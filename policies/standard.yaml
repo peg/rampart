@@ -1,0 +1,152 @@
+version: "1"
+default_action: allow
+policies:
+  - name: block-destructive
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "rm -rf /"
+            - "rm -rf ~"
+            - "rm -rf /*"
+            - "rm -rf ~/*"
+            - ":(){ :|:& };:"
+            - "dd if=*"
+            - "mkfs*"
+            - "chmod -R 777 /"
+            - "> /dev/sda"
+        message: "Destructive command blocked"
+
+  - name: log-privileged
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "sudo *"
+            - "kubectl delete *"
+            - "docker rm *"
+            - "docker rmi *"
+        message: "Privileged command logged"
+
+  - name: log-network-exfil
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "curl *"
+            - "wget *"
+            - "scp *"
+            - "rsync *"
+        message: "Network command logged for review"
+
+  - name: block-credential-access
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.env"
+            - "**/.netrc"
+            - "**/token*"
+            - "**/.git-credentials"
+        message: "Credential file access blocked"
+
+  - name: block-credential-commands
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "cat */.ssh/*"
+            - "cat */.aws/*"
+            - "cat */.env"
+            - "cat */.netrc"
+            - "cat */.git-credentials"
+            - "head */.ssh/*"
+            - "tail */.ssh/*"
+            - "less */.ssh/*"
+            - "more */.ssh/*"
+            - "base64 */.ssh/*"
+            - "base64 */.aws/*"
+            - "cp */.ssh/*"
+            - "cp */.aws/*"
+        message: "Credential file access via shell blocked"
+
+  - name: block-sensitive-writes
+    match:
+      tool: ["write"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "/etc/**"
+            - "/usr/**"
+            - "/bin/**"
+            - "/sbin/**"
+            - "**/.ssh/**"
+            - "**/.aws/**"
+            - "**/.bashrc"
+            - "**/.bash_profile"
+            - "**/.zshrc"
+            - "**/.profile"
+        message: "Write to sensitive path blocked"
+
+  - name: block-exfil-domains
+    match:
+      tool: ["fetch"]
+    rules:
+      - action: deny
+        when:
+          domain_matches:
+            - "*.ngrok.io"
+            - "*.ngrok-free.app"
+            - "*.requestbin.com"
+            - "requestbin.com"
+            - "*.hookbin.com"
+            - "hookbin.com"
+            - "*.webhook.site"
+            - "webhook.site"
+            - "*.pipedream.net"
+            - "pipedream.net"
+            - "*.beeceptor.com"
+            - "beeceptor.com"
+        message: "Potential data exfiltration domain blocked"
+
+  - name: block-mcp-destructive
+    match:
+      tool: ["mcp-destructive"]
+    rules:
+      - action: deny
+        message: "Destructive MCP operation blocked (delete/destroy/remove/drop)"
+
+  - name: log-mcp-dangerous
+    match:
+      tool: ["mcp-dangerous"]
+    rules:
+      - action: log
+        message: "Dangerous MCP operation logged (stop/restart/execute/modify)"
+
+  - name: block-credential-leaks
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+            - "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+            - "ghp_[a-zA-Z0-9]{36}"
+            - "sk-[a-zA-Z0-9]{48}"
+            - "xox[bsapr]-[a-zA-Z0-9-]+"
+            - "eyJ[a-zA-Z0-9_-]+\\.eyJ[a-zA-Z0-9_-]+"
+        message: "Sensitive credential detected in response"

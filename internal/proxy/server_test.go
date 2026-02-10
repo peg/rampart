@@ -1,0 +1,326 @@
+// Copyright 2026 The Rampart Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package proxy
+
+import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"github.com/peg/rampart/internal/audit"
+	"github.com/peg/rampart/internal/engine"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const testPolicyYAML = `
+version: "1"
+default_action: allow
+policies:
+  - name: block-destructive
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm -rf *"]
+        message: "destructive command blocked"
+  - name: log-sudo
+    match:
+      tool: exec
+    rules:
+      - action: log
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo usage flagged"
+  - name: allow-git
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["git *"]
+        message: "git allowed"
+`
+
+const responsePolicyYAML = `
+version: "1"
+default_action: allow
+policies:
+  - name: allow-exec
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          default: true
+  - name: block-credential-leaks
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+        message: "Sensitive credential detected in response"
+`
+
+type mockSink struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (m *mockSink) Write(e audit.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, e)
+	return nil
+}
+
+func (m *mockSink) Flush() error { return nil }
+
+func (m *mockSink) Close() error { return nil }
+
+func (m *mockSink) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.events)
+}
+
+func (m *mockSink) lastEvent() audit.Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.events) == 0 {
+		return audit.Event{}
+	}
+	return m.events[len(m.events)-1]
+}
+
+func setupTestServer(t *testing.T, configYAML, mode string) (*Server, string, *mockSink) {
+	t.Helper()
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	require.NoError(t, os.WriteFile(policyPath, []byte(configYAML), 0o644))
+
+	store := engine.NewFileStore(policyPath)
+	eng, err := engine.New(store, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	require.NoError(t, err)
+
+	sink := &mockSink{}
+	token := "test-token"
+	srv := New(
+		eng,
+		sink,
+		WithMode(mode),
+		WithToken(token),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))),
+	)
+
+	return srv, token, sink
+}
+
+func postToolCall(t *testing.T, ts *httptest.Server, token string, body string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+func decodeBody(t *testing.T, resp *http.Response) map[string]any {
+	t.Helper()
+
+	var data map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&data))
+	return data
+}
+
+func TestToolCall_Allow(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"git push"}}`)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Equal(t, "allow", body["decision"])
+}
+
+func TestToolCall_Deny(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"rm -rf /"}}`)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Equal(t, "deny", body["decision"])
+	assert.NotEmpty(t, body["policy"])
+}
+
+func TestToolCall_Log(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"sudo reboot"}}`)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Equal(t, "log", body["decision"])
+}
+
+func TestToolCall_MissingAuth(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, "", `{"agent":"main","session":"s1","params":{"command":"git push"}}`)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Contains(t, body["error"], "missing authorization header")
+}
+
+func TestToolCall_InvalidAuth(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, "wrong", `{"agent":"main","session":"s1","params":{"command":"git push"}}`)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Contains(t, body["error"], "invalid authorization token")
+}
+
+func TestToolCall_BadBody(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, token, `{`)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Contains(t, body["error"], "invalid request body")
+}
+
+func TestToolCall_MonitorMode(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "monitor")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"rm -rf /"}}`)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Equal(t, "deny", body["decision"])
+}
+
+func TestToolCall_DisabledMode(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "disabled")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"rm -rf /"}}`)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Equal(t, "allow", body["decision"])
+	assert.Equal(t, "policy evaluation disabled", body["message"])
+}
+
+func TestHealthCheck(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "monitor")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/healthz")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body := decodeBody(t, resp)
+	assert.Equal(t, "ok", body["status"])
+	assert.Equal(t, "monitor", body["mode"])
+}
+
+func TestNotFound(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/nonexistent")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestToolCall_AuditWritten(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp := postToolCall(t, ts, token, `{"agent":"main","session":"sess-1","params":{"command":"git push"}}`)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	_ = decodeBody(t, resp)
+
+	require.Equal(t, 1, sink.count())
+	evt := sink.lastEvent()
+	assert.Equal(t, "main", evt.Agent)
+	assert.Equal(t, "sess-1", evt.Session)
+	assert.Equal(t, "exec", evt.Tool)
+	assert.Equal(t, "allow", evt.Decision.Action)
+}
+
+func TestToolCall_ResponseDeniedAndRedacted(t *testing.T) {
+	srv, token, _ := setupTestServer(t, responsePolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"main","session":"s1","params":{"command":"echo"},"response":"leaked AKIA1234567890ABCDEF"}`
+	resp := postToolCall(t, ts, token, body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := decodeBody(t, resp)
+	assert.Equal(t, "deny", data["decision"])
+	assert.Equal(t, "Sensitive credential detected in response", data["message"])
+	assert.Equal(t, redactedResponse, data["response"])
+	assert.Equal(t, "block-credential-leaks", data["policy"])
+}
+
+func TestToolCall_ResponseAllowed(t *testing.T) {
+	srv, token, _ := setupTestServer(t, responsePolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"main","session":"s1","params":{"command":"echo"},"response":"all clear"}`
+	resp := postToolCall(t, ts, token, body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := decodeBody(t, resp)
+	assert.Equal(t, "allow", data["decision"])
+	assert.Equal(t, "all clear", data["response"])
+}

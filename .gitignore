@@ -1,0 +1,25 @@
+# Build
+/rampart
+/bin/
+*.exe
+
+# Go build/test cache
+.cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage.out
+*.coverprofile
+
+# Runtime audit logs
+audit/
+.cache/

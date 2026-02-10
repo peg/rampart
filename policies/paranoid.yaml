@@ -1,0 +1,132 @@
+version: "1"
+default_action: deny
+policies:
+  - name: dev-tools-allowlist
+    priority: 10
+    match:
+      tool: ["exec"]
+    rules:
+      - action: allow
+        when:
+          command_matches:
+            - "git *"
+            - "npm *"
+            - "npx *"
+            - "node *"
+            - "python3 *"
+            - "python *"
+            - "pip *"
+            - "go *"
+            - "cargo *"
+            - "make *"
+            - "cat *"
+            - "ls *"
+            - "find *"
+            - "grep *"
+            - "head *"
+            - "tail *"
+            - "wc *"
+            - "sort *"
+            - "uniq *"
+            - "diff *"
+            - "echo *"
+            - "mkdir *"
+            - "cp *"
+            - "mv *"
+            - "touch *"
+            - "test *"
+        message: "Allowed dev tool"
+
+  - name: read-allowlist
+    priority: 10
+    match:
+      tool: ["read"]
+    rules:
+      - action: allow
+        when:
+          path_matches:
+            - "**/*.go"
+            - "**/*.py"
+            - "**/*.js"
+            - "**/*.ts"
+            - "**/*.rs"
+            - "**/*.md"
+            - "**/*.yaml"
+            - "**/*.yml"
+            - "**/*.json"
+            - "**/*.toml"
+            - "**/*.txt"
+            - "**/*.html"
+            - "**/*.css"
+            - "**/Makefile"
+            - "**/Dockerfile"
+            - "**/go.mod"
+            - "**/go.sum"
+            - "**/package.json"
+            - "**/Cargo.toml"
+        message: "Allowed source file read"
+
+  - name: write-allowlist
+    priority: 10
+    match:
+      tool: ["write"]
+    rules:
+      - action: allow
+        when:
+          path_matches:
+            - "**/*.go"
+            - "**/*.py"
+            - "**/*.js"
+            - "**/*.ts"
+            - "**/*.rs"
+            - "**/*.md"
+            - "**/*.yaml"
+            - "**/*.yml"
+            - "**/*.json"
+            - "**/*.toml"
+            - "**/*.txt"
+            - "**/*.html"
+            - "**/*.css"
+            - "**/Makefile"
+            - "**/Dockerfile"
+            - "**/go.mod"
+            - "**/go.sum"
+            - "**/package.json"
+            - "**/Cargo.toml"
+        message: "Allowed source file write"
+
+  - name: fetch-allowlist
+    priority: 10
+    match:
+      tool: ["fetch"]
+    rules:
+      - action: allow
+        when:
+          domain_matches:
+            - "*.github.com"
+            - "*.githubusercontent.com"
+            - "*.npmjs.org"
+            - "*.npmjs.com"
+            - "*.pypi.org"
+            - "*.crates.io"
+            - "*.golang.org"
+            - "*.pkg.go.dev"
+            - "*.docs.rs"
+            - "localhost"
+            - "127.0.0.1"
+        message: "Allowed package registry/docs fetch"
+
+  - name: block-credential-access
+    priority: 1
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.env"
+            - "**/.netrc"
+            - "**/.git-credentials"
+        message: "Credential file access blocked"

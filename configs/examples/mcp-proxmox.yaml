@@ -1,0 +1,39 @@
+version: "1"
+default_action: allow
+policies:
+  # Block destructive Proxmox operations
+  - name: block-vm-destruction
+    match:
+      tool: ["mcp__proxmox__vm_delete", "mcp__proxmox__snapshot_delete"]
+    rules:
+      - action: deny
+        message: "VM/snapshot deletion blocked by policy"
+
+  # Log dangerous but sometimes necessary operations
+  - name: log-vm-power
+    match:
+      tool: ["mcp__proxmox__vm_stop", "mcp__proxmox__vm_shutdown", "mcp__proxmox__vm_reboot"]
+    rules:
+      - action: log
+        message: "VM power operation logged"
+
+  # Log migrations (risky in production)
+  - name: log-vm-migrate
+    match:
+      tool: ["mcp__proxmox__vm_migrate"]
+    rules:
+      - action: log
+        message: "VM migration logged for review"
+
+  # Block disk resize (irreversible growth)
+  - name: block-disk-resize
+    match:
+      tool: ["mcp__proxmox__vm_resize_disk"]
+    rules:
+      - action: deny
+        message: "Disk resize blocked — irreversible operation"
+
+  # Allow read-only operations freely
+  # get_nodes, get_vms, get_node_status, get_cluster_status,
+  # get_storage, get_vm_configuration, get_tasks, snapshot_list
+  # all fall through to default_action: allow

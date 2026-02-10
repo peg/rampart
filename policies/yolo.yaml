@@ -1,0 +1,11 @@
+version: "1"
+default_action: allow
+policies:
+  - name: log-everything
+    match:
+      tool: ["exec", "read", "write"]
+    rules:
+      - action: log
+        when:
+          default: true
+        message: "Audit-only mode: all actions logged"

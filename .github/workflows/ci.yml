@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Build
+        run: go build -o rampart ./cmd/rampart
+
+      - name: Policy check (standard)
+        run: ./rampart policy check --config policies/standard.yaml
+
+      - name: Policy check (paranoid)
+        run: ./rampart policy check --config policies/paranoid.yaml
+
+      - name: Policy check (yolo)
+        run: ./rampart policy check --config policies/yolo.yaml
+
+      - name: Benchmark
+        run: go test -bench=. -benchmem ./internal/engine/ ./internal/audit/
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
