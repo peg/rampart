@@ -213,7 +213,6 @@ After setup, configure OpenClaw to use the shim as its shell.`,
 				filepath.Join(home, ".rampart", "audit"),
 				filepath.Join(home, ".rampart", "policies"),
 				filepath.Join(home, ".local", "bin"),
-				filepath.Join(home, ".config", "systemd", "user"),
 			}
 			for _, d := range dirs {
 				if err := os.MkdirAll(d, 0o700); err != nil {
@@ -239,27 +238,10 @@ After setup, configure OpenClaw to use the shim as its shell.`,
 				}
 			}
 
-			// Create systemd service
-			servicePath := filepath.Join(home, ".config", "systemd", "user", "rampart-proxy.service")
-			serviceContent := fmt.Sprintf(`[Unit]
-Description=Rampart Policy Proxy
-Before=openclaw-gateway.service
-
-[Service]
-ExecStart=%s serve --port %d --config %s
-Restart=always
-RestartSec=3
-Environment=HOME=%s
-Environment=RAMPART_TOKEN=%s
-
-[Install]
-WantedBy=default.target
-`, rampartBin, port, policyPath, home, token)
-
-			if err := os.WriteFile(servicePath, []byte(serviceContent), 0o644); err != nil {
-				return fmt.Errorf("setup: write service file: %w", err)
+			// Create service (OS-specific)
+			if err := installService(cmd, home, rampartBin, policyPath, token, port); err != nil {
+				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Systemd service written to %s\n", servicePath)
 
 			// Create shell shim
 			shimContent := fmt.Sprintf(`#!/usr/bin/env bash
@@ -309,19 +291,9 @@ exec "$REAL_SHELL" "$@"
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Shell shim installed at %s\n", shimPath)
 
-			// Enable and start service
-			reload := osexec.Command("systemctl", "--user", "daemon-reload")
-			reload.Stderr = cmd.ErrOrStderr()
-			if err := reload.Run(); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not reload systemd: %v\n", err)
-				fmt.Fprintln(cmd.ErrOrStderr(), "  Run manually: systemctl --user daemon-reload")
-			}
-
-			enable := osexec.Command("systemctl", "--user", "enable", "--now", "rampart-proxy")
-			enable.Stderr = cmd.ErrOrStderr()
-			if err := enable.Run(); err != nil {
+			// Start service (OS-specific)
+			if err := startService(cmd); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not start service: %v\n", err)
-				fmt.Fprintln(cmd.ErrOrStderr(), "  Run manually: systemctl --user enable --now rampart-proxy")
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "✓ Rampart proxy service started")
 			}
@@ -344,6 +316,112 @@ exec "$REAL_SHELL" "$@"
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing shim and service config")
 	cmd.Flags().IntVar(&port, "port", 19090, "Port for Rampart policy server")
 	return cmd
+}
+
+func installService(cmd *cobra.Command, home, rampartBin, policyPath, token string, port int) error {
+	if runtime.GOOS == "darwin" {
+		return installLaunchd(cmd, home, rampartBin, policyPath, token, port)
+	}
+	return installSystemd(cmd, home, rampartBin, policyPath, token, port)
+}
+
+func installSystemd(cmd *cobra.Command, home, rampartBin, policyPath, token string, port int) error {
+	serviceDir := filepath.Join(home, ".config", "systemd", "user")
+	if err := os.MkdirAll(serviceDir, 0o700); err != nil {
+		return fmt.Errorf("setup: create systemd dir: %w", err)
+	}
+	servicePath := filepath.Join(serviceDir, "rampart-proxy.service")
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=Rampart Policy Proxy
+Before=openclaw-gateway.service
+
+[Service]
+ExecStart=%s serve --port %d --config %s
+Restart=always
+RestartSec=3
+Environment=HOME=%s
+Environment=RAMPART_TOKEN=%s
+
+[Install]
+WantedBy=default.target
+`, rampartBin, port, policyPath, home, token)
+
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0o644); err != nil {
+		return fmt.Errorf("setup: write service file: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Systemd service written to %s\n", servicePath)
+	return nil
+}
+
+func installLaunchd(cmd *cobra.Command, home, rampartBin, policyPath, token string, port int) error {
+	agentDir := filepath.Join(home, "Library", "LaunchAgents")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		return fmt.Errorf("setup: create LaunchAgents dir: %w", err)
+	}
+	plistPath := filepath.Join(agentDir, "com.rampart.proxy.plist")
+	plistContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rampart.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>serve</string>
+        <string>--port</string>
+        <string>%d</string>
+        <string>--config</string>
+        <string>%s</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>%s</string>
+        <key>RAMPART_TOKEN</key>
+        <string>%s</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>%s</string>
+    <key>StandardErrorPath</key>
+    <string>%s</string>
+</dict>
+</plist>
+`, rampartBin, port, policyPath, home, token,
+		filepath.Join(home, ".rampart", "rampart-proxy.log"),
+		filepath.Join(home, ".rampart", "rampart-proxy.log"))
+
+	if err := os.WriteFile(plistPath, []byte(plistContent), 0o644); err != nil {
+		return fmt.Errorf("setup: write plist: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ LaunchAgent written to %s\n", plistPath)
+	return nil
+}
+
+func startService(cmd *cobra.Command) error {
+	if runtime.GOOS == "darwin" {
+		home, _ := os.UserHomeDir()
+		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.rampart.proxy.plist")
+		// Unload first in case it's already loaded (ignore errors)
+		unload := osexec.Command("launchctl", "unload", plistPath)
+		_ = unload.Run()
+		load := osexec.Command("launchctl", "load", plistPath)
+		load.Stderr = cmd.ErrOrStderr()
+		return load.Run()
+	}
+
+	reload := osexec.Command("systemctl", "--user", "daemon-reload")
+	reload.Stderr = cmd.ErrOrStderr()
+	if err := reload.Run(); err != nil {
+		return err
+	}
+	enable := osexec.Command("systemctl", "--user", "enable", "--now", "rampart-proxy")
+	enable.Stderr = cmd.ErrOrStderr()
+	return enable.Run()
 }
 
 const defaultPolicy = `version: "1"
