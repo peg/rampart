@@ -14,6 +14,7 @@ import (
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/notify"
 	"github.com/spf13/cobra"
 )
 
@@ -158,6 +159,14 @@ Add to ~/.claude/settings.json:
 				}
 			}
 
+			// Send webhook notification if configured
+			config, err := store.Load()
+			if err != nil {
+				logger.Error("hook: failed to reload config for notifications", "error", err)
+			} else if config.Notify != nil && config.Notify.URL != "" {
+				go sendNotification(config.Notify, call, decision, logger)
+			}
+
 			// Return decision
 			if decision.Action == engine.ActionDeny && mode == "enforce" {
 				return outputDeny(cmd, decision.Message)
@@ -171,6 +180,66 @@ Add to ~/.claude/settings.json:
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 
 	return cmd
+}
+
+// sendNotification sends a webhook notification for the policy decision.
+func sendNotification(config *engine.NotifyConfig, call engine.ToolCall, decision engine.Decision, logger *slog.Logger) {
+	// Check if this action should trigger a notification
+	actionStr := decision.Action.String()
+	shouldNotify := false
+	for _, triggerAction := range config.On {
+		if triggerAction == actionStr {
+			shouldNotify = true
+			break
+		}
+	}
+	if !shouldNotify {
+		return
+	}
+
+	// Extract command/path from tool parameters
+	command := ""
+	switch call.Tool {
+	case "exec":
+		if cmd, ok := call.Params["command"].(string); ok {
+			command = cmd
+		}
+	case "read", "write":
+		if path, ok := call.Params["path"].(string); ok {
+			command = path
+		} else if filePath, ok := call.Params["file_path"].(string); ok {
+			command = filePath
+		}
+	case "fetch":
+		if url, ok := call.Params["url"].(string); ok {
+			command = url
+		}
+	}
+
+	// Get the matched policy name
+	policyName := "unknown"
+	if len(decision.MatchedPolicies) > 0 {
+		policyName = decision.MatchedPolicies[0]
+	}
+
+	// Create notification event
+	event := notify.NotifyEvent{
+		Action:    actionStr,
+		Tool:      call.Tool,
+		Command:   command,
+		Policy:    policyName,
+		Message:   decision.Message,
+		Agent:     call.Agent,
+		Timestamp: call.Timestamp.Format(time.RFC3339),
+	}
+
+	// Create and send notification
+	notifier := notify.NewNotifier(config.URL, config.Platform)
+	if err := notifier.Send(event); err != nil {
+		logger.Error("hook: webhook notification failed", "error", err, "url", config.URL)
+	} else {
+		logger.Debug("hook: webhook notification sent", "action", actionStr, "policy", policyName)
+	}
 }
 
 // mapHookTool maps Claude Code tool names to Rampart tool types.

@@ -1,0 +1,277 @@
+// Copyright 2026 The Rampart Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package notify
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestDetectPlatform(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"https://hooks.slack.com/services/EXAMPLE/EXAMPLE/EXAMPLE", "slack"},
+		{"https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz", "discord"},
+		{"https://outlook.office.com/webhook/abcd-1234-efgh-5678/IncomingWebhook/xyz", "teams"},
+		{"https://webhook.office.com/webhookb2/abcd-1234-efgh-5678@tenant.onmicrosoft.com/IncomingWebhook/xyz", "teams"},
+		{"https://example.com/webhook", "webhook"},
+		{"http://localhost:8080/notifications", "webhook"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.url, func(t *testing.T) {
+			result := DetectPlatform(test.url)
+			if result != test.expected {
+				t.Errorf("DetectPlatform(%s) = %s, want %s", test.url, result, test.expected)
+			}
+		})
+	}
+}
+
+func TestNewNotifier(t *testing.T) {
+	tests := []struct {
+		url      string
+		platform string
+		expected string
+	}{
+		{"https://hooks.slack.com/services/test", "slack", "*notify.SlackNotifier"},
+		{"https://discord.com/api/webhooks/test", "discord", "*notify.DiscordNotifier"},
+		{"https://webhook.office.com/test", "teams", "*notify.TeamsNotifier"},
+		{"https://example.com/webhook", "webhook", "*notify.GenericNotifier"},
+		{"https://hooks.slack.com/services/test", "auto", "*notify.SlackNotifier"},
+		{"https://discord.com/api/webhooks/test", "", "*notify.DiscordNotifier"},
+	}
+
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("%s-%s", test.platform, test.url), func(t *testing.T) {
+			notifier := NewNotifier(test.url, test.platform)
+			typeName := fmt.Sprintf("%T", notifier)
+			if typeName != test.expected {
+				t.Errorf("NewNotifier(%s, %s) type = %s, want %s", test.url, test.platform, typeName, test.expected)
+			}
+		})
+	}
+}
+
+func TestGenericNotifier_Send(t *testing.T) {
+	// Create test event
+	event := NotifyEvent{
+		Action:    "deny",
+		Tool:      "exec",
+		Command:   "rm -rf /",
+		Policy:    "dangerous-commands",
+		Message:   "Destructive command not allowed",
+		Agent:     "test-agent",
+		Timestamp: "2026-02-11T08:30:00Z",
+	}
+
+	// Create test server
+	var receivedPayload NotifyEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// Test notifier
+	notifier := NewGenericNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Errorf("Send() error = %v", err)
+	}
+
+	// Verify payload
+	if receivedPayload != event {
+		t.Errorf("Received payload doesn't match sent event")
+	}
+}
+
+func TestSlackNotifier_Send(t *testing.T) {
+	event := NotifyEvent{
+		Action:    "log",
+		Tool:      "read",
+		Command:   "/etc/passwd",
+		Policy:    "sensitive-files",
+		Message:   "Reading sensitive file",
+		Agent:     "test-agent",
+		Timestamp: "2026-02-11T08:30:00Z",
+	}
+
+	var receivedPayload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewSlackNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Errorf("Send() error = %v", err)
+	}
+
+	// Verify Slack-specific structure
+	attachments, ok := receivedPayload["attachments"].([]interface{})
+	if !ok || len(attachments) == 0 {
+		t.Error("Expected attachments array")
+		return
+	}
+
+	attachment := attachments[0].(map[string]interface{})
+	if attachment["color"] != "#d29922" {
+		t.Errorf("Expected orange color for log action, got %s", attachment["color"])
+	}
+
+	blocks, ok := attachment["blocks"].([]interface{})
+	if !ok || len(blocks) == 0 {
+		t.Error("Expected blocks array")
+	}
+}
+
+func TestDiscordNotifier_Send(t *testing.T) {
+	event := NotifyEvent{
+		Action:    "deny",
+		Tool:      "exec",
+		Command:   "sudo rm -rf /",
+		Policy:    "admin-commands",
+		Message:   "Admin command denied",
+		Agent:     "test-agent",
+		Timestamp: "2026-02-11T08:30:00Z",
+	}
+
+	var receivedPayload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewDiscordNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Errorf("Send() error = %v", err)
+	}
+
+	// Verify Discord-specific structure
+	embeds, ok := receivedPayload["embeds"].([]interface{})
+	if !ok || len(embeds) == 0 {
+		t.Error("Expected embeds array")
+		return
+	}
+
+	embed := embeds[0].(map[string]interface{})
+	if embed["title"] != "Rampart: Command Denied" {
+		t.Errorf("Expected deny title, got %s", embed["title"])
+	}
+	if embed["color"] != float64(0xf85149) {
+		t.Errorf("Expected red color for deny action, got %v", embed["color"])
+	}
+
+	fields, ok := embed["fields"].([]interface{})
+	if !ok || len(fields) == 0 {
+		t.Error("Expected fields array")
+	}
+}
+
+func TestTeamsNotifier_Send(t *testing.T) {
+	event := NotifyEvent{
+		Action:    "deny",
+		Tool:      "write",
+		Command:   "/etc/hosts",
+		Policy:    "system-files",
+		Message:   "System file modification denied",
+		Agent:     "test-agent",
+		Timestamp: "2026-02-11T08:30:00Z",
+	}
+
+	var receivedPayload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewTeamsNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Errorf("Send() error = %v", err)
+	}
+
+	// Verify Teams-specific structure
+	if receivedPayload["@type"] != "MessageCard" {
+		t.Errorf("Expected MessageCard type, got %s", receivedPayload["@type"])
+	}
+	if receivedPayload["themeColor"] != "f85149" {
+		t.Errorf("Expected red theme color for deny action, got %s", receivedPayload["themeColor"])
+	}
+	if !strings.Contains(receivedPayload["title"].(string), "Command Denied") {
+		t.Errorf("Expected deny title, got %s", receivedPayload["title"])
+	}
+
+	sections, ok := receivedPayload["sections"].([]interface{})
+	if !ok || len(sections) == 0 {
+		t.Error("Expected sections array")
+		return
+	}
+
+	section := sections[0].(map[string]interface{})
+	facts, ok := section["facts"].([]interface{})
+	if !ok || len(facts) == 0 {
+		t.Error("Expected facts array")
+	}
+}
+
+func TestNotifierErrorHandling(t *testing.T) {
+	// Test server that returns an error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	event := NotifyEvent{
+		Action: "deny",
+		Tool:   "exec",
+	}
+
+	notifiers := []Notifier{
+		NewGenericNotifier(server.URL),
+		NewSlackNotifier(server.URL),
+		NewDiscordNotifier(server.URL),
+		NewTeamsNotifier(server.URL),
+	}
+
+	for i, notifier := range notifiers {
+		t.Run(fmt.Sprintf("notifier-%d", i), func(t *testing.T) {
+			if err := notifier.Send(event); err == nil {
+				t.Error("Expected error for bad request, got nil")
+			}
+		})
+	}
+}

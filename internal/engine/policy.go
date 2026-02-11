@@ -35,6 +35,9 @@ type Config struct {
 	// Policies is the ordered list of policy rules.
 	Policies []Policy `yaml:"policies"`
 
+	// Notify configures webhook notifications for policy decisions.
+	Notify *NotifyConfig `yaml:"notify,omitempty"`
+
 	responseRegexCache map[string]*regexp.Regexp
 }
 
@@ -182,6 +185,21 @@ func (c Condition) IsEmpty() bool {
 //	tool: "exec"           → ["exec"]
 //	tool: ["exec", "read"] → ["exec", "read"]
 type StringOrSlice []string
+
+// NotifyConfig configures webhook notifications for policy decisions.
+type NotifyConfig struct {
+	// URL is the webhook endpoint to send notifications to.
+	URL string `yaml:"url"`
+
+	// Platform specifies the notification format.
+	// Valid values: "auto", "slack", "discord", "teams", "webhook".
+	// "auto" detects the platform based on the URL. Default: "auto".
+	Platform string `yaml:"platform"`
+
+	// On specifies which decision types trigger notifications.
+	// Valid values: "deny", "log". Can be a string or list of strings.
+	On []string `yaml:"on"`
+}
 
 // UnmarshalYAML implements custom YAML unmarshaling for string-or-slice fields.
 func (s *StringOrSlice) UnmarshalYAML(value *yaml.Node) error {
