@@ -271,6 +271,9 @@ if [ "$1" = "-c" ]; then
     fi
 
     ALLOWED=$(printf '%%s' "$DECISION" | sed -n 's/.*"allowed":[[:space:]]*\(true\|false\).*/\1/p' | head -n 1)
+    if [ -z "$ALLOWED" ]; then
+        exec "$REAL_SHELL" -c "$CMD" "$@"
+    fi
     if [ "$RAMPART_MODE" = "enforce" ] && [ "$ALLOWED" != "true" ]; then
         MSG=$(printf '%%s' "$DECISION" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p' | head -n 1)
         if [ -z "$MSG" ]; then

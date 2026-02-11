@@ -181,6 +181,10 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 						continue
 					}
 					lastReload = now
+					// Delay briefly to let the file write complete.
+					// File writes trigger events on truncation (empty file)
+					// before the new content is flushed.
+					time.Sleep(100 * time.Millisecond)
 					if err := eng.Reload(); err != nil {
 						logger.Error("serve: reload failed", "error", err)
 						continue
