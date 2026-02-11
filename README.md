@@ -326,6 +326,43 @@ rampart watch
 
 ---
 
+## Webhook Notifications
+
+Get real-time alerts when Rampart blocks something. Add a `notify` section to your policy file:
+
+```yaml
+version: "1"
+default_action: allow
+
+notify:
+  webhook:
+    url: "https://discord.com/api/webhooks/your/webhook"
+    # Or Slack: "https://hooks.slack.com/services/your/webhook"
+    events: ["deny"]  # Only notify on denied commands (options: deny, log, ask, allow)
+
+policies:
+  # ... your policies
+```
+
+Rampart sends a JSON payload to your webhook URL whenever a matching event occurs:
+
+```json
+{
+  "timestamp": "2026-02-11T21:03:38Z",
+  "decision": "deny",
+  "tool": "exec",
+  "command": "rm -rf /tmp/*",
+  "policy": "protect-sys",
+  "message": "Destructive command blocked",
+  "agent": "claude-code",
+  "session": "abc123"
+}
+```
+
+Works with Discord webhooks, Slack incoming webhooks, or any HTTP endpoint that accepts POST requests.
+
+---
+
 ## Integration
 
 ### HTTP Proxy

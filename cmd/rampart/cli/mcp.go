@@ -47,17 +47,29 @@ func defaultMCPDeps() mcpDeps {
 }
 
 func newMCPCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
+	proxyCmd := newMCPProxyCmd(opts, deps)
+	scanCmd := newMCPScanCmd(opts)
+
 	cmd := &cobra.Command{
-		Use:   "mcp",
+		Use:   "mcp [-- <mcp-server-command>]",
 		Short: "MCP (Model Context Protocol) tools",
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		// When called with args (rampart mcp -- server), delegate to proxy for backward compat
+		DisableFlagParsing: false,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				// Backward compat: "rampart mcp -- server" delegates to proxy
+				return proxyCmd.RunE(proxyCmd, args)
+			}
 			return cmd.Help()
 		},
 	}
 
+	// Copy proxy flags to parent so "rampart mcp --mode monitor -- server" works
+	cmd.Flags().AddFlagSet(proxyCmd.Flags())
+
 	// Add subcommands
-	cmd.AddCommand(newMCPProxyCmd(opts, deps))
-	cmd.AddCommand(newMCPScanCmd(opts))
+	cmd.AddCommand(proxyCmd)
+	cmd.AddCommand(scanCmd)
 
 	return cmd
 }
