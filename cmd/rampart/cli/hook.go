@@ -144,16 +144,12 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			switch format {
 			case "claude-code":
 				toolType, params, agentName, err = parseClaudeCodeInput(os.Stdin, logger)
-				if err != nil {
-					logger.Warn("hook: failed to parse Claude Code input", "error", err)
-					return outputAllow(cmd, format)
-				}
 			case "cline":
 				toolType, params, agentName, err = parseClineInput(os.Stdin, logger)
-				if err != nil {
-					logger.Warn("hook: failed to parse Cline input", "error", err)
-					return outputAllowCline(cmd)
-				}
+			}
+			if err != nil {
+				logger.Warn("hook: failed to parse input", "format", format, "error", err)
+				return outputHookResult(cmd, format, false, "")
 			}
 
 			// Build tool call for evaluation
@@ -203,21 +199,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				go sendNotification(config.Notify, call, decision, logger)
 			}
 
-			// Return decision based on format
-			switch format {
-			case "claude-code":
-				if decision.Action == engine.ActionDeny && mode == "enforce" {
-					return outputDeny(cmd, decision.Message)
-				}
-				return outputAllow(cmd, format)
-			case "cline":
-				if decision.Action == engine.ActionDeny && mode == "enforce" {
-					return outputDenyCline(cmd, decision.Message)
-				}
-				return outputAllowCline(cmd)
-			}
-
-			return outputAllow(cmd, format)
+			// Return decision
+			denied := decision.Action == engine.ActionDeny && mode == "enforce"
+			return outputHookResult(cmd, format, denied, decision.Message)
 		},
 	}
 
@@ -308,41 +292,25 @@ func mapClineTool(toolName string) string {
 	}
 }
 
-func outputAllow(cmd *cobra.Command, format string) error {
-	if format == "cline" {
-		return outputAllowCline(cmd)
+// outputHookResult writes the allow/deny response in the correct format.
+func outputHookResult(cmd *cobra.Command, format string, denied bool, reason string) error {
+	switch format {
+	case "cline":
+		out := clineHookOutput{Cancel: denied}
+		if denied {
+			out.ErrorMessage = "Blocked by Rampart: " + reason
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+	default: // claude-code
+		out := hookOutput{
+			HookSpecificOutput: hookDecision{
+				HookEventName: "PreToolUse",
+			},
+		}
+		if denied {
+			out.HookSpecificOutput.PermissionDecision = "deny"
+			out.HookSpecificOutput.PermissionDecisionReason = "Rampart: " + reason
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
-	
-	out := hookOutput{
-		HookSpecificOutput: hookDecision{
-			HookEventName: "PreToolUse",
-		},
-	}
-	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
-}
-
-func outputDeny(cmd *cobra.Command, reason string) error {
-	out := hookOutput{
-		HookSpecificOutput: hookDecision{
-			HookEventName:            "PreToolUse",
-			PermissionDecision:       "deny",
-			PermissionDecisionReason: "Rampart: " + reason,
-		},
-	}
-	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
-}
-
-func outputAllowCline(cmd *cobra.Command) error {
-	out := clineHookOutput{
-		Cancel: false,
-	}
-	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
-}
-
-func outputDenyCline(cmd *cobra.Command, reason string) error {
-	out := clineHookOutput{
-		Cancel:       true,
-		ErrorMessage: "Blocked by Rampart: " + reason,
-	}
-	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 }
