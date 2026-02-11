@@ -15,11 +15,59 @@ package cli
 
 import (
 	"log/slog"
+	"regexp"
+	"sync"
 	"time"
 
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
 )
+
+var (
+	// Rate limiting for webhook notifications
+	lastNotificationTime time.Time
+	notificationMutex    sync.Mutex
+)
+
+// sanitizeCommand removes sensitive patterns from command strings before sending to webhooks.
+func sanitizeCommand(command string) string {
+	result := command
+	
+	// Handle quoted Authorization headers first (before individual token patterns)
+	result = regexp.MustCompile(`'Authorization:\s+(Bearer|Basic)\s+[^']+'`).ReplaceAllString(result, "'[REDACTED]'")
+	
+	// MySQL passwords: -p'...' or -p"..." or -pSOMETHING (be more specific to avoid conflicts)
+	result = regexp.MustCompile(`\s-p'[^']*'`).ReplaceAllString(result, " [REDACTED]")
+	result = regexp.MustCompile(`\s-p"[^"]*"`).ReplaceAllString(result, " [REDACTED]")
+	result = regexp.MustCompile(`\s-p[A-Za-z0-9][^\s]*`).ReplaceAllString(result, " [REDACTED]")
+	
+	// Password arguments (handle these before general token patterns)  
+	result = regexp.MustCompile(`--password=\S+`).ReplaceAllString(result, "[REDACTED]")
+	result = regexp.MustCompile(`--password\s+\S+`).ReplaceAllString(result, "[REDACTED]")
+	
+	// GitHub tokens (handle before general sk- pattern)
+	result = regexp.MustCompile(`ghp_[a-zA-Z0-9]{40}`).ReplaceAllString(result, "[REDACTED]")
+	result = regexp.MustCompile(`gho_[a-zA-Z0-9]+`).ReplaceAllString(result, "[REDACTED]")
+	result = regexp.MustCompile(`ghs_[a-zA-Z0-9]+`).ReplaceAllString(result, "[REDACTED]")
+	
+	// Slack tokens (handle before general patterns)
+	result = regexp.MustCompile(`xoxb-[a-zA-Z0-9-]+`).ReplaceAllString(result, "[REDACTED]")
+	result = regexp.MustCompile(`xoxp-[a-zA-Z0-9-]+`).ReplaceAllString(result, "[REDACTED]")
+	
+	// OpenAI-style API keys
+	result = regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`).ReplaceAllString(result, "[REDACTED]")
+	
+	// AWS access key IDs
+	result = regexp.MustCompile(`AKIA[0-9A-Z]{16}`).ReplaceAllString(result, "[REDACTED]")
+	
+	// Unquoted Authorization headers
+	result = regexp.MustCompile(`Authorization:\s+(Bearer|Basic)\s+\S+`).ReplaceAllString(result, "Authorization: $1 [REDACTED]")
+	
+	// Long base64 strings when preceded by credential keywords (handle last, be more specific)
+	result = regexp.MustCompile(`(?i)\b(api_?key|auth_?token|token|secret|access_?token)\s*[=:]\s*[A-Za-z0-9+/]{40,}={0,2}`).ReplaceAllString(result, "[REDACTED]")
+	
+	return result
+}
 
 // sendNotification sends a webhook notification for the policy decision.
 func sendNotification(config *engine.NotifyConfig, call engine.ToolCall, decision engine.Decision, logger *slog.Logger) {
@@ -36,8 +84,22 @@ func sendNotification(config *engine.NotifyConfig, call engine.ToolCall, decisio
 		return
 	}
 
+	// Rate limiting: check if less than 6 seconds since last notification
+	notificationMutex.Lock()
+	now := time.Now()
+	if now.Sub(lastNotificationTime) < 6*time.Second {
+		notificationMutex.Unlock()
+		logger.Warn("webhook notification rate limited", "action", actionStr)
+		return
+	}
+	lastNotificationTime = now
+	notificationMutex.Unlock()
+
 	// Extract command/path from tool parameters
 	command := extractCommand(call)
+	
+	// Sanitize command before sending to webhook
+	sanitizedCommand := sanitizeCommand(command)
 
 	// Get the matched policy name
 	policyName := "unknown"
@@ -45,11 +107,11 @@ func sendNotification(config *engine.NotifyConfig, call engine.ToolCall, decisio
 		policyName = decision.MatchedPolicies[0]
 	}
 
-	// Create notification event
+	// Create notification event with sanitized command
 	event := notify.NotifyEvent{
 		Action:    actionStr,
 		Tool:      call.Tool,
-		Command:   command,
+		Command:   sanitizedCommand,
 		Policy:    policyName,
 		Message:   decision.Message,
 		Agent:     call.Agent,

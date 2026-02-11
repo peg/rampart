@@ -121,18 +121,18 @@ type Decision struct {
 }
 
 // ParseAction converts a string to an Action.
-func ParseAction(s string) Action {
+func ParseAction(s string) (Action, error) {
 	switch s {
 	case "allow":
-		return ActionAllow
+		return ActionAllow, nil
 	case "deny":
-		return ActionDeny
+		return ActionDeny, nil
 	case "log":
-		return ActionLog
+		return ActionLog, nil
 	case "require_approval":
-		return ActionRequireApproval
+		return ActionRequireApproval, nil
 	default:
-		return ActionAllow
+		return ActionAllow, fmt.Errorf("unknown action: %q", s)
 	}
 }
 

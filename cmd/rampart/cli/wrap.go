@@ -563,8 +563,13 @@ func (s *decisionCounterSink) Write(event audit.Event) error {
 			Agent:     event.Agent,
 			Timestamp: event.Timestamp,
 		}
+		action, err := engine.ParseAction(event.Decision.Action)
+		if err != nil {
+			s.logger.Error("invalid action in audit event", "action", event.Decision.Action, "error", err)
+			action = engine.ActionAllow // fallback for backwards compatibility
+		}
 		decision := engine.Decision{
-			Action:          engine.ParseAction(event.Decision.Action),
+			Action:          action,
 			MatchedPolicies: event.Decision.MatchedPolicies,
 			Message:         event.Decision.Message,
 		}
