@@ -34,16 +34,45 @@ type hookDecision struct {
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
 }
 
+// clineHookInput is the JSON sent by Cline on stdin for PreToolUse hooks.
+type clineHookInput struct {
+	ClineVersion    string        `json:"clineVersion"`
+	HookName        string        `json:"hookName"`
+	Timestamp       string        `json:"timestamp"`
+	TaskID          string        `json:"taskId"`
+	WorkspaceRoots  []string      `json:"workspaceRoots"`
+	PreToolUse      *clineToolUse `json:"preToolUse"`
+	PostToolUse     *clineToolUse `json:"postToolUse"`
+}
+
+// clineToolUse represents tool usage in Cline's format.
+type clineToolUse struct {
+	ToolName   string         `json:"toolName"`
+	Parameters map[string]any `json:"parameters"`
+}
+
+// clineHookOutput is the JSON response for Cline hooks.
+type clineHookOutput struct {
+	Cancel               bool   `json:"cancel"`
+	ContextModification  string `json:"contextModification,omitempty"`
+	ErrorMessage         string `json:"errorMessage,omitempty"`
+}
+
 func newHookCmd(opts *rootOptions) *cobra.Command {
 	var auditDir string
 	var mode string
+	var format string
 
 	cmd := &cobra.Command{
 		Use:   "hook",
-		Short: "Claude Code PreToolUse hook — reads JSON from stdin, returns allow/deny",
-		Long: `Integrates with Claude Code's hook system for native policy enforcement.
+		Short: "AI agent hook — reads JSON from stdin, returns allow/deny",
+		Long: `Integrates with AI agent hook systems for native policy enforcement.
 
-Add to ~/.claude/settings.json:
+Supports multiple formats:
+  --format claude-code (default): Claude Code integration
+  --format cline: Cline (VS Code extension) integration
+
+Claude Code setup (add to ~/.claude/settings.json):
 {
   "hooks": {
     "PreToolUse": [
@@ -53,10 +82,15 @@ Add to ~/.claude/settings.json:
       }
     ]
   }
-}`,
+}
+
+Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if mode != "enforce" && mode != "monitor" {
-				return fmt.Errorf("hook: invalid mode %q (must be enforce or monitor)", mode)
+			if mode != "enforce" && mode != "monitor" && mode != "audit" {
+				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
+			}
+			if format != "claude-code" && format != "cline" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code or cline)", format)
 			}
 
 			// Resolve audit directory
@@ -102,27 +136,30 @@ Add to ~/.claude/settings.json:
 			}
 			defer auditFile.Close()
 
-			// Read hook input from stdin
-			var input hookInput
-			if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
-				// If we can't parse input, allow by default (don't break the agent)
-				logger.Warn("hook: failed to parse stdin", "error", err)
-				return outputAllow(cmd)
-			}
-
-			// Map Claude Code tool names to Rampart tool types
-			toolType := mapHookTool(input.ToolName)
-
-			// Extract command for exec tools
-			params := input.ToolInput
-			if params == nil {
-				params = map[string]any{}
+			// Parse input based on format
+			var toolType string
+			var params map[string]any
+			var agentName string
+			
+			switch format {
+			case "claude-code":
+				toolType, params, agentName, err = parseClaudeCodeInput(os.Stdin, logger)
+				if err != nil {
+					logger.Warn("hook: failed to parse Claude Code input", "error", err)
+					return outputAllow(cmd, format)
+				}
+			case "cline":
+				toolType, params, agentName, err = parseClineInput(os.Stdin, logger)
+				if err != nil {
+					logger.Warn("hook: failed to parse Cline input", "error", err)
+					return outputAllowCline(cmd)
+				}
 			}
 
 			// Build tool call for evaluation
 			call := engine.ToolCall{
 				ID:        audit.NewEventID(),
-				Agent:     "claude-code",
+				Agent:     agentName,
 				Session:   "hook",
 				Tool:      toolType,
 				Params:    params,
@@ -166,23 +203,75 @@ Add to ~/.claude/settings.json:
 				go sendNotification(config.Notify, call, decision, logger)
 			}
 
-			// Return decision
-			if decision.Action == engine.ActionDeny && mode == "enforce" {
-				return outputDeny(cmd, decision.Message)
+			// Return decision based on format
+			switch format {
+			case "claude-code":
+				if decision.Action == engine.ActionDeny && mode == "enforce" {
+					return outputDeny(cmd, decision.Message)
+				}
+				return outputAllow(cmd, format)
+			case "cline":
+				if decision.Action == engine.ActionDeny && mode == "enforce" {
+					return outputDenyCline(cmd, decision.Message)
+				}
+				return outputAllowCline(cmd)
 			}
 
-			return outputAllow(cmd)
+			return outputAllow(cmd, format)
 		},
 	}
 
-	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor")
+	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
+	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 
 	return cmd
 }
 
-// mapHookTool maps Claude Code tool names to Rampart tool types.
-func mapHookTool(toolName string) string {
+// parseClaudeCodeInput parses Claude Code hook input format
+func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (string, map[string]any, string, error) {
+	var input hookInput
+	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+		return "", nil, "", err
+	}
+	
+	toolType := mapClaudeCodeTool(input.ToolName)
+	params := input.ToolInput
+	if params == nil {
+		params = map[string]any{}
+	}
+	
+	return toolType, params, "claude-code", nil
+}
+
+// parseClineInput parses Cline hook input format
+func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (string, map[string]any, string, error) {
+	var input clineHookInput
+	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+		return "", nil, "", err
+	}
+	
+	// Extract tool info from PreToolUse or PostToolUse
+	var toolUse *clineToolUse
+	if input.PreToolUse != nil {
+		toolUse = input.PreToolUse
+	} else if input.PostToolUse != nil {
+		toolUse = input.PostToolUse
+	} else {
+		return "", nil, "", fmt.Errorf("no tool use found in input")
+	}
+	
+	toolType := mapClineTool(toolUse.ToolName)
+	params := toolUse.Parameters
+	if params == nil {
+		params = map[string]any{}
+	}
+	
+	return toolType, params, "cline", nil
+}
+
+// mapClaudeCodeTool maps Claude Code tool names to Rampart tool types.
+func mapClaudeCodeTool(toolName string) string {
 	switch toolName {
 	case "Bash":
 		return "exec"
@@ -197,7 +286,33 @@ func mapHookTool(toolName string) string {
 	}
 }
 
-func outputAllow(cmd *cobra.Command) error {
+// mapClineTool maps Cline tool names to Rampart tool types.
+func mapClineTool(toolName string) string {
+	switch toolName {
+	case "execute_command":
+		return "exec"
+	case "read_file":
+		return "read"
+	case "write_to_file":
+		return "write"
+	case "search_files", "list_files", "list_code_definition_names":
+		return "read"
+	case "browser_action":
+		return "fetch"
+	case "use_mcp_tool", "access_mcp_resource":
+		return "mcp"
+	case "ask_followup_question", "attempt_completion", "new_task", "fetch_instructions", "plan_mode_respond":
+		return "interact"
+	default:
+		return "exec"
+	}
+}
+
+func outputAllow(cmd *cobra.Command, format string) error {
+	if format == "cline" {
+		return outputAllowCline(cmd)
+	}
+	
 	out := hookOutput{
 		HookSpecificOutput: hookDecision{
 			HookEventName: "PreToolUse",
@@ -213,6 +328,21 @@ func outputDeny(cmd *cobra.Command, reason string) error {
 			PermissionDecision:       "deny",
 			PermissionDecisionReason: "Rampart: " + reason,
 		},
+	}
+	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+}
+
+func outputAllowCline(cmd *cobra.Command) error {
+	out := clineHookOutput{
+		Cancel: false,
+	}
+	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+}
+
+func outputDenyCline(cmd *cobra.Command, reason string) error {
+	out := clineHookOutput{
+		Cancel:       true,
+		ErrorMessage: "Blocked by Rampart: " + reason,
 	}
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 }
