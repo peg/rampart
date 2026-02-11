@@ -207,6 +207,78 @@ Claude Desktop
 
 Rampart speaks the MCP protocol natively. It's invisible to both Claude Desktop and the MCP server — they don't know it's there. Denied tool calls return a standard JSON-RPC error, so Claude handles them gracefully (typically saying "I wasn't able to access that file").
 
+## Local vs Cloud MCP Servers
+
+MCP servers can run locally on your machine or remotely in the cloud. Rampart's protection works differently depending on where the server lives:
+
+### Local MCP Servers
+
+Most MCP servers today run locally — Claude Desktop launches them as child processes on your machine.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                     YOUR MACHINE                          │
+│                                                          │
+│  Claude Desktop                                          │
+│    └─ MCP tool call ──► Rampart ──► MCP Server (local)   │
+│                          │    │         │                │
+│                       DENY?   LOG    executes            │
+│                          │              │                │
+│                     never reaches    touches YOUR        │
+│                     the server       filesystem,         │
+│                                      YOUR network,      │
+│                                      YOUR credentials   │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Rampart blocks the request before it reaches the server.** The MCP server never sees denied tool calls. Since the server runs on your machine, a blocked call means the action never happens — your files stay untouched, no network requests fire, no commands execute.
+
+**This is full protection.** You control both the policy layer and the execution environment.
+
+### Cloud/Remote MCP Servers
+
+Some MCP servers run remotely — on Cloudflare, AWS, a company API, etc. Claude Desktop connects to them over the network (typically via SSE or WebSocket transport).
+
+```
+┌────────────────────────────────┐      ┌─────────────────────┐
+│          YOUR MACHINE          │      │    CLOUD SERVER      │
+│                                │      │                      │
+│  Claude Desktop                │      │  MCP Server          │
+│    └─ MCP tool call ──► Rampart ─ ✕ ─►│    (executes on      │
+│                          │     │      │     remote infra)     │
+│                       DENY?    │      │                      │
+│                          │     │      │  You don't control   │
+│                     request    │      │  this environment    │
+│                     never      │      │                      │
+│                     leaves     │      └─────────────────────┘
+│                     your       │
+│                     machine    │
+└────────────────────────────────┘
+```
+
+**Rampart blocks the request before it leaves your machine.** The cloud server never receives the denied tool call. This is important:
+
+- **Credential exfiltration stopped** — if a prompt injection tries to send your SSH key to a remote API, the tool call gets denied locally. The data never hits the wire.
+- **Destructive remote actions stopped** — `delete_database`, `terminate_instance`, etc. get blocked before the request reaches the cloud.
+- **Full audit trail** — every tool call (allowed or denied) is logged locally, even for cloud servers. You have a record of what your AI tried to do.
+
+**What Rampart can't do for cloud servers:**
+- If a tool call is **allowed** and the cloud server executes it maliciously, Rampart can't prevent that — it already forwarded the request.
+- If the cloud MCP server itself is compromised (returning malicious responses), Rampart's response-side evaluation can catch some patterns, but the primary defense is on the request side.
+- If Claude Desktop connects to a remote MCP server directly (without going through a local command), Rampart can't intercept it unless you configure a local proxy.
+
+### The Bottom Line
+
+| Scenario | What Rampart blocks | Where |
+|----------|-------------------|-------|
+| **Local MCP server** | Request + execution | Everything happens on your machine — full protection |
+| **Cloud MCP server** | Request only | Blocked calls never leave your machine. Allowed calls execute remotely. |
+| **Direct cloud connection** | Nothing (without proxy) | If Claude connects to a remote URL directly, Rampart isn't in the path |
+
+For maximum protection with cloud MCP servers, the policy should be **more restrictive** — deny by default, explicitly allow only the tool calls you expect.
+
+---
+
 ## Also Works With
 
 This same approach works with any MCP-compatible app:
