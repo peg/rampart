@@ -116,12 +116,12 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				proxyErrCh  chan error
 			)
 			if port > 0 {
-				proxyServer = proxy.New(
-					eng,
-					sink,
-					proxy.WithMode(mode),
-					proxy.WithLogger(logger),
-				)
+				var proxyOpts []proxy.Option
+				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger))
+				if envToken := os.Getenv("RAMPART_TOKEN"); envToken != "" {
+					proxyOpts = append(proxyOpts, proxy.WithToken(envToken))
+				}
+				proxyServer = proxy.New(eng, sink, proxyOpts...)
 
 				token := proxyServer.Token()
 				display := token
@@ -191,7 +191,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&auditDir, "audit-dir", "./audit", "Directory for audit logs")
+	defaultAuditDir := "./audit"
+	if home, err := os.UserHomeDir(); err == nil {
+		defaultAuditDir = filepath.Join(home, ".rampart", "audit")
+	}
+	cmd.Flags().StringVar(&auditDir, "audit-dir", defaultAuditDir, "Directory for audit logs")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")
 	cmd.Flags().IntVar(&port, "port", 9090, "Proxy listen port (0 = SDK-only mode)")
 
