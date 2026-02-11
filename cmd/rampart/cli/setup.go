@@ -23,6 +23,12 @@ func newSetupCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Set up Rampart integrations with AI agents",
+		Long: `Set up Rampart integrations with supported AI agents.
+
+Supported AI Agents:
+  • Claude Code (Anthropic)   - Native hook integration
+  • Cline (VS Code)           - Native hook integration  
+  • OpenClaw                  - Shell wrapper integration`,
 	}
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
@@ -150,17 +156,7 @@ other settings.`,
 	return cmd
 }
 
-func newSetupClineCmd(opts *rootOptions) *cobra.Command {
-	return &cobra.Command{
-		Use:   "cline",
-		Short: "Install Rampart hook into Cline settings (coming soon)",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Fprintln(cmd.OutOrStdout(), "Cline integration coming soon.")
-			fmt.Fprintln(cmd.OutOrStdout(), "For now, use: rampart wrap -- cline")
-			return nil
-		},
-	}
-}
+// newSetupClineCmd is defined in cline.go
 
 func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 	var force bool
