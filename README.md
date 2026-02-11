@@ -134,6 +134,11 @@ rampart wrap --config my-policy.yaml -- your-agent
 # Install (Go 1.24+)
 go install github.com/peg/rampart/cmd/rampart@latest
 
+# Make sure it's in your PATH (required for Claude Code hooks)
+# Add to your shell profile (~/.zshrc or ~/.bashrc):
+#   export PATH=$PATH:$(go env GOPATH)/bin
+# Or symlink: sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart
+
 # Or build from source
 git clone https://github.com/peg/rampart.git && cd rampart
 go build -o rampart ./cmd/rampart
