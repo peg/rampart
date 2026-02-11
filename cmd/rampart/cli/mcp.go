@@ -47,6 +47,22 @@ func defaultMCPDeps() mcpDeps {
 }
 
 func newMCPCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "MCP (Model Context Protocol) tools",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+
+	// Add subcommands
+	cmd.AddCommand(newMCPProxyCmd(opts, deps))
+	cmd.AddCommand(newMCPScanCmd(opts))
+
+	return cmd
+}
+
+func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 	var mode string
 	var auditDir string
 	var filterTools bool
@@ -62,11 +78,11 @@ func newMCPCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:   "mcp -- <mcp-server-command> [args...]",
+		Use:   "proxy -- <mcp-server-command> [args...]",
 		Short: "Proxy MCP stdio with Rampart policy enforcement",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return fmt.Errorf("mcp: command is required (use: rampart mcp -- <command> [args...])")
+				return fmt.Errorf("mcp proxy: command is required (use: rampart mcp proxy -- <command> [args...])")
 			}
 			return nil
 		},
