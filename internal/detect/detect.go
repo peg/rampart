@@ -34,66 +34,85 @@ type DetectResult struct {
 
 // Environment performs environment detection and returns results.
 func Environment() (*DetectResult, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
 	result := &DetectResult{}
 
-	// Detect Claude Code
-	claudeSettingsPath := filepath.Join(homeDir, ".claude", "settings.json")
-	if _, err := os.Stat(claudeSettingsPath); err == nil {
-		result.ClaudeCode = true
-		
-		// Also check for MCP servers in Claude settings
-		servers, _ := detectMCPServersFromClaudeSettings(claudeSettingsPath)
-		result.MCPServers = append(result.MCPServers, servers...)
-	}
-
-	// Detect MCP servers from other locations
-	mcpPaths := []string{
-		filepath.Join(homeDir, ".cursor", "mcp.json"),
-		filepath.Join(homeDir, ".config", "codex", "mcp.json"),
-	}
+	// Try to get home directory, but continue with partial results if it fails
+	homeDir, homeDirErr := os.UserHomeDir()
 	
-	for _, path := range mcpPaths {
-		if servers, err := detectMCPServersFromFile(path); err == nil {
+	// If we have a home directory, check home-based detection
+	if homeDirErr == nil {
+		// Detect Claude Code
+		claudeSettingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+		if err := checkFileExists(claudeSettingsPath); err == nil {
+			result.ClaudeCode = true
+			
+			// Also check for MCP servers in Claude settings
+			servers, _ := detectMCPServersFromClaudeSettings(claudeSettingsPath)
 			result.MCPServers = append(result.MCPServers, servers...)
 		}
-	}
 
-	// Remove duplicates from MCP servers
-	result.MCPServers = removeDuplicates(result.MCPServers)
-
-	// Detect SSH keys
-	sshDir := filepath.Join(homeDir, ".ssh")
-	if entries, err := os.ReadDir(sshDir); err == nil {
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), "id_") && !strings.HasSuffix(entry.Name(), ".pub") {
-				result.SSHKeys = true
-				break
+		// Detect MCP servers from other locations
+		mcpPaths := []string{
+			filepath.Join(homeDir, ".cursor", "mcp.json"),
+			filepath.Join(homeDir, ".config", "codex", "mcp.json"),
+		}
+		
+		for _, path := range mcpPaths {
+			if servers, err := detectMCPServersFromFile(path); err == nil {
+				result.MCPServers = append(result.MCPServers, servers...)
 			}
 		}
+
+		// Remove duplicates from MCP servers
+		result.MCPServers = removeDuplicates(result.MCPServers)
+
+		// Detect SSH keys
+		sshDir := filepath.Join(homeDir, ".ssh")
+		if entries, err := os.ReadDir(sshDir); err == nil {
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), "id_") && !strings.HasSuffix(entry.Name(), ".pub") {
+					result.SSHKeys = true
+					break
+				}
+			}
+		}
+		// Note: we skip SSH key detection on permission errors rather than failing
+
+		// Detect AWS credentials
+		awsCredsPath := filepath.Join(homeDir, ".aws", "credentials")
+		if err := checkFileExists(awsCredsPath); err == nil {
+			result.AWSCredentials = true
+		}
+		// Note: we skip AWS detection on permission errors rather than failing
 	}
 
-	// Detect AWS credentials
-	awsCredsPath := filepath.Join(homeDir, ".aws", "credentials")
-	if _, err := os.Stat(awsCredsPath); err == nil {
-		result.AWSCredentials = true
-	}
-
-	// Detect kubectl
+	// Detect kubectl (works regardless of home directory)
 	if _, err := exec.LookPath("kubectl"); err == nil {
 		result.HasKubectl = true
 	}
 
-	// Detect docker
+	// Detect docker (works regardless of home directory)
 	if _, err := exec.LookPath("docker"); err == nil {
 		result.HasDocker = true
 	}
 
+	// Always return results, even if we couldn't access home directory
 	return result, nil
+}
+
+// checkFileExists checks if a file exists, properly handling permission errors.
+// Returns nil if file exists, error only for actual problems.
+// Permission denied is treated as "skip with warning" (returns error but caller can ignore).
+func checkFileExists(path string) error {
+	_, err := os.Stat(path)
+	if err == nil {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return err // File doesn't exist
+	}
+	// Permission denied or other errors - return error but caller can choose to ignore
+	return err
 }
 
 // detectMCPServersFromClaudeSettings reads Claude settings and extracts MCP server names.
