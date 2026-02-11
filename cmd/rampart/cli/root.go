@@ -95,6 +95,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(newDenyCmd(opts))
 	cmd.AddCommand(newPendingCmd(opts))
 	cmd.AddCommand(newWrapCmd(opts, nil))
+	cmd.AddCommand(newPreloadCmd(opts))
 	cmd.AddCommand(newMCPCmd(opts, nil))
 	cmd.AddCommand(newHookCmd(opts))
 	cmd.AddCommand(newSetupCmd(opts))
