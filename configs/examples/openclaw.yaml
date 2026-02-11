@@ -61,6 +61,51 @@ policies:
             - "wget * | bash"
         message: "Destructive command pattern blocked"
 
+  # ── Credential Exfiltration via Shell ────────────────────────────
+  - name: block-credential-exfil
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "cat ~/.ssh/*"
+            - "cat ~/.aws/*"
+            - "cat ~/.env*"
+            - "cat ~/.netrc*"
+            - "cat ~/.git-credentials*"
+            - "cat /etc/shadow*"
+            - "sudo cat /etc/shadow*"
+            - "base64 ~/.ssh/*"
+            - "base64 ~/.aws/*"
+            - "*cat*.ssh*|*curl*"
+            - "*cat*.ssh*|*wget*"
+            - "*cat*.aws*|*curl*"
+            - "*curl*$(cat*"
+            - "*wget*$(cat*"
+        message: "Credential access or exfiltration blocked"
+
+  # ── Known Exfiltration Domains ─────────────────────────────────
+  - name: block-exfil-domains
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "*curl*webhook.site*"
+            - "*curl*ngrok.io*"
+            - "*curl*ngrok-free.app*"
+            - "*curl*requestbin.com*"
+            - "*curl*pipedream.net*"
+            - "*curl*beeceptor.com*"
+            - "*wget*webhook.site*"
+            - "*wget*ngrok.io*"
+            - "*wget*requestbin.com*"
+        message: "Data exfiltration to known staging domain blocked"
+
   - name: log-privileged
     match:
       tool: "exec"

@@ -121,6 +121,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if envToken := os.Getenv("RAMPART_TOKEN"); envToken != "" {
 					proxyOpts = append(proxyOpts, proxy.WithToken(envToken))
 				}
+				// Load notify config from policy file
+				if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
+					proxyOpts = append(proxyOpts, proxy.WithNotify(cfg.Notify))
+					logger.Info("serve: webhook notifications enabled", "url", cfg.Notify.URL)
+				}
 				proxyServer = proxy.New(eng, sink, proxyOpts...)
 
 				token := proxyServer.Token()
@@ -176,6 +181,10 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 						continue
 					}
 					lastReload = now
+					// Delay briefly to let the file write complete.
+					// File writes trigger events on truncation (empty file)
+					// before the new content is flushed.
+					time.Sleep(100 * time.Millisecond)
 					if err := eng.Reload(); err != nil {
 						logger.Error("serve: reload failed", "error", err)
 						continue

@@ -200,6 +200,12 @@ func (e *Engine) Reload() error {
 		return fmt.Errorf("engine: reload failed: %w", err)
 	}
 
+	// Reject empty or clearly broken configs from hot-reload.
+	// File watchers can fire on truncated files before new content is written.
+	if cfg.DefaultAction == "" && len(cfg.Policies) == 0 {
+		return fmt.Errorf("engine: reload rejected — empty config (file may be mid-write)")
+	}
+
 	e.mu.Lock()
 	e.config = cfg
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
