@@ -54,6 +54,14 @@ func MatchGlob(pattern, name string) bool {
 		}
 	}
 
+	// For patterns with leading "*" (e.g. "*curl*webhook.site*"), use
+	// substring matching. Split on "*" and verify all parts appear in
+	// order within the name. filepath.Match can't handle these because
+	// "*" doesn't cross "/" boundaries.
+	if strings.HasPrefix(pattern, "*") {
+		return matchWildcardSegments(pattern, name)
+	}
+
 	// Fall back to filepath.Match for standard glob patterns.
 	matched, err := filepath.Match(pattern, name)
 	if err != nil {
@@ -278,6 +286,24 @@ func matchResponseCondition(
 	}
 	if matchAnyRegex(cond.ResponseNotMatches, response, regexCache) {
 		return false
+	}
+	return true
+}
+
+// matchWildcardSegments handles patterns like "*curl*webhook.site*" by
+// splitting on "*" and checking that all non-empty segments appear in order.
+func matchWildcardSegments(pattern, name string) bool {
+	parts := strings.Split(pattern, "*")
+	remaining := name
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		idx := strings.Index(remaining, part)
+		if idx < 0 {
+			return false
+		}
+		remaining = remaining[idx+len(part):]
 	}
 	return true
 }
