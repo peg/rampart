@@ -120,6 +120,22 @@ type Decision struct {
 	EvalDuration time.Duration
 }
 
+// ParseAction converts a string to an Action.
+func ParseAction(s string) (Action, error) {
+	switch s {
+	case "allow":
+		return ActionAllow, nil
+	case "deny":
+		return ActionDeny, nil
+	case "log":
+		return ActionLog, nil
+	case "require_approval":
+		return ActionRequireApproval, nil
+	default:
+		return ActionAllow, fmt.Errorf("unknown action: %q", s)
+	}
+}
+
 // Denied returns true if the tool call was blocked.
 func (d Decision) Denied() bool {
 	return d.Action == ActionDeny

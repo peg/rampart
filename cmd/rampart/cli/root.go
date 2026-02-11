@@ -87,6 +87,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(newServeCmd(opts, nil))
 	cmd.AddCommand(newPolicyCmd(opts))
 	cmd.AddCommand(newAuditCmd(opts))
+	cmd.AddCommand(newReportCmd(opts))
 	cmd.AddCommand(newWatchCmd(opts))
 	cmd.AddCommand(newOpenClawCmd(opts))
 	cmd.AddCommand(newDaemonCmd(opts))

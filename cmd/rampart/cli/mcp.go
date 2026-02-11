@@ -113,7 +113,12 @@ func newMCPCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 				return fmt.Errorf("mcp: open audit file: %w", err)
 			}
 			sink := &appendSink{file: auditFile}
-			countedSink := &decisionCounterSink{sink: sink}
+			// Load notify config from policy
+			var mcpNotifyConfig *engine.NotifyConfig
+			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
+				mcpNotifyConfig = cfg.Notify
+			}
+			countedSink := &decisionCounterSink{sink: sink, notifyConfig: mcpNotifyConfig, logger: logger}
 			defer func() {
 				_ = countedSink.Close()
 			}()

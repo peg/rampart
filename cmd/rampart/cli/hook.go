@@ -158,6 +158,14 @@ Add to ~/.claude/settings.json:
 				}
 			}
 
+			// Send webhook notification if configured
+			config, err := store.Load()
+			if err != nil {
+				logger.Error("hook: failed to reload config for notifications", "error", err)
+			} else if config.Notify != nil && config.Notify.URL != "" {
+				go sendNotification(config.Notify, call, decision, logger)
+			}
+
 			// Return decision
 			if decision.Action == engine.ActionDeny && mode == "enforce" {
 				return outputDeny(cmd, decision.Message)

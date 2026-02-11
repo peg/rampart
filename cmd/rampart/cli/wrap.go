@@ -121,7 +121,12 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("wrap: create audit sink: %w", err)
 			}
-			countedSink := &decisionCounterSink{sink: sink}
+			// Load notify config from policy
+			var notifyConfig *engine.NotifyConfig
+			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
+				notifyConfig = cfg.Notify
+			}
+			countedSink := &decisionCounterSink{sink: sink, notifyConfig: notifyConfig, logger: logger}
 			defer func() {
 				_ = countedSink.Close()
 			}()
@@ -530,6 +535,9 @@ exec "$REAL" $ORIG_ARGS
 type decisionCounterSink struct {
 	sink audit.AuditSink
 
+	notifyConfig *engine.NotifyConfig
+	logger       *slog.Logger
+
 	mu        sync.Mutex
 	evaluated int
 	denied    int
@@ -546,6 +554,28 @@ func (s *decisionCounterSink) Write(event audit.Event) error {
 		s.logged++
 	}
 	s.mu.Unlock()
+
+	// Fire webhook notification if configured
+	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
+		call := engine.ToolCall{
+			Tool:      event.Tool,
+			Params:    event.Request,
+			Agent:     event.Agent,
+			Timestamp: event.Timestamp,
+		}
+		action, err := engine.ParseAction(event.Decision.Action)
+		if err != nil {
+			s.logger.Error("invalid action in audit event", "action", event.Decision.Action, "error", err)
+			action = engine.ActionAllow // fallback for backwards compatibility
+		}
+		decision := engine.Decision{
+			Action:          action,
+			MatchedPolicies: event.Decision.MatchedPolicies,
+			Message:         event.Decision.Message,
+		}
+		go sendNotification(s.notifyConfig, call, decision, s.logger)
+	}
+
 	return s.sink.Write(event)
 }
 
