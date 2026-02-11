@@ -32,6 +32,7 @@ import (
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/notify"
 )
 
 const defaultMode = "enforce"
@@ -39,15 +40,16 @@ const redactedResponse = "[REDACTED: sensitive content removed by Rampart]"
 
 // Server is Rampart's HTTP proxy runtime for policy-aware tool calls.
 type Server struct {
-	engine    *engine.Engine
-	sink      audit.AuditSink
-	approvals *approval.Store
-	token     string
-	mode      string
-	logger    *slog.Logger
-	mu        sync.Mutex
-	server    *http.Server
-	startedAt time.Time
+	engine       *engine.Engine
+	sink         audit.AuditSink
+	approvals    *approval.Store
+	token        string
+	mode         string
+	logger       *slog.Logger
+	mu           sync.Mutex
+	server       *http.Server
+	startedAt    time.Time
+	notifyConfig *engine.NotifyConfig
 }
 
 // Option configures a proxy server.
@@ -68,6 +70,13 @@ func WithMode(mode string) Option {
 }
 
 // WithLogger sets the logger used by the proxy.
+// WithNotify configures webhook notifications for policy decisions.
+func WithNotify(cfg *engine.NotifyConfig) Option {
+	return func(s *Server) {
+		s.notifyConfig = cfg
+	}
+}
+
 func WithLogger(logger *slog.Logger) Option {
 	return func(s *Server) {
 		if logger != nil {
@@ -317,6 +326,31 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 	if err := s.sink.Write(event); err != nil {
 		s.logger.Error("proxy: audit write failed", "error", err)
 	}
+
+	// Fire webhook notification if configured
+	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
+		shouldNotify := false
+		actionStr := decision.Action.String()
+		for _, on := range s.notifyConfig.On {
+			if on == actionStr {
+				shouldNotify = true
+				break
+			}
+		}
+		if len(s.notifyConfig.On) == 0 {
+			// Default: notify on deny
+			shouldNotify = actionStr == "deny"
+		}
+		if shouldNotify {
+			call := engine.ToolCall{
+				Tool:      toolName,
+				Params:    req.Params,
+				Agent:     req.Agent,
+				Timestamp: time.Now().UTC(),
+			}
+			go s.sendWebhook(call, decision)
+		}
+	}
 }
 
 // handlePreflight evaluates a tool call against policies without executing it.
@@ -460,6 +494,34 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
+	command := ""
+	if cmd, ok := call.Params["command"].(string); ok {
+		command = cmd
+	}
+	policyName := "unknown"
+	if len(decision.MatchedPolicies) > 0 {
+		policyName = decision.MatchedPolicies[0]
+	}
+
+	event := notify.NotifyEvent{
+		Action:    decision.Action.String(),
+		Tool:      call.Tool,
+		Command:   command,
+		Policy:    policyName,
+		Message:   decision.Message,
+		Agent:     call.Agent,
+		Timestamp: call.Timestamp.Format(time.RFC3339),
+	}
+
+	notifier := notify.NewNotifier(s.notifyConfig.URL, s.notifyConfig.Platform)
+	if err := notifier.Send(event); err != nil {
+		s.logger.Error("proxy: webhook notification failed", "error", err)
+	} else {
+		s.logger.Debug("proxy: webhook notification sent", "action", decision.Action.String())
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
