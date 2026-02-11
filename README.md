@@ -1,10 +1,8 @@
 <div align="center">
 
-# Rampart
+# 🛡️ Rampart
 
-**Policy engine for AI agent tool calls.**
-
-Secure your AI agents without changing their code.
+**See everything your AI agent does. Block the dangerous stuff.**
 
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -14,23 +12,26 @@ Secure your AI agents without changing their code.
 
 ---
 
-Agents call tools — `exec`, `read`, `write`, `fetch`, MCP. Rampart sits between the agent and those calls, evaluates them against your policies, and blocks what shouldn't run. Everything gets logged to a hash-chained audit trail.
+Running Claude Code in yolo mode? Letting agents manage your infrastructure unsupervised? Rampart gives you visibility and control — every tool call gets evaluated against your policy before it executes. Dangerous commands get blocked in microseconds. Everything gets logged to a hash-chained audit trail.
 
 ```bash
-rampart setup claude-code                                # one-command Claude Code integration
-rampart wrap -- aider                                    # wrap any agent that reads $SHELL
-rampart mcp -- npx @modelcontextprotocol/server-fs .     # protect MCP servers
-rampart serve                                            # protect via HTTP API
+# One command to protect Claude Code
+rampart setup claude-code
+
+# Or wrap any agent
+rampart wrap -- aider
+
+# Or protect MCP servers
+rampart mcp -- npx @modelcontextprotocol/server-fs .
 ```
 
-```
-rampart: blocked — Destructive command blocked
-Rampart: 47 calls evaluated, 1 denied, 3 logged
-```
+<div align="center">
+<img src="docs/watch.png" alt="rampart watch — live audit dashboard" width="700">
+</div>
 
 ## Contents
 
-- [The Problem](#the-problem)
+- [Why Rampart](#why-rampart)
 - [Claude Code Integration](#claude-code-integration)
 - [Wrap Any Agent](#wrap-any-agent)
 - [Protect MCP Servers](#protect-mcp-servers)
@@ -50,11 +51,11 @@ Rampart: 47 calls evaluated, 1 denied, 3 logged
 
 ---
 
-## The Problem
+## Why Rampart
 
-AI agents make tool calls you didn't anticipate. They hallucinate commands, follow injected instructions, and improvise in ways you'd rather they didn't. Traditional sandboxing is all-or-nothing: let the agent run, or don't.
+You gave your AI agent shell access because it's useful. But you have no idea what it's running — and sandboxing kills the usefulness.
 
-That's not useful. You need *"yes to `git push`, no to `rm -rf /`, and log every `curl` for review"* — per tool, per pattern, with an audit trail.
+Rampart sits between the agent and your system. You write a simple YAML policy that says what's allowed, what's blocked, and what gets flagged. The agent keeps working. You keep sleeping.
 
 ```
 Agent → Tool Call → Rampart → Allow / Deny / Log
