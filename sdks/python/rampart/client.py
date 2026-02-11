@@ -311,10 +311,12 @@ class RampartClient:
                 data = response.json()
                 return Decision(
                     allowed=data.get("allowed", False),
-                    action=data.get("action", "deny"),
+                    action=data.get("decision", data.get("action", "deny")),
                     message=data.get("message", ""),
-                    policies=data.get("policies", []),
-                    eval_duration_ms=data.get("eval_duration_ms", 0.0),
+                    policies=data.get("matched_policies") or data.get("policies") or [],
+                    eval_duration_ms=data.get("eval_duration_us", 0.0) / 1000.0
+                        if "eval_duration_us" in data
+                        else data.get("eval_duration_ms", 0.0),
                 )
             else:
                 # Server returned an error
@@ -367,10 +369,12 @@ class RampartClient:
                 data = response.json()
                 return Decision(
                     allowed=data.get("allowed", False),
-                    action=data.get("action", "deny"),
+                    action=data.get("decision", data.get("action", "deny")),
                     message=data.get("message", ""),
-                    policies=data.get("policies", []),
-                    eval_duration_ms=data.get("eval_duration_ms", 0.0),
+                    policies=data.get("matched_policies") or data.get("policies") or [],
+                    eval_duration_ms=data.get("eval_duration_us", 0.0) / 1000.0
+                        if "eval_duration_us" in data
+                        else data.get("eval_duration_ms", 0.0),
                 )
             else:
                 # Server returned an error
