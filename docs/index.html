@@ -5,157 +5,306 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rampart — Policy engine for AI agent tool calls</title>
     <meta name="description" content="Secure your AI agents without changing their code. Single Go binary, microsecond overhead, hash-chained audit trail.">
+    <meta property="og:title" content="Rampart — Policy engine for AI agent tool calls">
+    <meta property="og:description" content="Secure your AI agents without changing their code.">
+    <meta property="og:image" content="https://rampart.sh/watch.png">
+    <meta property="og:url" content="https://rampart.sh">
+    <meta name="twitter:card" content="summary_large_image">
     <style>
         :root {
             --bg: #0d1117;
             --surface: #161b22;
             --border: #30363d;
-            --text: #e6edf3;
+            --text: #c9d1d9;
+            --heading: #e6edf3;
             --muted: #8b949e;
             --green: #3fb950;
             --red: #f85149;
             --blue: #58a6ff;
+            --orange: #d29922;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
             background: var(--bg);
             color: var(--text);
-            line-height: 1.6;
+            line-height: 1.7;
+            font-size: 16px;
         }
-        .container {
-            max-width: 720px;
-            margin: 0 auto;
-            padding: 80px 24px;
-        }
-        h1 {
-            font-size: 2.5rem;
+        .container { max-width: 680px; margin: 0 auto; padding: 0 24px; }
+
+        /* Hero */
+        header { padding: 80px 0 0; }
+        header h1 {
+            font-size: 2rem;
             font-weight: 700;
-            margin-bottom: 8px;
+            color: var(--heading);
+            letter-spacing: -0.02em;
         }
-        .tagline {
-            font-size: 1.25rem;
+        header .sub {
+            font-size: 1.1rem;
             color: var(--muted);
-            margin-bottom: 48px;
+            margin-top: 4px;
+            margin-bottom: 32px;
         }
         .hero-img {
             width: 100%;
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            margin-bottom: 48px;
-        }
-        .install {
-            background: var(--surface);
-            border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 24px;
-            margin-bottom: 48px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 0.9rem;
-            overflow-x: auto;
-        }
-        .install .comment { color: var(--muted); }
-        .install .cmd { color: var(--green); }
-        .features {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            margin-bottom: 48px;
-        }
-        @media (max-width: 560px) {
-            .features { grid-template-columns: 1fr; }
-            h1 { font-size: 2rem; }
-        }
-        .feature {
-            background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 20px;
+            margin-bottom: 16px;
         }
-        .feature h3 {
-            font-size: 1rem;
-            margin-bottom: 4px;
-        }
-        .feature p {
-            font-size: 0.875rem;
+        .hero-caption {
+            font-size: 0.85rem;
             color: var(--muted);
+            margin-bottom: 48px;
         }
-        .cta {
+
+        /* Sections */
+        section { margin-bottom: 56px; }
+        section h2 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            color: var(--heading);
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        p { margin-bottom: 12px; }
+        p:last-child { margin-bottom: 0; }
+
+        /* Code blocks */
+        pre {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 16px 20px;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+            margin-bottom: 12px;
+            line-height: 1.6;
+        }
+        code {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.875rem;
+            background: var(--surface);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        pre code { background: none; padding: 0; }
+        .comment { color: var(--muted); }
+        .val { color: var(--green); }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 12px;
+            font-size: 0.9rem;
+        }
+        th, td {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            color: var(--heading);
+            font-weight: 600;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Tags */
+        .tag {
             display: inline-block;
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 2px 8px;
+            border-radius: 12px;
+            border: 1px solid;
+        }
+        .tag-green { color: var(--green); border-color: #238636; }
+        .tag-red { color: var(--red); border-color: #da3633; }
+        .tag-orange { color: var(--orange); border-color: #9e6a03; }
+
+        /* Buttons */
+        .buttons { margin-top: 32px; }
+        .btn {
+            display: inline-block;
+            padding: 10px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-right: 12px;
+            margin-bottom: 8px;
+        }
+        .btn-primary {
             background: var(--green);
             color: var(--bg);
-            padding: 12px 32px;
-            border-radius: 6px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 1rem;
-            margin-right: 16px;
-            margin-bottom: 12px;
         }
-        .cta:hover { opacity: 0.9; }
-        .cta-secondary {
-            display: inline-block;
+        .btn-secondary {
             background: transparent;
             color: var(--text);
-            padding: 12px 32px;
-            border-radius: 6px;
             border: 1px solid var(--border);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 1rem;
+        }
+        .btn:hover { opacity: 0.9; }
+
+        /* Note */
+        .note {
+            background: #1c2128;
+            border-left: 3px solid var(--orange);
+            padding: 12px 16px;
+            font-size: 0.875rem;
+            border-radius: 0 6px 6px 0;
             margin-bottom: 12px;
         }
-        .cta-secondary:hover { border-color: var(--muted); }
+
+        /* Footer */
         footer {
-            margin-top: 80px;
-            padding-top: 24px;
+            margin-top: 64px;
+            padding: 24px 0 48px;
             border-top: 1px solid var(--border);
             color: var(--muted);
-            font-size: 0.875rem;
+            font-size: 0.85rem;
         }
         footer a { color: var(--blue); text-decoration: none; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Rampart</h1>
-        <p class="tagline">Policy engine for AI agent tool calls.<br>Secure your agents without changing their code.</p>
 
-        <img src="watch.png" alt="Rampart watch dashboard showing allowed and denied commands" class="hero-img">
+        <header>
+            <h1>Rampart</h1>
+            <p class="sub">Policy engine for AI agent tool calls.</p>
+        </header>
 
-        <div class="install">
-            <span class="comment"># Install</span><br>
-            <span class="cmd">go install github.com/peg/rampart/cmd/rampart@latest</span><br><br>
-            <span class="comment"># Protect Claude Code (one command)</span><br>
-            <span class="cmd">rampart setup claude-code</span><br><br>
-            <span class="comment"># Watch it work</span><br>
-            <span class="cmd">rampart watch</span>
+        <img src="watch.png" alt="Rampart live dashboard showing allowed and denied agent commands" class="hero-img">
+        <p class="hero-caption">Live dashboard — green for allowed, red for denied. Every agent tool call evaluated in microseconds.</p>
+
+        <section>
+            <h2>What it does</h2>
+            <p>AI agents call tools — <code>exec</code>, <code>read</code>, <code>write</code>, <code>fetch</code>, MCP. Rampart sits between the agent and those calls, evaluates them against your policies, and blocks what shouldn't run.</p>
+            <p>Traditional sandboxing is all-or-nothing. Rampart gives you granular control: allow <code>git push</code>, deny <code>rm -rf /</code>, log every <code>curl</code> for review. Per tool, per pattern, with a hash-chained audit trail.</p>
+        </section>
+
+        <section>
+            <h2>Install</h2>
+            <p>Requires <a href="https://go.dev/dl/" style="color:var(--blue)">Go 1.24+</a>.</p>
+<pre><code>go install github.com/peg/rampart/cmd/rampart@latest</code></pre>
+
+            <div class="note">
+                After install, make sure <code>rampart</code> is in your system PATH.<br>
+                Quick fix: <code>sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart</code>
+            </div>
+
+            <p>Or build from source:</p>
+<pre><code>git clone https://github.com/peg/rampart.git
+cd rampart
+go build -o rampart ./cmd/rampart
+sudo mv rampart /usr/local/bin/</code></pre>
+        </section>
+
+        <section>
+            <h2>Protect Claude Code</h2>
+            <p>Native integration through Claude Code's hook system. One command:</p>
+<pre><code><span class="comment"># Install the hook</span>
+rampart setup claude-code
+
+<span class="comment"># Use Claude Code normally — Rampart evaluates every tool call</span>
+claude
+
+<span class="comment"># Open the live dashboard in another terminal</span>
+rampart watch</code></pre>
+            <p>Every Bash command, file read, and file write goes through Rampart before execution. Blocked calls never run — Claude Code gets a policy denial and moves on.</p>
+        </section>
+
+        <section>
+            <h2>Protect any agent</h2>
+            <p>For agents that read the <code>$SHELL</code> environment variable (Aider, OpenCode, Continue, Cline):</p>
+<pre><code>rampart wrap -- aider
+rampart wrap -- opencode
+rampart wrap -- python my_agent.py</code></pre>
+            <p>For MCP servers:</p>
+<pre><code><span class="comment"># Wrap any MCP server — denied tool calls never reach it</span>
+rampart mcp -- npx @modelcontextprotocol/server-filesystem .</code></pre>
+        </section>
+
+        <section>
+            <h2>What gets blocked</h2>
+            <p>The default <code>standard</code> profile blocks out of the box:</p>
+            <table>
+                <thead>
+                    <tr><th>Category</th><th>Examples</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Destructive commands</td>
+                        <td><code>rm -rf /</code>, <code>mkfs</code>, <code>dd if=</code></td>
+                        <td><span class="tag tag-red">deny</span></td>
+                    </tr>
+                    <tr>
+                        <td>Credential access</td>
+                        <td><code>~/.ssh/id_*</code>, <code>~/.aws/credentials</code></td>
+                        <td><span class="tag tag-red">deny</span></td>
+                    </tr>
+                    <tr>
+                        <td>Sensitive writes</td>
+                        <td><code>/etc/</code>, <code>~/.bashrc</code>, <code>~/.ssh/</code></td>
+                        <td><span class="tag tag-red">deny</span></td>
+                    </tr>
+                    <tr>
+                        <td>Exfil domains</td>
+                        <td><code>*.ngrok.io</code>, <code>webhook.site</code></td>
+                        <td><span class="tag tag-red">deny</span></td>
+                    </tr>
+                    <tr>
+                        <td>Privileged commands</td>
+                        <td><code>sudo</code>, <code>kubectl delete</code></td>
+                        <td><span class="tag tag-orange">log</span></td>
+                    </tr>
+                    <tr>
+                        <td>Network commands</td>
+                        <td><code>curl</code>, <code>wget</code>, <code>scp</code></td>
+                        <td><span class="tag tag-orange">log</span></td>
+                    </tr>
+                    <tr>
+                        <td>Credential leaks</td>
+                        <td>AWS keys, private keys, tokens in output</td>
+                        <td><span class="tag tag-red">deny</span></td>
+                    </tr>
+                    <tr>
+                        <td>Everything else</td>
+                        <td><code>git push</code>, <code>ls</code>, <code>go build</code></td>
+                        <td><span class="tag tag-green">allow</span></td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>Policies are YAML. Write your own or use the built-in profiles: <code>standard</code>, <code>paranoid</code>, <code>yolo</code>.</p>
+        </section>
+
+        <section>
+            <h2>Details</h2>
+            <table>
+                <tbody>
+                    <tr><td>Language</td><td>Go — single binary, no runtime dependencies</td></tr>
+                    <tr><td>Overhead</td><td>5–50µs per policy evaluation</td></tr>
+                    <tr><td>Audit</td><td>Hash-chained JSONL with tamper detection</td></tr>
+                    <tr><td>Platforms</td><td>Linux, macOS (hooks + wrap). Windows (hooks only).</td></tr>
+                    <tr><td>License</td><td>Apache 2.0</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <div class="buttons">
+            <a href="https://github.com/peg/rampart" class="btn btn-primary">GitHub</a>
+            <a href="https://github.com/peg/rampart/blob/main/README.md" class="btn btn-secondary">Full docs</a>
+            <a href="https://github.com/peg/rampart/blob/main/SECURITY.md" class="btn btn-secondary">Security</a>
         </div>
-
-        <div class="features">
-            <div class="feature">
-                <h3>🔒 Claude Code Hooks</h3>
-                <p>Native integration. Every Bash, Read, and Write call goes through policy evaluation before execution.</p>
-            </div>
-            <div class="feature">
-                <h3>🛡️ MCP Proxy</h3>
-                <p>Drop-in proxy for any MCP server. Evaluates tools/call requests against your policies.</p>
-            </div>
-            <div class="feature">
-                <h3>📋 Audit Trail</h3>
-                <p>Hash-chained JSONL logs. Every tool call recorded with tamper detection.</p>
-            </div>
-            <div class="feature">
-                <h3>⚡ Microsecond Overhead</h3>
-                <p>Single Go binary. No runtime deps. Policy evaluation in 5-50µs.</p>
-            </div>
-        </div>
-
-        <a href="https://github.com/peg/rampart" class="cta">View on GitHub</a>
-        <a href="https://github.com/peg/rampart/blob/main/README.md" class="cta-secondary">Documentation</a>
 
         <footer>
-            <p>Apache 2.0 · Built by <a href="https://github.com/peg">Linear, LLC</a> · <a href="mailto:rampartsec@pm.me">Security</a></p>
+            <p>Apache 2.0 · <a href="https://github.com/peg">peg/rampart</a> · <a href="mailto:rampartsec@pm.me">rampartsec@pm.me</a></p>
         </footer>
     </div>
 </body>
