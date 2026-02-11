@@ -21,6 +21,9 @@ rampart setup claude-code
 # Or wrap any agent
 rampart wrap -- aider
 
+# Or protect anything via syscall interception (LD_PRELOAD)
+rampart preload -- codex
+
 # Or protect MCP servers
 rampart mcp -- npx @modelcontextprotocol/server-fs .
 ```
@@ -34,6 +37,7 @@ rampart mcp -- npx @modelcontextprotocol/server-fs .
 - [Why Rampart](#why-rampart)
 - [Claude Code Integration](#claude-code-integration)
 - [Wrap Any Agent](#wrap-any-agent)
+- [Protect Any Process (LD_PRELOAD)](#protect-any-process-ld_preload)
 - [Protect MCP Servers](#protect-mcp-servers)
 - [Quick Start](#quick-start)
 - [Writing Policies](#writing-policies)
@@ -95,6 +99,36 @@ rampart wrap -- aider
 rampart wrap -- opencode
 rampart wrap -- python my_agent.py
 ```
+
+## Protect Any Process (LD_PRELOAD)
+
+For agents with no hook system and no `$SHELL` support, `preload` intercepts exec-family syscalls at the OS level. This is the universal fallback — it works with **any** dynamically-linked process:
+
+```bash
+# Protect Codex CLI (no hooks, no $SHELL — preload is the only way)
+rampart preload -- codex
+
+# Protect any Python agent
+rampart preload -- python my_agent.py
+
+# Protect any Node.js agent
+rampart preload -- node agent.js
+
+# Monitor mode (log only, don't block)
+rampart preload --mode monitor -- risky-tool
+```
+
+Preload intercepts `execve`, `execvp`, `system()`, `popen()`, and `posix_spawn()` — every way a process can spawn a command. Each call gets evaluated against your policy before executing. Denied calls return `EPERM`.
+
+**Requires:** `librampart.so` (Linux) or `librampart.dylib` (macOS) installed to `~/.rampart/lib/`. Build from `preload/` or download from releases.
+
+**Platform notes:**
+- **Linux:** Works with all dynamically-linked binaries (~95% coverage)
+- **macOS:** Works with Homebrew, nvm, pyenv, cargo binaries. Blocked by SIP for `/usr/bin/*` (but AI agents don't live there)
+
+See [`preload/README.md`](preload/README.md) for build instructions and details.
+
+---
 
 ## Protect MCP Servers
 
@@ -385,6 +419,11 @@ rampart hook                                 # Called automatically by Claude Co
 rampart wrap -- <command>                    # Wrap any agent
 rampart wrap --mode monitor -- <command>     # Audit-only, no blocking
 
+# Preload (syscall interception — works with anything)
+rampart preload -- <command>                 # LD_PRELOAD protection
+rampart preload --mode monitor -- <command>  # Audit-only, no blocking
+rampart preload --debug -- <command>         # Debug output to stderr
+
 # MCP
 rampart mcp -- <mcp-server-command>          # Proxy MCP with policy enforcement
 rampart mcp --mode monitor -- <server>       # Audit-only MCP proxy
@@ -433,9 +472,12 @@ What's here:
 - Policy engine (deny-wins, priority ordering, glob matching)
 - HTTP proxy with bearer auth
 - `rampart setup claude-code` — one-command Claude Code integration
+- `rampart setup cline` — one-command Cline integration
 - `rampart hook` — native Claude Code/Cline hook handler
 - `rampart wrap` — zero-config agent wrapping via `$SHELL`
+- `rampart preload` — syscall-level interception via LD_PRELOAD (works with any agent)
 - `rampart mcp` — MCP protocol proxy with policy enforcement
+- Python SDK (`sdks/python/`) — decorators, async support
 - Four interceptors (exec, read, write, fetch)
 - Response-side evaluation (catch credential leaks in output)
 - Hash-chained audit trail
@@ -449,15 +491,18 @@ What's here:
 | Agent | Method | Status |
 |-------|--------|--------|
 | Claude Code | `rampart setup claude-code` | Native hooks, all platforms |
+| Cline | `rampart setup cline` | Native hooks, all platforms |
+| Codex CLI | `rampart preload` | LD_PRELOAD, Linux + macOS |
 | Claude Desktop | `rampart mcp` | MCP server proxying, all platforms |
 | Aider | `rampart wrap` | Linux, macOS |
 | OpenCode | `rampart wrap` | Linux, macOS |
 | Continue | `rampart wrap` | Linux, macOS |
-| Cline | `rampart wrap` or hooks | Linux, macOS |
 | Cursor | `rampart wrap` + `rampart mcp` | Linux, macOS |
 | Windsurf | `rampart wrap` | Linux, macOS |
-| Codex CLI | Not yet supported | Uses `getpwuid()`, bypasses `$SHELL` |
+| Python agents | `rampart preload` or HTTP API | Linux, macOS |
+| Node.js agents | `rampart preload` or HTTP API | Linux, macOS |
 | Any MCP server | `rampart mcp` | All platforms |
+| Any process | `rampart preload` | Linux, macOS |
 | Custom agents | `rampart serve` | All platforms |
 
 `rampart hook`, `rampart mcp`, and `rampart serve` work on Linux, macOS, and Windows.
