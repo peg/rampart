@@ -452,7 +452,7 @@ What's here:
 | OpenCode | `rampart wrap` | Linux, macOS |
 | Continue | `rampart wrap` | Linux, macOS |
 | Cline | `rampart wrap` or hooks | Linux, macOS |
-| Cursor | `rampart wrap` | Linux, macOS |
+| Cursor | `rampart wrap` + `rampart mcp` | Linux, macOS |
 | Windsurf | `rampart wrap` | Linux, macOS |
 | Codex CLI | Not yet supported | Uses `getpwuid()`, bypasses `$SHELL` |
 | Any MCP server | `rampart mcp` | All platforms |
