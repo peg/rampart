@@ -138,12 +138,29 @@ The library reads from env (set by `rampart preload` command):
 ### Threat model alignment
 Our threat is **hallucinating/manipulated AI agents**, not **adversarial human attackers**. An AI agent doesn't know to unset LD_PRELOAD. The bypass resistance is low against a determined human but high against the actual threat.
 
-## Performance
+## Performance (Critical Priority)
 
-- ~5-15ms overhead per intercepted exec call (HTTP round-trip to localhost)
-- Negligible for AI agent workloads (agents exec commands seconds apart, not milliseconds)
-- No overhead on non-exec syscalls (read, write, connect are not intercepted)
-- Library loads once at process start, stays in memory
+Performance is non-negotiable. Users should not be able to measure the overhead.
+
+**Target: < 1ms per intercepted call.**
+
+Optimization strategy (in order of implementation):
+1. **Persistent keep-alive connection** — open one HTTP connection at library init via `curl_easy_init()`, reuse for every call. Eliminates TCP handshake per call.
+2. **Unix domain socket** — `rampart serve` listens on `~/.rampart/rampart.sock` in addition to TCP. The preload library connects via UDS, eliminating the TCP stack entirely. Target: ~0.3ms round-trip.
+3. **Connection pooling** — if the agent spawns child processes that inherit LD_PRELOAD, each process gets its own persistent connection.
+
+Fallback path (if serve is unreachable): return immediately with allow. No retries, no blocking, no timeout. Fail-open must be instant.
+
+**What we do NOT do:**
+- No in-process policy evaluation (keeps library minimal and auditable)
+- No shared memory mapping (complexity not justified)
+- No caching of decisions (policies can change, every call must be fresh)
+
+**Benchmark targets:**
+- Persistent TCP to localhost: < 3ms p99
+- Unix domain socket: < 1ms p99  
+- Fail-open (serve down): < 0.01ms
+- Library load time: < 5ms (one-time at process start)
 
 ## Implementation Plan
 
@@ -190,7 +207,9 @@ LD_PRELOAD is the only approach that works cross-platform with reasonable effort
 
 - Works with Codex CLI, Python agents, Node.js agents on Linux
 - Works with Homebrew-installed tools on macOS
-- < 20ms average overhead per exec call
-- Existing policies enforce correctly
-- Fails open when serve is down
-- Zero crashes or memory corruption in library
+- **< 1ms p99 latency via Unix socket, < 3ms via TCP**
+- Existing policies enforce correctly without modification
+- Fails open instantly when serve is down (no user-visible delay)
+- Zero crashes, zero memory leaks, zero UB in C code
+- Passes Valgrind and AddressSanitizer clean
+- Library is small enough to audit in one sitting (< 600 lines)
