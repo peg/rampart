@@ -448,6 +448,7 @@ What's here:
 | Agent | Method | Status |
 |-------|--------|--------|
 | Claude Code | `rampart setup claude-code` | Native hooks, all platforms |
+| Claude Desktop | `rampart mcp` | MCP server proxying, all platforms |
 | Aider | `rampart wrap` | Linux, macOS |
 | OpenCode | `rampart wrap` | Linux, macOS |
 | Continue | `rampart wrap` | Linux, macOS |
