@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
+
+var execLookPath = osexec.LookPath
 
 func newSetupCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
@@ -126,6 +129,14 @@ other settings.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route Bash commands through Rampart.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
+
+			// Check if rampart is in system PATH.
+			if _, err := execLookPath("rampart"); err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "")
+				fmt.Fprintln(cmd.ErrOrStderr(), "⚠ Warning: 'rampart' is not in your system PATH.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "  Claude Code hooks won't work until it is.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "  Fix with: sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart")
+			}
 			return nil
 		},
 	}
