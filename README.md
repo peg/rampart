@@ -14,6 +14,59 @@
 
 Running Claude Code in yolo mode? Letting agents manage your infrastructure unsupervised? Rampart gives you visibility and control — every tool call gets evaluated against your policy before it executes. Dangerous commands get blocked in microseconds. Everything gets logged to a hash-chained audit trail.
 
+## How It Works
+
+```mermaid
+graph TB
+    subgraph "AI Agents"
+        CC[Claude Code]
+        CL[Cline]
+        CX[Codex]
+        OC[OpenClaw]
+        O[Others]
+    end
+
+    subgraph "Integration Layer"
+        H[Native Hooks]
+        S[Shim + Serve]
+        M[MCP Proxy]
+        P[LD_PRELOAD]
+    end
+
+    PE[YAML Policy Eval<br/>~20μs per decision]
+
+    subgraph "Observability"
+        direction LR
+        AU[Hash-Chained Audit]
+        SI[Syslog / CEF]
+        WE[Webhooks<br/>Discord · Slack]
+    end
+
+    SB["⚡ rampart-verify (optional)<br/>gpt-4o-mini · Haiku · Ollama"]
+
+    CC --> H
+    CL --> H
+    CX --> P
+    OC --> S
+    O --> M
+
+    H --> PE
+    S --> PE
+    M --> PE
+    P --> PE
+
+    PE --> |all decisions logged| AU
+    PE -. "ambiguous commands only ⚠️" .-> SB
+    SB -. allow/deny .-> PE
+    AU --> SI
+    AU --> WE
+
+    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
+    style PE fill:#238636,stroke:#fff,color:#fff
+```
+
+*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions — including sidecar verdicts — are written to the audit trail.*
+
 ```bash
 # One command to protect Claude Code
 rampart setup claude-code
