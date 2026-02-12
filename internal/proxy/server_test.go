@@ -371,3 +371,31 @@ func TestListenAndServeTimeouts(t *testing.T) {
 	assert.Equal(t, 30*time.Second, httpSrv.WriteTimeout)
 	assert.Equal(t, 120*time.Second, httpSrv.IdleTimeout)
 }
+
+func TestStripLeadingComments(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"no comments", "ls -la", "ls -la"},
+		{"single comment", "# list files\nls -la", "ls -la"},
+		{"multiple comments", "# step 1\n# step 2\nls -la", "ls -la"},
+		{"comment with blank line", "# desc\n\nls -la", "ls -la"},
+		{"no stripping needed", "git push origin main", "git push origin main"},
+		{"all comments returns original", "# just a comment\n# another", "# just a comment\n# another"},
+		{"inline comment preserved", "ls -la # list files", "ls -la # list files"},
+		{"multiline command", "# build\ndocker build -t app .\ndocker push app", "docker build -t app .\ndocker push app"},
+		{"empty string", "", ""},
+		{"whitespace comment", "  # padded comment\necho hi", "echo hi"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripLeadingComments(tt.input)
+			if got != tt.want {
+				t.Errorf("stripLeadingComments(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

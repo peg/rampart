@@ -253,6 +253,8 @@ func (s *Store) watchExpiry(req *Request) {
 	select {
 	case <-req.done:
 		return // Already resolved.
+	case <-s.stop:
+		return // Store is shutting down.
 	case <-timer.C:
 		s.mu.Lock()
 		if req.Status == StatusPending {

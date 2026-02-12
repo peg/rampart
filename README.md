@@ -414,6 +414,8 @@ rules:
 
 The webhook receives the full tool call context and returns `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}`. Fail-open by default so a down webhook doesn't break your agent.
 
+**Reference implementation**: See [`rampart-verify`](https://github.com/peg/rampart-verify) — an optional sidecar that uses LLMs (gpt-4o-mini, Claude Haiku, or local Ollama) to classify ambiguous commands. Pattern matching handles 95% of decisions for free; the sidecar reviews the rest at ~$0.0001/call.
+
 ---
 
 ## Integration

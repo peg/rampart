@@ -135,8 +135,13 @@ type WebhookActionConfig struct {
 }
 
 // EffectiveTimeout returns the configured timeout or 5s default.
+// Capped at 30s to prevent resource exhaustion.
 func (c *WebhookActionConfig) EffectiveTimeout() time.Duration {
+	const maxTimeout = 30 * time.Second
 	if c.Timeout.Duration > 0 {
+		if c.Timeout.Duration > maxTimeout {
+			return maxTimeout
+		}
 		return c.Timeout.Duration
 	}
 	return 5 * time.Second

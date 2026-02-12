@@ -142,6 +142,37 @@ func (d *Daemon) connectAndListen(ctx context.Context) error {
 	d.seq.Store(0)
 	d.mu.Unlock()
 
+	// Set up ping/pong to detect dead connections.
+	const pongWait = 90 * time.Second
+	const pingInterval = 30 * time.Second
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	// Start ping ticker in background.
+	pingDone := make(chan struct{})
+	go func() {
+		defer close(pingDone)
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				d.mu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+				d.mu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+	defer func() { <-pingDone }()
+
 	// Perform handshake.
 	if err := d.handshake(ctx); err != nil {
 		return fmt.Errorf("daemon: handshake: %w", err)
@@ -162,6 +193,8 @@ func (d *Daemon) connectAndListen(ctx context.Context) error {
 			return fmt.Errorf("daemon: read: %w", err)
 		}
 
+		// Reset deadline on every successful read.
+		conn.SetReadDeadline(time.Now().Add(pongWait))
 		d.handleMessage(ctx, message)
 	}
 }

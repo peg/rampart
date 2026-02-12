@@ -70,7 +70,7 @@ Example:
 			}
 
 			// Ensure audit directory exists.
-			if err := os.MkdirAll(auditDir, 0o755); err != nil {
+			if err := os.MkdirAll(auditDir, 0o700); err != nil {
 				return fmt.Errorf("daemon: create audit dir: %w", err)
 			}
 

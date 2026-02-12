@@ -95,7 +95,7 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 				}
 				auditDir = filepath.Join(home, ".rampart", "audit")
 			}
-			if err := os.MkdirAll(auditDir, 0o755); err != nil {
+			if err := os.MkdirAll(auditDir, 0o700); err != nil {
 				return fmt.Errorf("wrap: create audit dir %s: %w", auditDir, err)
 			}
 
@@ -167,6 +167,7 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 			}
 			defer func() {
 				_ = os.Remove(shimPath)
+				_ = os.Remove(shimPath + ".tok")
 			}()
 
 			child := exec.Command(args[0], args[1:]...)
@@ -185,7 +186,7 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 				childEnv = append(childEnv, e)
 			}
 			// Create PATH-based shell wrappers for agents that ignore $SHELL
-			shimDir, err := createShellWrappers(proxyURL, proxyServer.Token(), mode)
+			shimDir, err := createShellWrappers(proxyURL, shimPath+".tok", mode)
 			if err != nil {
 				return fmt.Errorf("wrap: create shell wrappers: %w", err)
 			}
@@ -355,11 +356,20 @@ func createShellShim(proxyURL, token, mode, realShell string) (string, error) {
 		return "", fmt.Errorf("wrap: create shell shim: %w", err)
 	}
 
+	// Write token to a separate file (0600) so it's not visible in the shim
+	// script or /proc/*/cmdline.
+	tokenFile := tmp.Name() + ".tok"
+	if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return "", fmt.Errorf("wrap: write token file: %w", err)
+	}
+
 	script := fmt.Sprintf(`#!/usr/bin/env bash
 # Rampart shell shim - auto-generated.
 REAL_SHELL=%q
 RAMPART_URL=%q
-RAMPART_TOKEN=%q
+RAMPART_TOKEN=$(cat %q 2>/dev/null)
 RAMPART_MODE=%q
 
 # Parse shell flags — collect flags before -c, extract the command after -c.
@@ -420,7 +430,7 @@ if [ "$FOUND_C" = "true" ]; then
 fi
 
 exec "$REAL_SHELL" $ORIG_ARGS
-`, realShell, proxyURL, token, mode)
+`, realShell, proxyURL, tokenFile, mode)
 
 	if _, err := io.WriteString(tmp, script); err != nil {
 		_ = tmp.Close()
@@ -446,10 +456,15 @@ exec "$REAL_SHELL" $ORIG_ARGS
 // through Rampart policy before executing. If not set, passes straight through
 // to the real shell. This catches agents that hardcode /bin/bash or /bin/zsh
 // instead of reading $SHELL.
-func createShellWrappers(proxyURL, token, mode string) (string, error) {
+func createShellWrappers(proxyURL, tokenFile, mode string) (string, error) {
 	dir, err := os.MkdirTemp("", "rampart-shells-*")
 	if err != nil {
 		return "", fmt.Errorf("create shell wrapper dir: %w", err)
+	}
+	// Restrict directory permissions — contains scripts with token file paths.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("chmod shell wrapper dir: %w", err)
 	}
 
 	shells := []struct {
@@ -496,8 +511,9 @@ if [ "$FOUND_C" = "true" ]; then
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
     PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","params":{"command_b64":"%%s"}}' "$ENCODED")
+    RAMPART_TOKEN=$(cat %q 2>/dev/null)
     DECISION=$(curl -sfS -X POST "%s/v1/preflight/exec" \
-        -H "Authorization: Bearer %s" \
+        -H "Authorization: Bearer ${RAMPART_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$PAYLOAD" 2>/dev/null)
 
@@ -520,7 +536,7 @@ fi
 
 # Interactive or non -c usage — pass through directly
 exec "$REAL" $ORIG_ARGS
-`, s.name, s.realPath, proxyURL, token, mode)
+`, s.name, s.realPath, tokenFile, proxyURL, mode)
 
 		wrapperPath := filepath.Join(dir, s.name)
 		if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
