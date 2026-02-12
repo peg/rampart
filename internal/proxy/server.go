@@ -712,6 +712,12 @@ func decodeBase64Command(params map[string]any) (string, bool) {
 		return "", false
 	}
 
+	// Cap encoded input at 1MB to prevent memory exhaustion.
+	const maxBase64Len = 1 << 20
+	if len(encoded) > maxBase64Len {
+		return "", false
+	}
+
 	decoded, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return "", false

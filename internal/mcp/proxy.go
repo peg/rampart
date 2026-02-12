@@ -100,8 +100,9 @@ type Proxy struct {
 }
 
 type pendingCall struct {
-	call    engine.ToolCall
-	request map[string]any
+	call      engine.ToolCall
+	request   map[string]any
+	createdAt time.Time
 }
 
 // NewProxy creates a new MCP stdio proxy.
@@ -287,11 +288,39 @@ func (p *Proxy) handleToolsCall(req Request, rawLine []byte) error {
 	if HasID(req.ID) {
 		id := NormalizedID(req.ID)
 		p.pendingMu.Lock()
-		p.pendingCalls[id] = pendingCall{call: call, request: requestData}
+		p.pendingCalls[id] = pendingCall{call: call, request: requestData, createdAt: time.Now()}
+		p.evictStalePendingCalls()
 		p.pendingMu.Unlock()
 	}
 
 	return p.writeToChild(rawLine)
+}
+
+// evictStalePendingCalls removes pending calls older than 5 minutes.
+// Must be called with pendingMu held.
+func (p *Proxy) evictStalePendingCalls() {
+	const maxAge = 5 * time.Minute
+	const maxPending = 1000
+	now := time.Now()
+	for id, pc := range p.pendingCalls {
+		if now.Sub(pc.createdAt) > maxAge {
+			delete(p.pendingCalls, id)
+		}
+	}
+	// Hard cap: if still too many, evict oldest
+	if len(p.pendingCalls) > maxPending {
+		var oldestID string
+		var oldestTime time.Time
+		for id, pc := range p.pendingCalls {
+			if oldestID == "" || pc.createdAt.Before(oldestTime) {
+				oldestID = id
+				oldestTime = pc.createdAt
+			}
+		}
+		if oldestID != "" {
+			delete(p.pendingCalls, oldestID)
+		}
+	}
 }
 
 func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
