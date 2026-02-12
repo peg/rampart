@@ -45,6 +45,9 @@ rampart mcp -- npx @modelcontextprotocol/server-fs .
 - [Preflight API](#preflight-api)
 - [Audit Trail](#audit-trail)
 - [Live Dashboard](#live-dashboard)
+- [Webhook Notifications](#webhook-notifications)
+- [SIEM Integration](#siem-integration)
+- [Webhook Actions](#webhook-actions)
 - [Integration](#integration)
 - [Performance](#performance)
 - [Architecture](#architecture)
@@ -152,6 +155,16 @@ In your MCP config (Claude Code, Cursor, etc.):
 ```
 
 Denied tool calls return a JSON-RPC error — the MCP server never sees them. Safe calls pass through transparently. Tools with destructive keywords (delete, destroy, remove) are blocked out of the box.
+
+### Auto-Generate Policies from MCP Servers
+
+Don't write policies from scratch — scan an MCP server's tool list and generate a deny-by-default policy:
+
+```bash
+rampart mcp scan -- npx @modelcontextprotocol/server-filesystem .
+```
+
+Review, customize, deploy. Each tool becomes an explicit rule you can allow or deny.
 
 ```bash
 # Dry run — log everything, block nothing
@@ -363,6 +376,46 @@ Works with Discord webhooks, Slack incoming webhooks, or any HTTP endpoint that 
 
 ---
 
+## SIEM Integration
+
+Send audit events to your existing security stack. Three output formats, works with any SIEM:
+
+```bash
+# RFC 5424 syslog (Wazuh, QRadar, ArcSight, LogRhythm, Sentinel)
+rampart serve --syslog localhost:514
+
+# Common Event Format (Splunk, QRadar, ArcSight, Exabeam)
+rampart serve --syslog localhost:514 --cef
+
+# CEF to file (when you don't have a syslog collector)
+rampart serve --cef
+```
+
+All three outputs run alongside the default JSONL audit trail — you don't lose anything by enabling SIEM output.
+
+**Wazuh users**: See [`docs/guides/wazuh-integration.md`](docs/guides/wazuh-integration.md) for a complete setup guide with custom decoder, alerting rules, and FIM recommendations for AI agent hosts.
+
+---
+
+## Webhook Actions
+
+Delegate allow/deny decisions to an external service — LLM-based intent verification, Slack approval bots, custom logic:
+
+```yaml
+rules:
+  - action: webhook
+    when:
+      command_matches: ['*production*']
+    webhook:
+      url: 'http://localhost:8090/verify'
+      timeout: 5s
+      fail_open: true
+```
+
+The webhook receives the full tool call context and returns `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}`. Fail-open by default so a down webhook doesn't break your agent.
+
+---
+
 ## Integration
 
 ### HTTP Proxy
@@ -464,10 +517,16 @@ rampart preload --debug -- <command>         # Debug output to stderr
 # MCP
 rampart mcp -- <mcp-server-command>          # Proxy MCP with policy enforcement
 rampart mcp --mode monitor -- <server>       # Audit-only MCP proxy
+rampart mcp scan -- <server>                 # Auto-generate policies from MCP tools
+
+# OpenClaw
+rampart setup openclaw                       # Install shim + systemd/launchd service
 
 # Proxy
 rampart init [--profile standard|paranoid|yolo]
 rampart serve [--port 9090]
+rampart serve --syslog localhost:514         # With syslog output
+rampart serve --cef                          # With CEF file output
 rampart watch
 
 # Policy
@@ -503,23 +562,29 @@ Requires Go 1.24+.
 
 ## Roadmap
 
-Current: **v0.1** — all tests passing.
+Current: **v0.1.7** — all tests passing.
 
 What's here:
-- Policy engine (deny-wins, priority ordering, glob matching)
+- Policy engine (deny-wins, priority ordering, glob matching, path canonicalization)
 - HTTP proxy with bearer auth
 - `rampart setup claude-code` — one-command Claude Code integration
 - `rampart setup cline` — one-command Cline integration
+- `rampart setup openclaw` — one-command OpenClaw shim + service setup
 - `rampart hook` — native Claude Code/Cline hook handler
 - `rampart wrap` — zero-config agent wrapping via `$SHELL`
 - `rampart preload` — syscall-level interception via LD_PRELOAD (works with any agent)
 - `rampart mcp` — MCP protocol proxy with policy enforcement
+- `rampart mcp scan` — auto-generate policies from MCP server tool lists
+- `action: webhook` — delegate decisions to external HTTP endpoints
+- SIEM integration — `--syslog` (RFC 5424), `--cef` (Common Event Format)
 - Python SDK (`sdks/python/`) — decorators, async support
 - Four interceptors (exec, read, write, fetch)
 - Response-side evaluation (catch credential leaks in output)
-- Hash-chained audit trail
+- Hash-chained audit trail with verification
 - Human approval flow
 - Live terminal dashboard
+- Webhook notifications (Slack, Discord, Teams, generic)
+- HTML audit reports
 - OpenClaw daemon integration
 - Three security profiles (standard, paranoid, yolo)
 
@@ -542,14 +607,16 @@ What's here:
 | Any process | `rampart preload` | Linux, macOS |
 | Custom agents | `rampart serve` | All platforms |
 
-`rampart hook`, `rampart mcp`, and `rampart serve` work on Linux, macOS, and Windows.
-`rampart wrap` requires a POSIX shell and works on Linux and macOS.
+`rampart hook`, `rampart mcp`, `rampart mcp scan`, and `rampart serve` work on Linux, macOS, and Windows.
+`rampart wrap` and `rampart preload` require Linux or macOS.
+`--syslog` requires Linux or macOS. `--cef` works on all platforms.
 
 ## What's next
 - Behavioral fingerprinting from audit data
 - Temporal sequence detection ("read .env then curl within 30s")
-- MCP auto-policy generation from tool schemas
-- Adversarial testing framework
+- Semantic verification sidecar (LLM-based intent checking via `action: webhook`)
+- Web dashboard for policy management
+- Additional SIEM guides (Splunk, Elastic)
 
 ---
 
