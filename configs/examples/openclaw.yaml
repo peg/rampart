@@ -86,6 +86,60 @@ policies:
             - "*wget*$(cat*"
         message: "Credential access or exfiltration blocked"
 
+  # ── Encoding/Obfuscation Detection ────────────────────────────
+  # Catches AI agents trying to encode data before exfiltrating.
+  # Threat model: hallucinating/manipulated agents, not adversarial humans.
+  - name: block-encoding-exfil
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # Piping sensitive files through encoding
+            - "*cat*.ssh*|*base64*"
+            - "*cat*.aws*|*base64*"
+            - "*cat*.env*|*base64*"
+            - "*cat*.gnupg*|*base64*"
+            - "*cat*/etc/shadow*|*base64*"
+            # base64 piped to network tools
+            - "*base64*|*curl*"
+            - "*base64*|*wget*"
+            - "*base64*|*nc *"
+            - "*base64*|*ncat*"
+            - "*base64*|*netcat*"
+            # xxd/hex encoding of secrets
+            - "*xxd*.ssh*"
+            - "*xxd*.aws*"
+            - "*xxd*/etc/shadow*"
+            - "*xxd*|*curl*"
+            - "*xxd*|*wget*"
+            # openssl encoding
+            - "*openssl*enc*-base64*-in*"
+            - "*openssl*enc*-in*.ssh*"
+            - "*openssl*enc*-in*.aws*"
+            # Python one-liners (common AI agent pattern)
+            - "*python*base64*encode*.ssh*"
+            - "*python*base64*encode*.aws*"
+            - "*python*base64*encode*.env*"
+            - "*python*open(*.ssh*"
+            - "*python*open(*.aws*"
+            - "*python*open(*/etc/shadow*"
+            # Perl encoding
+            - "*perl*MIME::Base64*.ssh*"
+            - "*perl*MIME::Base64*.aws*"
+            # eval with encoded payloads
+            - "*eval*$(echo*|*base64*"
+            - "*echo*|*base64*-d*|*sh*"
+            - "*echo*|*base64*-d*|*bash*"
+            # Reverse shell patterns (bonus)
+            - "*bash -i >& /dev/tcp*"
+            - "*python*socket*connect*"
+            - "*nc -e /bin/*"
+            - "*ncat -e /bin/*"
+        message: "Encoding/obfuscation of sensitive data blocked"
+
   # ── Known Exfiltration Domains ─────────────────────────────────
   - name: block-exfil-domains
     priority: 1
