@@ -1,0 +1,124 @@
+# Rampart Policy — Anti-Exfiltration
+# Detects encoding, obfuscation, and data staging patterns.
+# Drop this into your policy directory alongside your main config.
+#
+# Threat model: AI agents that are hallucinating or manipulated via
+# prompt injection — not adversarial human attackers who can use
+# static binaries, direct syscalls, or custom encoding.
+
+version: "1"
+default_action: allow
+
+policies:
+  # ── Encoding of Sensitive Files ────────────────────────────────
+  - name: encoding-sensitive-files
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # Direct base64 of secrets
+            - "base64 ~/.ssh/*"
+            - "base64 ~/.aws/*"
+            - "base64 ~/.gnupg/*"
+            - "base64 ~/.env*"
+            # Piping secrets through base64
+            - "*cat*.ssh*|*base64*"
+            - "*cat*.aws*|*base64*"
+            - "*cat*.env*|*base64*"
+            - "*cat*.gnupg*|*base64*"
+            - "*cat*/etc/shadow*|*base64*"
+            # xxd/hex dumps of secrets
+            - "*xxd*.ssh*"
+            - "*xxd*.aws*"
+            - "*xxd*/etc/shadow*"
+            # openssl encoding
+            - "*openssl*enc*-in*.ssh*"
+            - "*openssl*enc*-in*.aws*"
+            - "*openssl*enc*-in*.env*"
+        message: "Encoding of sensitive files blocked"
+
+  # ── Encoded Data to Network ────────────────────────────────────
+  - name: encoded-data-exfil
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # base64 output piped to network
+            - "*base64*|*curl*"
+            - "*base64*|*wget*"
+            - "*base64*|*nc *"
+            - "*base64*|*ncat*"
+            - "*base64*|*netcat*"
+            # xxd output piped to network
+            - "*xxd*|*curl*"
+            - "*xxd*|*wget*"
+            - "*xxd*|*nc *"
+        message: "Encoded data sent to network blocked"
+
+  # ── Scripted Secret Access ─────────────────────────────────────
+  - name: scripted-secret-access
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # Python reading secrets
+            - "*python*open(*.ssh*"
+            - "*python*open(*.aws*"
+            - "*python*open(*/etc/shadow*"
+            - "*python*base64*encode*.ssh*"
+            - "*python*base64*encode*.aws*"
+            # Perl encoding secrets
+            - "*perl*MIME::Base64*.ssh*"
+            - "*perl*MIME::Base64*.aws*"
+            # Ruby reading secrets
+            - "*ruby*File.read*.ssh*"
+            - "*ruby*File.read*.aws*"
+        message: "Scripted access to secrets blocked"
+
+  # ── Encoded Payload Execution ──────────────────────────────────
+  - name: encoded-payload-exec
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # Decode-and-execute chains
+            - "*echo*|*base64*-d*|*sh*"
+            - "*echo*|*base64*-d*|*bash*"
+            - "*echo*|*base64*--decode*|*sh*"
+            - "*echo*|*base64*--decode*|*bash*"
+            - "*eval*$(echo*|*base64*"
+            - "*printf*\\x*|*sh*"
+            - "*printf*\\x*|*bash*"
+        message: "Encoded payload execution blocked"
+
+  # ── Reverse Shell Patterns ─────────────────────────────────────
+  - name: reverse-shell
+    priority: 1
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "*bash -i >& /dev/tcp*"
+            - "*bash -i >&/dev/tcp*"
+            - "*/bin/sh -i >& /dev/tcp*"
+            - "*python*socket*connect*"
+            - "*python*pty.spawn*"
+            - "*nc -e /bin/*"
+            - "*ncat -e /bin/*"
+            - "*socat*exec*"
+            - "*php -r*fsockopen*"
+        message: "Reverse shell pattern blocked"

@@ -47,6 +47,34 @@ func defaultMCPDeps() mcpDeps {
 }
 
 func newMCPCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
+	proxyCmd := newMCPProxyCmd(opts, deps)
+	scanCmd := newMCPScanCmd(opts)
+
+	cmd := &cobra.Command{
+		Use:   "mcp [-- <mcp-server-command>]",
+		Short: "MCP (Model Context Protocol) tools",
+		// When called with args (rampart mcp -- server), delegate to proxy for backward compat
+		DisableFlagParsing: false,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				// Backward compat: "rampart mcp -- server" delegates to proxy
+				return proxyCmd.RunE(proxyCmd, args)
+			}
+			return cmd.Help()
+		},
+	}
+
+	// Copy proxy flags to parent so "rampart mcp --mode monitor -- server" works
+	cmd.Flags().AddFlagSet(proxyCmd.Flags())
+
+	// Add subcommands
+	cmd.AddCommand(proxyCmd)
+	cmd.AddCommand(scanCmd)
+
+	return cmd
+}
+
+func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 	var mode string
 	var auditDir string
 	var filterTools bool
@@ -62,11 +90,11 @@ func newMCPCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:   "mcp -- <mcp-server-command> [args...]",
+		Use:   "proxy -- <mcp-server-command> [args...]",
 		Short: "Proxy MCP stdio with Rampart policy enforcement",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return fmt.Errorf("mcp: command is required (use: rampart mcp -- <command> [args...])")
+				return fmt.Errorf("mcp proxy: command is required (use: rampart mcp proxy -- <command> [args...])")
 			}
 			return nil
 		},
