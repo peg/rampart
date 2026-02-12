@@ -14,6 +14,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -255,6 +256,27 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	if s.mode == "enforce" && decision.Action == engine.ActionDeny {
 		writeJSON(w, http.StatusForbidden, resp)
+		return
+	}
+
+	if s.mode == "enforce" && decision.Action == engine.ActionWebhook {
+		webhookDecision := s.executeWebhookAction(call, decision)
+		resp["decision"] = webhookDecision.Action.String()
+		resp["message"] = webhookDecision.Message
+
+		s.writeAudit(req, toolName, webhookDecision)
+
+		if webhookDecision.Action == engine.ActionDeny {
+			writeJSON(w, http.StatusForbidden, resp)
+			return
+		}
+
+		if blocked := s.applyResponseEvaluation(call, req.Response, resp); blocked {
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -500,6 +522,115 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// webhookActionRequest is the payload POSTed to a webhook action endpoint.
+type webhookActionRequest struct {
+	Tool      string         `json:"tool"`
+	Params    map[string]any `json:"params"`
+	Agent     string         `json:"agent"`
+	Session   string         `json:"session"`
+	Policy    string         `json:"policy"`
+	Timestamp string         `json:"timestamp"`
+}
+
+// webhookActionResponse is the expected response from a webhook action endpoint.
+type webhookActionResponse struct {
+	Decision string `json:"decision"` // "allow" or "deny"
+	Reason   string `json:"reason"`
+}
+
+// executeWebhookAction calls the configured webhook URL and returns an
+// allow or deny decision based on the response. On error/timeout, behavior
+// is determined by the fail_open setting (default: fail open).
+func (s *Server) executeWebhookAction(call engine.ToolCall, decision engine.Decision) engine.Decision {
+	cfg := decision.WebhookConfig
+	if cfg == nil || cfg.URL == "" {
+		s.logger.Error("proxy: webhook action missing config")
+		return engine.Decision{
+			Action:  engine.ActionAllow,
+			Message: "webhook action misconfigured; failing open",
+		}
+	}
+
+	policyName := "unknown"
+	if len(decision.MatchedPolicies) > 0 {
+		policyName = decision.MatchedPolicies[0]
+	}
+
+	payload := webhookActionRequest{
+		Tool:      call.Tool,
+		Params:    call.Params,
+		Agent:     call.Agent,
+		Session:   call.Session,
+		Policy:    policyName,
+		Timestamp: call.Timestamp.Format(time.RFC3339),
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		s.logger.Error("proxy: webhook marshal failed", "error", err)
+		return s.webhookFallback(cfg, "marshal error")
+	}
+
+	client := &http.Client{Timeout: cfg.EffectiveTimeout()}
+	resp, err := client.Post(cfg.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		s.logger.Error("proxy: webhook call failed", "url", cfg.URL, "error", err)
+		return s.webhookFallback(cfg, fmt.Sprintf("webhook error: %v", err))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.logger.Error("proxy: webhook returned non-2xx", "url", cfg.URL, "status", resp.StatusCode)
+		return s.webhookFallback(cfg, fmt.Sprintf("webhook returned HTTP %d", resp.StatusCode))
+	}
+
+	var whResp webhookActionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&whResp); err != nil {
+		s.logger.Error("proxy: webhook response parse failed", "error", err)
+		return s.webhookFallback(cfg, "invalid webhook response")
+	}
+
+	switch strings.ToLower(whResp.Decision) {
+	case "allow":
+		s.logger.Info("proxy: webhook allowed", "url", cfg.URL, "tool", call.Tool)
+		return engine.Decision{
+			Action:          engine.ActionAllow,
+			MatchedPolicies: decision.MatchedPolicies,
+			Message:         "allowed by webhook",
+		}
+	case "deny":
+		reason := whResp.Reason
+		if reason == "" {
+			reason = "denied by webhook"
+		}
+		s.logger.Info("proxy: webhook denied", "url", cfg.URL, "tool", call.Tool, "reason", reason)
+		return engine.Decision{
+			Action:          engine.ActionDeny,
+			MatchedPolicies: decision.MatchedPolicies,
+			Message:         reason,
+		}
+	default:
+		s.logger.Error("proxy: webhook returned unknown decision", "decision", whResp.Decision)
+		return s.webhookFallback(cfg, fmt.Sprintf("unknown webhook decision: %q", whResp.Decision))
+	}
+}
+
+// webhookFallback returns the appropriate decision when a webhook call fails.
+func (s *Server) webhookFallback(cfg *engine.WebhookActionConfig, reason string) engine.Decision {
+	if cfg.EffectiveFailOpen() {
+		s.logger.Warn("proxy: webhook fail-open", "reason", reason)
+		return engine.Decision{
+			Action:  engine.ActionAllow,
+			Message: fmt.Sprintf("webhook unavailable, failing open: %s", reason),
+		}
+	}
+	s.logger.Warn("proxy: webhook fail-closed", "reason", reason)
+	return engine.Decision{
+		Action:  engine.ActionDeny,
+		Message: fmt.Sprintf("webhook unavailable, failing closed: %s", reason),
+	}
 }
 
 func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {

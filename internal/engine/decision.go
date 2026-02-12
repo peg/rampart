@@ -45,6 +45,11 @@ const (
 	// The call is held pending with a unique approval ID. Resolve via CLI
 	// (rampart approve/deny) or the HTTP API.
 	ActionRequireApproval
+
+	// ActionWebhook delegates the allow/deny decision to an external webhook.
+	// The proxy POSTs tool call details to the configured URL and uses the
+	// response to determine whether to allow or deny the call.
+	ActionWebhook
 )
 
 // String returns a human-readable action name.
@@ -58,6 +63,8 @@ func (a Action) String() string {
 		return "log"
 	case ActionRequireApproval:
 		return "require_approval"
+	case ActionWebhook:
+		return "webhook"
 	default:
 		return fmt.Sprintf("action(%d)", int(a))
 	}
@@ -118,6 +125,10 @@ type Decision struct {
 	// EvalDuration is how long policy evaluation took.
 	// Tracked for performance monitoring.
 	EvalDuration time.Duration
+
+	// WebhookConfig is set when Action is ActionWebhook. Contains the
+	// webhook URL and behavior configuration for the proxy to execute.
+	WebhookConfig *WebhookActionConfig
 }
 
 // ParseAction converts a string to an Action.
@@ -131,6 +142,8 @@ func ParseAction(s string) (Action, error) {
 		return ActionLog, nil
 	case "require_approval":
 		return ActionRequireApproval, nil
+	case "webhook":
+		return ActionWebhook, nil
 	default:
 		return ActionAllow, fmt.Errorf("unknown action: %q", s)
 	}

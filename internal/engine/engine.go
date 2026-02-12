@@ -102,8 +102,10 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 		anyRuleFired bool
 	)
 
+	var finalWebhookConfig *WebhookActionConfig
+
 	for _, p := range matching {
-		action, message, ok := e.evaluatePolicy(p, call)
+		action, message, rule, ok := e.evaluatePolicy(p, call)
 		if !ok {
 			continue // no rule matched within this policy
 		}
@@ -120,9 +122,18 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				Message:         message,
 				EvalDuration:    time.Since(start),
 			}
+		case ActionWebhook:
+			// Webhook wins over log and allow, but not deny.
+			if finalAction != ActionDeny && finalAction != ActionWebhook {
+				finalAction = ActionWebhook
+				finalMessage = message
+				if rule != nil {
+					finalWebhookConfig = rule.Webhook
+				}
+			}
 		case ActionRequireApproval:
-			// Require approval wins over log and allow, but not deny.
-			if finalAction != ActionDeny && finalAction != ActionRequireApproval {
+			// Require approval wins over log and allow, but not deny or webhook.
+			if finalAction != ActionDeny && finalAction != ActionWebhook && finalAction != ActionRequireApproval {
 				finalAction = ActionRequireApproval
 				finalMessage = message
 			}
@@ -153,6 +164,7 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 		MatchedPolicies: matched,
 		Message:         finalMessage,
 		EvalDuration:    time.Since(start),
+		WebhookConfig:   finalWebhookConfig,
 	}
 }
 
@@ -276,8 +288,9 @@ func (e *Engine) matchesScope(m Match, call ToolCall) bool {
 
 // evaluatePolicy runs through a policy's rules top-to-bottom and returns
 // the first matching rule's action. Returns ok=false if no rule matches.
-func (e *Engine) evaluatePolicy(p Policy, call ToolCall) (Action, string, bool) {
-	for _, rule := range p.Rules {
+// The returned *Rule pointer is non-nil when a rule matched (for webhook config access).
+func (e *Engine) evaluatePolicy(p Policy, call ToolCall) (Action, string, *Rule, bool) {
+	for i, rule := range p.Rules {
 		if !matchCondition(rule.When, call) {
 			continue
 		}
@@ -290,13 +303,13 @@ func (e *Engine) evaluatePolicy(p Policy, call ToolCall) (Action, string, bool) 
 				"error", err,
 			)
 			// Fail closed: invalid rule = deny.
-			return ActionDeny, "invalid rule action; failing closed", true
+			return ActionDeny, "invalid rule action; failing closed", nil, true
 		}
 
-		return action, rule.Message, true
+		return action, rule.Message, &p.Rules[i], true
 	}
 
-	return ActionAllow, "", false
+	return ActionAllow, "", nil, false
 }
 
 func (e *Engine) evaluateResponsePolicies(
