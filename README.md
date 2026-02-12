@@ -105,6 +105,7 @@ rampart mcp -- npx @modelcontextprotocol/server-fs .
 - [Webhook Actions](#webhook-actions)
 - [Integration](#integration)
 - [Performance](#performance)
+- [Security Recommendations](#security-recommendations)
 - [CLI Reference](#cli-reference)
 - [Compatibility](#compatibility)
 - [Building from Source](#building-from-source)
@@ -514,6 +515,34 @@ Policy evaluation in single-digit microseconds:
 | `curl ngrok.io` | deny | 3µs |
 
 The proxy adds negligible latency. Agents wait seconds for LLM responses — a few microseconds of policy evaluation is invisible.
+
+---
+
+## Security Recommendations
+
+**Run `rampart serve` as a separate user.** If Rampart runs as the same user as your AI agent, the agent can read audit logs and modify policy files. A dedicated `rampart` user prevents this:
+
+```bash
+# Create a system user
+sudo useradd -r -s /usr/sbin/nologin rampart
+
+# Move config and audit to the new user
+sudo mkdir -p /etc/rampart /var/lib/rampart/audit
+sudo cp ~/.rampart/policies/*.yaml /etc/rampart/
+sudo chown -R rampart:rampart /etc/rampart /var/lib/rampart
+sudo chmod 700 /etc/rampart /var/lib/rampart/audit
+
+# Run serve as the rampart user
+# (update your systemd service with User=rampart)
+rampart serve --config /etc/rampart/standard.yaml --audit-dir /var/lib/rampart/audit
+```
+
+The agent communicates with Rampart over HTTP on localhost — no file access needed. This means:
+- **Audit logs** are protected from agent tampering or credential harvesting
+- **Policy files** can't be modified by the agent to weaken its own rules
+- **The agent loses zero capability** — it still executes commands normally
+
+For single-user or development setups, running as the same user works fine. The separation matters most in production where agents run unsupervised.
 
 ---
 
