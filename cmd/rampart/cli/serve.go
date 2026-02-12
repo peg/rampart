@@ -89,7 +89,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 			// Build the final sink, optionally wrapping with syslog/CEF outputs.
 			var sink audit.AuditSink = jsonlSink
-			var syslogSinkPtr *audit.SyslogSink
+			var syslogSender audit.SyslogSender
 			var cefFilePtr *audit.CEFFileSink
 
 			if syslogAddr != "" {
@@ -97,7 +97,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if sErr != nil {
 					logger.Warn("serve: syslog init failed, continuing without syslog", "error", sErr)
 				} else {
-					syslogSinkPtr = s
+					syslogSender = s
 					logger.Info("serve: syslog output enabled", "addr", syslogAddr, "cef", cef)
 				}
 			}
@@ -113,8 +113,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				logger.Info("serve: CEF file output enabled", "path", cefPath)
 			}
 
-			if syslogSinkPtr != nil || cefFilePtr != nil {
-				sink = audit.NewMultiSink(jsonlSink, syslogSinkPtr, cefFilePtr, logger)
+			if syslogSender != nil || cefFilePtr != nil {
+				sink = audit.NewMultiSink(jsonlSink, syslogSender, cefFilePtr, logger)
 			}
 
 			defer func() {
