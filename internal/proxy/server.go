@@ -683,6 +683,11 @@ func enrichParams(toolName string, params map[string]any) {
 		if cmd, ok := decodeBase64Command(params); ok {
 			params["command"] = cmd
 		}
+		// Strip leading shell comment lines (e.g. "# description\nactual command")
+		// so that command_matches patterns work against the real command.
+		if cmd, ok := params["command"].(string); ok {
+			params["command"] = stripLeadingComments(cmd)
+		}
 	}
 
 	if toolName == "fetch" || toolName == "http" || toolName == "web_fetch" {
@@ -704,6 +709,30 @@ func enrichParams(toolName string, params map[string]any) {
 			params["path"] = parsed.Path
 		}
 	}
+}
+
+// stripLeadingComments removes leading lines that start with # (shell comments)
+// from multi-line command strings. Agent frameworks often prepend descriptive
+// comments (e.g. "# Check disk space\ndf -h") which break command_matches
+// patterns that expect the actual command at the start of the string.
+func stripLeadingComments(cmd string) string {
+	lines := strings.Split(cmd, "\n")
+	start := 0
+	for start < len(lines) {
+		trimmed := strings.TrimSpace(lines[start])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			start++
+			continue
+		}
+		break
+	}
+	if start == 0 {
+		return cmd
+	}
+	if start >= len(lines) {
+		return cmd // all comments — return original
+	}
+	return strings.Join(lines[start:], "\n")
 }
 
 func decodeBase64Command(params map[string]any) (string, bool) {
