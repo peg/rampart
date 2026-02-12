@@ -179,6 +179,35 @@ In Wazuh Dashboard, create a custom visualization:
 - **Filter:** `rule.groups: rampart`
 - **Useful fields:** `data.tool`, `data.action`, `data.command`, `data.policy_name`, `data.agent`
 
+## FIM Considerations
+
+If the Wazuh agent runs on the same machine as your AI agent, the agent's workspace can generate thousands of files (Go caches, node_modules, git objects, audit logs). This can exhaust Wazuh's default 100,000 file FIM limit.
+
+**Recommended syscheck configuration for AI agent hosts:**
+
+```xml
+<syscheck>
+  <!-- Bump file limit for dev-heavy machines -->
+  <file_limit>
+    <enabled>yes</enabled>
+    <entries>500000</entries>
+  </file_limit>
+
+  <!-- Realtime on security-critical paths only -->
+  <directories check_all="yes" realtime="yes">/home/*/.ssh</directories>
+  <directories check_all="yes" realtime="yes">/home/*/.rampart/policies</directories>
+
+  <!-- Scheduled scan on broader paths -->
+  <directories check_all="yes">/home</directories>
+  <directories check_all="yes">/etc,/usr/bin,/usr/sbin</directories>
+
+  <!-- Skip build/cache noise -->
+  <ignore type="sregex">node_modules|\.cache|\.npm|__pycache__|\.git/objects</ignore>
+</syscheck>
+```
+
+This gives you instant alerts on SSH key or Rampart policy tampering, scheduled coverage on everything else, and enough headroom to not hit limits.
+
 ## Compatibility
 
 - Wazuh 4.x and later
