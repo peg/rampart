@@ -7,12 +7,66 @@
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/peg/rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/peg/rampart/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/peg/rampart?style=flat)](https://github.com/peg/rampart/releases)
 
 </div>
 
 ---
 
 Running Claude Code in yolo mode? Letting agents manage your infrastructure unsupervised? Rampart gives you visibility and control — every tool call gets evaluated against your policy before it executes. Dangerous commands get blocked in microseconds. Everything gets logged to a hash-chained audit trail.
+
+## How It Works
+
+```mermaid
+graph TB
+    subgraph "AI Agents"
+        CC[Claude Code]
+        CL[Cline]
+        CX[Codex]
+        OC[OpenClaw]
+        O[Others]
+    end
+
+    subgraph "Integration Layer"
+        H[Native Hooks]
+        S[Shim + Serve]
+        M[MCP Proxy]
+        P[LD_PRELOAD]
+    end
+
+    PE[YAML Policy Eval<br/>~20μs per decision]
+
+    subgraph "Observability"
+        direction LR
+        AU[Hash-Chained Audit]
+        SI[Syslog / CEF]
+        WE[Webhooks<br/>Discord · Slack]
+    end
+
+    SB["⚡ rampart-verify (optional)<br/>gpt-4o-mini · Haiku · Ollama"]
+
+    CC --> H
+    CL --> H
+    CX --> P
+    OC --> S
+    O --> M
+
+    H --> PE
+    S --> PE
+    M --> PE
+    P --> PE
+
+    PE --> |all decisions logged| AU
+    PE -. "ambiguous commands only ⚠️" .-> SB
+    SB -. allow/deny .-> PE
+    AU --> SI
+    AU --> WE
+
+    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
+    style PE fill:#238636,stroke:#fff,color:#fff
+```
+
+*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions — including sidecar verdicts — are written to the audit trail.*
 
 ```bash
 # One command to protect Claude Code
@@ -34,7 +88,8 @@ rampart mcp -- npx @modelcontextprotocol/server-fs .
 
 ## Contents
 
-- [Why Rampart](#why-rampart)
+- [How It Works](#how-it-works)
+- [Install](#install)
 - [Claude Code Integration](#claude-code-integration)
 - [Wrap Any Agent](#wrap-any-agent)
 - [Protect Any Process (LD_PRELOAD)](#protect-any-process-ld_preload)
@@ -50,24 +105,30 @@ rampart mcp -- npx @modelcontextprotocol/server-fs .
 - [Webhook Actions](#webhook-actions)
 - [Integration](#integration)
 - [Performance](#performance)
-- [Architecture](#architecture)
+- [Security Recommendations](#security-recommendations)
 - [CLI Reference](#cli-reference)
+- [Compatibility](#compatibility)
 - [Building from Source](#building-from-source)
+- [Contributing](#contributing)
 - [Roadmap](#roadmap)
 - [License](#license)
 
 ---
 
-## Why Rampart
+## Install
 
-You gave your AI agent shell access because it's useful. But you have no idea what it's running — and sandboxing kills the usefulness.
+```bash
+# Homebrew (macOS and Linux)
+brew tap peg/rampart && brew install rampart
 
-Rampart sits between the agent and your system. You write a simple YAML policy that says what's allowed, what's blocked, and what gets flagged. The agent keeps working. You keep sleeping.
+# Go install (requires Go 1.24+)
+go install github.com/peg/rampart/cmd/rampart@latest
 
+# Or download a binary from GitHub Releases
+# https://github.com/peg/rampart/releases
 ```
-Agent → Tool Call → Rampart → Allow / Deny / Log
-                            → Audit (always)
-```
+
+> **Note:** Make sure `rampart` is in your PATH. For `go install`, add `$(go env GOPATH)/bin` to your shell profile, or symlink: `sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart`
 
 ---
 
@@ -179,18 +240,6 @@ rampart wrap --config my-policy.yaml -- your-agent
 ## Quick Start
 
 ```bash
-# Install (Go 1.24+)
-go install github.com/peg/rampart/cmd/rampart@latest
-
-# Make sure it's in your PATH (required for Claude Code hooks)
-# Add to your shell profile (~/.zshrc or ~/.bashrc):
-#   export PATH=$PATH:$(go env GOPATH)/bin
-# Or symlink: sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart
-
-# Or build from source
-git clone https://github.com/peg/rampart.git && cd rampart
-go build -o rampart ./cmd/rampart
-
 # Set up Claude Code integration (one command)
 rampart setup claude-code
 
@@ -199,11 +248,8 @@ rampart wrap -- aider
 
 # Or start the HTTP proxy
 rampart serve
-```
 
-Test the policy engine directly:
-
-```bash
+# Test the policy engine directly
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 # → {"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"Rampart: Destructive command blocked"}}
 ```
@@ -446,7 +492,13 @@ if response.json()["decision"] == "deny":
 
 ### OpenClaw
 
-For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart includes a daemon mode that connects via WebSocket to evaluate exec approvals. See [integrations/openclaw](integrations/openclaw/) for setup.
+For [OpenClaw](https://github.com/openclaw/openclaw) users — one command sets up a shell shim and background service:
+
+```bash
+rampart setup openclaw
+```
+
+Works on Linux (systemd) and macOS (launchd).
 
 ---
 
@@ -466,37 +518,31 @@ The proxy adds negligible latency. Agents wait seconds for LLM responses — a f
 
 ---
 
-## Architecture
+## Security Recommendations
 
-```
-┌──────────────────────────────────────────┐
-│              Your Agent                   │
-└───────────────┬──────────────────────────┘
-                │ HTTP
-                ▼
-┌──────────────────────────────────────────┐
-│           Rampart Proxy (:9090)          │
-│                                          │
-│  ┌────────────┐    ┌──────────────────┐  │
-│  │   Engine    │    │   Audit Sink     │  │
-│  │  (µs eval)  │    │ (hash-chained)  │  │
-│  └────────────┘    └──────────────────┘  │
-│                                          │
-│  ┌────────────┐    ┌──────────────────┐  │
-│  │ Interceptors│    │ Approval Store  │  │
-│  │ exec/read/  │    │ (timeout, ULID) │  │
-│  │ write/fetch │    │                  │  │
-│  └────────────┘    └──────────────────┘  │
-└──────────────────────────────────────────┘
+**Run `rampart serve` as a separate user.** If Rampart runs as the same user as your AI agent, the agent can read audit logs and modify policy files. A dedicated `rampart` user prevents this:
+
+```bash
+# Create a system user
+sudo useradd -r -s /usr/sbin/nologin rampart
+
+# Move config and audit to the new user
+sudo mkdir -p /etc/rampart /var/lib/rampart/audit
+sudo cp ~/.rampart/policies/*.yaml /etc/rampart/
+sudo chown -R rampart:rampart /etc/rampart /var/lib/rampart
+sudo chmod 700 /etc/rampart /var/lib/rampart/audit
+
+# Run serve as the rampart user
+# (update your systemd service with User=rampart)
+rampart serve --config /etc/rampart/standard.yaml --audit-dir /var/lib/rampart/audit
 ```
 
-**Engine** — Loads YAML policies, evaluates tool calls. Deny-wins, first-match-within-policy, priority ordering.
+The agent communicates with Rampart over HTTP on localhost — no file access needed. This means:
+- **Audit logs** are protected from agent tampering or credential harvesting
+- **Policy files** can't be modified by the agent to weaken its own rules
+- **The agent loses zero capability** — it still executes commands normally
 
-**Interceptors** — Per-tool logic. Path normalization for filesystem ops, URL parsing for fetch, pattern matching for exec.
-
-**Audit Sink** — Hash-chained JSONL with rotation and verification.
-
-**Approval Store** — Thread-safe, ULID-keyed, configurable timeouts.
+For single-user or development setups, running as the same user works fine. The separation matters most in production where agents run unsupervised.
 
 ---
 
@@ -562,16 +608,23 @@ Requires Go 1.24+.
 
 ---
 
+## Contributing
+
+Contributions welcome. Please open an issue first for anything beyond small fixes — we want to discuss the approach before you invest time.
+
+```bash
+git clone https://github.com/peg/rampart.git
+cd rampart
+go test ./...
+```
+
+All work goes through the `staging` branch. PRs to `main` require one approving review.
+
+---
+
 ## Roadmap
 
-Current: **v0.1.7** — all tests passing.
-
-What's here:
-- Policy engine (deny-wins, priority ordering, glob matching, path canonicalization)
-- HTTP proxy with bearer auth
-- `rampart setup claude-code` — one-command Claude Code integration
-- `rampart setup cline` — one-command Cline integration
-- `rampart setup openclaw` — one-command OpenClaw shim + service setup
+Current: **v0.1.8** — all tests passing.
 - `rampart hook` — native Claude Code/Cline hook handler
 - `rampart wrap` — zero-config agent wrapping via `$SHELL`
 - `rampart preload` — syscall-level interception via LD_PRELOAD (works with any agent)
@@ -613,10 +666,9 @@ What's here:
 `rampart wrap` and `rampart preload` require Linux or macOS.
 `--syslog` requires Linux or macOS. `--cef` works on all platforms.
 
-## What's next
+What's next:
 - Behavioral fingerprinting from audit data
 - Temporal sequence detection ("read .env then curl within 30s")
-- Semantic verification sidecar (LLM-based intent checking via `action: webhook`)
 - Web dashboard for policy management
 - Additional SIEM guides (Splunk, Elastic)
 
