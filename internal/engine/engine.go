@@ -158,8 +158,18 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 
 // EvaluateResponse runs response-side evaluation against matching policies.
 // Only response-specific conditions are considered.
+// maxResponseMatchSize is the maximum response body size (in bytes) that will
+// be evaluated against regex patterns. Larger responses are truncated to avoid
+// pathological backtracking on user-defined regexes.
+const maxResponseMatchSize = 1 << 20 // 1 MB
+
 func (e *Engine) EvaluateResponse(call ToolCall, response string) Decision {
 	start := time.Now()
+
+	// Cap response size before regex matching to prevent ReDoS on large bodies.
+	if len(response) > maxResponseMatchSize {
+		response = response[:maxResponseMatchSize]
+	}
 
 	e.mu.RLock()
 	cfg := e.config

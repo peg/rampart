@@ -15,14 +15,17 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
@@ -323,4 +326,48 @@ func TestToolCall_ResponseAllowed(t *testing.T) {
 	data := decodeBody(t, resp)
 	assert.Equal(t, "allow", data["decision"])
 	assert.Equal(t, "all clear", data["response"])
+}
+
+func TestServerTimeouts(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	time.Sleep(50 * time.Millisecond)
+	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+
+	srv.mu.Lock()
+	httpSrv := srv.server
+	srv.mu.Unlock()
+
+	require.NotNil(t, httpSrv)
+	assert.Equal(t, 30*time.Second, httpSrv.ReadTimeout)
+	assert.Equal(t, 30*time.Second, httpSrv.WriteTimeout)
+	assert.Equal(t, 120*time.Second, httpSrv.IdleTimeout)
+}
+
+func TestListenAndServeTimeouts(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	ln.Close() // free the port for ListenAndServe
+
+	go func() { _ = srv.ListenAndServe(addr) }()
+	// Give it a moment to start
+	time.Sleep(50 * time.Millisecond)
+	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+
+	srv.mu.Lock()
+	httpSrv := srv.server
+	srv.mu.Unlock()
+
+	require.NotNil(t, httpSrv)
+	assert.Equal(t, 30*time.Second, httpSrv.ReadTimeout)
+	assert.Equal(t, 30*time.Second, httpSrv.WriteTimeout)
+	assert.Equal(t, 120*time.Second, httpSrv.IdleTimeout)
 }

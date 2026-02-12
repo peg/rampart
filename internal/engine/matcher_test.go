@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestMatchGlob(t *testing.T) {
 	tests := []struct {
@@ -51,6 +54,87 @@ func TestMatchGlob(t *testing.T) {
 			got := MatchGlob(tt.pattern, tt.name)
 			if got != tt.want {
 				t.Errorf("MatchGlob(%q, %q) = %v, want %v", tt.pattern, tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCleanPath(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/etc/../etc/shadow", "/etc/shadow"},
+		{"/home/user/./file", "/home/user/file"},
+		{"/a/b/../c/d", "/a/c/d"},
+		{"", ""},
+		{"/clean/path", "/clean/path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := cleanPath(tt.input)
+			if got != tt.want {
+				t.Errorf("cleanPath(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchCondition_PathTraversalBypass(t *testing.T) {
+	// A deny rule for /etc/shadow should catch traversal attempts.
+	cond := Condition{
+		PathMatches: []string{"/etc/shadow"},
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"exact match", "/etc/shadow", true},
+		{"dot-dot traversal", "/etc/../etc/shadow", true},
+		{"dot segment", "/etc/./shadow", true},
+		{"deep traversal", "/tmp/../etc/shadow", true},
+		{"unrelated path", "/etc/passwd", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := ToolCall{
+				Tool:   "read",
+				Params: map[string]interface{}{"path": tt.path},
+			}
+			got := matchCondition(cond, call)
+			if got != tt.want {
+				t.Errorf("matchCondition(path_matches=/etc/shadow, path=%q) = %v, want %v",
+					tt.path, got, tt.want)
+			}
+		})
+	}
+
+	// Glob pattern: ~/.ssh/* should catch traversal to ~/.ssh/id_rsa
+	home := filepath.Clean("/home/user")
+	condSSH := Condition{
+		PathMatches: []string{home + "/.ssh/*"},
+	}
+	sshTests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"direct", home + "/.ssh/id_rsa", true},
+		{"traversal", home + "/.ssh/../.ssh/id_rsa", true},
+	}
+	for _, tt := range sshTests {
+		t.Run("ssh_"+tt.name, func(t *testing.T) {
+			call := ToolCall{
+				Tool:   "read",
+				Params: map[string]interface{}{"path": tt.path},
+			}
+			got := matchCondition(condSSH, call)
+			if got != tt.want {
+				t.Errorf("matchCondition(path_matches=%s/.ssh/*, path=%q) = %v, want %v",
+					home, tt.path, got, tt.want)
 			}
 		})
 	}

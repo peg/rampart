@@ -123,8 +123,11 @@ func (s *Server) Token() string {
 // ListenAndServe starts serving HTTP requests at addr.
 func (s *Server) ListenAndServe(addr string) error {
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: s.handler(),
+		Addr:         addr,
+		Handler:      s.handler(),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	s.mu.Lock()
@@ -140,7 +143,10 @@ func (s *Server) ListenAndServe(addr string) error {
 // Serve starts serving HTTP requests on an existing listener.
 func (s *Server) Serve(listener net.Listener) error {
 	srv := &http.Server{
-		Handler: s.handler(),
+		Handler:      s.handler(),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	s.mu.Lock()
