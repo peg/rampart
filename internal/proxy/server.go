@@ -110,8 +110,8 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 		s.token = generateToken(s.logger)
 	}
 
-	if len(s.token) > 8 {
-		s.logger.Info("proxy: auth token", "token", s.token[:8]+"...")
+	if len(s.token) > 4 {
+		s.logger.Info("proxy: auth token", "prefix", s.token[:4]+"…")
 	}
 	return s
 }

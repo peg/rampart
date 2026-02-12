@@ -461,6 +461,11 @@ func createShellWrappers(proxyURL, tokenFile, mode string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create shell wrapper dir: %w", err)
 	}
+	// Restrict directory permissions — contains scripts with token file paths.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("chmod shell wrapper dir: %w", err)
+	}
 
 	shells := []struct {
 		name     string
