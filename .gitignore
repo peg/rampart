@@ -20,6 +20,6 @@ Thumbs.db
 coverage.out
 *.coverprofile
 
-# Runtime audit logs
-audit/
+# Runtime audit logs (top-level only, not internal/audit/)
+/audit/
 .cache/

@@ -49,6 +49,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var auditDir string
 	var mode string
 	var port int
+	var syslogAddr string
+	var cef bool
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -80,10 +82,41 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				return fmt.Errorf("serve: create engine: %w", err)
 			}
 
-			sink, err := audit.NewJSONLSink(auditDir, audit.WithLogger(logger))
+			jsonlSink, err := audit.NewJSONLSink(auditDir, audit.WithLogger(logger))
 			if err != nil {
 				return fmt.Errorf("serve: create audit sink: %w", err)
 			}
+
+			// Build the final sink, optionally wrapping with syslog/CEF outputs.
+			var sink audit.AuditSink = jsonlSink
+			var syslogSinkPtr *audit.SyslogSink
+			var cefFilePtr *audit.CEFFileSink
+
+			if syslogAddr != "" {
+				s, sErr := audit.NewSyslogSink(syslogAddr, cef, logger)
+				if sErr != nil {
+					logger.Warn("serve: syslog init failed, continuing without syslog", "error", sErr)
+				} else {
+					syslogSinkPtr = s
+					logger.Info("serve: syslog output enabled", "addr", syslogAddr, "cef", cef)
+				}
+			}
+
+			if cef && syslogAddr == "" {
+				// CEF standalone mode — write to cef.log file.
+				cefPath := filepath.Join(auditDir, "cef.log")
+				cf, cErr := audit.NewCEFFileSink(cefPath, logger)
+				if cErr != nil {
+					return fmt.Errorf("serve: create cef file sink: %w", cErr)
+				}
+				cefFilePtr = cf
+				logger.Info("serve: CEF file output enabled", "path", cefPath)
+			}
+
+			if syslogSinkPtr != nil || cefFilePtr != nil {
+				sink = audit.NewMultiSink(jsonlSink, syslogSinkPtr, cefFilePtr, logger)
+			}
+
 			defer func() {
 				_ = sink.Close()
 			}()
@@ -207,6 +240,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&auditDir, "audit-dir", defaultAuditDir, "Directory for audit logs")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")
 	cmd.Flags().IntVar(&port, "port", 9090, "Proxy listen port (0 = SDK-only mode)")
+	cmd.Flags().StringVar(&syslogAddr, "syslog", "", "Syslog server address (e.g. localhost:514)")
+	cmd.Flags().BoolVar(&cef, "cef", false, "Use CEF format (with --syslog: CEF over syslog; standalone: write ~/.rampart/audit/cef.log)")
 
 	return cmd
 }
