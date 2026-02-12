@@ -15,10 +15,34 @@ package engine
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 )
+
+// cleanPath canonicalizes a file path for policy matching. It applies
+// filepath.Clean to resolve ".." and "." segments, then attempts
+// filepath.EvalSymlinks to resolve symlinks (falling back to the
+// cleaned path if the file doesn't exist yet). This ensures that
+// traversal tricks like "/etc/../etc/shadow" are normalized before
+// glob matching, regardless of which entry point (proxy, interceptor,
+// MCP, SDK) produced the path.
+func cleanPath(p string) string {
+	if p == "" {
+		return p
+	}
+	cleaned := filepath.Clean(p)
+	resolved, err := filepath.EvalSymlinks(cleaned)
+	if err != nil {
+		// File may not exist yet (e.g. write to new path) — use Clean result.
+		if os.IsNotExist(err) {
+			return cleaned
+		}
+		return cleaned
+	}
+	return resolved
+}
 
 // MatchGlob reports whether name matches the glob pattern.
 //
@@ -168,7 +192,7 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 	}
 
 	if len(cond.PathMatches) > 0 {
-		path := call.Path()
+		path := cleanPath(call.Path())
 		if path == "" {
 			return false, ""
 		}
@@ -233,8 +257,9 @@ func matchCondition(cond Condition, call ToolCall) bool {
 	}
 
 	// Path matching (for read/write tool calls).
+	// Canonicalize path to prevent traversal bypasses (e.g. /etc/../etc/shadow).
 	if len(cond.PathMatches) > 0 {
-		path := call.Path()
+		path := cleanPath(call.Path())
 		if path == "" || !matchAny(cond.PathMatches, path) {
 			return false
 		}

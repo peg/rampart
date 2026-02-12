@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -103,7 +104,8 @@ func (m Match) EffectiveAgent() string {
 
 // Rule is a single allow/deny/log rule within a policy.
 type Rule struct {
-	// Action is what to do when this rule matches: "allow", "deny", or "log".
+	// Action is what to do when this rule matches: "allow", "deny", "log",
+	// "require_approval", or "webhook".
 	Action string `yaml:"action"`
 
 	// When defines the conditions under which this rule matches.
@@ -112,6 +114,57 @@ type Rule struct {
 	// Message is a human-readable reason shown to the agent on denial
 	// and recorded in the audit trail.
 	Message string `yaml:"message"`
+
+	// Webhook configures the external webhook for action: webhook rules.
+	Webhook *WebhookActionConfig `yaml:"webhook,omitempty"`
+}
+
+// WebhookActionConfig defines the webhook endpoint and behavior for
+// action: webhook rules.
+type WebhookActionConfig struct {
+	// URL is the webhook endpoint to POST to for allow/deny decisions.
+	URL string `yaml:"url"`
+
+	// Timeout is how long to wait for the webhook response.
+	// Default: 5s.
+	Timeout Duration `yaml:"timeout,omitempty"`
+
+	// FailOpen determines behavior on webhook error or timeout.
+	// true = allow on failure (default), false = deny on failure.
+	FailOpen *bool `yaml:"fail_open,omitempty"`
+}
+
+// EffectiveTimeout returns the configured timeout or 5s default.
+func (c *WebhookActionConfig) EffectiveTimeout() time.Duration {
+	if c.Timeout.Duration > 0 {
+		return c.Timeout.Duration
+	}
+	return 5 * time.Second
+}
+
+// EffectiveFailOpen returns whether to fail open on error/timeout.
+// Default: true (fail open).
+func (c *WebhookActionConfig) EffectiveFailOpen() bool {
+	if c.FailOpen == nil {
+		return true
+	}
+	return *c.FailOpen
+}
+
+// Duration is a time.Duration that unmarshals from YAML duration strings
+// like "5s", "1m", "500ms".
+type Duration struct {
+	time.Duration
+}
+
+// UnmarshalYAML parses a duration string.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	dur, err := time.ParseDuration(value.Value)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", value.Value, err)
+	}
+	d.Duration = dur
+	return nil
 }
 
 // ParseAction converts the rule's action string to an Action constant.
@@ -126,6 +179,8 @@ func (r Rule) ParseAction() (Action, error) {
 		return ActionLog, nil
 	case "require_approval":
 		return ActionRequireApproval, nil
+	case "webhook":
+		return ActionWebhook, nil
 	default:
 		return ActionAllow, fmt.Errorf("engine: unknown action %q", r.Action)
 	}
@@ -274,8 +329,14 @@ func (cfg *Config) validate() error {
 		seen[p.Name] = true
 
 		for j, r := range p.Rules {
-			if _, err := r.ParseAction(); err != nil {
+			action, err := r.ParseAction()
+			if err != nil {
 				return fmt.Errorf("engine: policy %q rule %d: %w", p.Name, j, err)
+			}
+			if action == ActionWebhook {
+				if r.Webhook == nil || r.Webhook.URL == "" {
+					return fmt.Errorf("engine: policy %q rule %d: webhook action requires webhook.url", p.Name, j)
+				}
 			}
 			if err := compileResponseRegexes(r.When, cache); err != nil {
 				return fmt.Errorf("engine: policy %q rule %d: %w", p.Name, j, err)

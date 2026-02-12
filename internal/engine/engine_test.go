@@ -560,6 +560,47 @@ policies:
 	}
 }
 
+func TestEvaluateResponse_TruncatesLargeBody(t *testing.T) {
+	// Place a secret past the 1MB cap boundary — it should NOT be detected.
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: block-credential-leaks
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+        message: "credential detected"
+`)
+
+	// Build a response where the secret is beyond 1MB.
+	padding := strings.Repeat("x", 1<<20) // exactly 1MB of padding
+	secret := "AKIA1234567890ABCDEF"
+	largeResponse := padding + secret
+
+	call := ToolCall{
+		ID:        "trunc-test",
+		Agent:     "main",
+		Session:   "s1",
+		Tool:      "exec",
+		Params:    map[string]any{"command": "cat big.txt"},
+		Timestamp: time.Now(),
+	}
+
+	// Secret is past the cap, so it should be allowed (truncated before matching).
+	got := e.EvaluateResponse(call, largeResponse)
+	assert.Equal(t, ActionAllow, got.Action, "secret beyond 1MB cap should not be detected")
+
+	// Secret within the cap should still be detected.
+	smallResponse := "prefix AKIA1234567890ABCDEF suffix"
+	got2 := e.EvaluateResponse(call, smallResponse)
+	assert.Equal(t, ActionDeny, got2.Action, "secret within cap should be detected")
+}
+
 func BenchmarkEvaluateResponse10KB(b *testing.B) {
 	dir := b.TempDir()
 	path := filepath.Join(dir, "policy.yaml")
