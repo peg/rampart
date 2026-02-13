@@ -23,7 +23,7 @@
             --border-light: #3f3f46;
             --text: #a1a1aa;
             --text-bright: #e4e4e7;
-            --heading: #fafafa;
+            --heading: #e4e4e7;
             --accent: #FF6392;
             --accent-dim: #cc4f75;
             --accent-bg: rgba(255, 99, 146, 0.1);
@@ -411,7 +411,7 @@
             padding: 10px 14px;
             font-family: 'SF Mono', 'Fira Code', monospace;
             font-size: 0.85rem;
-            color: var(--accent);
+            color: #c9d1d9;
             margin-bottom: 12px;
             overflow-x: auto;
             scrollbar-width: thin;
@@ -490,10 +490,11 @@
             border-radius: 6px;
             padding: 12px 16px;
             font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             color: var(--heading);
             overflow-x: auto;
             margin: 0;
+            white-space: nowrap;
             scrollbar-width: thin;
             scrollbar-color: var(--border-light) transparent;
         }
@@ -819,7 +820,7 @@
 <!-- Install -->
 <section class="install" id="install">
     <div class="container">
-        <h2 class="section-title">Start protecting your agents</h2>
+        <h2 class="section-title">Start protecting your <span style="color:var(--accent)">agents</span></h2>
         <p class="sub">Install in seconds. No account, no API key, no cloud dependency.</p>
         <div class="install-options">
             <div class="install-card">
