@@ -277,6 +277,25 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 		return err
 	}
 
+	// Ask about file tool patching if OpenClaw is selected
+	patchFileTools := false
+	for _, a := range selectedAgents {
+		if a.SetupCmd == "openclaw" && !force {
+			fmt.Fprintln(out, "OpenClaw: also patch file tools (read/write/edit) for full coverage?")
+			fmt.Fprintln(out, "  This modifies node_modules and needs re-running after OpenClaw upgrades.")
+			fmt.Fprint(out, "  Patch file tools? [y/N]: ")
+			ans := readLine(scanner)
+			if ans == "\x00" {
+				fmt.Fprintln(out, "\nSetup aborted.")
+				return nil
+			}
+			ans = strings.ToLower(strings.TrimSpace(ans))
+			patchFileTools = ans == "y" || ans == "yes"
+			fmt.Fprintln(out, "")
+			break
+		}
+	}
+
 	// Run setup for each selected agent via subcommands
 	for _, a := range selectedAgents {
 		subCmd, _, err := cmd.Find([]string{a.SetupCmd})
@@ -286,6 +305,12 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 		// Set --force so subcommands don't prompt
 		if f := subCmd.Flags().Lookup("force"); f != nil {
 			_ = f.Value.Set("true")
+		}
+		// Set --patch-tools if user opted in
+		if a.SetupCmd == "openclaw" && patchFileTools {
+			if f := subCmd.Flags().Lookup("patch-tools"); f != nil {
+				_ = f.Value.Set("true")
+			}
 		}
 		if err := subCmd.RunE(subCmd, nil); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %s setup failed: %v\n", a.Name, err)
