@@ -646,6 +646,14 @@ policies:
             - "chmod -R 777 /"
             - "> /dev/sda"
         message: "Destructive command blocked"
+      - action: deny
+        when:
+          command_matches:
+            - "nc -e *"
+            - "nc -c *"
+            - "ncat -e *"
+            - "bash -i >*"
+        message: "Reverse shell detected"
 
   - name: log-privileged
     match:
@@ -696,6 +704,10 @@ policies:
             - "more /etc/shadow"
             - "grep * /etc/shadow"
             - "cat /etc/sudoers"
+            - "cat /etc/sudoers.d/*"
+            - "cat */.bash_history"
+            - "cat */.zsh_history"
+            - "cat */.*_history"
         message: "Credential access blocked"
 `
 
