@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <limits.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <pthread.h>
@@ -51,6 +52,8 @@ struct http_response {
 static CURL *curl_handle = NULL;
 static pthread_mutex_t curl_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+static char preload_lib_path[PATH_MAX];
+static int preload_anchor;
 
 // Original function pointers
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
@@ -62,6 +65,7 @@ static int (*real_system)(const char *) = NULL;
 static FILE *(*real_popen)(const char *, const char *) = NULL;
 static int (*real_posix_spawn)(pid_t *, const char *, const posix_spawn_file_actions_t *,
                                const posix_spawnattr_t *, char *const[], char *const[]) = NULL;
+extern char **environ;
 
 static void debug_log(const char *fmt, ...) {
     if (!config.debug) return;
@@ -119,6 +123,12 @@ static void init_config(void) {
 static void init_library(void) {
     init_config();
     debug_log("Initializing librampart for PID %d", getpid());
+
+    Dl_info info;
+    if (dladdr(&preload_anchor, &info) && info.dli_fname) {
+        strncpy(preload_lib_path, info.dli_fname, sizeof(preload_lib_path) - 1);
+        preload_lib_path[sizeof(preload_lib_path) - 1] = '\0';
+    }
     
     // Initialize libcurl
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -173,6 +183,58 @@ static void init_library(void) {
     }
     
     debug_log("Library initialized successfully");
+}
+
+static int ld_preload_contains(const char *value) {
+    if (!value || !*value || !*preload_lib_path) return 0;
+    size_t n = strlen(preload_lib_path);
+    const char *p = value;
+    while (*p) {
+        const char *end = strchr(p, ':');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        if (len == n && strncmp(p, preload_lib_path, n) == 0) return 1;
+        if (!end) break;
+        p = end + 1;
+    }
+    return 0;
+}
+
+static void free_modified_envp(char **env) {
+    if (!env) return;
+    for (size_t i = 0; env[i]; i++) free(env[i]);
+    free(env);
+}
+
+static char **ensure_preload_env(char *const envp[], int *modified) {
+    *modified = 0;
+    if (!*preload_lib_path) return (char **)envp;
+    char *const *src = envp ? envp : (char *const *)environ;
+    size_t n = 0, ld_idx = (size_t)-1;
+    for (; src && src[n]; n++) if (strncmp(src[n], "LD_PRELOAD=", 11) == 0) ld_idx = n;
+    if (ld_idx != (size_t)-1 && ld_preload_contains(src[ld_idx] + 11)) return (char **)envp;
+    char **out = calloc(n + 2, sizeof(char *));
+    if (!out) return (char **)envp;
+    for (size_t i = 0; i < n; i++) {
+        if (i == ld_idx) {
+            const char *cur = src[i] + 11;
+            size_t cur_len = strlen(cur), lib_len = strlen(preload_lib_path);
+            out[i] = malloc(11 + cur_len + (cur_len ? 1 : 0) + lib_len + 1);
+            if (!out[i]) { free_modified_envp(out); return (char **)envp; }
+            snprintf(out[i], 11 + cur_len + (cur_len ? 1 : 0) + lib_len + 1,
+                     "LD_PRELOAD=%s%s%s", cur, cur_len ? ":" : "", preload_lib_path);
+            continue;
+        }
+        out[i] = strdup(src[i]);
+        if (!out[i]) { free_modified_envp(out); return (char **)envp; }
+    }
+    if (ld_idx == (size_t)-1) {
+        size_t lib_len = strlen(preload_lib_path);
+        out[n] = malloc(11 + lib_len + 1);
+        if (!out[n]) { free_modified_envp(out); return (char **)envp; }
+        snprintf(out[n], 11 + lib_len + 1, "LD_PRELOAD=%s", preload_lib_path);
+    }
+    *modified = 1;
+    return out;
 }
 
 /* Wrap str in quotes with JSON escaping.  Returns a malloc'd string.
@@ -357,7 +419,11 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     
     debug_log("Allowing execve: %s", cmd ? cmd : "(null)");
     if (cmd) free(cmd);
-    return real_execve(path, argv, envp);
+    int modified = 0;
+    char **effective_envp = ensure_preload_env(envp, &modified);
+    int rc = real_execve(path, argv, effective_envp);
+    if (modified) free_modified_envp(effective_envp);
+    return rc;
 }
 
 int execvp(const char *file, char *const argv[]) {
@@ -400,7 +466,11 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
     
     debug_log("Allowing execvpe: %s", cmd ? cmd : "(null)");
     if (cmd) free(cmd);
-    return real_execvpe(file, argv, envp);
+    int modified = 0;
+    char **effective_envp = ensure_preload_env(envp, &modified);
+    int rc = real_execvpe(file, argv, effective_envp);
+    if (modified) free_modified_envp(effective_envp);
+    return rc;
 }
 #endif
 
@@ -459,7 +529,11 @@ int posix_spawn(pid_t *pid, const char *path,
     
     debug_log("Allowing posix_spawn: %s", cmd ? cmd : "(null)");
     if (cmd) free(cmd);
-    return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
+    int modified = 0;
+    char **effective_envp = ensure_preload_env(envp, &modified);
+    int rc = real_posix_spawn(pid, path, file_actions, attrp, argv, effective_envp);
+    if (modified) free_modified_envp(effective_envp);
+    return rc;
 }
 
 // Cleanup function (called at library unload)

@@ -265,6 +265,17 @@ test_child_process_inheritance() {
     else
         log_error "Child process inheritance failed"
     fi
+
+    export RAMPART_DEBUG="1"
+    if command -v python3 >/dev/null 2>&1; then
+        output=$(python3 -c 'import os; os.system("true")' 2>&1 >/dev/null || true)
+        if echo "$output" | grep -q "Allowing system: true"; then log_success "Python os.system() intercepted"; else log_error "Python os.system() interception missing"; fi
+    else
+        log_warning "Skipping Python cascade test (python3 not available)"
+    fi
+    output=$(bash -c 'bash -c "ls >/dev/null"' 2>&1 >/dev/null || true)
+    if echo "$output" | grep -q "Allowing exec"; then log_success "Bash subprocess interception working"; else log_error "Bash subprocess interception missing"; fi
+    export RAMPART_DEBUG="0"
 }
 
 # Main test runner
