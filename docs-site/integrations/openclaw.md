@@ -26,7 +26,7 @@ rampart setup
 | File reads | ❌ Not checked | ✅ Protected |
 | File writes | ❌ Not checked | ✅ Protected |
 | File edits | ❌ Not checked | ✅ Protected |
-| Grep/search | ❌ Not checked | ✅ Protected |
+| Grep | ❌ Not checked | ✅ Protected |
 
 We recommend `--patch-tools` for full coverage, especially if your policies include file access rules (e.g., blocking reads of `.env`, SSH keys, credentials).
 
