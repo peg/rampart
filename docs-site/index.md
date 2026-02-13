@@ -20,7 +20,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
 <div class="grid cards" markdown>
 
--   :shield:{ .lg .middle } **Policy Engine**
+-   :material-shield-check:{ .lg .middle } **Policy Engine**
 
     ---
 
@@ -28,7 +28,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     [:octicons-arrow-right-24: Learn more](features/policy-engine.md)
 
--   :lock:{ .lg .middle } **Audit Trail**
+-   :material-lock:{ .lg .middle } **Audit Trail**
 
     ---
 
@@ -36,7 +36,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     [:octicons-arrow-right-24: Learn more](features/audit-trail.md)
 
--   :bell:{ .lg .middle } **Real-time Alerts**
+-   :material-bell-ring:{ .lg .middle } **Real-time Alerts**
 
     ---
 
@@ -44,7 +44,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     [:octicons-arrow-right-24: Learn more](features/webhooks.md)
 
--   :plug:{ .lg .middle } **Universal Integration**
+-   :material-connection:{ .lg .middle } **Universal Integration**
 
     ---
 

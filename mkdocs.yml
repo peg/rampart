@@ -99,6 +99,7 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/peg/rampart
+  homepage: https://rampart.sh
   generator: false
 
 copyright: Copyright &copy; 2026 Rampart Contributors — Apache 2.0
