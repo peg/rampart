@@ -11,6 +11,9 @@
     <meta property="og:url" content="https://rampart.sh">
     <meta name="twitter:card" content="summary_large_image">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 104 104'><mask id='m' maskUnits='userSpaceOnUse' x='0' y='0' width='105' height='105'><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 49.264)' fill='white'/><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 76.631)' fill='white'/><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 54.74 76.631)' fill='white'/><rect width='104' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 104)' fill='white'/><rect width='104' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 21.895)' fill='white'/><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 54.74 49.264)' fill='white'/></mask><g mask='url(%23m)'><rect width='104' height='104' rx='3' transform='matrix(1 0 0 -1 0 104)' fill='%23FF6392'/></g></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #09090b;
@@ -65,8 +68,9 @@
             justify-content: space-between;
         }
         nav .logo {
-            font-size: 1.1rem;
-            font-weight: 700;
+            font-family: 'Archivo', sans-serif;
+            font-size: 2rem;
+            font-weight: 300;
             color: var(--heading);
             text-decoration: none;
             letter-spacing: -0.02em;
@@ -555,8 +559,8 @@
 
 <nav>
     <div class="inner">
-        <a href="/" class="logo">
-            <svg width="24" height="24" viewBox="0 0 104 104" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <span class="logo">
+            <svg width="28" height="28" viewBox="0 0 104 104" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <mask id="mask0" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="105" height="105">
                     <rect width="49.264" height="21.895" rx="3" transform="matrix(1 0 0 -1 0 49.264)" fill="white"/>
                     <rect width="49.264" height="21.895" rx="3" transform="matrix(1 0 0 -1 0 76.631)" fill="white"/>
@@ -576,7 +580,7 @@
                 </defs>
             </svg>
             rampart
-        </a>
+        </span>
         <div class="links">
             <a href="https://github.com/peg/rampart/blob/main/README.md" class="hide-mobile">Docs</a>
             <a href="https://github.com/peg/rampart/blob/main/docs/THREAT-MODEL.md" class="hide-mobile">Threat Model</a>
