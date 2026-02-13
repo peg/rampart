@@ -16,6 +16,11 @@ policies:
         when:
           path_matches:
             - "**/.ssh/id_*"
+          path_not_matches:
+            - "**/*.pub"
+      - action: deny
+        when:
+          path_matches:
             - "**/.aws/credentials"
             - "**/.gnupg/*"
             - "**/*.pem"
