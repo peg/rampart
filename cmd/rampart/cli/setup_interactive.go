@@ -283,14 +283,14 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 		if a.SetupCmd == "openclaw" && !force {
 			fmt.Fprintln(out, "OpenClaw: also patch file tools (read/write/edit) for full coverage?")
 			fmt.Fprintln(out, "  This modifies node_modules and needs re-running after OpenClaw upgrades.")
-			fmt.Fprint(out, "  Patch file tools? [Y/n]: ")
+			fmt.Fprint(out, "  Patch file tools? [y/N]: ")
 			ans := readLine(scanner)
 			if ans == "\x00" {
 				fmt.Fprintln(out, "\nSetup aborted.")
 				return nil
 			}
 			ans = strings.ToLower(strings.TrimSpace(ans))
-			patchFileTools = ans == "" || ans == "y" || ans == "yes"
+			patchFileTools = ans == "y" || ans == "yes"
 			fmt.Fprintln(out, "")
 			break
 		}

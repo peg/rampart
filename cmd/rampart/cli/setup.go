@@ -783,7 +783,7 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 		// Backup
 		backupPath := file + ".rampart-backup"
 		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+			if err := os.WriteFile(backupPath, content, 0o600); err != nil {
 				return fmt.Errorf("backup %s: %w", file, err)
 			}
 		}
@@ -821,7 +821,9 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 	if grepContent, err := os.ReadFile(grepFile); err == nil {
 		backupPath := grepFile + ".rampart-backup"
 		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-			_ = os.WriteFile(backupPath, grepContent, 0o644)
+			if err := os.WriteFile(backupPath, grepContent, 0o600); err != nil {
+				return fmt.Errorf("backup %s: %w", grepFile, err)
+			}
 		}
 
 		grepOrig := `execute: async (_toolCallId, { pattern, path: searchDir, glob, ignoreCase, literal, context, limit, }, signal) => {
