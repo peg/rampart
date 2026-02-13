@@ -2,32 +2,26 @@
 
 What's coming next for Rampart. Priorities shift based on feedback — open an issue if something matters to you.
 
-## Recently Shipped (v0.1.x)
+## Recently Shipped
 
-- ✅ Claude Code hook integration
-- ✅ MCP protocol proxy
-- ✅ Shell wrapper (`rampart wrap`)
-- ✅ Live TUI dashboard (`rampart watch`)
-- ✅ HTML audit reports (`rampart report`)
-- ✅ Webhook notifications (Slack, Discord, Teams)
-- ✅ Environment detection (`rampart init --detect`)
+- ✅ Native hooks for Claude Code and Cline
+- ✅ MCP protocol proxy with auto-policy generation
+- ✅ Shell wrapper and LD_PRELOAD interception
+- ✅ Live TUI dashboard and HTML reports
+- ✅ Webhook notifications and webhook actions
+- ✅ SIEM integration (syslog + CEF)
+- ✅ Semantic verification sidecar ([rampart-verify](https://github.com/peg/rampart-verify))
 
 ## Up Next
 
-- **Smarter MCP enforcement** — transport improvements, tool schema analysis
-- **CI integration** — GitHub Action for wrapping AI agents in pull requests
-- **Policy intelligence** — detect credential exfiltration patterns in tool calls
-- **Starter policy library** — curated policies for common stacks
-
-## Future
-
-- **MCP server isolation** — Deno-style per-server permissions
-- **Community rules** — shareable policy patterns
-- **Response evaluation** — inspect tool outputs, not just inputs
+- Expanded integration guides
+- Starter policy library for common stacks
+- CI/CD integration
+- Additional SIEM platform guides
 
 ## Non-Goals
 
-Rampart is a policy engine for agents that operate in the real world. We don't chase full sandboxing — if an agent can be sandboxed, it doesn't need Rampart. We focus on the agents that *can't* be locked down because they need access to your actual infrastructure.
+Rampart is a policy engine for agents that operate in the real world. We don't chase full sandboxing — if an agent can be sandboxed, it doesn't need Rampart. We focus on the agents that *can't* be locked down because they need real access to your infrastructure.
 
 ---
 

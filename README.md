@@ -544,6 +544,8 @@ The agent communicates with Rampart over HTTP on localhost — no file access ne
 
 For single-user or development setups, running as the same user works fine. The separation matters most in production where agents run unsupervised.
 
+For a full discussion of what Rampart does and doesn't protect against, see [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
+
 ---
 
 ## CLI Reference
@@ -666,11 +668,7 @@ Current: **v0.1.8** — all tests passing.
 `rampart wrap` and `rampart preload` require Linux or macOS.
 `--syslog` requires Linux or macOS. `--cef` works on all platforms.
 
-What's next:
-- Behavioral fingerprinting from audit data
-- Temporal sequence detection ("read .env then curl within 30s")
-- Web dashboard for policy management
-- Additional SIEM guides (Splunk, Elastic)
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's coming next. Priorities shift based on feedback — [open an issue](https://github.com/peg/rampart/issues) if something matters to you.
 
 ---
 
