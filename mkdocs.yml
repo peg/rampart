@@ -1,0 +1,137 @@
+site_name: Rampart
+site_url: https://docs.rampart.sh
+site_description: Open-source firewall for AI agents. Policy engine that controls what AI tools can do on your machine.
+site_author: peg
+repo_url: https://github.com/peg/rampart
+repo_name: peg/rampart
+edit_uri: edit/main/docs-site/
+
+docs_dir: docs-site
+
+theme:
+  name: material
+  custom_dir: docs-site/overrides
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - assets/extra.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/peg/rampart
+  generator: false
+
+copyright: Copyright &copy; 2026 Rampart Contributors — Apache 2.0
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  - Integration Guides:
+    - Overview: integrations/index.md
+    - Claude Code: integrations/claude-code.md
+    - Cline: integrations/cline.md
+    - Cursor: integrations/cursor.md
+    - Claude Desktop: integrations/claude-desktop.md
+    - Codex CLI: integrations/codex-cli.md
+    - OpenClaw: integrations/openclaw.md
+    - Python Agents: integrations/python-agents.md
+    - Any CLI Agent: integrations/any-cli-agent.md
+  - Features:
+    - Policy Engine: features/policy-engine.md
+    - Audit Trail: features/audit-trail.md
+    - Webhook Notifications: features/webhooks.md
+    - MCP Proxy: features/mcp-proxy.md
+    - Semantic Verification: features/semantic-verification.md
+    - SIEM Integration: features/siem-integration.md
+  - Deployment:
+    - User Separation: deployment/user-separation.md
+    - Production Checklist: deployment/production-checklist.md
+  - Reference:
+    - CLI Commands: reference/cli-commands.md
+    - Policy Schema: reference/policy-schema.md
+    - Threat Model: reference/threat-model.md
+    - Architecture: reference/architecture.md
+  - Contributing: contributing.md
