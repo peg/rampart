@@ -8,6 +8,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/peg/rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/peg/rampart/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/peg/rampart?style=flat)](https://github.com/peg/rampart/releases)
+[![Docs](https://img.shields.io/badge/Docs-docs.rampart.sh-FF6392?style=flat)](https://docs.rampart.sh)
 
 </div>
 
