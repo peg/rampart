@@ -10,7 +10,6 @@ Install native hooks into Claude Code.
 
 ```bash
 rampart setup claude-code           # Install hooks
-# rampart setup claude-code --remove  # Not yet implemented
 ```
 
 ### `rampart setup cline`
@@ -19,7 +18,6 @@ Install native hooks into Cline.
 
 ```bash
 rampart setup cline           # Install hooks
-# rampart setup cline --remove  # Not yet implemented
 ```
 
 ### `rampart setup openclaw`
@@ -28,7 +26,6 @@ Install shell shim and background service for OpenClaw.
 
 ```bash
 rampart setup openclaw                # Exec shim only
-# rampart setup openclaw --patch-tools  # Not yet implemented
 ```
 
 ## Core Commands

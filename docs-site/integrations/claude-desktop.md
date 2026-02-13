@@ -4,7 +4,7 @@ Claude Desktop uses MCP servers for filesystem access, databases, APIs, and more
 
 ## The Threat
 
-Claude Desktop processes content from emails, documents, calendar invites, and web pages. Any of these can contain hidden instructions ([prompt injection](https://simonwillison.net/2025/Jan/5/prompt-injection/)) that hijack Claude's behavior.
+Claude Desktop processes content from emails, documents, calendar invites, and web pages. Any of these can contain hidden instructions ([prompt injection](https://simonwillison.net/series/prompt-injection/)) that hijack Claude's behavior.
 
 **Example attack:** A calendar invite contains hidden text telling Claude to read `~/.ssh/id_rsa` and send it to `webhook.site`. Without Rampart, both steps succeed. With Rampart, both get blocked and logged.
 

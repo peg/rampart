@@ -27,39 +27,19 @@ go install github.com/peg/rampart/cmd/rampart@latest
 
 ## Binary Download
 
-Download pre-built binaries from [GitHub Releases](https://github.com/peg/rampart/releases):
+Download pre-built binaries from [GitHub Releases](https://github.com/peg/rampart/releases).
 
-=== "Linux (amd64)"
+Binaries are available for Linux (amd64/arm64) as `.tar.gz` and macOS (amd64/arm64) as `.zip`:
 
-    ```bash
-    curl -Lo rampart.tar.gz https://github.com/peg/rampart/releases/latest/download/rampart_linux_amd64.tar.gz
-    tar xzf rampart.tar.gz
-    sudo mv rampart /usr/local/bin/
-    ```
+```bash
+# Example: Linux amd64
+tar xzf rampart_*_linux_amd64.tar.gz
+sudo mv rampart /usr/local/bin/
 
-=== "Linux (arm64)"
-
-    ```bash
-    curl -Lo rampart.tar.gz https://github.com/peg/rampart/releases/latest/download/rampart_linux_arm64.tar.gz
-    tar xzf rampart.tar.gz
-    sudo mv rampart /usr/local/bin/
-    ```
-
-=== "macOS (Apple Silicon)"
-
-    ```bash
-    curl -Lo rampart.tar.gz https://github.com/peg/rampart/releases/latest/download/rampart_darwin_arm64.tar.gz
-    tar xzf rampart.tar.gz
-    sudo mv rampart /usr/local/bin/
-    ```
-
-=== "macOS (Intel)"
-
-    ```bash
-    curl -Lo rampart.tar.gz https://github.com/peg/rampart/releases/latest/download/rampart_darwin_amd64.tar.gz
-    tar xzf rampart.tar.gz
-    sudo mv rampart /usr/local/bin/
-    ```
+# Example: macOS (unzip, then move)
+unzip rampart_*_darwin_arm64.zip
+sudo mv rampart /usr/local/bin/
+```
 
 ## Build from Source
 
