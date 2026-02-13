@@ -255,6 +255,7 @@ func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 	var force bool
 	var remove bool
 	var port int
+	var patchTools bool
 
 	cmd := &cobra.Command{
 		Use:   "openclaw",
@@ -268,6 +269,9 @@ Creates:
   - Default policy at ~/.rampart/policies/standard.yaml (if missing)
 
 After setup, configure OpenClaw to use the shim as its shell.
+
+Use --patch-tools to also patch OpenClaw's file tools (read/write/edit/grep)
+so file operations go through Rampart too. Re-run after OpenClaw upgrades.
 
 Use --remove to uninstall the shim and service (preserves policies and audit logs).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -396,12 +400,24 @@ exec "$REAL_SHELL" "$@"
 				fmt.Fprintln(cmd.OutOrStdout(), "✓ Rampart proxy service started")
 			}
 
+			// Optionally patch file tools
+			if patchTools {
+				if err := patchOpenClawTools(cmd, fmt.Sprintf("http://127.0.0.1:%d", port), token); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not patch file tools: %v\n", err)
+					fmt.Fprintln(cmd.ErrOrStderr(), "  Shell commands are still protected. Run with --patch-tools again to retry.")
+				}
+			}
+
 			// Print next steps
 			fmt.Fprintln(cmd.OutOrStdout(), "")
 			fmt.Fprintln(cmd.OutOrStdout(), "Next steps:")
 			fmt.Fprintf(cmd.OutOrStdout(), "  1. Set SHELL=%s in your OpenClaw gateway config\n", shimPath)
 			fmt.Fprintln(cmd.OutOrStdout(), "  2. Restart the OpenClaw gateway")
 			fmt.Fprintln(cmd.OutOrStdout(), "  3. Every command will now go through Rampart's policy engine")
+			if !patchTools {
+				fmt.Fprintln(cmd.OutOrStdout(), "")
+				fmt.Fprintln(cmd.OutOrStdout(), "  Optional: Run with --patch-tools to also protect file reads/writes/edits.")
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "")
 			fmt.Fprintf(cmd.OutOrStdout(), "Policy: %s\n", policyPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "Audit:  %s\n", filepath.Join(home, ".rampart", "audit"))
@@ -413,6 +429,7 @@ exec "$REAL_SHELL" "$@"
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing shim and service config")
 	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart shim and service (preserves policies and audit logs)")
+	cmd.Flags().BoolVar(&patchTools, "patch-tools", false, "Also patch OpenClaw's file tools (read/write/edit/grep) for full coverage")
 	cmd.Flags().IntVar(&port, "port", 19090, "Port for Rampart policy server")
 	return cmd
 }
@@ -454,6 +471,25 @@ func removeOpenClaw(cmd *cobra.Command) error {
 			}
 			reload := osexec.Command("systemctl", "--user", "daemon-reload")
 			_ = reload.Run()
+		}
+	}
+
+	// Restore patched file tools
+	candidates := []string{
+		"/usr/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
+		"/usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
+		filepath.Join(home, ".npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
+	}
+	for _, d := range candidates {
+		for _, tool := range []string{"read", "write", "edit", "grep"} {
+			backup := filepath.Join(d, tool+".js.rampart-backup")
+			target := filepath.Join(d, tool+".js")
+			if data, err := os.ReadFile(backup); err == nil {
+				if err := os.WriteFile(target, data, 0o644); err == nil {
+					_ = os.Remove(backup)
+					removed = append(removed, target+" (restored)")
+				}
+			}
 		}
 	}
 
@@ -663,6 +699,162 @@ func hasRampartHook(settings claudeSettings) bool {
 		}
 	}
 	return false
+}
+
+func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
+	// Find the tools directory
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		"/usr/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
+		"/usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
+		filepath.Join(home, ".npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
+	}
+
+	var toolsDir string
+	for _, d := range candidates {
+		if _, err := os.Stat(filepath.Join(d, "read.js")); err == nil {
+			toolsDir = d
+			break
+		}
+	}
+	if toolsDir == "" {
+		return fmt.Errorf("could not find OpenClaw's pi-coding-agent tools directory")
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Found tools: %s\n", toolsDir)
+
+	// Check if already patched
+	readFile := filepath.Join(toolsDir, "read.js")
+	data, err := os.ReadFile(readFile)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", readFile, err)
+	}
+	if strings.Contains(string(data), "RAMPART_") {
+		fmt.Fprintln(cmd.OutOrStdout(), "✓ File tools already patched")
+		return nil
+	}
+
+	tokenExpr := `process.env.RAMPART_TOKEN`
+	if token != "" {
+		tokenExpr = fmt.Sprintf(`process.env.RAMPART_TOKEN || "%s"`, token)
+	}
+
+	type toolPatch struct {
+		name      string
+		endpoint  string
+		origStart string
+		nextLine  string
+		paramVar  string // variable name containing path
+	}
+
+	patches := []toolPatch{
+		{
+			name:      "read",
+			endpoint:  "/v1/tool/read",
+			origStart: `execute: async (_toolCallId, { path, offset, limit }, signal) => {`,
+			nextLine:  `const absolutePath = resolveReadPath(path, cwd);`,
+			paramVar:  "path",
+		},
+		{
+			name:      "write",
+			endpoint:  "/v1/tool/write",
+			origStart: `execute: async (_toolCallId, { path, content }, signal) => {`,
+			nextLine:  `const absolutePath = resolveToCwd(path, cwd);`,
+			paramVar:  "path",
+		},
+		{
+			name:      "edit",
+			endpoint:  "/v1/tool/edit",
+			origStart: `execute: async (_toolCallId, { path, oldText, newText }, signal) => {`,
+			nextLine:  `const absolutePath = resolveToCwd(path, cwd);`,
+			paramVar:  "path",
+		},
+	}
+
+	for _, p := range patches {
+		file := filepath.Join(toolsDir, p.name+".js")
+		content, err := os.ReadFile(file)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s.js: %v\n", p.name, err)
+			continue
+		}
+
+		// Backup
+		backupPath := file + ".rampart-backup"
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+				return fmt.Errorf("backup %s: %w", file, err)
+			}
+		}
+
+		orig := p.origStart + "\n            " + p.nextLine
+		check := fmt.Sprintf(`%s
+            /* RAMPART_%s_CHECK */ try {
+                const __rr = await fetch((process.env.RAMPART_URL || "%s") + "%s", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+                    body: JSON.stringify({ agent: "openclaw", session: "main", params: { %s } }),
+                    signal: AbortSignal.timeout(3000)
+                });
+                if (__rr.status === 403) {
+                    const __rd = await __rr.json().catch(() => ({}));
+                    return { content: [{ type: "text", text: "rampart: " + (__rd.message || "policy denied") }] };
+                }
+            } catch (__re) { /* fail-open */ }
+            %s`, p.origStart, strings.ToUpper(p.name), url, p.endpoint, tokenExpr, p.paramVar, p.nextLine)
+
+		newContent := strings.Replace(string(content), orig, check, 1)
+		if newContent == string(content) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s.js: injection point not found (version mismatch?)\n", p.name)
+			continue
+		}
+
+		if err := os.WriteFile(file, []byte(newContent), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", file, err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s.js patched\n", p.name)
+	}
+
+	// Grep has a different signature
+	grepFile := filepath.Join(toolsDir, "grep.js")
+	if grepContent, err := os.ReadFile(grepFile); err == nil {
+		backupPath := grepFile + ".rampart-backup"
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			_ = os.WriteFile(backupPath, grepContent, 0o644)
+		}
+
+		grepOrig := `execute: async (_toolCallId, { pattern, path: searchDir, glob, ignoreCase, literal, context, limit, }, signal) => {
+            return new Promise((resolve, reject) => {`
+
+		grepCheck := fmt.Sprintf(`execute: async (_toolCallId, { pattern, path: searchDir, glob, ignoreCase, literal, context, limit, }, signal) => {
+            /* RAMPART_GREP_CHECK */ try {
+                const __gp = searchDir || ".";
+                const __rr = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/grep", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+                    body: JSON.stringify({ agent: "openclaw", session: "main", params: { path: __gp, pattern } }),
+                    signal: AbortSignal.timeout(3000)
+                });
+                if (__rr.status === 403) {
+                    const __rd = await __rr.json().catch(() => ({}));
+                    return { content: [{ type: "text", text: "rampart: " + (__rd.message || "policy denied") }] };
+                }
+            } catch (__re) { /* fail-open */ }
+            return new Promise((resolve, reject) => {`, url, tokenExpr)
+
+		newGrep := strings.Replace(string(grepContent), grepOrig, grepCheck, 1)
+		if newGrep != string(grepContent) {
+			if err := os.WriteFile(grepFile, []byte(newGrep), 0o644); err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "  ✓ grep.js patched\n")
+			}
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ grep.js: injection point not found (skipping)\n")
+		}
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "")
+	fmt.Fprintln(cmd.OutOrStdout(), "⚠ File tool patches modify node_modules — re-run after OpenClaw upgrades.")
+	return nil
 }
 
 func hasRampartInMatcher(matcher map[string]any) bool {
