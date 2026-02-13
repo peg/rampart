@@ -186,7 +186,11 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 		fmt.Fprintln(out, "Which agents would you like to protect? [all detected/select/skip]")
 		fmt.Fprint(out, "Choice [all detected]: ")
 		choice := readLine(scanner)
-		choice = strings.TrimSpace(strings.ToLower(choice))
+		if choice == "\x00" {
+			fmt.Fprintln(out, "\nSetup aborted.")
+			return nil
+		}
+		choice = strings.ToLower(choice)
 
 		switch choice {
 		case "skip":
@@ -420,7 +424,9 @@ func installShellCompletions(cmd *cobra.Command, out io.Writer) error {
 // readLine reads a line from the scanner, returning empty string on EOF.
 func readLine(scanner *bufio.Scanner) string {
 	if scanner.Scan() {
-		return scanner.Text()
+		return strings.TrimSpace(scanner.Text())
 	}
-	return ""
+	// EOF (Ctrl+D) — return sentinel to abort.
+	return "\x00"
 }
+

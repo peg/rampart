@@ -124,6 +124,7 @@ func resolveTestPolicyPath(path string) (string, func(), error) {
 	}
 
 	// Fall back to embedded standard policy.
+	fmt.Fprintf(os.Stderr, "⚠ No policy file found — using embedded standard policy\n\n")
 	data, err := policies.Profile("standard")
 	if err != nil {
 		return "", nil, fmt.Errorf("test: no policy found. Run 'rampart init' to create one")

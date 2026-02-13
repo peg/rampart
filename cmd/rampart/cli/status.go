@@ -141,18 +141,17 @@ func todayEvents() (allow, deny, log int, lastDeny *audit.Event) {
 
 	today := time.Now().UTC().Format("2006-01-02")
 
-	// Try common audit file naming patterns
-	candidates := []string{
-		filepath.Join(auditDir, today+".jsonl"),
-		filepath.Join(auditDir, "audit-"+today+".jsonl"),
-		filepath.Join(auditDir, "rampart-"+today+".jsonl"),
-	}
-
-	// Also scan directory for any file containing today's date
+	// Scan directory for any file containing today's date (deduplicated)
+	seen := make(map[string]bool)
+	var candidates []string
 	if entries, err := os.ReadDir(auditDir); err == nil {
 		for _, e := range entries {
 			if strings.Contains(e.Name(), today) && strings.HasSuffix(e.Name(), ".jsonl") {
-				candidates = append(candidates, filepath.Join(auditDir, e.Name()))
+				p := filepath.Join(auditDir, e.Name())
+				if !seen[p] {
+					seen[p] = true
+					candidates = append(candidates, p)
+				}
 			}
 		}
 	}

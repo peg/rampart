@@ -195,12 +195,16 @@ func countClaudeHookMatchers(settings map[string]any) int {
 			if !ok {
 				continue
 			}
-			if matcher, ok := m["matcher"].(string); ok && strings.Contains(strings.ToLower(matcher), "rampart") {
-				count++
-			}
-			// Also check command field for rampart
-			if cmd, ok := m["command"].(string); ok && strings.Contains(strings.ToLower(cmd), "rampart") {
-				count++
+			// Check nested hooks[].command for "rampart" (matches --remove detection)
+			if innerHooks, ok := m["hooks"].([]any); ok {
+				for _, h := range innerHooks {
+					if hm, ok := h.(map[string]any); ok {
+						if cmd, ok := hm["command"].(string); ok && strings.Contains(cmd, "rampart") {
+							count++
+							break
+						}
+					}
+				}
 			}
 		}
 	}

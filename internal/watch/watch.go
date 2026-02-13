@@ -219,6 +219,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, waitForTailer(m.tailerCh)
 	case tickMsg:
+		// Clean up expired deny flashes (must be in Update, not View).
+		now := time.Now()
+		for idx, t := range m.denyFlash {
+			if now.Sub(t) >= 3*time.Second {
+				delete(m.denyFlash, idx)
+			}
+		}
 		return m, tickCmd()
 	}
 
@@ -301,13 +308,6 @@ func (m *Model) View() string {
 	}
 
 	lines = append(lines, frameLineBottom(innerWidth))
-
-	// Clean up expired deny flashes.
-	for idx, t := range m.denyFlash {
-		if now.Sub(t) >= 3*time.Second {
-			delete(m.denyFlash, idx)
-		}
-	}
 
 	return m.frameStyle.Render(strings.Join(lines, "\n"))
 }

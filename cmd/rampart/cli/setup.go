@@ -318,7 +318,7 @@ Use --remove to uninstall the shim and service (preserves policies and audit log
 			// Copy default policy if none exists
 			policyPath := filepath.Join(home, ".rampart", "policies", "standard.yaml")
 			if _, err := os.Stat(policyPath); os.IsNotExist(err) {
-				if err := os.WriteFile(policyPath, []byte(defaultPolicy), 0o644); err != nil {
+				if err := os.WriteFile(policyPath, []byte(defaultPolicy), 0o600); err != nil {
 					return fmt.Errorf("setup: write default policy: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "✓ Default policy written to %s\n", policyPath)

@@ -72,7 +72,12 @@ func TestCountClaudeHookMatchers(t *testing.T) {
 	settings := map[string]any{
 		"hooks": map[string]any{
 			"PreToolUse": []any{
-				map[string]any{"matcher": "rampart-exec", "command": "/usr/local/bin/rampart hook"},
+				map[string]any{
+					"matcher": "Bash",
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "rampart hook"},
+					},
+				},
 			},
 		},
 	}
