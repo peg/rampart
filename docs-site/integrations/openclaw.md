@@ -45,15 +45,8 @@ rampart watch
 
 ## Uninstall
 
-Stop the background service and remove the shim:
-
 ```bash
-# Linux
-systemctl --user stop rampart-proxy
-systemctl --user disable rampart-proxy
-
-# Remove shim
-rm ~/.local/bin/rampart-shim
+rampart setup openclaw --remove
 ```
 
-Your policies and audit logs in `~/.rampart/` are unaffected.
+This stops the background service, removes the shim and service file. Your policies and audit logs in `~/.rampart/` are preserved.

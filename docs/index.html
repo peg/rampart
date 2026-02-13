@@ -854,7 +854,7 @@ brew install rampart</pre>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">How do I uninstall?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Remove the binary (<code>brew uninstall rampart</code> or delete the binary), then remove the hooks from your agent's settings. For Claude Code, edit <code>~/.claude/settings.json</code> and delete the hooks section. Policies live in <code>~/.rampart/</code> — delete that folder to fully clean up.</p>
+                <p style="margin-top: 12px; color: var(--text-dim);">Run <code>rampart setup claude-code --remove</code> (or <code>cline --remove</code> / <code>openclaw --remove</code>) to cleanly remove hooks. Then uninstall the binary with <code>brew uninstall rampart</code> or delete it. Policies and logs live in <code>~/.rampart/</code> — delete that folder to fully clean up.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">What's the performance impact?</summary>

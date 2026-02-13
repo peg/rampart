@@ -54,4 +54,8 @@ Adjust your policies in `~/.rampart/policies/` or use `rampart watch` to see whi
 
 ## Uninstall
 
-To remove Rampart hooks, edit Cline's settings in VS Code and delete the Rampart hook entries, then restart Cline. Your policies and audit logs in `~/.rampart/` are unaffected.
+```bash
+rampart setup cline --remove
+```
+
+This removes the Rampart hook scripts. Your policies and audit logs in `~/.rampart/` are preserved.
