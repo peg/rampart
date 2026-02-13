@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-02-13 | Applies to: v0.1.9-dev
+> Last reviewed: 2026-02-13 | Applies to: v0.1.9-dev (with file tool patching)
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -53,7 +53,9 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 - The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar uses LLM classification to assess intent of commands like `python3 -c "..."` based on the inline code
 - Patterns like `python3 -c *` can be routed to semantic verification via `action: webhook`
 
-**Remaining surface:** The cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered. Multi-step sequences (write file, then execute) remain an active area of development.
+**Remaining surface:** The cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
+
+**Multi-step sequences:** With file tool coverage enabled (native hooks or `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
 
 ### 2. Audit Log Rewrite
 
@@ -91,7 +93,18 @@ An agent could potentially encode commands to bypass pattern matching:
 
 **Coverage:** The two-layer approach (pattern matching + LLM classification) significantly reduces the obfuscation surface. Pattern matching catches known encodings; the LLM layer catches intent regardless of how the command is formatted.
 
-### 5. Fail-Open Behavior
+### 5. Framework-Specific Patching
+
+Some agent frameworks (e.g., OpenClaw) don't expose hook points for file operations. Rampart provides a `--patch-tools` option that modifies framework source files to add policy checks before read/write/edit operations. These patches don't survive framework upgrades — they modify files in `node_modules` that get replaced on update.
+
+**Mitigations:**
+- `rampart setup openclaw --patch-tools` can be re-run after upgrades
+- Native hook integrations (Claude Code, Cline) don't have this limitation — they use the framework's own hook system
+- A feature request for generic tool authorization hooks benefits the entire ecosystem and would eliminate the need for patching
+
+**Trade-off:** Monkey-patching is fragile but functional. It closes a real security gap today while proper upstream support is developed. The patches fail-open — if the patched code changes in an upgrade, the worst case is that file tools bypass Rampart (reverting to the pre-patch state), not that they break.
+
+### 6. Fail-Open Behavior
 
 When `rampart serve` is unreachable (crashed, network issue), the shim defaults to **fail-open** — commands execute without policy checks. This is a deliberate design choice: fail-closed would lock you out of your own machine.
 
