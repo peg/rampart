@@ -85,7 +85,9 @@ def run_command(command: str) -> str:
     data = resp.json()
     if data["decision"] == "deny":
         return f"Command blocked by policy: {data['message']}"
-    return data.get("output", "")
+    # Rampart only evaluates policy — execute the command yourself
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    return result.stdout
 ```
 
 ## API Reference

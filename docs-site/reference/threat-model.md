@@ -44,7 +44,7 @@ If an agent runs `python3 script.py`, Rampart evaluates `python3 script.py` but 
 
 - **LD_PRELOAD cascade** — child processes spawned by allowed commands inherit the interceptor. `python3 script.py` calling `os.system("rm -rf /")` is caught.
 - **Semantic verification** — the [rampart-verify](https://github.com/peg/rampart-verify) sidecar classifies intent of commands like `python3 -c "..."`
-- **File + exec coverage** — with native hooks or `--patch-tools`, write-then-execute sequences are evaluated at both steps
+- **File + exec coverage** — with native hooks or manual file tool patches, write-then-execute sequences are evaluated at both steps
 
 ### 2. Audit Log Rewrite
 
@@ -71,7 +71,7 @@ When `rampart serve` is unreachable, commands execute without policy checks. Thi
 
 ### 5. Framework Patching Fragility
 
-`--patch-tools` modifies framework source files that get replaced on upgrades. Between upgrade and re-patch, file tools bypass Rampart.
+File tool patches modify framework source files that get replaced on upgrades. Between upgrade and re-patch, file tools bypass Rampart.
 
 ### 6. Token Exposure
 

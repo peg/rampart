@@ -27,5 +27,7 @@ rampart watch
 ## Uninstall
 
 ```bash
-rampart setup cline --remove
+## Uninstall
+
+To remove Rampart hooks, edit your Cline MCP settings in VS Code and delete the Rampart hook entries, then restart Cline.
 ```

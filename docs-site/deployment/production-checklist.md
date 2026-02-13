@@ -44,4 +44,4 @@ Before running AI agents unsupervised in production, verify each item.
 
 - [ ] **Runbook** — Team knows how to approve pending commands
 - [ ] **Escalation** — Process for reviewing audit anomalies
-- [ ] **Upgrade plan** — Re-run `--patch-tools` after framework upgrades
+- [ ] **Upgrade plan** — Re-patch file tools after framework upgrades

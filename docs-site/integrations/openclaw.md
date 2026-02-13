@@ -15,13 +15,13 @@ This installs a shell shim that intercepts all `exec` tool calls and sets up a b
 For complete protection including file operations (Read, Write, Edit):
 
 ```bash
-rampart setup openclaw --patch-tools
+rampart setup openclaw
 ```
 
 This patches OpenClaw's tool implementations to check Rampart before file operations. Requires write access to the OpenClaw installation directory (may need `sudo` for global npm installs).
 
 !!! warning "Re-run after upgrades"
-    The `--patch-tools` option modifies files in `node_modules` that get replaced on OpenClaw upgrades. Re-run after every upgrade. Between upgrade and re-patch, file tools bypass Rampart (the exec shim remains active).
+    File tool coverage (read/write/edit/grep) requires manual patching of OpenClaw's `node_modules`. See the [README](https://github.com/peg/rampart#openclaw) for the patch script. Re-run after every OpenClaw upgrade.
 
 ## Compatibility
 

@@ -67,7 +67,9 @@ See [Configuration](../getting-started/configuration.md) for the full policy for
 ## Uninstall
 
 ```bash
-rampart setup claude-code --remove
+## Uninstall
+
+To remove Rampart hooks, edit `~/.claude/settings.json` and delete the `hooks` section, then restart Claude Code.
 ```
 
 This removes the hooks from Claude Code's configuration. Your policies and audit logs are preserved.
@@ -77,7 +79,7 @@ This removes the hooks from Claude Code's configuration. Your policies and audit
 ### Verify hooks are installed
 
 ```bash
-cat ~/.claude/hooks.json
+cat ~/.claude/settings.json
 ```
 
 You should see Rampart entries for `PreToolUse` hooks.
