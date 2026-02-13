@@ -31,6 +31,8 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	var policyName string
 	var mode string
 	var agent string
+	var decision string
+	var tool string
 
 	cmd := &cobra.Command{
 		Use:   "watch",
@@ -56,6 +58,8 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 				PolicyName: policyName,
 				Mode:       mode,
 				Agent:      agent,
+				Decision:   decision,
+				Tool:       tool,
 				Out:        cmd.OutOrStdout(),
 			})
 		},
@@ -65,6 +69,8 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&policyName, "policy", "standard.yaml", "Policy file name to display in status")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Display mode label")
 	cmd.Flags().StringVar(&agent, "agent", "all", "Filter to a single agent in view")
+	cmd.Flags().StringVar(&decision, "decision", "", "Filter by decision (allow, deny, log, webhook)")
+	cmd.Flags().StringVar(&tool, "tool", "", "Filter by tool name (e.g., exec, read, write)")
 
 	return cmd
 }
