@@ -321,7 +321,7 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 // installPolicy writes the selected policy profile to ~/.rampart/policies/.
 func installPolicy(out io.Writer, home, profile string) error {
 	policyDir := filepath.Join(home, ".rampart", "policies")
-	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+	if err := os.MkdirAll(policyDir, 0o700); err != nil {
 		return fmt.Errorf("setup: create policy dir: %w", err)
 	}
 
@@ -337,7 +337,7 @@ func installPolicy(out io.Writer, home, profile string) error {
 		return fmt.Errorf("setup: read embedded profile %s: %w", profile, err)
 	}
 
-	if err := os.WriteFile(policyPath, content, 0o644); err != nil {
+	if err := os.WriteFile(policyPath, content, 0o600); err != nil {
 		return fmt.Errorf("setup: write policy: %w", err)
 	}
 	fmt.Fprintf(out, "✓ Policy written to %s\n", policyPath)
