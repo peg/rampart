@@ -150,16 +150,15 @@ func TestFormatDuration(t *testing.T) {
 		d    time.Duration
 		want string
 	}{
-		{500 * time.Microsecond, "0μs"}, // <1μs rounds
-		{6 * time.Microsecond, "0μs"},
-		{100 * time.Microsecond, "0μs"},
+		{500 * time.Microsecond, "500μs"},
+		{6 * time.Microsecond, "6μs"},
+		{100 * time.Microsecond, "100μs"},
 		{1500 * time.Microsecond, "1ms"},
 	}
-	// Just verify it doesn't panic.
 	for _, tt := range tests {
 		got := formatDuration(tt.d)
-		if got == "" {
-			t.Errorf("formatDuration(%v) returned empty string", tt.d)
+		if got != tt.want {
+			t.Errorf("formatDuration(%v) = %q, want %q", tt.d, got, tt.want)
 		}
 	}
 }

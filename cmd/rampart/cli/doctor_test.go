@@ -20,9 +20,6 @@ import (
 	"time"
 )
 
-func parseTestDuration(s string) (time.Duration, error) {
-	return time.ParseDuration(s)
-}
 
 func TestRunDoctor(t *testing.T) {
 	var buf bytes.Buffer
@@ -60,7 +57,7 @@ func TestFormatAgo(t *testing.T) {
 		{"3h", "3h ago"},
 	}
 	for _, tt := range tests {
-		d, _ := parseTestDuration(tt.input)
+		d, _ := time.ParseDuration(tt.input)
 		got := formatAgo(d)
 		if got != tt.contains {
 			t.Errorf("formatAgo(%s) = %q, want %q", tt.input, got, tt.contains)

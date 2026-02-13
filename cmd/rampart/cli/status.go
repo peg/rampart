@@ -75,7 +75,10 @@ func runStatus(w io.Writer) error {
 
 func detectProtectedAgents() []string {
 	var agents []string
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
 
 	// Claude Code hooks
 	claudeSettings := filepath.Join(home, ".claude", "settings.json")
@@ -105,7 +108,10 @@ func detectProtectedAgents() []string {
 }
 
 func detectMode() (string, string) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "unknown", "unknown"
+	}
 	policyDir := filepath.Join(home, ".rampart", "policies")
 
 	entries, err := os.ReadDir(policyDir)
@@ -136,7 +142,10 @@ func detectMode() (string, string) {
 }
 
 func todayEvents() (allow, deny, log int, lastDeny *audit.Event) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
 	auditDir := filepath.Join(home, ".rampart", "audit")
 
 	today := time.Now().UTC().Format("2006-01-02")

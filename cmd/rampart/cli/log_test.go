@@ -162,7 +162,7 @@ func TestLoadLogEvents_WithFile(t *testing.T) {
 		lines = append(lines, string(b))
 	}
 	content := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "2026-02-13.jsonl"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "2026-02-13.jsonl"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

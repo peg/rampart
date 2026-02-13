@@ -114,9 +114,4 @@ func TestIsTerminal_PipeIsNotTerminal(t *testing.T) {
 	}
 }
 
-func TestNonInteractive_ShowsHelp(t *testing.T) {
-	// When stdin is a pipe, runInteractiveSetup should fall back to help.
-	// We test isTerminal returns false for pipes (tested above).
-	// Full integration would require wiring up cobra, which is covered
-	// by the isTerminal check.
-}
+// TestNonInteractive pipe detection is covered by TestIsTerminal_Pipe above.

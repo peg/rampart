@@ -80,7 +80,10 @@ func runDoctor(w io.Writer) error {
 
 func doctorPolicies(w io.Writer) int {
 	issues := 0
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
 	policyDir := filepath.Join(home, ".rampart", "policies")
 
 	entries, err := os.ReadDir(policyDir)
@@ -139,7 +142,10 @@ func doctorHooks(w io.Writer) int {
 	issues := 0
 
 	// Claude Code hooks
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
 	claudeSettings := filepath.Join(home, ".claude", "settings.json")
 	data, err := os.ReadFile(claudeSettings)
 	if err == nil {
@@ -164,8 +170,19 @@ func doctorHooks(w io.Writer) int {
 
 	// Cline hooks
 	clineDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if entries, err := os.ReadDir(clineDir); err == nil && len(entries) > 0 {
-		fmt.Fprintf(w, "✓ Hooks: Cline (%d hook scripts)\n", len(entries))
+	if entries, err := os.ReadDir(clineDir); err == nil {
+		hookCount := 0
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "rampart-") {
+				hookCount++
+			}
+		}
+		if hookCount > 0 {
+			fmt.Fprintf(w, "✓ Hooks: Cline (%d hook scripts)\n", hookCount)
+		} else {
+			fmt.Fprintln(w, "✗ Hooks: Cline (no Rampart hooks found)")
+			issues++
+		}
 	} else {
 		fmt.Fprintln(w, "✗ Hooks: Cline (not installed)")
 		issues++
@@ -212,7 +229,10 @@ func countClaudeHookMatchers(settings map[string]any) int {
 }
 
 func doctorAudit(w io.Writer) int {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
 	auditDir := filepath.Join(home, ".rampart", "audit")
 
 	entries, err := os.ReadDir(auditDir)
