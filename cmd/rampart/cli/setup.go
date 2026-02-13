@@ -20,16 +20,25 @@ import (
 var execLookPath = osexec.LookPath
 
 func newSetupCmd(opts *rootOptions) *cobra.Command {
+	var force bool
+
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Set up Rampart integrations with AI agents",
 		Long: `Set up Rampart integrations with supported AI agents.
 
+Run without a subcommand to launch the interactive setup wizard.
+
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
   • Cline (VS Code)           - Native hook integration  
   • OpenClaw                  - Shell wrapper integration`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInteractiveSetup(cmd, opts)
+		},
 	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmations during interactive setup")
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
 	cmd.AddCommand(newSetupClineCmd(opts))
@@ -44,6 +53,7 @@ type claudeSettings map[string]any
 
 func newSetupClaudeCodeCmd(opts *rootOptions) *cobra.Command {
 	var force bool
+	var remove bool
 
 	cmd := &cobra.Command{
 		Use:   "claude-code",
@@ -52,8 +62,13 @@ func newSetupClaudeCodeCmd(opts *rootOptions) *cobra.Command {
 Bash commands through Rampart's policy engine before execution.
 
 Safe to run multiple times — will not duplicate hooks or overwrite
-other settings.`,
+other settings.
+
+Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if remove {
+				return removeClaudeCodeHooks(cmd)
+			}
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return fmt.Errorf("setup: resolve home: %w", err)
@@ -153,13 +168,92 @@ other settings.`,
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing Rampart hook config")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart hooks from Claude Code settings")
 	return cmd
+}
+
+func removeClaudeCodeHooks(cmd *cobra.Command) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("setup: resolve home: %w", err)
+	}
+
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintln(cmd.OutOrStdout(), "No Claude Code settings found. Nothing to remove.")
+			return nil
+		}
+		return fmt.Errorf("setup: read settings: %w", err)
+	}
+
+	settings := make(claudeSettings)
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("setup: parse settings: %w", err)
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		fmt.Fprintln(cmd.OutOrStdout(), "No hooks found in Claude Code settings. Nothing to remove.")
+		return nil
+	}
+
+	preToolUse, ok := hooks["PreToolUse"].([]any)
+	if !ok {
+		fmt.Fprintln(cmd.OutOrStdout(), "No PreToolUse hooks found. Nothing to remove.")
+		return nil
+	}
+
+	var kept []any
+	var removedCount int
+	for _, h := range preToolUse {
+		if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
+			removedCount++
+			matcher, _ := m["matcher"].(string)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Removed hook: matcher=%s\n", matcher)
+			continue
+		}
+		kept = append(kept, h)
+	}
+
+	if removedCount == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No Rampart hooks found in Claude Code settings. Nothing to remove.")
+		return nil
+	}
+
+	// Clean up empty structures
+	if len(kept) == 0 {
+		delete(hooks, "PreToolUse")
+	} else {
+		hooks["PreToolUse"] = kept
+	}
+	if len(hooks) == 0 {
+		delete(settings, "hooks")
+	} else {
+		settings["hooks"] = hooks
+	}
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("setup: marshal settings: %w", err)
+	}
+	out = append(out, '\n')
+
+	if err := os.WriteFile(settingsPath, out, 0o644); err != nil {
+		return fmt.Errorf("setup: write settings: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Removed %d Rampart hook(s) from %s\n", removedCount, settingsPath)
+	return nil
 }
 
 // newSetupClineCmd is defined in cline.go
 
 func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 	var force bool
+	var remove bool
 	var port int
 
 	cmd := &cobra.Command{
@@ -173,8 +267,13 @@ Creates:
   - A shell shim at ~/.local/bin/rampart-shim
   - Default policy at ~/.rampart/policies/standard.yaml (if missing)
 
-After setup, configure OpenClaw to use the shim as its shell.`,
+After setup, configure OpenClaw to use the shim as its shell.
+
+Use --remove to uninstall the shim and service (preserves policies and audit logs).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if remove {
+				return removeOpenClaw(cmd)
+			}
 			if runtime.GOOS == "windows" {
 				return fmt.Errorf("setup openclaw: not supported on Windows")
 			}
@@ -313,8 +412,69 @@ exec "$REAL_SHELL" "$@"
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing shim and service config")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart shim and service (preserves policies and audit logs)")
 	cmd.Flags().IntVar(&port, "port", 19090, "Port for Rampart policy server")
 	return cmd
+}
+
+func removeOpenClaw(cmd *cobra.Command) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("setup openclaw: not supported on Windows")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("setup: resolve home: %w", err)
+	}
+
+	var removed []string
+
+	// Stop and disable service
+	if runtime.GOOS == "darwin" {
+		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.rampart.proxy.plist")
+		if _, err := os.Stat(plistPath); err == nil {
+			unload := osexec.Command("launchctl", "unload", plistPath)
+			if err := unload.Run(); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not unload launchd agent: %v\n", err)
+			}
+			if err := os.Remove(plistPath); err == nil {
+				removed = append(removed, plistPath)
+			}
+		}
+	} else {
+		stop := osexec.Command("systemctl", "--user", "stop", "rampart-proxy")
+		_ = stop.Run()
+		disable := osexec.Command("systemctl", "--user", "disable", "rampart-proxy")
+		_ = disable.Run()
+
+		servicePath := filepath.Join(home, ".config", "systemd", "user", "rampart-proxy.service")
+		if _, err := os.Stat(servicePath); err == nil {
+			if err := os.Remove(servicePath); err == nil {
+				removed = append(removed, servicePath)
+			}
+			reload := osexec.Command("systemctl", "--user", "daemon-reload")
+			_ = reload.Run()
+		}
+	}
+
+	// Remove shell shim
+	shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")
+	if _, err := os.Stat(shimPath); err == nil {
+		if err := os.Remove(shimPath); err == nil {
+			removed = append(removed, shimPath)
+		}
+	}
+
+	if len(removed) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No OpenClaw integration found. Nothing to remove.")
+		return nil
+	}
+
+	for _, p := range removed {
+		fmt.Fprintf(cmd.OutOrStdout(), "  Removed: %s\n", p)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Removed %d file(s). Policies and audit logs were preserved.\n", len(removed))
+	return nil
 }
 
 func installService(cmd *cobra.Command, home, rampartBin, policyPath, token string, port int) error {
