@@ -40,11 +40,7 @@ rampart watch
 
 ## Start in Monitor Mode
 
-Not sure about your policies yet? Start in monitor mode — everything gets logged but nothing gets blocked:
-
-```bash
-rampart setup cline --mode monitor
-```
+Not sure about your policies yet? Set your policy's `default_action: allow` and use `action: log` rules instead of `deny` — everything gets logged but nothing gets blocked. Check `rampart watch` to see what would be caught, then switch rules to `deny` when you're confident.
 
 ## Troubleshooting
 
