@@ -168,6 +168,14 @@ rampart policy explain "rm -rf /"
 rampart policy explain "git status"
 ```
 
+### `rampart policy test`
+
+Evaluate a set of tool calls from a JSON file against your policies.
+
+```bash
+rampart policy test --input test-cases.json
+```
+
 ## Approvals
 
 ### `rampart pending`
@@ -191,5 +199,5 @@ rampart approve <id>
 Deny a pending command.
 
 ```bash
-rampart deny <id> --reason "Not approved"
+rampart deny <id>
 ```
