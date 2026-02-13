@@ -2,6 +2,9 @@
 
 Get Rampart protecting your AI agent in under a minute.
 
+!!! tip "Zero risk to try"
+    Rampart **fails open** — if the policy engine crashes or is unreachable, your tools keep working normally. You'll never get locked out of your own machine. Start in monitor mode (`--mode monitor`) to observe without blocking anything.
+
 ## Claude Code (Recommended)
 
 If you're using Claude Code, this is a one-liner:

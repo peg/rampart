@@ -1,6 +1,6 @@
 # Cline
 
-Cline supports native hooks, similar to Claude Code. Rampart integrates directly with Cline's hook system.
+[Cline](https://github.com/cline/cline) is an AI coding assistant for VS Code. Rampart integrates via Cline's native hook system — every command, file read, and file write gets evaluated before execution.
 
 ## Setup
 
@@ -8,26 +8,54 @@ Cline supports native hooks, similar to Claude Code. Rampart integrates directly
 rampart setup cline
 ```
 
-This installs native hooks that intercept exec and file operations before they execute.
+This installs hooks into Cline's settings that route tool calls through `rampart hook` for policy evaluation.
+
+## What Gets Intercepted
+
+| Tool Call | Example | Intercepted? |
+|-----------|---------|:---:|
+| Shell commands | `npm install`, `rm -rf` | ✅ |
+| File reads | Reading `.env`, `id_rsa` | ✅ |
+| File writes | Writing to `/etc/`, config files | ✅ |
+| File edits | Modifying source code | ✅ |
 
 ## How It Works
 
-Same as [Claude Code](claude-code.md) — Cline's hook system sends tool calls to `rampart hook` for evaluation. Denied calls return an error to Cline, which never executes them.
+When Cline wants to execute a tool:
 
-## Usage
+1. Cline's hook system sends the tool call to `rampart hook` via stdin (JSON)
+2. Rampart evaluates the call against your YAML policies (<10μs)
+3. If **allowed**: Rampart returns success, Cline proceeds
+4. If **denied**: Rampart returns an error message, Cline never executes the command
 
-Launch Cline normally from VS Code. Rampart evaluates every tool call transparently.
+This happens transparently — you use Cline exactly as before.
 
-## Monitor
+## Monitor in Real Time
+
+Open a separate terminal to watch decisions as they happen:
 
 ```bash
 rampart watch
 ```
 
-## Uninstall
+## Start in Monitor Mode
+
+Not sure about your policies yet? Start in monitor mode — everything gets logged but nothing gets blocked:
 
 ```bash
+rampart setup cline --mode monitor
+```
+
+## Troubleshooting
+
+**Hooks not intercepting anything?**
+
+Check that Cline's settings have the Rampart hook entries. In VS Code, open Cline settings and look for hook configuration pointing to `rampart hook`.
+
+**Getting false positives?**
+
+Adjust your policies in `~/.rampart/policies/` or use `rampart watch` to see which rules are firing, then tune the patterns.
+
 ## Uninstall
 
-To remove Rampart hooks, edit your Cline MCP settings in VS Code and delete the Rampart hook entries, then restart Cline.
-```
+To remove Rampart hooks, edit Cline's settings in VS Code and delete the Rampart hook entries, then restart Cline. Your policies and audit logs in `~/.rampart/` are unaffected.

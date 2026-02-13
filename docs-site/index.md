@@ -16,7 +16,7 @@ hide:
 
 ## What is Rampart?
 
-Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked in microseconds. Everything gets logged to a tamper-evident, hash-chained audit trail.
+Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked in microseconds. Everything gets logged to a tamper-proof audit trail where each entry is cryptographically linked to the previous one — if anyone tampers with a record, the chain breaks.
 
 <div class="grid cards" markdown>
 
@@ -32,7 +32,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     ---
 
-    Hash-chained JSONL logs. Tamper with any record and the chain breaks. Daily rotation, search, and verification.
+    Tamper-proof logs where every entry is linked to the last. Daily rotation, search, and verification built in.
 
     [:octicons-arrow-right-24: Learn more](features/audit-trail.md)
 
@@ -40,7 +40,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     ---
 
-    Webhook notifications to Discord, Slack, or Teams when something gets blocked. SIEM export via syslog or CEF.
+    Webhook notifications to Discord, Slack, or Teams when something gets blocked. Export to security monitoring tools (Splunk, Wazuh, etc.) via syslog.
 
     [:octicons-arrow-right-24: Learn more](features/webhooks.md)
 
@@ -48,7 +48,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     ---
 
-    Native hooks, shell wrapping, MCP proxy, LD_PRELOAD, HTTP API. Works with every major AI agent.
+    Native hooks, shell wrapping, MCP proxy, system-level interception, HTTP API. Works with every major AI agent.
 
     [:octicons-arrow-right-24: Integration guides](integrations/index.md)
 

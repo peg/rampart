@@ -583,7 +583,7 @@
         </span>
         <div class="links">
             <a href="https://docs.rampart.sh" class="hide-mobile">Docs</a>
-            <a href="https://github.com/peg/rampart/blob/main/docs/THREAT-MODEL.md" class="hide-mobile">Threat Model</a>
+            <a href="https://docs.rampart.sh/reference/threat-model/" class="hide-mobile">Threat Model</a>
             <a href="https://github.com/peg/rampart" class="btn-nav">GitHub</a>
         </div>
     </div>
@@ -839,14 +839,51 @@ brew install rampart</pre>
     </div>
 </section>
 
+<!-- FAQ -->
+<section id="faq" style="padding: 80px 0;">
+    <div class="container">
+        <h2 style="text-align: center; margin-bottom: 48px;">Frequently Asked Questions</h2>
+        <div style="max-width: 720px; margin: 0 auto;">
+            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">What happens if Rampart crashes?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">Your tools keep working. Rampart fails open by default — if the policy engine is unreachable, commands pass through normally. You'll never get locked out of your own machine.</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">How do I update Rampart?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">Same way you installed it. <code>brew upgrade rampart</code> for Homebrew, <code>go install github.com/peg/rampart/cmd/rampart@latest</code> for Go, or download the latest binary from <a href="https://github.com/peg/rampart/releases" style="color: var(--accent);">GitHub Releases</a>. Your policies and audit logs are untouched.</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">How do I uninstall?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">Remove the binary (<code>brew uninstall rampart</code> or delete the binary), then remove the hooks from your agent's settings. For Claude Code, edit <code>~/.claude/settings.json</code> and delete the hooks section. Policies live in <code>~/.rampart/</code> — delete that folder to fully clean up.</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">What's the performance impact?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">Policy evaluation takes less than 10 microseconds — you won't notice it. Rampart adds no measurable latency to your agent's workflow. The policy engine is a pure pattern matcher with no network calls (unless you opt into webhook-based semantic verification).</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Does it work on Windows?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">The policy engine and hook integrations (Claude Code, Cline) work on Windows. Shell wrapping and LD_PRELOAD are Linux/macOS only. See the <a href="https://docs.rampart.sh/integrations/" style="color: var(--accent);">integration guides</a> for details.</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can I use project-specific policies?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">Yes. Put a <code>rampart.yaml</code> in your project root and Rampart will use it. You can also layer global policies (<code>~/.rampart/policies/</code>) with project-specific overrides.</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Is this a sandbox?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">No. Sandboxes isolate the entire process — great for untrusted code, but they break workflows that need real file and network access. Rampart is a policy engine: it lets your agent work normally and only blocks the dangerous stuff. Think of it as a seatbelt, not a cage.</p>
+            </details>
+        </div>
+    </div>
+</section>
+
 <!-- Footer -->
 <footer>
     <div class="container">
         <div class="footer-links">
             <a href="https://github.com/peg/rampart">GitHub</a>
             <a href="https://docs.rampart.sh">Docs</a>
-            <a href="https://github.com/peg/rampart/blob/main/docs/THREAT-MODEL.md">Threat Model</a>
-            <a href="https://github.com/peg/rampart-verify">Sidecar</a>
+            <a href="https://docs.rampart.sh/reference/threat-model/">Threat Model</a>
+            <a href="https://docs.rampart.sh/features/semantic-verification/">Sidecar</a>
             <a href="https://github.com/peg/rampart/blob/main/SECURITY.md">Security</a>
             <a href="mailto:rampartsec@pm.me">Contact</a>
         </div>
