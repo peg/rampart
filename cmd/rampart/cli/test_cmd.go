@@ -16,6 +16,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -63,6 +64,9 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 		return err
 	}
 	defer cleanup()
+
+	// Suppress engine startup logs for clean test output.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	store := engine.NewFileStore(policyPath)
 	eng, err := engine.New(store, nil)
