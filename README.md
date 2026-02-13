@@ -534,8 +534,25 @@ The proxy adds negligible latency. Agents wait seconds for LLM responses — a f
 
 **Run `rampart serve` as a separate user.** If Rampart runs as the same user as your AI agent, the agent can read audit logs and modify policy files. A dedicated `rampart` user prevents this:
 
+```
+┌──────────────────────────────────────────────────┐
+│  agent (unprivileged user)                       │
+│  ┌────────────┐    HTTP :19090    ┌────────────┐ │
+│  │  Claude /   │ ──────────────▶ │  rampart    │ │
+│  │  OpenClaw   │ ◀────────────── │  serve      │ │
+│  └────────────┘  allow / deny    └─────┬──────┘ │
+│   Can't read:                          │        │
+│   • /etc/rampart/     ✖               │        │
+│   • /var/lib/rampart/ ✖         Owns: ▼        │
+│                              ┌──────────────┐   │
+│  rampart (service account)   │ policy.yaml  │   │
+│  nologin, no shell           │ audit/*.jsonl│   │
+│                              └──────────────┘   │
+└──────────────────────────────────────────────────┘
+```
+
 ```bash
-# Create a system user
+# Create a service account
 sudo useradd -r -s /usr/sbin/nologin rampart
 
 # Move config and audit to the new user
