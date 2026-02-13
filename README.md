@@ -506,6 +506,8 @@ rampart setup openclaw --patch-tools
 
 This patches OpenClaw's Read, Write, Edit, and Grep tools to check Rampart before file operations. Requires write access to the OpenClaw installation directory (typically needs `sudo` for global npm installs).
 
+Supports OpenClaw `2026.1.30` – `2026.2.12` (latest).
+
 ⚠️ **Re-run after OpenClaw upgrades** — the patch modifies files in `node_modules` that get replaced on update. Between upgrade and re-patch, file tools bypass Rampart (exec shim remains active).
 
 Works on Linux (systemd) and macOS (launchd).
@@ -530,10 +532,12 @@ The proxy adds negligible latency. Agents wait seconds for LLM responses — a f
 
 ## Security Recommendations
 
+**Don't run your AI agent as root.** If the agent runs as root, no user separation can protect policy files or audit logs — root can read everything. Run your agent framework (OpenClaw, Claude Code, etc.) as an unprivileged user.
+
 **Run `rampart serve` as a separate user.** If Rampart runs as the same user as your AI agent, the agent can read audit logs and modify policy files. A dedicated `rampart` user prevents this:
 
 ```bash
-# Create a system user
+# Create a service account
 sudo useradd -r -s /usr/sbin/nologin rampart
 
 # Move config and audit to the new user
