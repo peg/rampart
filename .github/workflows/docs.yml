@@ -8,12 +8,17 @@ on:
       - 'mkdocs.yml'
   workflow_dispatch:
 
+# NOTE: Docs deploy to peg/rampart-docs repo (docs.rampart.sh).
+# Auto-deploy requires a PAT with repo scope stored as DOCS_DEPLOY_TOKEN.
+# Until configured, deploy manually: mkdocs build && push site/ to rampart-docs gh-pages.
+
 permissions:
   contents: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: ${{ vars.DOCS_DEPLOY_ENABLED == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,5 +29,14 @@ jobs:
       - name: Install dependencies
         run: pip install mkdocs-material mkdocs-minify-plugin
 
-      - name: Build and deploy
-        run: mkdocs gh-deploy --force
+      - name: Build
+        run: mkdocs build
+
+      - name: Deploy to rampart-docs
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          external_repository: peg/rampart-docs
+          publish_branch: gh-pages
+          publish_dir: ./site
+          cname: docs.rampart.sh
