@@ -276,8 +276,7 @@
         }
         .feature-card:hover { border-color: var(--border-light); }
         .feature-card.highlight {
-            border-color: rgba(34, 197, 94, 0.3);
-            background: linear-gradient(135deg, rgba(34, 197, 94, 0.05), transparent);
+            border-color: var(--border-light);
         }
         .feature-icon {
             width: 40px; height: 40px;
@@ -339,7 +338,18 @@
             font-size: 1rem;
             font-weight: 600;
             color: var(--heading);
-            margin-bottom: 8px;
+            margin-bottom: 12px;
+        }
+        .step-code {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            color: var(--green);
+            margin-bottom: 12px;
+            overflow-x: auto;
         }
         .step p { font-size: 0.9rem; line-height: 1.6; }
 
@@ -623,17 +633,20 @@
             <div class="step">
                 <div class="step-num">1</div>
                 <h3>Install</h3>
-                <p>Single binary via Homebrew or Go. No daemon, no Docker, no config files required.</p>
+                <pre class="step-code">brew install peg/rampart/rampart</pre>
+                <p>Single binary. No daemon, no Docker, no config files.</p>
             </div>
             <div class="step">
                 <div class="step-num">2</div>
                 <h3>Connect</h3>
-                <p>One command per agent. Native hooks for Claude Code and Cline, shell shim for everything else.</p>
+                <pre class="step-code">rampart setup claude-code</pre>
+                <p>One command per agent. Also: <span style="color:var(--text-bright)">rampart wrap</span>, <span style="color:var(--text-bright)">rampart mcp</span>, <span style="color:var(--text-bright)">rampart preload</span>.</p>
             </div>
             <div class="step">
                 <div class="step-num">3</div>
                 <h3>Watch</h3>
-                <p>Live dashboard shows every tool call in real time. Green for allowed, red for denied. Audit trail writes automatically.</p>
+                <pre class="step-code">rampart watch</pre>
+                <p>Live dashboard. Green for allowed, red for denied. Audit trail writes automatically.</p>
             </div>
         </div>
     </div>
