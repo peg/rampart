@@ -71,15 +71,7 @@ That's it. Every tool call now goes through Rampart's policy engine. [Full setup
 
 ## How It Works
 
-```mermaid
-graph LR
-    A[AI Agent] -->|tool call| R[Rampart]
-    R -->|evaluate| P[Policy Engine<br/><10μs]
-    P -->|allow| T[Tool executes]
-    P -->|deny| B[Blocked + logged]
-    P -->|log| L[Allowed + logged]
-    R -->|always| AU[Audit Trail]
-```
+![Rampart Architecture](assets/architecture.png)
 
 ## Works With Every Agent
 
