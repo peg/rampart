@@ -504,7 +504,7 @@ This covers all `exec` tool calls. For full file tool coverage (Read, Write, Edi
 rampart setup openclaw --patch-tools
 ```
 
-This patches OpenClaw's Read, Write, and Edit tools to check Rampart before file operations. Requires write access to the OpenClaw installation directory (typically needs `sudo` for global npm installs).
+This patches OpenClaw's Read, Write, Edit, and Grep tools to check Rampart before file operations. Requires write access to the OpenClaw installation directory (typically needs `sudo` for global npm installs).
 
 ⚠️ **Re-run after OpenClaw upgrades** — the patch modifies files in `node_modules` that get replaced on update. Between upgrade and re-patch, file tools bypass Rampart (exec shim remains active).
 

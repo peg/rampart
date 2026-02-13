@@ -125,6 +125,50 @@ patch_tool "read" "{ path, offset, limit }" "const absolutePath = resolveReadPat
 patch_tool "write" "{ path, content }" "const absolutePath = resolveToCwd(path, cwd);"
 patch_tool "edit" "{ path, oldText, newText }" "const absolutePath = resolveToCwd(path, cwd);"
 
+# Grep has a different signature — path is aliased as searchDir
+GREP_FILE="$TOOLS_DIR/grep.js"
+if [ -f "$GREP_FILE" ]; then
+    cp "$GREP_FILE" "${GREP_FILE}.rampart-backup"
+    python3 -c "
+import sys
+with open('$GREP_FILE') as f:
+    code = f.read()
+
+url = '$RAMPART_URL'
+token = '$RAMPART_TOKEN'
+token_expr = 'process.env.RAMPART_TOKEN' if not token else 'process.env.RAMPART_TOKEN || \"' + token + '\"'
+
+orig = '''execute: async (_toolCallId, { pattern, path: searchDir, glob, ignoreCase, literal, context, limit, }, signal) => {
+            return new Promise((resolve, reject) => {'''
+
+patched = '''execute: async (_toolCallId, { pattern, path: searchDir, glob, ignoreCase, literal, context, limit, }, signal) => {
+            /* RAMPART_GREP_CHECK */ try {
+                const __gp = searchDir || \".\";
+                const __rr = await fetch((process.env.RAMPART_URL || \"''' + url + '''\") + \"/v1/tool/grep\", {
+                    method: \"POST\",
+                    headers: { \"Content-Type\": \"application/json\", \"Authorization\": \"Bearer \" + (''' + token_expr + ''') },
+                    body: JSON.stringify({ agent: \"openclaw\", session: \"main\", params: { path: __gp, pattern } }),
+                    signal: AbortSignal.timeout(3000)
+                });
+                if (__rr.status === 403) {
+                    const __rd = await __rr.json().catch(() => ({}));
+                    return { content: [{ type: \"text\", text: \"rampart: \" + (__rd.message || \"policy denied\") }] };
+                }
+            } catch (__re) { /* fail-open: if rampart serve is unreachable, allow */ }
+            return new Promise((resolve, reject) => {'''
+
+if orig in code:
+    code = code.replace(orig, patched, 1)
+    with open('$GREP_FILE', 'w') as f:
+        f.write(code)
+    print('  ✅ grep.js patched')
+else:
+    print('  ⚠️  grep.js: injection point not found (skipping, non-critical)')
+"
+else
+    echo "  ⚠️  grep.js not found (skipping)"
+fi
+
 echo ""
 echo "All tools patched. Restart the gateway:"
 echo "  openclaw gateway restart"
