@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -39,9 +40,16 @@ func (s *JSONLSink) openNewFileLocked(withHeader bool, prevFile string) error {
 		return fmt.Errorf("audit: open jsonl file: %w", err)
 	}
 
+	// Get current file size (file may already exist from earlier today).
+	info, statErr := file.Stat()
+	if statErr != nil {
+		file.Close()
+		return fmt.Errorf("audit: stat jsonl file: %w", statErr)
+	}
+
 	s.file = file
 	s.currentFile = name
-	s.currentSize = 0
+	s.currentSize = info.Size()
 
 	if !withHeader {
 		return nil
@@ -58,7 +66,7 @@ func (s *JSONLSink) rotateLocked() error {
 		s.file = nil
 	}
 
-	if err := s.openNewFileLocked(true, prevFile); err != nil {
+	if err := s.openRotatedFileLocked(prevFile); err != nil {
 		return err
 	}
 
@@ -69,6 +77,39 @@ func (s *JSONLSink) rotateLocked() error {
 	)
 
 	return nil
+}
+
+// openRotatedFileLocked opens the next file for size-based or day-change rotation.
+// For day changes it uses the base daily name; for size rotation within the same day
+// it uses a sequenced name.
+func (s *JSONLSink) openRotatedFileLocked(prevFile string) error {
+	var name string
+	today := time.Now().UTC().Format("2006-01-02")
+	if strings.HasPrefix(prevFile, today) {
+		// Same day — size rotation, use sequence number.
+		name = s.nextRotatedFilenameLocked()
+	} else {
+		// New day — use base daily name.
+		name = s.nextFilenameLocked()
+	}
+
+	path := filepath.Join(s.dir, name)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("audit: open jsonl file: %w", err)
+	}
+
+	info, statErr := file.Stat()
+	if statErr != nil {
+		file.Close()
+		return fmt.Errorf("audit: stat jsonl file: %w", statErr)
+	}
+
+	s.file = file
+	s.currentFile = name
+	s.currentSize = info.Size()
+
+	return s.writeChainContinuationLocked(prevFile)
 }
 
 func (s *JSONLSink) writeChainContinuationLocked(prevFile string) error {
@@ -97,11 +138,31 @@ func (s *JSONLSink) writeChainContinuationLocked(prevFile string) error {
 	return nil
 }
 
+// dayChangedLocked reports whether the current date (UTC) differs from the
+// date encoded in the current filename.
+func (s *JSONLSink) dayChangedLocked() bool {
+	today := time.Now().UTC().Format("2006-01-02")
+	// currentFile is "YYYY-MM-DD.jsonl" or "YYYY-MM-DD.N.jsonl"
+	return !strings.HasPrefix(s.currentFile, today)
+}
+
+// nextFilenameLocked returns the daily file name. On the first call of a day
+// it returns "YYYY-MM-DD.jsonl". Size-based rotation within the same day is
+// handled by nextRotatedFilenameLocked which appends a sequence number.
 func (s *JSONLSink) nextFilenameLocked() string {
-	now := time.Now().UTC().Truncate(time.Second)
-	if !s.lastFileAt.IsZero() && !now.After(s.lastFileAt) {
-		now = s.lastFileAt.Add(time.Second)
+	return time.Now().UTC().Format("2006-01-02") + ".jsonl"
+}
+
+// nextRotatedFilenameLocked returns a sequenced filename for size-based
+// rotation within the same day, e.g. "2026-02-13.1.jsonl".
+func (s *JSONLSink) nextRotatedFilenameLocked() string {
+	today := time.Now().UTC().Format("2006-01-02")
+	// Find next available sequence number.
+	for seq := 1; ; seq++ {
+		name := fmt.Sprintf("%s.p%d.jsonl", today, seq)
+		path := filepath.Join(s.dir, name)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return name
+		}
 	}
-	s.lastFileAt = now
-	return "audit-" + now.Format("2006-01-02T15-04-05") + ".jsonl"
 }

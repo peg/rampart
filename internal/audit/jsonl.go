@@ -36,7 +36,6 @@ type JSONLSink struct {
 	currentSize    int64
 	lastHash       string
 	eventCount     int64
-	lastFileAt     time.Time
 	fsync          bool
 	rotateSize     int64
 	anchorInterval int
@@ -116,7 +115,7 @@ func (s *JSONLSink) Write(event Event) error {
 	}
 	line = append(line, '\n')
 
-	if s.shouldRotateLocked(len(line)) {
+	if s.shouldRotateLocked(len(line)) || s.dayChangedLocked() {
 		if err := s.rotateLocked(); err != nil {
 			return err
 		}
