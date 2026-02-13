@@ -654,6 +654,12 @@ policies:
             - "ncat -e *"
             - "bash -i >*"
         message: "Reverse shell detected"
+      - action: deny
+        when:
+          command_matches:
+            - "crontab -r"
+            - "crontab -r *"
+        message: "Crontab deletion blocked"
 
   - name: log-privileged
     match:
@@ -708,6 +714,7 @@ policies:
             - "cat */.bash_history"
             - "cat */.zsh_history"
             - "cat */.*_history"
+            - "cat /proc/**/environ"
         message: "Credential access blocked"
 `
 

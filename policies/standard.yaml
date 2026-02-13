@@ -117,7 +117,7 @@ policies:
             - "cat */.python_history"
             - "cat */.*_history"
             - "cat /etc/sudoers.d/*"
-            - "cat /proc/*/environ"
+            - "cat /proc/**/environ"
         message: "Credential file access via shell blocked"
 
   - name: block-sensitive-writes
