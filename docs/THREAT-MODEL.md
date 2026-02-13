@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-02-12 | Applies to: v0.1.8
+> Last reviewed: 2026-02-13 | Applies to: v0.1.9-dev
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -49,11 +49,11 @@ Policy files are the security boundary. If an attacker can modify policy files, 
 Rampart evaluates the command string passed to the shell. This applies to **all integration methods** — native hooks (Claude Code, Cline), wrap mode, LD_PRELOAD, and the HTTP API all see the same command string. If an agent runs `python3 script.py`, Rampart sees and evaluates `python3 script.py` — but cannot inspect what `script.py` does internally.
 
 **Mitigations:**
+- **LD_PRELOAD cascade** (v0.1.9+): When using `rampart preload` or `rampart wrap`, child processes spawned by allowed commands automatically inherit the interceptor. This means `python3 script.py` calling `os.system("rm -rf /")` is caught — the subprocess goes through Rampart's policy engine. Covers `execve`, `execvpe`, and `posix_spawn` call paths.
 - The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar uses LLM classification to assess intent of commands like `python3 -c "..."` based on the inline code
-- File write hooks can catch the creation of malicious scripts before execution
 - Patterns like `python3 -c *` can be routed to semantic verification via `action: webhook`
 
-**Remaining surface:** Multi-step sequences (write file, then execute) are an active area of development. In practice, AI agents overwhelmingly shell out via `subprocess`/`os.system` rather than using native APIs — and those shell-outs go through Rampart.
+**Remaining surface:** The cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered. Multi-step sequences (write file, then execute) remain an active area of development.
 
 ### 2. Audit Log Rewrite
 
