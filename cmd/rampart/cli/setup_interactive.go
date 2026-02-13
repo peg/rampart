@@ -288,7 +288,24 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 		}
 	}
 
-	// 7. Done
+	// 7. Shell completions
+	if isTerminal(os.Stdin) {
+		installCompletions := force
+		if !force {
+			fmt.Fprintln(out, "")
+			fmt.Fprint(out, "Would you like to install shell completions? [Y/n] ")
+			ans := readLine(scanner)
+			ans = strings.TrimSpace(strings.ToLower(ans))
+			installCompletions = ans == "" || ans == "y" || ans == "yes"
+		}
+		if installCompletions {
+			if err := installShellCompletions(cmd, out); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Shell completions failed: %v\n", err)
+			}
+		}
+	}
+
+	// 8. Done
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "✅ Setup complete!")
 	fmt.Fprintln(out, "")
@@ -324,6 +341,79 @@ func installPolicy(out io.Writer, home, profile string) error {
 		return fmt.Errorf("setup: write policy: %w", err)
 	}
 	fmt.Fprintf(out, "✓ Policy written to %s\n", policyPath)
+	return nil
+}
+
+// installShellCompletions detects the user's shell and installs completion scripts.
+func installShellCompletions(cmd *cobra.Command, out io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("setup: resolve home: %w", err)
+	}
+
+	shell := os.Getenv("SHELL")
+	// Strip rampart-shim if that's set as SHELL
+	if strings.Contains(shell, "rampart") {
+		shell = "/bin/bash"
+	}
+
+	rootCmd := cmd.Root()
+
+	var completionDir, completionFile string
+
+	switch {
+	case strings.HasSuffix(shell, "/zsh"):
+		completionDir = filepath.Join(home, ".zsh", "completions")
+		completionFile = filepath.Join(completionDir, "_rampart")
+		if err := os.MkdirAll(completionDir, 0o755); err != nil {
+			return fmt.Errorf("setup: create zsh completions dir: %w", err)
+		}
+		f, err := os.Create(completionFile)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if err := rootCmd.GenZshCompletion(f); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "✓ Zsh completions installed to %s\n", completionFile)
+		fmt.Fprintln(out, "  Add this to ~/.zshrc if not already present:")
+		fmt.Fprintf(out, "    fpath=(~/.zsh/completions $fpath)\n")
+
+	case strings.HasSuffix(shell, "/fish"):
+		completionDir = filepath.Join(home, ".config", "fish", "completions")
+		completionFile = filepath.Join(completionDir, "rampart.fish")
+		if err := os.MkdirAll(completionDir, 0o755); err != nil {
+			return fmt.Errorf("setup: create fish completions dir: %w", err)
+		}
+		f, err := os.Create(completionFile)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if err := rootCmd.GenFishCompletion(f, true); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "✓ Fish completions installed to %s\n", completionFile)
+
+	default:
+		// Default to bash
+		completionDir = filepath.Join(home, ".local", "share", "bash-completion", "completions")
+		completionFile = filepath.Join(completionDir, "rampart")
+		if err := os.MkdirAll(completionDir, 0o755); err != nil {
+			return fmt.Errorf("setup: create bash completions dir: %w", err)
+		}
+		f, err := os.Create(completionFile)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if err := rootCmd.GenBashCompletion(f); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "✓ Bash completions installed to %s\n", completionFile)
+	}
+
 	return nil
 }
 
