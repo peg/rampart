@@ -127,6 +127,8 @@ When `rampart serve` is unreachable (crashed, network issue), the shim defaults 
 | Separate user | ❌ No | ❌ No | Production, unsupervised agents |
 | Separate user + SIEM | ❌ No | ❌ No | Enterprise, compliance |
 
+**Prerequisite:** The agent must run as a non-root user. If the agent runs as root, user separation provides no protection — root can read and modify all files regardless of ownership.
+
 ## Philosophy
 
 Rampart is a **seatbelt, not a roll cage**. It catches the vast majority of dangerous situations an AI agent will encounter — accidental or manipulated. It doesn't claim to stop every possible attack vector, and we're honest about what falls outside its scope.

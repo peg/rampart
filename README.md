@@ -530,6 +530,8 @@ The proxy adds negligible latency. Agents wait seconds for LLM responses — a f
 
 ## Security Recommendations
 
+**Don't run your AI agent as root.** If the agent runs as root, no user separation can protect policy files or audit logs — root can read everything. Run your agent framework (OpenClaw, Claude Code, etc.) as an unprivileged user.
+
 **Run `rampart serve` as a separate user.** If Rampart runs as the same user as your AI agent, the agent can read audit logs and modify policy files. A dedicated `rampart` user prevents this:
 
 ```bash
