@@ -475,11 +475,7 @@ func removeOpenClaw(cmd *cobra.Command) error {
 	}
 
 	// Restore patched file tools
-	candidates := []string{
-		"/usr/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
-		"/usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
-		filepath.Join(home, ".npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
-	}
+	candidates := openclawToolsCandidates()
 	for _, d := range candidates {
 		for _, tool := range []string{"read", "write", "edit", "grep"} {
 			backup := filepath.Join(d, tool+".js.rampart-backup")
@@ -701,14 +697,19 @@ func hasRampartHook(settings claudeSettings) bool {
 	return false
 }
 
-func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
-	// Find the tools directory
+// openclawToolsCandidates returns possible paths for OpenClaw's pi-coding-agent tools directory.
+func openclawToolsCandidates() []string {
 	home, _ := os.UserHomeDir()
-	candidates := []string{
+	return []string{
 		"/usr/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
 		"/usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
 		filepath.Join(home, ".npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
 	}
+}
+
+func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
+	// Find the tools directory
+	candidates := openclawToolsCandidates()
 
 	var toolsDir string
 	for _, d := range candidates {
@@ -844,7 +845,9 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 
 		newGrep := strings.Replace(string(grepContent), grepOrig, grepCheck, 1)
 		if newGrep != string(grepContent) {
-			if err := os.WriteFile(grepFile, []byte(newGrep), 0o644); err == nil {
+			if err := os.WriteFile(grepFile, []byte(newGrep), 0o644); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ grep.js: write failed: %v\n", err)
+			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "  ✓ grep.js patched\n")
 			}
 		} else {
