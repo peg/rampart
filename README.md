@@ -394,10 +394,9 @@ version: "1"
 default_action: allow
 
 notify:
-  webhook:
-    url: "https://discord.com/api/webhooks/your/webhook"
-    # Or Slack: "https://hooks.slack.com/services/your/webhook"
-    events: ["deny"]  # Only notify on denied commands (options: deny, log, ask, allow)
+  url: "https://discord.com/api/webhooks/your/webhook"
+  # Or Slack: "https://hooks.slack.com/services/your/webhook"
+  on: ["deny"]  # Only notify on denied commands (options: deny, log)
 
 policies:
   # ... your policies

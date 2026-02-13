@@ -161,7 +161,7 @@ policies:
     match:
       tool: ["write"]
     rules:
-      - action: ask
+      - action: require_approval
         when:
           path_matches: ["**/.*"]  # Hidden files
         message: "Writing to hidden file — approve?"

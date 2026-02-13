@@ -59,7 +59,7 @@ func TestMatchGlob(t *testing.T) {
 	}
 }
 
-func TestCleanPath(t *testing.T) {
+func TestCleanPaths(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
@@ -72,9 +72,9 @@ func TestCleanPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := cleanPath(tt.input)
-			if got != tt.want {
-				t.Errorf("cleanPath(%q) = %q, want %q", tt.input, got, tt.want)
+			cleaned, _ := cleanPaths(tt.input)
+			if cleaned != tt.want {
+				t.Errorf("cleanPaths(%q) cleaned = %q, want %q", tt.input, cleaned, tt.want)
 			}
 		})
 	}
