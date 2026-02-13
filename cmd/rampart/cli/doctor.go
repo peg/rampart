@@ -142,51 +142,56 @@ func doctorServer(w io.Writer) int {
 func doctorHooks(w io.Writer) int {
 	issues := 0
 
-	// Claude Code hooks
+	// Claude Code hooks — only check if ~/.claude/ exists
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return 0
 	}
-	claudeSettings := filepath.Join(home, ".claude", "settings.json")
-	data, err := os.ReadFile(claudeSettings)
-	if err == nil {
-		// Count hook matchers
-		var settings map[string]any
-		if json.Unmarshal(data, &settings) == nil {
-			count := countClaudeHookMatchers(settings)
-			if count > 0 {
-				fmt.Fprintf(w, "✓ Hooks: Claude Code (%d matchers in settings.json)\n", count)
+	claudeDir := filepath.Join(home, ".claude")
+	if _, err := os.Stat(claudeDir); err == nil {
+		claudeSettingsPath := filepath.Join(claudeDir, "settings.json")
+		data, err := os.ReadFile(claudeSettingsPath)
+		if err == nil {
+			var settings map[string]any
+			if json.Unmarshal(data, &settings) == nil {
+				count := countClaudeHookMatchers(settings)
+				if count > 0 {
+					fmt.Fprintf(w, "✓ Hooks: Claude Code (%d matchers in settings.json)\n", count)
+				} else {
+					fmt.Fprintln(w, "✗ Hooks: Claude Code (no Rampart hooks in settings.json)")
+					issues++
+				}
 			} else {
-				fmt.Fprintln(w, "✗ Hooks: Claude Code (no Rampart hooks in settings.json)")
+				fmt.Fprintln(w, "✗ Hooks: Claude Code (invalid settings.json)")
 				issues++
 			}
 		} else {
-			fmt.Fprintln(w, "✗ Hooks: Claude Code (invalid settings.json)")
+			fmt.Fprintln(w, "✗ Hooks: Claude Code (no settings.json found)")
 			issues++
 		}
-	} else {
-		fmt.Fprintln(w, "✗ Hooks: Claude Code (not installed)")
-		issues++
 	}
 
-	// Cline hooks
-	clineDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if entries, err := os.ReadDir(clineDir); err == nil {
-		hookCount := 0
-		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), "rampart-") {
-				hookCount++
+	// Cline hooks — only check if ~/Documents/Cline/ exists
+	clineBaseDir := filepath.Join(home, "Documents", "Cline")
+	if _, err := os.Stat(clineBaseDir); err == nil {
+		clineDir := filepath.Join(clineBaseDir, "Hooks")
+		if entries, err := os.ReadDir(clineDir); err == nil {
+			hookCount := 0
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), "rampart-") {
+					hookCount++
+				}
 			}
-		}
-		if hookCount > 0 {
-			fmt.Fprintf(w, "✓ Hooks: Cline (%d hook scripts)\n", hookCount)
+			if hookCount > 0 {
+				fmt.Fprintf(w, "✓ Hooks: Cline (%d hook scripts)\n", hookCount)
+			} else {
+				fmt.Fprintln(w, "✗ Hooks: Cline (no Rampart hooks found)")
+				issues++
+			}
 		} else {
-			fmt.Fprintln(w, "✗ Hooks: Cline (no Rampart hooks found)")
+			fmt.Fprintln(w, "✗ Hooks: Cline (no Hooks directory found)")
 			issues++
 		}
-	} else {
-		fmt.Fprintln(w, "✗ Hooks: Cline (not installed)")
-		issues++
 	}
 
 	return issues

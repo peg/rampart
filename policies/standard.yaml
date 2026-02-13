@@ -18,6 +18,23 @@ policies:
             - "chmod -R 777 /"
             - "> /dev/sda"
         message: "Destructive command blocked"
+      - action: deny
+        when:
+          command_matches:
+            - "nc -e *"
+            - "nc -c *"
+            - "ncat -e *"
+            - "bash -i >*"
+            - "python* -c *import socket*connect*"
+            - "perl -e *socket*"
+            - "ruby -rsocket*"
+        message: "Reverse shell detected"
+      - action: deny
+        when:
+          command_matches:
+            - "crontab -r"
+            - "crontab -r *"
+        message: "Crontab deletion blocked"
 
   - name: log-privileged
     match:
@@ -85,11 +102,27 @@ policies:
             - "base64 */.aws/*"
             - "cp */.ssh/*"
             - "cp */.aws/*"
+            - "cat /etc/shadow"
+            - "cat /etc/passwd"
+            - "cat /etc/gshadow"
+            - "cat /etc/master.passwd"
+            - "head /etc/shadow"
+            - "tail /etc/shadow"
+            - "less /etc/shadow"
+            - "more /etc/shadow"
+            - "grep * /etc/shadow"
+            - "cat /etc/sudoers"
+            - "cat */.bash_history"
+            - "cat */.zsh_history"
+            - "cat */.python_history"
+            - "cat */.*_history"
+            - "cat /etc/sudoers.d/*"
+            - "cat /proc/**/environ"
         message: "Credential file access via shell blocked"
 
   - name: block-sensitive-writes
     match:
-      tool: ["write"]
+      tool: ["write", "edit"]
     rules:
       - action: deny
         when:
