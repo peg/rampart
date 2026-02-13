@@ -15,7 +15,6 @@ package engine
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -28,20 +27,19 @@ import (
 // traversal tricks like "/etc/../etc/shadow" are normalized before
 // glob matching, regardless of which entry point (proxy, interceptor,
 // MCP, SDK) produced the path.
-func cleanPath(p string) string {
+// cleanPaths returns both the cleaned path and the symlink-resolved path.
+// On macOS, /etc -> /private/etc, so policies matching "/etc/**" need to
+// check both forms. For non-existent files, both values are the same.
+func cleanPaths(p string) (cleaned string, resolved string) {
 	if p == "" {
-		return p
+		return p, p
 	}
-	cleaned := filepath.Clean(p)
-	resolved, err := filepath.EvalSymlinks(cleaned)
+	cleaned = filepath.Clean(p)
+	r, err := filepath.EvalSymlinks(cleaned)
 	if err != nil {
-		// File may not exist yet (e.g. write to new path) — use Clean result.
-		if os.IsNotExist(err) {
-			return cleaned
-		}
-		return cleaned
+		return cleaned, cleaned
 	}
-	return resolved
+	return cleaned, r
 }
 
 // MatchGlob reports whether name matches the glob pattern.
@@ -192,11 +190,14 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 	}
 
 	if len(cond.PathMatches) > 0 {
-		path := cleanPath(call.Path())
-		if path == "" {
+		cleaned, resolved := cleanPaths(call.Path())
+		if cleaned == "" {
 			return false, ""
 		}
-		matched := matchFirst(cond.PathMatches, path)
+		matched := matchFirst(cond.PathMatches, cleaned)
+		if matched == "" && resolved != cleaned {
+			matched = matchFirst(cond.PathMatches, resolved)
+		}
 		if matched == "" {
 			return false, ""
 		}
@@ -259,11 +260,19 @@ func matchCondition(cond Condition, call ToolCall) bool {
 	// Path matching (for read/write tool calls).
 	// Canonicalize path to prevent traversal bypasses (e.g. /etc/../etc/shadow).
 	if len(cond.PathMatches) > 0 {
-		path := cleanPath(call.Path())
-		if path == "" || !matchAny(cond.PathMatches, path) {
+		cleaned, resolved := cleanPaths(call.Path())
+		if cleaned == "" {
 			return false
 		}
-		if matchAny(cond.PathNotMatches, path) {
+		pathMatch := matchAny(cond.PathMatches, cleaned)
+		if !pathMatch && resolved != cleaned {
+			pathMatch = matchAny(cond.PathMatches, resolved)
+		}
+		if !pathMatch {
+			return false
+		}
+		// Check exclusions against both forms too.
+		if matchAny(cond.PathNotMatches, cleaned) || (resolved != cleaned && matchAny(cond.PathNotMatches, resolved)) {
 			return false
 		}
 		matched = true

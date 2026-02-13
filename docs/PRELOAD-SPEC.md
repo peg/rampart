@@ -1,8 +1,7 @@
 # Rampart Preload — Syscall-Level Agent Protection
 
-**Status:** Spec / Not yet implemented  
-**Target:** v0.2.0  
-**Effort:** 4-5 weeks
+**Status:** Shipped (v0.1.5+)  
+**See also:** `rampart preload --help`, [README](../README.md#ld_preload)
 
 ## Overview
 

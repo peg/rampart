@@ -11,7 +11,7 @@ Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Log
 
 ## Design Decisions
 
-**Fail-closed.** If Rampart crashes, tool calls fail. The agent doesn't get unrestricted access. A security layer that fails open is a logging tool.
+**Fail-open by default.** If Rampart crashes or is unreachable, tool calls pass through. This is deliberate — fail-closed locks you out of your own machine. See the [threat model](THREAT-MODEL.md) for trade-offs and mitigations.
 
 **Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call run?" — and doesn't need a general-purpose policy language. Three lines of YAML beats fifteen lines of Rego. The custom engine also evaluates in <10µs vs OPA's 0.1-1ms.
 
