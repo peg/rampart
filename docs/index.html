@@ -10,7 +10,7 @@
     <meta property="og:image" content="https://rampart.sh/og.png">
     <meta property="og:url" content="https://rampart.sh">
     <meta name="twitter:card" content="summary_large_image">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 104 104'><mask id='m' maskUnits='userSpaceOnUse' x='0' y='0' width='105' height='105'><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 49.264)' fill='white'/><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 76.631)' fill='white'/><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 54.74 76.631)' fill='white'/><rect width='104' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 104)' fill='white'/><rect width='104' height='21.895' rx='3' transform='matrix(1 0 0 -1 0 21.895)' fill='white'/><rect width='49.264' height='21.895' rx='3' transform='matrix(1 0 0 -1 54.74 49.264)' fill='white'/></mask><g mask='url(%23m)'><rect width='104' height='104' rx='3' transform='matrix(1 0 0 -1 0 104)' fill='%23FF6392'/></g></svg>">
     <style>
         :root {
             --bg: #09090b;
@@ -21,12 +21,14 @@
             --text: #a1a1aa;
             --text-bright: #e4e4e7;
             --heading: #fafafa;
+            --accent: #FF6392;
+            --accent-dim: #cc4f75;
+            --accent-bg: rgba(255, 99, 146, 0.1);
+            --accent-border: rgba(255, 99, 146, 0.2);
             --green: #22c55e;
-            --green-dim: #16a34a;
             --red: #ef4444;
             --orange: #f59e0b;
             --blue: #3b82f6;
-            --purple: #a78bfa;
             --cyan: #06b6d4;
         }
 
@@ -68,8 +70,11 @@
             color: var(--heading);
             text-decoration: none;
             letter-spacing: -0.02em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        nav .logo span { color: var(--green); }
+        nav .logo svg { flex-shrink: 0; }
         nav .links { display: flex; gap: 24px; align-items: center; }
         nav .links a {
             color: var(--text);
@@ -97,7 +102,7 @@
             display: flex;
             justify-content: center;
             gap: 12px;
-            margin-bottom: 24px;
+            margin-bottom: 28px;
             flex-wrap: wrap;
         }
         .hero .badge {
@@ -124,7 +129,7 @@
             margin-bottom: 20px;
         }
         .hero h1 .accent {
-            background: linear-gradient(135deg, var(--green), var(--cyan));
+            background: linear-gradient(135deg, #d94e78, var(--accent));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -132,7 +137,7 @@
         .hero .sub {
             font-size: 1.15rem;
             color: var(--text);
-            max-width: 560px;
+            max-width: 580px;
             margin: 0 auto 40px;
             line-height: 1.7;
         }
@@ -155,12 +160,12 @@
             border: none;
             cursor: pointer;
         }
-        .btn:focus { outline: 2px solid var(--green); outline-offset: 2px; }
+        .btn:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
         .btn-primary {
-            background: var(--green);
+            background: var(--accent);
             color: #000;
         }
-        .btn-primary:hover { background: var(--green-dim); }
+        .btn-primary:hover { background: var(--accent-dim); }
         .btn-ghost {
             background: transparent;
             color: var(--text-bright);
@@ -236,6 +241,64 @@
             font-size: 0.78rem;
         }
 
+        /* ── Positioning Section ── */
+        .positioning {
+            padding: 80px 0;
+            border-top: 1px solid var(--border);
+        }
+        .pos-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            max-width: 780px;
+        }
+        .pos-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+        }
+        .pos-card.negative { opacity: 0.6; }
+        .pos-card.positive { border-color: var(--accent-border); }
+        .pos-card .label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 12px;
+        }
+        .pos-card.negative .label { color: var(--text); }
+        .pos-card.positive .label { color: var(--accent); }
+        .pos-card h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--heading);
+            margin-bottom: 8px;
+        }
+        .pos-card p {
+            font-size: 0.9rem;
+            color: var(--text);
+            line-height: 1.6;
+        }
+        .pos-card pre {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.82rem;
+            color: var(--text);
+            margin-top: 16px;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-light) transparent;
+        }
+        .pos-card pre::-webkit-scrollbar { height: 4px; }
+        .pos-card pre::-webkit-scrollbar-track { background: transparent; }
+        .pos-card pre::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
+        .pos-card.positive pre { color: var(--accent); }
+        .pos-strike { text-decoration: line-through; color: var(--text); opacity: 0.5; }
+
         /* ── Features Grid ── */
         .features {
             padding: 80px 0;
@@ -246,7 +309,7 @@
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.1em;
-            color: var(--green);
+            color: var(--accent);
             margin-bottom: 12px;
         }
         .section-title {
@@ -275,9 +338,6 @@
             transition: border-color 0.2s;
         }
         .feature-card:hover { border-color: var(--border-light); }
-        .feature-card.highlight {
-            border-color: var(--border-light);
-        }
         .feature-icon {
             width: 40px; height: 40px;
             display: flex;
@@ -304,8 +364,8 @@
             display: inline-block;
             font-family: 'SF Mono', monospace;
             font-size: 0.8rem;
-            color: var(--green);
-            background: rgba(34, 197, 94, 0.1);
+            color: var(--accent);
+            background: var(--accent-bg);
             padding: 2px 8px;
             border-radius: 4px;
             margin-top: 8px;
@@ -327,9 +387,9 @@
             justify-content: center;
             width: 32px; height: 32px;
             border-radius: 8px;
-            background: rgba(34, 197, 94, 0.1);
-            border: 1px solid rgba(34, 197, 94, 0.2);
-            color: var(--green);
+            background: var(--accent-bg);
+            border: 1px solid var(--accent-border);
+            color: var(--accent);
             font-size: 0.85rem;
             font-weight: 700;
             margin-bottom: 16px;
@@ -347,10 +407,15 @@
             padding: 10px 14px;
             font-family: 'SF Mono', 'Fira Code', monospace;
             font-size: 0.85rem;
-            color: var(--green);
+            color: var(--accent);
             margin-bottom: 12px;
             overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-light) transparent;
         }
+        .step-code::-webkit-scrollbar { height: 4px; }
+        .step-code::-webkit-scrollbar-track { background: transparent; }
+        .step-code::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
         .step p { font-size: 0.9rem; line-height: 1.6; }
 
         /* ── Compatibility ── */
@@ -378,7 +443,7 @@
         .agent-chip .dot {
             width: 8px; height: 8px;
             border-radius: 50%;
-            background: var(--green);
+            background: var(--accent);
             flex-shrink: 0;
         }
 
@@ -420,20 +485,17 @@
             border: 1px solid var(--border);
             border-radius: 6px;
             padding: 12px 16px;
-            padding-right: 48px;
             font-family: 'SF Mono', 'Fira Code', monospace;
             font-size: 0.85rem;
             color: var(--heading);
             overflow-x: auto;
             margin: 0;
-            position: relative;
             scrollbar-width: thin;
             scrollbar-color: var(--border-light) transparent;
         }
         .install-card pre::-webkit-scrollbar { height: 4px; }
         .install-card pre::-webkit-scrollbar-track { background: transparent; }
         .install-card pre::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
-        /* */
         .copy-btn {
             display: block;
             margin: 8px 0 0 auto;
@@ -448,7 +510,7 @@
             transition: all 0.15s;
         }
         .copy-btn:hover { color: var(--heading); border-color: var(--border-light); }
-        .copy-btn.copied { color: var(--green); border-color: var(--green); }
+        .copy-btn.copied { color: var(--accent); border-color: var(--accent); }
 
         /* ── Footer ── */
         footer {
@@ -461,7 +523,7 @@
             font-size: 0.85rem;
         }
         footer a { color: var(--text-bright); text-decoration: none; }
-        footer a:hover { color: var(--green); }
+        footer a:hover { color: var(--accent); }
         footer .footer-links {
             display: flex;
             justify-content: center;
@@ -474,6 +536,7 @@
         @media (max-width: 768px) {
             .hero { padding: 60px 0 48px; }
             .steps { grid-template-columns: 1fr; gap: 24px; }
+            .pos-grid { grid-template-columns: 1fr; }
             nav .links a.hide-mobile { display: none; }
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
@@ -492,7 +555,28 @@
 
 <nav>
     <div class="inner">
-        <a href="/" class="logo"><span>▌</span>rampart</a>
+        <a href="/" class="logo">
+            <svg width="24" height="24" viewBox="0 0 104 104" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <mask id="mask0" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="105" height="105">
+                    <rect width="49.264" height="21.895" rx="3" transform="matrix(1 0 0 -1 0 49.264)" fill="white"/>
+                    <rect width="49.264" height="21.895" rx="3" transform="matrix(1 0 0 -1 0 76.631)" fill="white"/>
+                    <rect width="49.264" height="21.895" rx="3" transform="matrix(1 0 0 -1 54.74 76.631)" fill="white"/>
+                    <rect width="104" height="21.895" rx="3" transform="matrix(1 0 0 -1 0 104)" fill="white"/>
+                    <rect width="104" height="21.895" rx="3" transform="matrix(1 0 0 -1 0 21.895)" fill="white"/>
+                    <rect width="49.264" height="21.895" rx="3" transform="matrix(1 0 0 -1 54.74 49.264)" fill="white"/>
+                </mask>
+                <g mask="url(#mask0)">
+                    <rect width="104" height="104" rx="3" transform="matrix(1 0 0 -1 0 104)" fill="url(#g1)"/>
+                </g>
+                <defs>
+                    <linearGradient id="g1" x1="0" y1="0" x2="97.795" y2="109.54" gradientUnits="userSpaceOnUse">
+                        <stop stop-color="#993B58"/>
+                        <stop offset="0.457" stop-color="#FF6392"/>
+                    </linearGradient>
+                </defs>
+            </svg>
+            rampart
+        </a>
         <div class="links">
             <a href="https://github.com/peg/rampart/blob/main/README.md" class="hide-mobile">Docs</a>
             <a href="https://github.com/peg/rampart/blob/main/docs/THREAT-MODEL.md" class="hide-mobile">Threat Model</a>
@@ -512,9 +596,9 @@
                 <span style="color:var(--text);">stars</span>
             </a>
         </div>
-        <h1>A firewall for <span class="accent">AI agents</span></h1>
+        <h1>Sandboxes break your workflow.<br><span class="accent">Rampart doesn't.</span></h1>
         <p class="sub">
-            Policy engine that controls what Claude Code, Cursor, Codex, and any AI tool can do on your machine. Microsecond evaluation. Hash-chained audit trail.
+            Open-source firewall for AI agents. Your agent keeps full access — Rampart just blocks the dangerous stuff. Microsecond policy evaluation. Tamper-proof audit trail.
         </p>
         <div class="hero-buttons">
             <a href="https://github.com/peg/rampart" class="btn btn-primary">
@@ -606,39 +690,68 @@
     </div>
 </section>
 
+<!-- Positioning: Sandbox vs Rampart -->
+<section class="positioning">
+    <div class="container">
+        <div class="section-label">A different approach</div>
+        <h2 class="section-title">Your agent needs access to work.<br>It just shouldn't have access to <em>everything</em>.</h2>
+        <p class="section-desc">Sandboxes are great for isolation — but they often block the tools your agent actually needs. Rampart takes a complementary approach: let the agent work normally and block the specific things that are dangerous.</p>
+        <div class="pos-grid">
+            <div class="pos-card negative">
+                <div class="label">Sandbox approach</div>
+                <h3>Lock everything, allow a few things</h3>
+                <p>Agent can't install deps, run tests against your DB, or hit your staging API. Secure — but you end up fighting the sandbox to get work done.</p>
+                <pre><span style="color:#484f58;">$ sandbox --allow ./project -- agent</span>
+<span style="color:#ef4444;">✗</span> npm install        <span style="color:#484f58;"># denied</span>
+<span style="color:#ef4444;">✗</span> pytest --db-url ... <span style="color:#484f58;"># denied</span>
+<span style="color:#ef4444;">✗</span> curl staging.api    <span style="color:#484f58;"># denied</span></pre>
+            </div>
+            <div class="pos-card positive">
+                <div class="label">Rampart approach</div>
+                <h3>Allow everything, block what's dangerous</h3>
+                <p>Agent works normally — Rampart only intervenes on credential access, data exfiltration, and destructive commands.</p>
+                <pre>$ rampart setup claude-code
+<span style="color:#22c55e;">✔</span> npm install        <span style="color:#484f58;"># allowed</span>
+<span style="color:#22c55e;">✔</span> pytest --db-url ... <span style="color:#484f58;"># allowed</span>
+<span style="color:#FF6392;">✗</span> cat ~/.ssh/id_rsa   <span style="color:#484f58;"># denied</span></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
 <!-- Features -->
 <section class="features">
     <div class="container">
-        <div class="section-label">Why Rampart</div>
-        <h2 class="section-title">Security without the sandbox tax</h2>
-        <p class="section-desc">Traditional sandboxing is all-or-nothing. Rampart gives you granular control over every tool call — allow, deny, or log — with near-zero overhead.</p>
+        <div class="section-label">Under the hood</div>
+        <h2 class="section-title">Security that stays out of your way</h2>
+        <p class="section-desc">One Go binary. No daemon. No cloud dependency. Evaluates every tool call in microseconds against your YAML policies.</p>
         <div class="feature-grid">
-            <div class="feature-card highlight">
+            <div class="feature-card">
                 <div class="feature-icon">⚡</div>
                 <h3>Microsecond overhead</h3>
                 <p>Policy evaluation in single-digit microseconds. Your agent won't notice it's there. Single Go binary, zero runtime dependencies.</p>
                 <span class="feature-stat">~5µs avg evaluation</span>
             </div>
-            <div class="feature-card highlight">
+            <div class="feature-card">
                 <div class="feature-icon">🔗</div>
-                <h3>Hash-chained audit trail</h3>
-                <p>Every tool call logged with SHA-256 chain. Tamper with one record and the chain breaks. Export to your SIEM via syslog or CEF.</p>
+                <h3>Tamper-proof audit trail</h3>
+                <p>Every tool call logged with SHA-256 hash chain. Modify one record and the chain breaks. Export to your SIEM via syslog or CEF.</p>
                 <span class="feature-stat">RFC 5424 + CEF</span>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">📋</div>
-                <h3>YAML policies</h3>
-                <p>Readable, version-controlled security rules. Allow, deny, or log by tool type, command pattern, file path, or domain.</p>
+                <h3>Your rules, your policies</h3>
+                <p>Define custom security policies in simple YAML. Allow, deny, or log by tool type, command pattern, file path, or domain. Version-control them alongside your code.</p>
             </div>
-            <div class="feature-card highlight">
+            <div class="feature-card">
                 <div class="feature-icon">🔌</div>
-                <h3>Seven integration methods</h3>
-                <p>Native hooks, shell shim, LD_PRELOAD, MCP proxy, HTTP API, OpenClaw patches — pick what fits. One tool, any agent.</p>
+                <h3>Works with every agent</h3>
+                <p>Native hooks for Claude Code and Cline. MCP proxy for Claude Desktop and Cursor. Shell wrapper and HTTP API for everything else. One tool, any agent.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🧠</div>
                 <h3>Semantic verification sidecar</h3>
-                <p>Pattern matching handles 95% of decisions for free. For the ambiguous 5%, the optional <a href="https://github.com/peg/rampart-verify" style="color:var(--cyan)">rampart-verify</a> sidecar routes to an LLM that classifies intent. Two layers, near-zero cost.</p>
+                <p>Pattern matching handles 95% of decisions for free. For the ambiguous 5%, the optional <a href="https://github.com/peg/rampart-verify" style="color:var(--accent)">rampart-verify</a> sidecar routes to an LLM. Two layers, near-zero cost.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🏢</div>
@@ -659,13 +772,13 @@
                 <div class="step-num">1</div>
                 <h3>Install</h3>
                 <pre class="step-code">go install github.com/peg/rampart/cmd/rampart@latest</pre>
-                <p>Single binary. Also available via <a href="#install" style="color:var(--cyan);">Homebrew or direct download</a>.</p>
+                <p>Single binary. Also available via <a href="#install" style="color:var(--accent);">Homebrew or direct download</a>.</p>
             </div>
             <div class="step">
                 <div class="step-num">2</div>
                 <h3>Connect</h3>
                 <pre class="step-code">rampart setup claude-code</pre>
-                <p>One command per agent. Also: <span style="color:var(--text-bright)">rampart wrap</span>, <span style="color:var(--text-bright)">rampart mcp</span>, <span style="color:var(--text-bright)">rampart preload</span>.</p>
+                <p>One command per agent. Also supports <span style="color:var(--text-bright)">Cursor</span>, <span style="color:var(--text-bright)">Cline</span>, <span style="color:var(--text-bright)">Codex</span>, and more.</p>
             </div>
             <div class="step">
                 <div class="step-num">3</div>
@@ -738,7 +851,6 @@ brew install rampart</pre>
 </footer>
 
 <script>
-// Fetch GitHub stars
 fetch('https://api.github.com/repos/peg/rampart')
     .then(r => r.json())
     .then(d => {
@@ -747,7 +859,6 @@ fetch('https://api.github.com/repos/peg/rampart')
     })
     .catch(() => {});
 
-// Copy button
 function copyCode(btn) {
     const pre = btn.parentElement.querySelector('pre');
     navigator.clipboard.writeText(pre.textContent).then(() => {
