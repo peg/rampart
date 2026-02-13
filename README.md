@@ -504,7 +504,9 @@ This covers all `exec` tool calls. For full file tool coverage (Read, Write, Edi
 rampart setup openclaw --patch-tools
 ```
 
-This patches OpenClaw's internal tool implementations to check Rampart before file operations. **Re-run after OpenClaw upgrades** — the patch modifies files in `node_modules` that get replaced on update.
+This patches OpenClaw's Read, Write, and Edit tools to check Rampart before file operations. Requires write access to the OpenClaw installation directory (typically needs `sudo` for global npm installs).
+
+⚠️ **Re-run after OpenClaw upgrades** — the patch modifies files in `node_modules` that get replaced on update. Between upgrade and re-patch, file tools bypass Rampart (exec shim remains active).
 
 Works on Linux (systemd) and macOS (launchd).
 
@@ -659,7 +661,7 @@ Current: **v0.1.8** — all tests passing.
 |-------|--------|--------|
 | Claude Code | `rampart setup claude-code` | Native hooks (exec + file), all platforms |
 | Cline | `rampart setup cline` | Native hooks (exec + file), all platforms |
-| OpenClaw | `rampart setup openclaw` | Exec shim + file tool patch, Linux/macOS |
+| OpenClaw | `rampart setup openclaw [--patch-tools]` | Exec shim + optional file tool patch, Linux/macOS |
 | Codex CLI | `rampart preload` | LD_PRELOAD, Linux + macOS |
 | Claude Desktop | `rampart mcp` | MCP server proxying, all platforms |
 | Aider | `rampart wrap` | Linux, macOS |

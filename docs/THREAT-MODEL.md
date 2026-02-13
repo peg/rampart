@@ -98,9 +98,13 @@ An agent could potentially encode commands to bypass pattern matching:
 Some agent frameworks (e.g., OpenClaw) don't expose hook points for file operations. Rampart provides a `--patch-tools` option that modifies framework source files to add policy checks before read/write/edit operations. These patches don't survive framework upgrades — they modify files in `node_modules` that get replaced on update.
 
 **Mitigations:**
-- `rampart setup openclaw --patch-tools` can be re-run after upgrades
+- `rampart setup openclaw --patch-tools` must be re-run immediately after OpenClaw upgrades to restore protection
 - Native hook integrations (Claude Code, Cline) don't have this limitation — they use the framework's own hook system
 - A feature request for generic tool authorization hooks benefits the entire ecosystem and would eliminate the need for patching
+
+**Security implications:**
+- **Timing window:** Between OpenClaw upgrade and re-patch, file tools bypass all policies (exec shim remains active)
+- **Silent degradation:** If the target code changes in a new version, patches fail to apply and file tools fail-open without warning. The patch script exits with an error, but if run unattended this could go unnoticed.
 
 **Trade-off:** Monkey-patching is fragile but functional. It closes a real security gap today while proper upstream support is developed. The patches fail-open — if the patched code changes in an upgrade, the worst case is that file tools bypass Rampart (reverting to the pre-patch state), not that they break.
 
