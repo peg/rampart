@@ -67,12 +67,10 @@ See [Configuration](../getting-started/configuration.md) for the full policy for
 ## Uninstall
 
 ```bash
-## Uninstall
-
-To remove Rampart hooks, edit `~/.claude/settings.json` and delete the `hooks` section, then restart Claude Code.
+rampart setup claude-code --remove
 ```
 
-This removes the hooks from Claude Code's configuration. Your policies and audit logs are preserved.
+This removes the Rampart hooks from Claude Code's settings. Your policies and audit logs in `~/.rampart/` are preserved.
 
 ## Troubleshooting
 

@@ -24,6 +24,7 @@ import (
 func newSetupClineCmd(opts *rootOptions) *cobra.Command {
 	var workspace bool
 	var force bool
+	var remove bool
 
 	cmd := &cobra.Command{
 		Use:   "cline",
@@ -37,8 +38,13 @@ Hooks are installed to:
 The PreToolUse hook evaluates all tool calls through Rampart's policy engine
 before execution. The PostToolUse hook logs completed actions for audit.
 
-Compatible with Cline's hook system - no configuration changes needed.`,
+Compatible with Cline's hook system - no configuration changes needed.
+
+Use --remove to uninstall the Rampart hook scripts.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if remove {
+				return removeClineHooks(cmd, workspace)
+			}
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return fmt.Errorf("setup cline: resolve home: %w", err)
@@ -102,7 +108,47 @@ Compatible with Cline's hook system - no configuration changes needed.`,
 
 	cmd.Flags().BoolVar(&workspace, "workspace", false, "Install hooks at workspace level (.clinerules/hooks/) instead of global")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing hook scripts")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart hook scripts")
 	return cmd
+}
+
+func removeClineHooks(cmd *cobra.Command, workspace bool) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("setup cline: resolve home: %w", err)
+	}
+
+	var hookDir string
+	if workspace {
+		hookDir = ".clinerules/hooks"
+	} else {
+		hookDir = filepath.Join(home, "Documents", "Cline", "Hooks")
+	}
+
+	var removed []string
+	paths := []string{
+		filepath.Join(hookDir, "PreToolUse", "rampart-policy"),
+		filepath.Join(hookDir, "PostToolUse", "rampart-audit"),
+	}
+
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			if err := os.Remove(p); err == nil {
+				removed = append(removed, p)
+			}
+		}
+	}
+
+	if len(removed) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No Cline hooks found. Nothing to remove.")
+		return nil
+	}
+
+	for _, p := range removed {
+		fmt.Fprintf(cmd.OutOrStdout(), "  Removed: %s\n", p)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Removed %d Rampart hook(s) from Cline\n", len(removed))
+	return nil
 }
 
 // Variables for testing (osExecutable only; execLookPath is declared in setup.go)

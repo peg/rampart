@@ -98,7 +98,11 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(newPreloadCmd(opts))
 	cmd.AddCommand(newMCPCmd(opts, nil))
 	cmd.AddCommand(newHookCmd(opts))
+	cmd.AddCommand(newLogCmd(opts))
 	cmd.AddCommand(newSetupCmd(opts))
+	cmd.AddCommand(newDoctorCmd())
+	cmd.AddCommand(newStatusCmd())
+	cmd.AddCommand(newTestCmd(opts))
 
 	return cmd
 }

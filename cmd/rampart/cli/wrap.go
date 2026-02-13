@@ -422,7 +422,12 @@ if [ "$FOUND_C" = "true" ]; then
         if [ -z "$MSG" ]; then
             MSG="policy denied"
         fi
-        echo "rampart: blocked - ${MSG}" >&2
+        # Branded deny message with optional color
+        if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+            printf '\xf0\x9f\x9b\xa1\xef\xb8\x8f \033[31mRampart blocked: %%s\033[0m\n   \033[2mReason: %%s\033[0m\n' "$CMD" "$MSG" >&2
+        else
+            printf '🛡️ Rampart blocked: %%s\n   Reason: %%s\n' "$CMD" "$MSG" >&2
+        fi
         exit 126
     fi
 
@@ -527,7 +532,12 @@ if [ "$FOUND_C" = "true" ]; then
         if [ -z "$MSG" ]; then
             MSG="policy denied"
         fi
-        echo "rampart: blocked - ${MSG}" >&2
+        # Branded deny message with optional color
+        if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+            printf '\xf0\x9f\x9b\xa1\xef\xb8\x8f \033[31mRampart blocked: %%s\033[0m\n   \033[2mReason: %%s\033[0m\n' "$CMD" "$MSG" >&2
+        else
+            printf '🛡️ Rampart blocked: %%s\n   Reason: %%s\n' "$CMD" "$MSG" >&2
+        fi
         exit 126
     fi
 

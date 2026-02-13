@@ -149,7 +149,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
-				return outputHookResult(cmd, format, false, "")
+				return outputHookResult(cmd, format, false, "", "")
 			}
 
 			// Build tool call for evaluation
@@ -201,7 +201,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 			// Return decision
 			denied := decision.Action == engine.ActionDeny && mode == "enforce"
-			return outputHookResult(cmd, format, denied, decision.Message)
+			cmdStr := extractCommand(call)
+			return outputHookResult(cmd, format, denied, decision.Message, cmdStr)
 		},
 	}
 
@@ -293,7 +294,11 @@ func mapClineTool(toolName string) string {
 }
 
 // outputHookResult writes the allow/deny response in the correct format.
-func outputHookResult(cmd *cobra.Command, format string, denied bool, reason string) error {
+// When denied, it also prints a branded message to stderr.
+func outputHookResult(cmd *cobra.Command, format string, denied bool, reason string, command string) error {
+	if denied {
+		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason))
+	}
 	switch format {
 	case "cline":
 		out := clineHookOutput{Cancel: denied}
