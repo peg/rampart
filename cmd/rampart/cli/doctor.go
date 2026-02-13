@@ -49,6 +49,7 @@ func runDoctor(w io.Writer) error {
 
 	// 1. Binary version
 	fmt.Fprintf(w, "✓ Version: %s (%s)\n", build.Version, runtime.Version())
+	issues += doctorVersionCheck(w)
 
 	// 2. Policy files
 	issues += doctorPolicies(w)
@@ -273,6 +274,54 @@ func doctorAudit(w io.Writer) int {
 
 	fmt.Fprintf(w, "✓ Audit: ~/%s (%d files, latest: %s)\n", relHome(auditDir, home), len(files), latest)
 	return 0
+}
+
+func doctorVersionCheck(w io.Writer) int {
+	current := build.Version
+	if current == "dev" || current == "" {
+		return 0 // dev build, skip check
+	}
+
+	// GitHub API: get latest release
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/peg/rampart/releases/latest")
+	if err != nil {
+		return 0 // network error, don't count as issue
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return 0
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return 0
+	}
+
+	latest := strings.TrimPrefix(release.TagName, "v")
+	currentClean := strings.TrimPrefix(current, "v")
+
+	if latest == currentClean {
+		return 0
+	}
+
+	// Detect install method for upgrade hint
+	exe, _ := os.Executable()
+	var hint string
+	switch {
+	case strings.Contains(exe, "homebrew") || strings.Contains(exe, "Cellar") || strings.Contains(exe, "linuxbrew"):
+		hint = "  brew upgrade rampart"
+	case strings.Contains(exe, filepath.Join("go", "bin")):
+		hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s", release.TagName)
+	default:
+		hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s\n  — or download from https://github.com/peg/rampart/releases", release.TagName)
+	}
+
+	fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n%s\n", current, release.TagName, hint)
+	return 0 // informational, not an issue
 }
 
 func relHome(path, home string) string {

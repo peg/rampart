@@ -98,6 +98,12 @@ type ToolCall struct {
 // Command extracts the command string from an exec tool call's params.
 // Returns empty string if not present or not a string.
 func (tc ToolCall) Command() string {
+	// Prefer the effective (sanitized) command for policy matching.
+	// This has heredoc bodies and safe-binary quoted args stripped
+	// to reduce false positives.
+	if eff, ok := tc.Params["command_effective"].(string); ok && eff != "" {
+		return eff
+	}
 	cmd, _ := tc.Params["command"].(string)
 	return cmd
 }

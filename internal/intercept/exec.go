@@ -41,11 +41,20 @@ func (i *ExecInterceptor) toolCall(agent, session, command string) engine.ToolCa
 	normalized := strings.TrimSpace(command)
 	binary := extractBinary(normalized)
 
+	// Extract the effective command for policy matching by stripping
+	// heredoc bodies and quoted string arguments from safe binaries.
+	effective := StripHeredocBodies(normalized)
+	effective = StripQuotedArgs(effective)
+
 	return engine.ToolCall{
 		Agent:     agent,
 		Session:   session,
 		Tool:      "exec",
-		Params:    map[string]any{"command": normalized, "binary": binary},
+		Params: map[string]any{
+			"command":           normalized, // full command for audit log
+			"command_effective": effective,  // stripped command for matching
+			"binary":           binary,
+		},
 		Timestamp: time.Now(),
 	}
 }

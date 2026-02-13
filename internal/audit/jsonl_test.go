@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"sort"
 	"os"
 	"path/filepath"
 	"sync"
@@ -185,8 +186,9 @@ func TestJSONLSinkWrite_RotationCreatesNewFileWithChainContinuation(t *testing.T
 	}
 
 	// Should have multiple JSONL files now.
-	files, err := filepath.Glob(filepath.Join(dir, "audit-*.jsonl"))
+	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	require.NoError(t, err)
+	sort.Strings(files) // ensure deterministic order
 	assert.GreaterOrEqual(t, len(files), 2, "expected at least 2 rotated files, got %d", len(files))
 
 	// Every file after the first should start with a chain continuation header.
