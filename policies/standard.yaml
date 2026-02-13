@@ -85,6 +85,16 @@ policies:
             - "base64 */.aws/*"
             - "cp */.ssh/*"
             - "cp */.aws/*"
+            - "cat /etc/shadow"
+            - "cat /etc/passwd"
+            - "cat /etc/gshadow"
+            - "cat /etc/master.passwd"
+            - "head /etc/shadow"
+            - "tail /etc/shadow"
+            - "less /etc/shadow"
+            - "more /etc/shadow"
+            - "grep * /etc/shadow"
+            - "cat /etc/sudoers"
         message: "Credential file access via shell blocked"
 
   - name: block-sensitive-writes

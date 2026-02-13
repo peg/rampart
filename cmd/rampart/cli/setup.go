@@ -360,20 +360,31 @@ if [ "$1" = "-c" ]; then
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
     PAYLOAD=$(printf '{"agent":"openclaw","session":"main","params":{"command_b64":"%%s"}}' "$ENCODED")
-    DECISION=$(curl -sfS -X POST "${RAMPART_URL}/v1/preflight/exec" \
+    HTTP_CODE=$(curl -sS -o /tmp/.rampart-resp -w "%%{http_code}" -X POST "${RAMPART_URL}/v1/tool/exec" \
         -H "Authorization: Bearer ${RAMPART_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$PAYLOAD" 2>/dev/null)
+    DECISION=$(cat /tmp/.rampart-resp 2>/dev/null)
+    rm -f /tmp/.rampart-resp
 
+    # Fail open if no response
     if [ -z "$DECISION" ]; then
         exec "$REAL_SHELL" -c "$CMD" "$@"
     fi
 
-    ALLOWED=$(printf '%%s' "$DECISION" | sed -n 's/.*"allowed":[[:space:]]*\(true\|false\).*/\1/p' | head -n 1)
-    if [ -z "$ALLOWED" ]; then
-        exec "$REAL_SHELL" -c "$CMD" "$@"
+    # Check HTTP status — 403 means denied
+    if [ "$RAMPART_MODE" = "enforce" ] && [ "$HTTP_CODE" = "403" ]; then
+        MSG=$(printf '%%s' "$DECISION" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p' | head -n 1)
+        if [ -z "$MSG" ]; then
+            MSG="policy denied"
+        fi
+        echo "rampart: blocked - ${MSG}" >&2
+        exit 126
     fi
-    if [ "$RAMPART_MODE" = "enforce" ] && [ "$ALLOWED" != "true" ]; then
+
+    # Also check "decision":"deny" as fallback
+    DENIED=$(printf '%%s' "$DECISION" | sed -n 's/.*"decision":"\(deny\)".*/\1/p' | head -n 1)
+    if [ "$RAMPART_MODE" = "enforce" ] && [ "$DENIED" = "deny" ]; then
         MSG=$(printf '%%s' "$DECISION" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p' | head -n 1)
         if [ -z "$MSG" ]; then
             MSG="policy denied"
@@ -675,6 +686,16 @@ policies:
             - "cat */.netrc"
             - "cat */credentials"
             - "cat */.git-credentials"
+            - "cat /etc/shadow"
+            - "cat /etc/passwd"
+            - "cat /etc/gshadow"
+            - "cat /etc/master.passwd"
+            - "head /etc/shadow"
+            - "tail /etc/shadow"
+            - "less /etc/shadow"
+            - "more /etc/shadow"
+            - "grep * /etc/shadow"
+            - "cat /etc/sudoers"
         message: "Credential access blocked"
 `
 
