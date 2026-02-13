@@ -433,21 +433,19 @@
         .install-card pre::-webkit-scrollbar { height: 4px; }
         .install-card pre::-webkit-scrollbar-track { background: transparent; }
         .install-card pre::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
-        .install-card { position: relative; }
+        /* */
         .copy-btn {
-            position: absolute;
-            top: 50px;
-            right: 28px;
+            display: block;
+            margin: 8px 0 0 auto;
             background: var(--surface-2);
             border: 1px solid var(--border);
             border-radius: 4px;
-            padding: 4px 8px;
+            padding: 4px 12px;
             cursor: pointer;
             color: var(--text);
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             font-family: inherit;
             transition: all 0.15s;
-            z-index: 1;
         }
         .copy-btn:hover { color: var(--heading); border-color: var(--border-light); }
         .copy-btn.copied { color: var(--green); border-color: var(--green); }
@@ -660,8 +658,8 @@
             <div class="step">
                 <div class="step-num">1</div>
                 <h3>Install</h3>
-                <pre class="step-code">brew install peg/rampart/rampart</pre>
-                <p>Single binary. No daemon, no Docker, no config files.</p>
+                <pre class="step-code">go install github.com/peg/rampart/cmd/rampart@latest</pre>
+                <p>Single binary. Also available via <a href="#install" style="color:var(--cyan);">Homebrew or direct download</a>.</p>
             </div>
             <div class="step">
                 <div class="step-num">2</div>
@@ -709,14 +707,14 @@
         <div class="install-options">
             <div class="install-card">
                 <div class="label">Homebrew</div>
-                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
                 <pre>brew tap peg/rampart
 brew install rampart</pre>
+                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
             </div>
             <div class="install-card">
                 <div class="label">Go install</div>
-                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
                 <pre>go install github.com/peg/rampart/cmd/rampart@latest</pre>
+                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
             </div>
         </div>
         <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost" style="margin-right: 12px;">Download binary</a>
