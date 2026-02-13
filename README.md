@@ -506,7 +506,7 @@ rampart setup openclaw --patch-tools
 
 This patches OpenClaw's Read, Write, Edit, and Grep tools to check Rampart before file operations. Requires write access to the OpenClaw installation directory (typically needs `sudo` for global npm installs).
 
-Tested on OpenClaw `2026.1.30` through `2026.2.12` (current latest). The patch targets stable function signatures in `pi-coding-agent` — if a future version changes these, the script will exit with an error rather than silently fail.
+Supports OpenClaw `2026.1.30` – `2026.2.12` (latest).
 
 ⚠️ **Re-run after OpenClaw upgrades** — the patch modifies files in `node_modules` that get replaced on update. Between upgrade and re-patch, file tools bypass Rampart (exec shim remains active).
 
