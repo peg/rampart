@@ -55,3 +55,22 @@ func TestHandlerSetsSecurityHeaders(t *testing.T) {
 	assertHeader("Referrer-Policy", "strict-origin-when-cross-origin")
 	assertHeader("Cache-Control", "no-store")
 }
+
+func TestHandlerIncludesAuthUXForApprovalsAPI(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "Bearer token for /v1 API") {
+		t.Fatalf("response does not include token input prompt")
+	}
+	if !strings.Contains(body, "unauthorized (set token)") {
+		t.Fatalf("response does not include unauthorized guidance message")
+	}
+}

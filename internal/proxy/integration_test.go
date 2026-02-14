@@ -229,6 +229,33 @@ func TestEndToEnd_AuthRequired(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp2.StatusCode)
 }
 
+func TestEndToEnd_ApprovalsListAuthRequired(t *testing.T) {
+	srv := setupStandardProxy(t)
+	h := srv.handler()
+
+	srv.approvals.Create(
+		engine.ToolCall{Tool: "exec", Agent: "agent-1", Session: "session-1", Params: map[string]any{"command": "git status"}},
+		engine.Decision{Message: "approval required"},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/approvals", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/approvals", nil)
+	req2.Header.Set("Authorization", "Bearer "+srv.Token())
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	assert.Equal(t, http.StatusOK, rr2.Code)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&body))
+	approvals, ok := body["approvals"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, approvals)
+}
+
 func setupStandardProxy(t *testing.T) *Server {
 	t.Helper()
 

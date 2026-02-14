@@ -21,10 +21,12 @@ import (
 // Handler serves the embedded dashboard static files.
 // Handler returns an HTTP handler that serves the embedded approval dashboard.
 //
-// Security model: The dashboard UI itself is served without authentication.
-// It displays pending approval requests (tool name, command, agent, timestamps).
-// All mutating actions (approve/deny) require a Bearer token, which the user
-// enters in the dashboard's token field and is stored in localStorage.
+// Security model: The dashboard UI (HTML/CSS/JS) itself is served without
+// authentication and does not embed secrets. Sensitive approval data is fetched
+// at runtime from /v1 APIs.
+//
+// Read and mutating API actions require a Bearer token, which the user enters
+// in the dashboard token field and is stored in localStorage.
 //
 // If you need to restrict read access to the dashboard, place it behind a
 // reverse proxy with authentication, or bind the listen address to localhost.
