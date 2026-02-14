@@ -408,8 +408,9 @@ func (s *Server) shouldNotify(actionStr string) bool {
 		return false
 	}
 	if len(s.notifyConfig.On) == 0 {
-		// Default: notify on deny
-		return actionStr == "deny"
+		// Default to deny + require_approval so operators get alerted for
+		// blocked calls and pending human-approval decisions out of the box.
+		return actionStr == "deny" || actionStr == "require_approval"
 	}
 	for _, on := range s.notifyConfig.On {
 		if on == actionStr {

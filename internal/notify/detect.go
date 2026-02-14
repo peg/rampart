@@ -16,16 +16,25 @@ package notify
 import "strings"
 
 // DetectPlatform detects the webhook platform based on the URL.
-// Returns "slack", "discord", "teams", or "webhook" for generic webhooks.
+// Returns "slack", "discord", "teams", "openclaw", or "webhook".
 func DetectPlatform(url string) string {
-	if strings.Contains(url, "hooks.slack.com") {
+	normalizedURL := strings.ToLower(strings.TrimSpace(url))
+
+	if strings.Contains(normalizedURL, "hooks.slack.com") {
 		return "slack"
 	}
-	if strings.Contains(url, "discord.com/api/webhooks") {
+	if strings.Contains(normalizedURL, "discord.com/api/webhooks") {
 		return "discord"
 	}
-	if strings.Contains(url, "webhook.office.com") || strings.Contains(url, "outlook.office.com") {
+	if strings.Contains(normalizedURL, "webhook.office.com") || strings.Contains(normalizedURL, "outlook.office.com") {
 		return "teams"
+	}
+	// OpenClaw auto-detection requires an explicit domain match to avoid
+	// false positives on URLs that happen to contain "openclaw" as a substring.
+	if strings.Contains(normalizedURL, "openclaw.dev") ||
+		strings.Contains(normalizedURL, "openclaw.ai") ||
+		strings.Contains(normalizedURL, "openclaw.io") {
+		return "openclaw"
 	}
 	return "webhook"
 }
@@ -33,6 +42,7 @@ func DetectPlatform(url string) string {
 // NewNotifier creates a notifier for the specified platform.
 // If platform is "auto" or empty, it will auto-detect based on the URL.
 func NewNotifier(url, platform string) Notifier {
+	platform = strings.ToLower(strings.TrimSpace(platform))
 	if platform == "auto" || platform == "" {
 		platform = DetectPlatform(url)
 	}
@@ -44,6 +54,8 @@ func NewNotifier(url, platform string) Notifier {
 		return NewDiscordNotifier(url)
 	case "teams":
 		return NewTeamsNotifier(url)
+	case "openclaw":
+		return NewOpenClawNotifier(url)
 	default:
 		return NewGenericNotifier(url)
 	}

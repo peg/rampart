@@ -31,8 +31,13 @@ func TestDetectPlatform(t *testing.T) {
 		{"https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz", "discord"},
 		{"https://outlook.office.com/webhook/abcd-1234-efgh-5678/IncomingWebhook/xyz", "teams"},
 		{"https://webhook.office.com/webhookb2/abcd-1234-efgh-5678@tenant.onmicrosoft.com/IncomingWebhook/xyz", "teams"},
+		{"https://hooks.openclaw.dev/events", "openclaw"},
+		{"https://api.openclaw.ai/webhooks/123", "openclaw"},
+		{"https://notify.openclaw.io/v1/events", "openclaw"},
 		{"https://example.com/webhook", "webhook"},
 		{"http://localhost:8080/notifications", "webhook"},
+		{"https://mycompany.com/openclaw-events/handler", "webhook"}, // substring, not domain match
+		{"http://localhost:9090/openclaw/callback", "webhook"},       // localhost with openclaw path
 	}
 
 	for _, test := range tests {
@@ -54,9 +59,11 @@ func TestNewNotifier(t *testing.T) {
 		{"https://hooks.slack.com/services/test", "slack", "*notify.SlackNotifier"},
 		{"https://discord.com/api/webhooks/test", "discord", "*notify.DiscordNotifier"},
 		{"https://webhook.office.com/test", "teams", "*notify.TeamsNotifier"},
+		{"https://hooks.openclaw.dev/events", "openclaw", "*notify.OpenClawNotifier"},
 		{"https://example.com/webhook", "webhook", "*notify.GenericNotifier"},
 		{"https://hooks.slack.com/services/test", "auto", "*notify.SlackNotifier"},
 		{"https://discord.com/api/webhooks/test", "", "*notify.DiscordNotifier"},
+		{"https://hooks.openclaw.dev/events", "", "*notify.OpenClawNotifier"},
 	}
 
 	for _, test := range tests {
@@ -456,5 +463,46 @@ func TestTeamsNotifier_SendRequireApproval(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), event.ResolveURL) {
 		t.Fatalf("sections missing resolve URL: %s", raw)
+	}
+}
+
+func TestOpenClawNotifier_SendRequireApproval(t *testing.T) {
+	event := NotifyEvent{
+		Action:     "require_approval",
+		Tool:       "exec",
+		Command:    "kubectl delete pod x",
+		Agent:      "codex",
+		Timestamp:  "2026-02-11T08:30:00Z",
+		ApprovalID: "01JKV8PY8NJWQ2Y0C4YQ4JQ9M8",
+		ExpiresAt:  "2026-02-11T08:35:00Z",
+		ResolveURL: "http://localhost:9091/v1/approvals/01JKV8PY8NJWQ2Y0C4YQ4JQ9M8/resolve",
+	}
+
+	var receivedPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewOpenClawNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	if got := receivedPayload["approval_id"]; got != event.ApprovalID {
+		t.Fatalf("approval_id = %v, want %s", got, event.ApprovalID)
+	}
+	if got := receivedPayload["resolve_url"]; got != event.ResolveURL {
+		t.Fatalf("resolve_url = %v, want %s", got, event.ResolveURL)
+	}
+	if got := receivedPayload["expires_at"]; got != event.ExpiresAt {
+		t.Fatalf("expires_at = %v, want %s", got, event.ExpiresAt)
+	}
+	text, _ := receivedPayload["text"].(string)
+	if !strings.Contains(text, "Approval required") || !strings.Contains(text, event.ResolveURL) {
+		t.Fatalf("text = %q, expected approval instruction with resolve URL", text)
 	}
 }
