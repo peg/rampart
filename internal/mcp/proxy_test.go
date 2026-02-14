@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 )
@@ -233,23 +234,108 @@ func TestHandleToolsCall_RequireApproval(t *testing.T) {
 	childIn := &bytes.Buffer{}
 	parentOut := &bytes.Buffer{}
 	sink := &mockSink{}
+	store := approval.NewStore()
+	t.Cleanup(store.Close)
 
 	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithMode("enforce"), WithLogger(silentLogger()))
+		WithMode("enforce"), WithApprovalStore(store), WithLogger(silentLogger()))
 	p.parentOut = parentOut
 
 	line := []byte(makeToolsCallJSON(2, "exec_command", map[string]any{"command": "ls"}) + "\n")
-	err := p.handleClientLine(line)
-	if err != nil {
-		t.Fatalf("handleClientLine: %v", err)
+	done := make(chan error, 1)
+	go func() {
+		done <- p.handleClientLine(line)
+	}()
+
+	var pending *approval.Request
+	deadline := time.After(500 * time.Millisecond)
+	for pending == nil {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for pending approval")
+		default:
+			items := store.List()
+			if len(items) > 0 {
+				pending = items[0]
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 
-	// RequireApproval in enforce mode should deny
+	if err := store.Resolve(pending.ID, true, "test"); err != nil {
+		t.Fatalf("resolve approval: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("handleClientLine: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for tools/call completion")
+	}
+
+	if childIn.Len() == 0 {
+		t.Fatal("approved require_approval request should be forwarded to child")
+	}
+	if parentOut.Len() != 0 {
+		t.Fatal("approved require_approval request should not return an error")
+	}
+}
+
+func TestHandleToolsCall_RequireApprovalDenied(t *testing.T) {
+	eng := buildAskEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	sink := &mockSink{}
+	store := approval.NewStore()
+	t.Cleanup(store.Close)
+
+	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithApprovalStore(store), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	line := []byte(makeToolsCallJSON(3, "exec_command", map[string]any{"command": "ls"}) + "\n")
+	done := make(chan error, 1)
+	go func() {
+		done <- p.handleClientLine(line)
+	}()
+
+	var pending *approval.Request
+	deadline := time.After(500 * time.Millisecond)
+	for pending == nil {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for pending approval")
+		default:
+			items := store.List()
+			if len(items) > 0 {
+				pending = items[0]
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	if err := store.Resolve(pending.ID, false, "test"); err != nil {
+		t.Fatalf("resolve approval: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("handleClientLine: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for tools/call completion")
+	}
+
 	if childIn.Len() != 0 {
-		t.Error("require_approval should not forward in enforce mode")
+		t.Fatal("denied require_approval request should not be forwarded")
 	}
 	if parentOut.Len() == 0 {
-		t.Fatal("expected error response for require_approval")
+		t.Fatal("denied require_approval request should return an error")
 	}
 }
 
@@ -483,6 +569,57 @@ func TestMaybeFilterToolsList_NotRequested_Noop(t *testing.T) {
 	}
 	if handled {
 		t.Error("should not handle response for unrequested tools/list")
+	}
+}
+
+func TestMaybeFilterToolsList_RequireApprovalVisible(t *testing.T) {
+	eng := buildAskEngine(t)
+	sink := &mockSink{}
+
+	p := NewProxy(eng, sink, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+		WithFilterTools(true), WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = &bytes.Buffer{}
+
+	p.pendingMu.Lock()
+	p.pendingToolList["1"] = struct{}{}
+	p.pendingMu.Unlock()
+
+	toolsResult := map[string]any{
+		"tools": []any{
+			map[string]any{"name": "read_file", "description": "Read a file"},
+			map[string]any{"name": "execute_command", "description": "Run shell commands"},
+		},
+	}
+	resultBytes, _ := json.Marshal(toolsResult)
+	resp := Response{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Result:  resultBytes,
+	}
+
+	filtered, handled, err := p.maybeFilterToolsList(resp)
+	if err != nil {
+		t.Fatalf("maybeFilterToolsList: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected handled=true")
+	}
+
+	var filteredResp Response
+	if err := json.Unmarshal(bytes.TrimSpace(filtered), &filteredResp); err != nil {
+		t.Fatalf("unmarshal filtered: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(filteredResp.Result, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	tools, ok := result["tools"].([]any)
+	if !ok {
+		t.Fatalf("expected tools list, got %T", result["tools"])
+	}
+	if len(tools) != 2 {
+		t.Fatalf("require_approval tools should stay visible, got %d tools", len(tools))
 	}
 }
 
@@ -1105,8 +1242,15 @@ policies: []
 func buildAskEngine(t *testing.T) *engine.Engine {
 	t.Helper()
 	return buildTestEngine(t, `
-default_action: ask
-policies: []
+default_action: allow
+policies:
+  - name: require-approval
+    match:
+      tool: "*"
+    rules:
+      - action: require_approval
+        when:
+          default: true
 `)
 }
 

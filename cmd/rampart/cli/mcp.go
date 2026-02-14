@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/mcp"
@@ -150,6 +151,16 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 			defer func() {
 				_ = countedSink.Close()
 			}()
+			approvalStore := approval.NewStore(
+				approval.WithExpireCallback(func(r *approval.Request) {
+					logger.Warn("mcp: approval expired, denying",
+						"id", r.ID,
+						"tool", r.Call.Tool,
+						"command", r.Call.Command(),
+					)
+				}),
+			)
+			defer approvalStore.Close()
 
 			child := exec.Command(args[0], args[1:]...)
 			child.Stderr = cmd.ErrOrStderr()
@@ -174,6 +185,7 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 				childOut,
 				mcp.WithMode(mode),
 				mcp.WithFilterTools(filterTools),
+				mcp.WithApprovalStore(approvalStore),
 				mcp.WithLogger(logger),
 			)
 
