@@ -27,45 +27,45 @@ var (
 	// Rate limiting for webhook notifications
 	lastNotificationTime time.Time
 	notificationMutex    sync.Mutex
+
+	// Pre-compiled regexes for sanitizeCommand — compiled once at init, not per call.
+	sanitizePatterns = []struct {
+		re          *regexp.Regexp
+		replacement string
+	}{
+		// Quoted Authorization headers (before individual token patterns)
+		{regexp.MustCompile(`'Authorization:\s+(Bearer|Basic)\s+[^']+'`), "'[REDACTED]'"},
+		// MySQL passwords: -p'...' or -p"..." or -pSOMETHING
+		{regexp.MustCompile(`\s-p'[^']*'`), " [REDACTED]"},
+		{regexp.MustCompile(`\s-p"[^"]*"`), " [REDACTED]"},
+		{regexp.MustCompile(`\s-p[A-Za-z0-9][^\s]*`), " [REDACTED]"},
+		// Password arguments
+		{regexp.MustCompile(`--password=\S+`), "[REDACTED]"},
+		{regexp.MustCompile(`--password\s+\S+`), "[REDACTED]"},
+		// GitHub tokens
+		{regexp.MustCompile(`ghp_[a-zA-Z0-9]{40}`), "[REDACTED]"},
+		{regexp.MustCompile(`gho_[a-zA-Z0-9]+`), "[REDACTED]"},
+		{regexp.MustCompile(`ghs_[a-zA-Z0-9]+`), "[REDACTED]"},
+		// Slack tokens
+		{regexp.MustCompile(`xoxb-[a-zA-Z0-9-]+`), "[REDACTED]"},
+		{regexp.MustCompile(`xoxp-[a-zA-Z0-9-]+`), "[REDACTED]"},
+		// OpenAI-style API keys
+		{regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`), "[REDACTED]"},
+		// AWS access key IDs
+		{regexp.MustCompile(`AKIA[0-9A-Z]{16}`), "[REDACTED]"},
+		// Unquoted Authorization headers
+		{regexp.MustCompile(`Authorization:\s+(Bearer|Basic)\s+\S+`), "Authorization: $1 [REDACTED]"},
+		// Long base64 strings with credential keywords (last — most general)
+		{regexp.MustCompile(`(?i)\b(api_?key|auth_?token|token|secret|access_?token)\s*[=:]\s*[A-Za-z0-9+/]{40,}={0,2}`), "[REDACTED]"},
+	}
 )
 
 // sanitizeCommand removes sensitive patterns from command strings before sending to webhooks.
 func sanitizeCommand(command string) string {
 	result := command
-	
-	// Handle quoted Authorization headers first (before individual token patterns)
-	result = regexp.MustCompile(`'Authorization:\s+(Bearer|Basic)\s+[^']+'`).ReplaceAllString(result, "'[REDACTED]'")
-	
-	// MySQL passwords: -p'...' or -p"..." or -pSOMETHING (be more specific to avoid conflicts)
-	result = regexp.MustCompile(`\s-p'[^']*'`).ReplaceAllString(result, " [REDACTED]")
-	result = regexp.MustCompile(`\s-p"[^"]*"`).ReplaceAllString(result, " [REDACTED]")
-	result = regexp.MustCompile(`\s-p[A-Za-z0-9][^\s]*`).ReplaceAllString(result, " [REDACTED]")
-	
-	// Password arguments (handle these before general token patterns)  
-	result = regexp.MustCompile(`--password=\S+`).ReplaceAllString(result, "[REDACTED]")
-	result = regexp.MustCompile(`--password\s+\S+`).ReplaceAllString(result, "[REDACTED]")
-	
-	// GitHub tokens (handle before general sk- pattern)
-	result = regexp.MustCompile(`ghp_[a-zA-Z0-9]{40}`).ReplaceAllString(result, "[REDACTED]")
-	result = regexp.MustCompile(`gho_[a-zA-Z0-9]+`).ReplaceAllString(result, "[REDACTED]")
-	result = regexp.MustCompile(`ghs_[a-zA-Z0-9]+`).ReplaceAllString(result, "[REDACTED]")
-	
-	// Slack tokens (handle before general patterns)
-	result = regexp.MustCompile(`xoxb-[a-zA-Z0-9-]+`).ReplaceAllString(result, "[REDACTED]")
-	result = regexp.MustCompile(`xoxp-[a-zA-Z0-9-]+`).ReplaceAllString(result, "[REDACTED]")
-	
-	// OpenAI-style API keys
-	result = regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`).ReplaceAllString(result, "[REDACTED]")
-	
-	// AWS access key IDs
-	result = regexp.MustCompile(`AKIA[0-9A-Z]{16}`).ReplaceAllString(result, "[REDACTED]")
-	
-	// Unquoted Authorization headers
-	result = regexp.MustCompile(`Authorization:\s+(Bearer|Basic)\s+\S+`).ReplaceAllString(result, "Authorization: $1 [REDACTED]")
-	
-	// Long base64 strings when preceded by credential keywords (handle last, be more specific)
-	result = regexp.MustCompile(`(?i)\b(api_?key|auth_?token|token|secret|access_?token)\s*[=:]\s*[A-Za-z0-9+/]{40,}={0,2}`).ReplaceAllString(result, "[REDACTED]")
-	
+	for _, p := range sanitizePatterns {
+		result = p.re.ReplaceAllString(result, p.replacement)
+	}
 	return result
 }
 

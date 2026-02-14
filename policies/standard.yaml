@@ -1,3 +1,15 @@
+# Rampart Standard Policy — default rules for common AI agent threats.
+#
+# IMPORTANT: Pattern matching limitations
+# These rules use glob patterns against the literal command string.
+# They protect against well-behaved AI agents, NOT adversarial humans.
+# Evasion techniques like quoted binaries ('rm' -rf /), escaped chars
+# (\rm -rf /), variable expansion ($CMD), or base64-encoded payloads
+# will bypass glob matching. For adversarial threat models, combine
+# Rampart with OS-level sandboxing (containers, seccomp, AppArmor).
+#
+# See docs/THREAT-MODEL.md for the full discussion.
+
 version: "1"
 default_action: allow
 policies:
