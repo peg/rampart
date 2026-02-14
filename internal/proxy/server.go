@@ -144,6 +144,7 @@ func (s *Server) ListenAndServe(addr string) error {
 // Serve starts serving HTTP requests on an existing listener.
 func (s *Server) Serve(listener net.Listener) error {
 	srv := &http.Server{
+		Addr:         listener.Addr().String(),
 		Handler:      s.handler(),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -290,6 +291,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			"message", decision.Message,
 		)
 
+		if s.shouldNotify(decision.Action.String()) {
+			go s.sendApprovalWebhook(call, decision, pending)
+		}
+
 		resp["approval_id"] = pending.ID
 		resp["approval_status"] = "pending"
 		resp["expires_at"] = pending.ExpiresAt.Format(time.RFC3339)
@@ -357,19 +362,10 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 
 	// Fire webhook notification if configured
 	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
-		shouldNotify := false
 		actionStr := decision.Action.String()
-		for _, on := range s.notifyConfig.On {
-			if on == actionStr {
-				shouldNotify = true
-				break
-			}
-		}
-		if len(s.notifyConfig.On) == 0 {
-			// Default: notify on deny
-			shouldNotify = actionStr == "deny"
-		}
-		if shouldNotify {
+		// require_approval notifications are sent after pending approval
+		// creation so they can include approval metadata.
+		if actionStr != engine.ActionRequireApproval.String() && s.shouldNotify(actionStr) {
 			call := engine.ToolCall{
 				Tool:      toolName,
 				Params:    req.Params,
@@ -379,6 +375,22 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 			go s.sendWebhook(call, decision)
 		}
 	}
+}
+
+func (s *Server) shouldNotify(actionStr string) bool {
+	if s.notifyConfig == nil || s.notifyConfig.URL == "" {
+		return false
+	}
+	if len(s.notifyConfig.On) == 0 {
+		// Default: notify on deny
+		return actionStr == "deny"
+	}
+	for _, on := range s.notifyConfig.On {
+		if on == actionStr {
+			return true
+		}
+	}
+	return false
 }
 
 // handlePreflight evaluates a tool call against policies without executing it.
@@ -634,9 +646,9 @@ func (s *Server) webhookFallback(cfg *engine.WebhookActionConfig, reason string)
 }
 
 func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
-	command := ""
-	if cmd, ok := call.Params["command"].(string); ok {
-		command = cmd
+	command := call.Command()
+	if command == "" {
+		command = call.Path()
 	}
 	policyName := "unknown"
 	if len(decision.MatchedPolicies) > 0 {
@@ -659,6 +671,59 @@ func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
 	} else {
 		s.logger.Debug("proxy: webhook notification sent", "action", decision.Action.String())
 	}
+}
+
+func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decision, pending *approval.Request) {
+	command := call.Command()
+	if command == "" {
+		command = call.Path()
+	}
+	policyName := "unknown"
+	if len(decision.MatchedPolicies) > 0 {
+		policyName = decision.MatchedPolicies[0]
+	}
+
+	event := notify.NotifyEvent{
+		Action:     decision.Action.String(),
+		Tool:       call.Tool,
+		Command:    command,
+		Policy:     policyName,
+		Message:    decision.Message,
+		Agent:      call.Agent,
+		Timestamp:  pending.CreatedAt.UTC().Format(time.RFC3339),
+		ApprovalID: pending.ID,
+		ExpiresAt:  pending.ExpiresAt.UTC().Format(time.RFC3339),
+		ResolveURL: s.approvalResolveURL(pending.ID),
+	}
+
+	notifier := notify.NewNotifier(s.notifyConfig.URL, s.notifyConfig.Platform)
+	if err := notifier.Send(event); err != nil {
+		s.logger.Error("proxy: approval webhook notification failed", "error", err)
+	} else {
+		s.logger.Debug("proxy: webhook notification sent", "action", decision.Action.String(), "approval_id", pending.ID)
+	}
+}
+
+func (s *Server) approvalResolveURL(id string) string {
+	addr := ""
+	s.mu.Lock()
+	if s.server != nil {
+		addr = strings.TrimSpace(s.server.Addr)
+	}
+	s.mu.Unlock()
+
+	if addr == "" {
+		addr = "localhost:9090"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "localhost" + addr
+	}
+	if !strings.Contains(addr, "://") {
+		addr = "http://" + addr
+	}
+
+	base := strings.TrimRight(addr, "/")
+	return fmt.Sprintf("%s/v1/approvals/%s/resolve", base, url.PathEscape(id))
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

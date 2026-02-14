@@ -24,13 +24,17 @@ import (
 
 // NotifyEvent contains the data for a webhook notification.
 type NotifyEvent struct {
-	Action    string // "deny" or "log"
-	Tool      string // e.g. "exec", "read", "write"
-	Command   string // the command or path
-	Policy    string // policy name that matched
-	Message   string // human-readable reason
-	Agent     string // agent identifier
-	Timestamp string // ISO 8601
+	Action    string `json:"Action"`    // "deny", "log", or "require_approval"
+	Tool      string `json:"Tool"`      // e.g. "exec", "read", "write"
+	Command   string `json:"Command"`   // the command or path
+	Policy    string `json:"Policy"`    // policy name that matched
+	Message   string `json:"Message"`   // human-readable reason
+	Agent     string `json:"Agent"`     // agent identifier
+	Timestamp string `json:"Timestamp"` // ISO 8601
+
+	ApprovalID string `json:"approval_id,omitempty"` // pending approval ID
+	ExpiresAt  string `json:"expires_at,omitempty"`  // approval expiry timestamp (ISO 8601)
+	ResolveURL string `json:"resolve_url,omitempty"` // direct URL to resolve the approval
 }
 
 // Notifier sends notifications.
