@@ -30,6 +30,7 @@ import (
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/proxy"
+	"github.com/peg/rampart/internal/signing"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +52,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var port int
 	var syslogAddr string
 	var cef bool
+	var resolveBaseURL string
+	var signingKeyPath string
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -154,6 +157,25 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if envToken := os.Getenv("RAMPART_TOKEN"); envToken != "" {
 					proxyOpts = append(proxyOpts, proxy.WithToken(envToken))
 				}
+				if resolveBaseURL != "" {
+					proxyOpts = append(proxyOpts, proxy.WithResolveBaseURL(resolveBaseURL))
+				}
+				// Load or auto-generate signing key for approval resolve URLs.
+				if signingKeyPath == "" {
+					home, _ := os.UserHomeDir()
+					if home != "" {
+						signingKeyPath = filepath.Join(home, ".rampart", "signing.key")
+					}
+				}
+				if signingKeyPath != "" {
+					key, keyErr := signing.LoadOrCreateKey(signingKeyPath)
+					if keyErr != nil {
+						logger.Warn("serve: failed to load signing key, resolve URLs will be unsigned", "error", keyErr)
+					} else {
+						proxyOpts = append(proxyOpts, proxy.WithSigner(signing.NewSigner(key)))
+						logger.Info("serve: approval URL signing enabled", "key_path", signingKeyPath)
+					}
+				}
 				// Load notify config from policy file
 				if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
 					proxyOpts = append(proxyOpts, proxy.WithNotify(cfg.Notify))
@@ -242,6 +264,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().IntVar(&port, "port", 9090, "Proxy listen port (0 = SDK-only mode)")
 	cmd.Flags().StringVar(&syslogAddr, "syslog", "", "Syslog server address (e.g. localhost:514)")
 	cmd.Flags().BoolVar(&cef, "cef", false, "Use CEF format (with --syslog: CEF over syslog; standalone: write ~/.rampart/audit/cef.log)")
+	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")
+	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
 
 	return cmd
 }

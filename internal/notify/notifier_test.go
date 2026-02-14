@@ -83,7 +83,7 @@ func TestGenericNotifier_Send(t *testing.T) {
 	}
 
 	// Create test server
-	var receivedPayload NotifyEvent
+	var receivedPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST request, got %s", r.Method)
@@ -104,9 +104,26 @@ func TestGenericNotifier_Send(t *testing.T) {
 		t.Errorf("Send() error = %v", err)
 	}
 
-	// Verify payload
-	if receivedPayload != event {
-		t.Errorf("Received payload doesn't match sent event")
+	if got := receivedPayload["action"]; got != event.Action {
+		t.Fatalf("action = %v, want %s", got, event.Action)
+	}
+	if got := receivedPayload["tool"]; got != event.Tool {
+		t.Fatalf("tool = %v, want %s", got, event.Tool)
+	}
+	if got := receivedPayload["command"]; got != event.Command {
+		t.Fatalf("command = %v, want %s", got, event.Command)
+	}
+	if got := receivedPayload["policy"]; got != event.Policy {
+		t.Fatalf("policy = %v, want %s", got, event.Policy)
+	}
+	if got := receivedPayload["message"]; got != event.Message {
+		t.Fatalf("message = %v, want %s", got, event.Message)
+	}
+	if got := receivedPayload["agent"]; got != event.Agent {
+		t.Fatalf("agent = %v, want %s", got, event.Agent)
+	}
+	if got := receivedPayload["timestamp"]; got != event.Timestamp {
+		t.Fatalf("timestamp = %v, want %s", got, event.Timestamp)
 	}
 }
 

@@ -34,6 +34,7 @@ import (
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
+	"github.com/peg/rampart/internal/signing"
 )
 
 const defaultMode = "enforce"
@@ -41,16 +42,19 @@ const redactedResponse = "[REDACTED: sensitive content removed by Rampart]"
 
 // Server is Rampart's HTTP proxy runtime for policy-aware tool calls.
 type Server struct {
-	engine       *engine.Engine
-	sink         audit.AuditSink
-	approvals    *approval.Store
-	token        string
-	mode         string
-	logger       *slog.Logger
-	mu           sync.Mutex
-	server       *http.Server
-	startedAt    time.Time
-	notifyConfig *engine.NotifyConfig
+	engine         *engine.Engine
+	sink           audit.AuditSink
+	approvals      *approval.Store
+	token          string
+	mode           string
+	logger         *slog.Logger
+	resolveBaseURL string
+	listenAddr     string
+	signer         *signing.Signer
+	mu             sync.Mutex
+	server         *http.Server
+	startedAt      time.Time
+	notifyConfig   *engine.NotifyConfig
 }
 
 // Option configures a proxy server.
@@ -83,6 +87,20 @@ func WithLogger(logger *slog.Logger) Option {
 		if logger != nil {
 			s.logger = logger
 		}
+	}
+}
+
+// WithResolveBaseURL sets the base URL used for approval resolve links.
+func WithResolveBaseURL(url string) Option {
+	return func(s *Server) {
+		s.resolveBaseURL = strings.TrimSpace(url)
+	}
+}
+
+// WithSigner enables HMAC-signed approval resolve URLs.
+func WithSigner(signer *signing.Signer) Option {
+	return func(s *Server) {
+		s.signer = signer
 	}
 }
 
@@ -123,8 +141,14 @@ func (s *Server) Token() string {
 
 // ListenAndServe starts serving HTTP requests at addr.
 func (s *Server) ListenAndServe(addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("proxy: listen: %w", err)
+	}
+	s.listenAddr = listener.Addr().String()
+
 	srv := &http.Server{
-		Addr:         addr,
+		Addr:         s.listenAddr,
 		Handler:      s.handler(),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -135,7 +159,7 @@ func (s *Server) ListenAndServe(addr string) error {
 	s.server = srv
 	s.mu.Unlock()
 
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.Serve(listener); err != nil {
 		return fmt.Errorf("proxy: listen and serve: %w", err)
 	}
 	return nil
@@ -143,8 +167,9 @@ func (s *Server) ListenAndServe(addr string) error {
 
 // Serve starts serving HTTP requests on an existing listener.
 func (s *Server) Serve(listener net.Listener) error {
+	s.listenAddr = listener.Addr().String()
 	srv := &http.Server{
-		Addr:         listener.Addr().String(),
+		Addr:         s.listenAddr,
 		Handler:      s.handler(),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -693,7 +718,7 @@ func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decis
 		Timestamp:  pending.CreatedAt.UTC().Format(time.RFC3339),
 		ApprovalID: pending.ID,
 		ExpiresAt:  pending.ExpiresAt.UTC().Format(time.RFC3339),
-		ResolveURL: s.approvalResolveURL(pending.ID),
+		ResolveURL: s.approvalResolveURL(pending.ID, pending.ExpiresAt.UTC()),
 	}
 
 	notifier := notify.NewNotifier(s.notifyConfig.URL, s.notifyConfig.Platform)
@@ -704,26 +729,38 @@ func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decis
 	}
 }
 
-func (s *Server) approvalResolveURL(id string) string {
-	addr := ""
-	s.mu.Lock()
-	if s.server != nil {
-		addr = strings.TrimSpace(s.server.Addr)
+func (s *Server) approvalResolveURL(id string, expiresAt time.Time) string {
+	base := s.resolveURLBase()
+	if s.signer != nil {
+		return s.signer.SignURL(base, id, expiresAt)
 	}
-	s.mu.Unlock()
-
-	if addr == "" {
-		addr = "localhost:9090"
-	}
-	if strings.HasPrefix(addr, ":") {
-		addr = "localhost" + addr
-	}
-	if !strings.Contains(addr, "://") {
-		addr = "http://" + addr
-	}
-
-	base := strings.TrimRight(addr, "/")
 	return fmt.Sprintf("%s/v1/approvals/%s/resolve", base, url.PathEscape(id))
+}
+
+func (s *Server) resolveURLBase() string {
+	if base := strings.TrimSpace(s.resolveBaseURL); base != "" {
+		return strings.TrimRight(base, "/")
+	}
+
+	addr := strings.TrimSpace(s.listenAddr)
+	if addr == "" {
+		return "http://localhost:9090"
+	}
+
+	if strings.Contains(addr, "://") {
+		return strings.TrimRight(addr, "/")
+	}
+
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.HasPrefix(addr, ":") {
+			port = strings.TrimPrefix(addr, ":")
+		}
+	}
+	if strings.TrimSpace(port) == "" {
+		return "http://localhost:9090"
+	}
+	return "http://localhost:" + port
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

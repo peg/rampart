@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/signing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -398,4 +400,49 @@ func TestStripLeadingComments(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApprovalResolveURL_UsesConfiguredBaseURL(t *testing.T) {
+	srv := New(nil, nil, WithResolveBaseURL("https://approve.example.com/"), WithToken("test-token"))
+	expiresAt := time.Now().Add(5 * time.Minute).UTC()
+
+	got := srv.approvalResolveURL("approval/1", expiresAt)
+	want := "https://approve.example.com/v1/approvals/approval%2F1/resolve"
+	assert.Equal(t, want, got)
+}
+
+func TestApprovalResolveURL_FallbacksToLocalhostWithListenerPort(t *testing.T) {
+	srv := New(nil, nil, WithToken("test-token"))
+	srv.listenAddr = "127.0.0.1:54321"
+	expiresAt := time.Now().Add(5 * time.Minute).UTC()
+
+	got := srv.approvalResolveURL("approval-1", expiresAt)
+	want := "http://localhost:54321/v1/approvals/approval-1/resolve"
+	assert.Equal(t, want, got)
+}
+
+func TestApprovalResolveURL_SignedWhenSignerConfigured(t *testing.T) {
+	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
+	expiresAt := time.Now().Add(10 * time.Minute).UTC()
+	srv := New(
+		nil,
+		nil,
+		WithResolveBaseURL("https://approve.example.com"),
+		WithSigner(signer),
+		WithToken("test-token"),
+	)
+
+	got := srv.approvalResolveURL("approval-1", expiresAt)
+	parsed, err := url.Parse(got)
+	require.NoError(t, err)
+
+	assert.Equal(t, "https", parsed.Scheme)
+	assert.Equal(t, "approve.example.com", parsed.Host)
+	assert.Equal(t, "/v1/approvals/approval-1/resolve", parsed.Path)
+
+	sig := parsed.Query().Get("sig")
+	exp := parsed.Query().Get("exp")
+	require.NotEmpty(t, sig)
+	require.NotEmpty(t, exp)
+	assert.True(t, signer.ValidateSignature("approval-1", sig, expiresAt.Unix()))
 }
