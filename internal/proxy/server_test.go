@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -445,4 +447,85 @@ func TestApprovalResolveURL_SignedWhenSignerConfigured(t *testing.T) {
 	require.NotEmpty(t, sig)
 	require.NotEmpty(t, exp)
 	assert.True(t, signer.ValidateSignature("approval-1", sig, expiresAt.Unix()))
+}
+
+func TestResolveApproval_SignedURLBypassesBearerAuth(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
+	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"), WithSigner(signer))
+	handler := srv.handler()
+
+	// Create a pending approval.
+	pending := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	expiresAt := pending.ExpiresAt.UTC()
+	signedURL := signer.SignURL("http://localhost", pending.ID, expiresAt)
+
+	// Parse sig and exp from the signed URL.
+	parsedURL, err := url.Parse(signedURL)
+	require.NoError(t, err)
+
+	// Resolve with signature (no Bearer token).
+	body := `{"approved":true,"resolved_by":"discord-user"}`
+	resolveURL := fmt.Sprintf("/v1/approvals/%s/resolve?%s", pending.ID, parsedURL.RawQuery)
+	req := httptest.NewRequest(http.MethodPost, resolveURL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// Deliberately NOT setting Authorization header.
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "signed URL should bypass Bearer auth")
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Equal(t, pending.ID, resp["id"])
+	assert.Equal(t, true, resp["approved"])
+}
+
+func TestResolveApproval_BadSignatureRejected(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
+	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"), WithSigner(signer))
+	handler := srv.handler()
+
+	pending := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+
+	body := `{"approved":true,"resolved_by":"attacker"}`
+	resolveURL := fmt.Sprintf("/v1/approvals/%s/resolve?sig=forged&exp=9999999999", pending.ID)
+	req := httptest.NewRequest(http.MethodPost, resolveURL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code, "forged signature should be rejected")
+}
+
+func TestResolveApproval_NoSigFallsThroughToBearerAuth(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
+	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"), WithSigner(signer))
+	handler := srv.handler()
+
+	pending := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+
+	// No sig params, but valid Bearer token.
+	body := `{"approved":true,"resolved_by":"api-user"}`
+	resolveURL := fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID)
+	req := httptest.NewRequest(http.MethodPost, resolveURL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "Bearer token should still work without sig")
+}
+
+func buildApprovalEngine(t *testing.T) *engine.Engine {
+	t.Helper()
+	dir := t.TempDir()
+	policy := filepath.Join(dir, "policy.yaml")
+	os.WriteFile(policy, []byte("default_action: allow\npolicies: []\n"), 0o644)
+	store := engine.NewFileStore(policy)
+	eng, err := engine.New(store, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+	require.NoError(t, err)
+	return eng
 }
