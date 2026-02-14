@@ -20,12 +20,27 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
 const responseRegexMatchTimeout = 100 * time.Millisecond
 
-var regexMatchString = func(re *regexp.Regexp, value string) bool {
+// regexMatchFunc can be set in tests to override regex matching behavior
+// (e.g., to simulate slow matches). Must be set before any concurrent
+// evaluation. Protected by a mutex to avoid races with goroutines.
+var (
+	regexMatchFunc  func(*regexp.Regexp, string) bool
+	regexMatchMu    sync.RWMutex
+)
+
+func regexMatchString(re *regexp.Regexp, value string) bool {
+	regexMatchMu.RLock()
+	fn := regexMatchFunc
+	regexMatchMu.RUnlock()
+	if fn != nil {
+		return fn(re, value)
+	}
 	return re.MatchString(value)
 }
 

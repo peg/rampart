@@ -667,13 +667,16 @@ policies:
         message: "secret detected"
 `)
 
-	orig := regexMatchString
-	regexMatchString = func(re *regexp.Regexp, value string) bool {
+	regexMatchMu.Lock()
+	regexMatchFunc = func(re *regexp.Regexp, value string) bool {
 		time.Sleep(200 * time.Millisecond)
 		return re.MatchString(value)
 	}
+	regexMatchMu.Unlock()
 	t.Cleanup(func() {
-		regexMatchString = orig
+		regexMatchMu.Lock()
+		regexMatchFunc = nil
+		regexMatchMu.Unlock()
 	})
 
 	call := ToolCall{
