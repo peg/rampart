@@ -47,13 +47,13 @@ type slackAttachment struct {
 }
 
 type slackSection struct {
-	Type   string                 `json:"type"`
-	Text   *slackText             `json:"text,omitempty"`
-	Fields []slackText            `json:"fields,omitempty"`
+	Type   string      `json:"type"`
+	Text   *slackText  `json:"text,omitempty"`
+	Fields []slackText `json:"fields,omitempty"`
 }
 
 type slackContext struct {
-	Type     string              `json:"type"`
+	Type     string                `json:"type"`
 	Elements []slackContextElement `json:"elements"`
 }
 
@@ -75,6 +75,27 @@ func (n *SlackNotifier) Send(event NotifyEvent) error {
 	if event.Action == "log" {
 		color = "#d29922" // orange for log
 		actionText = "Command Logged"
+	} else if event.Action == "require_approval" {
+		color = "#d29922" // amber for approval required
+		actionText = "Approval Required"
+	}
+
+	fields := []slackText{
+		{Type: "mrkdwn", Text: fmt.Sprintf("*Tool:*\n%s", event.Tool)},
+		{Type: "mrkdwn", Text: fmt.Sprintf("*Command/Path:*\n%s", event.Command)},
+	}
+	if event.Action == "require_approval" {
+		fields = append(fields,
+			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Agent:*\n%s", event.Agent)},
+			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Approval ID:*\n%s", shortApprovalID(event.ApprovalID))},
+			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Expires In:*\n%s", expiresInText(event.ExpiresAt))},
+			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Resolve:*\n<%s|Open approval>", event.ResolveURL)},
+		)
+	} else {
+		fields = append(fields,
+			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Policy:*\n%s", event.Policy)},
+			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Message:*\n%s", event.Message)},
+		)
 	}
 
 	// Build the payload
@@ -93,13 +114,8 @@ func (n *SlackNotifier) Send(event NotifyEvent) error {
 					},
 					// Fields section
 					slackSection{
-						Type: "section",
-						Fields: []slackText{
-							{Type: "mrkdwn", Text: fmt.Sprintf("*Tool:*\n%s", event.Tool)},
-							{Type: "mrkdwn", Text: fmt.Sprintf("*Command/Path:*\n%s", event.Command)},
-							{Type: "mrkdwn", Text: fmt.Sprintf("*Policy:*\n%s", event.Policy)},
-							{Type: "mrkdwn", Text: fmt.Sprintf("*Message:*\n%s", event.Message)},
-						},
+						Type:   "section",
+						Fields: fields,
 					},
 					// Context section with timestamp
 					slackContext{

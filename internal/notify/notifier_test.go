@@ -275,3 +275,169 @@ func TestNotifierErrorHandling(t *testing.T) {
 		})
 	}
 }
+
+func TestGenericNotifier_SendRequireApproval(t *testing.T) {
+	event := NotifyEvent{
+		Action:     "require_approval",
+		Tool:       "exec",
+		Command:    "kubectl delete pod x",
+		Policy:     "prod-guardrails",
+		Message:    "Approval needed for production changes",
+		Agent:      "test-agent",
+		Timestamp:  "2026-02-11T08:30:00Z",
+		ApprovalID: "01JKV8PY8NJWQ2Y0C4YQ4JQ9M8",
+		ExpiresAt:  "2026-02-11T08:35:00Z",
+		ResolveURL: "http://localhost:9090/v1/approvals/01JKV8PY8NJWQ2Y0C4YQ4JQ9M8/resolve",
+	}
+
+	var receivedPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewGenericNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	if got := receivedPayload["approval_id"]; got != event.ApprovalID {
+		t.Fatalf("approval_id = %v, want %s", got, event.ApprovalID)
+	}
+	if got := receivedPayload["expires_at"]; got != event.ExpiresAt {
+		t.Fatalf("expires_at = %v, want %s", got, event.ExpiresAt)
+	}
+	if got := receivedPayload["resolve_url"]; got != event.ResolveURL {
+		t.Fatalf("resolve_url = %v, want %s", got, event.ResolveURL)
+	}
+}
+
+func TestDiscordNotifier_SendRequireApproval(t *testing.T) {
+	event := NotifyEvent{
+		Action:     "require_approval",
+		Tool:       "exec",
+		Command:    "terraform apply",
+		Agent:      "test-agent",
+		Timestamp:  "2026-02-11T08:30:00Z",
+		ApprovalID: "01JKV8PY8NJWQ2Y0C4YQ4JQ9M8",
+		ExpiresAt:  "2026-02-11T08:35:00Z",
+		ResolveURL: "http://localhost:9090/v1/approvals/01JKV8PY8NJWQ2Y0C4YQ4JQ9M8/resolve",
+	}
+
+	var receivedPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewDiscordNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	embeds := receivedPayload["embeds"].([]any)
+	embed := embeds[0].(map[string]any)
+	if got := embed["title"]; got != "Rampart: Approval Required" {
+		t.Fatalf("title = %v, want Rampart: Approval Required", got)
+	}
+	if got := embed["color"]; got != float64(0xd29922) {
+		t.Fatalf("color = %v, want %v", got, float64(0xd29922))
+	}
+
+	fields := embed["fields"].([]any)
+	raw, _ := json.Marshal(fields)
+	if !strings.Contains(string(raw), "Approval ID") {
+		t.Fatalf("fields missing Approval ID: %s", raw)
+	}
+	if !strings.Contains(string(raw), event.ResolveURL) {
+		t.Fatalf("fields missing resolve URL: %s", raw)
+	}
+}
+
+func TestSlackNotifier_SendRequireApproval(t *testing.T) {
+	event := NotifyEvent{
+		Action:     "require_approval",
+		Tool:       "exec",
+		Command:    "terraform apply",
+		Agent:      "test-agent",
+		Timestamp:  "2026-02-11T08:30:00Z",
+		ApprovalID: "01JKV8PY8NJWQ2Y0C4YQ4JQ9M8",
+		ExpiresAt:  "2026-02-11T08:35:00Z",
+		ResolveURL: "http://localhost:9090/v1/approvals/01JKV8PY8NJWQ2Y0C4YQ4JQ9M8/resolve",
+	}
+
+	var receivedPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewSlackNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	attachments := receivedPayload["attachments"].([]any)
+	attachment := attachments[0].(map[string]any)
+	if got := attachment["color"]; got != "#d29922" {
+		t.Fatalf("color = %v, want #d29922", got)
+	}
+	raw, _ := json.Marshal(attachment["blocks"])
+	if !strings.Contains(string(raw), "Approval Required") {
+		t.Fatalf("blocks missing approval title: %s", raw)
+	}
+	if !strings.Contains(string(raw), event.ResolveURL) {
+		t.Fatalf("blocks missing resolve URL: %s", raw)
+	}
+}
+
+func TestTeamsNotifier_SendRequireApproval(t *testing.T) {
+	event := NotifyEvent{
+		Action:     "require_approval",
+		Tool:       "exec",
+		Command:    "terraform apply",
+		Agent:      "test-agent",
+		Timestamp:  "2026-02-11T08:30:00Z",
+		ApprovalID: "01JKV8PY8NJWQ2Y0C4YQ4JQ9M8",
+		ExpiresAt:  "2026-02-11T08:35:00Z",
+		ResolveURL: "http://localhost:9090/v1/approvals/01JKV8PY8NJWQ2Y0C4YQ4JQ9M8/resolve",
+	}
+
+	var receivedPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedPayload); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	notifier := NewTeamsNotifier(server.URL)
+	if err := notifier.Send(event); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	if got := receivedPayload["themeColor"]; got != "d29922" {
+		t.Fatalf("themeColor = %v, want d29922", got)
+	}
+	if !strings.Contains(receivedPayload["title"].(string), "Approval Required") {
+		t.Fatalf("title = %v, expected Approval Required", receivedPayload["title"])
+	}
+
+	raw, _ := json.Marshal(receivedPayload["sections"])
+	if !strings.Contains(string(raw), "Approval ID") {
+		t.Fatalf("sections missing Approval ID: %s", raw)
+	}
+	if !strings.Contains(string(raw), event.ResolveURL) {
+		t.Fatalf("sections missing resolve URL: %s", raw)
+	}
+}
