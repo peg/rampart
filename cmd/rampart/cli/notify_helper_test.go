@@ -15,6 +15,8 @@ package cli
 
 import (
 	"testing"
+
+	"github.com/peg/rampart/internal/engine"
 )
 
 func TestSanitizeCommand(t *testing.T) {
@@ -125,6 +127,97 @@ func TestSanitizeCommand(t *testing.T) {
 			result := sanitizeCommand(tc.input)
 			if result != tc.expected {
 				t.Errorf("sanitizeCommand(%q) = %q, want %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestSanitizeCommand_AllPatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "quoted auth bearer", input: "curl -H 'Authorization: Bearer abc123' https://api.example.com", expected: "curl -H '[REDACTED]' https://api.example.com"},
+		{name: "mysql single quote", input: "mysql -uroot -p'secret' db", expected: "mysql -uroot [REDACTED] db"},
+		{name: "mysql double quote", input: `mysql -uroot -p"secret" db`, expected: "mysql -uroot [REDACTED] db"},
+		{name: "mysql unquoted", input: "mysql -uroot -psecret db", expected: "mysql -uroot [REDACTED] db"},
+		{name: "password equals", input: "cmd --password=topsecret --flag", expected: "cmd [REDACTED] --flag"},
+		{name: "password arg", input: "cmd --password topsecret --flag", expected: "cmd [REDACTED] --flag"},
+		{name: "github ghp", input: "token=ghp_1234567890123456789012345678901234567890", expected: "token=[REDACTED]"},
+		{name: "github gho", input: "token=gho_abcdef123456", expected: "token=[REDACTED]"},
+		{name: "github ghs", input: "token=ghs_abcdef123456", expected: "token=[REDACTED]"},
+		{name: "slack xoxb", input: "token=xoxb-111-222-abc", expected: "token=[REDACTED]"},
+		{name: "slack xoxp", input: "token=xoxp-111-222-abc", expected: "token=[REDACTED]"},
+		{name: "openai key", input: "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456", expected: "export OPENAI_API_KEY=[REDACTED]"},
+		{name: "aws access key", input: "aws configure set profile AKIA1234567890ABCDEF", expected: "aws configure set profile [REDACTED]"},
+		{name: "unquoted auth header", input: "curl -H Authorization: Bearer abc123 https://example.com", expected: "curl -H Authorization: Bearer [REDACTED] https://example.com"},
+		{name: "keyword base64 token", input: "env token=dGhpc2lzYXZlcnlsb25nc2VjcmV0dmFsdWV0aGF0c2hvdWxkYmVyZWRhY3RlZA==", expected: "env [REDACTED]"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeCommand(tc.input)
+			if got != tc.expected {
+				t.Fatalf("sanitizeCommand(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestExtractCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		call engine.ToolCall
+		want string
+	}{
+		{
+			name: "exec command",
+			call: engine.ToolCall{Tool: "exec", Params: map[string]any{"command": "go test ./..."}},
+			want: "go test ./...",
+		},
+		{
+			name: "read path",
+			call: engine.ToolCall{Tool: "read", Params: map[string]any{"path": "/tmp/in.txt"}},
+			want: "/tmp/in.txt",
+		},
+		{
+			name: "write path",
+			call: engine.ToolCall{Tool: "write", Params: map[string]any{"path": "/tmp/out.txt"}},
+			want: "/tmp/out.txt",
+		},
+		{
+			name: "read file_path fallback",
+			call: engine.ToolCall{Tool: "read", Params: map[string]any{"file_path": "/tmp/fallback-read.txt"}},
+			want: "/tmp/fallback-read.txt",
+		},
+		{
+			name: "write file_path fallback",
+			call: engine.ToolCall{Tool: "write", Params: map[string]any{"file_path": "/tmp/fallback-write.txt"}},
+			want: "/tmp/fallback-write.txt",
+		},
+		{
+			name: "fetch url",
+			call: engine.ToolCall{Tool: "fetch", Params: map[string]any{"url": "https://example.com"}},
+			want: "https://example.com",
+		},
+		{
+			name: "unknown tool",
+			call: engine.ToolCall{Tool: "other", Params: map[string]any{"path": "/tmp/x"}},
+			want: "",
+		},
+		{
+			name: "missing params",
+			call: engine.ToolCall{Tool: "exec", Params: map[string]any{}},
+			want: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractCommand(tc.call)
+			if got != tc.want {
+				t.Fatalf("extractCommand() = %q, want %q", got, tc.want)
 			}
 		})
 	}

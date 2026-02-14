@@ -125,6 +125,7 @@ func TestPolicyExplain(t *testing.T) {
 
 func TestServeGracefulShutdown(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	configPath := filepath.Join(dir, "rampart.yaml")
 	content, err := policies.FS.ReadFile("standard.yaml")
 	require.NoError(t, err)
@@ -149,7 +150,7 @@ func TestServeGracefulShutdown(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetContext(context.Background())
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"--port", "0"})
 
 	errCh := make(chan error, 1)
 	go func() {
