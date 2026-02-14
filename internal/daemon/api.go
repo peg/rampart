@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/approval"
+	"github.com/peg/rampart/internal/dashboard"
 )
 
 // API serves HTTP endpoints for the daemon's approval management.
@@ -42,6 +43,7 @@ func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/approvals", a.handleList)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", a.handleResolve)
+	mux.Handle("/", dashboard.Handler())
 	return http.MaxBytesHandler(mux, 1<<20) // 1MB limit
 }
 
