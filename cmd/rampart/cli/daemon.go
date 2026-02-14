@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/daemon"
+	"github.com/peg/rampart/internal/signing"
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +34,7 @@ func newDaemonCmd(opts *rootOptions) *cobra.Command {
 	var auditDir string
 	var apiAddr string
 	var reconnectSeconds int
+	var signingKeyPath string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -111,8 +113,26 @@ Example:
 			fmt.Fprintf(cmd.OutOrStdout(), "  Audit:   %s\n", auditDir)
 			fmt.Fprintf(cmd.OutOrStdout(), "  API:     %s\n\n", apiAddr)
 
+			// Load or auto-generate signing key for approval resolve URLs.
+			var signer *signing.Signer
+			if signingKeyPath == "" {
+				home, _ := os.UserHomeDir()
+				if home != "" {
+					signingKeyPath = filepath.Join(home, ".rampart", "signing.key")
+				}
+			}
+			if signingKeyPath != "" {
+				key, keyErr := signing.LoadOrCreateKey(signingKeyPath)
+				if keyErr != nil {
+					logger.Warn("daemon: failed to load signing key, resolve URLs will be unsigned", "error", keyErr)
+				} else {
+					signer = signing.NewSigner(key)
+					logger.Info("daemon: approval URL signing enabled", "key_path", signingKeyPath)
+				}
+			}
+
 			// Start the approval API server (shares gateway token for auth).
-			api := daemon.NewAPI(d.Approvals(), gatewayToken, logger)
+			api := daemon.NewAPI(d.Approvals(), gatewayToken, logger, signer)
 			apiServer := &http.Server{Addr: apiAddr, Handler: api.Handler()}
 			go func() {
 				if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -130,6 +150,7 @@ Example:
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Audit log directory (default ~/.rampart/audit)")
 	cmd.Flags().StringVar(&apiAddr, "api", "127.0.0.1:9091", "Daemon API listen address (for approval management)")
 	cmd.Flags().IntVar(&reconnectSeconds, "reconnect", 5, "Reconnect interval in seconds")
+	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
 
 	return cmd
 }

@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/dashboard"
+	"github.com/peg/rampart/internal/signing"
 )
 
 // API serves HTTP endpoints for the daemon's approval management.
@@ -30,12 +32,13 @@ type API struct {
 	approvals *approval.Store
 	token     string
 	logger    *slog.Logger
+	signer    *signing.Signer
 }
 
 // NewAPI creates a new daemon API handler.
 // If token is non-empty, all endpoints require Bearer auth.
-func NewAPI(approvals *approval.Store, token string, logger *slog.Logger) *API {
-	return &API{approvals: approvals, token: token, logger: logger}
+func NewAPI(approvals *approval.Store, token string, logger *slog.Logger, signer *signing.Signer) *API {
+	return &API{approvals: approvals, token: token, logger: logger, signer: signer}
 }
 
 // Handler returns the HTTP handler for the daemon API.
@@ -95,6 +98,15 @@ func (a *API) handleResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
+	if a.signer != nil {
+		sig := r.URL.Query().Get("sig")
+		expRaw := r.URL.Query().Get("exp")
+		exp, err := strconv.ParseInt(expRaw, 10, 64)
+		if sig == "" || err != nil || !a.signer.ValidateSignature(id, sig, exp) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired signature"})
+			return
+		}
+	}
 
 	var req resolveReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
