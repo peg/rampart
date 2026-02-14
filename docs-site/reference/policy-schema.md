@@ -10,7 +10,7 @@ default_action: allow      # Required. "allow" or "deny".
 
 notify:                    # Optional. Webhook notifications.
   url: "https://..."
-  platform: "auto"         # Optional. "auto", "slack", "discord", "teams", "webhook".
+  platform: "auto"         # Optional. "auto", "slack", "discord", "teams", "openclaw", "webhook".
   on: ["deny"]
 
 policies:                  # Required. List of policy objects.
@@ -160,13 +160,28 @@ webhook:
 ```yaml
 notify:
   url: "https://discord.com/api/webhooks/..."  # Required. Webhook URL.
-  on: ["deny"]                                  # Required. Event types.
+  platform: "auto"                             # Optional. Platform-specific formatting.
+  on: ["deny", "require_approval"]             # Required. Event types.
 ```
+
+### Events
 
 | Event | When |
 |-------|------|
 | `"deny"` | A tool call was blocked |
 | `"log"` | A tool call was flagged |
+| `"require_approval"` | A tool call requires human approval |
+
+### Platforms
+
+| Platform | Auto-detected for | Description |
+|----------|-------------------|-------------|
+| `"auto"` | Any URL | Auto-detect based on URL |
+| `"slack"` | hooks.slack.com | Slack webhook format |
+| `"discord"` | discord.com/api/webhooks | Discord webhook format |
+| `"teams"` | webhook.office.com | Microsoft Teams format |
+| `"openclaw"` | openclaw.dev/ai/io | OpenClaw notification format |
+| `"webhook"` | Other URLs | Generic JSON webhook |
 
 ## Evaluation Rules
 

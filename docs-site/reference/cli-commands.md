@@ -83,6 +83,16 @@ rampart preload --mode monitor -- agent         # Audit only
 rampart preload --debug -- agent                # Debug to stderr
 ```
 
+### `rampart daemon`
+
+Run Rampart as an OpenClaw approval daemon.
+
+```bash
+rampart daemon --token YOUR_TOKEN               # Connect to OpenClaw Gateway
+rampart daemon --gateway ws://host:port         # Custom gateway URL
+rampart daemon --signing-key ~/.rampart/key     # Custom signing key
+```
+
 ### `rampart mcp`
 
 Proxy MCP servers with policy enforcement.
