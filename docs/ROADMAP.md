@@ -11,13 +11,22 @@ What's coming next for Rampart. Priorities shift based on feedback — open an i
 - ✅ Webhook notifications and webhook actions
 - ✅ SIEM integration (syslog + CEF)
 - ✅ Semantic verification sidecar ([rampart-verify](https://github.com/peg/rampart-verify))
+- ✅ `require_approval` — human-in-the-loop approval for sensitive operations
+- ✅ Signed resolve URLs (HMAC-SHA256, self-authenticating)
+- ✅ Embedded web dashboard with security headers
+- ✅ OpenClaw integration (auto-detection, chat-based approval)
+- ✅ Regex complexity limits (ReDoS protection)
+- ✅ LD_PRELOAD constructor-based symbol resolution
+- ✅ Cross-platform release builds (goreleaser)
 
 ## Up Next
 
+- Fuzz testing for parsers and policy evaluation
 - Expanded integration guides
 - Starter policy library for common stacks
-- CI/CD integration
+- CI/CD integration (GitHub Actions, GitLab CI)
 - Additional SIEM platform guides
+- Fleet management and centralized policy distribution
 
 ## Non-Goals
 
