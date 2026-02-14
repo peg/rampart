@@ -65,6 +65,7 @@
 <script>
 (() => {
   const POLL_MS = 2000;
+  const MAX_POLL_MS = 30000;
   const TICK_MS = 1000;
   const TOKEN_KEY = 'rampart_dashboard_token';
   const MAX_HISTORY = 20;
@@ -79,7 +80,7 @@
     toasts: document.getElementById('toasts')
   };
 
-  const state = { pending: [], seen: new Set(), history: [] };
+  const state = { pending: [], seen: new Set(), history: [], pollDelay: POLL_MS, pollTimer: null, pollController: null };
 
   el.token.value = localStorage.getItem(TOKEN_KEY) || '';
 
@@ -119,8 +120,14 @@
     setTimeout(() => n.remove(), 2600);
   }
 
-  function upsertHistory(item, approved) {
-    state.history.unshift({ ...item, _approved: approved, _resolvedAt: new Date().toISOString() });
+  function upsertHistory(item, approved, resolvedBy, status) {
+    state.history.unshift({
+      ...item,
+      _approved: approved,
+      _status: status || (approved ? 'approved' : 'denied'),
+      _resolvedAt: new Date().toISOString(),
+      _resolvedBy: resolvedBy || 'dashboard'
+    });
     state.history = state.history.slice(0, MAX_HISTORY);
   }
 
@@ -135,13 +142,15 @@
       </div>
       <pre class="cmd">${escape(item.command || '')}</pre>
       <div class="kv">
+        <div class="k">ID</div><div class="v">${escape(item.id || '-')}</div>
         <div class="k">Agent</div><div class="v">${escape(item.agent || '-')}</div>
         <div class="k">Policy Message</div><div class="v">${escape(item.message || '-')}</div>
-        ${inHistory ? `<div class="k">Resolution</div><div class="v">${item._approved ? 'approved' : 'denied'}</div>` : ''}
+        ${inHistory ? `<div class="k">Resolution</div><div class="v">${escape(item._status || (item._approved ? 'approved' : 'denied'))}</div>` : ''}
+        ${inHistory ? `<div class="k">Resolved By</div><div class="v">${escape(item._resolvedBy || 'dashboard')}</div>` : ''}
         <div class="k">Created</div><div class="v">${escape(fmt.ts(item.created_at))}</div>
         <div class="k">${inHistory ? 'Resolved' : 'Expires'}</div><div class="v">${escape(fmt.ts(inHistory ? item._resolvedAt : item.expires_at))}</div>
       </div>
-      ${inHistory ? '' : `<div class="actions"><button class="btn ok" data-action="approve" data-id="${item.id}">Approve</button><button class="btn deny" data-action="deny" data-id="${item.id}">Deny</button></div>`}
+      ${inHistory ? '' : `<div class="actions"><button class="btn ok" data-action="approve" data-id="${escape(item.id)}">Approve</button><button class="btn deny" data-action="deny" data-id="${escape(item.id)}">Deny</button></div>`}
     `;
     return card;
   }
@@ -160,6 +169,10 @@
 
   function renderHistory() {
     el.history.innerHTML = '';
+    if (!state.history.length) {
+      el.history.innerHTML = '<div class="empty">No resolved approvals yet</div>';
+      return;
+    }
     for (const item of state.history) el.history.appendChild(renderCard(item, true));
   }
 
@@ -172,21 +185,45 @@
       .replaceAll("'", '&#39;');
   }
 
+  function schedulePoll(delay) {
+    if (state.pollTimer) clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(() => {
+      poll();
+    }, delay);
+  }
+
+  function nextBackoff() {
+    state.pollDelay = Math.min(state.pollDelay * 2, MAX_POLL_MS);
+  }
+
   async function poll() {
+    if (state.pollController) state.pollController.abort();
+    const controller = new AbortController();
+    state.pollController = controller;
     try {
-      const r = await fetch('/v1/approvals', { headers: headers(false) });
+      const r = await fetch('/v1/approvals', { headers: headers(false), signal: controller.signal });
       if (!r.ok) {
         const message = r.status === 401 ? 'unauthorized (set token)' : `request failed (${r.status})`;
         el.status.textContent = `Status: ${message}`;
+        nextBackoff();
         return;
       }
       const data = await r.json();
       state.pending = Array.isArray(data.approvals) ? data.approvals : [];
       renderPending();
+      renderHistory();
+      state.pollDelay = POLL_MS;
       el.status.textContent = 'Status: live';
       el.updated.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
-    } catch (_err) {
+    } catch (err) {
+      if (err.name === 'AbortError') return;
       el.status.textContent = 'Status: network error';
+      nextBackoff();
+    } finally {
+      if (state.pollController === controller) {
+        state.pollController = null;
+      }
+      schedulePoll(state.pollDelay);
     }
   }
 
@@ -204,7 +241,7 @@
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       const item = state.pending.find(x => x.id === id);
       if (item) {
-        upsertHistory(item, approved);
+        upsertHistory(item, approved, data.resolved_by || 'dashboard', data.status);
         renderHistory();
       }
       toast(approved ? 'Approval granted' : 'Approval denied', true);
@@ -233,8 +270,8 @@
     if (state.history.length) renderHistory();
   }, TICK_MS);
 
+  renderHistory();
   poll();
-  setInterval(poll, POLL_MS);
 })();
 </script>
 </body>
