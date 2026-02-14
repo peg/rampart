@@ -67,6 +67,109 @@ static int (*real_posix_spawn)(pid_t *, const char *, const posix_spawn_file_act
                                const posix_spawnattr_t *, char *const[], char *const[]) = NULL;
 extern char **environ;
 
+// Per-function interception toggles (1 = pass-through mode).
+static int disable_execve_intercept = 0;
+static int disable_execvp_intercept = 0;
+#ifdef __linux__
+static int disable_execvpe_intercept = 0;
+#endif
+static int disable_system_intercept = 0;
+static int disable_popen_intercept = 0;
+static int disable_posix_spawn_intercept = 0;
+
+// One-time warning guards for missing symbols.
+static int warned_execve_missing = 0;
+static int warned_execvp_missing = 0;
+#ifdef __linux__
+static int warned_execvpe_missing = 0;
+#endif
+static int warned_system_missing = 0;
+static int warned_popen_missing = 0;
+static int warned_posix_spawn_missing = 0;
+
+static void warn_once_missing_symbol(int *warned, const char *func_name, const char *phase) {
+    if (__sync_lock_test_and_set(warned, 1) != 0) return;
+    fprintf(stderr,
+            "[rampart] warning: failed to resolve %s via dlsym(RTLD_NEXT) during %s; "
+            "interception disabled for this function\n",
+            func_name, phase);
+}
+
+static int ensure_real_execve(void) {
+    if (real_execve) return 1;
+    union { void *p; int (*execve)(const char *, char *const[], char *const[]); } u;
+    u.p = dlsym(RTLD_NEXT, "execve");
+    real_execve = u.execve;
+    if (!real_execve) {
+        warn_once_missing_symbol(&warned_execve_missing, "execve", "runtime");
+        return 0;
+    }
+    return 1;
+}
+
+static int ensure_real_execvp(void) {
+    if (real_execvp) return 1;
+    union { void *p; int (*execvp)(const char *, char *const[]); } u;
+    u.p = dlsym(RTLD_NEXT, "execvp");
+    real_execvp = u.execvp;
+    if (!real_execvp) {
+        warn_once_missing_symbol(&warned_execvp_missing, "execvp", "runtime");
+        return 0;
+    }
+    return 1;
+}
+
+#ifdef __linux__
+static int ensure_real_execvpe(void) {
+    if (real_execvpe) return 1;
+    union { void *p; int (*execvpe)(const char *, char *const[], char *const[]); } u;
+    u.p = dlsym(RTLD_NEXT, "execvpe");
+    real_execvpe = u.execvpe;
+    if (!real_execvpe) {
+        warn_once_missing_symbol(&warned_execvpe_missing, "execvpe", "runtime");
+        return 0;
+    }
+    return 1;
+}
+#endif
+
+static int ensure_real_system(void) {
+    if (real_system) return 1;
+    union { void *p; int (*system)(const char *); } u;
+    u.p = dlsym(RTLD_NEXT, "system");
+    real_system = u.system;
+    if (!real_system) {
+        warn_once_missing_symbol(&warned_system_missing, "system", "runtime");
+        return 0;
+    }
+    return 1;
+}
+
+static int ensure_real_popen(void) {
+    if (real_popen) return 1;
+    union { void *p; FILE *(*popen)(const char *, const char *); } u;
+    u.p = dlsym(RTLD_NEXT, "popen");
+    real_popen = u.popen;
+    if (!real_popen) {
+        warn_once_missing_symbol(&warned_popen_missing, "popen", "runtime");
+        return 0;
+    }
+    return 1;
+}
+
+static int ensure_real_posix_spawn(void) {
+    if (real_posix_spawn) return 1;
+    union { void *p; int (*posix_spawn)(pid_t *, const char *, const posix_spawn_file_actions_t *,
+                                       const posix_spawnattr_t *, char *const[], char *const[]); } u;
+    u.p = dlsym(RTLD_NEXT, "posix_spawn");
+    real_posix_spawn = u.posix_spawn;
+    if (!real_posix_spawn) {
+        warn_once_missing_symbol(&warned_posix_spawn_missing, "posix_spawn", "runtime");
+        return 0;
+    }
+    return 1;
+}
+
 static void debug_log(const char *fmt, ...) {
     if (!config.debug) return;
     
@@ -160,26 +263,46 @@ static void init_library(void) {
     
     u_execve.p = dlsym(RTLD_NEXT, "execve");
     real_execve = u_execve.execve;
+    disable_execve_intercept = (real_execve == NULL);
+    if (disable_execve_intercept) {
+        warn_once_missing_symbol(&warned_execve_missing, "execve", "library initialization");
+    }
     
     u_execvp.p = dlsym(RTLD_NEXT, "execvp");
     real_execvp = u_execvp.execvp;
+    disable_execvp_intercept = (real_execvp == NULL);
+    if (disable_execvp_intercept) {
+        warn_once_missing_symbol(&warned_execvp_missing, "execvp", "library initialization");
+    }
     
 #ifdef __linux__
     u_execvpe.p = dlsym(RTLD_NEXT, "execvpe");
     real_execvpe = u_execvpe.execvpe;
+    disable_execvpe_intercept = (real_execvpe == NULL);
+    if (disable_execvpe_intercept) {
+        warn_once_missing_symbol(&warned_execvpe_missing, "execvpe", "library initialization");
+    }
 #endif
     
     u_system.p = dlsym(RTLD_NEXT, "system");
     real_system = u_system.system;
+    disable_system_intercept = (real_system == NULL);
+    if (disable_system_intercept) {
+        warn_once_missing_symbol(&warned_system_missing, "system", "library initialization");
+    }
     
     u_popen.p = dlsym(RTLD_NEXT, "popen");
     real_popen = u_popen.popen;
+    disable_popen_intercept = (real_popen == NULL);
+    if (disable_popen_intercept) {
+        warn_once_missing_symbol(&warned_popen_missing, "popen", "library initialization");
+    }
     
     u_posix_spawn.p = dlsym(RTLD_NEXT, "posix_spawn");
     real_posix_spawn = u_posix_spawn.posix_spawn;
-    
-    if (!real_execve || !real_execvp || !real_system || !real_popen || !real_posix_spawn) {
-        debug_log("Failed to load original function pointers");
+    disable_posix_spawn_intercept = (real_posix_spawn == NULL);
+    if (disable_posix_spawn_intercept) {
+        warn_once_missing_symbol(&warned_posix_spawn_missing, "posix_spawn", "library initialization");
     }
     
     debug_log("Library initialized successfully");
@@ -404,10 +527,11 @@ static int check_policy(const char *command) {
 int execve(const char *path, char *const argv[], char *const envp[]) {
     pthread_once(&init_once, init_library);
     
-    if (!real_execve) {
-        errno = ENOSYS;
+    if (!ensure_real_execve()) {
+        errno = EIO;
         return -1;
     }
+    if (disable_execve_intercept) return real_execve(path, argv, envp);
     
     char *cmd = build_command_string(argv);
     if (cmd && !check_policy(cmd)) {
@@ -429,10 +553,11 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
 int execvp(const char *file, char *const argv[]) {
     pthread_once(&init_once, init_library);
     
-    if (!real_execvp) {
-        errno = ENOSYS;
+    if (!ensure_real_execvp()) {
+        errno = EIO;
         return -1;
     }
+    if (disable_execvp_intercept) return real_execvp(file, argv);
     
     char *cmd = build_command_string(argv);
     if (cmd && !check_policy(cmd)) {
@@ -451,10 +576,11 @@ int execvp(const char *file, char *const argv[]) {
 int execvpe(const char *file, char *const argv[], char *const envp[]) {
     pthread_once(&init_once, init_library);
     
-    if (!real_execvpe) {
-        errno = ENOSYS;
+    if (!ensure_real_execvpe()) {
+        errno = EIO;
         return -1;
     }
+    if (disable_execvpe_intercept) return real_execvpe(file, argv, envp);
     
     char *cmd = build_command_string(argv);
     if (cmd && !check_policy(cmd)) {
@@ -477,10 +603,11 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
 int system(const char *command) {
     pthread_once(&init_once, init_library);
     
-    if (!real_system) {
-        errno = ENOSYS;
+    if (!ensure_real_system()) {
+        errno = EIO;
         return -1;
     }
+    if (disable_system_intercept) return real_system(command);
     
     if (command && !check_policy(command)) {
         debug_log("Blocking system: %s", command);
@@ -495,10 +622,11 @@ int system(const char *command) {
 FILE *popen(const char *command, const char *type) {
     pthread_once(&init_once, init_library);
     
-    if (!real_popen) {
-        errno = ENOSYS;
+    if (!ensure_real_popen()) {
+        errno = EIO;
         return NULL;
     }
+    if (disable_popen_intercept) return real_popen(command, type);
     
     if (command && !check_policy(command)) {
         debug_log("Blocking popen: %s", command);
@@ -516,8 +644,11 @@ int posix_spawn(pid_t *pid, const char *path,
                 char *const argv[], char *const envp[]) {
     pthread_once(&init_once, init_library);
     
-    if (!real_posix_spawn) {
-        return ENOSYS;
+    if (!ensure_real_posix_spawn()) {
+        return EIO;
+    }
+    if (disable_posix_spawn_intercept) {
+        return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
     }
     
     char *cmd = build_command_string(argv);
@@ -534,6 +665,11 @@ int posix_spawn(pid_t *pid, const char *path,
     int rc = real_posix_spawn(pid, path, file_actions, attrp, argv, effective_envp);
     if (modified) free_modified_envp(effective_envp);
     return rc;
+}
+
+__attribute__((constructor))
+static void load_library(void) {
+    pthread_once(&init_once, init_library);
 }
 
 // Cleanup function (called at library unload)

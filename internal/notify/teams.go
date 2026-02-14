@@ -65,6 +65,29 @@ func (n *TeamsNotifier) Send(event NotifyEvent) error {
 		themeColor = "d29922" // orange for log
 		title = "🛡️ Rampart: Command Logged"
 		summary = "Rampart policy engine logged a command"
+	} else if event.Action == "require_approval" {
+		themeColor = "d29922" // amber for approval required
+		title = "🛡️ Rampart: Approval Required"
+		summary = "Rampart policy engine requires human approval"
+	}
+
+	facts := []teamsFact{
+		{Name: "Tool", Value: event.Tool},
+		{Name: "Command/Path", Value: event.Command},
+		{Name: "Agent", Value: event.Agent},
+		{Name: "Timestamp", Value: event.Timestamp},
+	}
+	if event.Action == "require_approval" {
+		facts = append(facts,
+			teamsFact{Name: "Approval ID", Value: shortApprovalID(event.ApprovalID)},
+			teamsFact{Name: "Expires In", Value: expiresInText(event.ExpiresAt)},
+			teamsFact{Name: "Resolve URL", Value: event.ResolveURL},
+		)
+	} else {
+		facts = append(facts,
+			teamsFact{Name: "Policy", Value: event.Policy},
+			teamsFact{Name: "Message", Value: event.Message},
+		)
 	}
 
 	// Build the message card
@@ -76,14 +99,7 @@ func (n *TeamsNotifier) Send(event NotifyEvent) error {
 		ThemeColor: themeColor,
 		Sections: []teamsSection{
 			{
-				Facts: []teamsFact{
-					{Name: "Tool", Value: event.Tool},
-					{Name: "Command/Path", Value: event.Command},
-					{Name: "Policy", Value: event.Policy},
-					{Name: "Message", Value: event.Message},
-					{Name: "Agent", Value: event.Agent},
-					{Name: "Timestamp", Value: event.Timestamp},
-				},
+				Facts: facts,
 			},
 		},
 	}

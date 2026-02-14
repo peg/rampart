@@ -26,13 +26,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 )
 
 const (
-	defaultMode            = "enforce"
-	jsonRPCDenyCode        = -32600
+	defaultMode             = "enforce"
+	jsonRPCDenyCode         = -32600
 	jsonRPCResponseDenyCode = -32603
 )
 
@@ -78,21 +79,32 @@ func WithFilterTools(enabled bool) Option {
 	}
 }
 
+// WithApprovalStore sets the approval store used for require_approval decisions.
+func WithApprovalStore(store *approval.Store) Option {
+	return func(p *Proxy) {
+		p.approvals = store
+	}
+}
+
 // Proxy evaluates MCP tools/call requests before forwarding to child MCP server.
 type Proxy struct {
 	engine *engine.Engine
 	sink   audit.AuditSink
 
-	mode       string
-	logger     *slog.Logger
+	mode        string
+	logger      *slog.Logger
 	filterTools bool
 	toolMapping map[string]string
+	approvals   *approval.Store
 
-	childIn  io.WriteCloser
-	childOut io.Reader
+	childIn   io.WriteCloser
+	childOut  io.Reader
 	parentOut io.Writer
 
 	outMu sync.Mutex
+
+	stopCh   chan struct{}
+	stopOnce sync.Once
 
 	pendingMu       sync.Mutex
 	pendingCalls    map[string]pendingCall
@@ -114,6 +126,7 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 		logger:          slog.Default(),
 		childIn:         childIn,
 		childOut:        childOut,
+		stopCh:          make(chan struct{}),
 		pendingCalls:    make(map[string]pendingCall),
 		pendingToolList: make(map[string]struct{}),
 	}
@@ -130,6 +143,8 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 
 // Run starts bidirectional proxying between parent stdio and child MCP stdio.
 func (p *Proxy) Run(ctx context.Context, parentIn io.Reader, parentOut io.Writer) error {
+	defer p.closeStop()
+
 	if parentIn == nil || parentOut == nil {
 		return fmt.Errorf("mcp: parent streams must be non-nil")
 	}
@@ -145,7 +160,7 @@ func (p *Proxy) Run(ctx context.Context, parentIn io.Reader, parentOut io.Writer
 	childErrCh := make(chan error, 1)
 
 	go func() {
-		clientErrCh <- p.proxyClientToChild(parentIn)
+		clientErrCh <- p.proxyClientToChild(ctx, parentIn)
 	}()
 	go func() {
 		childErrCh <- p.proxyChildToClient(parentOut)
@@ -164,6 +179,12 @@ func (p *Proxy) Run(ctx context.Context, parentIn io.Reader, parentOut io.Writer
 	}
 }
 
+func (p *Proxy) closeStop() {
+	p.stopOnce.Do(func() {
+		close(p.stopCh)
+	})
+}
+
 func joinProxyErrors(a, b error) error {
 	if a == nil {
 		return b
@@ -174,7 +195,7 @@ func joinProxyErrors(a, b error) error {
 	return fmt.Errorf("%w; %v", a, b)
 }
 
-func (p *Proxy) proxyClientToChild(parentIn io.Reader) error {
+func (p *Proxy) proxyClientToChild(ctx context.Context, parentIn io.Reader) error {
 	reader := bufio.NewReader(parentIn)
 	for {
 		line, err := readLine(reader)
@@ -187,7 +208,7 @@ func (p *Proxy) proxyClientToChild(parentIn io.Reader) error {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		if handleErr := p.handleClientLine(line); handleErr != nil {
+		if handleErr := p.handleClientLineWithContext(ctx, line); handleErr != nil {
 			return handleErr
 		}
 	}
@@ -224,6 +245,10 @@ func readLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 func (p *Proxy) handleClientLine(line []byte) error {
+	return p.handleClientLineWithContext(context.Background(), line)
+}
+
+func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) error {
 	trimmed := bytes.TrimSpace(line)
 
 	var req Request
@@ -233,7 +258,7 @@ func (p *Proxy) handleClientLine(line []byte) error {
 	}
 
 	if req.Method == "tools/call" {
-		return p.handleToolsCall(req, line)
+		return p.handleToolsCall(ctx, req, line)
 	}
 
 	if p.filterTools && req.Method == "tools/list" && HasID(req.ID) {
@@ -245,7 +270,7 @@ func (p *Proxy) handleClientLine(line []byte) error {
 	return p.writeToChild(line)
 }
 
-func (p *Proxy) handleToolsCall(req Request, rawLine []byte) error {
+func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte) error {
 	var params ToolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		if p.mode == "enforce" && HasID(req.ID) {
@@ -274,7 +299,7 @@ func (p *Proxy) handleToolsCall(req Request, rawLine []byte) error {
 	decision := p.engine.Evaluate(call)
 	p.writeAudit(call, decision, requestData, nil)
 
-	if p.mode == "enforce" && (decision.Action == engine.ActionDeny || decision.Action == engine.ActionRequireApproval) {
+	if p.mode == "enforce" && decision.Action == engine.ActionDeny {
 		message := strings.TrimSpace(decision.Message)
 		if message == "" {
 			message = "request denied by policy"
@@ -283,6 +308,46 @@ func (p *Proxy) handleToolsCall(req Request, rawLine []byte) error {
 			return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: "+message)
 		}
 		return nil
+	}
+
+	if p.mode == "enforce" && decision.Action == engine.ActionRequireApproval {
+		message := strings.TrimSpace(decision.Message)
+		if message == "" {
+			message = "request requires approval"
+		}
+		if p.approvals == nil {
+			if HasID(req.ID) {
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: approval store is not configured")
+			}
+			return nil
+		}
+
+		pending := p.approvals.Create(call, decision)
+		p.logger.Info("mcp: approval required",
+			"id", pending.ID,
+			"tool", mappedTool,
+			"command", call.Command(),
+			"message", decision.Message,
+			"expires", pending.ExpiresAt.Format(time.RFC3339),
+		)
+
+		select {
+		case <-pending.Done():
+			if pending.Status != approval.StatusApproved {
+				denyMessage := message
+				if pending.Status == approval.StatusExpired {
+					denyMessage = "request approval expired"
+				}
+				if HasID(req.ID) {
+					return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: "+denyMessage)
+				}
+				return nil
+			}
+		case <-ctx.Done():
+			return nil
+		case <-p.stopCh:
+			return nil
+		}
 	}
 
 	if HasID(req.ID) {
@@ -422,7 +487,7 @@ func (p *Proxy) maybeFilterToolsList(resp Response) ([]byte, bool, error) {
 		decision := p.engine.Evaluate(call)
 		p.writeAudit(call, decision, requestData, nil)
 
-		if p.mode == "enforce" && (decision.Action == engine.ActionDeny || decision.Action == engine.ActionRequireApproval) {
+		if p.mode == "enforce" && decision.Action == engine.ActionDeny {
 			continue
 		}
 		filtered = append(filtered, item)

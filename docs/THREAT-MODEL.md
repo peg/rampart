@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-02-13 | Applies to: v0.1.9-dev (with file tool patching)
+> Last reviewed: 2026-02-14 | Applies to: v0.2.0-dev (staging branch)
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -118,6 +118,22 @@ When `rampart serve` is unreachable (crashed, network issue), the shim defaults 
 - Webhook notifications confirm the service is actively evaluating commands
 
 **Trade-off:** Fail-open means a brief security gap during outages. Fail-closed means a crashed Rampart bricks your agent (and potentially your system). We chose availability over strict enforcement. This is configurable for environments where fail-closed is preferred.
+
+### 7. Regex Complexity Limits
+
+Rampart imposes security limits on regex patterns used for response matching to prevent ReDoS (Regular Expression Denial of Service) attacks. These limits protect the policy evaluation engine from malicious or malformed patterns.
+
+**Current limits (v0.2.0+):**
+- **Maximum pattern length**: 500 characters
+- **Nested quantifiers**: Rejected (patterns like `(a+)*` or `(a*)+`)
+- **Execution timeout**: 100ms per regex match operation
+
+**Mitigations:**
+- Patterns exceeding these limits are rejected at policy load time with clear error messages
+- Long-running regex matches are terminated after 100ms and treated as non-matches
+- These limits apply only to response-side evaluation; command pattern matching uses simpler glob patterns
+
+**Security implications:** These limits prevent policy authors from accidentally creating performance DoS conditions, and prevent attackers from injecting malicious regex patterns into webhook-driven policy updates.
 
 ## Deployment Recommendations
 

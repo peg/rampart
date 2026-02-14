@@ -16,6 +16,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -487,6 +488,55 @@ policies:
 	assert.Contains(t, err.Error(), "invalid response regex")
 }
 
+func TestValidation_RejectsNestedQuantifierResponseRegex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+
+	yaml := `
+version: "1"
+default_action: allow
+policies:
+  - name: bad-response-regex
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          response_matches: ["(a+)+$"]
+`
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o644))
+
+	store := NewFileStore(path)
+	_, err := New(store, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nested quantifiers")
+}
+
+func TestValidation_RejectsOverlongResponseRegex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	longPattern := strings.Repeat("a", maxResponseRegexPatternLength+1)
+
+	yaml := `
+version: "1"
+default_action: allow
+policies:
+  - name: long-response-regex
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          response_matches: ["` + longPattern + `"]
+`
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o644))
+
+	store := NewFileStore(path)
+	_, err := New(store, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pattern too long")
+}
+
 // BenchmarkEvaluate measures the hot path: evaluating a single tool call
 // against a realistic set of policies. Target: <0.1ms p99.
 func BenchmarkEvaluate(b *testing.B) {
@@ -599,6 +649,52 @@ policies:
 	smallResponse := "prefix AKIA1234567890ABCDEF suffix"
 	got2 := e.EvaluateResponse(call, smallResponse)
 	assert.Equal(t, ActionDeny, got2.Action, "secret within cap should be detected")
+}
+
+func TestEvaluateResponse_RegexMatchTimeout(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: timeout-check
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "secret"
+        message: "secret detected"
+`)
+
+	regexMatchMu.Lock()
+	regexMatchFunc = func(re *regexp.Regexp, value string) bool {
+		time.Sleep(200 * time.Millisecond)
+		return re.MatchString(value)
+	}
+	regexMatchMu.Unlock()
+	t.Cleanup(func() {
+		regexMatchMu.Lock()
+		regexMatchFunc = nil
+		regexMatchMu.Unlock()
+	})
+
+	call := ToolCall{
+		ID:        "timeout-test",
+		Agent:     "main",
+		Session:   "s1",
+		Tool:      "exec",
+		Params:    map[string]any{"command": "echo test"},
+		Timestamp: time.Now(),
+	}
+
+	start := time.Now()
+	got := e.EvaluateResponse(call, "secret")
+	elapsed := time.Since(start)
+
+	assert.Equal(t, ActionAllow, got.Action, "timeout should be treated as no-match")
+	assert.GreaterOrEqual(t, elapsed, 90*time.Millisecond)
+	assert.Less(t, elapsed, 190*time.Millisecond)
 }
 
 func BenchmarkEvaluateResponse10KB(b *testing.B) {

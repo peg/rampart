@@ -62,6 +62,29 @@ func (n *DiscordNotifier) Send(event NotifyEvent) error {
 	if event.Action == "log" {
 		color = 0xd29922 // orange for log
 		title = "Rampart: Command Logged"
+	} else if event.Action == "require_approval" {
+		color = 0xd29922 // amber for approval required
+		title = "Rampart: Approval Required"
+	}
+
+	fields := []discordField{
+		{Name: "Tool", Value: event.Tool, Inline: true},
+		{Name: "Agent", Value: event.Agent, Inline: true},
+	}
+
+	if event.Action == "require_approval" {
+		fields = append(fields,
+			discordField{Name: "Command", Value: event.Command, Inline: false},
+			discordField{Name: "Approval ID", Value: shortApprovalID(event.ApprovalID), Inline: true},
+			discordField{Name: "Expires In", Value: expiresInText(event.ExpiresAt), Inline: true},
+			discordField{Name: "Resolve", Value: fmt.Sprintf("[Open Approval](%s)", event.ResolveURL), Inline: false},
+		)
+	} else {
+		fields = append(fields,
+			discordField{Name: "Policy", Value: event.Policy, Inline: true},
+			discordField{Name: "Command/Path", Value: event.Command, Inline: false},
+			discordField{Name: "Message", Value: event.Message, Inline: false},
+		)
 	}
 
 	// Build the embed
@@ -69,13 +92,7 @@ func (n *DiscordNotifier) Send(event NotifyEvent) error {
 		Title:     title,
 		Color:     color,
 		Timestamp: event.Timestamp,
-		Fields: []discordField{
-			{Name: "Tool", Value: event.Tool, Inline: true},
-			{Name: "Agent", Value: event.Agent, Inline: true},
-			{Name: "Policy", Value: event.Policy, Inline: true},
-			{Name: "Command/Path", Value: event.Command, Inline: false},
-			{Name: "Message", Value: event.Message, Inline: false},
-		},
+		Fields:    fields,
 	}
 
 	payload := discordPayload{

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rampart Dashboard</title>
+<style>
+:root{--bg:#0b1118;--panel:#111a24;--panel-2:#172331;--text:#dce7f5;--muted:#91a2b8;--border:#253447;--ok:#2bc46d;--deny:#f05454;--warn:#ff6d6d;--accent:#38bdf8;--shadow:0 10px 28px rgba(0,0,0,.35)}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 "JetBrains Mono","SFMono-Regular",Menlo,monospace;background:radial-gradient(circle at 0 0,#1b2940 0,var(--bg) 30%),var(--bg);color:var(--text)}
+.wrap{max-width:980px;margin:0 auto;padding:18px 14px 42px}
+.header{display:flex;flex-wrap:wrap;gap:12px;align-items:end;justify-content:space-between;margin-bottom:16px}
+.brand{font-size:24px;font-weight:700;letter-spacing:.4px}
+.brand span{color:var(--accent)}
+.auth{display:flex;gap:8px;align-items:center;flex:1;max-width:520px}
+.auth input{flex:1;padding:10px 12px;border:1px solid var(--border);background:#0c151f;color:var(--text);border-radius:8px;outline:none}
+.auth input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(56,189,248,.2)}
+.btn{border:0;border-radius:8px;padding:10px 12px;font-weight:700;cursor:pointer;transition:.14s transform,.14s opacity}.btn:active{transform:translateY(1px)}
+.btn.save{background:var(--accent);color:#03202e}.btn.ok{background:var(--ok);color:#052611}.btn.deny{background:var(--deny);color:#330606}.btn:disabled{opacity:.55;cursor:not-allowed}
+.meta{display:flex;gap:14px;color:var(--muted);font-size:12px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:1fr;gap:12px}
+.card{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);border-radius:12px;padding:12px 12px 10px;box-shadow:var(--shadow)}
+.card.new::after{content:"";position:absolute;inset:-1px;border-radius:12px;box-shadow:0 0 0 1px rgba(56,189,248,.5),0 0 22px rgba(56,189,248,.32);animation:pulse 2.4s ease-out 1}
+@keyframes pulse{0%{opacity:1}100%{opacity:0}}
+.top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:8px}
+.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#0f2031;color:#8fceef;border:1px solid #244661}
+.time{font-size:12px;color:var(--muted)}.time.soon{color:var(--warn);font-weight:700}
+.cmd{margin:8px 0;padding:10px;border-radius:8px;background:#0a131d;border:1px solid #223141;overflow:auto;white-space:pre-wrap;word-break:break-word;color:#d0f6e2}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 8px;font-size:12px}.k{color:var(--muted)}.v{word-break:break-word}
+.actions{display:flex;gap:8px;margin-top:10px}
+.empty{padding:30px 12px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:12px;animation:drift 2.2s ease-in-out infinite alternate}
+@keyframes drift{from{transform:translateY(0)}to{transform:translateY(-3px)}}
+.section{margin-top:18px}.section h2{margin:0 0 10px;font-size:14px;color:#b9c7d8;letter-spacing:.2px}
+.history .card{opacity:.62;filter:saturate(.75)}
+.toast-wrap{position:fixed;right:14px;bottom:14px;display:grid;gap:8px;z-index:20}
+.toast{padding:10px 12px;border-radius:8px;border:1px solid;background:#0d141e;box-shadow:var(--shadow)}
+.toast.ok{border-color:#246840;color:#8eeab8}.toast.err{border-color:#702c2c;color:#ffaaaa}
+@media (max-width:720px){.header{align-items:stretch}.auth{max-width:none;width:100%}.top{flex-direction:column}.kv{grid-template-columns:1fr}.actions{flex-direction:column}.actions .btn{width:100%}.brand{font-size:21px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="header">
+    <div class="brand">Rampart <span>Dashboard</span></div>
+    <div class="auth">
+      <input id="token" type="password" placeholder="Bearer token for /v1 API">
+      <button class="btn save" id="saveToken">Save</button>
+    </div>
+  </header>
+
+  <div class="meta">
+    <div id="status">Status: connecting...</div>
+    <div id="updated">Last update: never</div>
+  </div>
+
+  <main>
+    <div id="pending" class="grid"></div>
+    <div class="section history">
+      <h2>Resolved (last 20)</h2>
+      <div id="history" class="grid"></div>
+    </div>
+  </main>
+</div>
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+(() => {
+  const POLL_MS = 2000;
+  const MAX_POLL_MS = 30000;
+  const TICK_MS = 1000;
+  const TOKEN_KEY = 'rampart_dashboard_token';
+  const MAX_HISTORY = 20;
+
+  const el = {
+    token: document.getElementById('token'),
+    saveToken: document.getElementById('saveToken'),
+    status: document.getElementById('status'),
+    updated: document.getElementById('updated'),
+    pending: document.getElementById('pending'),
+    history: document.getElementById('history'),
+    toasts: document.getElementById('toasts')
+  };
+
+  const state = { pending: [], seen: new Set(), history: [], pollDelay: POLL_MS, pollTimer: null, pollController: null };
+
+  el.token.value = localStorage.getItem(TOKEN_KEY) || '';
+
+  const fmt = {
+    ts(s) {
+      const d = new Date(s);
+      if (Number.isNaN(d.getTime())) return '-';
+      return d.toLocaleString();
+    },
+    left(expiresAt) {
+      const ms = new Date(expiresAt).getTime() - Date.now();
+      if (ms <= 0) return { text: 'Expired', soon: true };
+      const sec = Math.floor(ms / 1000);
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return { text: `${m}m ${String(s).padStart(2, '0')}s`, soon: sec < 60 };
+    }
+  };
+
+  function token() {
+    return el.token.value.trim();
+  }
+
+  function headers(withJSON) {
+    const h = {};
+    const t = token();
+    if (t) h.Authorization = `Bearer ${t}`;
+    if (withJSON) h['Content-Type'] = 'application/json';
+    return h;
+  }
+
+  function toast(msg, ok) {
+    const n = document.createElement('div');
+    n.className = `toast ${ok ? 'ok' : 'err'}`;
+    n.textContent = msg;
+    el.toasts.appendChild(n);
+    setTimeout(() => n.remove(), 2600);
+  }
+
+  function upsertHistory(item, approved, resolvedBy, status) {
+    state.history.unshift({
+      ...item,
+      _approved: approved,
+      _status: status || (approved ? 'approved' : 'denied'),
+      _resolvedAt: new Date().toISOString(),
+      _resolvedBy: resolvedBy || 'dashboard'
+    });
+    state.history = state.history.slice(0, MAX_HISTORY);
+  }
+
+  function renderCard(item, inHistory) {
+    const left = fmt.left(item.expires_at);
+    const card = document.createElement('article');
+    card.className = `card ${!inHistory && !state.seen.has(item.id) ? 'new' : ''}`;
+    card.innerHTML = `
+      <div class="top">
+        <div class="badge">${escape(item.tool || 'unknown')}</div>
+        <div class="time ${left.soon ? 'soon' : ''}">Time remaining: ${left.text}</div>
+      </div>
+      <pre class="cmd">${escape(item.command || '')}</pre>
+      <div class="kv">
+        <div class="k">ID</div><div class="v">${escape(item.id || '-')}</div>
+        <div class="k">Agent</div><div class="v">${escape(item.agent || '-')}</div>
+        <div class="k">Policy Message</div><div class="v">${escape(item.message || '-')}</div>
+        ${inHistory ? `<div class="k">Resolution</div><div class="v">${escape(item._status || (item._approved ? 'approved' : 'denied'))}</div>` : ''}
+        ${inHistory ? `<div class="k">Resolved By</div><div class="v">${escape(item._resolvedBy || 'dashboard')}</div>` : ''}
+        <div class="k">Created</div><div class="v">${escape(fmt.ts(item.created_at))}</div>
+        <div class="k">${inHistory ? 'Resolved' : 'Expires'}</div><div class="v">${escape(fmt.ts(inHistory ? item._resolvedAt : item.expires_at))}</div>
+      </div>
+      ${inHistory ? '' : `<div class="actions"><button class="btn ok" data-action="approve" data-id="${escape(item.id)}">Approve</button><button class="btn deny" data-action="deny" data-id="${escape(item.id)}">Deny</button></div>`}
+    `;
+    return card;
+  }
+
+  function renderPending() {
+    el.pending.innerHTML = '';
+    if (!state.pending.length) {
+      el.pending.innerHTML = '<div class="empty">No pending approvals</div>';
+      return;
+    }
+    for (const item of state.pending) {
+      el.pending.appendChild(renderCard(item, false));
+      state.seen.add(item.id);
+    }
+  }
+
+  function renderHistory() {
+    el.history.innerHTML = '';
+    if (!state.history.length) {
+      el.history.innerHTML = '<div class="empty">No resolved approvals yet</div>';
+      return;
+    }
+    for (const item of state.history) el.history.appendChild(renderCard(item, true));
+  }
+
+  function escape(s) {
+    return String(s)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function schedulePoll(delay) {
+    if (state.pollTimer) clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(() => {
+      poll();
+    }, delay);
+  }
+
+  function nextBackoff() {
+    state.pollDelay = Math.min(state.pollDelay * 2, MAX_POLL_MS);
+  }
+
+  async function poll() {
+    if (state.pollController) state.pollController.abort();
+    const controller = new AbortController();
+    state.pollController = controller;
+    try {
+      const r = await fetch('/v1/approvals', { headers: headers(false), signal: controller.signal });
+      if (!r.ok) {
+        const message = r.status === 401 ? 'unauthorized (set token)' : `request failed (${r.status})`;
+        el.status.textContent = `Status: ${message}`;
+        nextBackoff();
+        return;
+      }
+      const data = await r.json();
+      state.pending = Array.isArray(data.approvals) ? data.approvals : [];
+      renderPending();
+      renderHistory();
+      state.pollDelay = POLL_MS;
+      el.status.textContent = 'Status: live';
+      el.updated.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      el.status.textContent = 'Status: network error';
+      nextBackoff();
+    } finally {
+      if (state.pollController === controller) {
+        state.pollController = null;
+      }
+      schedulePoll(state.pollDelay);
+    }
+  }
+
+  async function resolve(id, approved, button) {
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = approved ? 'Approving...' : 'Denying...';
+    try {
+      const r = await fetch(`/v1/approvals/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        headers: headers(true),
+        body: JSON.stringify({ approved, resolved_by: 'dashboard' })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      const item = state.pending.find(x => x.id === id);
+      if (item) {
+        upsertHistory(item, approved, data.resolved_by || 'dashboard', data.status);
+        renderHistory();
+      }
+      toast(approved ? 'Approval granted' : 'Approval denied', true);
+      await poll();
+    } catch (err) {
+      toast(`Action failed: ${err.message}`, false);
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+
+  el.saveToken.addEventListener('click', () => {
+    localStorage.setItem(TOKEN_KEY, token());
+    toast('Token saved', true);
+    poll();
+  });
+
+  el.pending.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-action]');
+    if (!b) return;
+    resolve(b.dataset.id, b.dataset.action === 'approve', b);
+  });
+
+  setInterval(() => {
+    if (state.pending.length) renderPending();
+    if (state.history.length) renderHistory();
+  }, TICK_MS);
+
+  renderHistory();
+  poll();
+})();
+</script>
+</body>
+</html>

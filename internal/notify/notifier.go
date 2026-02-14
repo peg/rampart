@@ -23,14 +23,19 @@ import (
 )
 
 // NotifyEvent contains the data for a webhook notification.
+// Breaking change: JSON field names are now snake_case for all fields.
 type NotifyEvent struct {
-	Action    string // "deny" or "log"
-	Tool      string // e.g. "exec", "read", "write"
-	Command   string // the command or path
-	Policy    string // policy name that matched
-	Message   string // human-readable reason
-	Agent     string // agent identifier
-	Timestamp string // ISO 8601
+	Action    string `json:"action"`    // "deny", "log", or "require_approval"
+	Tool      string `json:"tool"`      // e.g. "exec", "read", "write"
+	Command   string `json:"command"`   // the command or path
+	Policy    string `json:"policy"`    // policy name that matched
+	Message   string `json:"message"`   // human-readable reason
+	Agent     string `json:"agent"`     // agent identifier
+	Timestamp string `json:"timestamp"` // ISO 8601
+
+	ApprovalID string `json:"approval_id,omitempty"` // pending approval ID
+	ExpiresAt  string `json:"expires_at,omitempty"`  // approval expiry timestamp (ISO 8601)
+	ResolveURL string `json:"resolve_url,omitempty"` // direct URL to resolve the approval
 }
 
 // Notifier sends notifications.

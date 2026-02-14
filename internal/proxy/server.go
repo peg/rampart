@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
+	"github.com/peg/rampart/internal/signing"
 )
 
 const defaultMode = "enforce"
@@ -41,16 +43,19 @@ const redactedResponse = "[REDACTED: sensitive content removed by Rampart]"
 
 // Server is Rampart's HTTP proxy runtime for policy-aware tool calls.
 type Server struct {
-	engine       *engine.Engine
-	sink         audit.AuditSink
-	approvals    *approval.Store
-	token        string
-	mode         string
-	logger       *slog.Logger
-	mu           sync.Mutex
-	server       *http.Server
-	startedAt    time.Time
-	notifyConfig *engine.NotifyConfig
+	engine         *engine.Engine
+	sink           audit.AuditSink
+	approvals      *approval.Store
+	token          string
+	mode           string
+	logger         *slog.Logger
+	resolveBaseURL string
+	listenAddr     string
+	signer         *signing.Signer
+	mu             sync.Mutex
+	server         *http.Server
+	startedAt      time.Time
+	notifyConfig   *engine.NotifyConfig
 }
 
 // Option configures a proxy server.
@@ -83,6 +88,20 @@ func WithLogger(logger *slog.Logger) Option {
 		if logger != nil {
 			s.logger = logger
 		}
+	}
+}
+
+// WithResolveBaseURL sets the base URL used for approval resolve links.
+func WithResolveBaseURL(url string) Option {
+	return func(s *Server) {
+		s.resolveBaseURL = strings.TrimSpace(url)
+	}
+}
+
+// WithSigner enables HMAC-signed approval resolve URLs.
+func WithSigner(signer *signing.Signer) Option {
+	return func(s *Server) {
+		s.signer = signer
 	}
 }
 
@@ -123,8 +142,14 @@ func (s *Server) Token() string {
 
 // ListenAndServe starts serving HTTP requests at addr.
 func (s *Server) ListenAndServe(addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("proxy: listen: %w", err)
+	}
+	s.listenAddr = listener.Addr().String()
+
 	srv := &http.Server{
-		Addr:         addr,
+		Addr:         s.listenAddr,
 		Handler:      s.handler(),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -135,7 +160,7 @@ func (s *Server) ListenAndServe(addr string) error {
 	s.server = srv
 	s.mu.Unlock()
 
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.Serve(listener); err != nil {
 		return fmt.Errorf("proxy: listen and serve: %w", err)
 	}
 	return nil
@@ -143,7 +168,9 @@ func (s *Server) ListenAndServe(addr string) error {
 
 // Serve starts serving HTTP requests on an existing listener.
 func (s *Server) Serve(listener net.Listener) error {
+	s.listenAddr = listener.Addr().String()
 	srv := &http.Server{
+		Addr:         s.listenAddr,
 		Handler:      s.handler(),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -290,6 +317,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			"message", decision.Message,
 		)
 
+		if s.shouldNotify(decision.Action.String()) {
+			go s.sendApprovalWebhook(call, decision, pending)
+		}
+
 		resp["approval_id"] = pending.ID
 		resp["approval_status"] = "pending"
 		resp["expires_at"] = pending.ExpiresAt.Format(time.RFC3339)
@@ -357,19 +388,10 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 
 	// Fire webhook notification if configured
 	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
-		shouldNotify := false
 		actionStr := decision.Action.String()
-		for _, on := range s.notifyConfig.On {
-			if on == actionStr {
-				shouldNotify = true
-				break
-			}
-		}
-		if len(s.notifyConfig.On) == 0 {
-			// Default: notify on deny
-			shouldNotify = actionStr == "deny"
-		}
-		if shouldNotify {
+		// require_approval notifications are sent after pending approval
+		// creation so they can include approval metadata.
+		if actionStr != engine.ActionRequireApproval.String() && s.shouldNotify(actionStr) {
 			call := engine.ToolCall{
 				Tool:      toolName,
 				Params:    req.Params,
@@ -379,6 +401,23 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 			go s.sendWebhook(call, decision)
 		}
 	}
+}
+
+func (s *Server) shouldNotify(actionStr string) bool {
+	if s.notifyConfig == nil || s.notifyConfig.URL == "" {
+		return false
+	}
+	if len(s.notifyConfig.On) == 0 {
+		// Default to deny + require_approval so operators get alerted for
+		// blocked calls and pending human-approval decisions out of the box.
+		return actionStr == "deny" || actionStr == "require_approval"
+	}
+	for _, on := range s.notifyConfig.On {
+		if on == actionStr {
+			return true
+		}
+	}
+	return false
 }
 
 // handlePreflight evaluates a tool call against policies without executing it.
@@ -454,11 +493,26 @@ type resolveRequest struct {
 }
 
 func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	// Allow access via either Bearer token or valid HMAC signature.
+	if s.signer != nil {
+		sig := r.URL.Query().Get("sig")
+		expRaw := r.URL.Query().Get("exp")
+		if sig != "" && expRaw != "" {
+			exp, err := strconv.ParseInt(expRaw, 10, 64)
+			if err != nil || !s.signer.ValidateSignature(id, sig, exp) {
+				writeError(w, http.StatusUnauthorized, "invalid or expired signature")
+				return
+			}
+			// Signature valid — skip Bearer auth.
+			goto authorized
+		}
+	}
 	if !s.checkAuth(w, r) {
 		return
 	}
-
-	id := r.PathValue("id")
+authorized:
 	var req resolveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid body: %v", err))
@@ -634,9 +688,9 @@ func (s *Server) webhookFallback(cfg *engine.WebhookActionConfig, reason string)
 }
 
 func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
-	command := ""
-	if cmd, ok := call.Params["command"].(string); ok {
-		command = cmd
+	command := call.Command()
+	if command == "" {
+		command = call.Path()
 	}
 	policyName := "unknown"
 	if len(decision.MatchedPolicies) > 0 {
@@ -659,6 +713,71 @@ func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
 	} else {
 		s.logger.Debug("proxy: webhook notification sent", "action", decision.Action.String())
 	}
+}
+
+func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decision, pending *approval.Request) {
+	command := call.Command()
+	if command == "" {
+		command = call.Path()
+	}
+	policyName := "unknown"
+	if len(decision.MatchedPolicies) > 0 {
+		policyName = decision.MatchedPolicies[0]
+	}
+
+	event := notify.NotifyEvent{
+		Action:     decision.Action.String(),
+		Tool:       call.Tool,
+		Command:    command,
+		Policy:     policyName,
+		Message:    decision.Message,
+		Agent:      call.Agent,
+		Timestamp:  pending.CreatedAt.UTC().Format(time.RFC3339),
+		ApprovalID: pending.ID,
+		ExpiresAt:  pending.ExpiresAt.UTC().Format(time.RFC3339),
+		ResolveURL: s.approvalResolveURL(pending.ID, pending.ExpiresAt.UTC()),
+	}
+
+	notifier := notify.NewNotifier(s.notifyConfig.URL, s.notifyConfig.Platform)
+	if err := notifier.Send(event); err != nil {
+		s.logger.Error("proxy: approval webhook notification failed", "error", err)
+	} else {
+		s.logger.Debug("proxy: webhook notification sent", "action", decision.Action.String(), "approval_id", pending.ID)
+	}
+}
+
+func (s *Server) approvalResolveURL(id string, expiresAt time.Time) string {
+	base := s.resolveURLBase()
+	if s.signer != nil {
+		return s.signer.SignURL(base, id, expiresAt)
+	}
+	return fmt.Sprintf("%s/v1/approvals/%s/resolve", base, url.PathEscape(id))
+}
+
+func (s *Server) resolveURLBase() string {
+	if base := strings.TrimSpace(s.resolveBaseURL); base != "" {
+		return strings.TrimRight(base, "/")
+	}
+
+	addr := strings.TrimSpace(s.listenAddr)
+	if addr == "" {
+		return "http://localhost:9090"
+	}
+
+	if strings.Contains(addr, "://") {
+		return strings.TrimRight(addr, "/")
+	}
+
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.HasPrefix(addr, ":") {
+			port = strings.TrimPrefix(addr, ":")
+		}
+	}
+	if strings.TrimSpace(port) == "" {
+		return "http://localhost:9090"
+	}
+	return "http://localhost:" + port
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
