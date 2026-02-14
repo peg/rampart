@@ -362,7 +362,7 @@ func (e *Engine) evaluateResponsePolicy(
 	regexCache map[string]*regexp.Regexp,
 ) (Action, string, bool) {
 	for _, rule := range p.Rules {
-		if !matchResponseCondition(rule.When, response, regexCache) {
+		if !matchResponseCondition(rule.When, response, regexCache, e.logger) {
 			continue
 		}
 

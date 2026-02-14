@@ -15,6 +15,7 @@ package engine
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,6 +42,10 @@ type Config struct {
 
 	responseRegexCache map[string]*regexp.Regexp
 }
+
+const maxResponseRegexPatternLength = 500
+
+var responseRegexBackreferencePattern = regexp.MustCompile(`\\[1-9][0-9]*`)
 
 // Policy is a named set of rules scoped to specific agents and tools.
 type Policy struct {
@@ -362,6 +367,13 @@ func compileResponseRegexes(cond Condition, cache map[string]*regexp.Regexp) err
 			continue
 		}
 
+		if err := validateResponseRegexPattern(pattern); err != nil {
+			return fmt.Errorf("invalid response regex %q: %w", pattern, err)
+		}
+		if responseRegexBackreferencePattern.MatchString(pattern) {
+			slog.Warn("engine: response regex contains backreference; pattern may be unsupported", "pattern", pattern)
+		}
+
 		re, err := regexp.Compile(pattern)
 		if err != nil {
 			return fmt.Errorf("invalid response regex %q: %w", pattern, err)
@@ -370,4 +382,124 @@ func compileResponseRegexes(cond Condition, cache map[string]*regexp.Regexp) err
 	}
 
 	return nil
+}
+
+func validateResponseRegexPattern(pattern string) error {
+	if len(pattern) > maxResponseRegexPatternLength {
+		return fmt.Errorf("pattern too long (%d > %d characters)", len(pattern), maxResponseRegexPatternLength)
+	}
+	if hasNestedRegexQuantifiers(pattern) {
+		return fmt.Errorf("nested quantifiers are not allowed")
+	}
+	return nil
+}
+
+func hasNestedRegexQuantifiers(pattern string) bool {
+	type groupState struct {
+		hasQuantifier bool
+	}
+
+	stack := make([]groupState, 0, 8)
+	inClass := false
+	escaped := false
+	lastClosedGroupHadQuantifier := false
+
+	for i := 0; i < len(pattern); {
+		ch := pattern[i]
+
+		if escaped {
+			escaped = false
+			lastClosedGroupHadQuantifier = false
+			i++
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			lastClosedGroupHadQuantifier = false
+			i++
+			continue
+		}
+
+		if inClass {
+			if ch == ']' {
+				inClass = false
+			}
+			lastClosedGroupHadQuantifier = false
+			i++
+			continue
+		}
+		if ch == '[' {
+			inClass = true
+			lastClosedGroupHadQuantifier = false
+			i++
+			continue
+		}
+
+		if width, ok := regexQuantifierWidth(pattern, i); ok {
+			if lastClosedGroupHadQuantifier {
+				return true
+			}
+			if len(stack) > 0 {
+				stack[len(stack)-1].hasQuantifier = true
+			}
+			lastClosedGroupHadQuantifier = false
+			i += width
+			continue
+		}
+
+		switch ch {
+		case '(':
+			stack = append(stack, groupState{})
+			lastClosedGroupHadQuantifier = false
+		case ')':
+			if len(stack) == 0 {
+				lastClosedGroupHadQuantifier = false
+				i++
+				continue
+			}
+			group := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if group.hasQuantifier && len(stack) > 0 {
+				stack[len(stack)-1].hasQuantifier = true
+			}
+			lastClosedGroupHadQuantifier = group.hasQuantifier
+		default:
+			lastClosedGroupHadQuantifier = false
+		}
+
+		i++
+	}
+
+	return false
+}
+
+func regexQuantifierWidth(pattern string, i int) (int, bool) {
+	if i >= len(pattern) {
+		return 0, false
+	}
+
+	switch pattern[i] {
+	case '*', '+', '?':
+		return 1, true
+	case '{':
+		j := i + 1
+		digits := 0
+		for j < len(pattern) && pattern[j] >= '0' && pattern[j] <= '9' {
+			j++
+			digits++
+		}
+		if j < len(pattern) && pattern[j] == ',' {
+			j++
+			for j < len(pattern) && pattern[j] >= '0' && pattern[j] <= '9' {
+				j++
+				digits++
+			}
+		}
+		if digits == 0 || j >= len(pattern) || pattern[j] != '}' {
+			return 0, false
+		}
+		return j - i + 1, true
+	default:
+		return 0, false
+	}
 }

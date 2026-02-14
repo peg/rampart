@@ -14,11 +14,20 @@
 package engine
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
+
+const responseRegexMatchTimeout = 100 * time.Millisecond
+
+var regexMatchString = func(re *regexp.Regexp, value string) bool {
+	return re.MatchString(value)
+}
 
 // cleanPath canonicalizes a file path for policy matching. It applies
 // filepath.Clean to resolve ".." and "." segments, then attempts
@@ -163,6 +172,7 @@ func matchAny(patterns []string, name string) bool {
 //   - CommandMatches/PathMatches/etc. are OR within a field.
 //   - CommandNotMatches/PathNotMatches exclude matches.
 //   - Multiple field types are AND (e.g., CommandMatches AND PathMatches).
+//
 // ExplainCondition checks if a condition matches a tool call, returning
 // a human-readable detail string explaining what matched. Used by the
 // `policy explain` CLI command.
@@ -308,6 +318,7 @@ func matchResponseCondition(
 	cond Condition,
 	response string,
 	regexCache map[string]*regexp.Regexp,
+	logger *slog.Logger,
 ) bool {
 	if len(cond.ResponseMatches) == 0 {
 		return false
@@ -315,10 +326,10 @@ func matchResponseCondition(
 	if response == "" {
 		return false
 	}
-	if !matchAnyRegex(cond.ResponseMatches, response, regexCache) {
+	if !matchAnyRegex(cond.ResponseMatches, response, regexCache, logger) {
 		return false
 	}
-	if matchAnyRegex(cond.ResponseNotMatches, response, regexCache) {
+	if matchAnyRegex(cond.ResponseNotMatches, response, regexCache, logger) {
 		return false
 	}
 	return true
@@ -342,15 +353,38 @@ func matchWildcardSegments(pattern, name string) bool {
 	return true
 }
 
-func matchAnyRegex(patterns []string, value string, cache map[string]*regexp.Regexp) bool {
+func matchAnyRegex(patterns []string, value string, cache map[string]*regexp.Regexp, logger *slog.Logger) bool {
 	for _, pattern := range patterns {
 		re, ok := cache[pattern]
 		if !ok {
 			continue
 		}
-		if re.MatchString(value) {
+		if matchRegexWithTimeout(pattern, re, value, logger) {
 			return true
 		}
 	}
 	return false
+}
+
+func matchRegexWithTimeout(pattern string, re *regexp.Regexp, value string, logger *slog.Logger) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), responseRegexMatchTimeout)
+	defer cancel()
+
+	resultCh := make(chan bool, 1)
+	go func() {
+		resultCh <- regexMatchString(re, value)
+	}()
+
+	select {
+	case matched := <-resultCh:
+		return matched
+	case <-ctx.Done():
+		if logger != nil {
+			logger.Warn("engine: response regex match timed out",
+				"pattern", pattern,
+				"timeout", responseRegexMatchTimeout,
+			)
+		}
+		return false
+	}
 }
