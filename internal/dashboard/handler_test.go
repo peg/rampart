@@ -35,3 +35,23 @@ func TestHandlerServesIndex(t *testing.T) {
 		t.Fatalf("response does not contain dashboard title")
 	}
 }
+
+func TestHandlerSetsSecurityHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	Handler().ServeHTTP(rr, req)
+
+	assertHeader := func(key, want string) {
+		t.Helper()
+		if got := rr.Header().Get(key); got != want {
+			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+
+	assertHeader("X-Frame-Options", "DENY")
+	assertHeader("X-Content-Type-Options", "nosniff")
+	assertHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self'")
+	assertHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+	assertHeader("Cache-Control", "no-store")
+}
