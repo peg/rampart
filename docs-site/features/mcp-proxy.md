@@ -31,12 +31,18 @@ In your agent's MCP config (Claude Desktop, Cursor, etc.):
 
 ```mermaid
 graph LR
-    C[MCP Client] -->|tools/call| R[rampart mcp]
+    C[MCP Client] -->|"tools/call"| R[rampart mcp]
     R -->|evaluate| P[Policy Engine]
     P -->|allow| S[MCP Server]
-    P -->|deny| E[JSON-RPC Error]
+    P -->|deny| E[❌ JSON-RPC Error]
+    P -->|require_approval| W[⏳ Block & Wait]
+    W -->|approved| S
+    W -->|denied / timeout| E
     S -->|response| R
     R -->|response| C
+
+    style W fill:#d29922,stroke:#fff,color:#fff
+    style E fill:#da3633,stroke:#fff,color:#fff
 ```
 
 Rampart speaks the MCP protocol natively. The client and server don't know it's there. Denied tool calls return a standard JSON-RPC error — the MCP server never sees them.

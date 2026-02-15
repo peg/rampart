@@ -37,11 +37,18 @@ graph TB
 
     PE[YAML Policy Eval<br/>~20μs per decision]
 
+    PE -->|allow| PASS[✅ Execute]
+    PE -->|deny| BLOCK[❌ Blocked]
+    PE -->|require_approval| APR{👤 Human Approval}
+
+    APR -->|"Claude Code: native prompt<br/>OpenClaw: chat message<br/>Webhook: signed URL"| RESOLVE[Approve / Deny]
+
     subgraph "Observability"
         direction LR
         AU[Hash-Chained Audit]
         SI[Syslog / CEF]
-        WE[Webhooks<br/>Discord · Slack]
+        WH[Webhooks<br/>Discord · Slack]
+        DB[Dashboard]
     end
 
     SB["⚡ rampart-verify (optional)<br/>gpt-4o-mini · Haiku · Ollama"]
@@ -57,14 +64,18 @@ graph TB
     M --> PE
     P --> PE
 
-    PE --> |all decisions logged| AU
+    PE -->|all decisions logged| AU
     PE -. "ambiguous commands only ⚠️" .-> SB
     SB -. allow/deny .-> PE
     AU --> SI
-    AU --> WE
+    AU --> WH
+    AU --> DB
 
     style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
     style PE fill:#238636,stroke:#fff,color:#fff
+    style APR fill:#d29922,stroke:#fff,color:#fff
+    style BLOCK fill:#da3633,stroke:#fff,color:#fff
+    style PASS fill:#238636,stroke:#fff,color:#fff
 ```
 
 *Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions — including sidecar verdicts — are written to the audit trail.*
@@ -323,7 +334,26 @@ policies:
         message: "Production deployment requires approval"
 ```
 
-The proxy returns `202 Accepted` and blocks until resolved:
+How approval reaches you depends on your environment:
+
+```mermaid
+graph LR
+    PE[Policy Engine] -->|require_approval| D{Environment}
+    D -->|Claude Code| CC["Native prompt<br/>(ask hook)"]
+    D -->|MCP Client| MCP["Block & wait<br/>(proxy holds request)"]
+    D -->|OpenClaw| OC["Chat message<br/>(approve in-chat)"]
+    D -->|Webhook| WH["Signed URL<br/>(click to approve)"]
+    D -->|CLI / API| CLI["rampart approve &lt;id&gt;"]
+
+    CC -->|user responds| R[✅ Resolved]
+    MCP -->|via API / dashboard| R
+    OC -->|via API| R
+    WH -->|HMAC-verified link| R
+    CLI -->|direct| R
+
+    style D fill:#d29922,stroke:#fff,color:#fff
+    style R fill:#238636,stroke:#fff,color:#fff
+```
 
 ```bash
 rampart pending                          # What's waiting

@@ -29,13 +29,14 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 
 ```mermaid
 graph TD
-    A[Which agent?] -->|Claude Code| B[rampart setup claude-code]
-    A -->|Cline| C[rampart setup cline]
-    A -->|Claude Desktop / Cursor| D[rampart mcp --]
+    A[Which agent?] -->|Claude Code| B["rampart setup claude-code"]
+    A -->|Cline| C["rampart setup cline"]
+    A -->|OpenClaw| OC["rampart setup openclaw"]
+    A -->|Claude Desktop / Cursor| D["rampart mcp --"]
     A -->|Has $SHELL support?| E{Yes / No}
-    E -->|Yes| F[rampart wrap --]
-    E -->|No| G[rampart preload --]
-    A -->|Custom / Python| H[HTTP API]
+    E -->|Yes| F["rampart wrap --"]
+    E -->|No| G["rampart preload --"]
+    A -->|Custom / Python| H[HTTP API / Go SDK]
 ```
 
 !!! tip "Start with the simplest method"

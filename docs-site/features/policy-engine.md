@@ -10,15 +10,22 @@ graph TD
     M --> R[Evaluate rules<br/>top-to-bottom]
     R --> D{Any deny?}
     D -->|Yes| DENY[❌ Denied]
-    D -->|No| L{Any log?}
+    D -->|No| AP{Any require_approval?}
+    AP -->|Yes| APPROVAL[👤 Pending Approval]
+    AP -->|No| L{Any log?}
     L -->|Yes| LOG[🟡 Logged + Allowed]
     L -->|No| A{Any allow?}
     A -->|Yes| ALLOW[✅ Allowed]
     A -->|No| DEF[Default Action]
     DENY --> AU[Audit Trail]
+    APPROVAL --> AU
     LOG --> AU
     ALLOW --> AU
     DEF --> AU
+
+    style DENY fill:#da3633,stroke:#fff,color:#fff
+    style APPROVAL fill:#d29922,stroke:#fff,color:#fff
+    style ALLOW fill:#238636,stroke:#fff,color:#fff
 ```
 
 ### Evaluation Order
