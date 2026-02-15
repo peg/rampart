@@ -14,6 +14,28 @@
 
 ---
 
+### Try it in 30 seconds
+
+```bash
+brew tap peg/rampart && brew install rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
+rampart setup claude-code                       # one command — done
+claude                                          # use Claude Code normally
+```
+
+That's it. Every command Claude runs now goes through Rampart. Safe stuff passes instantly. Dangerous stuff gets blocked before it executes:
+
+```
+✅ 14:23:01  exec  "npm test"                          [allow-dev]
+✅ 14:23:03  read  ~/project/src/main.go                [default]
+🔴 14:23:05  exec  "rm -rf /tmp/*"                      [block-destructive]
+🟡 14:23:08  exec  "curl https://api.example.com"       [log-network]
+👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [require-approval]
+```
+
+Works in `--dangerously-skip-permissions` mode. [Full setup guide →](https://docs.rampart.sh/getting-started/quickstart/)
+
+---
+
 Running Claude Code in yolo mode? Letting agents manage your infrastructure unsupervised? Rampart gives you visibility and control — every tool call gets evaluated against your policy before it executes. Dangerous commands get blocked in microseconds. Everything gets logged to a hash-chained audit trail.
 
 ## How It Works
@@ -68,32 +90,18 @@ graph LR
 <img src="docs/watch.png" alt="rampart watch — live audit dashboard" width="700">
 </div>
 
-## Contents
+<details>
+<summary><strong>📖 Table of Contents</strong></summary>
 
-- [How It Works](#how-it-works)
-- [Install](#install)
-- [Claude Code Integration](#claude-code-integration)
-- [Wrap Any Agent](#wrap-any-agent)
-- [Protect Any Process (LD_PRELOAD)](#protect-any-process-ld_preload)
-- [Protect MCP Servers](#protect-mcp-servers)
-- [Quick Start](#quick-start)
-- [Writing Policies](#writing-policies)
-- [Approval Flow](#approval-flow)
-- [Preflight API](#preflight-api)
-- [Audit Trail](#audit-trail)
-- [Live Dashboard](#live-dashboard)
-- [Webhook Notifications](#webhook-notifications)
-- [SIEM Integration](#siem-integration)
-- [Webhook Actions](#webhook-actions)
-- [Integration](#integration)
-- [Performance](#performance)
-- [Security Recommendations](#security-recommendations)
-- [CLI Reference](#cli-reference)
-- [Compatibility](#compatibility)
-- [Building from Source](#building-from-source)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
-- [License](#license)
+**Getting Started:** [Install](#install) · [Claude Code](#claude-code-integration) · [Wrap Any Agent](#wrap-any-agent) · [Quick Start](#quick-start)
+
+**Core Features:** [Writing Policies](#writing-policies) · [Approval Flow](#approval-flow) · [Audit Trail](#audit-trail) · [Live Dashboard](#live-dashboard) · [Webhook Notifications](#webhook-notifications)
+
+**Advanced:** [LD_PRELOAD](#protect-any-process-ld_preload) · [MCP Proxy](#protect-mcp-servers) · [SIEM Integration](#siem-integration) · [Webhook Actions](#webhook-actions) · [Preflight API](#preflight-api)
+
+**Reference:** [Performance](#performance) · [Security](#security-recommendations) · [CLI Reference](#cli-reference) · [Compatibility](#compatibility) · [Building from Source](#building-from-source) · [Contributing](#contributing) · [Roadmap](#roadmap)
+
+</details>
 
 ---
 

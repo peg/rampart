@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,42 +31,176 @@ func newTestCmd(opts *rootOptions) *cobra.Command {
 	var (
 		toolName string
 		noColor  bool
+		verbose  bool
+		run      string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "test <command-or-path>",
-		Short: "Test how policies evaluate a command without executing it",
+		Use:   "test [command-or-path | test-file.yaml]",
+		Short: "Test how policies evaluate commands or run a test suite",
 		Long: `Dry-run a tool call through the policy engine and display the result.
 
 By default, the argument is treated as an exec command. Use --tool to
 change the tool type (read, write) in which case the argument is a path.
 
+If the argument is a YAML file, it is loaded as a test suite containing
+multiple test cases. A policy file with an inline "tests:" key can also
+be passed directly.
+
 Examples:
   rampart test "rm -rf /"
   rampart test "git status"
   rampart test --tool read "/etc/shadow"
-  rampart test --tool write "/etc/passwd"`,
+  rampart test tests.yaml
+  rampart test --verbose tests.yaml
+  rampart test --run "blocks*" tests.yaml`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTest(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, args[0], toolName, noColor)
+			arg := args[0]
+			if isYAMLFile(arg) {
+				return runTestSuite(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, noColor, verbose, run)
+			}
+			return runTest(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, toolName, noColor)
 		},
 	}
 
 	cmd.Flags().StringVar(&toolName, "tool", "exec", "Tool type: exec, read, write")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show match details for each test case")
+	cmd.Flags().StringVar(&run, "run", "", "Run only tests matching this glob pattern")
 
 	return cmd
 }
 
+func isYAMLFile(arg string) bool {
+	lower := strings.ToLower(arg)
+	return strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml")
+}
+
+func runTestSuite(w, errW io.Writer, opts *rootOptions, arg string, noColor, verbose bool, runFilter string) error {
+	suite, err := engine.LoadTestSuite(arg)
+	if err != nil {
+		suite, err = engine.LoadInlineTests(arg)
+		if err != nil {
+			return fmt.Errorf("test: %w", err)
+		}
+		if suite == nil {
+			return fmt.Errorf("test: %s contains no tests", arg)
+		}
+	}
+
+	policyPath := suite.Policy
+	if policyPath == "" {
+		policyPath = arg
+	}
+
+	if runFilter != "" {
+		var filtered []engine.TestCase
+		for _, tc := range suite.Tests {
+			matched, _ := filepath.Match(runFilter, tc.Name)
+			if matched {
+				filtered = append(filtered, tc)
+			}
+		}
+		if len(filtered) == 0 {
+			return fmt.Errorf("test: no tests match filter %q", runFilter)
+		}
+		suite.Tests = filtered
+	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	store := engine.NewFileStore(policyPath)
+	eng, err := engine.New(store, nil)
+	if err != nil {
+		return fmt.Errorf("test: load policy: %w", err)
+	}
+
+	results := engine.RunTests(eng, suite)
+
+	passed, failed, errored := 0, 0, 0
+	for _, r := range results {
+		printSuiteResult(w, r, noColor, verbose)
+		switch {
+		case r.Error != nil:
+			errored++
+		case r.Passed:
+			passed++
+		default:
+			failed++
+		}
+	}
+
+	fmt.Fprintln(w)
+	if noColor {
+		fmt.Fprintf(w, "%d passed, %d failed", passed, failed)
+	} else {
+		fmt.Fprintf(w, "\033[32m%d passed\033[0m, \033[31m%d failed\033[0m", passed, failed)
+	}
+	if errored > 0 {
+		fmt.Fprintf(w, ", %d error(s)", errored)
+	}
+	fmt.Fprintf(w, " (%d total)\n", len(results))
+
+	if failed > 0 || errored > 0 {
+		return exitCodeError{code: 1}
+	}
+	return nil
+}
+
+func printSuiteResult(w io.Writer, r engine.TestResult, noColor, verbose bool) {
+	var (
+		icon  string
+		color string
+		reset string
+	)
+
+	if !noColor {
+		reset = "\033[0m"
+	}
+
+	if r.Error != nil {
+		icon = "⚠️"
+		if !noColor {
+			color = "\033[33m"
+		}
+		fmt.Fprintf(w, "  %s %s%s%s — %v\n", icon, color, r.Case.Name, reset, r.Error)
+		return
+	}
+
+	if r.Passed {
+		icon = "✅"
+		if !noColor {
+			color = "\033[32m"
+		}
+		fmt.Fprintf(w, "  %s %s%s%s\n", icon, color, r.Case.Name, reset)
+	} else {
+		icon = "❌"
+		if !noColor {
+			color = "\033[31m"
+		}
+		fmt.Fprintf(w, "  %s %s%s%s — expected %s, got %s\n", icon, color, r.Case.Name, reset,
+			r.ExpectedAction, r.Decision.Action)
+	}
+
+	if verbose {
+		if r.Decision.Message != "" {
+			fmt.Fprintf(w, "       message: %s\n", r.Decision.Message)
+		}
+		if len(r.Decision.MatchedPolicies) > 0 {
+			fmt.Fprintf(w, "       matched: %s\n", strings.Join(r.Decision.MatchedPolicies, ", "))
+		}
+		fmt.Fprintf(w, "       eval:    %s\n", formatDuration(r.Decision.EvalDuration))
+	}
+}
+
 func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor bool) error {
-	// Resolve policy path with fallback.
 	policyPath, cleanup, err := resolveTestPolicyPath(opts.configPath)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	// Suppress engine startup logs for clean test output.
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	store := engine.NewFileStore(policyPath)
@@ -74,7 +209,6 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 		return fmt.Errorf("test: create engine: %w", err)
 	}
 
-	// Build the tool call.
 	call := engine.ToolCall{
 		Tool:      toolName,
 		Params:    make(map[string]any),
@@ -88,13 +222,9 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 		call.Params["command"] = arg
 	}
 
-	// Evaluate.
 	decision := eng.Evaluate(call)
-
-	// Format output.
 	printTestResult(w, decision, noColor)
 
-	// Exit code 1 for deny.
 	if decision.Action == engine.ActionDeny {
 		return exitCodeError{code: 1}
 	}
@@ -114,7 +244,6 @@ func resolveTestPolicyPath(path string) (string, func(), error) {
 		return "", nil, fmt.Errorf("test: check policy config %s: %w", path, err)
 	}
 
-	// Fall back to ~/.rampart/policies/standard.yaml.
 	home, err := os.UserHomeDir()
 	if err == nil {
 		stdPath := home + "/.rampart/policies/standard.yaml"
@@ -123,7 +252,6 @@ func resolveTestPolicyPath(path string) (string, func(), error) {
 		}
 	}
 
-	// Fall back to embedded standard policy.
 	fmt.Fprintf(os.Stderr, "⚠ No policy file found — using embedded standard policy\n\n")
 	data, err := policies.Profile("standard")
 	if err != nil {
@@ -164,19 +292,19 @@ func printTestResult(w io.Writer, d engine.Decision, noColor bool) {
 		icon = "🛡️"
 		label = "DENY"
 		if !noColor {
-			color = "\033[31m" // red
+			color = "\033[31m"
 		}
 	case engine.ActionLog:
 		icon = "📝"
 		label = "LOG"
 		if !noColor {
-			color = "\033[33m" // yellow
+			color = "\033[33m"
 		}
 	default:
 		icon = "✅"
 		label = "ALLOW"
 		if !noColor {
-			color = "\033[32m" // green
+			color = "\033[32m"
 		}
 	}
 

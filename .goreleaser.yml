@@ -51,3 +51,18 @@ release:
     owner: peg
     name: rampart
   prerelease: auto
+
+# Homebrew tap auto-update on release.
+# Requires HOMEBREW_TAP_GITHUB_TOKEN secret in GitHub Actions — a PAT with repo scope
+# that has write access to the peg/homebrew-rampart repository.
+brews:
+  - repository:
+      owner: peg
+      name: homebrew-rampart
+    homepage: "https://rampart.sh"
+    description: "Open-source firewall for AI agents"
+    license: "Apache-2.0"
+    install: |
+      bin.install "rampart"
+    test: |
+      system "#{bin}/rampart", "version"
