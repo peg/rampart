@@ -21,7 +21,7 @@ Send Rampart audit events to your existing security stack. Three output formats,
     Works with: Splunk, QRadar, ArcSight, Exabeam
 
     ```
-    CEF:0|Rampart|PolicyEngine|0.1.10|deny|Destructive command blocked|8|src=claude-code cmd=rm -rf / policy=exec-safety
+    CEF:0|Rampart|PolicyEngine|0.2.0|deny|Destructive command blocked|8|src=claude-code cmd=rm -rf / policy=exec-safety
     ```
 
 === "CEF to File"
