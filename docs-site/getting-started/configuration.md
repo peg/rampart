@@ -133,9 +133,56 @@ policies:
           command_matches: ["curl *"]
 ```
 
+## Approval Flow
+
+For commands that aren't dangerous enough to block outright, but risky enough for a human to decide:
+
+```yaml
+policies:
+  - name: approve-deployments
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "kubectl apply *"
+            - "terraform apply *"
+            - "docker push *"
+            - "helm upgrade *"
+        message: "Deployment — approve or deny?"
+
+  - name: approve-installs
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "pip install *"
+            - "npm install *"
+            - "brew install *"
+        message: "Package install — approve or deny?"
+```
+
+How you'll see the approval prompt depends on your setup:
+
+- **Claude Code** — native permission dialog (the same one Claude uses for `ask`)
+- **MCP clients** — the proxy blocks until you approve via CLI or API
+- **OpenClaw** — sends a chat message you can approve inline
+- **Webhooks** — sends a notification with a signed approve/deny link
+
+Manage pending approvals:
+
+```bash
+rampart pending                          # What's waiting
+rampart approve abc123                   # Let it through
+rampart deny abc123 --reason "not now"   # Block it
+```
+
 ## Webhook Notifications
 
-Get alerts when commands are blocked:
+Get alerts when commands are blocked or need approval:
 
 ```yaml
 version: "1"
@@ -143,7 +190,7 @@ default_action: allow
 
 notify:
   url: "https://discord.com/api/webhooks/your/webhook"
-  on: ["deny"]  # Options: deny, log
+  on: ["deny", "require_approval"]  # Options: deny, log, require_approval
 
 policies:
   # ... your policies

@@ -26,6 +26,8 @@ Cursor → MCP tool call → rampart mcp (proxy) → Policy Engine → MCP Serve
 
 Rampart speaks the MCP protocol natively. It intercepts every `tools/call` request, evaluates it against your policies, and either forwards it to the real MCP server or returns a JSON-RPC error.
 
+**require_approval behavior**: When a policy action is `require_approval`, the MCP proxy blocks and waits for human resolution via `rampart approve <id>` or the API. If denied or expired, it returns a JSON-RPC error to Cursor.
+
 Denied tool calls never reach the MCP server. Cursor handles the error gracefully.
 
 ## Auto-Generate Policies

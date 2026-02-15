@@ -88,9 +88,11 @@ rampart preload --debug -- agent                # Debug to stderr
 Run Rampart as an OpenClaw approval daemon.
 
 ```bash
-rampart daemon --token YOUR_TOKEN               # Connect to OpenClaw Gateway
-rampart daemon --gateway ws://host:port         # Custom gateway URL
-rampart daemon --signing-key ~/.rampart/key     # Custom signing key
+rampart daemon --token YOUR_TOKEN                    # Connect to OpenClaw Gateway
+rampart daemon --gateway ws://host:port              # Custom gateway URL  
+rampart daemon --signing-key ~/.rampart/key          # Custom signing key
+rampart daemon --api 127.0.0.1:9091                  # Custom API listen address
+rampart daemon --reconnect 5                         # Reconnect interval (seconds)
 ```
 
 ### `rampart mcp`
@@ -207,8 +209,19 @@ rampart audit stats
 Query the audit trail.
 
 ```bash
-rampart audit search --tool exec --decision deny
-rampart audit search --agent claude-code
+rampart audit search <query>                     # Search events by text
+rampart audit search --tool exec --decision deny # Search with filters
+rampart audit search --agent claude-code "cmd"   # Search by agent
+```
+
+### `rampart audit replay`
+
+Replay audit events with timing.
+
+```bash
+rampart audit replay                  # Replay with original timing
+rampart audit replay --speed 2.0      # Replay at 2x speed  
+rampart audit replay --speed 0        # Replay instantly (no delays)
 ```
 
 ## Policy

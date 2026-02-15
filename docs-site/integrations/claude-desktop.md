@@ -65,6 +65,10 @@ With the standard policy:
 
 For cloud MCP servers, use a more restrictive policy (deny by default, explicit allowlist).
 
+## require_approval Behavior
+
+When a policy action is `require_approval`, the MCP proxy blocks and waits for human resolution via `rampart approve <id>` or the API. If denied or expired, it returns a JSON-RPC error to Claude Desktop with code `-32600` and the denial reason.
+
 ## Monitor
 
 ```bash

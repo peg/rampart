@@ -42,6 +42,8 @@ OpenClaw
 
 **File tool patches**: Injects a policy check into OpenClaw's internal read/write/edit/grep tool implementations. Same fail-open behavior.
 
+**require_approval behavior**: When a policy action is `require_approval`, the daemon creates a pending approval and sends webhook notifications (if configured) to alert humans. The shim blocks execution until the approval is resolved via `rampart approve <id>` or the API.
+
 !!! warning "File patches require re-running after OpenClaw upgrades"
     `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw, run `rampart setup openclaw --patch-tools --force` to re-apply.
 

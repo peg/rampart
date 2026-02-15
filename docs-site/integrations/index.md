@@ -11,6 +11,22 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Codex CLI, any process |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
+| **Shim + Service** | Shell shim + background daemon | OpenClaw |
+| **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (alternative) |
+
+## require_approval Behavior
+
+When a policy action is `require_approval`, behavior varies by integration:
+
+| Integration | Behavior |
+|-------------|----------|
+| **Claude Code** | Hook returns `"permissionDecision":"ask"` — Claude Code shows native prompt |
+| **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
+| **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
+| **OpenClaw** | Shim blocks, daemon sends webhook notifications |
+| **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
+| **LD_PRELOAD** | Library blocks exec call, process appears "hung" |
+| **HTTP API** | Returns `"decision":"require_approval"` with `approval_id` |
 
 ## Agent Compatibility
 
@@ -22,20 +38,21 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI](codex-cli.md) | LD_PRELOAD | `rampart preload --` | Linux, macOS |
 | [OpenClaw](openclaw.md) | Shim + service | `rampart setup openclaw` | Linux, macOS |
-| [Python Agents](python-agents.md) | HTTP API / SDK | `localhost:9090` | All |
+| [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
 
 ## Choosing an Integration
 
 ```mermaid
 graph TD
-    A[Which agent?] -->|Claude Code| B[rampart setup claude-code]
-    A -->|Cline| C[rampart setup cline]
-    A -->|Claude Desktop / Cursor| D[rampart mcp --]
+    A[Which agent?] -->|Claude Code| B["rampart setup claude-code"]
+    A -->|Cline| C["rampart setup cline"]
+    A -->|OpenClaw| OC["rampart setup openclaw"]
+    A -->|Claude Desktop / Cursor| D["rampart mcp --"]
     A -->|Has $SHELL support?| E{Yes / No}
-    E -->|Yes| F[rampart wrap --]
-    E -->|No| G[rampart preload --]
-    A -->|Custom / Python| H[HTTP API]
+    E -->|Yes| F["rampart wrap --"]
+    E -->|No| G["rampart preload --"]
+    A -->|Custom / Python| H[HTTP API / Go SDK]
 ```
 
 !!! tip "Start with the simplest method"

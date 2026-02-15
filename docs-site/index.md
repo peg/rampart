@@ -71,7 +71,47 @@ That's it. Every tool call now goes through Rampart's policy engine. [Full setup
 
 ## How It Works
 
-![Rampart Architecture](assets/architecture.png)
+```mermaid
+graph TB
+    subgraph "AI Agents"
+        CC[Claude Code]
+        CL[Cline]
+        CX[Codex]
+        OC[OpenClaw]
+        O[Others]
+    end
+
+    subgraph "Integration Layer"
+        H[Native Hooks]
+        S[Shim + Serve]
+        M[MCP Proxy]
+        P[LD_PRELOAD]
+    end
+
+    PE[YAML Policy Eval<br/>~20μs per decision]
+
+    PE -->|allow| PASS[✅ Execute]
+    PE -->|deny| BLOCK[❌ Blocked]
+    PE -->|require_approval| APR[👤 Human Approval]
+
+    CC --> H
+    CL --> H
+    CX --> P
+    OC --> S
+    O --> M
+
+    H --> PE
+    S --> PE
+    M --> PE
+    P --> PE
+
+    PE -->|all decisions| AU[Hash-Chained Audit]
+
+    style PE fill:#238636,stroke:#fff,color:#fff
+    style APR fill:#d29922,stroke:#fff,color:#fff
+    style BLOCK fill:#da3633,stroke:#fff,color:#fff
+    style PASS fill:#238636,stroke:#fff,color:#fff
+```
 
 ## Works With Every Agent
 

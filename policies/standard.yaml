@@ -200,3 +200,44 @@ policies:
             - "xox[bsapr]-[a-zA-Z0-9-]+"
             - "eyJ[a-zA-Z0-9_-]+\\.eyJ[a-zA-Z0-9_-]+"
         message: "Sensitive credential detected in response"
+
+# ---------------------------------------------------------------------------
+# APPROVAL EXAMPLES (uncomment and customize)
+# ---------------------------------------------------------------------------
+# Use require_approval for commands that aren't dangerous enough to block
+# outright, but risky enough that a human should decide.
+#
+# How it works:
+#   - Claude Code: shows a native approval prompt
+#   - MCP clients: blocks until resolved via API or dashboard
+#   - OpenClaw: sends a chat message you can approve inline
+#   - Webhooks: sends a notification with a signed approve/deny link
+#
+#  - name: approve-deployments
+#    match:
+#      tool: ["exec"]
+#    rules:
+#      - action: require_approval
+#        when:
+#          command_matches:
+#            - "kubectl apply *"
+#            - "kubectl delete *"
+#            - "terraform apply *"
+#            - "docker push *"
+#            - "helm install *"
+#            - "helm upgrade *"
+#        message: "Deployment command — approve or deny?"
+#
+#  - name: approve-installs
+#    match:
+#      tool: ["exec"]
+#    rules:
+#      - action: require_approval
+#        when:
+#          command_matches:
+#            - "pip install *"
+#            - "npm install *"
+#            - "cargo install *"
+#            - "apt install *"
+#            - "brew install *"
+#        message: "Package install — approve or deny?"

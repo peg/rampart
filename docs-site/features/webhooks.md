@@ -12,7 +12,7 @@ default_action: allow
 
 notify:
   url: "https://discord.com/api/webhooks/your/webhook"
-  on: ["deny"]  # Only notify on denied commands
+  on: ["deny", "require_approval"]  # Notify on blocked and pending approval
 
 policies:
   # ... your policies
@@ -24,6 +24,7 @@ policies:
 |-------|------|
 | `deny` | A tool call was blocked |
 | `log` | A tool call was flagged for review |
+| `require_approval` | A tool call needs human approval |
 
 ## Payload Format
 
@@ -32,13 +33,12 @@ Rampart sends a JSON POST to your webhook URL:
 ```json
 {
   "timestamp": "2026-02-11T21:03:38Z",
-  "decision": "deny",
+  "action": "deny",
   "tool": "exec",
   "command": "rm -rf /tmp/*",
   "policy": "protect-sys",
   "message": "Destructive command blocked",
-  "agent": "claude-code",
-  "session": "abc123"
+  "agent": "claude-code"
 }
 ```
 

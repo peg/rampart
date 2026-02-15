@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+## [0.2.0] - 2026-02-15
+
+### Added
 - **`require_approval` action** — block tool calls until a human approves or denies them
 - **Claude Code `ask` hook** — `require_approval` maps to Claude Code's native permission prompt (`permissionDecision: "ask"`)
 - **MCP proxy blocking** — `require_approval` tools stay visible in `tools/list` but block on `tools/call` until resolved
@@ -125,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.1.14...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/peg/rampart/compare/v0.1.14...v0.2.0
 [0.1.14]: https://github.com/peg/rampart/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/peg/rampart/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/peg/rampart/compare/v0.1.11...v0.1.12

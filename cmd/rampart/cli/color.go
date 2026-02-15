@@ -18,7 +18,10 @@ import (
 	"os"
 )
 
-const colorDim = "\033[2m"
+const (
+	colorDim    = "\033[2m"
+	colorYellow = "\033[1;33m"
+)
 
 // noColor returns true when the NO_COLOR environment variable is set.
 func noColor() bool {
@@ -44,4 +47,15 @@ func formatDenyMessage(command, reason string) string {
 		)
 	}
 	return fmt.Sprintf("🛡️ Rampart blocked: %s\n   Reason: %s\n", command, reason)
+}
+
+// formatApprovalRequiredMessage returns a branded approval-required message for stderr.
+func formatApprovalRequiredMessage(command, reason string) string {
+	if stderrSupportsColor() {
+		return fmt.Sprintf("🛡️ %sRampart: approval required for: %s%s\n   %s%s%s\n",
+			colorYellow, command, colorReset,
+			colorDim, reason, colorReset,
+		)
+	}
+	return fmt.Sprintf("🛡️ Rampart: approval required for: %s\n   %s\n", command, reason)
 }
