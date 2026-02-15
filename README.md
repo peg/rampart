@@ -45,19 +45,15 @@ graph TB
 
 *Pattern matching handles 95%+ of decisions in microseconds. All decisions are written to a hash-chained audit trail.*
 
-```bash
-# One command to protect Claude Code
-rampart setup claude-code
-
-# Or wrap any agent
-rampart wrap -- aider
-
-# Or protect anything via syscall interception (LD_PRELOAD)
-rampart preload -- codex
-
-# Or protect MCP servers
-rampart mcp -- npx @modelcontextprotocol/server-fs .
-```
+| Agent | Setup | Integration |
+|-------|-------|-------------|
+| **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks — works in `--dangerously-skip-permissions` mode |
+| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow |
+| **Cline** | `rampart setup cline` | Native hooks via settings |
+| **Cursor** | `rampart setup cursor` | MCP proxy configuration |
+| **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
+| **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
+| **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
 
 <div align="center">
 <img src="docs/watch.png" alt="rampart watch — live audit dashboard" width="700">
