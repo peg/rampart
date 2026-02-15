@@ -21,68 +21,29 @@ Running Claude Code in yolo mode? Letting agents manage your infrastructure unsu
 ```mermaid
 graph TB
     subgraph "AI Agents"
-        CC[Claude Code]
-        CL[Cline]
-        CX[Codex]
-        OC[OpenClaw]
-        O[Others]
+        CC[Claude Code] & CL[Cline] --> H[Native Hooks]
+        OC[OpenClaw] --> S[Shell Shim]
+        CX[Codex] --> P[LD_PRELOAD]
+        O[Others] --> M[MCP Proxy]
     end
 
-    subgraph "Integration Layer"
-        H[Native Hooks]
-        S[Shim + Serve]
-        M[MCP Proxy]
-        P[LD_PRELOAD]
-    end
+    H & S & P & M --> PE[YAML Policy Eval · ~20μs]
 
-    PE[YAML Policy Eval<br/>~20μs per decision]
+    PE --> PASS[✅ Execute]
+    PE --> BLOCK[❌ Blocked]
+    PE --> APR[👤 Approval]
+    PE --> LOG[📝 Log]
 
-    PE -->|allow| PASS[✅ Execute]
-    PE -->|deny| BLOCK[❌ Blocked]
-    PE -->|log| LOG[📝 Log Only]
-    PE -->|require_approval| APR{👤 Human Approval}
-    PE -->|webhook| EXT[🔔 External Decision]
+    PE -.->|every decision| AU[Hash-Chained Audit · Syslog · Webhooks]
 
-    APR -->|"Claude Code: native prompt<br/>OpenClaw: chat message<br/>Webhook: signed URL"| RESOLVE[Approve / Deny]
-
-    subgraph "Observability — all decisions logged"
-        direction LR
-        AU[Hash-Chained Audit]
-        SI[Syslog / CEF]
-        WH[Webhooks<br/>Discord · Slack]
-    end
-
-    SB["⚡ rampart-verify (optional)<br/>gpt-4o-mini · Haiku · Ollama"]
-
-    CC --> H
-    CL --> H
-    CX --> P
-    OC --> S
-    O --> M
-
-    H --> PE
-    S --> PE
-    M --> PE
-    P --> PE
-
-    PASS --> AU
-    BLOCK --> AU
-    LOG --> AU
-    APR --> AU
-    EXT --> AU
-    PE -. "ambiguous commands only ⚠️" .-> SB
-    SB -. allow/deny .-> PE
-    AU --> SI
-    AU --> WH
-
-    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
     style PE fill:#238636,stroke:#fff,color:#fff
-    style APR fill:#d29922,stroke:#fff,color:#fff
     style BLOCK fill:#da3633,stroke:#fff,color:#fff
+    style APR fill:#d29922,stroke:#fff,color:#fff
     style PASS fill:#238636,stroke:#fff,color:#fff
+    style AU fill:#2d333b,stroke:#848d97,color:#c9d1d9
 ```
 
-*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions — including sidecar verdicts — are written to the audit trail.*
+*Pattern matching handles 95%+ of decisions in microseconds. All decisions are written to a hash-chained audit trail.*
 
 ```bash
 # One command to protect Claude Code
