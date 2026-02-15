@@ -21,12 +21,17 @@ Running Claude Code in yolo mode? Letting agents manage your infrastructure unsu
 ```mermaid
 graph LR
     subgraph "AI Agents"
-        direction TB
-        CC[Claude Code] & CL[Cline] --> H[Native Hooks]
-        OC[OpenClaw] --> S[Shell Shim]
-        CX[Codex] --> P[LD_PRELOAD]
-        O[Others] --> M[MCP Proxy]
+        CC[Claude Code]
+        CL[Cline]
+        OC[OpenClaw]
+        CX[Codex]
+        O[Others]
     end
+
+    CC & CL --> H[Native Hooks]
+    OC --> S[Shell Shim]
+    CX --> P[LD_PRELOAD]
+    O --> M[MCP Proxy]
 
     H & S & P & M --> PE[YAML Policy Eval<br/>~20μs]
 
