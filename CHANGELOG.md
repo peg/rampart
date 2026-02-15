@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.2.2] — 2026-02-15
+
+### Added
+- **Dashboard on `rampart serve`** — embedded approval dashboard now at `/dashboard/` (was daemon-only)
+- **Community policy library** — 5 ready-to-use templates: Kubernetes, AWS CLI, Terraform, Docker, Node.js/Python
+- **Fuzz tests** — 6 fuzz test suites covering policy parser, condition matcher, engine evaluator, hook parsers, proxy request parser, and command sanitizer
+- **Approval dashboard documentation** — full guide with security model, API reference, and hook integration
+- **Upgrade and uninstall guides** — covers all install methods, hook removal, and data cleanup
+
 ## [0.2.0] - 2026-02-15
 
 ### Added
