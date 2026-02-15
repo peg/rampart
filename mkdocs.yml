@@ -126,6 +126,7 @@ nav:
     - Policy Engine: features/policy-engine.md
     - Audit Trail: features/audit-trail.md
     - Webhook Notifications: features/webhooks.md
+    - Approval Dashboard: features/dashboard.md
     - MCP Proxy: features/mcp-proxy.md
     - Semantic Verification: features/semantic-verification.md
     - SIEM Integration: features/siem-integration.md

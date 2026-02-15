@@ -33,6 +33,7 @@ import (
 
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
+	"github.com/peg/rampart/internal/dashboard"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
 	"github.com/peg/rampart/internal/signing"
@@ -212,6 +213,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.Handle("/dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
+	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.Handler()))
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
