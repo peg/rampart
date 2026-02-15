@@ -48,7 +48,6 @@ graph TB
         AU[Hash-Chained Audit]
         SI[Syslog / CEF]
         WH[Webhooks<br/>Discord · Slack]
-        DB[Dashboard]
     end
 
     SB["⚡ rampart-verify (optional)<br/>gpt-4o-mini · Haiku · Ollama"]
@@ -69,7 +68,6 @@ graph TB
     SB -. allow/deny .-> PE
     AU --> SI
     AU --> WH
-    AU --> DB
 
     style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
     style PE fill:#238636,stroke:#fff,color:#fff

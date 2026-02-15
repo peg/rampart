@@ -7,23 +7,23 @@ Rampart is a policy enforcement layer between AI agents and their tools. Every t
 ```mermaid
 graph TB
     A[Agent] -->|tool call| R[Rampart]
-    R --> PE[Policy Engine]
-    PE --> I[Interceptors]
-    I --> D{Decision}
+    R -->|enrich params| PE[Policy Engine]
+    PE --> D{Decision}
     D -->|allow| T[✅ Tool Executes]
     D -->|deny| B[❌ Blocked]
     D -->|log| L[🟡 Flagged + Allowed]
+    D -->|webhook| WH[🔗 External Decides]
     D -->|require_approval| AP{👤 Human Review}
     AP -->|approved| T
-    AP -->|denied| B
-    AP -->|timeout| B
+    AP -->|denied / timeout| B
+    WH -->|allow / deny| T
     R --> AU[Audit Sink]
     AU --> J[JSONL Files]
     AU --> S[Syslog / CEF]
     AU --> W[Webhooks]
-    AU --> DB[Dashboard]
 
     style AP fill:#d29922,stroke:#fff,color:#fff
+    style WH fill:#1f6feb,stroke:#fff,color:#fff
     style T fill:#238636,stroke:#fff,color:#fff
     style B fill:#da3633,stroke:#fff,color:#fff
 ```
