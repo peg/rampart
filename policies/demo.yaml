@@ -1,0 +1,82 @@
+# Rampart Demo Policy
+#
+# Three rules that demonstrate the core decision types:
+#   ✅ Allow  — safe commands run normally
+#   ❌ Deny   — destructive commands get blocked instantly
+#   👤 Approval — risky commands wait for human confirmation
+#
+# Usage:
+#   rampart serve --config policies/demo.yaml
+#   rampart watch  (in another terminal)
+#
+# Then try:
+#   echo "hello world"          → allowed
+#   rm -rf /                    → blocked
+#   kubectl apply -f app.yaml   → waits for your approval
+
+version: "1"
+default_action: allow
+
+policies:
+  - name: block-destructive
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "rm -rf /*"
+            - "rm -rf ~/*"
+            - "rm -rf /"
+            - "rm -rf ~"
+            - ":(){ :|:& };:"
+            - "mkfs*"
+            - "> /dev/sda"
+            - "dd if=/dev/zero of=/dev/*"
+        message: "Destructive command blocked"
+
+  - name: block-secrets
+    priority: 1
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.env"
+            - "**/.env.local"
+          path_not_matches:
+            - "**/*.pub"
+            - "**/.env.example"
+        message: "Sensitive file access blocked"
+
+  - name: approve-deployments
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "kubectl apply *"
+            - "kubectl delete *"
+            - "docker push *"
+            - "terraform apply*"
+            - "helm install *"
+            - "helm upgrade *"
+        message: "Deployment needs human approval"
+
+  - name: log-network
+    priority: 10
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "curl *"
+            - "wget *"
+        message: "Network request logged"

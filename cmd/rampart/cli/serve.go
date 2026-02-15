@@ -190,6 +190,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: proxy listening on :%d (token=%s)\n", port, display)
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: full token: %s\n", token)
+				fmt.Fprintf(cmd.ErrOrStderr(), "serve: dashboard: http://localhost:%d/dashboard/?token=%s\n", port, token)
 
 				proxyErrCh = make(chan error, 1)
 				go func() {

@@ -68,6 +68,8 @@ func decisionMeta(action string) (icon string, color lipgloss.Color) {
 		return "\U0001f7e1", lipgloss.Color("11")
 	case "webhook":
 		return "\U0001f535", lipgloss.Color("14")
+	case "require_approval":
+		return "👤", lipgloss.Color("214")
 	default:
 		return "\u2022", lipgloss.Color("7")
 	}
