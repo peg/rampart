@@ -149,7 +149,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
-				return outputHookResult(cmd, format, false, "", "")
+				return outputHookResult(cmd, format, hookAllow, "", "")
 			}
 
 			// Build tool call for evaluation
@@ -200,9 +200,18 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 
 			// Return decision
-			denied := decision.Action == engine.ActionDeny && mode == "enforce"
 			cmdStr := extractCommand(call)
-			return outputHookResult(cmd, format, denied, decision.Message, cmdStr)
+			if mode != "enforce" {
+				return outputHookResult(cmd, format, hookAllow, decision.Message, cmdStr)
+			}
+			switch decision.Action {
+			case engine.ActionDeny:
+				return outputHookResult(cmd, format, hookDeny, decision.Message, cmdStr)
+			case engine.ActionRequireApproval:
+				return outputHookResult(cmd, format, hookAsk, decision.Message, cmdStr)
+			default:
+				return outputHookResult(cmd, format, hookAllow, decision.Message, cmdStr)
+			}
 		},
 	}
 
@@ -293,17 +302,36 @@ func mapClineTool(toolName string) string {
 	}
 }
 
-// outputHookResult writes the allow/deny response in the correct format.
-// When denied, it also prints a branded message to stderr.
-func outputHookResult(cmd *cobra.Command, format string, denied bool, reason string, command string) error {
-	if denied {
+// hookDecisionType represents the three possible hook outcomes.
+type hookDecisionType int
+
+const (
+	hookAllow hookDecisionType = iota
+	hookDeny
+	hookAsk // require_approval → Claude Code native prompt
+)
+
+// outputHookResult writes the allow/deny/ask response in the correct format.
+// When denied, it prints a branded message to stderr.
+// When ask, Claude Code shows its native permission prompt; Cline cancels
+// (Cline has no native ask equivalent).
+func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, reason string, command string) error {
+	if decision == hookDeny {
 		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason))
+	}
+	if decision == hookAsk {
+		fmt.Fprint(os.Stderr, formatApprovalRequiredMessage(command, reason))
 	}
 	switch format {
 	case "cline":
-		out := clineHookOutput{Cancel: denied}
-		if denied {
+		// Cline has no "ask" — cancel on both deny and require_approval.
+		cancel := decision == hookDeny || decision == hookAsk
+		out := clineHookOutput{Cancel: cancel}
+		if decision == hookDeny {
 			out.ErrorMessage = "Blocked by Rampart: " + reason
+		}
+		if decision == hookAsk {
+			out.ErrorMessage = "Rampart: approval required — " + reason
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	default: // claude-code
@@ -312,10 +340,15 @@ func outputHookResult(cmd *cobra.Command, format string, denied bool, reason str
 				HookEventName: "PreToolUse",
 			},
 		}
-		if denied {
+		switch decision {
+		case hookDeny:
 			out.HookSpecificOutput.PermissionDecision = "deny"
 			out.HookSpecificOutput.PermissionDecisionReason = "Rampart: " + reason
+		case hookAsk:
+			out.HookSpecificOutput.PermissionDecision = "ask"
+			out.HookSpecificOutput.PermissionDecisionReason = "Rampart: " + reason
 		}
+		// hookAllow: omit permissionDecision (Claude Code treats absent as allow)
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
 }

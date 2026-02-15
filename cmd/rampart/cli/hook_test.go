@@ -176,7 +176,7 @@ func TestOutputHookResult_ClaudeCode(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	err := outputHookResult(cmd, "claude-code", false, "", "")
+	err := outputHookResult(cmd, "claude-code", hookAllow, "", "")
 	if err != nil {
 		t.Fatalf("allow outputHookResult error: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestOutputHookResult_ClaudeCode(t *testing.T) {
 
 	out.Reset()
 	stderr := captureStderr(t, func() {
-		err = outputHookResult(cmd, "claude-code", true, "blocked by policy", "rm -rf /")
+		err = outputHookResult(cmd, "claude-code", hookDeny, "blocked by policy", "rm -rf /")
 	})
 	if err != nil {
 		t.Fatalf("deny outputHookResult error: %v", err)
@@ -220,7 +220,7 @@ func TestOutputHookResult_Cline(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	err := outputHookResult(cmd, "cline", false, "approval required", "echo hi")
+	err := outputHookResult(cmd, "cline", hookAllow, "approval required", "echo hi")
 	if err != nil {
 		t.Fatalf("allow outputHookResult error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestOutputHookResult_Cline(t *testing.T) {
 
 	out.Reset()
 	stderr := captureStderr(t, func() {
-		err = outputHookResult(cmd, "cline", true, "requires approval", "kubectl delete")
+		err = outputHookResult(cmd, "cline", hookDeny, "requires approval", "kubectl delete")
 	})
 	if err != nil {
 		t.Fatalf("deny outputHookResult error: %v", err)
@@ -256,5 +256,69 @@ func TestOutputHookResult_Cline(t *testing.T) {
 	}
 	if deny.ErrorMessage != "Blocked by Rampart: requires approval" {
 		t.Fatalf("ErrorMessage = %q", deny.ErrorMessage)
+	}
+}
+
+func TestOutputHookResult_ClaudeCode_Ask(t *testing.T) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	stderr := captureStderr(t, func() {
+		err := outputHookResult(cmd, "claude-code", hookAsk, "deployment needs approval", "kubectl apply -f deploy.yaml")
+		if err != nil {
+			t.Fatalf("ask outputHookResult error: %v", err)
+		}
+	})
+
+	// Stderr should show approval message, not deny message
+	if !strings.Contains(stderr, "approval required") {
+		t.Fatalf("stderr missing approval message: %q", stderr)
+	}
+	if strings.Contains(stderr, "blocked") {
+		t.Fatalf("stderr should not say 'blocked' for ask: %q", stderr)
+	}
+
+	var ask hookOutput
+	if err := json.Unmarshal(out.Bytes(), &ask); err != nil {
+		t.Fatalf("unmarshal ask output: %v", err)
+	}
+	if ask.HookSpecificOutput.PermissionDecision != "ask" {
+		t.Fatalf("PermissionDecision = %q, want ask", ask.HookSpecificOutput.PermissionDecision)
+	}
+	if ask.HookSpecificOutput.PermissionDecisionReason != "Rampart: deployment needs approval" {
+		t.Fatalf("PermissionDecisionReason = %q", ask.HookSpecificOutput.PermissionDecisionReason)
+	}
+	if ask.HookSpecificOutput.HookEventName != "PreToolUse" {
+		t.Fatalf("HookEventName = %q", ask.HookSpecificOutput.HookEventName)
+	}
+}
+
+func TestOutputHookResult_Cline_Ask(t *testing.T) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	stderr := captureStderr(t, func() {
+		err := outputHookResult(cmd, "cline", hookAsk, "deployment needs approval", "kubectl apply -f deploy.yaml")
+		if err != nil {
+			t.Fatalf("ask outputHookResult error: %v", err)
+		}
+	})
+
+	if !strings.Contains(stderr, "approval required") {
+		t.Fatalf("stderr missing approval message: %q", stderr)
+	}
+
+	var ask clineHookOutput
+	if err := json.Unmarshal(out.Bytes(), &ask); err != nil {
+		t.Fatalf("unmarshal ask output: %v", err)
+	}
+	// Cline has no "ask" — require_approval cancels the operation
+	if !ask.Cancel {
+		t.Fatal("Cancel should be true for require_approval in Cline")
+	}
+	if !strings.Contains(ask.ErrorMessage, "approval required") {
+		t.Fatalf("ErrorMessage = %q, should mention approval required", ask.ErrorMessage)
 	}
 }

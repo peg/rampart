@@ -20,8 +20,8 @@ When a policy action is `require_approval`, behavior varies by integration:
 
 | Integration | Behavior |
 |-------------|----------|
-| **Claude Code** | Hook returns `"permissionDecision":"ask"`, waits for resolution |
-| **Cline** | Hook returns `{"cancel":true}` immediately (no waiting) |
+| **Claude Code** | Hook returns `"permissionDecision":"ask"` — Claude Code shows native prompt |
+| **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
 | **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
 | **OpenClaw** | Shim blocks, daemon sends webhook notifications |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |

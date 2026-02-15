@@ -36,7 +36,7 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Rampart: Manual approval required"}}
 ```
 
-**require_approval behavior:** When a policy action is `require_approval`, the hook blocks and waits for human resolution via `rampart approve <id>` or the API. Once resolved, it returns the final decision to Claude Code.
+**require_approval behavior:** When a policy action is `require_approval`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt — the user approves or denies directly in the Claude Code UI. No external approval store needed.
 
 Denied commands never execute. Claude Code receives the denial reason and can explain it to the user.
 
