@@ -57,6 +57,7 @@ type Server struct {
 	server         *http.Server
 	startedAt      time.Time
 	notifyConfig   *engine.NotifyConfig
+	metricsEnabled bool
 }
 
 // Option configures a proxy server.
@@ -96,6 +97,13 @@ func WithLogger(logger *slog.Logger) Option {
 func WithResolveBaseURL(url string) Option {
 	return func(s *Server) {
 		s.resolveBaseURL = strings.TrimSpace(url)
+	}
+}
+
+// WithMetrics enables the /metrics Prometheus endpoint.
+func WithMetrics(enabled bool) Option {
+	return func(s *Server) {
+		s.metricsEnabled = enabled
 	}
 }
 
@@ -214,6 +222,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	if s.metricsEnabled {
+		mux.Handle("GET /metrics", MetricsHandler())
+	}
 	mux.Handle("/dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
 	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.Handler()))
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -271,6 +282,17 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		decision = s.engine.Evaluate(call)
+	}
+
+	if s.metricsEnabled {
+		policy := ""
+		if len(decision.MatchedPolicies) > 0 {
+			policy = decision.MatchedPolicies[0]
+		}
+		RecordDecision(decision.Action.String(), policy, decision.EvalDuration)
+		SetPendingApprovals(len(s.approvals.List()))
+		SetPolicyCount(s.engine.PolicyCount())
+		SetUptime(time.Since(s.startedAt))
 	}
 
 	s.writeAudit(req, toolName, decision)
