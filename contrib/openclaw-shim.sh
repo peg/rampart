@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 REAL_SHELL="/bin/bash"
-RAMPART_URL="http://127.0.0.1:19090"
-RAMPART_TOKEN="c86356c424aafc202ec88e7cbdc6ce3cb0484be26c89cac20254dce4b6774897"
-RAMPART_MODE="enforce"
+RAMPART_URL="${RAMPART_URL:-http://127.0.0.1:9090}"
+RAMPART_TOKEN="${RAMPART_TOKEN:?Set RAMPART_TOKEN to your rampart serve token}"
+RAMPART_MODE="${RAMPART_MODE:-enforce}"
 APPROVAL_POLL_INTERVAL=3
 APPROVAL_TIMEOUT=300
 
@@ -17,12 +17,13 @@ if [ "$1" = "-c" ]; then
 
     ENCODED=$(printf '%s' "$CMD" | base64 | tr -d '\n\r')
     PAYLOAD=$(printf '{"agent":"openclaw","session":"main","params":{"command_b64":"%s"}}' "$ENCODED")
-    HTTP_CODE=$(curl -sS -o /tmp/.rampart-resp -w "%{http_code}" -X POST "${RAMPART_URL}/v1/tool/exec" \
+    RESP_FILE=$(mktemp /tmp/.rampart-resp.XXXXXX)
+    HTTP_CODE=$(curl -sS -o "$RESP_FILE" -w "%{http_code}" -X POST "${RAMPART_URL}/v1/tool/exec" \
         -H "Authorization: Bearer ${RAMPART_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$PAYLOAD" 2>/dev/null)
-    DECISION=$(cat /tmp/.rampart-resp 2>/dev/null)
-    rm -f /tmp/.rampart-resp
+    DECISION=$(cat "$RESP_FILE" 2>/dev/null)
+    rm -f "$RESP_FILE"
 
     # Fail open if no response
     if [ -z "$DECISION" ]; then
