@@ -38,7 +38,7 @@ When a policy action is `require_approval`, behavior varies by integration:
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI](codex-cli.md) | LD_PRELOAD | `rampart preload --` | Linux, macOS |
 | [OpenClaw](openclaw.md) | Shim + service | `rampart setup openclaw` | Linux, macOS |
-| [Python Agents](python-agents.md) | HTTP API / SDK | `localhost:9090` | All |
+| [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
 
 ## Choosing an Integration
