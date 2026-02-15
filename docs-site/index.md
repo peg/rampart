@@ -72,45 +72,37 @@ That's it. Every tool call now goes through Rampart's policy engine. [Full setup
 ## How It Works
 
 ```mermaid
-graph TB
+graph LR
     subgraph "AI Agents"
         CC[Claude Code]
         CL[Cline]
-        CX[Codex]
         OC[OpenClaw]
+        CX[Codex]
         O[Others]
     end
 
-    subgraph "Integration Layer"
-        H[Native Hooks]
-        S[Shim + Serve]
-        M[MCP Proxy]
-        P[LD_PRELOAD]
-    end
+    CC & CL --> H[Native Hooks]
+    OC --> S[Shell Shim]
+    CX --> P[LD_PRELOAD]
+    O --> M[MCP Proxy]
 
-    PE[YAML Policy Eval<br/>~20μs per decision]
+    H & S & P & M --> PE[YAML Policy Eval<br/>~20μs]
 
-    PE -->|allow| PASS[✅ Execute]
-    PE -->|deny| BLOCK[❌ Blocked]
-    PE -->|require_approval| APR[👤 Human Approval]
+    PE --> AU[📋 Hash-Chained Audit<br/>Syslog · CEF · Webhooks]
 
-    CC --> H
-    CL --> H
-    CX --> P
-    OC --> S
-    O --> M
+    AU --> PASS[✅ Execute]
+    AU --> BLOCK[❌ Blocked]
+    AU --> APR[👤 Approval]
 
-    H --> PE
-    S --> PE
-    M --> PE
-    P --> PE
-
-    PE -->|all decisions| AU[Hash-Chained Audit]
+    PE -. "ambiguous ⚠️" .-> SB["⚡ rampart-verify<br/>(optional sidecar)<br/>gpt-4o-mini · Haiku · Ollama"]
+    SB -. allow/deny .-> PE
 
     style PE fill:#238636,stroke:#fff,color:#fff
-    style APR fill:#d29922,stroke:#fff,color:#fff
+    style AU fill:#1f6feb,stroke:#fff,color:#fff
     style BLOCK fill:#da3633,stroke:#fff,color:#fff
+    style APR fill:#d29922,stroke:#fff,color:#fff
     style PASS fill:#238636,stroke:#fff,color:#fff
+    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
 ## Works With Every Agent
