@@ -48,7 +48,7 @@ graph TB
 | Agent | Setup | Integration |
 |-------|-------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks — works in `--dangerously-skip-permissions` mode |
-| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow |
+| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Cursor** | `rampart setup cursor` | MCP proxy configuration |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
