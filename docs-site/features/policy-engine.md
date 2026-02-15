@@ -214,6 +214,19 @@ policies:
 
 Policy evaluation is pure in-memory pattern matching. No disk I/O, no network calls, no external processes.
 
+## Shell-Aware Command Matching
+
+Rampart normalizes shell commands before policy matching to prevent evasion via shell metacharacters. Without normalization, an agent could bypass a `command_matches: ["rm -rf *"]` rule by using `'rm' -rf /`, `r\m -rf /`, or `"rm" -rf /`.
+
+The normalizer handles:
+
+- **Quote stripping**: `'rm' -rf /` → `rm -rf /`
+- **Backslash escape removal**: `r\m -rf /` → `rm -rf /`
+- **Env var prefix stripping**: `FOO=bar rm -rf /` → `rm -rf /`
+- **Compound command splitting**: `rm -rf / && echo done` matches against each segment individually
+
+Commands are matched against **both** the raw and normalized forms, so existing policies continue to work without changes.
+
 ## Hot Reload
 
 Policies hot-reload via `fsnotify`. Edit the YAML file and changes take effect immediately — no restart required.
