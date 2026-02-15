@@ -1,0 +1,74 @@
+# Rampart Community Policy: Kubernetes
+#
+# For teams using AI agents to manage Kubernetes clusters.
+# Blocks destructive cluster operations, requires approval for
+# production changes, and logs diagnostic commands.
+#
+# Usage: rampart serve --config policies/community/kubernetes.yaml
+
+version: "1"
+default_action: allow
+
+policies:
+  - name: block-cluster-destructive
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "kubectl delete namespace *"
+            - "kubectl delete ns *"
+            - "kubectl delete --all *"
+            - "kubectl drain * --force --delete-emptydir-data"
+            - "kubectl cordon *"
+            - "helm uninstall *"
+            - "helm delete *"
+        message: "Destructive cluster operation blocked"
+
+  - name: approve-production-changes
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "kubectl apply *"
+            - "kubectl set image *"
+            - "kubectl scale *"
+            - "kubectl rollout restart *"
+            - "kubectl patch *"
+            - "kubectl edit *"
+            - "helm install *"
+            - "helm upgrade *"
+        message: "Cluster change — approve or deny?"
+
+  - name: block-secret-access
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "kubectl get secret * -o json*"
+            - "kubectl get secret * -o yaml*"
+            - "kubectl get secret * -o jsonpath*"
+        message: "Direct secret extraction blocked — use proper secret management"
+
+  - name: log-diagnostics
+    priority: 10
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "kubectl get *"
+            - "kubectl describe *"
+            - "kubectl logs *"
+            - "kubectl top *"
+            - "kubectl exec *"
+        message: "Cluster diagnostic command"

@@ -1,0 +1,75 @@
+# Rampart Community Policy: Terraform
+#
+# For AI agents running Terraform / OpenTofu.
+# Requires approval for apply and destroy, blocks force-unlock,
+# allows plan and state inspection.
+#
+# Usage: rampart serve --config policies/community/terraform.yaml
+
+version: "1"
+default_action: allow
+
+policies:
+  - name: block-terraform-destructive
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "terraform destroy *-auto-approve*"
+            - "tofu destroy *-auto-approve*"
+            - "terraform force-unlock *"
+            - "tofu force-unlock *"
+            - "terraform state rm *"
+            - "tofu state rm *"
+        message: "Destructive Terraform operation blocked — never auto-approve destroy"
+
+  - name: approve-terraform-apply
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "terraform apply*"
+            - "tofu apply*"
+            - "terraform destroy*"
+            - "tofu destroy*"
+            - "terraform import *"
+            - "tofu import *"
+            - "terraform state mv *"
+            - "tofu state mv *"
+        message: "Terraform state change — approve or deny?"
+
+  - name: log-terraform-reads
+    priority: 10
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "terraform plan*"
+            - "tofu plan*"
+            - "terraform show*"
+            - "tofu show*"
+            - "terraform state list*"
+            - "tofu state list*"
+            - "terraform output*"
+            - "tofu output*"
+        message: "Terraform diagnostic"
+
+  - name: block-state-exfil
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "terraform state pull*"
+            - "tofu state pull*"
+        message: "State pull blocked — contains secrets. Use terraform output for specific values."

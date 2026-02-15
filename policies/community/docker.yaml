@@ -1,0 +1,82 @@
+# Rampart Community Policy: Docker / Container Operations
+#
+# For AI agents building and deploying containers.
+# Blocks privileged containers and host mounts, requires approval
+# for pushes and production deploys, allows builds and local runs.
+#
+# Usage: rampart serve --config policies/community/docker.yaml
+
+version: "1"
+default_action: allow
+
+policies:
+  - name: block-privileged-containers
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "docker run *--privileged*"
+            - "docker run *--pid=host*"
+            - "docker run *--network=host*"
+            - "docker run *-v /:/host*"
+            - "docker run *-v /etc:/*"
+            - "docker run *-v /var/run/docker.sock*"
+            - "docker run *--cap-add=SYS_ADMIN*"
+        message: "Privileged/host-access container blocked"
+
+  - name: block-system-prune
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "docker system prune -a*"
+            - "docker volume prune -a*"
+            - "docker image prune -a*"
+        message: "Mass prune blocked — specify targets instead"
+
+  - name: approve-registry-push
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "docker push *"
+            - "docker buildx build *--push*"
+            - "docker compose push*"
+        message: "Registry push — approve or deny?"
+
+  - name: approve-compose-production
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "docker compose up -d*"
+            - "docker compose down*"
+            - "docker stack deploy*"
+            - "docker stack rm*"
+            - "docker service update*"
+        message: "Service lifecycle change — approve or deny?"
+
+  - name: log-builds
+    priority: 10
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "docker build *"
+            - "docker buildx build *"
+            - "docker compose build*"
+        message: "Container build"

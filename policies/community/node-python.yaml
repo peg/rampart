@@ -1,0 +1,87 @@
+# Rampart Community Policy: Node.js / Python Development
+#
+# For AI agents writing and testing code in Node.js or Python projects.
+# Blocks global installs and eval patterns, requires approval for
+# publishing, allows local development freely.
+#
+# Usage: rampart serve --config policies/community/node-python.yaml
+
+version: "1"
+default_action: allow
+
+policies:
+  - name: block-global-installs
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "npm install -g *"
+            - "npm i -g *"
+            - "pip install --user *"
+            - "sudo pip install *"
+            - "sudo npm install *"
+        message: "Global package install blocked — use project-local deps"
+
+  - name: block-dangerous-eval
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "node -e *require('child_process')*"
+            - "node -e *execSync*"
+            - "node -e *exec(*"
+            - "python3 -c *import subprocess*"
+            - "python3 -c *import os; os.system*"
+            - "python -c *import subprocess*"
+        message: "Eval with shell access blocked — write a script file instead"
+
+  - name: approve-publish
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "npm publish*"
+            - "yarn publish*"
+            - "twine upload *"
+            - "pip upload *"
+            - "python -m build*"
+            - "python3 -m build*"
+        message: "Package publish — approve or deny?"
+
+  - name: block-credential-files
+    priority: 1
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.npmrc"
+            - "**/.pypirc"
+            - "**/.netrc"
+        message: "Registry credential file access blocked"
+
+  - name: protect-env-files
+    priority: 1
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.env"
+            - "**/.env.local"
+            - "**/.env.production"
+          path_not_matches:
+            - "**/.env.example"
+            - "**/.env.template"
+        message: "Environment file blocked — use .env.example for reference"

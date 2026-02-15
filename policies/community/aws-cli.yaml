@@ -1,0 +1,92 @@
+# Rampart Community Policy: AWS CLI
+#
+# For AI agents managing AWS infrastructure.
+# Blocks destructive operations (delete, terminate), requires approval
+# for resource creation and IAM changes, allows read operations.
+#
+# Usage: rampart serve --config policies/community/aws-cli.yaml
+
+version: "1"
+default_action: allow
+
+policies:
+  - name: block-aws-destructive
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "aws ec2 terminate-instances *"
+            - "aws rds delete-db-instance *"
+            - "aws rds delete-db-cluster *"
+            - "aws s3 rb *"
+            - "aws s3 rm * --recursive"
+            - "aws cloudformation delete-stack *"
+            - "aws lambda delete-function *"
+            - "aws iam delete-user *"
+            - "aws iam delete-role *"
+            - "aws organizations leave-organization*"
+        message: "Destructive AWS operation blocked"
+
+  - name: block-iam-credential-ops
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "aws iam create-access-key *"
+            - "aws iam create-login-profile *"
+            - "aws sts assume-role *"
+            - "aws iam attach-user-policy *"
+            - "aws iam attach-role-policy *"
+            - "aws iam put-user-policy *"
+            - "aws iam put-role-policy *"
+        message: "IAM credential/policy modification blocked"
+
+  - name: approve-resource-creation
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "aws ec2 run-instances *"
+            - "aws rds create-db-instance *"
+            - "aws s3 mb *"
+            - "aws cloudformation create-stack *"
+            - "aws cloudformation update-stack *"
+            - "aws lambda create-function *"
+            - "aws lambda update-function-code *"
+            - "aws ecs create-service *"
+            - "aws ecs update-service *"
+        message: "AWS resource creation — approve or deny?"
+
+  - name: approve-security-group-changes
+    priority: 2
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "aws ec2 authorize-security-group-ingress *"
+            - "aws ec2 authorize-security-group-egress *"
+            - "aws ec2 revoke-security-group-ingress *"
+            - "aws ec2 modify-security-group-rules *"
+        message: "Security group change — approve or deny?"
+
+  - name: block-credential-leaks
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+            - "ASIA[0-9A-Z]{16}"
+        message: "AWS credential detected in output"
