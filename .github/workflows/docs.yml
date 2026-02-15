@@ -1,11 +1,13 @@
 name: Deploy Docs
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'docs-site/**'
       - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
 
 permissions:
   contents: write
@@ -20,6 +22,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: pip install mkdocs-material
+      - run: pip install mkdocs-material mkdocs-minify-plugin
 
       - run: mkdocs gh-deploy --force
