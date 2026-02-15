@@ -148,11 +148,31 @@ func (s *Store) Close() {
 	}
 }
 
+// maxPendingApprovals is the maximum number of pending approval requests
+// allowed at any time. This prevents memory exhaustion from a flood of
+// approval-requiring tool calls.
+const maxPendingApprovals = 1000
+
+// ErrTooManyPending is returned when the pending approval limit is reached.
+var ErrTooManyPending = fmt.Errorf("approval: too many pending requests (limit: %d)", maxPendingApprovals)
+
 // Create adds a new pending approval and returns it.
 // The caller should wait on request.Done() for resolution.
-func (s *Store) Create(call engine.ToolCall, decision engine.Decision) *Request {
+// Returns nil and an error if the pending approval limit has been reached.
+func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Count pending approvals to enforce the size limit.
+	pendingCount := 0
+	for _, req := range s.pending {
+		if req.Status == StatusPending {
+			pendingCount++
+		}
+	}
+	if pendingCount >= maxPendingApprovals {
+		return nil, ErrTooManyPending
+	}
 
 	now := time.Now()
 	req := &Request{
@@ -170,7 +190,7 @@ func (s *Store) Create(call engine.ToolCall, decision engine.Decision) *Request 
 	// Start expiry timer.
 	go s.watchExpiry(req)
 
-	return req
+	return req, nil
 }
 
 // Resolve approves or denies a pending request.

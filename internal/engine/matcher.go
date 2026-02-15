@@ -85,7 +85,11 @@ func MatchGlob(pattern, name string) bool {
 	}
 
 	// Handle "**" as a recursive wildcard.
+	// Limit the number of "**" segments to prevent quadratic complexity.
 	if strings.Contains(pattern, "**") {
+		if strings.Count(pattern, "**") > 3 {
+			return false
+		}
 		return matchDoubleGlob(pattern, name)
 	}
 

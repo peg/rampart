@@ -52,7 +52,17 @@ The hash chain detects partial tampering. A complete rewrite with a new valid ch
 
 **Mitigations:** [User separation](../deployment/user-separation.md), SIEM export, webhook notifications.
 
-### 3. Encoding and Obfuscation
+### 3. Glob Pattern Evasion via Shell Metacharacters
+
+Glob matching operates on **raw command strings** and does not interpret shell semantics. An agent (or prompt injection) can evade deny-list patterns using quoting (`'rm' -rf /`), variable expansion (`$CMD`), backslash escaping (`r\m`), or path variations (`/bin/rm` vs `rm`).
+
+**Mitigations:**
+
+- Use `default_action: deny` with allowlists instead of deny-lists for high-security deployments
+- Combine with [semantic verification](https://github.com/peg/rampart-verify) which classifies intent regardless of syntax
+- LD_PRELOAD interceptor catches commands at the execve level
+
+### 4. Encoding and Obfuscation
 
 Commands can be encoded (base64, variable expansion) to bypass pattern matching.
 
@@ -63,17 +73,17 @@ Commands can be encoded (base64, variable expansion) to bypass pattern matching.
 - The [anti-exfiltration policy](../getting-started/configuration.md#example-anti-exfiltration-policy) catches common encoding patterns
 - Semantic verification classifies intent regardless of encoding
 
-### 4. Fail-Open Behavior
+### 5. Fail-Open Behavior
 
 When `rampart serve` is unreachable, commands execute without policy checks. This is deliberate — fail-closed locks you out of your machine.
 
 **Mitigations:** Service monitoring, auto-restart, webhook notifications as liveness signal.
 
-### 5. Framework Patching Fragility
+### 6. Framework Patching Fragility
 
 File tool patches modify framework source files that get replaced on upgrades. Between upgrade and re-patch, file tools bypass Rampart.
 
-### 6. Token Exposure
+### 7. Token Exposure
 
 In wrap mode, the bearer token is stored in a `0600` file. The agent user can still read it. Use native hooks or user separation for stronger guarantees.
 

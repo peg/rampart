@@ -312,7 +312,12 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && decision.Action == engine.ActionRequireApproval {
-		pending := s.approvals.Create(call, decision)
+		pending, err := s.approvals.Create(call, decision)
+		if err != nil {
+			s.logger.Error("proxy: approval store full", "error", err)
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 
 		s.logger.Info("proxy: approval required",
 			"id", pending.ID,
@@ -884,7 +889,7 @@ func stripLeadingComments(cmd string) string {
 		return cmd
 	}
 	if start >= len(lines) {
-		return cmd // all comments — return original
+		return "" // all comments/blank lines — return empty
 	}
 	return strings.Join(lines[start:], "\n")
 }

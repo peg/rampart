@@ -42,7 +42,7 @@ func testDecision() engine.Decision {
 
 func TestCreateAndResolveApproval(t *testing.T) {
 	store := NewStore()
-	req := store.Create(testCall(), testDecision())
+	req, _ := store.Create(testCall(), testDecision())
 
 	assert.Equal(t, StatusPending, req.Status)
 	assert.NotEmpty(t, req.ID)
@@ -65,7 +65,7 @@ func TestCreateAndResolveApproval(t *testing.T) {
 
 func TestDenyApproval(t *testing.T) {
 	store := NewStore()
-	req := store.Create(testCall(), testDecision())
+	req, _ := store.Create(testCall(), testDecision())
 
 	err := store.Resolve(req.ID, false, "api")
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func TestResolveUnknownID(t *testing.T) {
 
 func TestDoubleResolve(t *testing.T) {
 	store := NewStore()
-	req := store.Create(testCall(), testDecision())
+	req, _ := store.Create(testCall(), testDecision())
 
 	require.NoError(t, store.Resolve(req.ID, true, "cli"))
 	err := store.Resolve(req.ID, false, "cli")
@@ -99,7 +99,7 @@ func TestExpiry(t *testing.T) {
 		}),
 	)
 
-	req := store.Create(testCall(), testDecision())
+	req, _ := store.Create(testCall(), testDecision())
 
 	select {
 	case got := <-expired:
@@ -113,8 +113,8 @@ func TestExpiry(t *testing.T) {
 
 func TestListPending(t *testing.T) {
 	store := NewStore()
-	store.Create(testCall(), testDecision())
-	store.Create(testCall(), testDecision())
+	_, _ = store.Create(testCall(), testDecision())
+	_, _ = store.Create(testCall(), testDecision())
 
 	pending := store.List()
 	assert.Len(t, pending, 2)
@@ -122,7 +122,7 @@ func TestListPending(t *testing.T) {
 
 func TestCleanup(t *testing.T) {
 	store := NewStore()
-	req := store.Create(testCall(), testDecision())
+	req, _ := store.Create(testCall(), testDecision())
 	require.NoError(t, store.Resolve(req.ID, true, "cli"))
 
 	// Should not clean up yet (too recent).
@@ -137,7 +137,7 @@ func TestCleanup(t *testing.T) {
 
 func TestWaitForResolution(t *testing.T) {
 	store := NewStore()
-	req := store.Create(testCall(), testDecision())
+	req, _ := store.Create(testCall(), testDecision())
 
 	// Resolve in background after a delay.
 	go func() {

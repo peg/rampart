@@ -52,7 +52,7 @@ func TestHandlerSetsSecurityHeaders(t *testing.T) {
 	assertHeader("X-Frame-Options", "DENY")
 	assertHeader("X-Content-Type-Options", "nosniff")
 	assertHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self'")
-	assertHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+	assertHeader("Referrer-Policy", "no-referrer")
 	assertHeader("Cache-Control", "no-store")
 }
 

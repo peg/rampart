@@ -396,7 +396,12 @@ func (d *Daemon) handleHumanApproval(
 	call engine.ToolCall,
 	decision engine.Decision,
 ) {
-	pending := d.approvals.Create(call, decision)
+	pending, err := d.approvals.Create(call, decision)
+	if err != nil {
+		d.logger.Error("daemon: approval store full", "error", err)
+		d.resolveApproval(req.ID, "deny")
+		return
+	}
 	d.logger.Warn("approval required — waiting for human",
 		"rampart_id", pending.ID,
 		"openclaw_id", req.ID,

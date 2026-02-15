@@ -34,7 +34,7 @@ func TestHandleResolve_AllowsUnsignedWhenSignerNotConfigured(t *testing.T) {
 	store := approval.NewStore()
 	t.Cleanup(store.Close)
 
-	pending := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	pending, _ := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
 	api := NewAPI(store, "", slog.Default(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/"+pending.ID+"/resolve", bytes.NewBufferString(`{"approved":true,"resolved_by":"test"}`))
@@ -49,7 +49,7 @@ func TestHandleResolve_RejectsInvalidSignature(t *testing.T) {
 	store := approval.NewStore()
 	t.Cleanup(store.Close)
 
-	pending := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	pending, _ := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
 	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
 	api := NewAPI(store, "", slog.Default(), signer)
 
@@ -66,7 +66,7 @@ func TestHandleResolve_AllowsValidSignature(t *testing.T) {
 	store := approval.NewStore()
 	t.Cleanup(store.Close)
 
-	pending := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	pending, _ := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
 	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
 	api := NewAPI(store, "", slog.Default(), signer)
 
@@ -91,7 +91,7 @@ func TestHandleResolve_RejectsExpiredSignature(t *testing.T) {
 	store := approval.NewStore()
 	t.Cleanup(store.Close)
 
-	pending := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	pending, _ := store.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
 	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
 	api := NewAPI(store, "", slog.Default(), signer)
 

@@ -174,6 +174,34 @@ policies:
         message: "VM deletion blocked"
 ```
 
+## ⚠️ Glob Matching Limitations
+
+!!! warning "Glob patterns operate on raw command strings"
+    Rampart's glob matching compares patterns against the **literal command string** as received from the agent framework. It does **not** interpret shell semantics. This means commands can evade glob patterns using:
+
+    - **Quoting:** `r"m" -rf /` or `'rm' -rf /` won't match `rm -rf *`
+    - **Variable expansion:** `$CMD` where `CMD=rm` won't match `rm *`
+    - **Backslash escaping:** `r\m -rf /` won't match `rm -rf *`
+    - **Path variations:** `/bin/rm` vs `rm`
+    - **Unicode/encoding tricks:** homoglyph characters
+
+    **For high-security deployments**, use `default_action: deny` with explicit allowlists rather than relying solely on deny-list glob patterns. This inverts the model: only explicitly permitted commands can run, and evasion techniques are blocked by default.
+
+    ```yaml
+    default_action: deny
+    policies:
+      - name: allowed-commands
+        match:
+          tool: [exec]
+        rules:
+          - action: allow
+            when:
+              command_matches:
+                - "git status"
+                - "git diff *"
+                - "ls *"
+    ```
+
 ## Performance
 
 | Command | Decision | Time |
