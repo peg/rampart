@@ -37,7 +37,7 @@ func TestStripQuotedArgs(t *testing.T) {
 		want  string
 	}{
 		{"echo with dangerous string", `echo "rm -rf /"`, `echo "…"`},
-		{"git commit message", `git commit -m "Fix: remove rm -rf from script"`, `git commit -m "…"`},
+		{"git commit message", `git commit -m "Fix: remove rm -rf from script"`, `git commit -m "Fix: remove rm -rf from script"`},
 		{"bash -c preserved", `bash -c "rm -rf /"`, `bash -c "rm -rf /"`},
 		{"sh -c preserved", `sh -c "rm -rf /"`, `sh -c "rm -rf /"`},
 		{"python preserved", `python -c "import os; os.system('rm -rf /')"`, `python -c "import os; os.system('rm -rf /')"`},

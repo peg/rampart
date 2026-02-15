@@ -93,20 +93,26 @@ type resolveReq struct {
 }
 
 func (a *API) handleResolve(w http.ResponseWriter, r *http.Request) {
-	if !a.checkAuth(w, r) {
-		return
-	}
-
 	id := r.PathValue("id")
+
+	// Allow access via either Bearer token or valid HMAC signature.
 	if a.signer != nil {
 		sig := r.URL.Query().Get("sig")
 		expRaw := r.URL.Query().Get("exp")
-		exp, err := strconv.ParseInt(expRaw, 10, 64)
-		if sig == "" || err != nil || !a.signer.ValidateSignature(id, sig, exp) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired signature"})
-			return
+		if sig != "" && expRaw != "" {
+			exp, err := strconv.ParseInt(expRaw, 10, 64)
+			if err != nil || !a.signer.ValidateSignature(id, sig, exp) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired signature"})
+				return
+			}
+			// Signature valid — skip Bearer auth.
+			goto authorized
 		}
 	}
+	if !a.checkAuth(w, r) {
+		return
+	}
+authorized:
 
 	var req resolveReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

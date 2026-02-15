@@ -387,7 +387,7 @@ func TestStripLeadingComments(t *testing.T) {
 		{"multiple comments", "# step 1\n# step 2\nls -la", "ls -la"},
 		{"comment with blank line", "# desc\n\nls -la", "ls -la"},
 		{"no stripping needed", "git push origin main", "git push origin main"},
-		{"all comments returns original", "# just a comment\n# another", "# just a comment\n# another"},
+		{"all comments returns empty", "# just a comment\n# another", ""},
 		{"inline comment preserved", "ls -la # list files", "ls -la # list files"},
 		{"multiline command", "# build\ndocker build -t app .\ndocker push app", "docker build -t app .\ndocker push app"},
 		{"empty string", "", ""},
@@ -456,7 +456,7 @@ func TestResolveApproval_SignedURLBypassesBearerAuth(t *testing.T) {
 	handler := srv.handler()
 
 	// Create a pending approval.
-	pending := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	pending, _ := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
 	expiresAt := pending.ExpiresAt.UTC()
 	signedURL := signer.SignURL("http://localhost", pending.ID, expiresAt)
 
@@ -487,7 +487,7 @@ func TestResolveApproval_BadSignatureRejected(t *testing.T) {
 	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"), WithSigner(signer))
 	handler := srv.handler()
 
-	pending := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	pending, _ := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
 
 	body := `{"approved":true,"resolved_by":"attacker"}`
 	resolveURL := fmt.Sprintf("/v1/approvals/%s/resolve?sig=forged&exp=9999999999", pending.ID)
@@ -505,7 +505,7 @@ func TestResolveApproval_NoSigFallsThroughToBearerAuth(t *testing.T) {
 	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"), WithSigner(signer))
 	handler := srv.handler()
 
-	pending := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	pending, _ := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
 
 	// No sig params, but valid Bearer token.
 	body := `{"approved":true,"resolved_by":"api-user"}`

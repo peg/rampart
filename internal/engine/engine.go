@@ -228,6 +228,15 @@ func (e *Engine) Reload() error {
 		return fmt.Errorf("engine: reload rejected — empty config (file may be mid-write)")
 	}
 
+	// Reject configs where policy count drops to zero from a non-zero count.
+	// This prevents accidental policy wipe from a bad config edit.
+	e.mu.RLock()
+	currentCount := len(e.config.Policies)
+	e.mu.RUnlock()
+	if currentCount > 0 && len(cfg.Policies) == 0 {
+		return fmt.Errorf("engine: reload rejected — policy count dropped from %d to 0", currentCount)
+	}
+
 	e.mu.Lock()
 	e.config = cfg
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)

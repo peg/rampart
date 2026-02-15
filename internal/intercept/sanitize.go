@@ -56,7 +56,7 @@ func StripHeredocBodies(cmd string) string {
 // string arguments as code.
 var safeBinaries = map[string]bool{
 	"echo": true, "printf": true, "cat": true,
-	"git": true, "sed": true, "grep": true,
+	"grep": true,
 	"head": true, "tail": true, "tee": true,
 	"logger": true,
 }

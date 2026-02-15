@@ -60,7 +60,7 @@ policies:
 	assert.Equal(t, ActionWebhook, decision.Action)
 	require.NotNil(t, decision.WebhookConfig)
 	assert.Equal(t, 5*1e9, float64(decision.WebhookConfig.EffectiveTimeout()))
-	assert.True(t, decision.WebhookConfig.EffectiveFailOpen())
+	assert.False(t, decision.WebhookConfig.EffectiveFailOpen())
 }
 
 func TestWebhookValidationRequiresURL(t *testing.T) {

@@ -322,7 +322,11 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 			return nil
 		}
 
-		pending := p.approvals.Create(call, decision)
+		pending, err := p.approvals.Create(call, decision)
+		if err != nil {
+			p.logger.Error("mcp: approval store full", "error", err)
+			return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: "+err.Error())
+		}
 		p.logger.Info("mcp: approval required",
 			"id", pending.ID,
 			"tool", mappedTool,
