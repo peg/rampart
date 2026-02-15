@@ -110,6 +110,8 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
     - Configuration: getting-started/configuration.md
+    - Upgrade: getting-started/upgrade.md
+    - Uninstall: getting-started/uninstall.md
   - Integration Guides:
     - Overview: integrations/index.md
     - Claude Code: integrations/claude-code.md
