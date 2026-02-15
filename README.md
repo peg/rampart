@@ -39,11 +39,13 @@ graph TB
 
     PE -->|allow| PASS[✅ Execute]
     PE -->|deny| BLOCK[❌ Blocked]
+    PE -->|log| LOG[📝 Log Only]
     PE -->|require_approval| APR{👤 Human Approval}
+    PE -->|webhook| EXT[🔔 External Decision]
 
     APR -->|"Claude Code: native prompt<br/>OpenClaw: chat message<br/>Webhook: signed URL"| RESOLVE[Approve / Deny]
 
-    subgraph "Observability"
+    subgraph "Observability — all decisions logged"
         direction LR
         AU[Hash-Chained Audit]
         SI[Syslog / CEF]
@@ -63,7 +65,11 @@ graph TB
     M --> PE
     P --> PE
 
-    PE -->|all decisions logged| AU
+    PASS --> AU
+    BLOCK --> AU
+    LOG --> AU
+    APR --> AU
+    EXT --> AU
     PE -. "ambiguous commands only ⚠️" .-> SB
     SB -. allow/deny .-> PE
     AU --> SI
