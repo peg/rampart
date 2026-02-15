@@ -28,22 +28,22 @@ graph LR
         O[Others] --> M[MCP Proxy]
     end
 
-    H & S & P & M --> PE[YAML Policy Eval<br/>~20μs · every decision logged]
-
-    PE --> PASS[✅ Execute]
-    PE --> BLOCK[❌ Blocked]
-    PE --> APR[👤 Approval]
+    H & S & P & M --> PE[YAML Policy Eval<br/>~20μs]
 
     PE --> AU[📋 Hash-Chained Audit<br/>Syslog · CEF · Webhooks]
+
+    AU --> PASS[✅ Execute]
+    AU --> BLOCK[❌ Blocked]
+    AU --> APR[👤 Approval]
 
     PE -. "ambiguous ⚠️" .-> SB["⚡ rampart-verify<br/>(optional sidecar)<br/>gpt-4o-mini · Haiku · Ollama"]
     SB -. allow/deny .-> PE
 
     style PE fill:#238636,stroke:#fff,color:#fff
+    style AU fill:#1f6feb,stroke:#fff,color:#fff
     style BLOCK fill:#da3633,stroke:#fff,color:#fff
     style APR fill:#d29922,stroke:#fff,color:#fff
     style PASS fill:#238636,stroke:#fff,color:#fff
-    style AU fill:#1f6feb,stroke:#fff,color:#fff
     style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
