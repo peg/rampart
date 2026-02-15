@@ -82,7 +82,16 @@
 
   const state = { pending: [], seen: new Set(), history: [], pollDelay: POLL_MS, pollTimer: null, pollController: null };
 
-  el.token.value = localStorage.getItem(TOKEN_KEY) || '';
+  // Auto-fill token from URL query param or localStorage
+  const urlToken = new URLSearchParams(window.location.search).get('token');
+  if (urlToken) {
+    el.token.value = urlToken;
+    localStorage.setItem(TOKEN_KEY, urlToken);
+    // Clean URL so token isn't visible in address bar
+    window.history.replaceState({}, '', window.location.pathname);
+  } else {
+    el.token.value = localStorage.getItem(TOKEN_KEY) || '';
+  }
 
   const fmt = {
     ts(s) {
