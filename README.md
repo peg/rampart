@@ -19,84 +19,50 @@ Running Claude Code in yolo mode? Letting agents manage your infrastructure unsu
 ## How It Works
 
 ```mermaid
-graph TB
+graph LR
     subgraph "AI Agents"
         CC[Claude Code]
         CL[Cline]
-        CX[Codex]
         OC[OpenClaw]
+        CX[Codex]
         O[Others]
     end
 
-    subgraph "Integration Layer"
-        H[Native Hooks]
-        S[Shim + Serve]
-        M[MCP Proxy]
-        P[LD_PRELOAD]
-    end
+    CC & CL --> H[Native Hooks]
+    OC --> S[Shell Shim]
+    CX --> P[LD_PRELOAD]
+    O --> M[MCP Proxy]
 
-    PE[YAML Policy Eval<br/>~20μs per decision]
+    H & S & P & M --> PE[YAML Policy Eval<br/>~20μs]
 
-    PE -->|allow| PASS[✅ Execute]
-    PE -->|deny| BLOCK[❌ Blocked]
-    PE -->|log| LOG[📝 Log Only]
-    PE -->|require_approval| APR{👤 Human Approval}
-    PE -->|webhook| EXT[🔔 External Decision]
+    PE --> AU[📋 Hash-Chained Audit<br/>Syslog · CEF · Webhooks]
 
-    APR -->|"Claude Code: native prompt<br/>OpenClaw: chat message<br/>Webhook: signed URL"| RESOLVE[Approve / Deny]
+    AU --> PASS[✅ Execute]
+    AU --> BLOCK[❌ Blocked]
+    AU --> APR[👤 Approval]
 
-    subgraph "Observability — all decisions logged"
-        direction LR
-        AU[Hash-Chained Audit]
-        SI[Syslog / CEF]
-        WH[Webhooks<br/>Discord · Slack]
-    end
-
-    SB["⚡ rampart-verify (optional)<br/>gpt-4o-mini · Haiku · Ollama"]
-
-    CC --> H
-    CL --> H
-    CX --> P
-    OC --> S
-    O --> M
-
-    H --> PE
-    S --> PE
-    M --> PE
-    P --> PE
-
-    PASS --> AU
-    BLOCK --> AU
-    LOG --> AU
-    APR --> AU
-    EXT --> AU
-    PE -. "ambiguous commands only ⚠️" .-> SB
+    PE -. "ambiguous ⚠️" .-> SB["⚡ rampart-verify<br/>(optional sidecar)<br/>gpt-4o-mini · Haiku · Ollama"]
     SB -. allow/deny .-> PE
-    AU --> SI
-    AU --> WH
 
-    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
     style PE fill:#238636,stroke:#fff,color:#fff
-    style APR fill:#d29922,stroke:#fff,color:#fff
+    style AU fill:#1f6feb,stroke:#fff,color:#fff
     style BLOCK fill:#da3633,stroke:#fff,color:#fff
+    style APR fill:#d29922,stroke:#fff,color:#fff
     style PASS fill:#238636,stroke:#fff,color:#fff
+    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
-*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions — including sidecar verdicts — are written to the audit trail.*
+*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions are written to a hash-chained audit trail.*
 
-```bash
-# One command to protect Claude Code
-rampart setup claude-code
-
-# Or wrap any agent
-rampart wrap -- aider
-
-# Or protect anything via syscall interception (LD_PRELOAD)
-rampart preload -- codex
-
-# Or protect MCP servers
-rampart mcp -- npx @modelcontextprotocol/server-fs .
-```
+| Agent | Setup | Integration |
+|-------|-------|-------------|
+| **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks — works in `--dangerously-skip-permissions` mode |
+| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
+| **Cline** | `rampart setup cline` | Native hooks via settings |
+| **Cursor** | `rampart setup cursor` | MCP proxy configuration |
+| **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
+| **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
+| **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
 
 <div align="center">
 <img src="docs/watch.png" alt="rampart watch — live audit dashboard" width="700">
