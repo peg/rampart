@@ -35,7 +35,7 @@ func (s *JSONLSink) openNewFileLocked(withHeader bool, prevFile string) error {
 	name := s.nextFilenameLocked()
 	path := filepath.Join(s.dir, name)
 
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("audit: open jsonl file: %w", err)
 	}
@@ -94,7 +94,7 @@ func (s *JSONLSink) openRotatedFileLocked(prevFile string) error {
 	}
 
 	path := filepath.Join(s.dir, name)
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("audit: open jsonl file: %w", err)
 	}

@@ -153,10 +153,10 @@ func (c *WebhookActionConfig) EffectiveTimeout() time.Duration {
 }
 
 // EffectiveFailOpen returns whether to fail open on error/timeout.
-// Default: true (fail open).
+// Default: false (fail closed — webhook outages block execution).
 func (c *WebhookActionConfig) EffectiveFailOpen() bool {
 	if c.FailOpen == nil {
-		return true
+		return false
 	}
 	return *c.FailOpen
 }
@@ -346,6 +346,10 @@ func (cfg *Config) validate() error {
 			if action == ActionWebhook {
 				if r.Webhook == nil || r.Webhook.URL == "" {
 					return fmt.Errorf("engine: policy %q rule %d: webhook action requires webhook.url", p.Name, j)
+				}
+				if r.Webhook != nil && strings.HasPrefix(r.Webhook.URL, "http://") {
+					slog.Warn("webhook URL uses insecure http:// scheme; use https:// in production",
+						"policy", p.Name, "rule", j, "url", r.Webhook.URL)
 				}
 			}
 			if err := compileResponseRegexes(r.When, cache); err != nil {
