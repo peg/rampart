@@ -16,7 +16,7 @@ hide:
 
 ## What is Rampart?
 
-Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked in microseconds. Everything gets logged to a tamper-proof audit trail where each entry is cryptographically linked to the previous one — if anyone tampers with a record, the chain breaks.
+Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked in microseconds. Everything gets logged to a tamper-evident audit trail where each entry is cryptographically linked to the previous one — if anyone tampers with a record, the chain breaks.
 
 <div class="grid cards" markdown>
 
@@ -32,7 +32,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     ---
 
-    Tamper-proof logs where every entry is linked to the last. Daily rotation, search, and verification built in.
+    Tamper-evident logs where every entry is linked to the last. Daily rotation, search, and verification built in.
 
     [:octicons-arrow-right-24: Learn more](features/audit-trail.md)
 
