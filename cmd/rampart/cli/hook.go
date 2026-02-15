@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/peg/rampart/internal/audit"
@@ -17,10 +18,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// hookInput is the JSON sent by Claude Code on stdin for PreToolUse hooks.
+// hookInput is the JSON sent by Claude Code on stdin for PreToolUse/PostToolUse hooks.
 type hookInput struct {
-	ToolName  string         `json:"tool_name"`
-	ToolInput map[string]any `json:"tool_input"`
+	ToolName   string          `json:"tool_name"`
+	ToolInput  map[string]any  `json:"tool_input"`
+	ToolResult *hookToolResult `json:"tool_result,omitempty"`
+}
+
+// hookToolResult captures the output from a completed tool execution (PostToolUse).
+type hookToolResult struct {
+	Stdout  string `json:"stdout,omitempty"`
+	Stderr  string `json:"stderr,omitempty"`
+	Content string `json:"content,omitempty"`
 }
 
 // hookOutput is the JSON response for Claude Code hooks.
@@ -36,13 +45,13 @@ type hookDecision struct {
 
 // clineHookInput is the JSON sent by Cline on stdin for PreToolUse hooks.
 type clineHookInput struct {
-	ClineVersion    string        `json:"clineVersion"`
-	HookName        string        `json:"hookName"`
-	Timestamp       string        `json:"timestamp"`
-	TaskID          string        `json:"taskId"`
-	WorkspaceRoots  []string      `json:"workspaceRoots"`
-	PreToolUse      *clineToolUse `json:"preToolUse"`
-	PostToolUse     *clineToolUse `json:"postToolUse"`
+	ClineVersion   string        `json:"clineVersion"`
+	HookName       string        `json:"hookName"`
+	Timestamp      string        `json:"timestamp"`
+	TaskID         string        `json:"taskId"`
+	WorkspaceRoots []string      `json:"workspaceRoots"`
+	PreToolUse     *clineToolUse `json:"preToolUse"`
+	PostToolUse    *clineToolUse `json:"postToolUse"`
 }
 
 // clineToolUse represents tool usage in Cline's format.
@@ -53,9 +62,17 @@ type clineToolUse struct {
 
 // clineHookOutput is the JSON response for Cline hooks.
 type clineHookOutput struct {
-	Cancel               bool   `json:"cancel"`
-	ContextModification  string `json:"contextModification,omitempty"`
-	ErrorMessage         string `json:"errorMessage,omitempty"`
+	Cancel              bool   `json:"cancel"`
+	ContextModification string `json:"contextModification,omitempty"`
+	ErrorMessage        string `json:"errorMessage,omitempty"`
+}
+
+// hookParseResult holds the parsed hook input including optional response data.
+type hookParseResult struct {
+	Tool     string
+	Params   map[string]any
+	Agent    string
+	Response string // non-empty for PostToolUse events
 }
 
 func newHookCmd(opts *rootOptions) *cobra.Command {
@@ -76,6 +93,12 @@ Claude Code setup (add to ~/.claude/settings.json):
 {
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "rampart hook" }]
+      }
+    ],
+    "PostToolUse": [
       {
         "matcher": "Bash",
         "hooks": [{ "type": "command", "command": "rampart hook" }]
@@ -126,8 +149,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 
 			// Audit: append to a daily file so watch can tail it.
-			// Unlike long-lived processes, the hook is invoked per-call,
-			// so we append to one file rather than creating a new one each time.
 			today := time.Now().UTC().Format("2006-01-02")
 			auditPath := filepath.Join(auditDir, "audit-hook-"+today+".jsonl")
 			auditFile, err := os.OpenFile(auditPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -137,15 +158,13 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			defer auditFile.Close()
 
 			// Parse input based on format
-			var toolType string
-			var params map[string]any
-			var agentName string
-			
+			var parsed *hookParseResult
+
 			switch format {
 			case "claude-code":
-				toolType, params, agentName, err = parseClaudeCodeInput(os.Stdin, logger)
+				parsed, err = parseClaudeCodeInput(os.Stdin, logger)
 			case "cline":
-				toolType, params, agentName, err = parseClineInput(os.Stdin, logger)
+				parsed, err = parseClineInput(os.Stdin, logger)
 			}
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
@@ -155,15 +174,23 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Build tool call for evaluation
 			call := engine.ToolCall{
 				ID:        audit.NewEventID(),
-				Agent:     agentName,
+				Agent:     parsed.Agent,
 				Session:   "hook",
-				Tool:      toolType,
-				Params:    params,
+				Tool:      parsed.Tool,
+				Params:    parsed.Params,
 				Timestamp: time.Now().UTC(),
 			}
 
-			// Evaluate
-			decision := eng.Evaluate(call)
+			isPostToolUse := parsed.Response != ""
+
+			// Evaluate: for PreToolUse, run command-side policy check.
+			// For PostToolUse, run response-side evaluation.
+			var decision engine.Decision
+			if isPostToolUse {
+				decision = eng.EvaluateResponse(call, parsed.Response)
+			} else {
+				decision = eng.Evaluate(call)
+			}
 
 			// Write audit event
 			eventDecision := audit.EventDecision{
@@ -178,7 +205,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Agent:     call.Agent,
 				Session:   call.Session,
 				Tool:      call.Tool,
-				Request:   params,
+				Request:   parsed.Params,
 				Decision:  eventDecision,
 			}
 			line, err := json.Marshal(event)
@@ -204,8 +231,12 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if mode != "enforce" {
 				return outputHookResult(cmd, format, hookAllow, decision.Message, cmdStr)
 			}
+
 			switch decision.Action {
 			case engine.ActionDeny:
+				if isPostToolUse {
+					return outputHookResult(cmd, format, hookBlock, decision.Message, cmdStr)
+				}
 				return outputHookResult(cmd, format, hookDeny, decision.Message, cmdStr)
 			case engine.ActionRequireApproval:
 				return outputHookResult(cmd, format, hookAsk, decision.Message, cmdStr)
@@ -222,46 +253,91 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	return cmd
 }
 
-// parseClaudeCodeInput parses Claude Code hook input format
-func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (string, map[string]any, string, error) {
+// parseClaudeCodeInput parses Claude Code hook input format.
+// Returns a hookParseResult; Response is non-empty for PostToolUse events.
+func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input hookInput
 	if err := json.NewDecoder(reader).Decode(&input); err != nil {
-		return "", nil, "", err
+		return nil, err
 	}
-	
+
 	toolType := mapClaudeCodeTool(input.ToolName)
 	params := input.ToolInput
 	if params == nil {
 		params = map[string]any{}
 	}
-	
-	return toolType, params, "claude-code", nil
+
+	result := &hookParseResult{
+		Tool:   toolType,
+		Params: params,
+		Agent:  "claude-code",
+	}
+
+	// Extract response from PostToolUse tool_result
+	if input.ToolResult != nil {
+		result.Response = extractToolResponse(input.ToolResult)
+	}
+
+	return result, nil
+}
+
+// extractToolResponse combines tool result fields into a single response string.
+func extractToolResponse(tr *hookToolResult) string {
+	var parts []string
+	if tr.Stdout != "" {
+		parts = append(parts, tr.Stdout)
+	}
+	if tr.Stderr != "" {
+		parts = append(parts, tr.Stderr)
+	}
+	if tr.Content != "" {
+		parts = append(parts, tr.Content)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n")
 }
 
 // parseClineInput parses Cline hook input format
-func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (string, map[string]any, string, error) {
+func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input clineHookInput
 	if err := json.NewDecoder(reader).Decode(&input); err != nil {
-		return "", nil, "", err
+		return nil, err
 	}
-	
+
 	// Extract tool info from PreToolUse or PostToolUse
 	var toolUse *clineToolUse
+	isPost := false
 	if input.PreToolUse != nil {
 		toolUse = input.PreToolUse
 	} else if input.PostToolUse != nil {
 		toolUse = input.PostToolUse
+		isPost = true
 	} else {
-		return "", nil, "", fmt.Errorf("no tool use found in input")
+		return nil, fmt.Errorf("no tool use found in input")
 	}
-	
+
 	toolType := mapClineTool(toolUse.ToolName)
 	params := toolUse.Parameters
 	if params == nil {
 		params = map[string]any{}
 	}
-	
-	return toolType, params, "cline", nil
+
+	result := &hookParseResult{
+		Tool:   toolType,
+		Params: params,
+		Agent:  "cline",
+	}
+
+	// For PostToolUse, extract output from parameters if present
+	if isPost {
+		if output, ok := params["output"].(string); ok {
+			result.Response = output
+		}
+	}
+
+	return result, nil
 }
 
 // mapClaudeCodeTool maps Claude Code tool names to Rampart tool types.
@@ -302,21 +378,22 @@ func mapClineTool(toolName string) string {
 	}
 }
 
-// hookDecisionType represents the three possible hook outcomes.
+// hookDecisionType represents the possible hook outcomes.
 type hookDecisionType int
 
 const (
 	hookAllow hookDecisionType = iota
 	hookDeny
-	hookAsk // require_approval → Claude Code native prompt
+	hookAsk   // require_approval → Claude Code native prompt
+	hookBlock // PostToolUse: block response from being shown to agent
 )
 
-// outputHookResult writes the allow/deny/ask response in the correct format.
-// When denied, it prints a branded message to stderr.
+// outputHookResult writes the allow/deny/ask/block response in the correct format.
+// When denied or blocked, it prints a branded message to stderr.
 // When ask, Claude Code shows its native permission prompt; Cline cancels
 // (Cline has no native ask equivalent).
 func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, reason string, command string) error {
-	if decision == hookDeny {
+	if decision == hookDeny || decision == hookBlock {
 		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason))
 	}
 	if decision == hookAsk {
@@ -324,10 +401,10 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 	}
 	switch format {
 	case "cline":
-		// Cline has no "ask" — cancel on both deny and require_approval.
-		cancel := decision == hookDeny || decision == hookAsk
+		// Cline has no "ask" — cancel on deny, block, and require_approval.
+		cancel := decision == hookDeny || decision == hookAsk || decision == hookBlock
 		out := clineHookOutput{Cancel: cancel}
-		if decision == hookDeny {
+		if decision == hookDeny || decision == hookBlock {
 			out.ErrorMessage = "Blocked by Rampart: " + reason
 		}
 		if decision == hookAsk {
@@ -346,6 +423,10 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 			out.HookSpecificOutput.PermissionDecisionReason = "Rampart: " + reason
 		case hookAsk:
 			out.HookSpecificOutput.PermissionDecision = "ask"
+			out.HookSpecificOutput.PermissionDecisionReason = "Rampart: " + reason
+		case hookBlock:
+			out.HookSpecificOutput.HookEventName = "PostToolUse"
+			out.HookSpecificOutput.PermissionDecision = "block"
 			out.HookSpecificOutput.PermissionDecisionReason = "Rampart: " + reason
 		}
 		// hookAllow: omit permissionDecision (Claude Code treats absent as allow)

@@ -46,27 +46,84 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 				t.Fatalf("marshal input: %v", err)
 			}
 
-			tool, params, agent, err := parseClaudeCodeInput(strings.NewReader(string(data)), testLogger())
+			parsed, err := parseClaudeCodeInput(strings.NewReader(string(data)), testLogger())
 			if err != nil {
 				t.Fatalf("parseClaudeCodeInput error: %v", err)
 			}
-			if tool != tt.wantTool {
-				t.Fatalf("tool = %q, want %q", tool, tt.wantTool)
+			if parsed.Tool != tt.wantTool {
+				t.Fatalf("tool = %q, want %q", parsed.Tool, tt.wantTool)
 			}
-			if agent != "claude-code" {
-				t.Fatalf("agent = %q, want claude-code", agent)
+			if parsed.Agent != "claude-code" {
+				t.Fatalf("agent = %q, want claude-code", parsed.Agent)
 			}
-			if params == nil {
+			if parsed.Params == nil {
 				t.Fatal("params is nil")
+			}
+			if parsed.Response != "" {
+				t.Fatalf("expected empty response for PreToolUse, got %q", parsed.Response)
 			}
 		})
 	}
 }
 
 func TestParseClaudeCodeInput_InvalidJSON(t *testing.T) {
-	_, _, _, err := parseClaudeCodeInput(strings.NewReader("{"), testLogger())
+	_, err := parseClaudeCodeInput(strings.NewReader("{"), testLogger())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestParseClaudeCodeInput_PostToolUse(t *testing.T) {
+	tests := []struct {
+		name         string
+		toolResult   map[string]any
+		wantResponse string
+	}{
+		{
+			name:         "stdout only",
+			toolResult:   map[string]any{"stdout": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE"},
+			wantResponse: "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE",
+		},
+		{
+			name:         "stdout and stderr",
+			toolResult:   map[string]any{"stdout": "output", "stderr": "warning"},
+			wantResponse: "output\nwarning",
+		},
+		{
+			name:         "content field",
+			toolResult:   map[string]any{"content": "-----BEGIN PRIVATE KEY-----\nMIIE..."},
+			wantResponse: "-----BEGIN PRIVATE KEY-----\nMIIE...",
+		},
+		{
+			name:         "empty result",
+			toolResult:   map[string]any{},
+			wantResponse: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := map[string]any{
+				"tool_name":  "Bash",
+				"tool_input": map[string]any{"command": "env"},
+			}
+			if tt.toolResult != nil {
+				payload["tool_result"] = tt.toolResult
+			}
+
+			data, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+
+			parsed, err := parseClaudeCodeInput(strings.NewReader(string(data)), testLogger())
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if parsed.Response != tt.wantResponse {
+				t.Fatalf("response = %q, want %q", parsed.Response, tt.wantResponse)
+			}
+		})
 	}
 }
 
@@ -120,17 +177,17 @@ func TestParseClineInput_Mappings(t *testing.T) {
 				t.Fatalf("marshal input: %v", err)
 			}
 
-			tool, params, agent, err := parseClineInput(strings.NewReader(string(data)), testLogger())
+			parsed, err := parseClineInput(strings.NewReader(string(data)), testLogger())
 			if err != nil {
 				t.Fatalf("parseClineInput error: %v", err)
 			}
-			if tool != tt.wantTool {
-				t.Fatalf("tool = %q, want %q", tool, tt.wantTool)
+			if parsed.Tool != tt.wantTool {
+				t.Fatalf("tool = %q, want %q", parsed.Tool, tt.wantTool)
 			}
-			if agent != "cline" {
-				t.Fatalf("agent = %q, want cline", agent)
+			if parsed.Agent != "cline" {
+				t.Fatalf("agent = %q, want cline", parsed.Agent)
 			}
-			if params == nil {
+			if parsed.Params == nil {
 				t.Fatal("params is nil")
 			}
 		})
@@ -138,15 +195,41 @@ func TestParseClineInput_Mappings(t *testing.T) {
 }
 
 func TestParseClineInput_Errors(t *testing.T) {
-	_, _, _, err := parseClineInput(strings.NewReader("{"), testLogger())
+	_, err := parseClineInput(strings.NewReader("{"), testLogger())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
 
 	data := `{"clineVersion":"1.0","hookName":"PreToolUse","timestamp":"2026-01-01T00:00:00Z","taskId":"task-1"}`
-	_, _, _, err = parseClineInput(strings.NewReader(data), testLogger())
+	_, err = parseClineInput(strings.NewReader(data), testLogger())
 	if err == nil {
 		t.Fatal("expected error when no preToolUse/postToolUse present")
+	}
+}
+
+func TestParseClineInput_PostToolUseResponse(t *testing.T) {
+	payload := map[string]any{
+		"clineVersion": "1.0",
+		"hookName":     "PostToolUse",
+		"timestamp":    "2026-01-01T00:00:00Z",
+		"taskId":       "task-1",
+		"postToolUse": map[string]any{
+			"toolName":   "execute_command",
+			"parameters": map[string]any{"output": "secret_api_key=sk-1234567890abcdefghij"},
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	parsed, err := parseClineInput(strings.NewReader(string(data)), testLogger())
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if parsed.Response != "secret_api_key=sk-1234567890abcdefghij" {
+		t.Fatalf("response = %q, want %q", parsed.Response, "secret_api_key=sk-1234567890abcdefghij")
 	}
 }
 
@@ -215,6 +298,37 @@ func TestOutputHookResult_ClaudeCode(t *testing.T) {
 	}
 }
 
+func TestOutputHookResult_ClaudeCode_Block(t *testing.T) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	stderr := captureStderr(t, func() {
+		err := outputHookResult(cmd, "claude-code", hookBlock, "Response contains potential credentials", "env")
+		if err != nil {
+			t.Fatalf("block outputHookResult error: %v", err)
+		}
+	})
+
+	if !strings.Contains(stderr, "Rampart blocked") {
+		t.Fatalf("stderr missing block message: %q", stderr)
+	}
+
+	var block hookOutput
+	if err := json.Unmarshal(out.Bytes(), &block); err != nil {
+		t.Fatalf("unmarshal block output: %v", err)
+	}
+	if block.HookSpecificOutput.HookEventName != "PostToolUse" {
+		t.Fatalf("HookEventName = %q, want PostToolUse", block.HookSpecificOutput.HookEventName)
+	}
+	if block.HookSpecificOutput.PermissionDecision != "block" {
+		t.Fatalf("PermissionDecision = %q, want block", block.HookSpecificOutput.PermissionDecision)
+	}
+	if !strings.Contains(block.HookSpecificOutput.PermissionDecisionReason, "credentials") {
+		t.Fatalf("PermissionDecisionReason = %q", block.HookSpecificOutput.PermissionDecisionReason)
+	}
+}
+
 func TestOutputHookResult_Cline(t *testing.T) {
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
@@ -259,6 +373,30 @@ func TestOutputHookResult_Cline(t *testing.T) {
 	}
 }
 
+func TestOutputHookResult_Cline_Block(t *testing.T) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	captureStderr(t, func() {
+		err := outputHookResult(cmd, "cline", hookBlock, "credential leak", "cat .env")
+		if err != nil {
+			t.Fatalf("block outputHookResult error: %v", err)
+		}
+	})
+
+	var block clineHookOutput
+	if err := json.Unmarshal(out.Bytes(), &block); err != nil {
+		t.Fatalf("unmarshal block output: %v", err)
+	}
+	if !block.Cancel {
+		t.Fatal("Cancel should be true for block")
+	}
+	if !strings.Contains(block.ErrorMessage, "Blocked by Rampart") {
+		t.Fatalf("ErrorMessage = %q", block.ErrorMessage)
+	}
+}
+
 func TestOutputHookResult_ClaudeCode_Ask(t *testing.T) {
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
@@ -271,7 +409,6 @@ func TestOutputHookResult_ClaudeCode_Ask(t *testing.T) {
 		}
 	})
 
-	// Stderr should show approval message, not deny message
 	if !strings.Contains(stderr, "approval required") {
 		t.Fatalf("stderr missing approval message: %q", stderr)
 	}
@@ -314,11 +451,33 @@ func TestOutputHookResult_Cline_Ask(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &ask); err != nil {
 		t.Fatalf("unmarshal ask output: %v", err)
 	}
-	// Cline has no "ask" — require_approval cancels the operation
 	if !ask.Cancel {
 		t.Fatal("Cancel should be true for require_approval in Cline")
 	}
 	if !strings.Contains(ask.ErrorMessage, "approval required") {
 		t.Fatalf("ErrorMessage = %q, should mention approval required", ask.ErrorMessage)
+	}
+}
+
+func TestExtractToolResponse(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *hookToolResult
+		want   string
+	}{
+		{"stdout only", &hookToolResult{Stdout: "hello"}, "hello"},
+		{"stderr only", &hookToolResult{Stderr: "error"}, "error"},
+		{"content only", &hookToolResult{Content: "data"}, "data"},
+		{"all fields", &hookToolResult{Stdout: "out", Stderr: "err", Content: "content"}, "out\nerr\ncontent"},
+		{"empty", &hookToolResult{}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractToolResponse(tt.result)
+			if got != tt.want {
+				t.Fatalf("extractToolResponse = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
