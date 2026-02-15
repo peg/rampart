@@ -211,6 +211,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/tool/{toolName}", s.handleToolCall)
 	mux.HandleFunc("POST /v1/preflight/{toolName}", s.handlePreflight)
 	mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
+	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("/dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
@@ -488,6 +489,37 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"approvals": items})
+}
+
+func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	id := r.PathValue("id")
+	req, ok := s.approvals.Get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "approval not found")
+		return
+	}
+
+	item := map[string]any{
+		"id":         req.ID,
+		"tool":       req.Call.Tool,
+		"command":    req.Call.Command(),
+		"agent":      req.Call.Agent,
+		"session":    req.Call.Session,
+		"message":    req.Decision.Message,
+		"status":     req.Status.String(),
+		"created_at": req.CreatedAt.Format(time.RFC3339),
+		"expires_at": req.ExpiresAt.Format(time.RFC3339),
+	}
+	if !req.ResolvedAt.IsZero() {
+		item["resolved_at"] = req.ResolvedAt.Format(time.RFC3339)
+		item["resolved_by"] = req.ResolvedBy
+	}
+
+	writeJSON(w, http.StatusOK, item)
 }
 
 type resolveRequest struct {
