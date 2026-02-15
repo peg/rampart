@@ -275,12 +275,46 @@ func matchCondition(cond Condition, call ToolCall) bool {
 	matched := false
 
 	// Command matching (for exec tool calls).
+	// Shell-aware: normalize the command to prevent evasion via quotes,
+	// backslash escapes, and env var prefixes. Also match against each
+	// segment of compound commands. We match against BOTH raw and
+	// normalized forms for backward compatibility.
 	if len(cond.CommandMatches) > 0 {
 		cmd := call.Command()
-		if cmd == "" || !matchAny(cond.CommandMatches, cmd) {
+		if cmd == "" {
 			return false
 		}
+		cmdMatch := matchAny(cond.CommandMatches, cmd)
+		if !cmdMatch {
+			// Try normalized form.
+			norm := NormalizeCommand(cmd)
+			if norm != cmd {
+				cmdMatch = matchAny(cond.CommandMatches, norm)
+			}
+			// Try each segment of compound commands.
+			if !cmdMatch {
+				for _, seg := range SplitCompoundCommand(cmd) {
+					if matchAny(cond.CommandMatches, seg) {
+						cmdMatch = true
+						break
+					}
+					nseg := NormalizeCommand(seg)
+					if nseg != seg && matchAny(cond.CommandMatches, nseg) {
+						cmdMatch = true
+						break
+					}
+				}
+			}
+		}
+		if !cmdMatch {
+			return false
+		}
+		// Exclusions: check raw, normalized, and segments.
 		if matchAny(cond.CommandNotMatches, cmd) {
+			return false
+		}
+		norm := NormalizeCommand(cmd)
+		if norm != cmd && matchAny(cond.CommandNotMatches, norm) {
 			return false
 		}
 		matched = true

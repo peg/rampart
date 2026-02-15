@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/peg/rampart/internal/audit"
@@ -17,10 +18,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// hookInput is the JSON sent by Claude Code on stdin for PreToolUse hooks.
+// hookInput is the JSON sent by Claude Code on stdin for PreToolUse/PostToolUse hooks.
 type hookInput struct {
 	ToolName  string         `json:"tool_name"`
 	ToolInput map[string]any `json:"tool_input"`
+	// PostToolUse fields — tool_result contains the tool's output.
+	ToolResult *hookToolResult `json:"tool_result,omitempty"`
+}
+
+// hookToolResult captures the output from a completed tool execution.
+type hookToolResult struct {
+	// Stdout is the standard output from the tool.
+	Stdout string `json:"stdout,omitempty"`
+	// Stderr is the standard error from the tool.
+	Stderr string `json:"stderr,omitempty"`
+	// Content is a generic content field (used by some tools).
+	Content string `json:"content,omitempty"`
 }
 
 // hookOutput is the JSON response for Claude Code hooks.
@@ -137,15 +150,13 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			defer auditFile.Close()
 
 			// Parse input based on format
-			var toolType string
-			var params map[string]any
-			var agentName string
-			
+			var parsed *hookParseResult
+
 			switch format {
 			case "claude-code":
-				toolType, params, agentName, err = parseClaudeCodeInput(os.Stdin, logger)
+				parsed, err = parseClaudeCodeInput(os.Stdin, logger)
 			case "cline":
-				toolType, params, agentName, err = parseClineInput(os.Stdin, logger)
+				parsed, err = parseClineInput(os.Stdin, logger)
 			}
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
@@ -155,15 +166,25 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Build tool call for evaluation
 			call := engine.ToolCall{
 				ID:        audit.NewEventID(),
-				Agent:     agentName,
+				Agent:     parsed.Agent,
 				Session:   "hook",
-				Tool:      toolType,
-				Params:    params,
+				Tool:      parsed.Tool,
+				Params:    parsed.Params,
 				Timestamp: time.Now().UTC(),
 			}
 
-			// Evaluate
+			// Evaluate: pre-execution policy check
 			decision := eng.Evaluate(call)
+
+			// Response-side evaluation for PostToolUse events
+			if parsed.Response != "" {
+				respDecision := eng.EvaluateResponse(call, parsed.Response)
+				if respDecision.Action == engine.ActionDeny {
+					decision = respDecision
+				} else if respDecision.Action == engine.ActionLog && decision.Action == engine.ActionAllow {
+					decision = respDecision
+				}
+			}
 
 			// Write audit event
 			eventDecision := audit.EventDecision{
@@ -178,7 +199,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Agent:     call.Agent,
 				Session:   call.Session,
 				Tool:      call.Tool,
-				Request:   params,
+				Request:   parsed.Params,
 				Decision:  eventDecision,
 			}
 			line, err := json.Marshal(event)
@@ -222,46 +243,99 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	return cmd
 }
 
-// parseClaudeCodeInput parses Claude Code hook input format
-func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (string, map[string]any, string, error) {
+// hookParseResult holds the parsed hook input including optional response data.
+type hookParseResult struct {
+	Tool     string
+	Params   map[string]any
+	Agent    string
+	Response string // non-empty for PostToolUse events
+}
+
+// parseClaudeCodeInput parses Claude Code hook input format.
+// Returns a hookParseResult; Response is non-empty for PostToolUse events.
+func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input hookInput
 	if err := json.NewDecoder(reader).Decode(&input); err != nil {
-		return "", nil, "", err
+		return nil, err
 	}
-	
+
 	toolType := mapClaudeCodeTool(input.ToolName)
 	params := input.ToolInput
 	if params == nil {
 		params = map[string]any{}
 	}
-	
-	return toolType, params, "claude-code", nil
+
+	result := &hookParseResult{
+		Tool:   toolType,
+		Params: params,
+		Agent:  "claude-code",
+	}
+
+	// Extract response from PostToolUse tool_result
+	if input.ToolResult != nil {
+		result.Response = extractToolResponse(input.ToolResult)
+	}
+
+	return result, nil
+}
+
+// extractToolResponse combines tool result fields into a single response string.
+func extractToolResponse(tr *hookToolResult) string {
+	var parts []string
+	if tr.Stdout != "" {
+		parts = append(parts, tr.Stdout)
+	}
+	if tr.Stderr != "" {
+		parts = append(parts, tr.Stderr)
+	}
+	if tr.Content != "" {
+		parts = append(parts, tr.Content)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n")
 }
 
 // parseClineInput parses Cline hook input format
-func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (string, map[string]any, string, error) {
+func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input clineHookInput
 	if err := json.NewDecoder(reader).Decode(&input); err != nil {
-		return "", nil, "", err
+		return nil, err
 	}
-	
+
 	// Extract tool info from PreToolUse or PostToolUse
 	var toolUse *clineToolUse
+	isPost := false
 	if input.PreToolUse != nil {
 		toolUse = input.PreToolUse
 	} else if input.PostToolUse != nil {
 		toolUse = input.PostToolUse
+		isPost = true
 	} else {
-		return "", nil, "", fmt.Errorf("no tool use found in input")
+		return nil, fmt.Errorf("no tool use found in input")
 	}
-	
+
 	toolType := mapClineTool(toolUse.ToolName)
 	params := toolUse.Parameters
 	if params == nil {
 		params = map[string]any{}
 	}
-	
-	return toolType, params, "cline", nil
+
+	result := &hookParseResult{
+		Tool:   toolType,
+		Params: params,
+		Agent:  "cline",
+	}
+
+	// For PostToolUse, extract output from parameters if present
+	if isPost {
+		if output, ok := params["output"].(string); ok {
+			result.Response = output
+		}
+	}
+
+	return result, nil
 }
 
 // mapClaudeCodeTool maps Claude Code tool names to Rampart tool types.

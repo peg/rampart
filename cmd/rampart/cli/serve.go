@@ -54,6 +54,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var cef bool
 	var resolveBaseURL string
 	var signingKeyPath string
+	var metrics bool
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -153,7 +154,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			)
 			if port > 0 {
 				var proxyOpts []proxy.Option
-				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger))
+				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics))
 				if envToken := os.Getenv("RAMPART_TOKEN"); envToken != "" {
 					proxyOpts = append(proxyOpts, proxy.WithToken(envToken))
 				}
@@ -192,6 +193,10 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: full token: %s\n", token)
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: dashboard: http://localhost:%d/dashboard/\n", port)
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: use the full token above to authenticate in the dashboard\n")
+
+				if metrics {
+					logger.Info("serve: metrics enabled on /metrics")
+				}
 
 				proxyErrCh = make(chan error, 1)
 				go func() {
@@ -268,6 +273,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().BoolVar(&cef, "cef", false, "Use CEF format (with --syslog: CEF over syslog; standalone: write ~/.rampart/audit/cef.log)")
 	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")
 	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
+	cmd.Flags().BoolVar(&metrics, "metrics", false, "Enable Prometheus metrics endpoint on /metrics")
 
 	return cmd
 }

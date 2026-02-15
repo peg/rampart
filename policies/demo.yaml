@@ -80,3 +80,42 @@ policies:
             - "curl *"
             - "wget *"
         message: "Network request logged"
+
+# Inline tests — run with: rampart test policies/demo.yaml
+tests:
+  - name: "blocks rm -rf /"
+    tool: exec
+    params:
+      command: "rm -rf /"
+    expect: deny
+    expect_message: "Destructive command blocked"
+
+  - name: "allows echo"
+    tool: exec
+    params:
+      command: "echo hello"
+    expect: allow
+
+  - name: "blocks reading .env"
+    tool: read
+    params:
+      path: "/home/user/project/.env"
+    expect: deny
+
+  - name: "allows reading .env.example"
+    tool: read
+    params:
+      path: "/home/user/project/.env.example"
+    expect: allow
+
+  - name: "requires approval for kubectl apply"
+    tool: exec
+    params:
+      command: "kubectl apply -f app.yaml"
+    expect: require_approval
+
+  - name: "logs curl requests"
+    tool: exec
+    params:
+      command: "curl https://example.com"
+    expect: log
