@@ -19,31 +19,35 @@ Running Claude Code in yolo mode? Letting agents manage your infrastructure unsu
 ## How It Works
 
 ```mermaid
-graph TB
+graph LR
     subgraph "AI Agents"
+        direction TB
         CC[Claude Code] & CL[Cline] --> H[Native Hooks]
         OC[OpenClaw] --> S[Shell Shim]
         CX[Codex] --> P[LD_PRELOAD]
         O[Others] --> M[MCP Proxy]
     end
 
-    H & S & P & M --> PE[YAML Policy Eval · ~20μs]
+    H & S & P & M --> PE[YAML Policy Eval<br/>~20μs · every decision logged]
 
     PE --> PASS[✅ Execute]
     PE --> BLOCK[❌ Blocked]
     PE --> APR[👤 Approval]
-    PE --> LOG[📝 Log]
 
-    PE -.->|every decision| AU[Hash-Chained Audit · Syslog · Webhooks]
+    PE --> AU[📋 Hash-Chained Audit<br/>Syslog · CEF · Webhooks]
+
+    PE -. "ambiguous ⚠️" .-> SB["⚡ rampart-verify<br/>(optional sidecar)<br/>gpt-4o-mini · Haiku · Ollama"]
+    SB -. allow/deny .-> PE
 
     style PE fill:#238636,stroke:#fff,color:#fff
     style BLOCK fill:#da3633,stroke:#fff,color:#fff
     style APR fill:#d29922,stroke:#fff,color:#fff
     style PASS fill:#238636,stroke:#fff,color:#fff
-    style AU fill:#2d333b,stroke:#848d97,color:#c9d1d9
+    style AU fill:#1f6feb,stroke:#fff,color:#fff
+    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
-*Pattern matching handles 95%+ of decisions in microseconds. All decisions are written to a hash-chained audit trail.*
+*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions are written to a hash-chained audit trail.*
 
 | Agent | Setup | Integration |
 |-------|-------|-------------|
