@@ -108,6 +108,14 @@ internal/
   approval/          Human approval flow
   daemon/            OpenClaw WebSocket integration
   watch/             Terminal dashboard (bubbletea)
+  mcp/               MCP proxy components
+  openclaw/          OpenClaw-specific integration
+  signing/           HMAC signing for approval URLs
+  notify/            Webhook/notification handling
+  dashboard/         Web dashboard (static assets)
+  report/            HTML report generation
+  detect/            Agent detection utilities
+  build/             Build-time metadata
 pkg/sdk/             Public Go SDK
 policies/            Built-in profiles
 preload/             C library for LD_PRELOAD

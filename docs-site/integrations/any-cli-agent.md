@@ -27,8 +27,10 @@ rampart wrap -- node agent.js
 Every time the agent spawns a shell command, the shim intercepts it, checks the preflight API, and either allows or blocks execution.
 
 ```
-Agent → spawns shell → $SHELL (rampart shim) → Policy Engine → Allow/Deny
+Agent → spawns shell → $SHELL (rampart shim) → Policy Engine → Allow/Deny/Require Approval
 ```
+
+**require_approval behavior**: The shell shim blocks execution and waits for human resolution via `rampart approve <id>` or the API. The agent sees the command as "hung" until resolved.
 
 ## Monitor Mode
 

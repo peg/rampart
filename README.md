@@ -675,7 +675,7 @@ All work goes through the `staging` branch. PRs to `main` require one approving 
 
 ## Roadmap
 
-Current: **v0.1.8** — all tests passing.
+Current: **v0.2.0** — all tests passing.
 - `rampart hook` — native Claude Code/Cline hook handler
 - `rampart wrap` — zero-config agent wrapping via `$SHELL`
 - `rampart preload` — syscall-level interception via LD_PRELOAD (works with any agent)

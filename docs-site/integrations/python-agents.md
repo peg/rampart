@@ -14,6 +14,7 @@ Then check commands before executing them:
 
 ```python
 import requests
+import time
 
 RAMPART_URL = "http://localhost:9090"
 RAMPART_TOKEN = "your-token"
@@ -33,6 +34,17 @@ def safe_exec(command: str) -> dict:
 
     if result["decision"] == "deny":
         return {"blocked": True, "reason": result["message"]}
+    elif result["decision"] == "require_approval":
+        # Poll for approval resolution
+        approval_id = result["approval_id"]
+        while True:
+            status_response = requests.get(f"{RAMPART_URL}/v1/approvals/{approval_id}")
+            status = status_response.json()
+            if status["status"] == "approved":
+                break
+            elif status["status"] in ["denied", "expired"]:
+                return {"blocked": True, "reason": status.get("message", "Approval denied")}
+            time.sleep(1)  # Poll every second
 
     # Command was allowed — execute it
     import subprocess

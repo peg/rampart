@@ -11,6 +11,22 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Codex CLI, any process |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
+| **Shim + Service** | Shell shim + background daemon | OpenClaw |
+| **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (alternative) |
+
+## require_approval Behavior
+
+When a policy action is `require_approval`, behavior varies by integration:
+
+| Integration | Behavior |
+|-------------|----------|
+| **Claude Code** | Hook returns `"permissionDecision":"ask"`, waits for resolution |
+| **Cline** | Hook returns `{"cancel":true}` immediately (no waiting) |
+| **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
+| **OpenClaw** | Shim blocks, daemon sends webhook notifications |
+| **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
+| **LD_PRELOAD** | Library blocks exec call, process appears "hung" |
+| **HTTP API** | Returns `"decision":"require_approval"` with `approval_id` |
 
 ## Agent Compatibility
 
