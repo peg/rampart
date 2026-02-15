@@ -3,7 +3,6 @@ package engine
 import (
 	"log/slog"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
