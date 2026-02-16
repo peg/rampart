@@ -131,19 +131,68 @@ The webhook receives the full tool call context and returns `{"decision": "allow
 
 ## Response-Side Evaluation
 
-Rampart can also scan tool output for sensitive patterns:
+Rampart can scan tool output (PostToolUse) for sensitive patterns, preventing credential leakage from reaching the AI agent. When a response matches, the output is blocked before the agent sees it.
+
+### How it works
+
+1. After a tool executes, the agent runtime sends a PostToolUse hook with the tool's output
+2. Rampart evaluates the output against `response_matches` regex patterns
+3. If a pattern matches, Rampart blocks the response — the agent never sees the sensitive data
+
+### Configuration
 
 ```yaml
-rules:
-  - action: deny
-    when:
-      response_matches:
-        - "AKIA[0-9A-Z]{16}"                    # AWS access key
-        - "-----BEGIN (RSA )?PRIVATE KEY-----"   # Private key
-        - "ghp_[a-zA-Z0-9]{36}"                 # GitHub PAT
+policies:
+  - name: block-credential-leakage
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AWS_SECRET_ACCESS_KEY\\s*="
+            - "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+            - "ghp_[A-Za-z0-9_]{36,}"           # GitHub PAT
+            - "sk-[A-Za-z0-9]{20,}"              # OpenAI API key
+            - "AKIA[0-9A-Z]{16}"                 # AWS access key ID
+            - "xox[bpras]-[0-9a-zA-Z-]+"         # Slack token
+          response_not_matches:
+            - "example|placeholder|test"          # Exclude known safe patterns
+        message: "Response contains potential credentials"
 ```
 
-This catches accidental credential leaks in command output.
+Patterns use **regex** (not glob). Response bodies larger than 1 MB are truncated before matching to prevent ReDoS.
+
+### Claude Code setup
+
+Add PostToolUse hooks alongside PreToolUse in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "rampart hook" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "rampart hook" }] }
+    ]
+  }
+}
+```
+
+### Proxy API
+
+The proxy API also supports response scanning. Include a `response` field in the request body:
+
+```bash
+curl -X POST http://localhost:9090/api/v1/tool \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"tool": "exec", "params": {"command": "env"}, "response": "AWS_SECRET_ACCESS_KEY=..."}'
+```
+
+### Default patterns
+
+The `standard.yaml` policy ships with a `block-credential-leakage` policy that detects common credential patterns including AWS keys, private keys, GitHub PATs, OpenAI API keys, and Slack tokens.
 
 ## MCP Tool Matching
 
