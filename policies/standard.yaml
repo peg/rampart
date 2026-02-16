@@ -241,3 +241,21 @@ policies:
 #            - "apt install *"
 #            - "brew install *"
 #        message: "Package install — approve or deny?"
+
+  # Response scanning — detect credentials leaked in tool output.
+  # These rules evaluate PostToolUse responses (tool output after execution).
+  # Uses regex patterns (response_matches) not glob patterns.
+  - name: block-credential-leakage
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AWS_SECRET_ACCESS_KEY\\s*="
+            - "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+            - "ghp_[A-Za-z0-9_]{36,}"
+            - "sk-[A-Za-z0-9]{20,}"
+            - "AKIA[0-9A-Z]{16}"
+            - "xox[bpras]-[0-9a-zA-Z-]+"
+        message: "Response contains potential credentials — output blocked"

@@ -46,17 +46,17 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 				t.Fatalf("marshal input: %v", err)
 			}
 
-			tool, params, agent, err := parseClaudeCodeInput(strings.NewReader(string(data)), testLogger())
+			result, err := parseClaudeCodeInput(strings.NewReader(string(data)), testLogger())
 			if err != nil {
 				t.Fatalf("parseClaudeCodeInput error: %v", err)
 			}
-			if tool != tt.wantTool {
-				t.Fatalf("tool = %q, want %q", tool, tt.wantTool)
+			if result.Tool != tt.wantTool {
+				t.Fatalf("tool = %q, want %q", result.Tool, tt.wantTool)
 			}
-			if agent != "claude-code" {
-				t.Fatalf("agent = %q, want claude-code", agent)
+			if result.Agent != "claude-code" {
+				t.Fatalf("agent = %q, want claude-code", result.Agent)
 			}
-			if params == nil {
+			if result.Params == nil {
 				t.Fatal("params is nil")
 			}
 		})
@@ -64,7 +64,7 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 }
 
 func TestParseClaudeCodeInput_InvalidJSON(t *testing.T) {
-	_, _, _, err := parseClaudeCodeInput(strings.NewReader("{"), testLogger())
+	_, err := parseClaudeCodeInput(strings.NewReader("{"), testLogger())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -120,17 +120,17 @@ func TestParseClineInput_Mappings(t *testing.T) {
 				t.Fatalf("marshal input: %v", err)
 			}
 
-			tool, params, agent, err := parseClineInput(strings.NewReader(string(data)), testLogger())
+			result, err := parseClineInput(strings.NewReader(string(data)), testLogger())
 			if err != nil {
 				t.Fatalf("parseClineInput error: %v", err)
 			}
-			if tool != tt.wantTool {
-				t.Fatalf("tool = %q, want %q", tool, tt.wantTool)
+			if result.Tool != tt.wantTool {
+				t.Fatalf("tool = %q, want %q", result.Tool, tt.wantTool)
 			}
-			if agent != "cline" {
-				t.Fatalf("agent = %q, want cline", agent)
+			if result.Agent != "cline" {
+				t.Fatalf("agent = %q, want cline", result.Agent)
 			}
-			if params == nil {
+			if result.Params == nil {
 				t.Fatal("params is nil")
 			}
 		})
@@ -138,13 +138,13 @@ func TestParseClineInput_Mappings(t *testing.T) {
 }
 
 func TestParseClineInput_Errors(t *testing.T) {
-	_, _, _, err := parseClineInput(strings.NewReader("{"), testLogger())
+	_, err := parseClineInput(strings.NewReader("{"), testLogger())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
 
 	data := `{"clineVersion":"1.0","hookName":"PreToolUse","timestamp":"2026-01-01T00:00:00Z","taskId":"task-1"}`
-	_, _, _, err = parseClineInput(strings.NewReader(data), testLogger())
+	_, err = parseClineInput(strings.NewReader(data), testLogger())
 	if err == nil {
 		t.Fatal("expected error when no preToolUse/postToolUse present")
 	}
@@ -185,11 +185,12 @@ func TestOutputHookResult_ClaudeCode(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &allow); err != nil {
 		t.Fatalf("unmarshal allow output: %v", err)
 	}
-	if allow.HookSpecificOutput.HookEventName != "PreToolUse" {
-		t.Fatalf("HookEventName = %q", allow.HookSpecificOutput.HookEventName)
+	// Allow outputs empty JSON — no hookSpecificOutput or decision fields.
+	if allow.HookSpecificOutput != nil {
+		t.Fatalf("expected nil HookSpecificOutput for allow, got %+v", allow.HookSpecificOutput)
 	}
-	if allow.HookSpecificOutput.PermissionDecision != "" {
-		t.Fatalf("expected empty PermissionDecision for allow, got %q", allow.HookSpecificOutput.PermissionDecision)
+	if allow.Decision != "" {
+		t.Fatalf("expected empty Decision for allow, got %q", allow.Decision)
 	}
 
 	out.Reset()

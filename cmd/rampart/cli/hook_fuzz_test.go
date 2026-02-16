@@ -60,8 +60,8 @@ func FuzzParseClaudeCodeInput(f *testing.F) {
 		reader := strings.NewReader(data)
 
 		// Should never panic, even with malformed JSON
-		tool, params, agent, err := parseClaudeCodeInput(reader, logger)
-		_, _, _, _ = tool, params, agent, err
+		result, err := parseClaudeCodeInput(reader, logger)
+		_, _ = result, err
 		// We don't care if it fails, just that it doesn't panic
 	})
 }
@@ -129,8 +129,8 @@ func FuzzParseClineInput(f *testing.F) {
 		reader := strings.NewReader(data)
 
 		// Should never panic, even with malformed JSON
-		tool, params, agent, err := parseClineInput(reader, logger)
-		_, _, _, _ = tool, params, agent, err
+		result, err := parseClineInput(reader, logger)
+		_, _ = result, err
 		// We don't care if it fails, just that it doesn't panic
 	})
 }
