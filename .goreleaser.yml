@@ -59,6 +59,7 @@ brews:
   - repository:
       owner: peg
       name: homebrew-rampart
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://rampart.sh"
     description: "Open-source firewall for AI agents"
     license: "Apache-2.0"
