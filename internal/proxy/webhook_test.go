@@ -199,6 +199,29 @@ func TestWebhookActionPayloadFormat(t *testing.T) {
 	assert.NotEmpty(t, received.Timestamp)
 }
 
+func TestWebhookMisconfiguredDenies(t *testing.T) {
+	// When webhook config is nil or has empty URL, should deny (fail closed).
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("default_action: allow\npolicies: []\n"), 0o644))
+	store := engine.NewFileStore(path)
+	eng, err := engine.New(store, nil)
+	require.NoError(t, err)
+
+	srv := New(eng, nil, WithToken("tok"), WithMode("enforce"))
+	call := engine.ToolCall{Tool: "exec", Params: map[string]any{"command": "test"}}
+
+	// nil config
+	d := srv.executeWebhookAction(call, engine.Decision{WebhookConfig: nil})
+	assert.Equal(t, engine.ActionDeny, d.Action)
+	assert.Contains(t, d.Message, "misconfigured")
+
+	// empty URL
+	d = srv.executeWebhookAction(call, engine.Decision{WebhookConfig: &engine.WebhookActionConfig{URL: ""}})
+	assert.Equal(t, engine.ActionDeny, d.Action)
+	assert.Contains(t, d.Message, "misconfigured")
+}
+
 func TestWebhookNonMatchingCommandSkipsWebhook(t *testing.T) {
 	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("webhook should not be called for non-matching commands")

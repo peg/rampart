@@ -129,7 +129,7 @@ func doctorServer(w io.Writer) int {
 		url := fmt.Sprintf("http://localhost:%d/health", port)
 		resp, err := client.Get(url)
 		if err == nil {
-			resp.Body.Close()
+			defer resp.Body.Close()
 			fmt.Fprintf(w, "✓ Server: rampart %s running on :%d\n", label, port)
 		} else {
 			fmt.Fprintf(w, "✗ Server: not running on :%d\n", port)

@@ -24,6 +24,7 @@ package audit
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -139,7 +140,7 @@ func (e *Event) VerifyHash() (bool, error) {
 	computed := e.Hash
 	e.Hash = expected
 
-	return computed == expected, nil
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(expected)) == 1, nil
 }
 
 // ChainAnchor records the hash chain state at a checkpoint.

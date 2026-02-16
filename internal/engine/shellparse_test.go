@@ -5,6 +5,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -119,6 +120,10 @@ func TestExtractSubcommands(t *testing.T) {
 		{"eval with env prefix", `FOO=bar eval "rm -rf /"`, []string{"rm -rf /"}},
 		{"backtick in echo", "echo `whoami`", []string{"whoami"}},
 		{"mixed backtick and dollar", "echo `uname` $(id)", []string{"id", "uname"}},
+		{"process substitution <()", "diff <(cat /etc/passwd) <(echo test)", []string{"cat /etc/passwd", "echo test"}},
+		{"process substitution >()", "tee >(grep error > log)", []string{"grep error > log"}},
+		{"null bytes stripped", "r\x00m -rf /", nil},
+		{"ansi escapes stripped", "\x1b[0mrm -rf /", nil},
 	}
 
 	for _, tt := range tests {
@@ -160,6 +165,63 @@ func FuzzExtractSubcommands(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestSanitizeCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want string
+	}{
+		{"null bytes", "r\x00m -rf /", "rm -rf /"},
+		{"ansi escape", "\x1b[0mrm -rf /", "rm -rf /"},
+		{"control chars", "rm\x01\x02 -rf /", "rm -rf /"},
+		{"tabs preserved", "echo\thello", "echo\thello"},
+		{"newlines preserved", "echo\nhello", "echo\nhello"},
+		{"clean string", "echo hello", "echo hello"},
+		{"multiple ansi", "\x1b[31mecho\x1b[0m hello", "echo hello"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SanitizeCommand(tt.cmd)
+			if got != tt.want {
+				t.Errorf("SanitizeCommand(%q) = %q, want %q", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitCompoundCommand_Newlines(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want []string
+	}{
+		{"newline separator", "echo safe\nrm -rf /", []string{"echo safe", "rm -rf /"}},
+		{"multiple newlines", "a\nb\nc", []string{"a", "b", "c"}},
+		{"newline in quotes", `echo "hello\nworld"`, []string{`echo "hello\nworld"`}},
+		{"empty lines", "a\n\nb", []string{"a", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SplitCompoundCommand(tt.cmd)
+			if len(got) != len(tt.want) {
+				t.Fatalf("SplitCompoundCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("segment %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestMatchGlob_LongInput(t *testing.T) {
+	// Verify glob matching doesn't hang on long inputs.
+	long := strings.Repeat("a", 20000)
+	// Should complete quickly due to maxGlobInputLen cap.
+	_ = MatchGlob("**a**b**c", long)
 }
 
 func TestNormalizeCommand_EvasionVectors(t *testing.T) {

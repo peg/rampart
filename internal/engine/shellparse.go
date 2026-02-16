@@ -14,16 +14,50 @@
 package engine
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
+
+// ansiEscapeRE matches ANSI escape sequences (CSI and simple ESC[...m).
+var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 // ExtractSubcommands extracts commands embedded inside $(...), backticks,
 // and eval "..." wrappers. It returns all extracted inner commands. This
 // handles one level of nesting for $(...) — e.g. $(echo $(whoami)) yields
 // both "echo $(whoami)" and "whoami". It does not attempt to handle deeply
 // adversarial nesting; 90% coverage is the goal.
+// SanitizeCommand strips null bytes, ANSI escape sequences, and non-printable
+// control characters (except \t and \n) from a command string. This prevents
+// evasion via invisible characters that shells may ignore but policy matching
+// would see as different bytes.
+func SanitizeCommand(cmd string) string {
+	// Strip ANSI escape sequences first.
+	cmd = ansiEscapeRE.ReplaceAllString(cmd, "")
+
+	var b strings.Builder
+	b.Grow(len(cmd))
+	for _, r := range cmd {
+		// Skip null bytes.
+		if r == 0 {
+			continue
+		}
+		// Keep tabs and newlines.
+		if r == '\t' || r == '\n' {
+			b.WriteRune(r)
+			continue
+		}
+		// Skip other control characters (0x01-0x1f).
+		if r < 0x20 {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func ExtractSubcommands(cmd string) []string {
+	cmd = SanitizeCommand(cmd)
 	var results []string
 
 	// Extract $(...) substitutions (handling nested parens).
@@ -35,6 +69,41 @@ func ExtractSubcommands(cmd string) []string {
 	// Extract eval arguments.
 	results = append(results, extractEval(cmd)...)
 
+	// Extract process substitutions <(...) and >(...).
+	results = append(results, extractProcessSubstitution(cmd)...)
+
+	return results
+}
+
+// extractProcessSubstitution finds <(...) and >(...) in cmd and returns inner commands.
+func extractProcessSubstitution(cmd string) []string {
+	var results []string
+	i := 0
+	for i < len(cmd)-1 {
+		if (cmd[i] == '<' || cmd[i] == '>') && cmd[i+1] == '(' {
+			depth := 1
+			start := i + 2
+			j := start
+			for j < len(cmd) && depth > 0 {
+				if cmd[j] == '(' {
+					depth++
+				} else if cmd[j] == ')' {
+					depth--
+					if depth == 0 {
+						inner := strings.TrimSpace(cmd[start:j])
+						if inner != "" {
+							results = append(results, inner)
+							results = append(results, ExtractSubcommands(inner)...)
+						}
+					}
+				}
+				j++
+			}
+			i = j
+		} else {
+			i++
+		}
+	}
 	return results
 }
 
@@ -191,6 +260,17 @@ func SplitCompoundCommand(cmd string) []string {
 		}
 
 		// Check for ; and |
+		// Newline as command separator (unquoted).
+		if ch == '\n' {
+			s := strings.TrimSpace(cur.String())
+			if s != "" {
+				segments = append(segments, s)
+			}
+			cur.Reset()
+			i++
+			continue
+		}
+
 		if ch == ';' || ch == '|' {
 			s := strings.TrimSpace(cur.String())
 			if s != "" {
@@ -223,6 +303,7 @@ func SplitCompoundCommand(cmd string) []string {
 // This is intentionally not a full bash parser — it handles the 90% case
 // to prevent trivial policy evasion.
 func NormalizeCommand(cmd string) string {
+	cmd = SanitizeCommand(cmd)
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return ""

@@ -26,11 +26,18 @@ import (
 
 const responseRegexMatchTimeout = 100 * time.Millisecond
 
-// regexMatchFunc can be set in tests to override regex matching behavior
-// (e.g., to simulate slow matches). Must be set before any concurrent
-// evaluation. Protected by a mutex to avoid races with goroutines.
+// regexMatchFunc is a TEST-ONLY override for regex matching behavior
+// (e.g., to simulate slow matches for timeout testing). It MUST NOT be
+// set in production code. Protected by regexMatchMu to avoid data races
+// with concurrent goroutines spawned by matchRegexWithTimeout.
+//
+// Usage pattern (tests only):
+//   regexMatchMu.Lock()
+//   regexMatchFunc = func(re *regexp.Regexp, s string) bool { ... }
+//   regexMatchMu.Unlock()
+//   defer func() { regexMatchMu.Lock(); regexMatchFunc = nil; regexMatchMu.Unlock() }()
 var (
-	regexMatchFunc  func(*regexp.Regexp, string) bool
+	regexMatchFunc  func(*regexp.Regexp, string) bool // test-only; see comment above
 	regexMatchMu    sync.RWMutex
 )
 
@@ -76,12 +83,20 @@ func cleanPaths(p string) (cleaned string, resolved string) {
 //	"cat ~/.ssh/*" matches "cat ~/.ssh/id_rsa"
 //
 // An empty pattern matches nothing. A "*" pattern matches everything.
+// maxGlobInputLen caps the input length for glob matching to prevent DoS
+// with pathological patterns like **a**b**c on very long strings.
+const maxGlobInputLen = 8192
+
 func MatchGlob(pattern, name string) bool {
 	if pattern == "" {
 		return false
 	}
 	if pattern == "*" {
 		return true
+	}
+	// Cap input length to prevent DoS on pathological patterns.
+	if len(name) > maxGlobInputLen {
+		name = name[:maxGlobInputLen]
 	}
 
 	// Handle "**" as a recursive wildcard.
@@ -164,8 +179,14 @@ func matchDoubleGlob(pattern, name string) bool {
 
 // matchSuffixGlob checks if any tail of s matches the glob pattern.
 // The pattern must not contain "**" (use matchDoubleGlob for that).
+// Iterations are capped to prevent CPU exhaustion on long inputs.
 func matchSuffixGlob(pattern, s string) bool {
-	for i := 0; i <= len(s); i++ {
+	const maxIter = 10000
+	limit := len(s)
+	if limit > maxIter {
+		limit = maxIter
+	}
+	for i := 0; i <= limit; i++ {
 		if matched, _ := filepath.Match(pattern, s[i:]); matched {
 			return true
 		}
@@ -452,6 +473,8 @@ func matchRegexWithTimeout(pattern string, re *regexp.Regexp, value string, logg
 				"timeout", responseRegexMatchTimeout,
 			)
 		}
-		return false
+		// Fail closed: treat timeout as a match so deny rules still fire.
+		// A slow/adversarial input should not bypass security checks.
+		return true
 	}
 }

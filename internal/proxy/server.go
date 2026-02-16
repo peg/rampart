@@ -157,13 +157,7 @@ func (s *Server) ListenAndServe(addr string) error {
 	}
 	s.listenAddr = listener.Addr().String()
 
-	srv := &http.Server{
-		Addr:         s.listenAddr,
-		Handler:      s.handler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
+	srv := s.newHTTPServer(s.listenAddr, s.handler())
 
 	s.mu.Lock()
 	s.server = srv
@@ -178,13 +172,7 @@ func (s *Server) ListenAndServe(addr string) error {
 // Serve starts serving HTTP requests on an existing listener.
 func (s *Server) Serve(listener net.Listener) error {
 	s.listenAddr = listener.Addr().String()
-	srv := &http.Server{
-		Addr:         s.listenAddr,
-		Handler:      s.handler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
+	srv := s.newHTTPServer(s.listenAddr, s.handler())
 
 	s.mu.Lock()
 	s.server = srv
@@ -194,6 +182,17 @@ func (s *Server) Serve(listener net.Listener) error {
 		return fmt.Errorf("proxy: serve: %w", err)
 	}
 	return nil
+}
+
+// newHTTPServer creates an *http.Server with standard timeouts.
+func (s *Server) newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 }
 
 // Shutdown gracefully stops the proxy server.
@@ -586,6 +585,11 @@ authorized:
 	}
 
 	if err := s.approvals.Resolve(id, req.Approved, req.ResolvedBy); err != nil {
+		// Distinguish "already resolved" (replay) from "unknown id".
+		if existing, ok := s.approvals.Get(id); ok && existing.Status != approval.StatusPending {
+			writeError(w, http.StatusGone, "approval already resolved; URL cannot be reused")
+			return
+		}
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -664,8 +668,8 @@ func (s *Server) executeWebhookAction(call engine.ToolCall, decision engine.Deci
 	if cfg == nil || cfg.URL == "" {
 		s.logger.Error("proxy: webhook action missing config")
 		return engine.Decision{
-			Action:  engine.ActionAllow,
-			Message: "webhook action misconfigured; failing open",
+			Action:  engine.ActionDeny,
+			Message: "webhook action misconfigured; denying for safety",
 		}
 	}
 
@@ -810,6 +814,10 @@ func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decis
 
 func (s *Server) approvalResolveURL(id string, expiresAt time.Time) string {
 	base := s.resolveURLBase()
+	if base == "" {
+		s.logger.Warn("proxy: cannot generate resolve URL; listen address not configured")
+		return ""
+	}
 	if s.signer != nil {
 		return s.signer.SignURL(base, id, expiresAt)
 	}
@@ -823,7 +831,7 @@ func (s *Server) resolveURLBase() string {
 
 	addr := strings.TrimSpace(s.listenAddr)
 	if addr == "" {
-		return "http://localhost:9090"
+		return ""
 	}
 
 	if strings.Contains(addr, "://") {
@@ -837,7 +845,7 @@ func (s *Server) resolveURLBase() string {
 		}
 	}
 	if strings.TrimSpace(port) == "" {
-		return "http://localhost:9090"
+		return ""
 	}
 	return "http://localhost:" + port
 }

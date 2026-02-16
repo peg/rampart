@@ -692,7 +692,7 @@ policies:
 	got := e.EvaluateResponse(call, "secret")
 	elapsed := time.Since(start)
 
-	assert.Equal(t, ActionAllow, got.Action, "timeout should be treated as no-match")
+	assert.Equal(t, ActionDeny, got.Action, "timeout should fail closed — deny rule fires")
 	assert.GreaterOrEqual(t, elapsed, 90*time.Millisecond)
 	assert.Less(t, elapsed, 190*time.Millisecond)
 }

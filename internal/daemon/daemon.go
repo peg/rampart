@@ -23,6 +23,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -162,9 +163,9 @@ func (d *Daemon) connectAndListen(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				d.mu.Lock()
+				d.writeMu.Lock()
 				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
-				d.mu.Unlock()
+				d.writeMu.Unlock()
 				if err != nil {
 					return
 				}
@@ -448,10 +449,14 @@ func (d *Daemon) resolveApproval(approvalID, resolution string) {
 		},
 	}
 
-	data, _ := json.Marshal(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		d.logger.Error("failed to marshal resolve message", "error", err, "approvalId", approvalID)
+		return
+	}
 
 	d.writeMu.Lock()
-	err := conn.WriteMessage(websocket.TextMessage, data)
+	err = conn.WriteMessage(websocket.TextMessage, data)
 	d.writeMu.Unlock()
 
 	if err != nil {
@@ -476,11 +481,15 @@ func (d *Daemon) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	var connErr, sinkErr error
 	if d.conn != nil {
-		d.conn.Close()
+		connErr = d.conn.Close()
 	}
 	if d.sink != nil {
-		d.sink.Close()
+		sinkErr = d.sink.Close()
 	}
-	return nil
+	if d.approvals != nil {
+		d.approvals.Close()
+	}
+	return errors.Join(connErr, sinkErr)
 }
