@@ -306,6 +306,20 @@ func matchCondition(cond Condition, call ToolCall) bool {
 				}
 			}
 		}
+		// Check subcommands (command substitution, backticks, eval).
+		if !cmdMatch {
+			for _, sub := range ExtractSubcommands(cmd) {
+				if matchAny(cond.CommandMatches, sub) {
+					cmdMatch = true
+					break
+				}
+				nsub := NormalizeCommand(sub)
+				if nsub != sub && matchAny(cond.CommandMatches, nsub) {
+					cmdMatch = true
+					break
+				}
+			}
+		}
 		if !cmdMatch {
 			return false
 		}
