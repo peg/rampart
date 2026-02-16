@@ -514,7 +514,7 @@ rampart setup openclaw --patch-tools
 
 This patches OpenClaw's Read, Write, Edit, and Grep tools to check Rampart before file operations. Requires write access to the OpenClaw installation directory (typically needs `sudo` for global npm installs).
 
-Supports OpenClaw `2026.1.30` – `2026.2.12` (latest).
+Supports recent OpenClaw versions with shell shim capabilities.
 
 ⚠️ **Re-run after OpenClaw upgrades** — the patch modifies files in `node_modules` that get replaced on update. Between upgrade and re-patch, file tools bypass Rampart (exec shim remains active).
 
@@ -655,24 +655,7 @@ All work goes through the `staging` branch. PRs to `main` require one approving 
 
 ## Roadmap
 
-Current: **v0.2.0** — all tests passing.
-- `rampart hook` — native Claude Code/Cline hook handler
-- `rampart wrap` — zero-config agent wrapping via `$SHELL`
-- `rampart preload` — syscall-level interception via LD_PRELOAD (works with any agent)
-- `rampart mcp` — MCP protocol proxy with policy enforcement
-- `rampart mcp scan` — auto-generate policies from MCP server tool lists
-- `action: webhook` — delegate decisions to external HTTP endpoints
-- SIEM integration — `--syslog` (RFC 5424), `--cef` (Common Event Format)
-- Python SDK (`sdks/python/`) — decorators, async support
-- Four interceptors (exec, read, write, fetch)
-- Response-side evaluation (catch credential leaks in output)
-- Hash-chained audit trail with verification
-- Human approval flow
-- Live terminal dashboard
-- Webhook notifications (Slack, Discord, Teams, generic)
-- HTML audit reports
-- OpenClaw daemon integration
-- Three security profiles (standard, paranoid, yolo)
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned. Priorities shift based on feedback — [open an issue](https://github.com/peg/rampart/issues) if something matters to you.
 
 ## Compatibility
 
@@ -697,8 +680,6 @@ Current: **v0.2.0** — all tests passing.
 `rampart hook`, `rampart mcp`, `rampart mcp scan`, and `rampart serve` work on Linux, macOS, and Windows.
 `rampart wrap` and `rampart preload` require Linux or macOS.
 `--syslog` requires Linux or macOS. `--cef` works on all platforms.
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's coming next. Priorities shift based on feedback — [open an issue](https://github.com/peg/rampart/issues) if something matters to you.
 
 ---
 

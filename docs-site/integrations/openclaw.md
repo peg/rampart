@@ -49,7 +49,7 @@ OpenClaw
 
 ## Compatibility
 
-Supports OpenClaw `2026.1.30`+ with pi-coding-agent `0.50.7`+.
+Supports recent OpenClaw versions with pi-coding-agent.
 
 ## Monitor
 
