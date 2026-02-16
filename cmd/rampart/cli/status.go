@@ -100,7 +100,7 @@ func detectProtectedAgents() []string {
 	// OpenClaw shim
 	client := &http.Client{Timeout: 1 * time.Second}
 	if resp, err := client.Get("http://localhost:19090/health"); err == nil {
-		resp.Body.Close()
+		defer resp.Body.Close()
 		agents = append(agents, "OpenClaw (shim)")
 	}
 

@@ -519,6 +519,51 @@ func TestResolveApproval_NoSigFallsThroughToBearerAuth(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "Bearer token should still work without sig")
 }
 
+func TestResolveURLBaseEmptyAddr(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("tok"))
+	srv.listenAddr = ""
+	srv.resolveBaseURL = ""
+	assert.Equal(t, "", srv.resolveURLBase(), "empty listen addr should return empty, not fallback")
+}
+
+func TestResolveURLBaseFromListenAddr(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("tok"))
+	srv.listenAddr = ":8080"
+	srv.resolveBaseURL = ""
+	assert.Equal(t, "http://localhost:8080", srv.resolveURLBase())
+}
+
+func TestApprovalDoubleResolveReturns410(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"))
+	handler := srv.handler()
+
+	pending, err := srv.approvals.Create(engine.ToolCall{
+		Tool:    "exec",
+		Params:  map[string]any{"command": "test"},
+		Agent:   "test",
+		Session: "s1",
+	}, engine.Decision{Action: engine.ActionRequireApproval, Message: "needs approval"})
+	require.NoError(t, err)
+
+	body := `{"approved":true,"resolved_by":"test"}`
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusGone, rr.Code)
+}
+
 func buildApprovalEngine(t *testing.T) *engine.Engine {
 	t.Helper()
 	dir := t.TempDir()
