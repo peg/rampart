@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/peg/rampart/internal/approval"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -268,10 +269,12 @@ policies:
 	// Send a sudo command — should pend, not auto-resolve.
 	mg.sendApprovalRequest("approval-sudo", "sudo reboot", "main")
 
-	// Resolve via the approval store directly.
-	time.Sleep(200 * time.Millisecond)
-	pending := d.Approvals().List()
-	require.Len(t, pending, 1, "expected one pending approval")
+	// Poll for pending approval with timeout (avoids flaky sleep in CI).
+	var pending []*approval.Request
+	require.Eventually(t, func() bool {
+		pending = d.Approvals().List()
+		return len(pending) == 1
+	}, 3*time.Second, 50*time.Millisecond, "expected one pending approval")
 	assert.Equal(t, "sudo reboot", pending[0].Call.Command())
 
 	// Approve it.
