@@ -1,0 +1,165 @@
+# Infrastructure / DevOps Policy
+# For: Kubernetes, Terraform, Docker, cloud infrastructure management
+# Base: Strict — approval required for all mutations, deny destructive ops
+#
+# Usage: rampart hook --config policies/examples/infrastructure.yaml
+#        rampart wrap --config policies/examples/infrastructure.yaml -- claude
+
+version: "1"
+default_action: allow
+
+policies:
+  # --- Block catastrophic commands ---
+  - name: block-catastrophic
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "rm -rf /"
+            - "rm -rf /*"
+            - "dd if=*"
+            - "mkfs*"
+            - "kubectl delete namespace *"
+            - "kubectl delete ns *"
+            - "terraform destroy*"
+            - "terraform destroy -auto-approve*"
+            - "docker system prune -a*"
+            - "helm uninstall *"
+        message: "Catastrophic infrastructure command blocked"
+
+  # --- Require approval for all infrastructure mutations ---
+  - name: approve-k8s-mutations
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "kubectl apply *"
+            - "kubectl delete *"
+            - "kubectl patch *"
+            - "kubectl edit *"
+            - "kubectl scale *"
+            - "kubectl rollout *"
+            - "kubectl create *"
+            - "kubectl replace *"
+            - "kubectl set *"
+        message: "Kubernetes mutation — approve?"
+
+  - name: approve-terraform
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "terraform apply*"
+            - "terraform import*"
+            - "terraform state *"
+            - "terraform taint *"
+            - "terraform untaint *"
+        message: "Terraform change — approve?"
+
+  - name: approve-docker
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "docker push *"
+            - "docker rm *"
+            - "docker rmi *"
+            - "docker stop *"
+            - "docker kill *"
+            - "docker compose up *"
+            - "docker compose down *"
+        message: "Docker operation — approve?"
+
+  # --- Log all reads (k8s get, describe, logs are fine but tracked) ---
+  - name: log-k8s-reads
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "kubectl get *"
+            - "kubectl describe *"
+            - "kubectl logs *"
+            - "terraform plan*"
+            - "terraform show*"
+        message: "Infrastructure read operation logged"
+
+  # --- Block credential file access ---
+  - name: block-credentials
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.kube/config"
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.aws/config"
+            - "**/terraform.tfstate"
+            - "**/terraform.tfstate.backup"
+            - "**/*.tfvars"
+            - "**/.env"
+            - "**/secrets.yaml"
+            - "**/secrets.yml"
+        message: "Infrastructure credential/state file access blocked"
+
+  # --- Block writes to infra config ---
+  - name: block-sensitive-writes
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.kube/**"
+            - "**/.ssh/**"
+            - "**/.aws/**"
+            - "/etc/**"
+        message: "Write to infrastructure config blocked"
+
+  # --- Catch credential leaks in output ---
+  - name: block-credential-leaks
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+            - "-----BEGIN.*PRIVATE KEY-----"
+            - "ghp_[a-zA-Z0-9]{36}"
+            - "sk-[a-zA-Z0-9]{48}"
+        message: "Credential detected in output"
+
+tests:
+  - name: "allows kubectl get pods"
+    tool: exec
+    params: { command: "kubectl get pods" }
+    expect: log
+  - name: "approves kubectl apply"
+    tool: exec
+    params: { command: "kubectl apply -f deploy.yaml" }
+    expect: require_approval
+  - name: "blocks terraform destroy"
+    tool: exec
+    params: { command: "terraform destroy -auto-approve" }
+    expect: deny
+  - name: "blocks tfstate read"
+    tool: read
+    params: { path: "/home/user/infra/terraform.tfstate" }
+    expect: deny
+  - name: "approves terraform apply"
+    tool: exec
+    params: { command: "terraform apply" }
+    expect: require_approval

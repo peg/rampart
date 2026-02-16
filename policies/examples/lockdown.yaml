@@ -1,0 +1,184 @@
+# Lockdown Policy
+# For: High-security environments, production access, compliance requirements
+# Base: Deny by default — only explicitly allowed commands run
+#
+# This is stricter than "paranoid" — it allows NOTHING unless you add it.
+# Start here and add allow rules for exactly what your agent needs.
+#
+# Usage: rampart hook --config policies/examples/lockdown.yaml
+#        rampart wrap --config policies/examples/lockdown.yaml -- claude
+
+version: "1"
+default_action: deny
+
+policies:
+  # --- Allow only safe read-only commands ---
+  - name: allow-reads
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: allow
+        when:
+          command_matches:
+            - "ls *"
+            - "cat *"
+            - "head *"
+            - "tail *"
+            - "grep *"
+            - "find *"
+            - "wc *"
+            - "echo *"
+            - "pwd"
+            - "whoami"
+            - "date"
+            - "env"
+            - "which *"
+            - "file *"
+            - "stat *"
+            - "diff *"
+        message: "Read-only command allowed"
+
+  # --- Allow version control reads ---
+  - name: allow-git-reads
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: allow
+        when:
+          command_matches:
+            - "git status*"
+            - "git log*"
+            - "git diff*"
+            - "git show*"
+            - "git branch*"
+            - "git remote -v"
+        message: "Git read command allowed"
+
+  # --- Require approval for git writes ---
+  - name: approve-git-writes
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "git add *"
+            - "git commit *"
+            - "git push *"
+            - "git checkout *"
+            - "git merge *"
+            - "git rebase *"
+        message: "Git write — approve?"
+
+  # --- Allow file reads in project directory only ---
+  - name: allow-project-reads
+    priority: 1
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.env"
+            - "**/.env.*"
+            - "**/.ssh/**"
+            - "**/.aws/**"
+            - "/etc/**"
+        message: "Sensitive file blocked"
+      - action: allow
+        when:
+          path_matches:
+            - "**/*.go"
+            - "**/*.py"
+            - "**/*.js"
+            - "**/*.ts"
+            - "**/*.rs"
+            - "**/*.yaml"
+            - "**/*.yml"
+            - "**/*.json"
+            - "**/*.toml"
+            - "**/*.md"
+            - "**/*.txt"
+            - "**/*.html"
+            - "**/*.css"
+            - "**/Makefile"
+            - "**/Dockerfile"
+            - "**/go.mod"
+            - "**/go.sum"
+            - "**/package.json"
+            - "**/Cargo.toml"
+            - "**/requirements.txt"
+        message: "Source file read allowed"
+
+  # --- Require approval for all file writes ---
+  - name: approve-writes
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/**"
+            - "**/.aws/**"
+            - "**/.bashrc"
+            - "**/.zshrc"
+            - "/etc/**"
+            - "/usr/**"
+        message: "Sensitive path write blocked"
+      - action: require_approval
+        when:
+          default: true
+        message: "File write — approve?"
+
+  # --- Block all network and fetch ---
+  - name: block-network
+    match:
+      tool: ["fetch"]
+    rules:
+      - action: deny
+        message: "Network access blocked in lockdown mode"
+
+  # --- Catch credential leaks ---
+  - name: block-credential-leaks
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+            - "-----BEGIN.*PRIVATE KEY-----"
+            - "ghp_[a-zA-Z0-9]{36}"
+        message: "Credential detected in output"
+
+tests:
+  - name: "allows ls"
+    tool: exec
+    params: { command: "ls -la" }
+    expect: allow
+  - name: "allows git status"
+    tool: exec
+    params: { command: "git status" }
+    expect: allow
+  - name: "approves git push"
+    tool: exec
+    params: { command: "git push origin main" }
+    expect: require_approval
+  - name: "denies curl (default deny)"
+    tool: exec
+    params: { command: "curl https://example.com" }
+    expect: deny
+  - name: "allows .go file read"
+    tool: read
+    params: { path: "./src/main.go" }
+    expect: allow
+  - name: "denies .env read"
+    tool: read
+    params: { path: "./.env" }
+    expect: deny
+  - name: "approves file write"
+    tool: write
+    params: { path: "./src/handler.go" }
+    expect: require_approval
