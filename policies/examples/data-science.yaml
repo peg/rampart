@@ -1,0 +1,183 @@
+# Data Science / ML Policy
+# For: Python, Jupyter, pandas, ML training, data pipelines
+# Base: Allow data work, block exfiltration, protect datasets and credentials
+#
+# Usage: rampart hook --config policies/examples/data-science.yaml
+#        rampart wrap --config policies/examples/data-science.yaml -- claude
+
+version: "1"
+default_action: allow
+
+policies:
+  # --- Block destructive commands ---
+  - name: block-destructive
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "rm -rf /"
+            - "rm -rf ~"
+            - "rm -rf /*"
+            - "dd if=*"
+            - "mkfs*"
+        message: "Destructive command blocked"
+
+  # --- Block data exfiltration ---
+  - name: block-exfil
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "scp *"
+            - "rsync *"
+            - "python* -m http.server*"
+            - "python* -m SimpleHTTPServer*"
+        message: "Potential data exfiltration blocked"
+
+  - name: block-exfil-domains
+    match:
+      tool: ["fetch"]
+    rules:
+      - action: deny
+        when:
+          domain_matches:
+            - "*.ngrok-free.app"
+            - "*.requestbin.com"
+            - "*.webhook.site"
+            - "*.pipedream.net"
+            - "*.transfer.sh"
+            - "file.io"
+        message: "Data exfiltration domain blocked"
+
+  # --- Require approval for uploads and cloud storage ---
+  - name: approve-uploads
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "aws s3 cp *"
+            - "aws s3 sync *"
+            - "gsutil cp *"
+            - "gsutil rsync *"
+            - "az storage blob upload*"
+            - "huggingface-cli upload*"
+            - "kaggle * upload*"
+            - "dvc push*"
+        message: "Cloud upload — approve?"
+
+  # --- Require approval for pip installs (supply chain risk) ---
+  - name: approve-installs
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "pip install *"
+            - "pip3 install *"
+            - "conda install *"
+            - "mamba install *"
+        message: "Package install — approve?"
+
+  # --- Log network requests ---
+  - name: log-network
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "curl *"
+            - "wget *"
+            - "python* -c *requests*"
+        message: "Network request logged"
+
+  # --- Protect data files from writes ---
+  - name: block-dataset-overwrites
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/raw/**"
+            - "**/data/raw/**"
+            - "**/datasets/**/*.csv"
+            - "**/datasets/**/*.parquet"
+        message: "Write to raw dataset blocked — use processed/ directory"
+
+  # --- Block credential access ---
+  - name: block-credentials
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.env"
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.kaggle/kaggle.json"
+            - "**/.huggingface/token"
+        message: "Credential file access blocked"
+
+  # --- Block sensitive writes ---
+  - name: block-sensitive-writes
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/**"
+            - "**/.aws/**"
+            - "/etc/**"
+            - "**/.bashrc"
+            - "**/.zshrc"
+        message: "Write to sensitive path blocked"
+
+  # --- Catch credential leaks in output ---
+  - name: block-credential-leaks
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+            - "-----BEGIN.*PRIVATE KEY-----"
+            - "ghp_[a-zA-Z0-9]{36}"
+            - "sk-[a-zA-Z0-9]{48}"
+        message: "Credential detected in output"
+
+tests:
+  - name: "allows python script"
+    tool: exec
+    params: { command: "python train.py" }
+    expect: allow
+  - name: "allows jupyter"
+    tool: exec
+    params: { command: "jupyter notebook" }
+    expect: allow
+  - name: "approves pip install"
+    tool: exec
+    params: { command: "pip install pandas" }
+    expect: require_approval
+  - name: "blocks raw dataset write"
+    tool: write
+    params: { path: "/home/user/project/data/raw/sales.csv" }
+    expect: deny
+  - name: "blocks scp exfil"
+    tool: exec
+    params: { command: "scp data.csv alice@10.0.0.5:/tmp/" }
+    expect: deny
+  - name: "approves s3 upload"
+    tool: exec
+    params: { command: "aws s3 cp model.pkl s3://bucket/" }
+    expect: require_approval

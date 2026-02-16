@@ -2,6 +2,8 @@
 
 Get Rampart protecting your AI agent in under a minute.
 
+![Rampart Architecture](../assets/architecture.png)
+
 !!! tip "Zero risk to try"
     Rampart **fails open** — if the policy engine crashes or is unreachable, your tools keep working normally. You'll never get locked out of your own machine. Use `default_action: allow` with `action: log` rules to observe without blocking anything.
 

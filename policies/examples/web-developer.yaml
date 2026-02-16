@@ -1,0 +1,155 @@
+# Web Developer Policy
+# For: Node.js, React, Python web frameworks, general web development
+# Base: Allow common dev tools, block system-level danger, log network activity
+#
+# Usage: rampart hook --config policies/examples/web-developer.yaml
+#        rampart wrap --config policies/examples/web-developer.yaml -- claude
+
+version: "1"
+default_action: allow
+
+policies:
+  # --- Block dangerous commands ---
+  - name: block-destructive
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "rm -rf /"
+            - "rm -rf ~"
+            - "rm -rf /*"
+            - "rm -rf ~/*"
+            - "dd if=*"
+            - "mkfs*"
+            - "> /dev/sda"
+        message: "Destructive command blocked"
+
+  # --- Block reverse shells ---
+  - name: block-reverse-shells
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "nc -e *"
+            - "nc -c *"
+            - "bash -i >*"
+            - "python* -c *import socket*connect*"
+        message: "Reverse shell detected"
+
+  # --- Require approval for global installs and system changes ---
+  - name: approve-global-installs
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "npm install -g *"
+            - "pip install --user *"
+            - "sudo apt install *"
+            - "sudo brew install *"
+            - "cargo install *"
+        message: "Global package install — approve?"
+
+  # --- Require approval for deployments ---
+  - name: approve-deploys
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "npm publish*"
+            - "git push *production*"
+            - "git push *main*"
+            - "docker push *"
+            - "vercel --prod*"
+            - "netlify deploy --prod*"
+            - "railway up*"
+            - "fly deploy*"
+        message: "Production deployment — approve?"
+
+  # --- Log network commands (not blocked, just tracked) ---
+  - name: log-network
+    match:
+      tool: ["exec"]
+    rules:
+      - action: log
+        when:
+          command_matches:
+            - "curl *"
+            - "wget *"
+            - "fetch *"
+        message: "Network request logged"
+
+  # --- Block credential file reads ---
+  - name: block-credentials
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.env"
+            - "**/.env.*"
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.npmrc"
+            - "**/.pypirc"
+        message: "Credential file access blocked"
+
+  # --- Block writes to dotfiles and system paths ---
+  - name: block-sensitive-writes
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.bashrc"
+            - "**/.zshrc"
+            - "**/.profile"
+            - "**/.ssh/**"
+            - "/etc/**"
+            - "/usr/**"
+        message: "Write to sensitive path blocked"
+
+  # --- Catch credential leaks in output ---
+  - name: block-credential-leaks
+    match:
+      tool: ["exec", "read"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+            - "-----BEGIN.*PRIVATE KEY-----"
+            - "ghp_[a-zA-Z0-9]{36}"
+            - "sk-[a-zA-Z0-9]{48}"
+        message: "Credential detected in output"
+
+tests:
+  - name: "allows npm test"
+    tool: exec
+    params: { command: "npm test" }
+    expect: allow
+  - name: "allows git commit"
+    tool: exec
+    params: { command: "git commit -m 'fix'" }
+    expect: allow
+  - name: "blocks rm -rf /"
+    tool: exec
+    params: { command: "rm -rf /" }
+    expect: deny
+  - name: "approves npm publish"
+    tool: exec
+    params: { command: "npm publish" }
+    expect: require_approval
+  - name: "blocks .env read"
+    tool: read
+    params: { path: "/home/user/project/.env" }
+    expect: deny

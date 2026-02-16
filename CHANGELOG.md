@@ -8,10 +8,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Example policy templates** — `policies/examples/` with web-developer, infrastructure, data-science, and lockdown templates (all with inline tests)
 
-### Changed
+## [0.2.25] — 2026-02-16
+
+### Added
+- **Response-side scanning** — PostToolUse hooks evaluate tool output through `EvaluateResponse()`. Default credential leak patterns in `standard.yaml` (AWS keys, GitHub PATs, private keys, OpenAI keys, Slack tokens)
+- **Policy linter** — `rampart policy lint` catches common YAML mistakes: unknown fields with typo suggestions, match/when confusion, reason/message confusion, shadowed rules, excessive glob depth. 10 checks (3 error, 5 warning, 2 info)
+- **CLI test coverage** — 15 new test files, coverage 37.7% → 49.7%
 
 ### Fixed
+- **PostToolUse field name** — corrected `tool_result` → `tool_response` per Claude Code docs
+- **PostToolUse output format** — uses top-level `decision`/`reason` instead of `hookSpecificOutput`
+
+## [0.2.24] — 2026-02-15
+
+### Added
+- **Shell-aware command parsing** — `NormalizeCommand()` strips quotes, backslash escapes, env var prefixes to prevent policy evasion (`'rm' -rf /`, `r\m`, `"rm" -rf /` all now match)
+- **`SplitCompoundCommand()`** — handles `&&`, `||`, `;`, pipes — each segment matched independently
+- **Policy test framework** — `rampart test policy.yaml` runs inline test suites with colored output, `--verbose` and `--run` filtering
+- **Prometheus metrics** — opt-in via `rampart serve --metrics`. 5 metrics: `rampart_decisions_total`, `rampart_eval_duration_seconds`, `rampart_pending_approvals`, `rampart_policy_count`, `rampart_uptime_seconds`
+- **Goreleaser Homebrew** — `brews:` section for auto-updating `peg/homebrew-rampart` on release
+- **30-second quickstart** — copy-paste install + setup + inline output preview at top of README
+- **Collapsible TOC** — README table of contents grouped by category
+
+## [0.2.23] — 2026-02-15
+
+### Security
+- **Removed `git` and `sed` from safe binaries** — prevents policy bypass via `git -c core.sshCommand` and `sed -e '1e'`
+- **Webhook `FailOpen` default → false** — webhook outages now block instead of silently allowing
+- **Go 1.24.13** — resolves 13 reachable stdlib vulnerabilities
+- **Audit file permissions 0644 → 0600** — prevents other users from reading audit logs
+- **HTTP webhook URL warning** — logs `slog.Warn` for non-HTTPS webhook URLs
+- **Daemon API auth fix** — Bearer token now works when HMAC signer is also configured
+- **Token removed from dashboard URL** — `rampart serve` prints hint instead of full token
+- **Referrer-Policy → no-referrer** — prevents token leakage via referrer headers
+- **Approval store capped at 1000** — prevents memory exhaustion from unbounded approvals
+- **Reload rejects zero-policy configs** — prevents accidental "allow everything" on bad reload
+- **Glob `**` segment limit (max 3)** — prevents quadratic matching complexity
+- **`stripLeadingComments` returns empty for all-comment input** — prevents bypass via comment-only payloads
+
+### Added
+- **govulncheck in CI** — informational vulnerability scanning on every push
+- **SHA-pinned GitHub Actions** — all 3 workflow files use commit hashes
+- **CODEOWNERS** — `* @peg`
+- **Glob matching limitations documented** — in policy engine and threat model docs
+
+## [0.2.22] — 2026-02-15
+
+### Changed
+- **README architecture diagram redesigned** — LR flow, agents grouped, audit as required step
+- **`tamper-evident` language** — corrected from `tamper-proof` throughout docs and code
+- **Setup command table** — added to README with `--patch-tools` note for OpenClaw
+
+## [0.2.21] — 2026-02-15
+
+### Added
+- **GET approval endpoint** — `GET /v1/approvals/:id` for polling approval status
+- **OpenClaw shim** — auto-detection and chat-based approval integration
 
 ## [0.2.2] — 2026-02-15
 
@@ -142,7 +196,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.2.25...HEAD
+[0.2.25]: https://github.com/peg/rampart/compare/v0.2.24...v0.2.25
+[0.2.24]: https://github.com/peg/rampart/compare/v0.2.23...v0.2.24
+[0.2.23]: https://github.com/peg/rampart/compare/v0.2.22...v0.2.23
+[0.2.22]: https://github.com/peg/rampart/compare/v0.2.21...v0.2.22
+[0.2.21]: https://github.com/peg/rampart/compare/v0.2.2...v0.2.21
+[0.2.2]: https://github.com/peg/rampart/compare/v0.2.0...v0.2.2
 [0.2.0]: https://github.com/peg/rampart/compare/v0.1.14...v0.2.0
 [0.1.14]: https://github.com/peg/rampart/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/peg/rampart/compare/v0.1.12...v0.1.13
