@@ -18,6 +18,116 @@ import (
 	"unicode"
 )
 
+// ExtractSubcommands extracts commands embedded inside $(...), backticks,
+// and eval "..." wrappers. It returns all extracted inner commands. This
+// handles one level of nesting for $(...) — e.g. $(echo $(whoami)) yields
+// both "echo $(whoami)" and "whoami". It does not attempt to handle deeply
+// adversarial nesting; 90% coverage is the goal.
+func ExtractSubcommands(cmd string) []string {
+	var results []string
+
+	// Extract $(...) substitutions (handling nested parens).
+	results = append(results, extractDollarParen(cmd)...)
+
+	// Extract backtick substitutions.
+	results = append(results, extractBackticks(cmd)...)
+
+	// Extract eval arguments.
+	results = append(results, extractEval(cmd)...)
+
+	return results
+}
+
+// extractDollarParen finds all $(...) in cmd and returns the inner commands.
+// It handles nested parentheses by counting depth.
+func extractDollarParen(cmd string) []string {
+	var results []string
+	i := 0
+	for i < len(cmd)-1 {
+		if cmd[i] == '$' && cmd[i+1] == '(' {
+			// Find matching close paren.
+			depth := 1
+			start := i + 2
+			j := start
+			for j < len(cmd) && depth > 0 {
+				if j+1 < len(cmd) && cmd[j] == '$' && cmd[j+1] == '(' {
+					depth++
+					j += 2
+					continue
+				}
+				if cmd[j] == ')' {
+					depth--
+					if depth == 0 {
+						inner := strings.TrimSpace(cmd[start:j])
+						if inner != "" {
+							results = append(results, inner)
+							// Recurse to find nested subcommands.
+							results = append(results, ExtractSubcommands(inner)...)
+						}
+					}
+					j++
+					continue
+				}
+				j++
+			}
+			i = j
+		} else {
+			i++
+		}
+	}
+	return results
+}
+
+// extractBackticks finds all `...` in cmd and returns the inner commands.
+func extractBackticks(cmd string) []string {
+	var results []string
+	i := 0
+	for i < len(cmd) {
+		if cmd[i] == '`' {
+			j := i + 1
+			for j < len(cmd) && cmd[j] != '`' {
+				j++
+			}
+			if j < len(cmd) {
+				inner := strings.TrimSpace(cmd[i+1 : j])
+				if inner != "" {
+					results = append(results, inner)
+					results = append(results, ExtractSubcommands(inner)...)
+				}
+				i = j + 1
+			} else {
+				// Unclosed backtick — skip.
+				i++
+			}
+		} else {
+			i++
+		}
+	}
+	return results
+}
+
+// extractEval detects eval "..." or eval '...' and extracts the argument.
+func extractEval(cmd string) []string {
+	var results []string
+	// Tokenize to find "eval" as a command.
+	trimmed := strings.TrimSpace(cmd)
+	// Strip env var prefixes to find eval.
+	tokens := tokenize(trimmed)
+	start := 0
+	for start < len(tokens) && isEnvAssignment(tokens[start]) {
+		start++
+	}
+	tokens = tokens[start:]
+	if len(tokens) >= 2 && tokens[0] == "eval" {
+		inner := strings.Join(tokens[1:], " ")
+		if inner != "" {
+			results = append(results, inner)
+			results = append(results, ExtractSubcommands(inner)...)
+		}
+	}
+	return results
+}
+
 // SplitCompoundCommand splits a shell command on unquoted &&, ||, ;, and |
 // operators, returning each segment trimmed. Escaped or quoted delimiters
 // are not split on.

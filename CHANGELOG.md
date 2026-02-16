@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.26] — 2026-02-16
+
 ### Added
+- **Shell subcommand extraction** — `ExtractSubcommands()` detects commands inside `$(...)`, backticks, and `eval` wrappers. Matcher evaluates extracted subcommands against `command_matches` patterns, closing a documented evasion vector. 16 tests + fuzz test
+- **Tutorial docs** — "Protect your first agent in 5 minutes" walkthrough and troubleshooting guide with 6 common issues
 - **Example policy templates** — `policies/examples/` with web-developer, infrastructure, data-science, and lockdown templates (all with inline tests)
+- **CLI test coverage** — 49.3% → 58.3% (3 new test files)
 
 ## [0.2.25] — 2026-02-16
 
@@ -199,6 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [Unreleased]: https://github.com/peg/rampart/compare/v0.2.25...HEAD
 [0.2.25]: https://github.com/peg/rampart/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/peg/rampart/compare/v0.2.23...v0.2.24
+[0.2.26]: https://github.com/peg/rampart/compare/v0.2.25...v0.2.26
 [0.2.23]: https://github.com/peg/rampart/compare/v0.2.22...v0.2.23
 [0.2.22]: https://github.com/peg/rampart/compare/v0.2.21...v0.2.22
 [0.2.21]: https://github.com/peg/rampart/compare/v0.2.2...v0.2.21

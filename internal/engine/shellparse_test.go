@@ -98,6 +98,70 @@ func TestSplitCompoundCommand(t *testing.T) {
 	}
 }
 
+func TestExtractSubcommands(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want []string
+	}{
+		{"dollar paren", "$(rm -rf /)", []string{"rm -rf /"}},
+		{"backtick", "`rm -rf /`", []string{"rm -rf /"}},
+		{"echo with dollar paren", "echo $(cat /etc/shadow)", []string{"cat /etc/shadow"}},
+		{"eval double quotes", `eval "rm -rf /"`, []string{"rm -rf /"}},
+		{"eval single quotes", `eval 'rm -rf /'`, []string{"rm -rf /"}},
+		{"nested dollar paren", "$(echo $(whoami))", []string{"echo $(whoami)", "whoami"}},
+		{"multiple substitutions", "$(ls) && $(pwd)", []string{"ls", "pwd"}},
+		{"empty dollar paren", "$()", nil},
+		{"unclosed dollar paren", "$(rm -rf /", nil},
+		{"unclosed backtick", "`rm -rf /", nil},
+		{"no substitution", "echo hello", nil},
+		{"dollar without paren", "$HOME/bin/test", nil},
+		{"eval with env prefix", `FOO=bar eval "rm -rf /"`, []string{"rm -rf /"}},
+		{"backtick in echo", "echo `whoami`", []string{"whoami"}},
+		{"mixed backtick and dollar", "echo `uname` $(id)", []string{"id", "uname"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractSubcommands(tt.cmd)
+			if len(got) != len(tt.want) {
+				t.Fatalf("ExtractSubcommands(%q) = %v (len %d), want %v (len %d)",
+					tt.cmd, got, len(got), tt.want, len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("result %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func FuzzExtractSubcommands(f *testing.F) {
+	f.Add("$(rm -rf /)")
+	f.Add("`rm -rf /`")
+	f.Add("echo $(cat /etc/shadow)")
+	f.Add(`eval "rm -rf /"`)
+	f.Add("$(echo $(whoami))")
+	f.Add("$()")
+	f.Add("$(")
+	f.Add("`")
+	f.Add("")
+	f.Add("normal command")
+	f.Add("$$$$(((())))")
+	f.Add("`nested `backtick``")
+
+	f.Fuzz(func(t *testing.T, cmd string) {
+		// Should never panic.
+		results := ExtractSubcommands(cmd)
+		for _, r := range results {
+			if r == "" {
+				t.Error("ExtractSubcommands returned empty string")
+			}
+		}
+	})
+}
+
 func TestNormalizeCommand_EvasionVectors(t *testing.T) {
 	// All of these should normalize to "rm -rf /"
 	evasions := []string{

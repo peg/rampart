@@ -1,5 +1,8 @@
 # Quick Start
 
+!!! tip "New to Rampart?"
+    Start with the [5-minute tutorial](tutorial.md) for a hands-on walkthrough from install to first blocked command.
+
 Get Rampart protecting your AI agent in under a minute.
 
 ![Rampart Architecture](../assets/architecture.png)
