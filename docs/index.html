@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rampart — Open-source firewall for AI agents</title>
-    <meta name="description" content="Policy engine that controls what Claude Code, Cursor, Codex, and any AI tool can do on your machine. Microsecond overhead, hash-chained audit trail.">
+    <title>Rampart — Guardrails for AI agents</title>
+    <meta name="description" content="Open-source guardrails for AI coding agents. Set boundaries for Claude Code, Cursor, Codex, and any AI tool — without slowing them down. Works when sandboxes can't.">
     <link rel="canonical" href="https://rampart.sh/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Rampart — Open-source firewall for AI agents">
-    <meta property="og:description" content="Policy engine that controls what AI agents can do on your machine.">
+    <meta property="og:title" content="Rampart — Guardrails for AI agents">
+    <meta property="og:description" content="Open-source guardrails for AI agents. Set boundaries without slowing them down.">
     <meta property="og:image" content="https://rampart.sh/og.png">
     <meta property="og:url" content="https://rampart.sh">
     <meta name="twitter:card" content="summary_large_image">
@@ -18,7 +18,7 @@
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "Rampart",
-      "description": "Open-source policy engine for AI agent tool calls. Intercepts shell commands, file access, and API requests against declarative YAML policies.",
+      "description": "Open-source guardrails for AI agents. Set boundaries for what Claude Code, Cursor, Codex, and any AI tool can do — without slowing them down.",
       "url": "https://rampart.sh",
       "applicationCategory": "SecurityApplication",
       "operatingSystem": "Linux, macOS, Windows",
@@ -620,9 +620,9 @@
                 <span style="color:var(--text);">stars</span>
             </a>
         </div>
-        <h1>Sandboxes break your workflow.<br><span class="accent">Rampart doesn't.</span></h1>
+        <h1>Guardrails for AI agents.<br><span class="accent">Works when sandboxes can't.</span></h1>
         <p class="sub">
-            Open-source firewall for AI agents. Your agent keeps full access — Rampart just blocks the dangerous stuff. Microsecond policy evaluation. Tamper-proof audit trail.
+            Set boundaries for what your AI agent can do — without breaking its workflow. One YAML file controls shell commands, file access, and MCP tools. Your agent keeps working. The dangerous stuff gets blocked.
         </p>
         <div class="hero-buttons">
             <a href="https://github.com/peg/rampart" class="btn btn-primary">
@@ -718,8 +718,8 @@
 <section class="positioning">
     <div class="container">
         <div class="section-label">A different approach</div>
-        <h2 class="section-title">Your agent needs access to work.<br>It just shouldn't have access to <em>everything</em>.</h2>
-        <p class="section-desc">Sandboxes are great for isolation — but they often block the tools your agent actually needs. Rampart takes a complementary approach: let the agent work normally and block the specific things that are dangerous.</p>
+        <h2 class="section-title">Your agent needs real access to do real work.<br>It just shouldn't have access to <em>everything</em>.</h2>
+        <p class="section-desc">Sandboxes lock everything down. Your agent can't install deps, hit APIs, or run tests. Rampart takes the opposite approach: let your agent work normally and set guardrails around the dangerous stuff.</p>
         <div class="pos-grid">
             <div class="pos-card negative">
                 <div class="label">Sandbox approach</div>
@@ -747,8 +747,8 @@
 <section class="features">
     <div class="container">
         <div class="section-label">Under the hood</div>
-        <h2 class="section-title">Security that stays out of your way</h2>
-        <p class="section-desc">One Go binary. No daemon. No cloud dependency. Evaluates every tool call in microseconds against your YAML policies.</p>
+        <h2 class="section-title">Guardrails that stay out of your way</h2>
+        <p class="section-desc">One Go binary. No daemon. No cloud dependency. Evaluates every tool call in microseconds against your YAML rules.</p>
         <div class="feature-grid">
             <div class="feature-card">
                 <div class="feature-icon">⚡</div>
@@ -758,7 +758,7 @@
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🔗</div>
-                <h3>Tamper-proof audit trail</h3>
+                <h3>Tamper-evident audit trail</h3>
                 <p>Every tool call logged with SHA-256 hash chain. Modify one record and the chain breaks. Export to your SIEM via syslog or CEF.</p>
                 <span class="feature-stat">RFC 5424 + CEF</span>
             </div>
