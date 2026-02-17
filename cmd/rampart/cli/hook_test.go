@@ -28,10 +28,11 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 		{name: "ReadFile", toolName: "ReadFile", wantTool: "read", withInput: false},
 		{name: "Write", toolName: "Write", wantTool: "write", withInput: true},
 		{name: "WriteFile", toolName: "WriteFile", wantTool: "write", withInput: false},
+		{name: "Edit", toolName: "Edit", wantTool: "write", withInput: true},
 		{name: "EditFile", toolName: "EditFile", wantTool: "write", withInput: false},
 		{name: "WebFetch", toolName: "WebFetch", wantTool: "fetch", withInput: true},
 		{name: "Fetch", toolName: "Fetch", wantTool: "fetch", withInput: false},
-		{name: "Default", toolName: "UnknownTool", wantTool: "exec", withInput: false},
+		{name: "Default", toolName: "UnknownTool", wantTool: "unknown", withInput: false},
 	}
 
 	for _, tt := range tests {
@@ -92,7 +93,7 @@ func TestParseClineInput_Mappings(t *testing.T) {
 		{name: "new_task", toolName: "new_task", wantTool: "interact", withParam: false},
 		{name: "fetch_instructions", toolName: "fetch_instructions", wantTool: "interact", withParam: false},
 		{name: "plan_mode_respond", toolName: "plan_mode_respond", wantTool: "interact", withParam: false},
-		{name: "default", toolName: "unknown", wantTool: "exec", withParam: false},
+		{name: "default", toolName: "unknown", wantTool: "unknown", withParam: false},
 		{name: "post_tool_use", toolName: "read_file", wantTool: "read", usePost: true, withParam: true},
 	}
 
@@ -292,6 +293,37 @@ func TestOutputHookResult_ClaudeCode_Ask(t *testing.T) {
 	}
 	if ask.HookSpecificOutput.HookEventName != "PreToolUse" {
 		t.Fatalf("HookEventName = %q", ask.HookSpecificOutput.HookEventName)
+	}
+}
+
+func TestMapClaudeCodeTool(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Bash", "exec"},
+		{"Read", "read"},
+		{"ReadFile", "read"},
+		{"Write", "write"},
+		{"WriteFile", "write"},
+		{"Edit", "write"},
+		{"EditFile", "write"},
+		{"WebFetch", "fetch"},
+		{"Fetch", "fetch"},
+		{"web_search", "fetch"},
+		{"web_fetch", "fetch"},
+		{"memory", "memory"},
+		{"code_execution", "exec"},
+		{"tool_search", "read"},
+		{"SomethingUnknown", "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := mapClaudeCodeTool(tt.input)
+			if got != tt.want {
+				t.Errorf("mapClaudeCodeTool(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -140,6 +140,14 @@ policies:
       - action: deny
         message: "Network access blocked in lockdown mode"
 
+  # --- Block memory tool (Anthropic agent memory) ---
+  - name: block-memory
+    match:
+      tool: ["memory"]
+    rules:
+      - action: deny
+        message: "Memory tool blocked in lockdown mode"
+
   # --- Catch credential leaks ---
   - name: block-credential-leaks
     match:

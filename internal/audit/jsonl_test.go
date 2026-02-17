@@ -275,6 +275,100 @@ func BenchmarkWrite(b *testing.B) {
 	}
 }
 
+func TestJSONLSink_RecoverFromAnchor(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write exactly 2 events so anchor (at interval=2) is written for the last event.
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(2))
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		require.NoError(t, sink.Write(sampleEvent("exec")))
+	}
+	savedHash := sink.lastHash
+	require.NoError(t, sink.Close())
+
+	// Reopen — should recover from anchor since it matches last line.
+	sink2, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(2),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink2.Close()
+
+	assert.EqualValues(t, 2, sink2.eventCount)
+	assert.Equal(t, savedHash, sink2.lastHash)
+}
+
+func TestJSONLSink_RecoverByLineCounting(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write some events without anchoring.
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0))
+	require.NoError(t, err)
+	for i := 0; i < 5; i++ {
+		require.NoError(t, sink.Write(sampleEvent("exec")))
+	}
+	require.NoError(t, sink.Close())
+
+	// No anchor file — should recover by counting lines.
+	sink2, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink2.Close()
+
+	assert.EqualValues(t, 5, sink2.eventCount)
+}
+
+func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write events with anchoring.
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(2))
+	require.NoError(t, err)
+	for i := 0; i < 3; i++ {
+		require.NoError(t, sink.Write(sampleEvent("exec")))
+	}
+	require.NoError(t, sink.Close())
+
+	// Tamper with the anchor — change the hash.
+	anchorPath := filepath.Join(dir, anchorFilename)
+	data, err := os.ReadFile(anchorPath)
+	require.NoError(t, err)
+	var anchor ChainAnchor
+	require.NoError(t, json.Unmarshal(data, &anchor))
+	anchor.Hash = "tampered_hash_value"
+	tampered, _ := json.Marshal(anchor)
+	require.NoError(t, os.WriteFile(anchorPath, tampered, 0o600))
+
+	// Reopen — should detect mismatch and fall back to line counting.
+	sink2, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(2),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink2.Close()
+
+	// Should have recovered 3 events by line counting (not 2 from anchor).
+	assert.EqualValues(t, 3, sink2.eventCount)
+	// lastHash should be empty since we didn't trust the anchor.
+	assert.Empty(t, sink2.lastHash)
+}
+
+func TestJSONLSink_WriteErrorDoesNotUpdateHash(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+
+	// Write one good event.
+	require.NoError(t, sink.Write(sampleEvent("exec")))
+	hashAfterFirst := sink.lastHash
+
+	// Close the underlying file to cause a write error.
+	require.NoError(t, sink.Close())
+
+	err = sink.Write(sampleEvent("exec"))
+	assert.Error(t, err)
+
+	// lastHash should not have changed on error.
+	assert.Equal(t, hashAfterFirst, sink.lastHash)
+}
+
 func sampleEvent(tool string) Event {
 	return Event{
 		ID:        "",
