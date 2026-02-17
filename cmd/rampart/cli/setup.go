@@ -431,7 +431,7 @@ fi
 exec "$REAL_SHELL" "$@"
 `, realShell, port, token)
 
-			if err := os.WriteFile(shimPath, []byte(shimContent), 0o755); err != nil {
+			if err := os.WriteFile(shimPath, []byte(shimContent), 0o700); err != nil {
 				return fmt.Errorf("setup: write shim: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Shell shim installed at %s\n", shimPath)

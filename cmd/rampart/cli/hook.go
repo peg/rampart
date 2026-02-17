@@ -165,6 +165,26 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
+				// Best-effort audit entry for parse failure. This is written directly
+				// to the hook's audit file and is NOT part of the hash chain (the hook
+				// command does not maintain chain state). The schema matches the normal
+				// audit Event format for consistency with downstream consumers.
+				parseFailureEvent := audit.Event{
+					ID:        audit.NewEventID(),
+					Timestamp: time.Now().UTC(),
+					Agent:     format,
+					Session:   "hook",
+					Tool:      "unknown",
+					Request:   map[string]any{"raw_error": err.Error()},
+					Decision: audit.EventDecision{
+						Action:  "allow",
+						Message: fmt.Sprintf("parse failure (format=%s): %v — allowing by default", format, err),
+					},
+				}
+				if line, marshalErr := json.Marshal(parseFailureEvent); marshalErr == nil {
+					line = append(line, '\n')
+					_, _ = auditFile.Write(line)
+				}
 				return outputHookResult(cmd, format, hookAllow, "", "")
 			}
 
@@ -348,12 +368,19 @@ func mapClaudeCodeTool(toolName string) string {
 		return "exec"
 	case "Read", "ReadFile":
 		return "read"
-	case "Write", "WriteFile", "EditFile":
+	case "Write", "WriteFile", "Edit", "EditFile":
 		return "write"
-	case "WebFetch", "Fetch":
+	case "WebFetch", "Fetch", "web_search", "web_fetch":
 		return "fetch"
-	default:
+	case "memory":
+		return "memory"
+	case "code_execution":
 		return "exec"
+	case "tool_search":
+		return "read"
+	default:
+		slog.Warn("hook: unmapped Claude Code tool name, defaulting to unknown", "tool_name", toolName)
+		return "unknown"
 	}
 }
 
@@ -375,7 +402,8 @@ func mapClineTool(toolName string) string {
 	case "ask_followup_question", "attempt_completion", "new_task", "fetch_instructions", "plan_mode_respond":
 		return "interact"
 	default:
-		return "exec"
+		slog.Warn("hook: unmapped Cline tool name, defaulting to unknown", "tool_name", toolName)
+		return "unknown"
 	}
 }
 

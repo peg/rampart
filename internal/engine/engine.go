@@ -345,6 +345,10 @@ func (e *Engine) evaluateResponsePolicies(
 			// Short-circuit on deny. Only report policies that actually fired,
 			// not remaining unevaluated ones.
 			return ActionDeny, message, matched, true
+		case ActionWebhook:
+			e.logger.Warn("engine: webhook action not supported for response rules, treating as deny",
+				"policy", p.Name)
+			return ActionDeny, message, matched, true
 		case ActionRequireApproval:
 			if finalAction != ActionDeny && finalAction != ActionRequireApproval {
 				finalAction = ActionRequireApproval

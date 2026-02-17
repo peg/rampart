@@ -139,3 +139,14 @@ func TestMatchCondition_PathTraversalBypass(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchGlob_DoubleStarLimit(t *testing.T) {
+	// Two ** segments should work (allowed).
+	if !MatchGlob("**/foo/**", "/a/b/foo/c/d") {
+		t.Error("two ** segments should match")
+	}
+	// Three ** segments should be rejected (DoS protection).
+	if MatchGlob("**/**/foo/**", "/a/b/foo/c/d") {
+		t.Error("three ** segments should be rejected")
+	}
+}

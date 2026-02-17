@@ -1,0 +1,72 @@
+# MCP Server Policy — Guardrails for any MCP server
+#
+# Use with: rampart mcp --config mcp-server.yaml -- npx @modelcontextprotocol/server-filesystem .
+#
+# Rampart auto-categorizes MCP tools by keyword:
+#   - "mcp-destructive" → delete, destroy, remove, drop, purge, kill, etc.
+#   - "mcp-dangerous"   → stop, restart, execute, modify, send, post, etc.
+#   - "read"            → read_file, list_directory
+#   - "write"           → write_file, create_directory, delete_file, move_file
+#   - "exec"            → execute_command, run_command, shell
+#   - "fetch"           → fetch, http_request
+#   - "mcp"             → everything else
+#
+# You can also target tools by exact name (e.g., "create_issue", "send_message").
+
+version: "1"
+default_action: allow
+
+policies:
+  # Block all destructive tools by default (delete, destroy, remove, etc.)
+  - name: block-destructive
+    match:
+      tool: ["mcp-destructive"]
+    rules:
+      - action: deny
+        message: "Destructive MCP tool blocked — remove this rule to allow"
+
+  # Require human approval for dangerous operations (execute, modify, send, etc.)
+  - name: approve-dangerous
+    match:
+      tool: ["mcp-dangerous"]
+    rules:
+      - action: require_approval
+        message: "Risky MCP operation — approve?"
+
+  # Block credential and secret file access
+  - name: block-credential-reads
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.env"
+            - "**/.env.*"
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.config/gh/hosts.yml"
+        message: "Credential file access blocked"
+
+  # Block writes outside the project directory
+  - name: block-writes-outside-project
+    match:
+      tool: ["write"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "/etc/**"
+            - "/usr/**"
+            - "/var/**"
+            - "$HOME/.ssh/**"
+            - "$HOME/.aws/**"
+        message: "Write outside project directory blocked"
+
+  # Log all other MCP tool calls for visibility
+  - name: log-mcp-calls
+    match:
+      tool: ["mcp"]
+    rules:
+      - action: log
+        message: "MCP tool call logged"

@@ -194,6 +194,66 @@ Rampart evaluates against YAML policies (~20μs):
 
 The whole evaluation takes **microseconds**. Your agent doesn't slow down. But if it tries `rm -rf /`, it hits the deny rule and stops dead.
 
+## Bonus: Protect MCP Servers Too
+
+If you're using MCP servers (for Claude Desktop, Cursor, or any MCP client), Rampart can proxy those too. This works alongside the Claude Code hooks above — both can run at the same time.
+
+### What's MCP?
+
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets AI agents talk to external tools through a standard interface — file systems, GitHub, Slack, databases, and more. MCP servers expose "tools" that agents can call.
+
+The problem: these servers often have broad access, and there's no built-in way to limit what tools an agent can use.
+
+### Wrap an MCP Server
+
+Instead of pointing your agent directly at an MCP server, put Rampart in front:
+
+```bash
+# Before (no guardrails):
+npx @modelcontextprotocol/server-filesystem /path/to/project
+
+# After (with Rampart):
+rampart mcp -- npx @modelcontextprotocol/server-filesystem /path/to/project
+```
+
+In your MCP client config (e.g., `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "rampart",
+      "args": ["mcp", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "."]
+    }
+  }
+}
+```
+
+### Auto-Generate a Policy from MCP Tools
+
+Don't write rules from scratch — scan what tools the server exposes:
+
+```bash
+rampart mcp scan -- npx @modelcontextprotocol/server-filesystem .
+```
+
+This generates a deny-by-default policy with a rule for each tool. Review it, tweak it, and you're done.
+
+### What Happens
+
+When the agent calls an MCP tool:
+
+- **Allowed tools** pass through instantly — the server handles them normally
+- **Denied tools** get a JSON-RPC error back — the server never sees them
+- **Tools with destructive keywords** (delete, destroy, remove) are blocked automatically
+
+```bash
+# Watch MCP decisions alongside everything else:
+rampart watch
+```
+
+For more details, see the [MCP Proxy feature guide](../features/mcp-proxy.md) and the [Claude Desktop integration](../integrations/claude-desktop.md).
+
 ## Next Steps
 
 You're protected. Here's where to go from here:

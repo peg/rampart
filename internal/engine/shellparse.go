@@ -260,6 +260,17 @@ func SplitCompoundCommand(cmd string) []string {
 		}
 
 		// Check for ; and |
+		// Pipe splits for independent evaluation of each command in the pipeline.
+		if ch == '|' {
+			s := strings.TrimSpace(cur.String())
+			if s != "" {
+				segments = append(segments, s)
+			}
+			cur.Reset()
+			i++
+			continue
+		}
+
 		// Newline as command separator (unquoted).
 		if ch == '\n' {
 			s := strings.TrimSpace(cur.String())
@@ -271,7 +282,7 @@ func SplitCompoundCommand(cmd string) []string {
 			continue
 		}
 
-		if ch == ';' || ch == '|' {
+		if ch == ';' {
 			s := strings.TrimSpace(cur.String())
 			if s != "" {
 				segments = append(segments, s)

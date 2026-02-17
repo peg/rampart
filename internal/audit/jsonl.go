@@ -14,17 +14,71 @@
 package audit
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
 )
+
+// readLastLineHash reads the last non-empty line of a JSONL file and extracts
+// its "hash" field. Returns the hash and true if successful.
+func readLastLineHash(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+
+	var lastLine string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if line := scanner.Text(); line != "" {
+			lastLine = line
+		}
+	}
+	if lastLine == "" {
+		return "", false
+	}
+	var partial struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal([]byte(lastLine), &partial); err != nil {
+		return "", false
+	}
+	return partial.Hash, partial.Hash != ""
+}
+
+// countLinesInDir counts non-empty lines across all .jsonl files in dir
+// using streaming IO to avoid loading entire files into memory.
+func countLinesInDir(dir string) int64 {
+	var count int64
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		f, err := os.Open(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			if len(scanner.Bytes()) > 0 {
+				count++
+			}
+		}
+		_ = f.Close()
+	}
+	return count
+}
 
 // JSONLSink is an append-only JSONL audit sink with hash chaining.
 type JSONLSink struct {
@@ -70,6 +124,44 @@ func NewJSONLSink(dir string, opts ...SinkOption) (*JSONLSink, error) {
 		rotateSize:     cfg.rotateSize,
 		anchorInterval: cfg.anchorInterval,
 		logger:         logger,
+	}
+
+	// Recover state from anchor file if it exists.
+	anchorPath := filepath.Join(dir, anchorFilename)
+	anchorTrusted := false
+	if data, err := os.ReadFile(anchorPath); err == nil {
+		var anchor ChainAnchor
+		if err := json.Unmarshal(data, &anchor); err == nil {
+			// Validate anchor: verify the hash matches the last line of the referenced log file.
+			if anchor.File != "" {
+				if lastHash, ok := readLastLineHash(filepath.Join(dir, anchor.File)); ok {
+					if lastHash == anchor.Hash {
+						anchorTrusted = true
+					} else {
+						logger.Warn("audit: anchor hash mismatch — possible tampering, falling back to line count",
+							"anchor_hash", anchor.Hash,
+							"file_hash", lastHash,
+							"file", anchor.File,
+						)
+					}
+				}
+			}
+			if anchorTrusted {
+				sink.lastHash = anchor.Hash
+				sink.eventCount = anchor.EventCount
+				logger.Info("audit: recovered state from anchor",
+					"event_count", anchor.EventCount,
+					"hash", anchor.Hash,
+				)
+			}
+		}
+	}
+	if !anchorTrusted {
+		// No anchor — count non-empty lines in existing log files to recover eventCount.
+		sink.eventCount = countLinesInDir(dir)
+		if sink.eventCount > 0 {
+			logger.Info("audit: recovered event count from log files", "event_count", sink.eventCount)
+		}
 	}
 
 	if err := sink.openNewFileLocked(false, ""); err != nil {
@@ -125,14 +217,15 @@ func (s *JSONLSink) Write(event Event) error {
 	}
 
 	s.currentSize += int64(len(line))
-	s.lastHash = event.Hash
-	s.eventCount++
 
 	if s.fsync {
 		if err := s.file.Sync(); err != nil {
 			return fmt.Errorf("audit: fsync event: %w", err)
 		}
 	}
+
+	s.lastHash = event.Hash
+	s.eventCount++
 	if s.shouldAnchorLocked() {
 		if err := s.writeAnchorLocked(event); err != nil {
 			return err

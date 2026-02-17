@@ -241,3 +241,33 @@ func TestNormalizeCommand_EvasionVectors(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitCompoundCommand_PipeSplits(t *testing.T) {
+	// Pipes MUST split so each command in the pipeline is evaluated independently.
+	// This prevents evasion like "echo x | rm -rf /" where only "echo x" would be checked.
+	got := SplitCompoundCommand("cat foo | grep bar | wc -l")
+	want := []string{"cat foo", "grep bar", "wc -l"}
+	if len(got) != len(want) {
+		t.Fatalf("pipe split: got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("segment %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSplitCompoundCommand_PipeEvasion(t *testing.T) {
+	// Verify that pipe evasion is caught: "echo x | rm -rf /" must produce
+	// a segment containing "rm -rf /" so deny rules can match it.
+	got := SplitCompoundCommand("echo x | rm -rf /")
+	found := false
+	for _, seg := range got {
+		if seg == "rm -rf /" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("pipe evasion not caught: segments = %v, expected 'rm -rf /' segment", got)
+	}
+}
