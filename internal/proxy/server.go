@@ -46,7 +46,8 @@ const redactedResponse = "[REDACTED: sensitive content removed by Rampart]"
 type Server struct {
 	engine         *engine.Engine
 	sink           audit.AuditSink
-	approvals      *approval.Store
+	approvals        *approval.Store
+	approvalTimeout  time.Duration
 	token          string
 	mode           string
 	logger         *slog.Logger
@@ -114,12 +115,19 @@ func WithSigner(signer *signing.Signer) Option {
 	}
 }
 
+// WithApprovalTimeout sets the approval expiration duration.
+func WithApprovalTimeout(d time.Duration) Option {
+	return func(s *Server) {
+		s.approvalTimeout = d
+	}
+}
+
 // New creates a new proxy server.
 func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 	s := &Server{
 		engine:    eng,
 		sink:      sink,
-		approvals: approval.NewStore(),
+		approvals: nil, // initialized after options
 		mode:      defaultMode,
 		logger:    slog.Default(),
 		startedAt: time.Now().UTC(),
@@ -134,6 +142,13 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 	if s.mode == "" {
 		s.mode = defaultMode
 	}
+
+	// Initialize approval store with timeout.
+	var storeOpts []approval.Option
+	if s.approvalTimeout > 0 {
+		storeOpts = append(storeOpts, approval.WithTimeout(s.approvalTimeout))
+	}
+	s.approvals = approval.NewStore(storeOpts...)
 	if s.token == "" {
 		s.token = generateToken(s.logger)
 	}

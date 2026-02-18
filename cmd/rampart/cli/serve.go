@@ -57,6 +57,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var metrics bool
 	var configDir string
 	var reloadInterval time.Duration
+	var approvalTimeout time.Duration
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -179,6 +180,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			if port > 0 {
 				var proxyOpts []proxy.Option
 				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics))
+				if approvalTimeout > 0 {
+					proxyOpts = append(proxyOpts, proxy.WithApprovalTimeout(approvalTimeout))
+				}
 				if envToken := os.Getenv("RAMPART_TOKEN"); envToken != "" {
 					proxyOpts = append(proxyOpts, proxy.WithToken(envToken))
 				}
@@ -300,6 +304,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().BoolVar(&metrics, "metrics", false, "Enable Prometheus metrics endpoint on /metrics")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 30*time.Second, "How often to re-read policy files (0 to disable)")
+	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 5m)")
 
 	return cmd
 }
