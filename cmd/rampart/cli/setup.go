@@ -96,7 +96,14 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 
 			// Build the hook config — no --serve-url needed, hook auto-discovers on localhost:18275.
-			hookCommand := "rampart hook"
+			// Use absolute path so the hook works regardless of Claude Code's PATH.
+			hookBin := "rampart"
+			if exe, err := os.Executable(); err == nil {
+				hookBin = exe
+			} else if p, err := execLookPath("rampart"); err == nil {
+				hookBin = p
+			}
+			hookCommand := hookBin + " hook"
 
 			rampartHook := map[string]any{
 				"type":    "command",
@@ -962,7 +969,9 @@ func hasRampartInMatcher(matcher map[string]any) bool {
 	for _, h := range hooks {
 		if m, ok := h.(map[string]any); ok {
 			if cmd, ok := m["command"].(string); ok {
-				if cmd == "rampart hook" || strings.HasPrefix(cmd, "rampart hook ") {
+				// Match bare "rampart hook" or absolute path variants like "/usr/local/bin/rampart hook"
+				if cmd == "rampart hook" || strings.HasPrefix(cmd, "rampart hook ") ||
+					strings.HasSuffix(cmd, "/rampart hook") || strings.Contains(cmd, "/rampart hook ") {
 					return true
 				}
 			}
