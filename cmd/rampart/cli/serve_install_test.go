@@ -93,6 +93,7 @@ func TestResolveToken_FromEnv(t *testing.T) {
 
 func TestResolveToken_Generated(t *testing.T) {
 	t.Setenv("RAMPART_TOKEN", "")
+	t.Setenv("HOME", t.TempDir()) // prevent reading ~/.rampart/token from real home
 	tok, gen, err := resolveServiceToken("")
 	if err != nil {
 		t.Fatal(err)
