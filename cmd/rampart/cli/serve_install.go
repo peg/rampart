@@ -46,6 +46,8 @@ var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" e
         <key>RAMPART_TOKEN</key>
         <string>{{.Token}}</string>
     </dict>
+    <key>WorkingDirectory</key>
+    <string>{{.HomeDir}}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -79,6 +81,7 @@ type serviceConfig struct {
 	Args    []string
 	Token   string
 	LogPath string
+	HomeDir string
 }
 
 // commandRunner abstracts exec.Command so we can mock in tests.
@@ -200,12 +203,28 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 				return err
 			}
 
+			// Warn if the config file doesn't exist — service will fail to start.
+			if opts.configPath != "" && opts.configPath != "rampart.yaml" {
+				if _, err := os.Stat(opts.configPath); os.IsNotExist(err) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: policy file not found: %s\n   The service may fail to start. Run `rampart init --detect` to create one.\n\n", opts.configPath)
+				}
+			} else if opts.configPath == "rampart.yaml" || opts.configPath == "" {
+				// Default config — check home dir location since launchd WorkingDirectory is home
+				home, _ := os.UserHomeDir()
+				defaultPath := filepath.Join(home, "rampart.yaml")
+				if _, err := os.Stat(defaultPath); os.IsNotExist(err) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ No policy file found at ~/rampart.yaml.\n   Run `rampart init --detect` first, or pass --config /path/to/policy.yaml\n\n")
+				}
+			}
+
+			homeDir, _ := os.UserHomeDir()
 			args := buildServiceArgs(port, opts.configPath, configDir, auditDir, mode, approvalTimeout)
 			cfg := serviceConfig{
 				Binary:  binary,
 				Args:    args,
 				Token:   token,
 				LogPath: logPath(),
+				HomeDir: homeDir,
 			}
 
 			switch runtime.GOOS {
