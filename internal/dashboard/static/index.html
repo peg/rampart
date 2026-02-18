@@ -58,31 +58,44 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 #main-content{display:none}
 #main-content.visible{display:block}
 
-/* Table */
+/* Table — history/policy only */
 .tbl{width:100%;border-collapse:collapse}
-/* Pending table: fixed layout so the actions column width is enforced */
-#pending-table{table-layout:fixed}
-/* Actions cell is the last column — safe to let it overflow visibly */
-#pending-table td:last-child{overflow:visible}
 .tbl th{text-align:left;padding:6px 8px;font-size:11px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1;overflow:hidden;position:relative}
 .tbl th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;background:transparent;z-index:2}
 .tbl th .resize-handle:hover,.tbl th .resize-handle.active{background:var(--accent)}
 .tbl td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
-/* Command cell: td stays table-cell, overflow:hidden clips it cleanly */
-.tbl td.cmd-col{overflow:hidden;white-space:normal;padding-top:6px;padding-bottom:6px}
-/* Inner span does the 2-line clamp — webkit-box must NOT be on the td itself */
+.tbl td.cmd-col{overflow:hidden;white-space:normal}
 .cmd-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;line-height:1.35;white-space:normal}
 .tbl tr.row:hover{background:var(--surface)}
 .tbl tr.row{cursor:pointer;transition:background .15s}
-.tbl tr.row.new-item{animation:fadeHighlight 2s ease-out}
-.tbl tr.row.dangerous .cmd-text::before{content:'!';display:inline-block;background:rgba(245,158,11,.2);color:var(--orange);font-size:10px;font-weight:700;padding:0 4px;border-radius:3px;margin-right:5px;font-family:'JetBrains Mono',monospace;vertical-align:middle}
 .tbl tr.flash-green{background:rgba(34,197,94,.15)!important}
 .tbl tr.flash-red{background:rgba(239,68,68,.15)!important}
 @keyframes fadeHighlight{from{background:rgba(255,99,146,.12)}to{background:transparent}}
 
-/* Detail row */
-.detail-row td{padding:0!important;border-bottom:1px solid var(--border)}
+/* Pending items — flex cards, not table */
+.pending-bar{display:flex;align-items:center;padding:6px 0 4px;border-bottom:1px solid var(--border);margin-bottom:2px}
+.pending-bar label{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;user-select:none}
+.pend-item{display:flex;align-items:flex-start;gap:10px;padding:10px 2px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.pend-item:hover{background:var(--surface)}
+.pend-item.new-item{animation:fadeHighlight 2s ease-out}
+.pend-item.flash-green{background:rgba(34,197,94,.15)!important}
+.pend-item.flash-red{background:rgba(239,68,68,.15)!important}
+.pend-left{display:flex;align-items:center;gap:7px;flex-shrink:0;padding-top:2px}
+.pend-body{flex:1;min-width:0}
+.pend-cmd{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-bright);word-break:break-word;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pend-item.dangerous .pend-cmd::before{content:'! ';color:var(--orange);font-weight:700;font-family:'JetBrains Mono',monospace}
+.pend-meta{display:flex;align-items:center;gap:8px;margin-top:5px;font-size:11px;color:var(--text)}
+.pend-tool-badge{background:var(--surface-3);color:var(--text-bright);padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500}
+.pend-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.pend-timer{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);text-align:right;min-width:40px}
+.pend-actions{display:flex;gap:5px}
+
+/* Expand detail (shared by pending + history) */
 .detail-inner{max-height:0;overflow:hidden;transition:max-height .25s ease;padding:0 8px}
+.pend-detail{border-bottom:1px solid var(--border)}
+.pend-detail.open .detail-inner{max-height:300px;padding:10px 8px 10px 34px}
+/* History detail row */
+.detail-row td{padding:0!important;border-bottom:1px solid var(--border)}
 .detail-row.open .detail-inner{max-height:300px;padding:10px 8px}
 .detail-inner .kv{display:grid;grid-template-columns:100px 1fr;gap:4px 12px;font-size:12px}
 .detail-inner .kv dt{color:#52525b;font-weight:500}.detail-inner .kv dd{color:var(--text-bright);word-break:break-all}
@@ -238,17 +251,10 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
   <!-- ═══ ACTIVE TAB ═══ -->
   <div class="tab-panel active" id="panel-active">
-    <table class="tbl" id="pending-table">
-      <thead><tr>
-        <th class="chk-cell"><input type="checkbox" id="select-all" title="Select all"></th>
-        <th style="width:20px"></th>
-        <th class="col-tool" style="width:50px">Tool</th>
-        <th class="cmd-col">Command</th>
-        <th style="width:50px;text-align:right">Time</th>
-        <th style="width:185px">Actions</th>
-      </tr></thead>
-      <tbody id="pending-body"></tbody>
-    </table>
+    <div class="pending-bar">
+      <label><input type="checkbox" id="select-all"> Select all</label>
+    </div>
+    <div id="pending-body"></div>
     <div class="empty" id="pending-empty">No pending approvals</div>
 
     <!-- Recent Denials feed -->
@@ -432,7 +438,7 @@ function initResizeHandles(){
   });
 
   // Pending table events
-  document.getElementById('pending-table').addEventListener('click',handlePendingClick);
+  document.getElementById('pending-body').addEventListener('click',handlePendingClick);
 
   // Select-all
   document.getElementById('select-all').addEventListener('change',function(e){
@@ -596,20 +602,32 @@ function updatePending(approvals){
 
 function createPendingRow(a){
   const cmd=extractCmd(a);const danger=isDangerous(cmd);
-  const tr=document.createElement('tr');tr.className='row'+(danger?' dangerous':'');tr.id='row-'+a.id;tr.dataset.id=a.id;
-  tr.innerHTML=`<td class="chk-cell"><input type="checkbox" class="row-chk" data-id="${esc(a.id)}"></td>
-    <td><span class="dot pending"></span></td>
-    <td class="col-tool" style="font-size:11px;color:var(--text)">${esc(a.tool||'')}</td>
-    <td class="cmd-col mono"><span class="cmd-text">${esc(cmd)}</span></td>
-    <td style="text-align:right"><span class="timer" id="timer-${esc(a.id)}"></span></td>
-    <td><div class="actions">
-      <button class="act-btn approve" data-action="approve" data-id="${esc(a.id)}" title="Approve once">Allow</button>
-      <button class="act-btn always" data-action="always" data-id="${esc(a.id)}" title="Always allow this command pattern">Always</button>
-      <button class="act-btn deny" data-action="deny" data-id="${esc(a.id)}" title="Deny">Deny</button>
-    </div></td>`;
+  const item=document.createElement('div');
+  item.className='pend-item'+(danger?' dangerous':'');
+  item.id='row-'+a.id;item.dataset.id=a.id;
+  item.innerHTML=`
+    <div class="pend-left">
+      <input type="checkbox" class="row-chk" data-id="${esc(a.id)}">
+      <span class="dot pending"></span>
+    </div>
+    <div class="pend-body">
+      <div class="pend-cmd">${esc(cmd)}</div>
+      <div class="pend-meta">
+        <span class="pend-tool-badge">${esc(a.tool||'exec')}</span>
+        <span>${esc(a.agent||'')}</span>
+      </div>
+    </div>
+    <div class="pend-right">
+      <span class="pend-timer" id="timer-${esc(a.id)}"></span>
+      <div class="pend-actions">
+        <button class="act-btn approve" data-action="approve" data-id="${esc(a.id)}" title="Approve once">Allow</button>
+        <button class="act-btn always" data-action="always" data-id="${esc(a.id)}" title="Always allow this command pattern">Always</button>
+        <button class="act-btn deny" data-action="deny" data-id="${esc(a.id)}" title="Deny">Deny</button>
+      </div>
+    </div>`;
 
-  const det=document.createElement('tr');det.className='detail-row';det.id='det-'+a.id;
-  det.innerHTML=`<td colspan="6"><div class="detail-inner"><dl class="kv">
+  const det=document.createElement('div');det.className='pend-detail';det.id='det-'+a.id;
+  det.innerHTML=`<div class="detail-inner"><dl class="kv">
     <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(a.tool||'—')}</dd>
@@ -617,8 +635,8 @@ function createPendingRow(a){
     <dt>Message</dt><dd>${esc(a.message||a.description||'—')}</dd>
     <dt>Created</dt><dd>${a.created_at?new Date(a.created_at).toLocaleString():'—'}</dd>
     <dt>Expires</dt><dd>${a.expires_at?new Date(a.expires_at).toLocaleString():'—'}</dd>
-  </dl></div></td>`;
-  return{row:tr,detail:det};
+  </dl></div>`;
+  return{row:item,detail:det};
 }
 
 function handlePendingClick(e){
@@ -637,8 +655,8 @@ function handlePendingClick(e){
     }
     resolveApproval(btn.dataset.id,btn.dataset.action);return;
   }
-  if(e.target.closest('.chk-cell'))return;
-  const row=e.target.closest('tr.row');if(!row)return;
+  if(e.target.closest('.pend-left'))return;
+  const row=e.target.closest('.pend-item');if(!row)return;
   const id=row.dataset.id;
   const det=document.getElementById('det-'+id);if(!det)return;
   if(expandedId&&expandedId!==id)document.getElementById('det-'+expandedId)?.classList.remove('open');
