@@ -47,32 +47,28 @@ policies:
             - "crontab -r"
             - "crontab -r *"
         message: "Crontab deletion blocked"
+      - action: deny
+        when:
+          command_matches:
+            - "curl * | bash"
+            - "curl * | sh"
+            - "wget * | bash"
+            - "wget * | sh"
+            - "curl * | python*"
+            - "curl * | perl*"
+            - "curl -s * | *"
+            - "wget -q * | *"
+        message: "Piped execution blocked (supply chain risk)"
 
-  - name: log-privileged
+  - name: require-privileged-approval
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: require_approval
         when:
           command_matches:
             - "sudo *"
-            - "kubectl delete *"
-            - "docker rm *"
-            - "docker rmi *"
-        message: "Privileged command logged"
-
-  - name: log-network-exfil
-    match:
-      tool: ["exec"]
-    rules:
-      - action: log
-        when:
-          command_matches:
-            - "curl *"
-            - "wget *"
-            - "scp *"
-            - "rsync *"
-        message: "Network command logged for review"
+        message: "sudo requires approval"
 
   - name: block-credential-access
     match:

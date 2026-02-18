@@ -203,17 +203,12 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 				return err
 			}
 
-			// Warn if the config file doesn't exist — service will fail to start.
+			// Warn only if a custom config path was given but the file doesn't exist.
+			// When using the default path, rampart serve falls back to the embedded
+			// standard policy automatically — no warning needed.
 			if opts.configPath != "" && opts.configPath != "rampart.yaml" {
 				if _, err := os.Stat(opts.configPath); os.IsNotExist(err) {
 					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: policy file not found: %s\n   The service may fail to start. Run `rampart init --detect` to create one.\n\n", opts.configPath)
-				}
-			} else if opts.configPath == "rampart.yaml" || opts.configPath == "" {
-				// Default config — check home dir location since launchd WorkingDirectory is home
-				home, _ := os.UserHomeDir()
-				defaultPath := filepath.Join(home, "rampart.yaml")
-				if _, err := os.Stat(defaultPath); os.IsNotExist(err) {
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ No policy file found at ~/rampart.yaml.\n   Run `rampart init --detect` first, or pass --config /path/to/policy.yaml\n\n")
 				}
 			}
 

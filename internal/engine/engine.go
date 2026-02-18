@@ -260,6 +260,24 @@ func (e *Engine) PolicyCount() int {
 	return len(e.config.Policies)
 }
 
+// RuleCount returns the total number of rules across all loaded policies.
+func (e *Engine) RuleCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	total := 0
+	for _, p := range e.config.Policies {
+		total += len(p.Rules)
+	}
+	return total
+}
+
+// GetDefaultAction returns the configured default action as a string.
+func (e *Engine) GetDefaultAction() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.defaultAction.String()
+}
+
 // collectMatching returns all enabled policies whose Match clause matches
 // the tool call, sorted by priority (lowest number first).
 func (e *Engine) collectMatching(cfg *Config, call ToolCall) []Policy {

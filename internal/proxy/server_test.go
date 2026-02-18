@@ -679,6 +679,90 @@ func TestResolveApproval_AuditTrail(t *testing.T) {
 	}
 }
 
+func TestGetPolicy(t *testing.T) {
+	tests := []struct {
+		name           string
+		mode           string
+		configPath     string
+		wantConfigPath string
+		wantMode       string
+	}{
+		{
+			name:           "file config enforce mode",
+			mode:           "enforce",
+			configPath:     "/etc/rampart/policy.yaml",
+			wantConfigPath: "/etc/rampart/policy.yaml",
+			wantMode:       "enforce",
+		},
+		{
+			name:           "embedded standard policy",
+			mode:           "monitor",
+			configPath:     "embedded:standard",
+			wantConfigPath: "embedded:standard",
+			wantMode:       "monitor",
+		},
+		{
+			name:           "default empty configPath",
+			mode:           "enforce",
+			configPath:     "",
+			wantConfigPath: "rampart.yaml",
+			wantMode:       "enforce",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, token, _ := setupTestServer(t, testPolicyYAML, tt.mode)
+			if tt.configPath != "" {
+				srv.configPath = tt.configPath
+			}
+
+			ts := httptest.NewServer(srv.handler())
+			defer ts.Close()
+
+			req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/policy", nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+token)
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+			assert.Equal(t, tt.wantConfigPath, body["config_path"])
+			assert.Equal(t, tt.wantMode, body["mode"])
+			assert.NotNil(t, body["default_action"])
+			assert.NotNil(t, body["policy_count"])
+			assert.NotNil(t, body["rule_count"])
+
+			// Verify counts are plausible.
+			policyCount, ok := body["policy_count"].(float64)
+			require.True(t, ok, "policy_count should be a number")
+			assert.Greater(t, int(policyCount), 0, "should have at least one policy")
+
+			ruleCount, ok := body["rule_count"].(float64)
+			require.True(t, ok, "rule_count should be a number")
+			assert.Greater(t, int(ruleCount), 0, "should have at least one rule")
+		})
+	}
+}
+
+func TestGetPolicy_NoAuth(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/v1/policy")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
 func TestCreateApproval_NoAuth(t *testing.T) {
 	configYAML := `version: "1"
 default_action: allow

@@ -175,6 +175,107 @@ func (s *MultiStore) Path() string {
 	return s.dir + "/"
 }
 
+// MixedStore combines a primary PolicyStore (e.g. MemoryStore) with additional
+// YAML files from a directory. Useful when the primary config is not file-based.
+type MixedStore struct {
+	primary PolicyStore
+	dir     string
+	logger  *slog.Logger
+}
+
+// NewMixedStore creates a store that merges a primary PolicyStore with a directory.
+func NewMixedStore(primary PolicyStore, dir string, logger *slog.Logger) *MixedStore {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &MixedStore{primary: primary, dir: dir, logger: logger}
+}
+
+// Load reads the primary store and all directory files, merging them.
+func (s *MixedStore) Load() (*Config, error) {
+	// Load primary store first.
+	merged, err := s.primary.Load()
+	if err != nil {
+		return nil, fmt.Errorf("engine: load primary store: %w", err)
+	}
+
+	// Load directory files.
+	if s.dir == "" {
+		return merged, nil
+	}
+
+	absDir, err := filepath.Abs(s.dir)
+	if err != nil {
+		return nil, fmt.Errorf("engine: resolve dir %q: %w", s.dir, err)
+	}
+
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			s.logger.Debug("engine: config dir does not exist, skipping", "dir", absDir)
+			return merged, nil
+		}
+		return nil, fmt.Errorf("engine: read dir %q: %w", absDir, err)
+	}
+
+	var dirFiles []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if filepath.Ext(name) == ".yaml" || filepath.Ext(name) == ".yml" {
+			dirFiles = append(dirFiles, filepath.Join(absDir, name))
+		}
+	}
+	sort.Strings(dirFiles)
+
+	if len(dirFiles) == 0 {
+		return merged, nil
+	}
+
+	// Merge directory configs into merged.
+	seen := make(map[string]bool)
+	for _, p := range merged.Policies {
+		seen[p.Name] = true
+	}
+
+	dirCfg, err := mergeYAMLFiles(dirFiles, s.logger)
+	if err != nil {
+		// Log and return primary only; directory errors are non-fatal.
+		s.logger.Warn("engine: failed to load config dir, using primary only", "dir", absDir, "error", err)
+		return merged, nil
+	}
+
+	if merged.DefaultAction == "" && dirCfg.DefaultAction != "" {
+		merged.DefaultAction = dirCfg.DefaultAction
+	}
+	if merged.Notify == nil && dirCfg.Notify != nil {
+		merged.Notify = dirCfg.Notify
+	}
+	for _, p := range dirCfg.Policies {
+		if seen[p.Name] {
+			s.logger.Warn("engine: skip duplicate policy from config dir", "name", p.Name)
+			continue
+		}
+		seen[p.Name] = true
+		merged.Policies = append(merged.Policies, p)
+	}
+	if merged.responseRegexCache == nil {
+		merged.responseRegexCache = make(map[string]*regexp.Regexp)
+	}
+	for k, v := range dirCfg.responseRegexCache {
+		merged.responseRegexCache[k] = v
+	}
+
+	return merged, nil
+}
+
+// Path returns a description of this store's sources.
+func (s *MixedStore) Path() string {
+	return s.primary.Path() + " + " + s.dir + "/"
+}
+
 // mergeYAMLFiles reads and merges multiple YAML policy files into one Config.
 // The first file that specifies default_action wins. Invalid files are skipped.
 func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {

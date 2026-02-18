@@ -50,6 +50,7 @@ type Server struct {
 	approvalTimeout  time.Duration
 	token          string
 	mode           string
+	configPath     string
 	logger         *slog.Logger
 	resolveBaseURL string
 	listenAddr     string
@@ -120,6 +121,14 @@ func WithSigner(signer *signing.Signer) Option {
 func WithApprovalTimeout(d time.Duration) Option {
 	return func(s *Server) {
 		s.approvalTimeout = d
+	}
+}
+
+// WithConfigPath sets the config path string shown in the /v1/policy endpoint.
+// Use "embedded:standard" when the embedded default policy is active.
+func WithConfigPath(path string) Option {
+	return func(s *Server) {
+		s.configPath = path
 	}
 }
 
@@ -243,6 +252,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit/dates", s.handleAuditDates)
 	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)
 	mux.HandleFunc("GET /v1/audit/stats", s.handleAuditStats)
+	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	if s.metricsEnabled {
 		mux.Handle("GET /metrics", MetricsHandler())
@@ -767,6 +777,35 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
 // Approvals returns the approval store for external access (CLI, daemon).
 func (s *Server) Approvals() *approval.Store {
 	return s.approvals
+}
+
+// handlePolicy returns a summary of the current active policy configuration.
+func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	configPath := s.configPath
+	if configPath == "" {
+		configPath = "rampart.yaml"
+	}
+
+	defaultAction := "allow"
+	policyCount := 0
+	ruleCount := 0
+	if s.engine != nil {
+		defaultAction = s.engine.GetDefaultAction()
+		policyCount = s.engine.PolicyCount()
+		ruleCount = s.engine.RuleCount()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"config_path":    configPath,
+		"mode":           s.mode,
+		"default_action": defaultAction,
+		"policy_count":   policyCount,
+		"rule_count":     ruleCount,
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
