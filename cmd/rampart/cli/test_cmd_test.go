@@ -49,7 +49,7 @@ policies:
 	var errOut bytes.Buffer
 	opts := &rootOptions{configPath: policyFile}
 
-	runErr := runTest(&out, &errOut, opts, "rm -rf /", "exec", true)
+	runErr := runTest(&out, &errOut, opts, "rm -rf /", "exec", true, false)
 
 	// Should return exit code 1.
 	if runErr == nil {
@@ -99,7 +99,7 @@ policies:
 	var errOut bytes.Buffer
 	opts := &rootOptions{configPath: policyFile}
 
-	runErr := runTest(&out, &errOut, opts, "git status", "exec", true)
+	runErr := runTest(&out, &errOut, opts, "git status", "exec", true, false)
 	if runErr != nil {
 		t.Fatalf("expected no error for allowed command, got: %v", runErr)
 	}
@@ -134,7 +134,7 @@ policies:
 	var errOut bytes.Buffer
 	opts := &rootOptions{configPath: policyFile}
 
-	runErr := runTest(&out, &errOut, opts, "/etc/shadow", "read", true)
+	runErr := runTest(&out, &errOut, opts, "/etc/shadow", "read", true, false)
 	if runErr == nil {
 		t.Fatal("expected error for denied read")
 	}

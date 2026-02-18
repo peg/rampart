@@ -738,3 +738,127 @@ policies:
 		engine.EvaluateResponse(call, payload)
 	}
 }
+
+// TestSessionMatches verifies that session_matches condition filters by session.
+func TestSessionMatches(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: block-in-prod
+    match:
+      agent: "*"
+    rules:
+      - action: deny
+        message: "blocked in prod session"
+        when:
+          command_matches: ["rm *"]
+          session_matches: ["*/prod", "production/*"]
+`)
+
+	// Session that matches → should be denied
+	callProd := ToolCall{
+		Agent:   "claude-code",
+		Session: "myrepo/prod",
+		Tool:    "exec",
+		Params:  map[string]any{"command": "rm -rf /tmp/foo"},
+	}
+	d := e.Evaluate(callProd)
+	if d.Action != ActionDeny {
+		t.Errorf("session matching: expected deny for session %q, got %s", callProd.Session, d.Action)
+	}
+
+	// Session that does not match → should allow
+	callDev := ToolCall{
+		Agent:   "claude-code",
+		Session: "myrepo/staging",
+		Tool:    "exec",
+		Params:  map[string]any{"command": "rm -rf /tmp/foo"},
+	}
+	d2 := e.Evaluate(callDev)
+	if d2.Action == ActionDeny {
+		t.Errorf("session matching: expected allow for session %q, got %s", callDev.Session, d2.Action)
+	}
+}
+
+// TestSessionNotMatches verifies session_not_matches excludes sessions.
+func TestSessionNotMatches(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: allow-except-prod
+    match:
+      agent: "*"
+    rules:
+      - action: deny
+        message: "blocked outside dev"
+        when:
+          command_matches: ["rm *"]
+          session_not_matches: ["*/dev", "*/staging"]
+`)
+
+	// Session NOT in the exclusion list → deny applies
+	callProd := ToolCall{
+		Agent:   "claude-code",
+		Session: "myrepo/prod",
+		Tool:    "exec",
+		Params:  map[string]any{"command": "rm -rf /tmp/foo"},
+	}
+	d := e.Evaluate(callProd)
+	if d.Action != ActionDeny {
+		t.Errorf("session_not_matches: expected deny for %q, got %s", callProd.Session, d.Action)
+	}
+
+	// Session in the exclusion list → deny does NOT apply
+	callDev := ToolCall{
+		Agent:   "claude-code",
+		Session: "myrepo/dev",
+		Tool:    "exec",
+		Params:  map[string]any{"command": "rm -rf /tmp/foo"},
+	}
+	d2 := e.Evaluate(callDev)
+	if d2.Action == ActionDeny {
+		t.Errorf("session_not_matches: expected allow for %q, got %s", callDev.Session, d2.Action)
+	}
+}
+
+// TestMatchSessionScope verifies Match.Session scoping at the policy level.
+func TestMatchSessionScope(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: prod-only-policy
+    match:
+      agent: "*"
+      session: "*/prod"
+    rules:
+      - action: deny
+        message: "prod locked down"
+        when:
+          default: true
+`)
+
+	callProd := ToolCall{
+		Agent:   "claude-code",
+		Session: "myrepo/prod",
+		Tool:    "exec",
+		Params:  map[string]any{"command": "echo test"},
+	}
+	d := e.Evaluate(callProd)
+	if d.Action != ActionDeny {
+		t.Errorf("Match.Session scope: expected deny for %q, got %s", callProd.Session, d.Action)
+	}
+
+	callMain := ToolCall{
+		Agent:   "claude-code",
+		Session: "myrepo/main",
+		Tool:    "exec",
+		Params:  map[string]any{"command": "echo test"},
+	}
+	d2 := e.Evaluate(callMain)
+	if d2.Action == ActionDeny {
+		t.Errorf("Match.Session scope: expected allow for %q, got %s", callMain.Session, d2.Action)
+	}
+}

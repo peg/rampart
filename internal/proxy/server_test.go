@@ -785,3 +785,86 @@ policies: []`
 		t.Fatalf("expected 401, got %d", resp.StatusCode)
 	}
 }
+
+// TestHandleTest_HTTP covers the POST /v1/test endpoint that powers the policy REPL.
+func TestHandleTest_HTTP(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	postTest := func(t *testing.T, body string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/test", bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+
+	t.Run("deny command returns deny action", func(t *testing.T) {
+		resp := postTest(t, `{"command":"rm -rf /","tool":"exec"}`)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		assert.Equal(t, "deny", result["action"])
+		assert.Equal(t, "rm -rf /", result["command"])
+		assert.Equal(t, "exec", result["tool"])
+	})
+
+	t.Run("allowed command returns allow action", func(t *testing.T) {
+		resp := postTest(t, `{"command":"git status","tool":"exec"}`)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		assert.Equal(t, "allow", result["action"])
+	})
+
+	t.Run("defaults to exec tool when omitted", func(t *testing.T) {
+		resp := postTest(t, `{"command":"git status"}`)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		assert.Equal(t, "exec", result["tool"])
+	})
+
+	t.Run("missing command returns 400", func(t *testing.T) {
+		resp := postTest(t, `{"tool":"exec"}`)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("invalid JSON returns 400", func(t *testing.T) {
+		resp := postTest(t, `not json`)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("no auth returns 401", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/test", bytes.NewBufferString(`{"command":"git status"}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	t.Run("response includes policy_scope field", func(t *testing.T) {
+		resp := postTest(t, `{"command":"git log","tool":"exec"}`)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		assert.Equal(t, "global", result["policy_scope"])
+	})
+
+	t.Run("read tool uses path param", func(t *testing.T) {
+		// Using read tool — command is treated as path.
+		resp := postTest(t, `{"command":"/etc/passwd","tool":"read"}`)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		// action could be allow or deny depending on policy, but the response is valid
+		assert.NotEmpty(t, result["action"])
+	})
+}

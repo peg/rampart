@@ -12,6 +12,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// TestDeriveGitContext_EnvVar verifies RAMPART_SESSION overrides git session detection.
+func TestDeriveGitContext_EnvVar(t *testing.T) {
+	t.Setenv("RAMPART_SESSION", "my-pipeline")
+	ctx := deriveGitContext()
+	if ctx.session != "my-pipeline" {
+		t.Errorf("expected 'my-pipeline', got %q", ctx.session)
+	}
+}
+
+// TestDeriveGitContext_NoGit verifies that a non-git directory returns empty context.
+func TestDeriveGitContext_NoGit(t *testing.T) {
+	t.Setenv("RAMPART_SESSION", "")
+
+	// Change to a temp dir that has no git repo.
+	tmp := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(tmp)
+	defer os.Chdir(orig)
+
+	ctx := deriveGitContext()
+	if ctx.session != "" {
+		t.Errorf("expected empty session outside git repo, got %q", ctx.session)
+	}
+	if ctx.root != "" {
+		t.Errorf("expected empty root outside git repo, got %q", ctx.root)
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

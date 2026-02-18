@@ -33,6 +33,7 @@ import (
 
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/dashboard"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
@@ -253,6 +254,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)
 	mux.HandleFunc("GET /v1/audit/stats", s.handleAuditStats)
 	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
+	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	if s.metricsEnabled {
 		mux.Handle("GET /metrics", MetricsHandler())
@@ -366,6 +368,21 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && decision.Action == engine.ActionRequireApproval {
+		// Check if the user has previously "Always Allowed" this pattern.
+		// Auto-allow decisions override require_approval from global policies.
+		if engine.MatchesAutoAllowFile(engine.DefaultAutoAllowedPath(), call) {
+			s.logger.Debug("proxy: auto-allow matched, bypassing approval queue", "tool", toolName)
+			decision.Action = engine.ActionAllow
+			decision.Message = "auto-allowed by user rule"
+			decision.MatchedPolicies = []string{"auto-allowed"}
+			resp["decision"] = decision.Action.String()
+			resp["message"] = decision.Message
+			resp["policy"] = "auto-allowed"
+			s.writeAudit(req, toolName, decision)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
 		pending, err := s.approvals.Create(call, decision)
 		if err != nil {
 			s.logger.Error("proxy: approval store full", "error", err)
@@ -747,6 +764,10 @@ authorized:
 		} else {
 			persisted = true
 			s.logger.Info("proxy: allow rule persisted", "path", policyPath, "tool", resolved.Call.Tool)
+			// Force immediate reload so the new rule takes effect without waiting for hot-reload.
+			if s.engine != nil {
+				_ = s.engine.Reload()
+			}
 		}
 	}
 
@@ -808,12 +829,68 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleTest evaluates a command against the loaded policy engine and returns
+// the decision. This powers the "Try a command" REPL in the dashboard Policy tab.
+func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "policy engine not initialized")
+		return
+	}
+
+	var req struct {
+		Command string `json:"command"`
+		Tool    string `json:"tool"`    // optional, defaults to "exec"
+		Agent   string `json:"agent"`   // optional
+		Session string `json:"session,omitempty"` // optional; used for session_matches evaluation
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Command == "" {
+		writeError(w, http.StatusBadRequest, "command is required")
+		return
+	}
+	if req.Tool == "" {
+		req.Tool = "exec"
+	}
+
+	params := map[string]any{"command": req.Command}
+	if req.Tool == "write" || req.Tool == "read" {
+		params = map[string]any{"path": req.Command}
+	}
+	call := engine.ToolCall{
+		ID:        audit.NewEventID(),
+		Tool:      req.Tool,
+		Agent:     req.Agent,
+		Session:   req.Session,
+		Params:    params,
+		Timestamp: time.Now(),
+	}
+
+	decision := s.engine.Evaluate(call)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"command":          req.Command,
+		"tool":             req.Tool,
+		"action":           decision.Action.String(),
+		"message":          decision.Message,
+		"matched_policies": decision.MatchedPolicies,
+		"policy_scope":     "global", // project policies are hook-side only
+	})
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	uptime := int(time.Since(s.startedAt).Seconds())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":         "ok",
 		"mode":           s.mode,
 		"uptime_seconds": uptime,
+		"version":        build.Version,
 	})
 }
 

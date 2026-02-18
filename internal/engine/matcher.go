@@ -394,6 +394,17 @@ func matchCondition(cond Condition, call ToolCall) bool {
 		matched = true
 	}
 
+	// Session matching.
+	if len(cond.SessionMatches) > 0 && !matchAny(cond.SessionMatches, call.Session) {
+		return false
+	}
+	if len(cond.SessionNotMatches) > 0 && matchAny(cond.SessionNotMatches, call.Session) {
+		return false
+	}
+	if len(cond.SessionMatches) > 0 {
+		matched = true
+	}
+
 	return matched
 }
 

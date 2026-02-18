@@ -276,7 +276,7 @@ func TestNewLogCmd(t *testing.T) {
 func TestDoctorVersionCheck(t *testing.T) {
 	var buf bytes.Buffer
 	// With dev build version, should return 0 immediately
-	issues := doctorVersionCheck(&buf)
+	issues := doctorVersionCheck(&buf, false, nil)
 	if issues < 0 {
 		t.Errorf("unexpected negative issues: %d", issues)
 	}
@@ -285,9 +285,12 @@ func TestDoctorVersionCheck(t *testing.T) {
 // --- doctorHooks (doctor.go) ---
 
 func TestDoctorHooks(t *testing.T) {
-	var buf bytes.Buffer
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
 	// Should not panic even if no hooks configured
-	issues := doctorHooks(&buf)
+	issues := doctorHooks(emit)
 	if issues < 0 {
 		t.Errorf("unexpected negative issues: %d", issues)
 	}

@@ -86,6 +86,8 @@ var validConditionFields = map[string]bool{
 	"domain_matches":       true,
 	"response_matches":     true,
 	"response_not_matches": true,
+	"session_matches":      true,
+	"session_not_matches":  true,
 	"default":              true,
 }
 

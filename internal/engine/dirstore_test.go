@@ -5,6 +5,8 @@
 package engine
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -446,4 +448,152 @@ policies:
 		_, err := store.Load()
 		assert.Error(t, err)
 	})
+}
+
+func TestLayeredStore_ProjectPolicyMerged(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write base policy
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte(`version: "1"
+default_action: allow
+policies:
+  - name: base-deny-rm
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["rm -rf *"]}
+        message: "base blocked"
+`), 0644)
+
+	// Write project policy
+	proj := filepath.Join(dir, "project.yaml")
+	os.WriteFile(proj, []byte(`version: "1"
+policies:
+  - name: proj-deny-curl
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["curl ** | bash"]}
+        message: "project blocked"
+`), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	assert.Len(t, cfg.Policies, 2, "should have base + project policies")
+	assert.Equal(t, "allow", cfg.DefaultAction, "base default_action should win")
+}
+
+func TestLayeredStore_InvalidProjectPolicyNonFatal(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte("version: \"1\"\ndefault_action: allow\n"), 0644)
+
+	proj := filepath.Join(dir, "bad.yaml")
+	os.WriteFile(proj, []byte("not: valid: yaml: [[["), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+	cfg, err := store.Load()
+	require.NoError(t, err, "invalid project policy should be non-fatal")
+	assert.Equal(t, "allow", cfg.DefaultAction)
+}
+
+func TestLayeredStore_DuplicatePolicyNameSkipped(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte(`version: "1"
+policies:
+  - name: shared-rule
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["bad-cmd"]}
+`), 0644)
+	proj := filepath.Join(dir, "proj.yaml")
+	os.WriteFile(proj, []byte(`version: "1"
+policies:
+  - name: shared-rule
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when: {default: true}
+`), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	assert.Len(t, cfg.Policies, 1, "duplicate should be skipped")
+}
+
+func TestLayeredStore_NoExtraFile(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte("version: \"1\"\ndefault_action: deny\n"), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), "", logger)
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "deny", cfg.DefaultAction)
+}
+
+// TestLayeredStore_ResponseRegexCacheDeepCopy verifies that the deep-copy fix for
+// responseRegexCache in mergeProjectPolicy prevents aliasing between base and result.
+// Without the fix, modifying the result's cache would corrupt the base config's cache.
+func TestLayeredStore_ResponseRegexCacheDeepCopy(t *testing.T) {
+	dir := t.TempDir()
+
+	// Base has a response_matches rule — this populates responseRegexCache.
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte(`version: "1"
+default_action: allow
+policies:
+  - name: block-aws-keys
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when:
+          response_matches: ["AKIA[0-9A-Z]{16}"]
+        message: "AWS key in response"
+`), 0644)
+
+	// Project adds another response rule.
+	proj := filepath.Join(dir, "project.yaml")
+	os.WriteFile(proj, []byte(`version: "1"
+policies:
+  - name: block-gh-tokens
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when:
+          response_matches: ["ghp_[a-zA-Z0-9]{36}"]
+        message: "GitHub token in response"
+`), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+
+	// Load twice — both loads should be independent.
+	cfg1, err := store.Load()
+	require.NoError(t, err)
+	cfg2, err := store.Load()
+	require.NoError(t, err)
+
+	// Both configs should have 2 policies.
+	assert.Len(t, cfg1.Policies, 2)
+	assert.Len(t, cfg2.Policies, 2)
+
+	// The responseRegexCache on cfg1 and cfg2 must be distinct maps
+	// (deep-copy ensures no aliasing between separate Load() calls).
+	require.NotNil(t, cfg1.responseRegexCache)
+	require.NotNil(t, cfg2.responseRegexCache)
+
+	// Adding an entry to cfg1's cache must not affect cfg2's.
+	cfg1.responseRegexCache["__test_sentinel__"] = nil
+	_, poisoned := cfg2.responseRegexCache["__test_sentinel__"]
+	assert.False(t, poisoned, "cfg2 cache should not be aliased to cfg1 cache after deep-copy fix")
 }

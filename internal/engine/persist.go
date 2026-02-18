@@ -326,3 +326,68 @@ func marshalCleanYAML(cfg *Config) ([]byte, error) {
 	}
 	return yaml.Marshal(&clean)
 }
+
+// MatchesAutoAllowFile checks if a ToolCall matches any rule in the auto-allow
+// policy file. Returns true if the call should be allowed immediately without
+// going through the approval queue.
+//
+// This is checked at the serve level BEFORE creating a pending approval, so
+// that user "Always Allow" decisions override require_approval policies.
+func MatchesAutoAllowFile(policyPath string, call ToolCall) bool {
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		return false // no file = no auto-allow rules
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	for _, p := range cfg.Policies {
+		// Check tool match.
+		if len(p.Match.Tool) > 0 {
+			matched := false
+			for _, t := range p.Match.Tool {
+				if t == "*" || t == call.Tool {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+
+		// Check rules.
+		for _, r := range p.Rules {
+			if r.Action != "allow" {
+				continue
+			}
+			// Default: matches anything for this tool.
+			if r.When.Default {
+				return true
+			}
+			// Exec: command_matches.
+			if len(r.When.CommandMatches) > 0 {
+				cmd := call.Command()
+				for _, pattern := range r.When.CommandMatches {
+					if MatchGlob(pattern, cmd) {
+						return true
+					}
+				}
+			}
+			// Write/read: path_matches.
+			if len(r.When.PathMatches) > 0 {
+				path := call.Path()
+				for _, pattern := range r.When.PathMatches {
+					if MatchGlob(pattern, path) {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}

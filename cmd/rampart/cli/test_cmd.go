@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,6 +34,7 @@ func newTestCmd(opts *rootOptions) *cobra.Command {
 		noColor  bool
 		verbose  bool
 		run      string
+		jsonOut  bool
 	)
 
 	cmd := &cobra.Command{
@@ -47,20 +49,36 @@ If the argument is a YAML file, it is loaded as a test suite containing
 multiple test cases. A policy file with an inline "tests:" key can also
 be passed directly.
 
+When called with no arguments, looks for rampart-tests.yaml then rampart.yaml
+in the current directory.
+
 Examples:
   rampart test "rm -rf /"
   rampart test "git status"
   rampart test --tool read "/etc/shadow"
   rampart test tests.yaml
   rampart test --verbose tests.yaml
-  rampart test --run "blocks*" tests.yaml`,
-		Args: cobra.ExactArgs(1),
+  rampart test --run "blocks*" tests.yaml
+  rampart test --json tests.yaml
+  rampart test                    # auto-discovers rampart-tests.yaml or rampart.yaml`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			arg := args[0]
-			if isYAMLFile(arg) {
-				return runTestSuite(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, noColor, verbose, run)
+			// Zero-arg: discover test file from CWD.
+			var arg string
+			if len(args) == 0 {
+				discovered, err := discoverTestFile()
+				if err != nil {
+					return err
+				}
+				arg = discovered
+			} else {
+				arg = args[0]
 			}
-			return runTest(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, toolName, noColor)
+
+			if isYAMLFile(arg) {
+				return runTestSuite(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, noColor, verbose, run, jsonOut)
+			}
+			return runTest(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, toolName, noColor, jsonOut)
 		},
 	}
 
@@ -68,8 +86,20 @@ Examples:
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show match details for each test case")
 	cmd.Flags().StringVar(&run, "run", "", "Run only tests matching this glob pattern")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
 
 	return cmd
+}
+
+// discoverTestFile looks for a test/policy file in the current directory.
+func discoverTestFile() (string, error) {
+	candidates := []string{"rampart-tests.yaml", "rampart.yaml"}
+	for _, name := range candidates {
+		if _, err := os.Stat(name); err == nil {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("test: no test file found; pass a file path or create rampart-tests.yaml")
 }
 
 func isYAMLFile(arg string) bool {
@@ -77,7 +107,26 @@ func isYAMLFile(arg string) bool {
 	return strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml")
 }
 
-func runTestSuite(w, errW io.Writer, opts *rootOptions, arg string, noColor, verbose bool, runFilter string) error {
+// testJSONResult is the per-test result for --json output.
+type testJSONResult struct {
+	Name     string `json:"name"`
+	Passed   bool   `json:"passed"`
+	Expected string `json:"expected,omitempty"`
+	Got      string `json:"got,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// testJSONSummary is the top-level --json output structure.
+type testJSONSummary struct {
+	Passed int              `json:"passed"`
+	Failed int              `json:"failed"`
+	Errors int              `json:"errors"`
+	Total  int              `json:"total"`
+	Tests  []testJSONResult `json:"tests"`
+}
+
+func runTestSuite(w, errW io.Writer, opts *rootOptions, arg string, noColor, verbose bool, runFilter string, jsonOut bool) error {
 	suite, err := engine.LoadTestSuite(arg)
 	if err != nil {
 		suite, err = engine.LoadInlineTests(arg)
@@ -119,28 +168,53 @@ func runTestSuite(w, errW io.Writer, opts *rootOptions, arg string, noColor, ver
 	results := engine.RunTests(eng, suite)
 
 	passed, failed, errored := 0, 0, 0
+	var jsonTests []testJSONResult
+
 	for _, r := range results {
-		printSuiteResult(w, r, noColor, verbose)
-		switch {
-		case r.Error != nil:
+		if !jsonOut {
+			printSuiteResult(w, r, noColor, verbose)
+		}
+
+		jr := testJSONResult{Name: r.Case.Name, Passed: r.Passed}
+		if r.Error != nil {
 			errored++
-		case r.Passed:
+			jr.Error = r.Error.Error()
+		} else if r.Passed {
 			passed++
-		default:
+		} else {
 			failed++
+			jr.Expected = r.ExpectedAction.String()
+			jr.Got = r.Decision.Action.String()
+			jr.Message = r.Decision.Message
+		}
+		if jsonOut {
+			jsonTests = append(jsonTests, jr)
 		}
 	}
 
-	fmt.Fprintln(w)
-	if noColor {
-		fmt.Fprintf(w, "%d passed, %d failed", passed, failed)
+	if jsonOut {
+		summary := testJSONSummary{
+			Passed: passed,
+			Failed: failed,
+			Errors: errored,
+			Total:  len(results),
+			Tests:  jsonTests,
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(summary)
 	} else {
-		fmt.Fprintf(w, "\033[32m%d passed\033[0m, \033[31m%d failed\033[0m", passed, failed)
+		fmt.Fprintln(w)
+		if noColor {
+			fmt.Fprintf(w, "%d passed, %d failed", passed, failed)
+		} else {
+			fmt.Fprintf(w, "\033[32m%d passed\033[0m, \033[31m%d failed\033[0m", passed, failed)
+		}
+		if errored > 0 {
+			fmt.Fprintf(w, ", %d error(s)", errored)
+		}
+		fmt.Fprintf(w, " (%d total)\n", len(results))
 	}
-	if errored > 0 {
-		fmt.Fprintf(w, ", %d error(s)", errored)
-	}
-	fmt.Fprintf(w, " (%d total)\n", len(results))
 
 	if failed > 0 || errored > 0 {
 		return exitCodeError{code: 1}
@@ -194,7 +268,16 @@ func printSuiteResult(w io.Writer, r engine.TestResult, noColor, verbose bool) {
 	}
 }
 
-func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor bool) error {
+// bareCmdJSONResult is the JSON output for a single bare-command test (--json with no YAML file).
+type bareCmdJSONResult struct {
+	Command         string   `json:"command"`
+	Action          string   `json:"action"`
+	Message         string   `json:"message"`
+	MatchedPolicies []string `json:"matched_policies"`
+	PolicyScope     string   `json:"policy_scope"`
+}
+
+func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor, jsonOut bool) error {
 	policyPath, cleanup, err := resolveTestPolicyPath(opts.configPath)
 	if err != nil {
 		return err
@@ -223,6 +306,24 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 	}
 
 	decision := eng.Evaluate(call)
+
+	if jsonOut {
+		matched := decision.MatchedPolicies
+		if matched == nil {
+			matched = []string{}
+		}
+		result := bareCmdJSONResult{
+			Command:         arg,
+			Action:          decision.Action.String(),
+			Message:         decision.Message,
+			MatchedPolicies: matched,
+			PolicyScope:     "global",
+		}
+		enc := json.NewEncoder(w)
+		_ = enc.Encode(result)
+		return nil // exit 0 — dry-run, not enforcement
+	}
+
 	printTestResult(w, decision, noColor)
 
 	if decision.Action == engine.ActionDeny {

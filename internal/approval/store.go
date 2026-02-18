@@ -123,7 +123,7 @@ func WithExpireCallback(fn func(*Request)) Option {
 func NewStore(opts ...Option) *Store {
 	s := &Store{
 		pending: make(map[string]*Request),
-		timeout: 5 * time.Minute,
+		timeout: 1 * time.Hour,
 		stop:    make(chan struct{}),
 	}
 	for _, opt := range opts {

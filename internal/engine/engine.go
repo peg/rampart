@@ -301,10 +301,15 @@ func (e *Engine) collectMatching(cfg *Config, call ToolCall) []Policy {
 }
 
 // matchesScope checks whether a tool call falls within a policy's scope
-// (agent identity and tool name).
+// (agent identity, session identity, and tool name).
 func (e *Engine) matchesScope(m Match, call ToolCall) bool {
 	// Check agent identity.
 	if !MatchGlob(m.EffectiveAgent(), call.Agent) {
+		return false
+	}
+
+	// Check session identity.
+	if !MatchGlob(m.EffectiveSession(), call.Session) {
 		return false
 	}
 

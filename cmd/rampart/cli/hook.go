@@ -5,10 +5,12 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -72,6 +74,47 @@ type hookParseResult struct {
 	Response string // non-empty for PostToolUse events
 }
 
+// gitContext holds the git repository context for the current working directory.
+type gitContext struct {
+	session string // "reponame/branch" e.g. "myapp/main"
+	root    string // absolute git root path e.g. "/home/user/projects/myapp"
+}
+
+// deriveGitContext returns the git context for the current working directory.
+// The RAMPART_SESSION env var overrides the session name if set (root is still detected).
+// Returns an empty gitContext if not in a git repo or git is unavailable.
+func deriveGitContext() gitContext {
+	if s := strings.TrimSpace(os.Getenv("RAMPART_SESSION")); s != "" {
+		root, _ := gitRevParseTopLevel()
+		return gitContext{session: s, root: root}
+	}
+	root, err := gitRevParseTopLevel()
+	if err != nil || root == "" {
+		return gitContext{}
+	}
+	repo := filepath.Base(root)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel2()
+	branchOut, _ := exec.CommandContext(ctx2, "git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	branch := strings.TrimSpace(string(branchOut))
+	if branch == "" || branch == "HEAD" {
+		branch = "detached"
+	}
+	return gitContext{session: repo + "/" + branch, root: root}
+}
+
+// gitRevParseTopLevel returns the absolute path to the top-level git repository.
+// Returns ("", err) if not in a git repo or git is unavailable.
+func gitRevParseTopLevel() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil || len(out) == 0 {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func newHookCmd(opts *rootOptions) *cobra.Command {
 	var auditDir string
 	var mode string
@@ -109,13 +152,17 @@ Claude Code setup (add to ~/.claude/settings.json):
 
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Derive session identity once at the top (git repo/branch or RAMPART_SESSION env).
+			gitCtx := deriveGitContext()
+			hookSession := gitCtx.session
+
 			// Resolve serve-url and serve-token from env if not set via flags.
 			serveAutoDiscovered := false
 			if serveURL == "" {
 				serveURL = os.Getenv("RAMPART_SERVE_URL")
 			}
 			if serveURL == "" {
-				serveURL = "http://localhost:18275"
+				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
 				serveAutoDiscovered = true
 			}
 			if cmd.Flags().Changed("serve-token") {
@@ -183,6 +230,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				store = engine.NewFileStore(policyPath)
 			}
 
+			// Project policy: auto-load .rampart/policy.yaml from git root if present.
+			if gitCtx.root != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
+				candidate := filepath.Join(gitCtx.root, ".rampart", "policy.yaml")
+				if _, statErr := os.Stat(candidate); statErr == nil {
+					logger.Debug("hook: loading project policy", "path", candidate)
+					store = engine.NewLayeredStore(store, candidate, logger)
+				}
+			}
+
 			eng, err := engine.New(store, logger)
 			if err != nil {
 				return fmt.Errorf("hook: create engine: %w", err)
@@ -216,7 +272,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					ID:        audit.NewEventID(),
 					Timestamp: time.Now().UTC(),
 					Agent:     format,
-					Session:   "hook",
+					Session:   hookSession,
 					Tool:      "unknown",
 					Request:   map[string]any{"raw_error": err.Error()},
 					Decision: audit.EventDecision{
@@ -235,7 +291,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			call := engine.ToolCall{
 				ID:        audit.NewEventID(),
 				Agent:     parsed.Agent,
-				Session:   "hook",
+				Session:   hookSession,
 				Tool:      parsed.Tool,
 				Params:    parsed.Params,
 				Timestamp: time.Now().UTC(),

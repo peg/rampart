@@ -119,7 +119,7 @@ tests:
 
 	var out, errOut bytes.Buffer
 	opts := &rootOptions{configPath: policyFile}
-	err := runTestSuite(&out, &errOut, opts, policyFile, true, false, "")
+	err := runTestSuite(&out, &errOut, opts, policyFile, true, false, "", false)
 	if err != nil {
 		t.Logf("output: %s", out.String())
 		t.Logf("stderr: %s", errOut.String())
@@ -161,7 +161,7 @@ tests:
 
 	var out, errOut bytes.Buffer
 	opts := &rootOptions{configPath: policyFile}
-	err := runTestSuite(&out, &errOut, opts, policyFile, true, false, "blocks*")
+	err := runTestSuite(&out, &errOut, opts, policyFile, true, false, "blocks*", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +187,7 @@ tests:
 
 	var out, errOut bytes.Buffer
 	opts := &rootOptions{configPath: policyFile}
-	err := runTestSuite(&out, &errOut, opts, policyFile, true, false, "nonexistent*")
+	err := runTestSuite(&out, &errOut, opts, policyFile, true, false, "nonexistent*", false)
 	if err == nil {
 		t.Fatal("expected error for no matching tests")
 	}

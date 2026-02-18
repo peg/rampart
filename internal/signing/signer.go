@@ -40,9 +40,9 @@ func NewSigner(key []byte) *Signer {
 }
 
 // SignURL returns a signed resolve URL for the approval ID and expiry time.
-// TODO: Consider decoupling signature TTL from approval expiry. Currently the
-// signature expires when the approval expires, which is correct (can't approve
-// after expiry) but means long approval timeouts produce long-lived URLs.
+// The signature TTL is coupled to the approval expiry: the signature expires
+// when the approval expires, which is correct (you cannot approve after expiry),
+// but it means long approval timeouts produce long-lived signed URLs.
 func (s *Signer) SignURL(baseURL, approvalID string, expiresAt time.Time) string {
 	exp := expiresAt.Unix()
 	sig := s.signature(approvalID, exp)

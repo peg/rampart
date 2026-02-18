@@ -282,3 +282,55 @@ func TestAuditEvents_HookFilesIncluded(t *testing.T) {
 	total := int(body["total_in_file"].(float64))
 	assert.Equal(t, 2, total, "expected hook file events to be counted")
 }
+
+func TestAuditEvents_SessionFilter(t *testing.T) {
+	dir := t.TempDir()
+	today := time.Now().UTC().Format("2006-01-02")
+
+	events := []map[string]any{
+		{"id": "01", "agent": "claude", "session": "rampart/staging", "tool": "exec", "decision": map[string]any{"action": "allow"}},
+		{"id": "02", "agent": "claude", "session": "myrepo/main",    "tool": "exec", "decision": map[string]any{"action": "deny"}},
+		{"id": "03", "agent": "claude", "session": "rampart/staging", "tool": "read", "decision": map[string]any{"action": "allow"}},
+	}
+	writeAuditFile(t, dir, today, events)
+
+	ts, token := setupAuditTestServer(t, dir)
+
+	resp := doGet(t, ts, token, "/v1/audit/events?session=rampart/staging")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	evts := body["events"].([]any)
+	assert.Equal(t, 2, len(evts), "expected 2 events for session=rampart/staging")
+	for _, e := range evts {
+		m := e.(map[string]any)
+		assert.Equal(t, "rampart/staging", m["session"], "all returned events should match session filter")
+	}
+}
+
+func TestAuditStats_BySession(t *testing.T) {
+	dir := t.TempDir()
+	today := time.Now().UTC().Format("2006-01-02")
+
+	events := []map[string]any{
+		{"id": "01", "agent": "claude", "session": "rampart/staging", "tool": "exec", "decision": map[string]any{"action": "allow"}},
+		{"id": "02", "agent": "claude", "session": "myrepo/main",    "tool": "exec", "decision": map[string]any{"action": "deny"}},
+		{"id": "03", "agent": "claude", "session": "rampart/staging", "tool": "read", "decision": map[string]any{"action": "allow"}},
+	}
+	writeAuditFile(t, dir, today, events)
+
+	ts, token := setupAuditTestServer(t, dir)
+
+	resp := doGet(t, ts, token, "/v1/audit/stats")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	bySession, ok := body["by_session"].(map[string]any)
+	require.True(t, ok, "by_session should be present in stats response")
+	assert.Equal(t, float64(2), bySession["rampart/staging"], "rampart/staging should have 2 events")
+	assert.Equal(t, float64(1), bySession["myrepo/main"], "myrepo/main should have 1 event")
+}
