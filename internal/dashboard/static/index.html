@@ -64,12 +64,14 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .tbl th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;background:transparent;z-index:2}
 .tbl th .resize-handle:hover,.tbl th .resize-handle.active{background:var(--accent)}
 .tbl td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
-/* Command cell: wrap within cell bounds */
-.tbl td.cmd-col{white-space:normal;word-break:break-word;overflow:hidden}
+/* Command cell: td stays table-cell, overflow:hidden clips it cleanly */
+.tbl td.cmd-col{overflow:hidden;white-space:normal;padding-top:6px;padding-bottom:6px}
+/* Inner span does the 2-line clamp — webkit-box must NOT be on the td itself */
+.cmd-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;line-height:1.35;white-space:normal}
 .tbl tr.row:hover{background:var(--surface)}
 .tbl tr.row{cursor:pointer;transition:background .15s}
 .tbl tr.row.new-item{animation:fadeHighlight 2s ease-out}
-.tbl tr.row.dangerous .cmd-col::before{content:'!';display:inline-block;background:rgba(245,158,11,.2);color:var(--orange);font-size:10px;font-weight:700;padding:0 4px;border-radius:3px;margin-right:5px;font-family:'JetBrains Mono',monospace;vertical-align:middle}
+.tbl tr.row.dangerous .cmd-text::before{content:'!';display:inline-block;background:rgba(245,158,11,.2);color:var(--orange);font-size:10px;font-weight:700;padding:0 4px;border-radius:3px;margin-right:5px;font-family:'JetBrains Mono',monospace;vertical-align:middle}
 .tbl tr.flash-green{background:rgba(34,197,94,.15)!important}
 .tbl tr.flash-red{background:rgba(239,68,68,.15)!important}
 @keyframes fadeHighlight{from{background:rgba(255,99,146,.12)}to{background:transparent}}
@@ -594,7 +596,7 @@ function createPendingRow(a){
   tr.innerHTML=`<td class="chk-cell"><input type="checkbox" class="row-chk" data-id="${esc(a.id)}"></td>
     <td><span class="dot pending"></span></td>
     <td class="col-tool" style="font-size:11px;color:var(--text)">${esc(a.tool||'')}</td>
-    <td class="cmd-col mono">${esc(cmd)}</td>
+    <td class="cmd-col mono"><span class="cmd-text">${esc(cmd)}</span></td>
     <td style="text-align:right"><span class="timer" id="timer-${esc(a.id)}"></span></td>
     <td><div class="actions">
       <button class="act-btn approve" data-action="approve" data-id="${esc(a.id)}" title="Approve once">Allow</button>
@@ -837,7 +839,7 @@ function appendHistRow(ev,tbody){
   tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
     <td class="col-agent">${esc(ev.agent||'—')}</td>
     <td class="col-tool">${esc(ev.tool||'—')}</td>
-    <td class="cmd-col mono">${esc(cmd)}</td>
+    <td class="cmd-col mono"><span class="cmd-text">${esc(cmd)}</span></td>
     <td><span class="badge ${badgeCls}">${esc(actionLabel)}</span></td>`;
   const det=document.createElement('tr');det.className='detail-row';
   det.innerHTML=`<td colspan="5"><div class="detail-inner"><dl class="kv">
