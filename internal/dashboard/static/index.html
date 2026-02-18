@@ -230,8 +230,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       <thead><tr>
         <th class="chk-cell"><input type="checkbox" id="select-all" title="Select all"></th>
         <th style="width:20px"></th>
-        <th class="cmd-col">Command</th>
         <th class="col-tool" style="width:60px">Tool</th>
+        <th class="cmd-col">Command</th>
         <th class="col-agent" style="width:80px">Agent</th>
         <th style="width:50px;text-align:right">Time</th>
         <th style="width:140px;text-align:right">Actions</th>
@@ -280,6 +280,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
           <th class="col-agent" style="width:80px">Agent</th>
           <th class="col-tool" style="width:60px">Tool</th>
           <th class="cmd-col">Command</th>
+
           <th style="width:110px">Outcome</th>
         </tr></thead>
         <tbody id="hist-body"></tbody>
@@ -567,9 +568,9 @@ function createPendingRow(a){
   const cmd=extractCmd(a);const danger=isDangerous(cmd);
   const tr=document.createElement('tr');tr.className='row'+(danger?' dangerous':'');tr.id='row-'+a.id;tr.dataset.id=a.id;
   tr.innerHTML=`<td class="chk-cell"><input type="checkbox" class="row-chk" data-id="${esc(a.id)}"></td>
-    <td><span class="dot pending"></span>${danger?'<span style="color:var(--orange);margin-left:2px" title="Potentially dangerous">⚠</span>':''}</td>
-    <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
+    <td><span class="dot pending"></span></td>
     <td class="col-tool">${esc(a.tool||'')}</td>
+    <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
     <td class="col-agent">${esc(a.agent||'')}</td>
     <td style="text-align:right"><span class="timer" id="timer-${esc(a.id)}"></span></td>
     <td><div class="actions">
