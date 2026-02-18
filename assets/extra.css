@@ -1,0 +1,138 @@
+/* Hide permalink on hero title */
+.md-typeset .hero-title .headerlink { display: none; }
+
+/* Archivo for headings */
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --md-primary-fg-color: #FF6392;
+  --md-primary-fg-color--light: #ff7da6;
+  --md-primary-fg-color--dark: #cc4f75;
+  --md-accent-fg-color: #FF6392;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #0d1117;
+  --md-default-fg-color--light: #8b949e;
+}
+
+/* Headings */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  font-family: 'Archivo', var(--md-text-font-family);
+  font-weight: 700;
+  color: #e6edf3;
+}
+
+.md-typeset h1 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* Hero-style landing */
+.md-typeset .hero-title {
+  font-size: 2.5rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #FF6392 0%, #ff8fb1 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0.5rem;
+}
+
+.md-typeset .hero-subtitle {
+  font-size: 1.25rem;
+  color: #8b949e;
+  font-weight: 400;
+  margin-bottom: 2rem;
+}
+
+@media screen and (max-width: 600px) {
+  .md-typeset .hero-title {
+    font-size: 1.75rem;
+    letter-spacing: -0.02em;
+  }
+  .md-typeset .hero-subtitle {
+    font-size: 1rem;
+  }
+}
+
+/* Navigation */
+.md-nav__link {
+  font-size: 0.82rem;
+}
+
+/* Code blocks */
+.md-typeset code {
+  border-radius: 4px;
+}
+
+.md-typeset pre > code {
+  border-radius: 6px;
+}
+
+/* Admonitions */
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 8px;
+  border-width: 1px;
+}
+
+/* Tables */
+.md-typeset table:not([class]) {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: rgba(255, 99, 146, 0.1);
+  font-family: 'Archivo', var(--md-text-font-family);
+  font-weight: 600;
+}
+
+/* Footer */
+.md-footer {
+  border-top: 1px solid #21262d;
+}
+
+/* Tabs */
+.md-typeset .tabbed-labels > label {
+  font-family: 'Archivo', var(--md-text-font-family);
+  font-weight: 600;
+}
+
+/* Feature grid cards */
+.md-typeset .grid.cards > ul > li {
+  border-radius: 8px;
+  border: 1px solid #21262d;
+  transition: border-color 0.2s;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: #FF6392;
+}
+
+/* Accent color for links */
+.md-typeset a {
+  color: #FF6392;
+}
+
+.md-typeset a:hover {
+  color: #ff8fb1;
+}
+
+/* Header bar color */
+.md-header {
+  background-color: #0d1117;
+  border-bottom: 1px solid #21262d;
+}
+
+/* Search */
+.md-search__form {
+  border-radius: 8px;
+}
+
+/* Logo links to rampart.sh via homepage config */
