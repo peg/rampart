@@ -60,6 +60,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
 /* Table */
 .tbl{width:100%;border-collapse:collapse}
+/* Pending table: fixed layout so the actions column width is enforced */
+#pending-table{table-layout:fixed}
 .tbl th{text-align:left;padding:6px 8px;font-size:11px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1;overflow:hidden;position:relative}
 .tbl th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;background:transparent;z-index:2}
 .tbl th .resize-handle:hover,.tbl th .resize-handle.active{background:var(--accent)}
@@ -88,7 +90,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .dot.pending{background:var(--orange)}.dot.approved{background:var(--green)}.dot.denied{background:var(--red)}.dot.always{background:var(--accent)}
 
 /* Action buttons */
-.actions{display:flex;gap:4px;justify-content:flex-end;white-space:nowrap;flex-wrap:nowrap}
+.actions{display:flex;gap:4px;justify-content:flex-start;white-space:nowrap;flex-wrap:nowrap}
 .act-btn{border:none;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:12px;font-weight:600;line-height:1.4}
 .act-btn.approve{background:rgba(34,197,94,.15);color:var(--green)}.act-btn.approve:hover{background:rgba(34,197,94,.3)}
 .act-btn.always{background:rgba(255,99,146,.12);color:var(--accent)}.act-btn.always:hover{background:rgba(255,99,146,.25)}
@@ -241,7 +243,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
         <th class="col-tool" style="width:50px">Tool</th>
         <th class="cmd-col">Command</th>
         <th style="width:50px;text-align:right">Time</th>
-        <th style="width:150px;text-align:right">Actions</th>
+        <th style="width:160px">Actions</th>
       </tr></thead>
       <tbody id="pending-body"></tbody>
     </table>
