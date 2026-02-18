@@ -128,7 +128,7 @@ func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, tim
 			fmt.Fprintf(os.Stderr, "⚠ Approval cancelled\n")
 			return hookDeny
 		case <-deadline:
-			fmt.Fprintf(os.Stderr, "⏰ Approval timed out after %s\n", timeout)
+			fmt.Fprintf(os.Stderr, "⏰ Approval timed out — no response received within %s\n", timeout)
 			return hookDeny
 		case <-ticker.C:
 			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/approvals/%s", c.serveURL, id), nil)

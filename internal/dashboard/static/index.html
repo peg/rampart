@@ -606,6 +606,7 @@ body {
     const dangerous = isDangerous(item.command);
     const card = document.createElement('article');
     card.className = `card${inHistory ? ' history-card' : ''}${dangerous && !inHistory ? ' dangerous' : ''}`;
+    card.dataset.id = item.id;
 
     const badgesHTML = `
       <div class="card-badges">
@@ -760,9 +761,17 @@ body {
     resolve(b.dataset.id, b.dataset.action === 'approve' || persist, b, persist);
   });
 
-  // Tick countdown timers
+  // Tick countdown timers (in-place update, no DOM rebuild)
   setInterval(() => {
-    if (state.pending.length) renderPending();
+    for (const item of state.pending) {
+      const card = el.pending.querySelector(`[data-id="${item.id}"]`);
+      if (!card) continue;
+      const timerEl = card.querySelector('.timer');
+      if (!timerEl) continue;
+      const left = fmt.left(item.expires_at);
+      timerEl.textContent = left.text;
+      timerEl.classList.toggle('urgent', left.urgent);
+    }
   }, TICK_MS);
 
   renderPending();
