@@ -207,7 +207,13 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       <button class="disconnect-btn" id="disconnect-btn">disconnect</button>
     </div>
   </div>
-  <p class="auth-help" id="auth-help">Unauthorized? Run <code>rampart serve</code> — the token prints on startup.</p>
+  <div id="auth-help">
+    <div id="auth-prompt" style="display:none;border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin:10px 0;font-size:12px;line-height:1.7">
+      <b style="color:var(--text-bright);font-size:13px">Connect to Rampart</b><br>
+      Paste the token from <code>rampart serve</code> output above, then click <b>Connect</b>.<br>
+      <span style="color:#52525b">Don't have it? Run <code>rampart serve install</code> and check the output, or run <code>rampart serve</code> directly to see the token printed on startup.</span>
+    </div>
+  </div>
 
   <div id="error-banner"><span id="error-msg"></span><button onclick="reconnect()">Retry</button></div>
 
@@ -381,7 +387,7 @@ function initResizeHandles(){
   if(p){token=p;localStorage.setItem('rampart_token',p)}
   else token=localStorage.getItem('rampart_token')||'';
   document.getElementById('token-input').value=token;
-  if(token)connect();
+  if(token){connect()}else{const p=document.getElementById('auth-prompt');if(p)p.style.display='block'}
 
   document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
   document.getElementById('connect-btn').addEventListener('click',connect);
@@ -455,7 +461,6 @@ function setConnected(yes){
   }else{
     input.style.display='';btn.style.display='';
     connDiv.style.display='none';
-    if(help)help.style.display='';
   }
 }
 function setDot(cls){/* dot now inside auth-connected, update via setConnected */}
@@ -470,6 +475,7 @@ function timeAgo(iso){
 
 async function api(path,opts={}){
   const r=await fetch(path,{...opts,headers:{'Authorization':'Bearer '+token,...(opts.headers||{})}});
+  if(r.status===401||r.status===403){throw new Error('__auth__')}
   if(!r.ok)throw new Error(r.status+' '+r.statusText);
   return r;
 }
@@ -490,7 +496,9 @@ function switchTab(name){
 function connect(){
   token=document.getElementById('token-input').value.trim();if(!token)return;
   localStorage.setItem('rampart_token',token);
-  initialPoll=true;setDot('wait');
+  const p=document.getElementById('auth-prompt');if(p)p.style.display='none';
+  hideError();
+  initialPoll=true;
   poll();
 }
 function reconnect(){hideError();connect()}
@@ -507,9 +515,14 @@ async function poll(){
     const delay=pendingMap.size>0?2000:5000;
     if(!document.hidden)pollTimer=setTimeout(poll,delay);
   }catch(e){
+    if(e.message==='__auth__'){
+      connected=false;setConnected(false);
+      showError('Invalid token — paste the token from rampart serve output and click Connect.');
+      return; // don't retry on auth failure
+    }
     if(initialPoll){initialPoll=false;pollTimer=setTimeout(poll,2000);return}
     connected=false;setConnected(false);
-    showError('Connection failed: '+e.message);
+    showError('Cannot reach Rampart — is rampart serve running on this machine?');
     pollTimer=setTimeout(poll,10000);
   }
 }

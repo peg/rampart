@@ -70,7 +70,7 @@ func TestHandlerIncludesAuthUXForApprovalsAPI(t *testing.T) {
 	if !strings.Contains(body, "API token") {
 		t.Fatalf("response does not include token input prompt")
 	}
-	if !strings.Contains(body, "Unauthorized") {
-		t.Fatalf("response does not include unauthorized guidance message")
+	if !strings.Contains(body, "rampart serve") {
+		t.Fatalf("response does not include serve guidance message")
 	}
 }
