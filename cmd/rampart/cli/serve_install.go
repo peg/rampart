@@ -140,6 +140,8 @@ func tokenFilePath() (string, error) {
 }
 
 // persistToken writes the token to ~/.rampart/token (0600).
+// If the file already exists, permissions are explicitly set to 0o600 regardless
+// of what they were before — os.WriteFile only applies the mode on creation.
 func persistToken(token string) error {
 	p, err := tokenFilePath()
 	if err != nil {
@@ -148,7 +150,10 @@ func persistToken(token string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(token), 0o600)
+	if err := os.WriteFile(p, []byte(token), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(p, 0o600)
 }
 
 // readPersistedToken reads the token from ~/.rampart/token if it exists.

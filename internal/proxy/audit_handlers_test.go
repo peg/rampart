@@ -229,3 +229,56 @@ func TestAuditNoDir(t *testing.T) {
 		assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, "path: %s", path)
 	}
 }
+
+func writeHookAuditFile(t *testing.T, dir, date string, events []map[string]any) {
+	t.Helper()
+	path := filepath.Join(dir, "audit-hook-"+date+".jsonl")
+	var lines []string
+	for _, evt := range events {
+		b, err := json.Marshal(evt)
+		require.NoError(t, err)
+		lines = append(lines, string(b))
+	}
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644))
+}
+
+func TestAuditDates_WithHookFiles(t *testing.T) {
+	dir := t.TempDir()
+	// Serve writes one date, hook writes another — both should appear.
+	writeAuditFile(t, dir, "2026-02-17", []map[string]any{{"id": "serve-01"}})
+	writeHookAuditFile(t, dir, "2026-02-18", []map[string]any{{"id": "hook-01"}})
+
+	ts, token := setupAuditTestServer(t, dir)
+
+	resp := doGet(t, ts, token, "/v1/audit/dates")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	dates := body["dates"].([]any)
+	assert.Equal(t, 2, len(dates), "expected both serve and hook dates")
+	assert.Equal(t, "2026-02-18", dates[0])
+	assert.Equal(t, "2026-02-17", dates[1])
+}
+
+func TestAuditEvents_HookFilesIncluded(t *testing.T) {
+	dir := t.TempDir()
+	// Serve file is empty; hook file has events — dashboard should see them.
+	writeAuditFile(t, dir, "2026-02-18", []map[string]any{})
+	writeHookAuditFile(t, dir, "2026-02-18", []map[string]any{
+		{"id": "hook-01", "decision": map[string]any{"action": "allow"}},
+		{"id": "hook-02", "decision": map[string]any{"action": "deny"}},
+	})
+
+	ts, token := setupAuditTestServer(t, dir)
+
+	resp := doGet(t, ts, token, "/v1/audit/events?date=2026-02-18")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	total := int(body["total_in_file"].(float64))
+	assert.Equal(t, 2, total, "expected hook file events to be counted")
+}

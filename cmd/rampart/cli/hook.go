@@ -128,7 +128,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// This means settings.json never needs to contain credentials —
 			// the hook discovers both the URL and the token from standard locations.
 			if serveToken == "" {
-				if tok, err := readPersistedToken(); err == nil {
+				if tok, err := readPersistedToken(); err == nil && tok != "" {
 					serveToken = tok
 				}
 			}
