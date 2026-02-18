@@ -78,6 +78,7 @@ func newHookCmd(opts *rootOptions) *cobra.Command {
 	var format string
 	var serveURL string
 	var serveToken string
+	var configDir string
 
 	cmd := &cobra.Command{
 		Use:   "hook",
@@ -152,7 +153,23 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			defer cleanupPolicy()
 
-			store := engine.NewFileStore(policyPath)
+			// Build policy store: file, dir, or both.
+			var store engine.PolicyStore
+			effectiveDir := configDir
+			if effectiveDir == "" {
+				if home, hErr := os.UserHomeDir(); hErr == nil {
+					defaultDir := filepath.Join(home, ".rampart", "policies")
+					if _, sErr := os.Stat(defaultDir); sErr == nil {
+						effectiveDir = defaultDir
+					}
+				}
+			}
+			if effectiveDir != "" {
+				store = engine.NewMultiStore(policyPath, effectiveDir, logger)
+			} else {
+				store = engine.NewFileStore(policyPath)
+			}
+
 			eng, err := engine.New(store, logger)
 			if err != nil {
 				return fmt.Errorf("hook: create engine: %w", err)
@@ -293,6 +310,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of running rampart serve instance (env: RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Auth token for rampart serve (env: RAMPART_TOKEN)")
 	cmd.Flags().MarkDeprecated("serve-token", "use RAMPART_TOKEN env var instead (--serve-token is visible in process list)")
+	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 
 	return cmd
 }

@@ -55,6 +55,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var resolveBaseURL string
 	var signingKeyPath string
 	var metrics bool
+	var configDir string
+	var reloadInterval time.Duration
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -80,11 +82,33 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			}
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-			store := engine.NewFileStore(opts.configPath)
+			// Build policy store: file, dir, or both.
+			var store engine.PolicyStore
+			effectiveDir := configDir
+			if effectiveDir == "" {
+				// Default: include ~/.rampart/policies/ so auto-allowed rules are picked up.
+				if home, hErr := os.UserHomeDir(); hErr == nil {
+					defaultDir := filepath.Join(home, ".rampart", "policies")
+					if _, sErr := os.Stat(defaultDir); sErr == nil {
+						effectiveDir = defaultDir
+					}
+				}
+			}
+
+			if effectiveDir != "" {
+				store = engine.NewMultiStore(opts.configPath, effectiveDir, logger)
+			} else {
+				store = engine.NewFileStore(opts.configPath)
+			}
+
 			eng, err := engine.New(store, logger)
 			if err != nil {
 				return fmt.Errorf("serve: create engine: %w", err)
 			}
+
+			// Start periodic policy reload for picking up auto-allowed rules.
+			eng.StartPeriodicReload(reloadInterval)
+			defer eng.Stop()
 
 			jsonlSink, err := audit.NewJSONLSink(auditDir, audit.WithLogger(logger))
 			if err != nil {
@@ -274,6 +298,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")
 	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
 	cmd.Flags().BoolVar(&metrics, "metrics", false, "Enable Prometheus metrics endpoint on /metrics")
+	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
+	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 30*time.Second, "How often to re-read policy files (0 to disable)")
 
 	return cmd
 }
