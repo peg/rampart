@@ -49,7 +49,9 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
 /* Table */
 .tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;padding:6px 8px;font-size:11px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1}
+.tbl th{text-align:left;padding:6px 8px;font-size:11px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1;overflow:hidden;position:relative}
+.tbl th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;background:transparent;z-index:2}
+.tbl th .resize-handle:hover,.tbl th .resize-handle.active{background:var(--accent)}
 .tbl td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
 .tbl tr.row:hover{background:var(--surface)}
 .tbl tr.row{cursor:pointer;transition:background .15s}
@@ -284,6 +286,26 @@ let rulesCache=[];
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){clearTimeout(pollTimer)}
     else if(connected)poll();
+  });
+
+  // Resizable columns
+  document.querySelectorAll('.tbl th').forEach(th=>{
+    if(th.querySelector('.resize-handle'))return;
+    const handle=document.createElement('div');
+    handle.className='resize-handle';
+    th.appendChild(handle);
+    let startX,startW;
+    handle.addEventListener('mousedown',e=>{
+      e.preventDefault();e.stopPropagation();
+      startX=e.pageX;startW=th.offsetWidth;
+      handle.classList.add('active');
+      const table=th.closest('table');
+      table.style.tableLayout='fixed';
+      function onMove(e){th.style.width=(startW+(e.pageX-startX))+'px';th.style.minWidth=th.style.width}
+      function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp)}
+      document.addEventListener('mousemove',onMove);
+      document.addEventListener('mouseup',onUp);
+    });
   });
 })();
 
