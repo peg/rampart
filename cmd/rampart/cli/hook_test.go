@@ -12,34 +12,31 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestDeriveHookSession_EnvVar verifies RAMPART_SESSION overrides git detection.
-func TestDeriveHookSession_EnvVar(t *testing.T) {
-	t.Setenv("RAMPART_SESSION", "myproject/feature-x")
-	got := deriveHookSession()
-	if got != "myproject/feature-x" {
-		t.Errorf("deriveHookSession() = %q, want %q", got, "myproject/feature-x")
+// TestDeriveGitContext_EnvVar verifies RAMPART_SESSION overrides git session detection.
+func TestDeriveGitContext_EnvVar(t *testing.T) {
+	t.Setenv("RAMPART_SESSION", "my-pipeline")
+	ctx := deriveGitContext()
+	if ctx.session != "my-pipeline" {
+		t.Errorf("expected 'my-pipeline', got %q", ctx.session)
 	}
 }
 
-// TestDeriveHookSession_NoGit verifies that a non-git directory returns "".
-func TestDeriveHookSession_NoGit(t *testing.T) {
-	// Make sure RAMPART_SESSION is not set.
+// TestDeriveGitContext_NoGit verifies that a non-git directory returns empty context.
+func TestDeriveGitContext_NoGit(t *testing.T) {
 	t.Setenv("RAMPART_SESSION", "")
 
 	// Change to a temp dir that has no git repo.
 	tmp := t.TempDir()
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(orig) })
+	orig, _ := os.Getwd()
+	os.Chdir(tmp)
+	defer os.Chdir(orig)
 
-	got := deriveHookSession()
-	if got != "" {
-		t.Errorf("deriveHookSession() = %q, want %q (empty — no git repo)", got, "")
+	ctx := deriveGitContext()
+	if ctx.session != "" {
+		t.Errorf("expected empty session outside git repo, got %q", ctx.session)
+	}
+	if ctx.root != "" {
+		t.Errorf("expected empty root outside git repo, got %q", ctx.root)
 	}
 }
 

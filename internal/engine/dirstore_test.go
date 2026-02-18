@@ -5,6 +5,8 @@
 package engine
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -446,4 +448,95 @@ policies:
 		_, err := store.Load()
 		assert.Error(t, err)
 	})
+}
+
+func TestLayeredStore_ProjectPolicyMerged(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write base policy
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte(`version: "1"
+default_action: allow
+policies:
+  - name: base-deny-rm
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["rm -rf *"]}
+        message: "base blocked"
+`), 0644)
+
+	// Write project policy
+	proj := filepath.Join(dir, "project.yaml")
+	os.WriteFile(proj, []byte(`version: "1"
+policies:
+  - name: proj-deny-curl
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["curl ** | bash"]}
+        message: "project blocked"
+`), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	assert.Len(t, cfg.Policies, 2, "should have base + project policies")
+	assert.Equal(t, "allow", cfg.DefaultAction, "base default_action should win")
+}
+
+func TestLayeredStore_InvalidProjectPolicyNonFatal(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte("version: \"1\"\ndefault_action: allow\n"), 0644)
+
+	proj := filepath.Join(dir, "bad.yaml")
+	os.WriteFile(proj, []byte("not: valid: yaml: [[["), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+	cfg, err := store.Load()
+	require.NoError(t, err, "invalid project policy should be non-fatal")
+	assert.Equal(t, "allow", cfg.DefaultAction)
+}
+
+func TestLayeredStore_DuplicatePolicyNameSkipped(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte(`version: "1"
+policies:
+  - name: shared-rule
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["bad-cmd"]}
+`), 0644)
+	proj := filepath.Join(dir, "proj.yaml")
+	os.WriteFile(proj, []byte(`version: "1"
+policies:
+  - name: shared-rule
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when: {default: true}
+`), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	assert.Len(t, cfg.Policies, 1, "duplicate should be skipped")
+}
+
+func TestLayeredStore_NoExtraFile(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte("version: \"1\"\ndefault_action: deny\n"), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), "", logger)
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "deny", cfg.DefaultAction)
 }

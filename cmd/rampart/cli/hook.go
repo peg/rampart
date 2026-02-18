@@ -74,26 +74,45 @@ type hookParseResult struct {
 	Response string // non-empty for PostToolUse events
 }
 
-// deriveHookSession returns a "repo/branch" string for the current working
-// directory's git repository. The RAMPART_SESSION env var overrides if set.
-// Returns "" if not in a git repo or git is unavailable.
-func deriveHookSession() string {
+// gitContext holds the git repository context for the current working directory.
+type gitContext struct {
+	session string // "reponame/branch" e.g. "myapp/main"
+	root    string // absolute git root path e.g. "/home/user/projects/myapp"
+}
+
+// deriveGitContext returns the git context for the current working directory.
+// The RAMPART_SESSION env var overrides the session name if set (root is still detected).
+// Returns an empty gitContext if not in a git repo or git is unavailable.
+func deriveGitContext() gitContext {
 	if s := strings.TrimSpace(os.Getenv("RAMPART_SESSION")); s != "" {
-		return s
+		root, _ := gitRevParseTopLevel()
+		return gitContext{session: s, root: root}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	repoOut, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
-	if err != nil || len(repoOut) == 0 {
-		return ""
+	root, err := gitRevParseTopLevel()
+	if err != nil || root == "" {
+		return gitContext{}
 	}
-	repo := filepath.Base(strings.TrimSpace(string(repoOut)))
-	branchOut, _ := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	repo := filepath.Base(root)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel2()
+	branchOut, _ := exec.CommandContext(ctx2, "git", "rev-parse", "--abbrev-ref", "HEAD").Output()
 	branch := strings.TrimSpace(string(branchOut))
 	if branch == "" || branch == "HEAD" {
 		branch = "detached"
 	}
-	return repo + "/" + branch
+	return gitContext{session: repo + "/" + branch, root: root}
+}
+
+// gitRevParseTopLevel returns the absolute path to the top-level git repository.
+// Returns ("", err) if not in a git repo or git is unavailable.
+func gitRevParseTopLevel() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil || len(out) == 0 {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func newHookCmd(opts *rootOptions) *cobra.Command {
@@ -134,7 +153,8 @@ Claude Code setup (add to ~/.claude/settings.json):
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Derive session identity once at the top (git repo/branch or RAMPART_SESSION env).
-			hookSession := deriveHookSession()
+			gitCtx := deriveGitContext()
+			hookSession := gitCtx.session
 
 			// Resolve serve-url and serve-token from env if not set via flags.
 			serveAutoDiscovered := false
@@ -208,6 +228,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				store = engine.NewMultiStore(policyPath, effectiveDir, logger)
 			} else {
 				store = engine.NewFileStore(policyPath)
+			}
+
+			// Project policy: auto-load .rampart/policy.yaml from git root if present.
+			if gitCtx.root != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
+				candidate := filepath.Join(gitCtx.root, ".rampart", "policy.yaml")
+				if _, statErr := os.Stat(candidate); statErr == nil {
+					logger.Debug("hook: loading project policy", "path", candidate)
+					store = engine.NewLayeredStore(store, candidate, logger)
+				}
 			}
 
 			eng, err := engine.New(store, logger)

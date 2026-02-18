@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] — 2026-02-18
 
 ### Added
+- **Project-local policy files**: drop `.rampart/policy.yaml` in any git repo and Rampart automatically loads and enforces those rules when Claude Code runs in that directory. No configuration required — rules are additive on top of the global policy. Committed to git, so all team members get the same rules automatically. Set `RAMPART_NO_PROJECT_POLICY=1` to disable.
 - **Session identity**: Every hook audit event now carries a `session` field auto-derived from `git rev-parse` (format: `repo/branch`, e.g. `rampart/staging`). Zero config — falls back to `""` outside git repos. `RAMPART_SESSION` env var overrides for orchestrators and CI.
 - **Policy: session conditions**: New `session_matches` / `session_not_matches` condition fields in `when:` blocks, plus `session:` at the `match:` level to scope an entire policy to specific sessions (glob patterns, same semantics as `agent:`).
 - **Audit API: session filter**: `GET /v1/audit/events?session=<value>` filters events by session. `GET /v1/audit/stats` now includes `by_session` breakdown.

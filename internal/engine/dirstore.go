@@ -352,3 +352,82 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 	logger.Info("engine: loaded policy files", "files", loadedFiles, "policies", len(merged.Policies))
 	return merged, nil
 }
+
+// LayeredStore wraps a base PolicyStore and layers an optional extra policy file on top.
+// The base store's DefaultAction and Notify take precedence. Deny wins across both layers.
+// If the extra file fails to load, the base store is used alone (non-fatal degradation).
+type LayeredStore struct {
+	base   PolicyStore
+	extra  string // path to extra policy file; empty = disabled
+	logger *slog.Logger
+}
+
+// NewLayeredStore creates a LayeredStore. If extraPath is empty, it behaves identically to base.
+func NewLayeredStore(base PolicyStore, extraPath string, logger *slog.Logger) *LayeredStore {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &LayeredStore{base: base, extra: extraPath, logger: logger}
+}
+
+// Load loads the base config and merges the extra project policy on top.
+// If the extra file is missing or invalid, the base config is returned unchanged (non-fatal).
+func (s *LayeredStore) Load() (*Config, error) {
+	cfg, err := s.base.Load()
+	if err != nil {
+		return nil, err
+	}
+	if s.extra == "" {
+		return cfg, nil
+	}
+	data, err := os.ReadFile(s.extra)
+	if err != nil {
+		s.logger.Warn("project policy unreadable, using global policy only", "path", s.extra, "error", err)
+		return cfg, nil
+	}
+	var extraCfg Config
+	if err := yaml.Unmarshal(data, &extraCfg); err != nil {
+		s.logger.Warn("project policy parse error, using global policy only", "path", s.extra, "error", err)
+		return cfg, nil
+	}
+	return mergeProjectPolicy(cfg, &extraCfg, s.extra, s.logger), nil
+}
+
+// Path returns a combined description of both sources.
+func (s *LayeredStore) Path() string {
+	if s.extra == "" {
+		return s.base.Path()
+	}
+	return s.base.Path() + " + " + s.extra
+}
+
+// mergeProjectPolicy merges project policies into the base config.
+// Base wins for DefaultAction and Notify. Duplicate policy names are skipped with a warning.
+func mergeProjectPolicy(base, project *Config, projectPath string, logger *slog.Logger) *Config {
+	result := *base
+	result.Policies = make([]Policy, len(base.Policies))
+	copy(result.Policies, base.Policies)
+
+	seen := make(map[string]bool, len(base.Policies))
+	for _, p := range base.Policies {
+		seen[p.Name] = true
+	}
+	for _, p := range project.Policies {
+		if seen[p.Name] {
+			logger.Warn("project policy: duplicate policy name skipped", "name", p.Name, "project", projectPath)
+			continue
+		}
+		seen[p.Name] = true
+		result.Policies = append(result.Policies, p)
+	}
+	// Merge response regex cache if present.
+	if len(project.responseRegexCache) > 0 {
+		if result.responseRegexCache == nil {
+			result.responseRegexCache = make(map[string]*regexp.Regexp)
+		}
+		for k, v := range project.responseRegexCache {
+			result.responseRegexCache[k] = v
+		}
+	}
+	return &result
+}
