@@ -574,3 +574,81 @@ func buildApprovalEngine(t *testing.T) *engine.Engine {
 	require.NoError(t, err)
 	return eng
 }
+
+func TestCreateApproval(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"tool":"exec","command":"kubectl delete pod foo","agent":"claude-code","path":"/tmp","message":"needs approval"}`
+	req, err := http.NewRequest("POST", ts.URL+"/v1/approvals", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+
+	if result["id"] == nil || result["id"].(string) == "" {
+		t.Fatal("expected non-empty approval id")
+	}
+	if result["status"] != "pending" {
+		t.Fatalf("expected pending status, got %v", result["status"])
+	}
+
+	// Verify it shows up in GET /v1/approvals/{id}
+	approvalID := result["id"].(string)
+	getReq, _ := http.NewRequest("GET", ts.URL+"/v1/approvals/"+approvalID, nil)
+	getReq.Header.Set("Authorization", "Bearer "+token)
+	getResp, err := http.DefaultClient.Do(getReq)
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET approval: expected 200, got %d", getResp.StatusCode)
+	}
+
+	var getResult map[string]any
+	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&getResult))
+	if getResult["tool"] != "exec" {
+		t.Fatalf("expected tool=exec, got %v", getResult["tool"])
+	}
+	if getResult["agent"] != "claude-code" {
+		t.Fatalf("expected agent=claude-code, got %v", getResult["agent"])
+	}
+}
+
+func TestCreateApproval_NoAuth(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, _, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"tool":"exec","command":"echo hi","agent":"test","message":"test"}`
+	req, err := http.NewRequest("POST", ts.URL+"/v1/approvals", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+}
