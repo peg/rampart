@@ -237,6 +237,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
 	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
+	mux.HandleFunc("GET /v1/rules/auto-allowed", s.handleGetAutoAllowed)
+	mux.HandleFunc("DELETE /v1/rules/auto-allowed/{index}", s.handleDeleteAutoAllowed)
 	mux.HandleFunc("GET /v1/audit/events", s.handleAuditEvents)
 	mux.HandleFunc("GET /v1/audit/dates", s.handleAuditDates)
 	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)

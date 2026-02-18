@@ -109,6 +109,16 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 /* Unauthorized help text (hidden, for test) */
 .auth-help{font-size:11px;color:#52525b;margin-top:4px}
 
+/* Revoke button */
+.act-btn.revoke{background:rgba(239,68,68,.12);color:var(--red);font-size:11px;padding:2px 8px}
+.act-btn.revoke:hover{background:rgba(239,68,68,.25)}
+
+/* Rule link in history */
+.rule-link{font-size:10px;cursor:pointer;margin-left:4px}
+.rule-link.active{color:var(--accent)}
+.rule-link.active:hover{text-decoration:underline}
+.rule-link.revoked{color:#52525b;cursor:default}
+
 /* Responsive */
 @media(max-width:640px){
   .col-tool,.col-agent{display:none}
@@ -145,12 +155,14 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <button class="tab-btn active" data-tab="pending">Pending</button>
     <button class="tab-btn" data-tab="history">History</button>
     <button class="tab-btn" data-tab="audit">Audit Log</button>
+    <button class="tab-btn" data-tab="rules">Rules</button>
   </div>
 
   <!-- Pending Panel -->
   <div class="tab-panel active" id="panel-pending">
     <table class="tbl" id="pending-table">
       <thead><tr>
+        <th style="width:40px">#</th>
         <th style="width:20px"></th>
         <th class="cmd-col">Command</th>
         <th class="col-tool" style="width:60px">Tool</th>
@@ -167,6 +179,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
   <div class="tab-panel" id="panel-history">
     <table class="tbl" id="history-table">
       <thead><tr>
+        <th style="width:40px">#</th>
         <th style="width:20px"></th>
         <th class="cmd-col">Command</th>
         <th class="col-tool" style="width:60px">Tool</th>
@@ -203,6 +216,20 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <div class="empty" id="audit-empty" style="display:none">No audit events for this date</div>
     <div class="load-more" id="audit-more" style="display:none"><button onclick="loadAudit(false)">Load more</button></div>
   </div>
+  <!-- Rules Panel -->
+  <div class="tab-panel" id="panel-rules">
+    <table class="tbl" id="rules-table">
+      <thead><tr>
+        <th style="width:40px">#</th>
+        <th class="cmd-col">Command Pattern</th>
+        <th class="col-tool" style="width:60px">Tool</th>
+        <th style="width:140px">Created</th>
+        <th style="width:80px;text-align:right">Actions</th>
+      </tr></thead>
+      <tbody id="rules-body"></tbody>
+    </table>
+    <div class="empty" id="rules-empty">No auto-allowed rules. Use 'Always Allow' on a pending approval to create one.</div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -215,6 +242,14 @@ function isDangerous(cmd){return DANGEROUS.some(r=>r.test(cmd||''))}
 let token='',pollTimer=null,connected=false,expandedId=null;
 const pendingMap=new Map(),history=[];
 let auditOffset=0,auditHasMore=false;
+
+// Sequential numbering
+let seqCounter=0;
+const seqMap=new Map(); // approval ID → seq number
+function getSeq(id){if(!seqMap.has(id))seqMap.set(id,++seqCounter);return seqMap.get(id)}
+
+// Rules state
+let rulesCache=[];
 
 // Init
 (function(){
@@ -234,6 +269,7 @@ let auditOffset=0,auditHasMore=false;
     if(btn.dataset.tab==='audit'&&!document.getElementById('audit-date').value){
       document.getElementById('audit-date').value=todayStr();loadAudit(true);loadAuditStats();
     }
+    if(btn.dataset.tab==='rules')loadRules();
   });
 
   // Connect
@@ -332,19 +368,21 @@ function extractCmd(a){
 function createPendingRow(a){
   const cmd=extractCmd(a);const danger=isDangerous(cmd);
   const tr=document.createElement('tr');tr.className='row'+(danger?' dangerous':'');tr.id='row-'+a.id;tr.dataset.id=a.id;
-  tr.innerHTML=`<td><span class="dot pending"></span>${danger?'<span style="color:var(--orange);margin-left:2px" title="Potentially dangerous">⚠</span>':''}</td>
+  const seq=getSeq(a.id);
+  tr.innerHTML=`<td class="mono" style="color:#52525b;font-size:11px">#${seq}</td>
+    <td><span class="dot pending"></span>${danger?'<span style="color:var(--orange);margin-left:2px" title="Potentially dangerous">⚠</span>':''}</td>
     <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
     <td class="col-tool">${esc(a.tool||'')}</td>
     <td class="col-agent">${esc(a.agent||'')}</td>
     <td style="text-align:right"><span class="timer" id="timer-${a.id}"></span></td>
     <td><div class="actions">
       <button class="act-btn approve" data-action="approve" data-id="${a.id}" title="Approve">✓</button>
-      <button class="act-btn always" data-action="always" data-id="${a.id}" title="Always allow">★</button>
+      <button class="act-btn always" data-action="always" data-id="${a.id}" title="Always allow this command pattern (creates permanent rule)">★ Always</button>
       <button class="act-btn deny" data-action="deny" data-id="${a.id}" title="Deny">✗</button>
     </div></td>`;
 
   const det=document.createElement('tr');det.className='detail-row';det.id='det-'+a.id;
-  det.innerHTML=`<td colspan="6"><div class="detail-inner"><dl class="kv">
+  det.innerHTML=`<td colspan="7"><div class="detail-inner"><dl class="kv">
     <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(a.tool||'—')}</dd>
@@ -358,7 +396,15 @@ function createPendingRow(a){
 
 function handlePendingClick(e){
   const btn=e.target.closest('.act-btn');
-  if(btn){e.stopPropagation();resolveApproval(btn.dataset.id,btn.dataset.action);return}
+  if(btn){
+    e.stopPropagation();
+    if(btn.dataset.action==='always'){
+      const cmd=extractCmd(pendingMap.get(btn.dataset.id)||{});
+      if(!confirm('Always Allow will create a permanent rule that auto-approves similar commands.\n\nCommand: '+cmd+'\n\nThis can be revoked later in the Rules tab. Continue?'))return;
+    }
+    resolveApproval(btn.dataset.id,btn.dataset.action);
+    return;
+  }
   const row=e.target.closest('tr.row');
   if(!row)return;
   const id=row.dataset.id;
@@ -416,14 +462,23 @@ function renderHistoryRow(a,prepend){
   const tr=document.createElement('tr');tr.className='row';tr.dataset.id=a.id;
   const res=a.resolution||'approved';
   const dotCls=res==='denied'?'denied':(res==='always-allowed'?'always':'approved');
-  tr.innerHTML=`<td><span class="dot ${dotCls}"></span></td>
+  const seq=getSeq(a.id);
+  let ruleBadge='';
+  if(res==='always-allowed'){
+    const ruleActive=rulesCache.some(r=>r.tool===(a.tool||'')&&(r.command_pattern===cmd||r.command_pattern===engine_generalize(cmd)));
+    ruleBadge=ruleActive?
+      ' <span class="rule-link active" onclick="event.stopPropagation();switchTab(\'rules\')">Rule active</span>':
+      ' <span class="rule-link revoked">Rule revoked</span>';
+  }
+  tr.innerHTML=`<td class="mono" style="color:#52525b;font-size:11px">#${seq}</td>
+    <td><span class="dot ${dotCls}"></span></td>
     <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
     <td class="col-tool">${esc(a.tool||'')}</td>
     <td class="col-agent">${esc(a.agent||'')}</td>
-    <td><span class="badge ${res}">${res}</span></td>
+    <td><span class="badge ${res}">${res}</span>${ruleBadge}</td>
     <td style="text-align:right;font-size:11px">${a.resolved_at?timeAgo(a.resolved_at):''}</td>`;
   const det=document.createElement('tr');det.className='detail-row';
-  det.innerHTML=`<td colspan="6"><div class="detail-inner"><dl class="kv">
+  det.innerHTML=`<td colspan="7"><div class="detail-inner"><dl class="kv">
     <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Resolved by</dt><dd>${esc(a.resolved_by||'—')}</dd>
@@ -502,6 +557,58 @@ async function exportAudit(){
 }
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+// Simplified client-side generalize (for rule matching heuristic)
+function engine_generalize(cmd){
+  if(!cmd)return'*';const t=cmd.trim().split(/\s+/);
+  if(t.length<=1)return t[0]||'*';
+  if(t.length<=2)return t.join(' ')+' *';
+  return t[0]+' '+t[1]+' *';
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  const btn=document.querySelector(`.tab-btn[data-tab="${name}"]`);
+  if(btn)btn.classList.add('active');
+  document.getElementById('panel-'+name)?.classList.add('active');
+  if(name==='rules')loadRules();
+}
+
+async function loadRules(){
+  try{
+    const r=await api('/v1/rules/auto-allowed');
+    const data=await r.json();
+    rulesCache=data.rules||[];
+    renderRules(rulesCache);
+  }catch(e){toast('Rules error: '+e.message)}
+}
+
+function renderRules(rules){
+  const tbody=document.getElementById('rules-body');
+  tbody.innerHTML='';
+  document.getElementById('rules-empty').style.display=rules.length?'none':'block';
+  rules.forEach((r,i)=>{
+    const tr=document.createElement('tr');tr.className='row';
+    const pattern=r.command_pattern||r.path_pattern||'(default)';
+    const created=r.created?new Date(r.created).toLocaleString():'—';
+    tr.innerHTML=`<td class="mono" style="color:#52525b;font-size:11px">${r.index}</td>
+      <td class="cmd-col mono" title="${esc(pattern)}">${esc(pattern)}</td>
+      <td class="col-tool">${esc(r.tool||'')}</td>
+      <td style="font-size:11px">${created}</td>
+      <td style="text-align:right"><button class="act-btn revoke" onclick="revokeRule(${r.index})">Revoke</button></td>`;
+    tbody.append(tr);
+  });
+}
+
+async function revokeRule(index){
+  if(!confirm('Revoke this auto-allowed rule?'))return;
+  try{
+    await api('/v1/rules/auto-allowed/'+index,{method:'DELETE'});
+    toast('Rule revoked');
+    loadRules();
+  }catch(e){toast('Revoke error: '+e.message)}
+}
 </script>
 </body>
 </html>
