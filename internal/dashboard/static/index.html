@@ -950,11 +950,11 @@ async function runPolicyTest(){
   const btn = document.getElementById('policy-test-btn');
   btn.disabled = true; btn.textContent = 'Testing...';
   try {
-    const data = await api('/v1/test', {
+    const data = await (await api('/v1/test', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({command: cmd})
-    });
+    })).json();
     const action = data.action || 'allow';
     const icons = {allow:'✓', deny:'✗', require_approval:'⏸', watch:'○'};
     const labels = {allow:'Allow', deny:'Deny', require_approval:'Require Approval', watch:'Watch'};
