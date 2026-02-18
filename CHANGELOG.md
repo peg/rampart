@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.0] — 2026-02-18
+## [0.2.29] — 2026-02-18
 
 ### Added
 - **Unified approval system** — `rampart hook` now delegates `require_approval` to a running `rampart serve` instance via `--serve-url`. Approvals can be resolved from the dashboard, `rampart watch`, API, or native Claude Code prompt (fallback).
