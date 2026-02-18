@@ -78,12 +78,12 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
 /* Action buttons */
 .actions{display:flex;gap:4px;justify-content:flex-end;white-space:nowrap;flex-wrap:nowrap}
-.act-btn{border:1px solid transparent;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;line-height:1.4;background:transparent}
-.act-btn.approve{border-color:var(--green);color:var(--green)}.act-btn.approve:hover{background:rgba(34,197,94,.1)}
-.act-btn.always{border-color:var(--border-light);color:var(--text-bright)}.act-btn.always:hover{background:rgba(255,255,255,.06)}
-.act-btn.deny{border-color:var(--red);color:var(--red)}.act-btn.deny:hover{background:rgba(239,68,68,.1)}
-.act-btn.revoke{border-color:var(--red);color:var(--red);font-size:11px;padding:2px 8px}
-.act-btn.revoke:hover{background:rgba(239,68,68,.1)}
+.act-btn{border:none;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:12px;font-weight:600;line-height:1.4}
+.act-btn.approve{background:rgba(34,197,94,.15);color:var(--green)}.act-btn.approve:hover{background:rgba(34,197,94,.3)}
+.act-btn.always{background:rgba(255,99,146,.12);color:var(--accent)}.act-btn.always:hover{background:rgba(255,99,146,.25)}
+.act-btn.deny{background:rgba(239,68,68,.12);color:var(--red)}.act-btn.deny:hover{background:rgba(239,68,68,.25)}
+.act-btn.revoke{background:rgba(239,68,68,.12);color:var(--red);font-size:11px;padding:2px 8px}
+.act-btn.revoke:hover{background:rgba(239,68,68,.25)}
 .act-btn.reload{background:var(--surface-3);color:var(--text-bright);border:1px solid var(--border);padding:5px 14px;border-radius:var(--radius);font-size:12px}
 .act-btn.reload:hover{background:var(--border-light)}
 
@@ -99,7 +99,6 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .badge.deny{background:rgba(239,68,68,.12);color:var(--red)}
 .badge.require_approval{background:rgba(245,158,11,.12);color:var(--orange)}
 .badge.blocked{background:rgba(239,68,68,.12);color:var(--red)}
-.badge.danger{background:rgba(245,158,11,.15);color:var(--orange);font-size:10px;padding:1px 5px;border-radius:3px;font-weight:700;font-family:monospace;text-transform:none}
 
 /* Toast */
 #toast{position:fixed;bottom:20px;right:20px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-bright);padding:8px 16px;border-radius:var(--radius);font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
@@ -107,6 +106,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
 /* Empty state */
 .empty{text-align:center;padding:40px 0;color:#52525b;font-size:13px}
+.empty .icon{font-size:24px;margin-bottom:8px}
 
 /* Auth help */
 .auth-help{font-size:11px;color:#52525b;margin-top:4px}
@@ -176,8 +176,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 <div class="wrap">
   <!-- Auth -->
   <div id="auth-bar">
-    <div class="logo"><span>Rampart</span></div>
-    <button id="theme-toggle" title="Toggle theme">Dark</button>
+    <div class="logo"><span>◆</span> Rampart Dashboard</div>
+    <button id="theme-toggle" title="Toggle theme">🌙</button>
     <input type="password" id="token-input" placeholder="API token" autocomplete="off">
     <button id="connect-btn">Connect</button>
     <span class="conn-dot" id="conn-dot"></span>
@@ -207,7 +207,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       </tr></thead>
       <tbody id="pending-body"></tbody>
     </table>
-    <div class="empty" id="pending-empty">No pending approvals</div>
+    <div class="empty" id="pending-empty"><div class="icon">✓</div>No pending approvals — all clear</div>
 
     <!-- Recent Denials feed -->
     <div class="section-divider">
@@ -223,7 +223,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       </tr></thead>
       <tbody id="denials-body"></tbody>
     </table>
-    <div class="empty" id="denials-empty" style="display:none">No recent denials</div>
+    <div class="empty" id="denials-empty" style="display:none"><span style="color:#52525b">No recent denials — all clear ✓</span></div>
   </div>
 
   <!-- ═══ HISTORY TAB ═══ -->
@@ -300,8 +300,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 <!-- Bulk action bar -->
 <div id="bulk-bar">
   <span class="bulk-count" id="bulk-count">0 selected</span>
-  <button class="act-btn approve" onclick="bulkAction('approve')">Approve All</button>
-  <button class="act-btn deny" onclick="bulkAction('deny')">Deny All</button>
+  <button class="act-btn approve" onclick="bulkAction('approve')">✓ Approve All</button>
+  <button class="act-btn deny" onclick="bulkAction('deny')">✗ Deny All</button>
 </div>
 
 <script>
@@ -317,14 +317,14 @@ const selectedIds=new Set();
 function initTheme(){
   const saved=localStorage.getItem('rampart_theme')||'dark';
   document.documentElement.setAttribute('data-theme',saved);
-  document.getElementById('theme-toggle').textContent=saved==='dark'?'Dark':'Light';
+  document.getElementById('theme-toggle').textContent=saved==='dark'?'🌙':'☀️';
 }
 function toggleTheme(){
   const cur=document.documentElement.getAttribute('data-theme');
   const next=cur==='dark'?'light':'dark';
   document.documentElement.setAttribute('data-theme',next);
   localStorage.setItem('rampart_theme',next);
-  document.getElementById('theme-toggle').textContent=next==='dark'?'Dark':'Light';
+  document.getElementById('theme-toggle').textContent=next==='dark'?'🌙':'☀️';
 }
 
 // ── Column resize + persist ────────────────────────────────────────────────
@@ -519,15 +519,15 @@ function createPendingRow(a){
   const cmd=extractCmd(a);const danger=isDangerous(cmd);
   const tr=document.createElement('tr');tr.className='row'+(danger?' dangerous':'');tr.id='row-'+a.id;tr.dataset.id=a.id;
   tr.innerHTML=`<td class="chk-cell"><input type="checkbox" class="row-chk" data-id="${esc(a.id)}"></td>
-    <td><span class="dot pending"></span>${danger?'<span class="badge danger" style="margin-left:4px">!</span>':''}</td>
+    <td><span class="dot pending"></span>${danger?'<span style="color:var(--orange);margin-left:2px" title="Potentially dangerous">⚠</span>':''}</td>
     <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
     <td class="col-tool">${esc(a.tool||'')}</td>
     <td class="col-agent">${esc(a.agent||'')}</td>
     <td style="text-align:right"><span class="timer" id="timer-${esc(a.id)}"></span></td>
     <td><div class="actions">
-      <button class="act-btn approve" data-action="approve" data-id="${esc(a.id)}" title="Approve">Approve</button>
-      <button class="act-btn always" data-action="always" data-id="${esc(a.id)}" title="Always allow this command pattern">Always Allow</button>
-      <button class="act-btn deny" data-action="deny" data-id="${esc(a.id)}" title="Deny">Deny</button>
+      <button class="act-btn approve" data-action="approve" data-id="${esc(a.id)}" title="Approve">✓</button>
+      <button class="act-btn always" data-action="always" data-id="${esc(a.id)}" title="Always allow this command pattern">★ Always</button>
+      <button class="act-btn deny" data-action="deny" data-id="${esc(a.id)}" title="Deny">✗</button>
     </div></td>`;
 
   const det=document.createElement('tr');det.className='detail-row';det.id='det-'+a.id;
