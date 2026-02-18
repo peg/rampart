@@ -247,12 +247,31 @@ body {
 /* Cards */
 .grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
 
+/* Virtual scroll container for pending */
+.virtual-scroll {
+  position: relative;
+  overflow-y: auto;
+  will-change: transform;
+}
+
+.virtual-scroll-spacer {
+  width: 100%;
+  pointer-events: none;
+}
+
+.virtual-scroll-content {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
   transition: border-color 0.15s;
+  contain: layout style;
 }
 
 .card:hover { border-color: var(--border-light); }
@@ -295,6 +314,9 @@ body {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   color: var(--text);
+  /* Fixed width to prevent layout shift from changing text */
+  min-width: 4.5em;
+  text-align: right;
 }
 
 .timer.urgent { color: var(--red); font-weight: 600; }
@@ -412,6 +434,17 @@ body {
 
 @keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
+/* New card pulse - only triggers once via animation-fill-mode */
+.card.card-new {
+  animation: cardPulse 0.6s ease-out forwards;
+}
+
+@keyframes cardPulse {
+  0% { box-shadow: 0 0 0 0 var(--accent-bg); }
+  50% { box-shadow: 0 0 0 4px var(--accent-bg); }
+  100% { box-shadow: none; }
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .header { flex-direction: column; align-items: stretch; }
@@ -469,7 +502,7 @@ body {
         <div class="section-title">Pending Approvals</div>
         <div class="section-count" id="pending-count">0</div>
       </div>
-      <div id="pending" class="grid"></div>
+      <div id="pending" class="virtual-scroll"></div>
     </div>
 
     <div class="section">
@@ -485,11 +518,15 @@ body {
 
 <script>
 (() => {
-  const POLL_MS = 2000;
+  const POLL_ACTIVE_MS = 2000;
+  const POLL_IDLE_MS = 5000;
   const MAX_POLL_MS = 30000;
   const TICK_MS = 1000;
   const TOKEN_KEY = 'rampart_dashboard_token';
   const MAX_HISTORY = 20;
+  const CARD_HEIGHT = 200; // estimated card height in px
+  const CARD_GAP = 10;
+  const BUFFER_CARDS = 5; // extra cards above/below viewport
 
   const DANGEROUS_PATTERNS = [
     /^rm\s/, /^rm$/, /^chmod\s/, /^chown\s/, /^kill\s/, /^killall\s/, /^pkill\s/,
@@ -514,26 +551,160 @@ body {
     historyCount: document.getElementById('history-count'),
   };
 
+  // State
   const state = {
-    pending: [],
+    pendingMap: new Map(),    // id -> approval item
+    pendingOrder: [],         // ordered array of ids
     seen: new Set(),
     history: [],
+    historyDirty: false,
     approvedCount: 0,
     deniedCount: 0,
-    pollDelay: POLL_MS,
+    pollDelay: POLL_ACTIVE_MS,
     pollTimer: null,
-    pollController: null
+    pollController: null,
   };
 
-  // Auto-fill token from URL query param or localStorage
-  const urlToken = new URLSearchParams(window.location.search).get('token');
-  if (urlToken) {
-    el.token.value = urlToken;
-    localStorage.setItem(TOKEN_KEY, urlToken);
-    window.history.replaceState({}, '', window.location.pathname);
-  } else {
-    el.token.value = localStorage.getItem(TOKEN_KEY) || '';
+  // Escape cache to avoid repeated string ops
+  const escapeCache = new Map();
+  function escape(s) {
+    const str = String(s);
+    let cached = escapeCache.get(str);
+    if (cached !== undefined) return cached;
+    cached = str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    // Keep cache bounded
+    if (escapeCache.size > 2000) escapeCache.clear();
+    escapeCache.set(str, cached);
+    return cached;
   }
+
+  // ---- Virtual Scroll for Pending ----
+  const vs = {
+    cardNodes: new Map(),  // id -> DOM element
+    timerEls: new Map(),   // id -> timer span element
+    spacerTop: null,
+    spacerBottom: null,
+    content: null,
+    visibleIds: new Set(),
+    scrollRaf: 0,
+  };
+
+  function initVirtualScroll() {
+    const container = el.pending;
+    // Set max height so it scrolls when many cards
+    container.style.maxHeight = 'calc(100vh - 340px)';
+    container.style.minHeight = '80px';
+
+    vs.spacerTop = document.createElement('div');
+    vs.spacerTop.className = 'virtual-scroll-spacer';
+    vs.content = document.createElement('div');
+    vs.content.className = 'virtual-scroll-content';
+    vs.spacerBottom = document.createElement('div');
+    vs.spacerBottom.className = 'virtual-scroll-spacer';
+
+    container.appendChild(vs.spacerTop);
+    container.appendChild(vs.content);
+    container.appendChild(vs.spacerBottom);
+
+    container.addEventListener('scroll', onVirtualScroll, { passive: true });
+  }
+
+  function onVirtualScroll() {
+    if (vs.scrollRaf) return;
+    vs.scrollRaf = requestAnimationFrame(() => {
+      vs.scrollRaf = 0;
+      renderVirtualWindow();
+    });
+  }
+
+  function getVisibleRange() {
+    const total = state.pendingOrder.length;
+    if (total === 0) return { start: 0, end: 0 };
+    const scrollTop = el.pending.scrollTop;
+    const viewHeight = el.pending.clientHeight;
+    const itemH = CARD_HEIGHT + CARD_GAP;
+    const start = Math.max(0, Math.floor(scrollTop / itemH) - BUFFER_CARDS);
+    const end = Math.min(total, Math.ceil((scrollTop + viewHeight) / itemH) + BUFFER_CARDS);
+    return { start, end };
+  }
+
+  function renderVirtualWindow() {
+    const total = state.pendingOrder.length;
+    const itemH = CARD_HEIGHT + CARD_GAP;
+
+    if (total === 0) {
+      vs.spacerTop.style.height = '0px';
+      vs.spacerBottom.style.height = '0px';
+      // Show empty state
+      if (!vs.content.querySelector('.empty')) {
+        vs.content.innerHTML = '';
+        const emptyDiv = document.createElement('div');
+        emptyDiv.className = 'empty';
+        emptyDiv.innerHTML = '<div class="empty-icon">✓</div>No pending approvals';
+        vs.content.appendChild(emptyDiv);
+      }
+      // Remove stale card nodes
+      vs.cardNodes.clear();
+      vs.timerEls.clear();
+      vs.visibleIds.clear();
+      return;
+    }
+
+    // Remove empty state if present
+    const emptyEl = vs.content.querySelector('.empty');
+    if (emptyEl) emptyEl.remove();
+
+    const { start, end } = getVisibleRange();
+    const newVisibleIds = new Set();
+
+    vs.spacerTop.style.height = (start * itemH) + 'px';
+    vs.spacerBottom.style.height = ((total - end) * itemH) + 'px';
+
+    // Determine which ids should be visible
+    for (let i = start; i < end; i++) {
+      newVisibleIds.add(state.pendingOrder[i]);
+    }
+
+    // Remove cards no longer visible
+    for (const id of vs.visibleIds) {
+      if (!newVisibleIds.has(id)) {
+        const node = vs.cardNodes.get(id);
+        if (node && node.parentNode === vs.content) {
+          vs.content.removeChild(node);
+        }
+      }
+    }
+
+    // Build visible window in order
+    // To maintain order, rebuild content children for visible range
+    // Use a fragment to batch
+    const frag = document.createDocumentFragment();
+    for (let i = start; i < end; i++) {
+      const id = state.pendingOrder[i];
+      let node = vs.cardNodes.get(id);
+      if (!node) {
+        const item = state.pendingMap.get(id);
+        if (!item) continue;
+        node = createCardElement(item, false);
+        vs.cardNodes.set(id, node);
+        vs.timerEls.set(id, node.querySelector('.timer'));
+        // Mark new cards
+        if (!state.seen.has(id)) {
+          node.classList.add('card-new');
+          state.seen.add(id);
+          // Remove animation class after it completes
+          node.addEventListener('animationend', () => node.classList.remove('card-new'), { once: true });
+        }
+      } else if (node.parentNode === vs.content) {
+        vs.content.removeChild(node);
+      }
+      frag.appendChild(node);
+    }
+    vs.content.appendChild(frag);
+    vs.visibleIds = newVisibleIds;
+  }
+
+  // ---- Card Creation (pure DOM, no innerHTML for structure) ----
 
   function isDangerous(cmd) {
     if (!cmd) return false;
@@ -541,16 +712,83 @@ body {
     return DANGEROUS_PATTERNS.some(p => p.test(trimmed));
   }
 
+  function createEl(tag, className, text) {
+    const e = document.createElement(tag);
+    if (className) e.className = className;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function createCardElement(item, inHistory) {
+    const dangerous = isDangerous(item.command);
+    const card = createEl('article', 'card' + (inHistory ? ' history-card' : '') + (dangerous && !inHistory ? ' dangerous' : ''));
+    card.dataset.id = item.id;
+
+    // card-top
+    const top = createEl('div', 'card-top');
+    const badges = createEl('div', 'card-badges');
+    badges.appendChild(createEl('span', 'badge', item.tool || 'unknown'));
+    if (dangerous) badges.appendChild(createEl('span', 'badge badge-danger', '⚠ dangerous'));
+    if (inHistory) {
+      const status = item._status === 'always_allowed' ? 'always' : (item._approved ? 'approved' : 'denied');
+      const label = item._status === 'always_allowed' ? '✓ always allowed' : (item._approved ? '✓ approved' : '✗ denied');
+      badges.appendChild(createEl('span', 'resolution-badge ' + status, label));
+    }
+    top.appendChild(badges);
+
+    // Timer
+    if (inHistory) {
+      top.appendChild(createEl('span', 'timer', fmt.ts(item._resolvedAt)));
+    } else {
+      const left = fmt.left(item.expires_at);
+      const timer = createEl('span', 'timer' + (left.urgent ? ' urgent' : ''), left.text);
+      top.appendChild(timer);
+    }
+    card.appendChild(top);
+
+    // Command
+    const cmd = createEl('pre', 'cmd', item.command || '');
+    card.appendChild(cmd);
+
+    // Meta grid
+    const meta = createEl('div', 'meta-grid');
+    const addMeta = (k, v) => {
+      meta.appendChild(createEl('span', 'k', k));
+      meta.appendChild(createEl('span', 'v', v || '-'));
+    };
+    addMeta('Agent', item.agent);
+    addMeta('Message', item.message);
+    if (inHistory) addMeta('Resolved by', item._resolvedBy);
+    addMeta('ID', item.id);
+    card.appendChild(meta);
+
+    // Actions (pending only)
+    if (!inHistory) {
+      const actions = createEl('div', 'card-actions');
+      const btnApprove = createEl('button', 'btn btn-approve', '✓ Approve');
+      btnApprove.dataset.action = 'approve';
+      btnApprove.dataset.id = item.id;
+      const btnAlways = createEl('button', 'btn btn-always', 'Always Allow');
+      btnAlways.dataset.action = 'always';
+      btnAlways.dataset.id = item.id;
+      const btnDeny = createEl('button', 'btn btn-deny', '✗ Deny');
+      btnDeny.dataset.action = 'deny';
+      btnDeny.dataset.id = item.id;
+      actions.appendChild(btnApprove);
+      actions.appendChild(btnAlways);
+      actions.appendChild(btnDeny);
+      card.appendChild(actions);
+    }
+
+    return card;
+  }
+
+  // ---- Formatting ----
   const fmt = {
     ts(s) {
       const d = new Date(s);
       if (Number.isNaN(d.getTime())) return '-';
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    },
-    fullTs(s) {
-      const d = new Date(s);
-      if (Number.isNaN(d.getTime())) return '-';
-      return d.toLocaleString();
     },
     left(expiresAt) {
       const ms = new Date(expiresAt).getTime() - Date.now();
@@ -567,6 +805,16 @@ body {
     }
   };
 
+  // ---- Token ----
+  const urlToken = new URLSearchParams(window.location.search).get('token');
+  if (urlToken) {
+    el.token.value = urlToken;
+    localStorage.setItem(TOKEN_KEY, urlToken);
+    window.history.replaceState({}, '', window.location.pathname);
+  } else {
+    el.token.value = localStorage.getItem(TOKEN_KEY) || '';
+  }
+
   function token() { return el.token.value.trim(); }
 
   function headers(withJSON) {
@@ -578,17 +826,12 @@ body {
   }
 
   function toast(msg, ok) {
-    const n = document.createElement('div');
-    n.className = `toast ${ok ? 'ok' : 'err'}`;
-    n.textContent = msg;
+    const n = createEl('div', 'toast ' + (ok ? 'ok' : 'err'), msg);
     el.toasts.appendChild(n);
     setTimeout(() => n.remove(), 3000);
   }
 
-  function escape(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  }
-
+  // ---- History Management ----
   function upsertHistory(item, approved, resolvedBy, status) {
     state.history.unshift({
       ...item,
@@ -599,83 +842,71 @@ body {
     });
     state.history = state.history.slice(0, MAX_HISTORY);
     if (approved) state.approvedCount++; else state.deniedCount++;
+    state.historyDirty = true;
   }
 
-  function renderCard(item, inHistory) {
-    const left = fmt.left(item.expires_at);
-    const dangerous = isDangerous(item.command);
-    const card = document.createElement('article');
-    card.className = `card${inHistory ? ' history-card' : ''}${dangerous && !inHistory ? ' dangerous' : ''}`;
-    card.dataset.id = item.id;
-
-    const badgesHTML = `
-      <div class="card-badges">
-        <span class="badge">${escape(item.tool || 'unknown')}</span>
-        ${dangerous ? '<span class="badge badge-danger">⚠ dangerous</span>' : ''}
-        ${inHistory ? `<span class="resolution-badge ${escape(item._status === 'always_allowed' ? 'always' : item._approved ? 'approved' : 'denied')}">${escape(item._status === 'always_allowed' ? '✓ always allowed' : item._approved ? '✓ approved' : '✗ denied')}</span>` : ''}
-      </div>
-    `;
-
-    const timerHTML = inHistory
-      ? `<span class="timer">${escape(fmt.ts(item._resolvedAt))}</span>`
-      : `<span class="timer${left.urgent ? ' urgent' : ''}">${left.text}</span>`;
-
-    const metaHTML = `
-      <div class="meta-grid">
-        <span class="k">Agent</span><span class="v">${escape(item.agent || '-')}</span>
-        <span class="k">Message</span><span class="v">${escape(item.message || '-')}</span>
-        ${inHistory ? `<span class="k">Resolved by</span><span class="v">${escape(item._resolvedBy || '-')}</span>` : ''}
-        <span class="k">ID</span><span class="v">${escape(item.id || '-')}</span>
-      </div>
-    `;
-
-    const actionsHTML = inHistory ? '' : `
-      <div class="card-actions">
-        <button class="btn btn-approve" data-action="approve" data-id="${escape(item.id)}">✓ Approve</button>
-        <button class="btn btn-always" data-action="always" data-id="${escape(item.id)}">Always Allow</button>
-        <button class="btn btn-deny" data-action="deny" data-id="${escape(item.id)}">✗ Deny</button>
-      </div>
-    `;
-
-    card.innerHTML = `
-      <div class="card-top">${badgesHTML}${timerHTML}</div>
-      <pre class="cmd">${escape(item.command || '')}</pre>
-      ${metaHTML}${actionsHTML}
-    `;
-    return card;
-  }
-
+  // ---- Stats (pure textContent) ----
   function updateStats() {
-    el.statPending.textContent = state.pending.length;
-    el.statApproved.textContent = state.approvedCount;
-    el.statDenied.textContent = state.deniedCount;
-    el.pendingCount.textContent = state.pending.length;
-    el.historyCount.textContent = state.history.length;
+    const pendingLen = state.pendingOrder.length;
+    const txt = (el, v) => { const s = String(v); if (el.textContent !== s) el.textContent = s; };
+    txt(el.statPending, pendingLen);
+    txt(el.statApproved, state.approvedCount);
+    txt(el.statDenied, state.deniedCount);
+    txt(el.pendingCount, pendingLen);
+    txt(el.historyCount, state.history.length);
   }
 
-  function renderPending() {
-    el.pending.innerHTML = '';
-    if (!state.pending.length) {
-      el.pending.innerHTML = '<div class="empty"><div class="empty-icon">✓</div>No pending approvals</div>';
-      updateStats();
-      return;
+  // ---- Pending Diff ----
+  function diffPending(newApprovals) {
+    const newMap = new Map();
+    const newOrder = [];
+    for (const item of newApprovals) {
+      newMap.set(item.id, item);
+      newOrder.push(item.id);
     }
-    for (const item of state.pending) {
-      el.pending.appendChild(renderCard(item, false));
-      state.seen.add(item.id);
+
+    // Detect removed
+    for (const [id] of state.pendingMap) {
+      if (!newMap.has(id)) {
+        // Clean up DOM node
+        const node = vs.cardNodes.get(id);
+        if (node && node.parentNode) node.parentNode.removeChild(node);
+        vs.cardNodes.delete(id);
+        vs.timerEls.delete(id);
+        vs.visibleIds.delete(id);
+      }
     }
-    updateStats();
+
+    // Detect updated (only command/message/agent/tool/expires_at changes matter for card content)
+    for (const [id, newItem] of newMap) {
+      const old = state.pendingMap.get(id);
+      if (old && (old.command !== newItem.command || old.message !== newItem.message || old.agent !== newItem.agent || old.tool !== newItem.tool)) {
+        // Content changed - recreate card
+        const node = vs.cardNodes.get(id);
+        if (node && node.parentNode) node.parentNode.removeChild(node);
+        vs.cardNodes.delete(id);
+        vs.timerEls.delete(id);
+      }
+    }
+
+    state.pendingMap = newMap;
+    state.pendingOrder = newOrder;
   }
 
+  // ---- History Render (max 20, simple full render only when dirty) ----
   function renderHistory() {
+    if (!state.historyDirty) return;
+    state.historyDirty = false;
     el.history.innerHTML = '';
     if (!state.history.length) {
-      el.history.innerHTML = '<div class="empty"><div class="empty-icon">—</div>No resolved approvals yet</div>';
-      updateStats();
+      const emptyDiv = createEl('div', 'empty');
+      emptyDiv.innerHTML = '<div class="empty-icon">—</div>No resolved approvals yet';
+      el.history.appendChild(emptyDiv);
       return;
     }
-    for (const item of state.history) el.history.appendChild(renderCard(item, true));
-    updateStats();
+    const frag = document.createDocumentFragment();
+    for (const item of state.history) frag.appendChild(createCardElement(item, true));
+    el.history.appendChild(frag);
   }
 
   function setStatus(text, type) {
@@ -683,12 +914,16 @@ body {
     el.dot.className = 'dot ' + (type || '');
   }
 
+  // ---- Polling with visibility API and adaptive interval ----
   function schedulePoll(delay) {
     if (state.pollTimer) clearTimeout(state.pollTimer);
     state.pollTimer = setTimeout(poll, delay);
   }
 
   async function poll() {
+    // Don't poll when tab is hidden
+    if (document.visibilityState === 'hidden') return;
+
     if (state.pollController) state.pollController.abort();
     const controller = new AbortController();
     state.pollController = controller;
@@ -700,12 +935,20 @@ body {
         return;
       }
       const data = await r.json();
-      state.pending = Array.isArray(data.approvals) ? data.approvals : [];
-      renderPending();
-      renderHistory();
-      state.pollDelay = POLL_MS;
+      const newApprovals = Array.isArray(data.approvals) ? data.approvals : [];
+
+      // Diff and update
+      requestAnimationFrame(() => {
+        diffPending(newApprovals);
+        renderVirtualWindow();
+        renderHistory();
+        updateStats();
+      });
+
+      // Adaptive polling: faster when there are pending items
+      state.pollDelay = newApprovals.length > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS;
       setStatus('Connected', '');
-      el.updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+      el.updated.textContent = 'Updated ' + new Date().toLocaleTimeString();
     } catch (err) {
       if (err.name === 'AbortError') return;
       setStatus('Connection lost', 'error');
@@ -716,8 +959,18 @@ body {
     }
   }
 
+  // Visibility API: pause/resume polling
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      // Resume immediately
+      poll();
+    }
+    // If hidden, the next scheduled poll() will just return early
+  });
+
+  // ---- Resolve action ----
   async function resolve(id, approved, button, persist) {
-    const original = button.innerHTML;
+    const originalText = button.textContent;
     button.disabled = true;
     button.textContent = '...';
     try {
@@ -728,25 +981,25 @@ body {
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-      const item = state.pending.find(x => x.id === id);
+      const item = state.pendingMap.get(id);
       if (item) {
         const status = persist ? 'always_allowed' : (approved ? 'approved' : 'denied');
         upsertHistory(item, approved, data.resolved_by || 'dashboard', status);
-        renderHistory();
       }
       toast(persist ? 'Always allowed — rule saved' : approved ? 'Approved' : 'Denied', true);
       await poll();
     } catch (err) {
-      toast(`Failed: ${err.message}`, false);
+      toast('Failed: ' + err.message, false);
       button.disabled = false;
-      button.innerHTML = original;
+      button.textContent = originalText;
     }
   }
 
+  // ---- Event Delegation ----
   el.saveToken.addEventListener('click', () => {
     localStorage.setItem(TOKEN_KEY, token());
     toast('Token saved', true);
-    state.pollDelay = POLL_MS;
+    state.pollDelay = POLL_ACTIVE_MS;
     poll();
   });
 
@@ -754,6 +1007,7 @@ body {
     if (e.key === 'Enter') el.saveToken.click();
   });
 
+  // Event delegation on pending container (covers virtual scroll content)
   el.pending.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-action]');
     if (!b) return;
@@ -761,21 +1015,25 @@ body {
     resolve(b.dataset.id, b.dataset.action === 'approve' || persist, b, persist);
   });
 
-  // Tick countdown timers (in-place update, no DOM rebuild)
+  // ---- Timer tick: pure textContent swaps on visible cards only ----
   setInterval(() => {
-    for (const item of state.pending) {
-      const card = el.pending.querySelector(`[data-id="${item.id}"]`);
-      if (!card) continue;
-      const timerEl = card.querySelector('.timer');
+    for (const id of vs.visibleIds) {
+      const timerEl = vs.timerEls.get(id);
       if (!timerEl) continue;
+      const item = state.pendingMap.get(id);
+      if (!item) continue;
       const left = fmt.left(item.expires_at);
-      timerEl.textContent = left.text;
-      timerEl.classList.toggle('urgent', left.urgent);
+      if (timerEl.textContent !== left.text) timerEl.textContent = left.text;
+      const hasUrgent = timerEl.classList.contains('urgent');
+      if (left.urgent !== hasUrgent) timerEl.classList.toggle('urgent', left.urgent);
     }
   }, TICK_MS);
 
-  renderPending();
+  // ---- Init ----
+  initVirtualScroll();
+  state.historyDirty = true;
   renderHistory();
+  updateStats();
   poll();
 })();
 </script>
