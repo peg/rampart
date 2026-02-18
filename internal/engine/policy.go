@@ -185,7 +185,7 @@ func (r Rule) ParseAction() (Action, error) {
 		return ActionAllow, nil
 	case "deny":
 		return ActionDeny, nil
-	case "log":
+	case "watch", "log": // "log" kept as deprecated alias
 		return ActionWatch, nil
 	case "require_approval":
 		return ActionRequireApproval, nil
