@@ -37,7 +37,7 @@ const doctorServePort = 18275
 // checkResult holds the outcome of a single doctor check for --json output.
 type checkResult struct {
 	Name    string `json:"name"`
-	Status  string `json:"status"` // "ok", "warn", "fail"
+	Status  string `json:"status"` // "ok", "warn", "fail", "info"
 	Message string `json:"message"`
 }
 
@@ -212,14 +212,14 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 type emitFn func(name, status, msg string)
 
 func doctorToken(emit emitFn) (issues int, token string) {
-	// Try persisted token first.
-	if tok, err := readPersistedToken(); err == nil && tok != "" {
-		emit("Token", "ok", "token found in ~/.rampart/token")
-		return 0, tok
-	}
-	// Fallback to env var.
+	// Env var takes highest priority.
 	if tok := os.Getenv("RAMPART_TOKEN"); tok != "" {
 		emit("Token", "ok", "token found in RAMPART_TOKEN env var")
+		return 0, tok
+	}
+	// Fall back to persisted token file.
+	if tok, err := readPersistedToken(); err == nil && tok != "" {
+		emit("Token", "ok", "token found in ~/.rampart/token")
 		return 0, tok
 	}
 	emit("Token", "fail", "no token found (run 'rampart serve install' to create one)")
@@ -411,7 +411,7 @@ func doctorPending(emit emitFn, serveURL, token string) int {
 	}
 
 	count := 0
-	if pending, ok := body["pending"].([]any); ok {
+	if pending, ok := body["approvals"].([]any); ok {
 		count = len(pending)
 	}
 	if count > 0 {

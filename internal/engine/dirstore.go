@@ -420,14 +420,14 @@ func mergeProjectPolicy(base, project *Config, projectPath string, logger *slog.
 		seen[p.Name] = true
 		result.Policies = append(result.Policies, p)
 	}
-	// Merge response regex cache if present.
-	if len(project.responseRegexCache) > 0 {
-		if result.responseRegexCache == nil {
-			result.responseRegexCache = make(map[string]*regexp.Regexp)
-		}
-		for k, v := range project.responseRegexCache {
-			result.responseRegexCache[k] = v
-		}
+	// Deep-copy responseRegexCache to avoid aliasing base's map.
+	newCache := make(map[string]*regexp.Regexp, len(base.responseRegexCache)+len(project.responseRegexCache))
+	for k, v := range base.responseRegexCache {
+		newCache[k] = v
 	}
+	for k, v := range project.responseRegexCache {
+		newCache[k] = v
+	}
+	result.responseRegexCache = newCache
 	return &result
 }

@@ -1066,7 +1066,7 @@ function renderRules(rules){
     tr.innerHTML=`<td class="cmd-col mono" title="${esc(pattern)}">${esc(pattern)}</td>
       <td class="col-tool">${esc(r.tool||'')}</td>
       <td style="font-size:11px">${esc(created)}</td>
-      <td style="text-align:right"><button class="act-btn revoke" onclick="revokeRule(${r.index})">Revoke</button></td>`;
+      <td style="text-align:right"><button class="act-btn revoke" onclick="revokeRule(${parseInt(r.index,10)})">Revoke</button></td>`;
     tbody.append(tr);
   });
 }

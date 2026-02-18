@@ -817,10 +817,16 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "policy engine not initialized")
+		return
+	}
+
 	var req struct {
 		Command string `json:"command"`
-		Tool    string `json:"tool"`  // optional, defaults to "exec"
-		Agent   string `json:"agent"` // optional
+		Tool    string `json:"tool"`    // optional, defaults to "exec"
+		Agent   string `json:"agent"`   // optional
+		Session string `json:"session,omitempty"` // optional; used for session_matches evaluation
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -839,8 +845,10 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		params = map[string]any{"path": req.Command}
 	}
 	call := engine.ToolCall{
+		ID:        audit.NewEventID(),
 		Tool:      req.Tool,
 		Agent:     req.Agent,
+		Session:   req.Session,
 		Params:    params,
 		Timestamp: time.Now(),
 	}
