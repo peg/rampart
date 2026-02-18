@@ -78,7 +78,7 @@ Examples:
 			if isYAMLFile(arg) {
 				return runTestSuite(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, noColor, verbose, run, jsonOut)
 			}
-			return runTest(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, toolName, noColor)
+			return runTest(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, toolName, noColor, jsonOut)
 		},
 	}
 
@@ -268,7 +268,16 @@ func printSuiteResult(w io.Writer, r engine.TestResult, noColor, verbose bool) {
 	}
 }
 
-func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor bool) error {
+// bareCmdJSONResult is the JSON output for a single bare-command test (--json with no YAML file).
+type bareCmdJSONResult struct {
+	Command         string   `json:"command"`
+	Action          string   `json:"action"`
+	Message         string   `json:"message"`
+	MatchedPolicies []string `json:"matched_policies"`
+	PolicyScope     string   `json:"policy_scope"`
+}
+
+func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor, jsonOut bool) error {
 	policyPath, cleanup, err := resolveTestPolicyPath(opts.configPath)
 	if err != nil {
 		return err
@@ -297,6 +306,24 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 	}
 
 	decision := eng.Evaluate(call)
+
+	if jsonOut {
+		matched := decision.MatchedPolicies
+		if matched == nil {
+			matched = []string{}
+		}
+		result := bareCmdJSONResult{
+			Command:         arg,
+			Action:          decision.Action.String(),
+			Message:         decision.Message,
+			MatchedPolicies: matched,
+			PolicyScope:     "global",
+		}
+		enc := json.NewEncoder(w)
+		_ = enc.Encode(result)
+		return nil // exit 0 — dry-run, not enforcement
+	}
+
 	printTestResult(w, decision, noColor)
 
 	if decision.Action == engine.ActionDeny {

@@ -102,7 +102,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// 1. Binary version
 	versionMsg := fmt.Sprintf("%s (%s)", build.Version, runtime.Version())
 	emit("Version", "ok", versionMsg)
-	if n := doctorVersionCheck(w, collect); n > 0 {
+	if n := doctorVersionCheck(w, collect, emit); n > 0 {
 		issues += n
 	}
 
@@ -564,10 +564,21 @@ func doctorAudit(emit emitFn) int {
 	return 0
 }
 
-func doctorVersionCheck(w io.Writer, silent bool) int {
+func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {
 	current := build.Version
 	if current == "dev" || current == "" {
 		return 0 // dev build, skip check
+	}
+
+	// Pseudoversion or pre-release build (e.g. v0.2.37-0.20260218194853-6c13a58b371e).
+	// Comparing these to a stable release tag is meaningless and confusing — skip the check.
+	if strings.Contains(current, "-0.") {
+		if emit != nil {
+			emit("Update check", "info", "Dev build — update checks skipped")
+		} else if !silent {
+			fmt.Fprintf(w, "  ℹ Update check skipped (dev build: %s)\n", current)
+		}
+		return 0
 	}
 
 	// GitHub API: get latest release

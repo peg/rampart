@@ -183,6 +183,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				fmt.Fprintln(cmd.OutOrStdout(), "  Run 'rampart serve install' first to enable the dashboard.")
 			}
 
+			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
+
 			// Check if rampart is in system PATH.
 			if _, err := execLookPath("rampart"); err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "")

@@ -276,7 +276,7 @@ func TestNewLogCmd(t *testing.T) {
 func TestDoctorVersionCheck(t *testing.T) {
 	var buf bytes.Buffer
 	// With dev build version, should return 0 immediately
-	issues := doctorVersionCheck(&buf, false)
+	issues := doctorVersionCheck(&buf, false, nil)
 	if issues < 0 {
 		t.Errorf("unexpected negative issues: %d", issues)
 	}
