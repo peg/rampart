@@ -26,8 +26,8 @@ Claude Code → Tool Call → rampart hook → Policy Engine → Allow/Deny
 When Claude Code wants to run a command, it sends the tool call to `rampart hook` via stdin. Rampart evaluates it against your policies and returns a JSON response:
 
 ```json
-// Allowed (permissionDecision omitted when allowed)
-{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}
+// Allowed (explicit allow bypasses Claude Code permission system)
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}
 
 // Denied
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Rampart: Destructive command blocked"}}
