@@ -593,8 +593,11 @@ async function poll(){
 function extractCmd(a){
   // approval objects: top-level command
   if(a.command)return a.command;
+  // write/read tool calls: path field
+  if(a.path)return a.path;
   // audit events: nested under request
   if(a.request&&a.request.command)return Array.isArray(a.request.command)?a.request.command.join(' '):a.request.command;
+  if(a.request&&a.request.path)return a.request.path;
   if(a.description)return a.description;
   return a.id||'unknown';
 }
