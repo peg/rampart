@@ -71,7 +71,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .dot.pending{background:var(--orange)}.dot.approved{background:var(--green)}.dot.denied{background:var(--red)}.dot.always{background:var(--accent)}
 
 /* Action buttons */
-.actions{display:flex;gap:4px;justify-content:flex-end}
+.actions{display:flex;gap:4px;justify-content:flex-end;white-space:nowrap;flex-wrap:nowrap}
 .act-btn{border:none;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:12px;font-weight:600;line-height:1.4}
 .act-btn.approve{background:rgba(34,197,94,.15);color:var(--green)}.act-btn.approve:hover{background:rgba(34,197,94,.3)}
 .act-btn.always{background:rgba(255,99,146,.12);color:var(--accent)}.act-btn.always:hover{background:rgba(255,99,146,.25)}
@@ -168,7 +168,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
         <th class="col-tool" style="width:60px">Tool</th>
         <th class="col-agent" style="width:80px">Agent</th>
         <th style="width:50px;text-align:right">Time</th>
-        <th style="width:100px;text-align:right">Actions</th>
+        <th style="width:140px;text-align:right">Actions</th>
       </tr></thead>
       <tbody id="pending-body"></tbody>
     </table>
@@ -338,9 +338,10 @@ function updatePending(approvals){
       pendingMap.delete(id);
     }
   }
-  // Add/update
+  // Add/update (sort oldest-first so prepend results in newest-on-top)
   const tbody=document.getElementById('pending-body');
-  for(const a of approvals){
+  const sorted=[...approvals].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  for(const a of sorted){
     if(pendingMap.has(a.id)){
       pendingMap.set(a.id,a);
       updateTimerCell(a);
