@@ -10,7 +10,7 @@ hide:
 
 </div>
 
-<p class="hero-subtitle">Open-source firewall for AI agents. See everything your AI does. Block the dangerous stuff.</p>
+<p class="hero-subtitle">Guardrails for AI agents. Policy engine for shell commands, file access, and MCP tools.</p>
 
 ---
 
