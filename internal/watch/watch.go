@@ -26,12 +26,38 @@ import (
 	"github.com/peg/rampart/internal/audit"
 )
 
+// formatDuration renders a duration as Xm Ys.
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	m := int(d.Minutes())
+	s := int(d.Seconds()) % 60
+	if m > 0 {
+		return fmt.Sprintf("%dm%02ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
 type tailerMsg struct {
 	event audit.Event
 	err   error
 }
 
 type tickMsg time.Time
+
+// approvalsMsg carries the result of polling the approval API.
+type approvalsMsg struct {
+	approvals []PendingApproval
+	err       error
+}
+
+// resolveResultMsg carries the result of resolving an approval.
+type resolveResultMsg struct {
+	id       string
+	approved bool
+	err      error
+}
 
 // Config holds settings for the watch TUI.
 type Config struct {
@@ -42,6 +68,13 @@ type Config struct {
 	Decision   string // Filter: only show this decision (allow/deny/log/webhook).
 	Tool       string // Filter: only show this tool name.
 	Out        io.Writer
+
+	// ServeURL is the base URL for the serve API (optional).
+	// When set, watch polls for pending approvals.
+	ServeURL string
+
+	// ServeToken is the Bearer token for the serve API.
+	ServeToken string
 }
 
 // Stats tracks running totals of decisions.
@@ -69,6 +102,13 @@ type Model struct {
 	// denyFlash tracks event indices that should flash (deny highlight).
 	denyFlash map[int]time.Time
 
+	// Interactive approval support.
+	approvalClient   *ApprovalClient
+	pendingApprovals []PendingApproval
+	selectedApproval int // 1-indexed; 0 = none selected
+	approvalErr      error
+	resolveStatus    string // transient status message
+
 	frameStyle      lipgloss.Style
 	headerStyle     lipgloss.Style
 	sectionStyle    lipgloss.Style
@@ -79,6 +119,7 @@ type Model struct {
 	denyBgStyle     lipgloss.Style
 	mutedStyle      lipgloss.Style
 	statusLineStyle lipgloss.Style
+	pendingStyle    lipgloss.Style
 }
 
 // NewModel creates a new watch TUI model.
@@ -93,7 +134,7 @@ func NewModel(cfg Config) *Model {
 		cfg.Agent = "all"
 	}
 
-	return &Model{
+	m := &Model{
 		cfg:       cfg,
 		startedAt: time.Now(),
 		width:     80,
@@ -117,7 +158,14 @@ func NewModel(cfg Config) *Model {
 		mutedStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
 		statusLineStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("7")),
+		pendingStyle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11")),
 	}
+
+	if strings.TrimSpace(cfg.ServeURL) != "" {
+		m.approvalClient = NewApprovalClient(cfg.ServeURL, cfg.ServeToken)
+	}
+
+	return m
 }
 
 // Run starts the watch TUI.
@@ -134,7 +182,42 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(waitForTailer(m.tailerCh), tickCmd())
+	cmds := []tea.Cmd{waitForTailer(m.tailerCh), tickCmd()}
+	if m.approvalClient != nil {
+		cmds = append(cmds, m.pollApprovals())
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) pollApprovals() tea.Cmd {
+	client := m.approvalClient
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		approvals, err := client.ListPending(ctx)
+		return approvalsMsg{approvals: approvals, err: err}
+	}
+}
+
+func (m *Model) pollApprovalsAfterDelay() tea.Cmd {
+	client := m.approvalClient
+	return func() tea.Msg {
+		time.Sleep(time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		approvals, err := client.ListPending(ctx)
+		return approvalsMsg{approvals: approvals, err: err}
+	}
+}
+
+func (m *Model) resolveApproval(id string, approved bool, persist bool) tea.Cmd {
+	client := m.approvalClient
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := client.Resolve(ctx, id, approved, persist)
+		return resolveResultMsg{id: id, approved: approved, err: err}
+	}
 }
 
 func waitForTailer(ch <-chan tailerEvent) tea.Cmd {
@@ -170,6 +253,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "g":
 			m.scroll = 0
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			if m.approvalClient != nil {
+				num := int(typed.String()[0] - '0')
+				if num >= 1 && num <= len(m.pendingApprovals) {
+					m.selectedApproval = num
+				}
+			}
+		case "a":
+			if m.approvalClient != nil && m.selectedApproval >= 1 && m.selectedApproval <= len(m.pendingApprovals) {
+				a := m.pendingApprovals[m.selectedApproval-1]
+				m.resolveStatus = fmt.Sprintf("Approving %s...", a.ID)
+				return m, m.resolveApproval(a.ID, true, false)
+			}
+		case "d":
+			if m.approvalClient != nil && m.selectedApproval >= 1 && m.selectedApproval <= len(m.pendingApprovals) {
+				a := m.pendingApprovals[m.selectedApproval-1]
+				m.resolveStatus = fmt.Sprintf("Denying %s...", a.ID)
+				return m, m.resolveApproval(a.ID, false, false)
+			}
+		case "A":
+			// Approve + persist: creates an auto-allow rule for future matching calls.
+			if m.approvalClient != nil && m.selectedApproval >= 1 && m.selectedApproval <= len(m.pendingApprovals) {
+				a := m.pendingApprovals[m.selectedApproval-1]
+				m.resolveStatus = fmt.Sprintf("Approving (always) %s...", a.ID)
+				return m, m.resolveApproval(a.ID, true, true)
+			}
 		}
 	case tea.WindowSizeMsg:
 		if typed.Width > 0 {
@@ -218,6 +327,39 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		return m, waitForTailer(m.tailerCh)
+	case approvalsMsg:
+		if typed.err != nil {
+			m.approvalErr = typed.err
+		} else {
+			m.approvalErr = nil
+			m.pendingApprovals = typed.approvals
+			// Reset selection if out of range.
+			if m.selectedApproval > len(m.pendingApprovals) {
+				m.selectedApproval = 0
+			}
+		}
+		if m.approvalClient != nil {
+			return m, m.pollApprovalsAfterDelay()
+		}
+		return m, nil
+
+	case resolveResultMsg:
+		if typed.err != nil {
+			m.resolveStatus = fmt.Sprintf("Error: %v", typed.err)
+		} else {
+			action := "Denied"
+			if typed.approved {
+				action = "Approved"
+			}
+			m.resolveStatus = fmt.Sprintf("%s %s", action, typed.id)
+			m.selectedApproval = 0
+		}
+		// Immediately re-poll.
+		if m.approvalClient != nil {
+			return m, m.pollApprovals()
+		}
+		return m, nil
+
 	case tickMsg:
 		// Clean up expired deny flashes (must be in Update, not View).
 		now := time.Now()
@@ -267,8 +409,45 @@ func (m *Model) View() string {
 	lines := make([]string, 0, m.height)
 	lines = append(lines, frameLineTop(innerWidth))
 	lines = append(lines, frameLineBody(innerWidth, "  "+summaryLine))
+
+	// Pending approvals section.
+	approvalLines := 0
+	if len(m.pendingApprovals) > 0 {
+		lines = append(lines, frameLineMid(innerWidth))
+		lines = append(lines, frameLineBody(innerWidth, m.pendingStyle.Render("  ┌─ PENDING APPROVALS ─────────────────────────────────────┐")))
+		for i, a := range m.pendingApprovals {
+			remaining := time.Until(a.ExpiresAt).Round(time.Second)
+			if remaining < 0 {
+				remaining = 0
+			}
+			num := i + 1
+			sel := " "
+			if num == m.selectedApproval {
+				sel = ">"
+			}
+			line1 := fmt.Sprintf("  │ %s[%d] %s: %s  [%s]",
+				sel, num, a.Tool, truncateRunes(a.Command, innerWidth-30), truncateRunes(a.Message, 30))
+			line2 := fmt.Sprintf("  │     ⏳ %s remaining — (a)pprove (d)eny (A)lways allow", formatDuration(remaining))
+
+			if num == m.selectedApproval {
+				lines = append(lines, frameLineBody(innerWidth, m.pendingStyle.Render(truncateRunes(line1, innerWidth-2))))
+				lines = append(lines, frameLineBody(innerWidth, m.pendingStyle.Render(truncateRunes(line2, innerWidth-2))))
+			} else {
+				lines = append(lines, frameLineBody(innerWidth, truncateRunes(line1, innerWidth-2)))
+				lines = append(lines, frameLineBody(innerWidth, m.mutedStyle.Render(truncateRunes(line2, innerWidth-2))))
+			}
+		}
+		lines = append(lines, frameLineBody(innerWidth, m.pendingStyle.Render("  └─────────────────────────────────────────────────────────┘")))
+		approvalLines = 3 + len(m.pendingApprovals)*2 // header + footer + 2 per approval
+	}
+	if m.resolveStatus != "" {
+		lines = append(lines, frameLineBody(innerWidth, "  "+m.allowStyle.Render(m.resolveStatus)))
+		approvalLines++
+	}
+
 	lines = append(lines, frameLineMid(innerWidth))
 	lines = append(lines, frameLineBody(innerWidth, m.sectionStyle.Render("  LIVE FEED")))
+	_ = approvalLines
 
 	visible := m.visibleEvents(feedRows)
 	for i, event := range visible {

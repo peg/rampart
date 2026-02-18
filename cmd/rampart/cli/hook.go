@@ -76,6 +76,9 @@ func newHookCmd(opts *rootOptions) *cobra.Command {
 	var auditDir string
 	var mode string
 	var format string
+	var serveURL string
+	var serveToken string
+	var configDir string
 
 	cmd := &cobra.Command{
 		Use:   "hook",
@@ -106,6 +109,17 @@ Claude Code setup (add to ~/.claude/settings.json):
 
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Resolve serve-url and serve-token from env if not set via flags.
+			if serveURL == "" {
+				serveURL = os.Getenv("RAMPART_SERVE_URL")
+			}
+			if cmd.Flags().Changed("serve-token") {
+				fmt.Fprintln(os.Stderr, "Warning: --serve-token is visible in process list. Prefer RAMPART_TOKEN env var.")
+			}
+			if serveToken == "" {
+				serveToken = os.Getenv("RAMPART_TOKEN")
+			}
+
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
@@ -139,7 +153,23 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			defer cleanupPolicy()
 
-			store := engine.NewFileStore(policyPath)
+			// Build policy store: file, dir, or both.
+			var store engine.PolicyStore
+			effectiveDir := configDir
+			if effectiveDir == "" {
+				if home, hErr := os.UserHomeDir(); hErr == nil {
+					defaultDir := filepath.Join(home, ".rampart", "policies")
+					if _, sErr := os.Stat(defaultDir); sErr == nil {
+						effectiveDir = defaultDir
+					}
+				}
+			}
+			if effectiveDir != "" {
+				store = engine.NewMultiStore(policyPath, effectiveDir, logger)
+			} else {
+				store = engine.NewFileStore(policyPath)
+			}
+
 			eng, err := engine.New(store, logger)
 			if err != nil {
 				return fmt.Errorf("hook: create engine: %w", err)
@@ -256,6 +286,17 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr)
 			case engine.ActionRequireApproval:
+				if serveURL != "" {
+					approvalClient := &hookApprovalClient{
+						serveURL: strings.TrimRight(serveURL, "/"),
+						token:    serveToken,
+						logger:   logger,
+					}
+					command, _ := call.Params["command"].(string)
+					path, _ := call.Params["path"].(string)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, decision.Message, 5*time.Minute)
+					return outputHookResult(cmd, format, result, false, decision.Message, cmdStr)
+				}
 				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
 			default:
 				return outputHookResult(cmd, format, hookAllow, isPostToolUse, decision.Message, cmdStr)
@@ -266,6 +307,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
 	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
+	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of running rampart serve instance (env: RAMPART_SERVE_URL)")
+	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Auth token for rampart serve (env: RAMPART_TOKEN)")
+	cmd.Flags().MarkDeprecated("serve-token", "use RAMPART_TOKEN env var instead (--serve-token is visible in process list)")
+	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 
 	return cmd
 }

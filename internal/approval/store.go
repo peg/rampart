@@ -20,13 +20,19 @@
 package approval
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/peg/rampart/internal/engine"
 )
+
+// dedupWindow is the time window for deduplicating identical approval requests.
+const dedupWindow = 60 * time.Second
 
 // Status represents the state of an approval request.
 type Status int
@@ -78,6 +84,9 @@ type Request struct {
 
 	// ResolvedBy is who resolved the approval (e.g., "cli", "api", "timeout").
 	ResolvedBy string
+
+	// dedupKey is the SHA-256 hash of tool+command+agent for deduplication.
+	dedupKey string
 
 	// done is closed when the approval is resolved.
 	done chan struct{}
@@ -156,12 +165,32 @@ const maxPendingApprovals = 1000
 // ErrTooManyPending is returned when the pending approval limit is reached.
 var ErrTooManyPending = fmt.Errorf("approval: too many pending requests (limit: %d)", maxPendingApprovals)
 
+// dedupKey computes a SHA-256 hash of tool + command + agent for dedup lookup.
+func dedupKey(call engine.ToolCall) string {
+	h := sha256.Sum256([]byte(call.Tool + "\x00" + call.Command() + "\x00" + call.Agent))
+	return hex.EncodeToString(h[:])
+}
+
 // Create adds a new pending approval and returns it.
 // The caller should wait on request.Done() for resolution.
 // Returns nil and an error if the pending approval limit has been reached.
+//
+// If an identical pending approval (same tool + command + agent) was created
+// within the last 60 seconds, the existing approval is returned instead of
+// creating a duplicate. This handles agent retries on timeout/reconnect.
 func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	now := time.Now()
+	key := dedupKey(call)
+
+	// Check for an existing identical pending approval within the dedup window.
+	for _, req := range s.pending {
+		if req.Status == StatusPending && req.dedupKey == key && now.Sub(req.CreatedAt) < dedupWindow {
+			return req, nil
+		}
+	}
 
 	// Count pending approvals to enforce the size limit.
 	pendingCount := 0
@@ -173,8 +202,6 @@ func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request
 	if pendingCount >= maxPendingApprovals {
 		return nil, ErrTooManyPending
 	}
-
-	now := time.Now()
 	req := &Request{
 		ID:        ulid.Make().String(),
 		Call:      call,
@@ -182,6 +209,7 @@ func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request
 		Status:    StatusPending,
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.timeout),
+		dedupKey:  key,
 		done:      make(chan struct{}),
 	}
 
@@ -240,6 +268,10 @@ func (s *Store) List() []*Request {
 			result = append(result, req)
 		}
 	}
+	// Sort by creation time (oldest first) for deterministic ordering.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
 	return result
 }
 

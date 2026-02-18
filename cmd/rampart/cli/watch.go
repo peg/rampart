@@ -33,6 +33,8 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	var agent string
 	var decision string
 	var tool string
+	var serveURL string
+	var serveToken string
 
 	cmd := &cobra.Command{
 		Use:   "watch",
@@ -61,6 +63,8 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 				Decision:   decision,
 				Tool:       tool,
 				Out:        cmd.OutOrStdout(),
+				ServeURL:   serveURL,
+				ServeToken: serveToken,
 			})
 		},
 	}
@@ -71,6 +75,8 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "all", "Filter to a single agent in view")
 	cmd.Flags().StringVar(&decision, "decision", "", "Filter by decision (allow, deny, log, webhook)")
 	cmd.Flags().StringVar(&tool, "tool", "", "Filter by tool name (e.g., exec, read, write)")
+	cmd.Flags().StringVar(&serveURL, "serve-url", os.Getenv("RAMPART_SERVE_URL"), "Serve API URL for interactive approvals")
+	cmd.Flags().StringVar(&serveToken, "serve-token", os.Getenv("RAMPART_TOKEN"), "Bearer token for serve API")
 
 	return cmd
 }

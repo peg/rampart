@@ -34,15 +34,17 @@ import (
 type Engine struct {
 	mu            sync.RWMutex
 	config        *Config
-	store         *FileStore
+	store         PolicyStore
 	defaultAction Action
 	responseRegex map[string]*regexp.Regexp
 	logger        *slog.Logger
+	stopReload    chan struct{} // closed to stop periodic reload goroutine
+	stopOnce      sync.Once
 }
 
-// New creates an engine from a policy file.
-// Returns an error if the file cannot be loaded or contains invalid policies.
-func New(store *FileStore, logger *slog.Logger) (*Engine, error) {
+// New creates an engine from a policy store.
+// Returns an error if policies cannot be loaded or contain invalid entries.
+func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -411,6 +413,40 @@ func (e *Engine) remainingNames(policies []Policy, after string) []string {
 		}
 	}
 	return names
+}
+
+// StartPeriodicReload starts a background goroutine that reloads policies
+// at the given interval. Call Stop() to terminate the goroutine.
+// If interval is 0 or negative, no goroutine is started.
+func (e *Engine) StartPeriodicReload(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	e.stopReload = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := e.Reload(); err != nil {
+					e.logger.Error("engine: periodic reload failed", "error", err)
+				}
+			case <-e.stopReload:
+				return
+			}
+		}
+	}()
+	e.logger.Info("engine: periodic reload started", "interval", interval)
+}
+
+// Stop terminates the periodic reload goroutine, if running.
+func (e *Engine) Stop() {
+	e.stopOnce.Do(func() {
+		if e.stopReload != nil {
+			close(e.stopReload)
+		}
+	})
 }
 
 // parseDefaultAction converts a string default action to an Action constant.

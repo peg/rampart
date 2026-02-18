@@ -290,7 +290,7 @@ func matchCondition(cond Condition, call ToolCall) bool {
 		return true
 	}
 	if cond.IsEmpty() {
-		return false
+		return true
 	}
 
 	matched := false

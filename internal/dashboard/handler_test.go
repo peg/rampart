@@ -51,7 +51,7 @@ func TestHandlerSetsSecurityHeaders(t *testing.T) {
 
 	assertHeader("X-Frame-Options", "DENY")
 	assertHeader("X-Content-Type-Options", "nosniff")
-	assertHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self'")
+	assertHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'")
 	assertHeader("Referrer-Policy", "no-referrer")
 	assertHeader("Cache-Control", "no-store")
 }
@@ -67,10 +67,10 @@ func TestHandlerIncludesAuthUXForApprovalsAPI(t *testing.T) {
 	}
 
 	body := rr.Body.String()
-	if !strings.Contains(body, "Bearer token for /v1 API") {
+	if !strings.Contains(body, "API token") {
 		t.Fatalf("response does not include token input prompt")
 	}
-	if !strings.Contains(body, "unauthorized (set token)") {
+	if !strings.Contains(body, "Unauthorized") {
 		t.Fatalf("response does not include unauthorized guidance message")
 	}
 }
