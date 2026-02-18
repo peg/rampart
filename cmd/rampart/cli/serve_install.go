@@ -119,11 +119,49 @@ func resolveServiceToken(tokenFlag string) (string, bool, error) {
 	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
 		return env, false, nil
 	}
+	// Check persisted token file written by a previous serve install.
+	if tok, err := readPersistedToken(); err == nil && tok != "" {
+		return tok, false, nil
+	}
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", false, fmt.Errorf("generate token: %w", err)
 	}
 	return hex.EncodeToString(b), true, nil
+}
+
+// tokenFilePath returns the path to the persisted token file.
+func tokenFilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".rampart", "token"), nil
+}
+
+// persistToken writes the token to ~/.rampart/token (0600).
+func persistToken(token string) error {
+	p, err := tokenFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(token), 0o600)
+}
+
+// readPersistedToken reads the token from ~/.rampart/token if it exists.
+func readPersistedToken() (string, error) {
+	p, err := tokenFilePath()
+	if err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 func plistPath() (string, error) {
@@ -280,6 +318,7 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return fmt.Errorf("launchctl load: %w\n%s", err, out)
 	}
 
+	_ = persistToken(cfg.Token) // best-effort; failure doesn't block install
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
 }
@@ -317,6 +356,7 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return fmt.Errorf("systemctl enable: %w\n%s", err, out)
 	}
 
+	_ = persistToken(cfg.Token) // best-effort; failure doesn't block install
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
 }

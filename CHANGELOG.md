@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.35] — 2026-02-18
+
+### Fixed
+- `rampart setup claude-code` now inlines `RAMPART_TOKEN` directly in the hook command (e.g. `RAMPART_TOKEN=xxx /usr/local/bin/rampart hook`). Claude Code hooks don't inherit the user's shell environment, so the token was never set and the hook silently fell back to local-only evaluation — events never appeared in the dashboard.
+- `rampart serve install` now persists the token to `~/.rampart/token` (mode 0600) so subsequent `setup claude-code` runs can pick it up automatically without requiring `RAMPART_TOKEN` in the environment.
+- Hook removal recognises `RAMPART_TOKEN=xxx ...` prefixed commands written by the above fix.
+
 ## [0.2.34] — 2026-02-18
 
 ### Fixed
