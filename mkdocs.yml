@@ -1,6 +1,6 @@
 site_name: Rampart
 site_url: https://docs.rampart.sh
-site_description: Open-source guardrails for AI agents. Policy engine that controls what AI tools can do — shell commands, file access, MCP tools.
+site_description: Open-source guardrails for AI agents. A policy firewall for shell commands, file access, and MCP tools.
 site_author: peg
 repo_url: https://github.com/peg/rampart
 repo_name: peg/rampart
