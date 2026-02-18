@@ -255,7 +255,9 @@ func (s *MixedStore) Load() (*Config, error) {
 	}
 	for _, p := range dirCfg.Policies {
 		if seen[p.Name] {
-			s.logger.Warn("engine: skip duplicate policy from config dir", "name", p.Name)
+			// Debug-level: duplicates between the primary store (e.g. embedded standard)
+			// and the config dir are expected — the primary always takes precedence.
+			s.logger.Debug("engine: skip duplicate policy from config dir", "name", p.Name)
 			continue
 		}
 		seen[p.Name] = true
