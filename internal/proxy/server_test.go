@@ -199,7 +199,7 @@ func TestToolCall_Log(t *testing.T) {
 	resp := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"sudo reboot"}}`)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	body := decodeBody(t, resp)
-	assert.Equal(t, "log", body["decision"])
+	assert.Equal(t, "watch", body["decision"])
 }
 
 func TestToolCall_MissingAuth(t *testing.T) {

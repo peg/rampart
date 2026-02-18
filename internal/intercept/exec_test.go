@@ -121,7 +121,7 @@ policies:
 			want:    engine.ActionAllow,
 		},
 		{
-			name: "log action: tool call succeeds, decision is ActionLog",
+			name: "log action: tool call succeeds, decision is ActionWatch",
 			policy: `
 version: "1"
 default_action: deny
@@ -135,7 +135,7 @@ policies:
           command_matches: ["git *"]
 `,
 			command: "git push origin main",
-			want:    engine.ActionLog,
+			want:    engine.ActionWatch,
 		},
 		{
 			name: "command normalization: leading/trailing whitespace trimmed",

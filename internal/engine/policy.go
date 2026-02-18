@@ -186,7 +186,7 @@ func (r Rule) ParseAction() (Action, error) {
 	case "deny":
 		return ActionDeny, nil
 	case "log":
-		return ActionLog, nil
+		return ActionWatch, nil
 	case "require_approval":
 		return ActionRequireApproval, nil
 	case "webhook":

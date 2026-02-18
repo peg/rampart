@@ -513,7 +513,7 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	}
 
 	decision := s.engine.Evaluate(call)
-	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionLog
+	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
 	s.writeAudit(req, toolName, decision)
 
 	writeJSON(w, http.StatusOK, map[string]any{

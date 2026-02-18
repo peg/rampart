@@ -139,9 +139,9 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				finalAction = ActionRequireApproval
 				finalMessage = message
 			}
-		case ActionLog:
+		case ActionWatch:
 			if finalAction == ActionAllow {
-				finalAction = ActionLog
+				finalAction = ActionWatch
 				finalMessage = message
 			}
 		case ActionAllow:
@@ -374,9 +374,9 @@ func (e *Engine) evaluateResponsePolicies(
 				finalAction = ActionRequireApproval
 				finalMessage = message
 			}
-		case ActionLog:
+		case ActionWatch:
 			if finalAction == ActionAllow {
-				finalAction = ActionLog
+				finalAction = ActionWatch
 				finalMessage = message
 			}
 		case ActionAllow:
@@ -475,7 +475,7 @@ func (e *Engine) parseDefaultAction(s string) Action {
 	case "deny":
 		return ActionDeny
 	case "log":
-		return ActionLog
+		return ActionWatch
 	default:
 		// If unspecified or invalid, default to deny (fail closed).
 		return ActionDeny
