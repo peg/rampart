@@ -95,11 +95,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				return nil
 			}
 
-			// Build the hook config — include --serve-url if serve is reachable.
+			// Build the hook config — no --serve-url needed, hook auto-discovers on localhost:18275.
 			hookCommand := "rampart hook"
-			if serveReachable("http://localhost:8275") {
-				hookCommand = "rampart hook --serve-url http://localhost:8275"
-			}
 
 			rampartHook := map[string]any{
 				"type":    "command",
@@ -162,6 +159,11 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route Bash commands through Rampart.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
+			fmt.Fprintln(cmd.OutOrStdout(), "")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Dashboard approvals:")
+			fmt.Fprintln(cmd.OutOrStdout(), "    Run 'rampart serve' to enable dashboard-based approvals.")
+			fmt.Fprintln(cmd.OutOrStdout(), "    The hook auto-discovers serve on localhost:18275.")
+			fmt.Fprintln(cmd.OutOrStdout(), "    Set RAMPART_TOKEN env var to authenticate with serve.")
 
 			// Check if rampart is in system PATH.
 			if _, err := execLookPath("rampart"); err != nil {
