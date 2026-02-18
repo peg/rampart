@@ -207,6 +207,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .policy-test-row{display:flex;gap:8px}
 .policy-test-input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-family:monospace;font-size:13px;color:var(--text-bright);outline:none}
 .policy-test-input:focus{border-color:var(--accent)}
+.policy-test-tool{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-size:13px;color:var(--text-bright);outline:none;cursor:pointer}
+.policy-test-tool:focus{border-color:var(--accent)}
 .policy-test-btn{background:var(--accent);color:#fff;border:none;border-radius:4px;padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap}
 .policy-test-btn:hover{opacity:.85}
 .policy-test-result{margin-top:10px;padding:8px 10px;border-radius:4px;font-size:13px;font-family:monospace}
@@ -337,6 +339,11 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       <div class="policy-test-row">
         <input type="text" id="policy-test-input" class="policy-test-input"
                placeholder="e.g. sudo rm -rf /tmp/test" autocomplete="off" spellcheck="false">
+        <select id="policy-test-tool" class="policy-test-tool">
+          <option value="exec">exec</option>
+          <option value="write">write</option>
+          <option value="read">read</option>
+        </select>
         <button id="policy-test-btn" class="policy-test-btn">Test</button>
       </div>
       <div id="policy-test-result" class="policy-test-result" style="display:none"></div>
@@ -945,26 +952,41 @@ document.getElementById('policy-test-input').addEventListener('keydown', e => {
   if(e.key === 'Enter') runPolicyTest();
 });
 
+const policyTestPlaceholders = {
+  exec:  'e.g. sudo rm -rf /tmp/test',
+  write: 'e.g. /etc/passwd',
+  read:  'e.g. ~/.ssh/id_rsa',
+};
+document.getElementById('policy-test-tool').addEventListener('change', e => {
+  document.getElementById('policy-test-input').placeholder = policyTestPlaceholders[e.target.value] || '';
+});
+
 async function runPolicyTest(){
   const input = document.getElementById('policy-test-input');
   const result = document.getElementById('policy-test-result');
   const cmd = input.value.trim();
   if(!cmd) return;
+  const tool = document.getElementById('policy-test-tool').value;
   const btn = document.getElementById('policy-test-btn');
   btn.disabled = true; btn.textContent = 'Testing...';
+  const isPath = tool === 'write' || tool === 'read';
+  const payload = isPath
+    ? {command: cmd, tool: tool, path: cmd}
+    : {command: cmd, tool: 'exec'};
   try {
     const data = await (await api('/v1/test', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({command: cmd})
+      body: JSON.stringify(payload)
     })).json();
     const action = data.action || 'allow';
     const icons = {allow:'✓', deny:'✗', require_approval:'⏸', watch:'○'};
     const labels = {allow:'Allow', deny:'Deny', require_approval:'Require Approval', watch:'Watch'};
+    const fieldLabel = isPath ? 'path' : 'command';
     let text = `${icons[action]||'?'} ${labels[action]||action}`;
     if(data.message) text += ` — ${data.message}`;
     if(data.matched_policies&&data.matched_policies.length) text += ` (rule: ${data.matched_policies.join(', ')})`;
-    if(action==='allow'&&(!data.matched_policies||!data.matched_policies.length)) text += ' — no rule matched, default action';
+    if(action==='allow'&&(!data.matched_policies||!data.matched_policies.length)) text += ` — no rule matched, default action`;
     result.className = `policy-test-result ${action}`;
     result.textContent = text;
     result.style.display = 'block';

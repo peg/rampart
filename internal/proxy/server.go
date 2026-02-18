@@ -834,10 +834,14 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		req.Tool = "exec"
 	}
 
+	params := map[string]any{"command": req.Command}
+	if req.Tool == "write" || req.Tool == "read" {
+		params = map[string]any{"path": req.Command}
+	}
 	call := engine.ToolCall{
 		Tool:      req.Tool,
 		Agent:     req.Agent,
-		Params:    map[string]any{"command": req.Command},
+		Params:    params,
 		Timestamp: time.Now(),
 	}
 
