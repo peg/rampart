@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -30,56 +31,233 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const doctorServePort = 18275
+
+// checkResult holds the outcome of a single doctor check for --json output.
+type checkResult struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // "ok", "warn", "fail"
+	Message string `json:"message"`
+}
+
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check Rampart installation health",
 		Long:  "Run diagnostic checks on your Rampart installation and report any issues.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd.OutOrStdout())
+			return runDoctor(cmd.OutOrStdout(), jsonOut)
 		},
 	}
+
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
+	return cmd
 }
 
-func runDoctor(w io.Writer) error {
-	fmt.Fprintln(w, "🩺 Rampart Doctor")
-	fmt.Fprintln(w)
+func runDoctor(w io.Writer, jsonOut bool) error {
+	var results []checkResult
+	collect := jsonOut // only accumulate when --json is set
+
+	emit := func(name, status, msg string) {
+		if collect {
+			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+			return
+		}
+		icon := "✓"
+		if status == "fail" {
+			icon = "✗"
+		} else if status == "warn" {
+			icon = "⚠"
+		}
+		fmt.Fprintf(w, "%s %s: %s\n", icon, name, msg)
+	}
+
+	if !collect {
+		fmt.Fprintln(w, "🩺 Rampart Doctor")
+		fmt.Fprintln(w)
+	}
 
 	issues := 0
+	warnings := 0
 
 	// 1. Binary version
-	fmt.Fprintf(w, "✓ Version: %s (%s)\n", build.Version, runtime.Version())
-	issues += doctorVersionCheck(w)
+	versionMsg := fmt.Sprintf("%s (%s)", build.Version, runtime.Version())
+	emit("Version", "ok", versionMsg)
+	if n := doctorVersionCheck(w, collect); n > 0 {
+		issues += n
+	}
 
-	// 2. Policy files
-	issues += doctorPolicies(w)
+	// 2. PATH check
+	if _, err := exec.LookPath("rampart"); err != nil {
+		emit("PATH", "fail", "rampart not found in PATH")
+		issues++
+	} else {
+		emit("PATH", "ok", "rampart found in PATH")
+	}
 
-	// 3. Server running
-	issues += doctorServer(w)
+	// 3. Token check
+	tokenIssues, token := doctorToken(emit)
+	issues += tokenIssues
 
-	// 4. Hooks installed
-	issues += doctorHooks(w)
+	// 4. Policy files
+	issues += doctorPolicies(emit)
 
-	// 5. Audit directory
-	issues += doctorAudit(w)
+	// 5. Hook binary path
+	issues += doctorHookBinary(emit)
 
-	// 6. System info
-	fmt.Fprintf(w, "✓ System: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	// 6. Hooks installed (claude settings + cline)
+	issues += doctorHooks(emit)
+
+	// 7. Audit directory
+	issues += doctorAudit(emit)
+
+	// 8. Server running on port 18275
+	serverIssues, serveURL := doctorServer(emit)
+	issues += serverIssues
+
+	// 9. Token auth check (requires server running)
+	if serveURL != "" && token != "" {
+		if n := doctorTokenAuth(emit, serveURL, token); n > 0 {
+			issues += n
+		}
+	}
+
+	// 10. Policies via API
+	if serveURL != "" && token != "" {
+		if n := doctorPoliciesAPI(emit, serveURL, token); n > 0 {
+			issues += n
+		}
+	}
+
+	// 11. Pending approvals
+	if serveURL != "" && token != "" {
+		if n := doctorPending(emit, serveURL, token); n > 0 {
+			warnings += n
+		}
+	}
+
+	// 12. System info
+	emit("System", "ok", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+
+	if collect {
+		// JSON output
+		issueCount := 0
+		warnCount := 0
+		for _, r := range results {
+			switch r.Status {
+			case "fail":
+				issueCount++
+			case "warn":
+				warnCount++
+			}
+		}
+		out := map[string]any{
+			"checks":   results,
+			"issues":   issueCount,
+			"warnings": warnCount,
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
+		if issueCount > 0 {
+			return exitCodeError{code: 1}
+		}
+		return nil
+	}
 
 	fmt.Fprintln(w)
-	if issues == 0 {
+	if issues == 0 && warnings == 0 {
 		fmt.Fprintln(w, "No issues found.")
 	} else {
-		noun := "issue"
-		if issues > 1 {
-			noun = "issues"
+		if issues > 0 {
+			noun := "issue"
+			if issues > 1 {
+				noun = "issues"
+			}
+			fmt.Fprintf(w, "%d %s found. Run 'rampart setup' to fix hook installation.\n", issues, noun)
 		}
-		fmt.Fprintf(w, "%d %s found. Run 'rampart setup' to fix hook installation.\n", issues, noun)
+		if warnings > 0 {
+			fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
+		}
+	}
+
+	if issues > 0 {
+		return exitCodeError{code: 1}
 	}
 	return nil
 }
 
-func doctorPolicies(w io.Writer) int {
+type emitFn func(name, status, msg string)
+
+func doctorToken(emit emitFn) (issues int, token string) {
+	// Try persisted token first.
+	if tok, err := readPersistedToken(); err == nil && tok != "" {
+		emit("Token", "ok", "token found in ~/.rampart/token")
+		return 0, tok
+	}
+	// Fallback to env var.
+	if tok := os.Getenv("RAMPART_TOKEN"); tok != "" {
+		emit("Token", "ok", "token found in RAMPART_TOKEN env var")
+		return 0, tok
+	}
+	emit("Token", "fail", "no token found (run 'rampart serve install' to create one)")
+	return 1, ""
+}
+
+func doctorHookBinary(emit emitFn) int {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+	claudeSettingsPath := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(claudeSettingsPath)
+	if err != nil {
+		return 0 // settings.json absent — hook check covers this
+	}
+
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return 0
+	}
+
+	// Find all hook commands and check absolute paths.
+	issues := 0
+	hooks, _ := settings["hooks"].(map[string]any)
+	for _, v := range hooks {
+		arr, _ := v.([]any)
+		for _, item := range arr {
+			m, _ := item.(map[string]any)
+			innerHooks, _ := m["hooks"].([]any)
+			for _, h := range innerHooks {
+				hm, _ := h.(map[string]any)
+				cmd, _ := hm["command"].(string)
+				if cmd == "" {
+					continue
+				}
+				// Extract the binary (first field, before any spaces).
+				fields := strings.Fields(cmd)
+				if len(fields) == 0 {
+					continue
+				}
+				bin := fields[0]
+				if !filepath.IsAbs(bin) {
+					continue // not absolute — skip (PATH lookup, not our concern)
+				}
+				if _, statErr := os.Stat(bin); statErr != nil {
+					emit("Hook binary", "fail", fmt.Sprintf("%s not found", bin))
+					issues++
+				} else {
+					emit("Hook binary", "ok", fmt.Sprintf("%s exists", bin))
+				}
+			}
+		}
+	}
+	return issues
+}
+
+func doctorPolicies(emit emitFn) int {
 	issues := 0
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -89,7 +267,7 @@ func doctorPolicies(w io.Writer) int {
 
 	entries, err := os.ReadDir(policyDir)
 	if err != nil {
-		fmt.Fprintf(w, "✗ Policy: %s (not found)\n", policyDir)
+		emit("Policy", "fail", fmt.Sprintf("%s (not found)", policyDir))
 		return 1
 	}
 
@@ -103,43 +281,128 @@ func doctorPolicies(w io.Writer) int {
 		store := engine.NewFileStore(path)
 		cfg, err := store.Load()
 		if err != nil {
-			fmt.Fprintf(w, "✗ Policy: ~/%s (%s)\n", relHome(path, home), err)
+			emit("Policy", "fail", fmt.Sprintf("~/%s (%s)", relHome(path, home), err))
 			issues++
 		} else {
 			count := len(cfg.Policies)
-			fmt.Fprintf(w, "✓ Policy: ~/%s (%d policies, valid)\n", relHome(path, home), count)
+			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", relHome(path, home), count))
 		}
 	}
 	if !found {
-		fmt.Fprintf(w, "✗ Policy: no .yaml files in %s\n", policyDir)
+		emit("Policy", "fail", fmt.Sprintf("no .yaml files in %s", policyDir))
 		issues++
 	}
 	return issues
 }
 
-func doctorServer(w io.Writer) int {
-	issues := 0
+// doctorServer checks if rampart serve is running on port 18275.
+// Returns (issue count, serve URL for subsequent API checks).
+func doctorServer(emit emitFn) (int, string) {
 	client := &http.Client{Timeout: 2 * time.Second}
+	url := fmt.Sprintf("http://localhost:%d/healthz", doctorServePort)
+	resp, err := client.Get(url)
+	if err != nil {
+		emit("Server", "fail", fmt.Sprintf("not running on :%d (run 'rampart serve')", doctorServePort))
+		return 1, ""
+	}
+	defer resp.Body.Close()
 
-	for _, port := range []int{19090, 9090} {
-		label := "serve"
-		if port == 19090 {
-			label = "shim"
-		}
-		url := fmt.Sprintf("http://localhost:%d/health", port)
-		resp, err := client.Get(url)
-		if err == nil {
-			defer resp.Body.Close()
-			fmt.Fprintf(w, "✓ Server: rampart %s running on :%d\n", label, port)
-		} else {
-			fmt.Fprintf(w, "✗ Server: not running on :%d\n", port)
-			issues++
+	// Parse version from health response if available.
+	var health map[string]any
+	versionStr := ""
+	if decErr := json.NewDecoder(resp.Body).Decode(&health); decErr == nil {
+		if v, ok := health["version"].(string); ok {
+			versionStr = " v" + v
 		}
 	}
-	return issues
+
+	serveURL := fmt.Sprintf("http://localhost:%d", doctorServePort)
+	emit("Server", "ok", fmt.Sprintf("rampart serve%s running on :%d", versionStr, doctorServePort))
+	return 0, serveURL
 }
 
-func doctorHooks(w io.Writer) int {
+func doctorTokenAuth(emit emitFn, serveURL, token string) int {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, serveURL+"/v1/policy", nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0 // server issue, already reported
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		emit("Token auth", "fail", fmt.Sprintf("token rejected by server (HTTP %d)", resp.StatusCode))
+		return 1
+	}
+	emit("Token auth", "ok", "token accepted by server")
+	return 0
+}
+
+func doctorPoliciesAPI(emit emitFn, serveURL, token string) int {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, serveURL+"/v1/policy", nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	defer resp.Body.Close()
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0
+	}
+
+	count := 0
+	if v, ok := body["policy_count"].(float64); ok {
+		count = int(v)
+	}
+	if count == 0 {
+		emit("Policies API", "fail", "server reports 0 policies loaded")
+		return 1
+	}
+	emit("Policies API", "ok", fmt.Sprintf("%d policies loaded via API", count))
+	return 0
+}
+
+func doctorPending(emit emitFn, serveURL, token string) int {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, serveURL+"/v1/approvals", nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	defer resp.Body.Close()
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0
+	}
+
+	count := 0
+	if pending, ok := body["pending"].([]any); ok {
+		count = len(pending)
+	}
+	if count > 0 {
+		emit("Pending", "warn", fmt.Sprintf("%d approval(s) pending — check 'rampart approve list'", count))
+		return 1 // warning, not a hard failure
+	}
+	emit("Pending", "ok", "no pending approvals")
+	return 0
+}
+
+func doctorHooks(emit emitFn) int {
 	issues := 0
 
 	// Claude Code hooks — only check if ~/.claude/ exists
@@ -156,17 +419,17 @@ func doctorHooks(w io.Writer) int {
 			if json.Unmarshal(data, &settings) == nil {
 				count := countClaudeHookMatchers(settings)
 				if count > 0 {
-					fmt.Fprintf(w, "✓ Hooks: Claude Code (%d matchers in settings.json)\n", count)
+					emit("Hooks", "ok", fmt.Sprintf("Claude Code (%d matchers in settings.json)", count))
 				} else {
-					fmt.Fprintln(w, "✗ Hooks: Claude Code (no Rampart hooks in settings.json)")
+					emit("Hooks", "fail", "Claude Code (no Rampart hooks in settings.json)")
 					issues++
 				}
 			} else {
-				fmt.Fprintln(w, "✗ Hooks: Claude Code (invalid settings.json)")
+				emit("Hooks", "fail", "Claude Code (invalid settings.json)")
 				issues++
 			}
 		} else {
-			fmt.Fprintln(w, "✗ Hooks: Claude Code (no settings.json found)")
+			emit("Hooks", "fail", "Claude Code (no settings.json found)")
 			issues++
 		}
 	}
@@ -183,13 +446,13 @@ func doctorHooks(w io.Writer) int {
 				}
 			}
 			if hookCount > 0 {
-				fmt.Fprintf(w, "✓ Hooks: Cline (%d hook scripts)\n", hookCount)
+				emit("Hooks", "ok", fmt.Sprintf("Cline (%d hook scripts)", hookCount))
 			} else {
-				fmt.Fprintln(w, "✗ Hooks: Cline (no Rampart hooks found)")
+				emit("Hooks", "fail", "Cline (no Rampart hooks found)")
 				issues++
 			}
 		} else {
-			fmt.Fprintln(w, "✗ Hooks: Cline (no Hooks directory found)")
+			emit("Hooks", "fail", "Cline (no Hooks directory found)")
 			issues++
 		}
 	}
@@ -234,7 +497,7 @@ func countClaudeHookMatchers(settings map[string]any) int {
 	return count
 }
 
-func doctorAudit(w io.Writer) int {
+func doctorAudit(emit emitFn) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return 0
@@ -243,14 +506,14 @@ func doctorAudit(w io.Writer) int {
 
 	entries, err := os.ReadDir(auditDir)
 	if err != nil {
-		fmt.Fprintf(w, "✗ Audit: %s (not found)\n", auditDir)
+		emit("Audit", "fail", fmt.Sprintf("%s (not found)", auditDir))
 		return 1
 	}
 
 	// Check writable
 	testFile := filepath.Join(auditDir, ".doctor-write-test")
 	if err := os.WriteFile(testFile, []byte("test"), 0o600); err != nil {
-		fmt.Fprintf(w, "✗ Audit: %s (not writable)\n", auditDir)
+		emit("Audit", "fail", fmt.Sprintf("%s (not writable)", auditDir))
 		return 1
 	}
 	os.Remove(testFile)
@@ -264,7 +527,7 @@ func doctorAudit(w io.Writer) int {
 	}
 
 	if len(files) == 0 {
-		fmt.Fprintf(w, "✓ Audit: ~/%s (0 files)\n", relHome(auditDir, home))
+		emit("Audit", "ok", fmt.Sprintf("~/%s (0 files)", relHome(auditDir, home)))
 		return 0
 	}
 
@@ -277,11 +540,11 @@ func doctorAudit(w io.Writer) int {
 		latest = info.ModTime().Format("2006-01-02")
 	}
 
-	fmt.Fprintf(w, "✓ Audit: ~/%s (%d files, latest: %s)\n", relHome(auditDir, home), len(files), latest)
+	emit("Audit", "ok", fmt.Sprintf("~/%s (%d files, latest: %s)", relHome(auditDir, home), len(files), latest))
 	return 0
 }
 
-func doctorVersionCheck(w io.Writer) int {
+func doctorVersionCheck(w io.Writer, silent bool) int {
 	current := build.Version
 	if current == "dev" || current == "" {
 		return 0 // dev build, skip check
@@ -313,19 +576,20 @@ func doctorVersionCheck(w io.Writer) int {
 		return 0
 	}
 
-	// Detect install method for upgrade hint
-	exe, _ := os.Executable()
-	var hint string
-	switch {
-	case strings.Contains(exe, "homebrew") || strings.Contains(exe, "Cellar") || strings.Contains(exe, "linuxbrew"):
-		hint = "  brew upgrade rampart"
-	case strings.Contains(exe, filepath.Join("go", "bin")):
-		hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s", release.TagName)
-	default:
-		hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s\n  — or download from https://github.com/peg/rampart/releases", release.TagName)
+	if !silent {
+		// Detect install method for upgrade hint
+		exe, _ := os.Executable()
+		var hint string
+		switch {
+		case strings.Contains(exe, "homebrew") || strings.Contains(exe, "Cellar") || strings.Contains(exe, "linuxbrew"):
+			hint = "  brew upgrade rampart"
+		case strings.Contains(exe, filepath.Join("go", "bin")):
+			hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s", release.TagName)
+		default:
+			hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s\n  — or download from https://github.com/peg/rampart/releases", release.TagName)
+		}
+		fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n%s\n", current, release.TagName, hint)
 	}
-
-	fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n%s\n", current, release.TagName, hint)
 	return 0 // informational, not an issue
 }
 

@@ -15,6 +15,8 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -23,9 +25,9 @@ import (
 
 func TestRunDoctor(t *testing.T) {
 	var buf bytes.Buffer
-	err := runDoctor(&buf)
-	if err != nil {
-		t.Fatalf("runDoctor returned error: %v", err)
+	err := runDoctor(&buf, false)
+	if err != nil && err.Error() != "exit status 1" {
+		t.Fatalf("runDoctor returned unexpected error: %v", err)
 	}
 	out := buf.String()
 
@@ -82,4 +84,78 @@ func TestCountClaudeHookMatchers(t *testing.T) {
 	if count == 0 {
 		t.Error("expected non-zero count for rampart hooks")
 	}
+}
+
+func TestRunDoctor_JSON(t *testing.T) {
+	var buf bytes.Buffer
+	err := runDoctor(&buf, true)
+	// May return exitCodeError if issues found — that's expected in test env.
+	if err != nil {
+		var exitErr exitCodeError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("unexpected error type: %v", err)
+		}
+	}
+	var result map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("JSON output invalid: %v\noutput: %s", err, buf.String())
+	}
+	if _, ok := result["checks"]; !ok {
+		t.Error("JSON output missing 'checks' field")
+	}
+	if _, ok := result["issues"]; !ok {
+		t.Error("JSON output missing 'issues' field")
+	}
+}
+
+func TestRunDoctor_ExitCode(t *testing.T) {
+	var buf bytes.Buffer
+	err := runDoctor(&buf, false)
+	out := buf.String()
+	// In CI/test environment, we expect some checks to fail (no rampart serve running).
+	// Verify the output contains the header.
+	if !strings.Contains(out, "🩺 Rampart Doctor") {
+		t.Error("missing doctor header in output")
+	}
+	// Error should be nil or exitCodeError{1}.
+	if err != nil {
+		var exitErr exitCodeError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("expected exitCodeError, got: %T %v", err, err)
+		}
+		if exitErr.code != 1 {
+			t.Errorf("expected exit code 1, got %d", exitErr.code)
+		}
+	}
+}
+
+func TestDoctorToken_EnvVar(t *testing.T) {
+	t.Setenv("RAMPART_TOKEN", "test-token-xyz")
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	issues, token := doctorToken(emit)
+	if issues != 0 {
+		t.Errorf("expected 0 issues with RAMPART_TOKEN set, got %d", issues)
+	}
+	if token != "test-token-xyz" {
+		t.Errorf("expected token 'test-token-xyz', got %q", token)
+	}
+	if len(results) == 0 || results[0].Status != "ok" {
+		t.Errorf("expected ok status, got %+v", results)
+	}
+}
+
+func TestDoctorToken_Missing(t *testing.T) {
+	// Ensure no token present.
+	t.Setenv("RAMPART_TOKEN", "")
+	// Can't easily clear ~/.rampart/token in test — just test env path.
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	// With empty env var, will fall through to persisted token check.
+	// Just verify no panic.
+	_, _ = doctorToken(emit)
 }

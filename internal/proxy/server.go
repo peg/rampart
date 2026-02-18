@@ -33,6 +33,7 @@ import (
 
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/dashboard"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
@@ -814,6 +815,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"status":         "ok",
 		"mode":           s.mode,
 		"uptime_seconds": uptime,
+		"version":        build.Version,
 	})
 }
 
