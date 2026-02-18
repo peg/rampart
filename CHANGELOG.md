@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] — 2026-02-18
 
 ### Added
+- **`rampart quickstart`**: one-shot setup command — detects AI coding environment, installs service, configures hooks, runs health check.
 - **`rampart init --project`**: scaffolds `.rampart/policy.yaml` with a commented template for team-shared project rules. Errors clearly if the file already exists (no silent overwrites). Commit the generated file to enforce rules for all team members.
 - **`rampart doctor` project policy check**: shows whether a project policy is active in the current repo (`.rampart/policy.yaml`). Purely informational — never a failure. Skipped outside git repos. Included in `--json` output as `status: "ok"` or `status: "info"`.
 - **`rampart doctor` colored output**: `✓` green, `✗` red, `⚠` yellow in terminal output. Colors are suppressed when `--json` is set or `NO_COLOR` is set.
