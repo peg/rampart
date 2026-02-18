@@ -108,6 +108,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .badge.deny{background:rgba(239,68,68,.12);color:var(--red)}
 .badge.require_approval{background:rgba(245,158,11,.12);color:var(--orange)}
 .badge.blocked{background:rgba(239,68,68,.12);color:var(--red)}
+.badge.watch{background:var(--surface-3);color:var(--text)}
 
 /* Toast */
 #toast{position:fixed;bottom:20px;right:20px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-bright);padding:8px 16px;border-radius:var(--radius);font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
@@ -830,12 +831,14 @@ function appendHistRow(ev,tbody){
   const t=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString():'—';
   const tr=document.createElement('tr');
   tr.className='row'+(danger?' dangerous':'');
-  const badgeCls=action==='allow'?'allow':action==='deny'?'deny':action==='denied'?'denied':action==='approved'?'approved':action==='require_approval'?'require_approval':'';
+  // Normalize action labels for display
+  const actionLabel=action==='deny'?'blocked':action==='denied'?'denied':action==='allow'?'allow':action==='approved'?'approved':action==='watch'?'watch':action||'—';
+  const badgeCls=action==='allow'?'allow':(action==='deny'||action==='denied'||action==='blocked')?'deny':action==='approved'?'approved':action==='require_approval'?'require_approval':action==='watch'?'watch':'';
   tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
     <td class="col-agent">${esc(ev.agent||'—')}</td>
     <td class="col-tool">${esc(ev.tool||'—')}</td>
     <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
-    <td><span class="badge ${badgeCls}">${esc(action||'—')}</span></td>`;
+    <td><span class="badge ${badgeCls}">${esc(actionLabel)}</span></td>`;
   const det=document.createElement('tr');det.className='detail-row';
   det.innerHTML=`<td colspan="5"><div class="detail-inner"><dl class="kv">
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
