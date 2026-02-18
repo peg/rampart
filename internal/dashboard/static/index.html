@@ -4,58 +4,479 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rampart Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0b1118;--panel:#111a24;--panel-2:#172331;--text:#dce7f5;--muted:#91a2b8;--border:#253447;--ok:#2bc46d;--deny:#f05454;--warn:#ff6d6d;--accent:#38bdf8;--shadow:0 10px 28px rgba(0,0,0,.35)}
-*{box-sizing:border-box}body{margin:0;font:14px/1.45 "JetBrains Mono","SFMono-Regular",Menlo,monospace;background:radial-gradient(circle at 0 0,#1b2940 0,var(--bg) 30%),var(--bg);color:var(--text)}
-.wrap{max-width:980px;margin:0 auto;padding:18px 14px 42px}
-.header{display:flex;flex-wrap:wrap;gap:12px;align-items:end;justify-content:space-between;margin-bottom:16px}
-.brand{font-size:24px;font-weight:700;letter-spacing:.4px}
-.brand span{color:var(--accent)}
-.auth{display:flex;gap:8px;align-items:center;flex:1;max-width:520px}
-.auth input{flex:1;padding:10px 12px;border:1px solid var(--border);background:#0c151f;color:var(--text);border-radius:8px;outline:none}
-.auth input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(56,189,248,.2)}
-.btn{border:0;border-radius:8px;padding:10px 12px;font-weight:700;cursor:pointer;transition:.14s transform,.14s opacity}.btn:active{transform:translateY(1px)}
-.btn.save{background:var(--accent);color:#03202e}.btn.ok{background:var(--ok);color:#052611}.btn.deny{background:var(--deny);color:#330606}.btn:disabled{opacity:.55;cursor:not-allowed}
-.meta{display:flex;gap:14px;color:var(--muted);font-size:12px;margin-bottom:12px}
-.grid{display:grid;grid-template-columns:1fr;gap:12px}
-.card{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);border-radius:12px;padding:12px 12px 10px;box-shadow:var(--shadow)}
-.card.new::after{content:"";position:absolute;inset:-1px;border-radius:12px;box-shadow:0 0 0 1px rgba(56,189,248,.5),0 0 22px rgba(56,189,248,.32);animation:pulse 2.4s ease-out 1}
-@keyframes pulse{0%{opacity:1}100%{opacity:0}}
-.top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:8px}
-.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#0f2031;color:#8fceef;border:1px solid #244661}
-.time{font-size:12px;color:var(--muted)}.time.soon{color:var(--warn);font-weight:700}
-.cmd{margin:8px 0;padding:10px;border-radius:8px;background:#0a131d;border:1px solid #223141;overflow:auto;white-space:pre-wrap;word-break:break-word;color:#d0f6e2}
-.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 8px;font-size:12px}.k{color:var(--muted)}.v{word-break:break-word}
-.actions{display:flex;gap:8px;margin-top:10px}
-.empty{padding:30px 12px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:12px;animation:drift 2.2s ease-in-out infinite alternate}
-@keyframes drift{from{transform:translateY(0)}to{transform:translateY(-3px)}}
-.section{margin-top:18px}.section h2{margin:0 0 10px;font-size:14px;color:#b9c7d8;letter-spacing:.2px}
-.history .card{opacity:.62;filter:saturate(.75)}
-.toast-wrap{position:fixed;right:14px;bottom:14px;display:grid;gap:8px;z-index:20}
-.toast{padding:10px 12px;border-radius:8px;border:1px solid;background:#0d141e;box-shadow:var(--shadow)}
-.toast.ok{border-color:#246840;color:#8eeab8}.toast.err{border-color:#702c2c;color:#ffaaaa}
-@media (max-width:720px){.header{align-items:stretch}.auth{max-width:none;width:100%}.top{flex-direction:column}.kv{grid-template-columns:1fr}.actions{flex-direction:column}.actions .btn{width:100%}.brand{font-size:21px}}
+:root {
+  --bg: #09090b;
+  --surface: #18181b;
+  --surface-2: #1e1e22;
+  --surface-3: #27272a;
+  --border: #27272a;
+  --border-light: #3f3f46;
+  --text: #a1a1aa;
+  --text-bright: #e4e4e7;
+  --heading: #fafafa;
+  --accent: #FF6392;
+  --accent-dim: #cc4f75;
+  --accent-bg: rgba(255, 99, 146, 0.08);
+  --accent-border: rgba(255, 99, 146, 0.2);
+  --green: #22c55e;
+  --green-bg: rgba(34, 197, 94, 0.1);
+  --green-border: rgba(34, 197, 94, 0.25);
+  --red: #ef4444;
+  --red-bg: rgba(239, 68, 68, 0.1);
+  --red-border: rgba(239, 68, 68, 0.25);
+  --orange: #f59e0b;
+  --orange-bg: rgba(245, 158, 11, 0.1);
+  --orange-border: rgba(245, 158, 11, 0.25);
+  --shadow: 0 4px 24px rgba(0,0,0,.4);
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-icon {
+  width: 32px;
+  height: 32px;
+  background: var(--accent);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-icon svg { width: 18px; height: 18px; fill: white; }
+
+.brand-text {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--heading);
+  letter-spacing: -0.3px;
+}
+
+.brand-text span {
+  color: var(--text);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.auth {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.auth input {
+  width: 260px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-bright);
+  border-radius: 8px;
+  outline: none;
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+
+.auth input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.auth input::placeholder { color: var(--text); opacity: 0.5; }
+
+/* Buttons */
+.btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.btn-save { background: var(--accent); color: white; }
+.btn-save:hover { background: var(--accent-dim); }
+.btn-approve { background: var(--green); color: #052e16; }
+.btn-approve:hover { background: #16a34a; }
+.btn-always { background: transparent; color: var(--green); border: 1px solid var(--green-border); }
+.btn-always:hover { background: var(--green-bg); }
+.btn-deny { background: transparent; color: var(--red); border: 1px solid var(--red-border); }
+.btn-deny:hover { background: var(--red-bg); }
+
+/* Status bar */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.status-bar .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+  margin-right: 6px;
+  animation: blink 2s ease-in-out infinite;
+}
+
+.status-bar .dot.error { background: var(--red); animation: none; }
+.status-bar .dot.connecting { background: var(--orange); }
+
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+.status-left { display: flex; align-items: center; gap: 16px; }
+.status-right { color: var(--text); }
+
+/* Stats */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--heading);
+  letter-spacing: -1px;
+}
+
+.stat-value.pending-val { color: var(--accent); }
+.stat-value.approved-val { color: var(--green); }
+.stat-value.denied-val { color: var(--red); }
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  margin-top: 4px;
+}
+
+/* Section */
+.section {
+  margin-bottom: 32px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+}
+
+.section-count {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-3);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+/* Cards */
+.grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  transition: border-color 0.15s;
+}
+
+.card:hover { border-color: var(--border-light); }
+
+.card.dangerous {
+  border-color: var(--orange-border);
+  background: linear-gradient(135deg, var(--surface) 0%, rgba(245, 158, 11, 0.03) 100%);
+}
+
+.card.dangerous .cmd { border-color: var(--orange-border); background: rgba(245, 158, 11, 0.05); }
+
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.card-badges { display: flex; gap: 6px; align-items: center; }
+
+.badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+}
+
+.badge-danger {
+  background: var(--orange-bg);
+  color: var(--orange);
+  border-color: var(--orange-border);
+}
+
+.timer {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.timer.urgent { color: var(--red); font-weight: 600; }
+
+.cmd {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-bright);
+  line-height: 1.4;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.meta-grid .k {
+  color: var(--text);
+  opacity: 0.6;
+}
+
+.meta-grid .v {
+  color: var(--text);
+  word-break: break-word;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* History cards */
+.history-card {
+  opacity: 0.6;
+}
+
+.history-card:hover { opacity: 0.8; }
+
+.resolution-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.resolution-badge.approved {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+}
+
+.resolution-badge.denied {
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid var(--red-border);
+}
+
+.resolution-badge.always {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+}
+
+/* Empty state */
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text);
+  opacity: 0.5;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.empty-icon { font-size: 28px; margin-bottom: 8px; }
+
+/* Toasts */
+.toast-wrap {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 8px;
+  z-index: 50;
+}
+
+.toast {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  animation: slideIn 0.2s ease-out;
+}
+
+.toast.ok { border-color: var(--green-border); color: var(--green); }
+.toast.err { border-color: var(--red-border); color: var(--red); }
+
+@keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Responsive */
+@media (max-width: 640px) {
+  .header { flex-direction: column; align-items: stretch; }
+  .auth { width: 100%; }
+  .auth input { width: 100%; flex: 1; }
+  .stats { grid-template-columns: 1fr; }
+  .card-top { flex-direction: column; align-items: flex-start; }
+  .card-actions { flex-direction: column; }
+  .card-actions .btn { width: 100%; justify-content: center; }
+  .brand-text { font-size: 16px; }
+  .meta-grid { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand">Rampart <span>Dashboard</span></div>
+    <div class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2L3 7v10l9 5 9-5V7l-9-5zm0 2.18L18.36 7.5 12 10.82 5.64 7.5 12 4.18zM5 8.82l6 3.33v7.03l-6-3.33V8.82zm8 10.36V12.15l6-3.33v7.03l-6 3.33z"/></svg>
+      </div>
+      <div class="brand-text">Rampart<span>Dashboard</span></div>
+    </div>
     <div class="auth">
-      <input id="token" type="password" placeholder="Bearer token for /v1 API">
-      <button class="btn save" id="saveToken">Save</button>
+      <input id="token" type="password" placeholder="API token">
+      <button class="btn btn-save" id="saveToken">Connect</button>
     </div>
   </header>
 
-  <div class="meta">
-    <div id="status">Status: connecting...</div>
-    <div id="updated">Last update: never</div>
+  <div class="status-bar">
+    <div class="status-left">
+      <div><span class="dot connecting" id="dot"></span><span id="status">Connecting...</span></div>
+    </div>
+    <div class="status-right" id="updated"></div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-value pending-val" id="stat-pending">0</div>
+      <div class="stat-label">Pending</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value approved-val" id="stat-approved">0</div>
+      <div class="stat-label">Approved</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value denied-val" id="stat-denied">0</div>
+      <div class="stat-label">Denied</div>
+    </div>
   </div>
 
   <main>
-    <div id="pending" class="grid"></div>
-    <div class="section history">
-      <h2>Resolved (last 20)</h2>
+    <div class="section" id="pending-section">
+      <div class="section-header">
+        <div class="section-title">Pending Approvals</div>
+        <div class="section-count" id="pending-count">0</div>
+      </div>
+      <div id="pending" class="grid"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">History</div>
+        <div class="section-count" id="history-count">0</div>
+      </div>
       <div id="history" class="grid"></div>
     </div>
   </main>
@@ -70,48 +491,83 @@
   const TOKEN_KEY = 'rampart_dashboard_token';
   const MAX_HISTORY = 20;
 
+  const DANGEROUS_PATTERNS = [
+    /^rm\s/, /^rm$/, /^chmod\s/, /^chown\s/, /^kill\s/, /^killall\s/, /^pkill\s/,
+    /^dd\s/, /^mkfs/, /^fdisk/, /^reboot/, /^shutdown/, /^halt/,
+    /^systemctl\s+(stop|disable|restart)/, /^ssh\b.*\breboot\b/, /^curl\b.*\|\s*(ba)?sh/,
+    /\brm\s+-rf\b/, /\bsudo\b/
+  ];
+
   const el = {
     token: document.getElementById('token'),
     saveToken: document.getElementById('saveToken'),
     status: document.getElementById('status'),
+    dot: document.getElementById('dot'),
     updated: document.getElementById('updated'),
     pending: document.getElementById('pending'),
     history: document.getElementById('history'),
-    toasts: document.getElementById('toasts')
+    toasts: document.getElementById('toasts'),
+    statPending: document.getElementById('stat-pending'),
+    statApproved: document.getElementById('stat-approved'),
+    statDenied: document.getElementById('stat-denied'),
+    pendingCount: document.getElementById('pending-count'),
+    historyCount: document.getElementById('history-count'),
   };
 
-  const state = { pending: [], seen: new Set(), history: [], pollDelay: POLL_MS, pollTimer: null, pollController: null };
+  const state = {
+    pending: [],
+    seen: new Set(),
+    history: [],
+    approvedCount: 0,
+    deniedCount: 0,
+    pollDelay: POLL_MS,
+    pollTimer: null,
+    pollController: null
+  };
 
   // Auto-fill token from URL query param or localStorage
   const urlToken = new URLSearchParams(window.location.search).get('token');
   if (urlToken) {
     el.token.value = urlToken;
     localStorage.setItem(TOKEN_KEY, urlToken);
-    // Clean URL so token isn't visible in address bar
     window.history.replaceState({}, '', window.location.pathname);
   } else {
     el.token.value = localStorage.getItem(TOKEN_KEY) || '';
+  }
+
+  function isDangerous(cmd) {
+    if (!cmd) return false;
+    const trimmed = cmd.trim();
+    return DANGEROUS_PATTERNS.some(p => p.test(trimmed));
   }
 
   const fmt = {
     ts(s) {
       const d = new Date(s);
       if (Number.isNaN(d.getTime())) return '-';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    },
+    fullTs(s) {
+      const d = new Date(s);
+      if (Number.isNaN(d.getTime())) return '-';
       return d.toLocaleString();
     },
     left(expiresAt) {
       const ms = new Date(expiresAt).getTime() - Date.now();
-      if (ms <= 0) return { text: 'Expired', soon: true };
+      if (ms <= 0) return { text: 'Expired', urgent: true };
       const sec = Math.floor(ms / 1000);
+      if (sec > 3600) {
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        return { text: `${h}h ${m}m`, urgent: false };
+      }
       const m = Math.floor(sec / 60);
       const s = sec % 60;
-      return { text: `${m}m ${String(s).padStart(2, '0')}s`, soon: sec < 60 };
+      return { text: `${m}:${String(s).padStart(2, '0')}`, urgent: sec < 60 };
     }
   };
 
-  function token() {
-    return el.token.value.trim();
-  }
+  function token() { return el.token.value.trim(); }
 
   function headers(withJSON) {
     const h = {};
@@ -126,7 +582,11 @@
     n.className = `toast ${ok ? 'ok' : 'err'}`;
     n.textContent = msg;
     el.toasts.appendChild(n);
-    setTimeout(() => n.remove(), 2600);
+    setTimeout(() => n.remove(), 3000);
+  }
+
+  function escape(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   function upsertHistory(item, approved, resolvedBy, status) {
@@ -138,71 +598,93 @@
       _resolvedBy: resolvedBy || 'dashboard'
     });
     state.history = state.history.slice(0, MAX_HISTORY);
+    if (approved) state.approvedCount++; else state.deniedCount++;
   }
 
   function renderCard(item, inHistory) {
     const left = fmt.left(item.expires_at);
+    const dangerous = isDangerous(item.command);
     const card = document.createElement('article');
-    card.className = `card ${!inHistory && !state.seen.has(item.id) ? 'new' : ''}`;
+    card.className = `card${inHistory ? ' history-card' : ''}${dangerous && !inHistory ? ' dangerous' : ''}`;
+
+    const badgesHTML = `
+      <div class="card-badges">
+        <span class="badge">${escape(item.tool || 'unknown')}</span>
+        ${dangerous ? '<span class="badge badge-danger">⚠ dangerous</span>' : ''}
+        ${inHistory ? `<span class="resolution-badge ${escape(item._status === 'always_allowed' ? 'always' : item._approved ? 'approved' : 'denied')}">${escape(item._status === 'always_allowed' ? '✓ always allowed' : item._approved ? '✓ approved' : '✗ denied')}</span>` : ''}
+      </div>
+    `;
+
+    const timerHTML = inHistory
+      ? `<span class="timer">${escape(fmt.ts(item._resolvedAt))}</span>`
+      : `<span class="timer${left.urgent ? ' urgent' : ''}">${left.text}</span>`;
+
+    const metaHTML = `
+      <div class="meta-grid">
+        <span class="k">Agent</span><span class="v">${escape(item.agent || '-')}</span>
+        <span class="k">Message</span><span class="v">${escape(item.message || '-')}</span>
+        ${inHistory ? `<span class="k">Resolved by</span><span class="v">${escape(item._resolvedBy || '-')}</span>` : ''}
+        <span class="k">ID</span><span class="v">${escape(item.id || '-')}</span>
+      </div>
+    `;
+
+    const actionsHTML = inHistory ? '' : `
+      <div class="card-actions">
+        <button class="btn btn-approve" data-action="approve" data-id="${escape(item.id)}">✓ Approve</button>
+        <button class="btn btn-always" data-action="always" data-id="${escape(item.id)}">Always Allow</button>
+        <button class="btn btn-deny" data-action="deny" data-id="${escape(item.id)}">✗ Deny</button>
+      </div>
+    `;
+
     card.innerHTML = `
-      <div class="top">
-        <div class="badge">${escape(item.tool || 'unknown')}</div>
-        <div class="time ${left.soon ? 'soon' : ''}">Time remaining: ${left.text}</div>
-      </div>
+      <div class="card-top">${badgesHTML}${timerHTML}</div>
       <pre class="cmd">${escape(item.command || '')}</pre>
-      <div class="kv">
-        <div class="k">ID</div><div class="v">${escape(item.id || '-')}</div>
-        <div class="k">Agent</div><div class="v">${escape(item.agent || '-')}</div>
-        <div class="k">Policy Message</div><div class="v">${escape(item.message || '-')}</div>
-        ${inHistory ? `<div class="k">Resolution</div><div class="v">${escape(item._status || (item._approved ? 'approved' : 'denied'))}</div>` : ''}
-        ${inHistory ? `<div class="k">Resolved By</div><div class="v">${escape(item._resolvedBy || 'dashboard')}</div>` : ''}
-        <div class="k">Created</div><div class="v">${escape(fmt.ts(item.created_at))}</div>
-        <div class="k">${inHistory ? 'Resolved' : 'Expires'}</div><div class="v">${escape(fmt.ts(inHistory ? item._resolvedAt : item.expires_at))}</div>
-      </div>
-      ${inHistory ? '' : `<div class="actions"><button class="btn ok" data-action="approve" data-id="${escape(item.id)}">Approve</button><button class="btn ok" data-action="always" data-id="${escape(item.id)}" style="background:#1d8348">Always Allow</button><button class="btn deny" data-action="deny" data-id="${escape(item.id)}">Deny</button></div>`}
+      ${metaHTML}${actionsHTML}
     `;
     return card;
+  }
+
+  function updateStats() {
+    el.statPending.textContent = state.pending.length;
+    el.statApproved.textContent = state.approvedCount;
+    el.statDenied.textContent = state.deniedCount;
+    el.pendingCount.textContent = state.pending.length;
+    el.historyCount.textContent = state.history.length;
   }
 
   function renderPending() {
     el.pending.innerHTML = '';
     if (!state.pending.length) {
-      el.pending.innerHTML = '<div class="empty">No pending approvals</div>';
+      el.pending.innerHTML = '<div class="empty"><div class="empty-icon">✓</div>No pending approvals</div>';
+      updateStats();
       return;
     }
     for (const item of state.pending) {
       el.pending.appendChild(renderCard(item, false));
       state.seen.add(item.id);
     }
+    updateStats();
   }
 
   function renderHistory() {
     el.history.innerHTML = '';
     if (!state.history.length) {
-      el.history.innerHTML = '<div class="empty">No resolved approvals yet</div>';
+      el.history.innerHTML = '<div class="empty"><div class="empty-icon">—</div>No resolved approvals yet</div>';
+      updateStats();
       return;
     }
     for (const item of state.history) el.history.appendChild(renderCard(item, true));
+    updateStats();
   }
 
-  function escape(s) {
-    return String(s)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
+  function setStatus(text, type) {
+    el.status.textContent = text;
+    el.dot.className = 'dot ' + (type || '');
   }
 
   function schedulePoll(delay) {
     if (state.pollTimer) clearTimeout(state.pollTimer);
-    state.pollTimer = setTimeout(() => {
-      poll();
-    }, delay);
-  }
-
-  function nextBackoff() {
-    state.pollDelay = Math.min(state.pollDelay * 2, MAX_POLL_MS);
+    state.pollTimer = setTimeout(poll, delay);
   }
 
   async function poll() {
@@ -212,9 +694,8 @@
     try {
       const r = await fetch('/v1/approvals', { headers: headers(false), signal: controller.signal });
       if (!r.ok) {
-        const message = r.status === 401 ? 'unauthorized (set token)' : `request failed (${r.status})`;
-        el.status.textContent = `Status: ${message}`;
-        nextBackoff();
+        setStatus(r.status === 401 ? 'Unauthorized — check token' : `Error (${r.status})`, 'error');
+        state.pollDelay = Math.min(state.pollDelay * 2, MAX_POLL_MS);
         return;
       }
       const data = await r.json();
@@ -222,24 +703,22 @@
       renderPending();
       renderHistory();
       state.pollDelay = POLL_MS;
-      el.status.textContent = 'Status: live';
-      el.updated.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+      setStatus('Connected', '');
+      el.updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     } catch (err) {
       if (err.name === 'AbortError') return;
-      el.status.textContent = 'Status: network error';
-      nextBackoff();
+      setStatus('Connection lost', 'error');
+      state.pollDelay = Math.min(state.pollDelay * 2, MAX_POLL_MS);
     } finally {
-      if (state.pollController === controller) {
-        state.pollController = null;
-      }
+      if (state.pollController === controller) state.pollController = null;
       schedulePoll(state.pollDelay);
     }
   }
 
   async function resolve(id, approved, button, persist) {
-    const original = button.textContent;
+    const original = button.innerHTML;
     button.disabled = true;
-    button.textContent = approved ? 'Approving...' : 'Denying...';
+    button.textContent = '...';
     try {
       const r = await fetch(`/v1/approvals/${encodeURIComponent(id)}/resolve`, {
         method: 'POST',
@@ -250,22 +729,28 @@
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       const item = state.pending.find(x => x.id === id);
       if (item) {
-        upsertHistory(item, approved, data.resolved_by || 'dashboard', data.status);
+        const status = persist ? 'always_allowed' : (approved ? 'approved' : 'denied');
+        upsertHistory(item, approved, data.resolved_by || 'dashboard', status);
         renderHistory();
       }
-      toast(approved ? 'Approval granted' : 'Approval denied', true);
+      toast(persist ? 'Always allowed — rule saved' : approved ? 'Approved' : 'Denied', true);
       await poll();
     } catch (err) {
-      toast(`Action failed: ${err.message}`, false);
+      toast(`Failed: ${err.message}`, false);
       button.disabled = false;
-      button.textContent = original;
+      button.innerHTML = original;
     }
   }
 
   el.saveToken.addEventListener('click', () => {
     localStorage.setItem(TOKEN_KEY, token());
     toast('Token saved', true);
+    state.pollDelay = POLL_MS;
     poll();
+  });
+
+  el.token.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') el.saveToken.click();
   });
 
   el.pending.addEventListener('click', (e) => {
@@ -275,11 +760,12 @@
     resolve(b.dataset.id, b.dataset.action === 'approve' || persist, b, persist);
   });
 
+  // Tick countdown timers
   setInterval(() => {
     if (state.pending.length) renderPending();
-    if (state.history.length) renderHistory();
   }, TICK_MS);
 
+  renderPending();
   renderHistory();
   poll();
 })();
