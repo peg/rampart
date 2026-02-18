@@ -72,7 +72,7 @@ func (n *SlackNotifier) Send(event NotifyEvent) error {
 	// Choose color based on action
 	color := "#f85149" // red for deny
 	actionText := "Command Denied"
-	if event.Action == "log" {
+	if event.Action == "watch" || event.Action == "log" {
 		color = "#d29922" // orange for log
 		actionText = "Command Logged"
 	} else if event.Action == "require_approval" {

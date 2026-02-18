@@ -294,7 +294,7 @@ func printTestResult(w io.Writer, d engine.Decision, noColor bool) {
 		if !noColor {
 			color = "\033[31m"
 		}
-	case engine.ActionLog:
+	case engine.ActionWatch:
 		icon = "📝"
 		label = "LOG"
 		if !noColor {

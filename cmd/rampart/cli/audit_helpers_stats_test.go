@@ -12,14 +12,14 @@ func TestComputeAuditStatsAndFormatAuditStats(t *testing.T) {
 	events := []audit.Event{
 		{Tool: "exec", Agent: "zeta", Decision: audit.EventDecision{Action: "allow"}, Timestamp: time.Now().UTC()},
 		{Tool: "read", Agent: "alpha", Decision: audit.EventDecision{Action: "deny"}, Timestamp: time.Now().UTC()},
-		{Tool: "exec", Agent: "alpha", Decision: audit.EventDecision{Action: "log"}, Timestamp: time.Now().UTC()},
+		{Tool: "exec", Agent: "alpha", Decision: audit.EventDecision{Action: "watch"}, Timestamp: time.Now().UTC()},
 	}
 
 	stats := computeAuditStats(events)
 	if stats.Total != 3 {
 		t.Fatalf("Total = %d, want 3", stats.Total)
 	}
-	if stats.ByDecision["allow"] != 1 || stats.ByDecision["deny"] != 1 || stats.ByDecision["log"] != 1 {
+	if stats.ByDecision["allow"] != 1 || stats.ByDecision["deny"] != 1 || stats.ByDecision["watch"] != 1 {
 		t.Fatalf("unexpected ByDecision counts: %#v", stats.ByDecision)
 	}
 	if stats.ByTool["exec"] != 2 || stats.ByTool["read"] != 1 {
@@ -59,7 +59,7 @@ func TestComputeAuditStatsAndFormatAuditStats(t *testing.T) {
 	if !strings.Contains(colored, colorRed+"deny"+colorReset) {
 		t.Fatalf("missing colored deny label: %q", colored)
 	}
-	if !strings.Contains(colored, colorYel+"log"+colorReset) {
+	if !strings.Contains(colored, colorYel+"watch"+colorReset) {
 		t.Fatalf("missing colored log label: %q", colored)
 	}
 }

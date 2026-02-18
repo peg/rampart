@@ -27,7 +27,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .wrap{max-width:1200px;margin:0 auto;padding:0 16px}
 
 /* Auth bar */
-#auth-bar{padding:12px 0;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+#auth-bar{padding:10px 0;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
 #auth-bar .logo{font-weight:700;font-size:15px;color:var(--heading);margin-right:auto;display:flex;align-items:center;gap:6px}
 #auth-bar .logo span{color:var(--accent)}
 #token-input{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:6px 10px;border-radius:var(--radius);width:260px;font-size:12px;outline:none}
@@ -37,40 +37,68 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 #connect-btn:hover{background:var(--accent-dim)}
 #theme-toggle{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:4px 8px;border-radius:var(--radius);font-size:14px;cursor:pointer;line-height:1}
 #theme-toggle:hover{border-color:var(--accent)}
-.conn-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-left:4px}
+/* Connected state — replaces input+button after auth */
+#auth-connected{display:none;align-items:center;gap:8px;font-size:12px;color:var(--text)}
+#auth-connected .token-hint{color:#52525b;font-family:'JetBrains Mono',monospace;font-size:11px}
+#auth-connected .disconnect-btn{background:none;border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:var(--radius);font-size:11px;cursor:pointer}
+#auth-connected .disconnect-btn:hover{border-color:var(--red);color:var(--red)}
+.conn-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
 .conn-dot.ok{background:var(--green)}.conn-dot.err{background:var(--red)}.conn-dot.wait{background:var(--orange)}
 
 /* Error banner */
 #error-banner{display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:8px 16px;border-radius:var(--radius);margin:8px 0;font-size:12px;align-items:center;gap:8px}
 #error-banner button{background:var(--red);color:#fff;border:none;padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px}
 
-/* Stats bar */
-#stats-bar{display:flex;gap:16px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
-.stat{display:flex;align-items:center;gap:4px}.stat b{color:var(--heading);font-variant-numeric:tabular-nums}
-
 /* Tabs */
 .tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-top:2px}
-.tab-btn{background:none;border:none;color:var(--text);padding:8px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;font-weight:500}
+.tab-btn{background:none;border:none;color:var(--text);padding:8px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;font-weight:500;display:flex;align-items:center;gap:6px}
 .tab-btn:hover{color:var(--text-bright)}.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-badge{background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:10px;min-width:18px;text-align:center}
 .tab-panel{display:none}.tab-panel.active{display:block}
+#main-content{display:none}
+#main-content.visible{display:block}
 
-/* Table */
+/* Table — history/policy only */
 .tbl{width:100%;border-collapse:collapse}
 .tbl th{text-align:left;padding:6px 8px;font-size:11px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1;overflow:hidden;position:relative}
 .tbl th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;background:transparent;z-index:2}
 .tbl th .resize-handle:hover,.tbl th .resize-handle.active{background:var(--accent)}
 .tbl td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
+.tbl td.cmd-col{overflow:hidden;white-space:normal}
+.cmd-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;line-height:1.35;white-space:normal}
 .tbl tr.row:hover{background:var(--surface)}
 .tbl tr.row{cursor:pointer;transition:background .15s}
-.tbl tr.row.new-item{animation:fadeHighlight 2s ease-out}
-.tbl tr.row.dangerous{border-left:3px solid var(--orange)}
 .tbl tr.flash-green{background:rgba(34,197,94,.15)!important}
 .tbl tr.flash-red{background:rgba(239,68,68,.15)!important}
 @keyframes fadeHighlight{from{background:rgba(255,99,146,.12)}to{background:transparent}}
 
-/* Detail row */
+/* Pending items — flex cards, not table */
+.pending-bar{display:flex;align-items:center;padding:8px 0 6px;border-bottom:1px solid var(--border);margin-bottom:0}
+.pending-bar label{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;user-select:none}
+/* pend-item: no border-bottom; the pend-detail sibling always carries the separator */
+.pend-item{display:flex;align-items:center;gap:12px;padding:11px 12px;cursor:pointer;transition:background .1s;position:relative}
+.pend-item:hover{background:var(--surface)}
+.pend-item.dangerous{border-left:2px solid var(--orange);padding-left:10px}
+.pend-item.new-item{animation:fadeHighlight 2s ease-out}
+.pend-item.flash-green{background:rgba(34,197,94,.15)!important}
+.pend-item.flash-red{background:rgba(239,68,68,.15)!important}
+.pend-left{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.pend-body{flex:1;min-width:0}
+.pend-cmd{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-bright);word-break:break-word;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pend-meta{display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:var(--text)}
+.pend-tool-badge{background:var(--surface-3);color:var(--text-bright);padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+/* pend-right: horizontal row — timer left, buttons right */
+.pend-right{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.pend-timer{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text);min-width:44px;text-align:right;white-space:nowrap}
+.pend-actions{display:flex;gap:5px;align-items:center}
+
+/* Expand detail (shared by pending + history) */
+.detail-inner{max-height:0;overflow:hidden;transition:max-height .28s ease;padding:0 12px}
+/* pend-detail always carries the 1px separator between rows (avoids double-border with pend-item) */
+.pend-detail{border-bottom:1px solid var(--border)}
+.pend-detail.open .detail-inner{max-height:300px;padding:10px 12px 14px 52px}
+/* History detail row */
 .detail-row td{padding:0!important;border-bottom:1px solid var(--border)}
-.detail-inner{max-height:0;overflow:hidden;transition:max-height .25s ease;padding:0 8px}
 .detail-row.open .detail-inner{max-height:300px;padding:10px 8px}
 .detail-inner .kv{display:grid;grid-template-columns:100px 1fr;gap:4px 12px;font-size:12px}
 .detail-inner .kv dt{color:#52525b;font-weight:500}.detail-inner .kv dd{color:var(--text-bright);word-break:break-all}
@@ -80,11 +108,15 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .dot.pending{background:var(--orange)}.dot.approved{background:var(--green)}.dot.denied{background:var(--red)}.dot.always{background:var(--accent)}
 
 /* Action buttons */
-.actions{display:flex;gap:4px;justify-content:flex-end;white-space:nowrap;flex-wrap:nowrap}
-.act-btn{border:none;padding:2px 6px;border-radius:3px;cursor:pointer;font-size:12px;font-weight:600;line-height:1.4}
-.act-btn.approve{background:rgba(34,197,94,.15);color:var(--green)}.act-btn.approve:hover{background:rgba(34,197,94,.3)}
-.act-btn.always{background:rgba(255,99,146,.12);color:var(--accent)}.act-btn.always:hover{background:rgba(255,99,146,.25)}
-.act-btn.deny{background:rgba(239,68,68,.12);color:var(--red)}.act-btn.deny:hover{background:rgba(239,68,68,.25)}
+.actions{display:flex;gap:4px;justify-content:flex-start;white-space:nowrap;flex-wrap:nowrap}
+.act-btn{border:1px solid transparent;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;line-height:1.4;white-space:nowrap}
+.act-btn.approve{background:rgba(34,197,94,.12);color:var(--green);border-color:rgba(34,197,94,.22)}.act-btn.approve:hover{background:rgba(34,197,94,.25);border-color:rgba(34,197,94,.4)}
+.act-btn.always{background:rgba(255,99,146,.1);color:var(--accent);border-color:rgba(255,99,146,.22)}.act-btn.always:hover{background:rgba(255,99,146,.22);border-color:rgba(255,99,146,.4)}
+.act-btn.deny{background:rgba(239,68,68,.1);color:var(--red);border-color:rgba(239,68,68,.22)}.act-btn.deny:hover{background:rgba(239,68,68,.22);border-color:rgba(239,68,68,.4)}
+.act-btn.revoke{background:rgba(239,68,68,.1);color:var(--red);border-color:rgba(239,68,68,.22);font-size:11px;padding:3px 8px}
+.act-btn.revoke:hover{background:rgba(239,68,68,.22)}
+.act-btn.reload{background:var(--surface-3);color:var(--text-bright);border:1px solid var(--border);padding:5px 14px;border-radius:var(--radius);font-size:12px}
+.act-btn.reload:hover{background:var(--border-light)}
 
 /* Timer */
 .timer{font-variant-numeric:tabular-nums;min-width:36px;display:inline-block;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px}
@@ -97,14 +129,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .badge.allow{background:rgba(34,197,94,.15);color:var(--green)}
 .badge.deny{background:rgba(239,68,68,.12);color:var(--red)}
 .badge.require_approval{background:rgba(245,158,11,.12);color:var(--orange)}
-
-/* Audit controls */
-.audit-controls{display:flex;gap:8px;align-items:center;padding:10px 0;flex-wrap:wrap}
-.audit-controls input,.audit-controls select{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:5px 8px;border-radius:var(--radius);font-size:12px;outline:none}
-.audit-controls input:focus,.audit-controls select:focus{border-color:var(--accent)}
-.audit-controls button{background:var(--surface-3);color:var(--text-bright);border:1px solid var(--border);padding:5px 12px;border-radius:var(--radius);font-size:12px;cursor:pointer}
-.audit-controls button:hover{background:var(--border-light)}
-.audit-stats{display:flex;gap:12px;font-size:12px;padding:4px 0}
+.badge.blocked{background:rgba(239,68,68,.12);color:var(--red)}
+.badge.watch{background:var(--surface-3);color:var(--text)}
 
 /* Toast */
 #toast{position:fixed;bottom:20px;right:20px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-bright);padding:8px 16px;border-radius:var(--radius);font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
@@ -114,22 +140,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .empty{text-align:center;padding:40px 0;color:#52525b;font-size:13px}
 .empty .icon{font-size:24px;margin-bottom:8px}
 
-/* Load more */
-.load-more{text-align:center;padding:10px}
-.load-more button{background:var(--surface-3);color:var(--text-bright);border:1px solid var(--border);padding:6px 20px;border-radius:var(--radius);cursor:pointer;font-size:12px}
-
-/* Unauthorized help text (hidden, for test) */
+/* Auth help */
 .auth-help{font-size:11px;color:#52525b;margin-top:4px}
-
-/* Revoke button */
-.act-btn.revoke{background:rgba(239,68,68,.12);color:var(--red);font-size:11px;padding:2px 8px}
-.act-btn.revoke:hover{background:rgba(239,68,68,.25)}
-
-/* Rule link in history */
-.rule-link{font-size:10px;cursor:pointer;margin-left:4px}
-.rule-link.active{color:var(--accent)}
-.rule-link.active:hover{text-decoration:underline}
-.rule-link.revoked{color:#52525b;cursor:default}
 
 /* Bulk action bar */
 #bulk-bar{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(24,24,27,.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--border-light);color:var(--text-bright);padding:10px 20px;border-radius:var(--radius);font-size:13px;display:none;align-items:center;gap:12px;z-index:200;box-shadow:0 4px 24px rgba(0,0,0,.4)}
@@ -140,6 +152,61 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 /* Checkbox in table */
 .tbl .chk-cell{width:28px;text-align:center;cursor:default}
 .tbl .chk-cell input[type="checkbox"]{cursor:pointer;accent-color:var(--accent)}
+
+/* Section divider */
+.section-divider{display:flex;align-items:center;gap:8px;margin:20px 0 8px}
+.section-title{font-size:13px;font-weight:600;color:var(--text-bright)}
+.count-badge{background:var(--surface-3);color:var(--text);font-size:11px;font-weight:500;padding:1px 7px;border-radius:3px}
+.count-badge.has-items{background:rgba(239,68,68,.15);color:var(--red)}
+
+/* History controls */
+.hist-controls{display:flex;gap:8px;align-items:center;padding:10px 0;flex-wrap:wrap}
+.hist-controls input[type="search"],.hist-controls input[type="date"]{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:5px 8px;border-radius:var(--radius);font-size:12px;outline:none}
+.hist-controls input[type="search"]{flex:1;min-width:140px;max-width:280px}
+.hist-controls input[type="search"]:focus,.hist-controls input[type="date"]:focus{border-color:var(--accent)}
+.hist-controls button{background:var(--surface-3);color:var(--text-bright);border:1px solid var(--border);padding:5px 12px;border-radius:var(--radius);font-size:12px;cursor:pointer}
+.hist-controls button:hover{background:var(--border-light)}
+
+/* Stats bar */
+.stats-bar{display:flex;gap:16px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
+.stat{display:flex;align-items:center;gap:4px}.stat b{color:var(--heading);font-variant-numeric:tabular-nums}
+
+/* Filter pills */
+.filter-pills{display:flex;gap:4px;padding:6px 0 10px;flex-wrap:wrap}
+.pill{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:500}
+.pill:hover{border-color:var(--border-light);color:var(--text-bright)}
+.pill.active{background:rgba(255,99,146,.12);border-color:var(--accent);color:var(--accent)}
+
+/* History table scroll wrapper */
+.tbl-scroll{overflow-y:auto;max-height:60vh}
+
+/* Policy card */
+.policy-card{border:1px solid var(--border);border-radius:var(--radius);margin:12px 0;overflow:hidden;position:relative}
+.policy-card-grid{display:flex;flex-wrap:wrap}
+.policy-kv{display:flex;flex-direction:column;gap:3px;padding:12px 16px;border-right:1px solid var(--border)}
+.policy-kv:last-child{border-right:none}
+.policy-kv .pk-label{font-size:11px;font-weight:400;color:var(--text)}
+.policy-kv .pk-value{font-size:14px;color:var(--text-bright);font-weight:600}
+.policy-kv .pk-value.mono{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;word-break:break-all}
+.policy-unavail{color:#52525b;font-size:13px;font-style:italic;padding:12px 16px}
+/* Reload button lives in top-right of the card */
+.policy-reload-btn{position:absolute;top:8px;right:8px;background:none;border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:var(--radius);font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px}
+.policy-reload-btn:hover{border-color:var(--border-light);color:var(--text-bright)}
+.policy-reload-btn.spinning svg{animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.policy-reload-hint{font-size:11px;color:#52525b;padding:4px 16px 8px;display:none}
+.policy-reload-hint.visible{display:block}
+
+/* Denial feed — compact, no table */
+.denial-row{display:flex;align-items:baseline;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px}
+.denial-row:last-child{border-bottom:none}
+.denial-time{color:#52525b;font-size:11px;font-family:'JetBrains Mono',monospace;white-space:nowrap;flex-shrink:0}
+.denial-tool{color:var(--text);flex-shrink:0;min-width:36px}
+.denial-cmd{color:var(--text-bright);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.denial-reason{color:#52525b;font-size:11px;flex-shrink:0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Sentinel for infinite scroll */
+#hist-sentinel{height:4px;margin:4px 0}
 
 /* Responsive */
 @media(max-width:640px){
@@ -155,99 +222,111 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 <div class="wrap">
   <!-- Auth -->
   <div id="auth-bar">
-    <div class="logo"><span>◆</span> Rampart Dashboard</div>
+    <div class="logo"><span>◆</span> Rampart</div>
     <button id="theme-toggle" title="Toggle theme">🌙</button>
+    <!-- Pre-auth -->
     <input type="password" id="token-input" placeholder="API token" autocomplete="off">
     <button id="connect-btn">Connect</button>
-    <span class="conn-dot" id="conn-dot"></span>
+    <!-- Post-auth (shown after connect) -->
+    <div id="auth-connected">
+      <span class="conn-dot ok"></span>
+      <span class="token-hint" id="token-hint"></span>
+      <button class="disconnect-btn" id="disconnect-btn">disconnect</button>
+    </div>
   </div>
-  <p class="auth-help">Unauthorized? Check your token. Run <code>rampart serve</code> to see the full token on startup.</p>
+  <div id="auth-help">
+    <div id="auth-prompt" style="display:none;border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin:10px 0;font-size:12px;line-height:1.7">
+      <b style="color:var(--text-bright);font-size:13px">Connect to Rampart</b><br>
+      Paste the token from <code>rampart serve</code> output above, then click <b>Connect</b>.<br>
+      <span style="color:#52525b">Don't have it? Run <code>rampart serve install</code> and check the output, or run <code>rampart serve</code> directly to see the token printed on startup.</span>
+    </div>
+  </div>
 
   <div id="error-banner"><span id="error-msg"></span><button onclick="reconnect()">Retry</button></div>
 
-  <!-- Stats -->
-  <div id="stats-bar">
-    <div class="stat">Pending: <b id="stat-pending">0</b></div>
-    <div class="stat">Approved today: <b id="stat-approved">0</b></div>
-    <div class="stat">Denied today: <b id="stat-denied">0</b></div>
-    <div class="stat">Status: <span id="stat-status" style="color:#52525b">disconnected</span></div>
-  </div>
-
+<div id="main-content">
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab-btn active" data-tab="pending">Pending</button>
+    <button class="tab-btn active" data-tab="active">Active<span class="tab-badge" id="badge-active" style="display:none">0</span></button>
     <button class="tab-btn" data-tab="history">History</button>
-    <button class="tab-btn" data-tab="audit">Audit Log</button>
-    <button class="tab-btn" data-tab="rules">Rules</button>
+    <button class="tab-btn" data-tab="policy">Policy</button>
   </div>
 
-  <!-- Pending Panel -->
-  <div class="tab-panel active" id="panel-pending">
-    <table class="tbl" id="pending-table">
-      <thead><tr>
-        <th class="chk-cell"><input type="checkbox" id="select-all" title="Select all"></th>
-        <th style="width:40px">#</th>
-        <th style="width:20px"></th>
-        <th class="cmd-col">Command</th>
-        <th class="col-tool" style="width:60px">Tool</th>
-        <th class="col-agent" style="width:80px">Agent</th>
-        <th style="width:50px;text-align:right">Time</th>
-        <th style="width:140px;text-align:right">Actions</th>
-      </tr></thead>
-      <tbody id="pending-body"></tbody>
-    </table>
-    <div class="empty" id="pending-empty"><div class="icon">✓</div>No pending approvals — all clear</div>
-  </div>
-
-  <!-- History Panel -->
-  <div class="tab-panel" id="panel-history">
-    <table class="tbl" id="history-table">
-      <thead><tr>
-        <th style="width:40px">#</th>
-        <th style="width:20px"></th>
-        <th class="cmd-col">Command</th>
-        <th class="col-tool" style="width:60px">Tool</th>
-        <th class="col-agent" style="width:80px">Agent</th>
-        <th style="width:90px">Result</th>
-        <th style="width:100px;text-align:right">Time</th>
-      </tr></thead>
-      <tbody id="history-body"></tbody>
-    </table>
-    <div class="empty" id="history-empty">No resolved approvals yet</div>
-  </div>
-
-  <!-- Audit Panel -->
-  <div class="tab-panel" id="panel-audit">
-    <div class="audit-controls">
-      <input type="date" id="audit-date">
-      <select id="audit-tool"><option value="">All tools</option><option value="exec">exec</option><option value="write">write</option><option value="read">read</option><option value="fetch">fetch</option></select>
-      <select id="audit-action"><option value="">All actions</option><option value="allow">allow</option><option value="deny">deny</option><option value="require_approval">require_approval</option></select>
-      <select id="audit-agent"><option value="">All agents</option></select>
-      <button onclick="loadAudit(true)">Search</button>
-      <button onclick="exportAudit()">Export</button>
+  <!-- ═══ ACTIVE TAB ═══ -->
+  <div class="tab-panel active" id="panel-active">
+    <div class="pending-bar">
+      <label><input type="checkbox" id="select-all"> Select all</label>
     </div>
-    <div class="audit-stats" id="audit-stats"></div>
-    <table class="tbl" id="audit-table">
-      <thead><tr>
-        <th style="width:70px">Time</th>
-        <th class="cmd-col">Command</th>
-        <th class="col-tool" style="width:60px">Tool</th>
-        <th style="width:60px">Action</th>
-        <th class="col-agent" style="width:80px">Agent</th>
-      </tr></thead>
-      <tbody id="audit-body"></tbody>
-    </table>
-    <div class="empty" id="audit-empty" style="display:none">No audit events for this date</div>
-    <div class="load-more" id="audit-more" style="display:none"><button onclick="loadAudit(false)">Load more</button></div>
+    <div id="pending-body"></div>
+    <div class="empty" id="pending-empty">No pending approvals</div>
+
+    <!-- Recent Denials feed -->
+    <div class="section-divider" style="margin-top:24px">
+      <span class="section-title">Recent Denials</span>
+      <span class="count-badge" id="denials-badge" style="display:none"></span>
+    </div>
+    <div id="denials-feed"></div>
+    <div id="denials-empty" style="color:#52525b;font-size:12px;padding:6px 0">No recent denials</div>
   </div>
-  <!-- Rules Panel -->
-  <div class="tab-panel" id="panel-rules">
+
+  <!-- ═══ HISTORY TAB ═══ -->
+  <div class="tab-panel" id="panel-history">
+    <div class="stats-bar" id="hist-stats-bar">
+      <div class="stat"><b id="hs-total">—</b> total</div>
+      <div class="stat"><span class="dot approved"></span> <b id="hs-approved">—</b> approved</div>
+      <div class="stat"><span class="dot denied"></span> <b id="hs-denied">—</b> denied</div>
+      <div class="stat"><span class="dot pending"></span> <b id="hs-blocked">—</b> blocked</div>
+    </div>
+
+    <div class="hist-controls">
+      <input type="search" id="hist-search" placeholder="Filter by command…">
+      <input type="date" id="hist-date">
+      <button onclick="loadHistoryTab(true)">Load</button>
+      <button onclick="exportHistoryAudit()">Export</button>
+    </div>
+
+    <div class="filter-pills" id="filter-pills">
+      <button class="pill active" data-filter="all">All</button>
+      <button class="pill" data-filter="approved">Approved</button>
+      <button class="pill" data-filter="denied">Denied</button>
+      <button class="pill" data-filter="blocked">Blocked</button>
+      <button class="pill" data-filter="allowed">Allowed</button>
+    </div>
+
+    <div class="tbl-scroll" id="hist-scroll-wrap">
+      <table class="tbl" id="hist-table">
+        <thead><tr>
+          <th style="width:80px">Time</th>
+          <th class="col-agent" style="width:80px">Agent</th>
+          <th class="col-tool" style="width:60px">Tool</th>
+          <th class="cmd-col">Command</th>
+
+          <th style="width:110px">Outcome</th>
+        </tr></thead>
+        <tbody id="hist-body"></tbody>
+      </table>
+      <div class="empty" id="hist-empty" style="display:none">No events for this date</div>
+      <div id="hist-sentinel" style="height:4px"></div>
+    </div>
+  </div>
+
+  <!-- ═══ POLICY TAB ═══ -->
+  <div class="tab-panel" id="panel-policy">
+    <!-- Policy info card (reload button lives inside) -->
+    <div class="policy-card" id="policy-card">
+      <div class="policy-unavail">Loading policy info…</div>
+    </div>
+    <div class="policy-reload-hint" id="reload-hint"></div>
+
+    <!-- Auto-Allowed Rules -->
+    <div class="section-divider">
+      <span class="section-title">Auto-Allowed Rules</span>
+    </div>
     <table class="tbl" id="rules-table">
       <thead><tr>
-        <th style="width:40px">#</th>
         <th class="cmd-col">Command Pattern</th>
-        <th class="col-tool" style="width:60px">Tool</th>
-        <th style="width:140px">Created</th>
+        <th class="col-tool" style="width:70px">Tool</th>
+        <th style="width:150px">Created</th>
         <th style="width:80px;text-align:right">Actions</th>
       </tr></thead>
       <tbody id="rules-body"></tbody>
@@ -255,6 +334,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <div class="empty" id="rules-empty">No auto-allowed rules. Use 'Always Allow' on a pending approval to create one.</div>
   </div>
 </div>
+
+</div><!-- /main-content -->
 
 <div id="toast"></div>
 
@@ -270,21 +351,11 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 const DANGEROUS=[/^rm\s/,/^chmod\s/,/^chown\s/,/^kill\s/,/^killall\s/,/^pkill\s/,/^dd\s/,/^mkfs/,/^fdisk/,/^reboot/,/^shutdown/,/^halt/,/^systemctl\s+(stop|disable|restart)/,/\bsudo\b/,/\brm\s+-rf\b/,/^ssh\b.*\breboot\b/,/^curl\b.*\|\s*(ba)?sh/];
 function isDangerous(cmd){return DANGEROUS.some(r=>r.test(cmd||''))}
 
-let token='',pollTimer=null,connected=false,expandedId=null;
-let initialPoll=true; // Fix #1: suppress error on first poll
-const pendingMap=new Map(),history=[];
-let auditOffset=0,auditHasMore=false;
-const selectedIds=new Set(); // Bulk selection
+let token='',pollTimer=null,connected=false,expandedId=null,initialPoll=true;
+const pendingMap=new Map();
+const selectedIds=new Set();
 
-// Sequential numbering
-let seqCounter=0;
-const seqMap=new Map();
-function getSeq(id){if(!seqMap.has(id))seqMap.set(id,++seqCounter);return seqMap.get(id)}
-
-// Rules state
-let rulesCache=[];
-
-// Theme toggle (Fix #6)
+// ── Theme ──────────────────────────────────────────────────────────────────
 function initTheme(){
   const saved=localStorage.getItem('rampart_theme')||'dark';
   document.documentElement.setAttribute('data-theme',saved);
@@ -298,215 +369,268 @@ function toggleTheme(){
   document.getElementById('theme-toggle').textContent=next==='dark'?'🌙':'☀️';
 }
 
-// Column resize persistence (Fix #5)
+// ── Column resize + persist ────────────────────────────────────────────────
 function saveColWidths(table){
   const id=table.id;if(!id)return;
   const widths={};
-  table.querySelectorAll('thead th').forEach((th,i)=>{
-    if(th.style.width)widths[id+'_'+i]=th.style.width;
-  });
+  table.querySelectorAll('thead th').forEach((th,i)=>{if(th.style.width)widths[id+'_'+i]=th.style.width});
   const all=JSON.parse(localStorage.getItem('rampart_col_widths')||'{}');
-  Object.assign(all,widths);
-  localStorage.setItem('rampart_col_widths',JSON.stringify(all));
+  Object.assign(all,widths);localStorage.setItem('rampart_col_widths',JSON.stringify(all));
 }
 function restoreColWidths(){
   const all=JSON.parse(localStorage.getItem('rampart_col_widths')||'{}');
   document.querySelectorAll('.tbl').forEach(table=>{
     if(!table.id)return;
-    const ths=table.querySelectorAll('thead th');
-    let hasWidths=false;
-    ths.forEach((th,i)=>{
-      const w=all[table.id+'_'+i];
-      if(w){th.style.width=w;th.style.minWidth=w;hasWidths=true}
+    const ths=table.querySelectorAll('thead th');let hasW=false;
+    ths.forEach((th,i)=>{const w=all[table.id+'_'+i];if(w){th.style.width=w;th.style.minWidth=w;hasW=true}});
+    if(hasW)table.style.tableLayout='fixed';
+  });
+}
+function initResizeHandles(){
+  document.querySelectorAll('.tbl th').forEach(th=>{
+    if(th.querySelector('.resize-handle')||th.classList.contains('chk-cell'))return;
+    const h=document.createElement('div');h.className='resize-handle';th.appendChild(h);
+    let startX,startW;
+    h.addEventListener('mousedown',e=>{
+      e.preventDefault();e.stopPropagation();
+      startX=e.pageX;startW=th.offsetWidth;h.classList.add('active');
+      const table=th.closest('table');table.style.tableLayout='fixed';
+      function onMove(e){th.style.width=(startW+(e.pageX-startX))+'px';th.style.minWidth=th.style.width}
+      function onUp(){h.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);saveColWidths(table)}
+      document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
     });
-    if(hasWidths)table.style.tableLayout='fixed';
   });
 }
 
-// Init
+// ── Init ───────────────────────────────────────────────────────────────────
 (function(){
-  initTheme();
-  restoreColWidths();
+  initTheme();restoreColWidths();initResizeHandles();
 
   const p=new URLSearchParams(location.search).get('token');
   if(p){token=p;localStorage.setItem('rampart_token',p)}
   else token=localStorage.getItem('rampart_token')||'';
   document.getElementById('token-input').value=token;
-  if(token)connect();
+  if(token){connect()}else{const p=document.getElementById('auth-prompt');if(p)p.style.display='block'}
 
-  // Theme toggle
   document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
+  document.getElementById('connect-btn').addEventListener('click',connect);
+  document.getElementById('token-input').addEventListener('keydown',e=>{if(e.key==='Enter')connect()});
+  document.getElementById('disconnect-btn').addEventListener('click',()=>{
+    clearTimeout(pollTimer);clearTimeout(denialsTimer);
+    connected=false;token='';_denialsStarted=false;
+    histEvents=[];histOffset=0;histFiltered=[];
+    pendingMap.clear();selectedIds.clear();
+    localStorage.removeItem('rampart_token');
+    setConnected(false);hideError();
+    document.getElementById('token-input').value='';
+    document.getElementById('main-content').classList.remove('visible');
+    document.getElementById('pending-body').innerHTML='';
+    document.getElementById('denials-feed').innerHTML='';
+    document.getElementById('hist-body').innerHTML='';
+    document.getElementById('badge-active').style.display='none';
+    document.getElementById('pending-empty').style.display='block';
+    document.getElementById('denials-empty').style.display='block';
+    const p=document.getElementById('auth-prompt');if(p)p.style.display='block';
+    document.getElementById('auth-help').style.display='';
+  });
 
   // Tab switching
   document.querySelector('.tabs').addEventListener('click',e=>{
     const btn=e.target.closest('.tab-btn');if(!btn)return;
-    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('panel-'+btn.dataset.tab).classList.add('active');
-    if(btn.dataset.tab==='audit'&&!document.getElementById('audit-date').value){
-      document.getElementById('audit-date').value=todayStr();loadAudit(true);loadAuditStats();
-    }
-    if(btn.dataset.tab==='rules')loadRules();
-    if(btn.dataset.tab==='history')loadHistory();
+    switchTab(btn.dataset.tab);
   });
 
-  // Connect
-  document.getElementById('connect-btn').addEventListener('click',connect);
-  document.getElementById('token-input').addEventListener('keydown',e=>{if(e.key==='Enter')connect()});
+  // Pending table events
+  document.getElementById('pending-body').addEventListener('click',handlePendingClick);
 
-  // Event delegation for pending table
-  document.getElementById('pending-table').addEventListener('click',handlePendingClick);
-  document.getElementById('history-table').addEventListener('click',handleHistoryClick);
-
-  // Select all checkbox
+  // Select-all
   document.getElementById('select-all').addEventListener('change',function(e){
-    e.stopPropagation();
-    const checked=this.checked;
+    e.stopPropagation();const checked=this.checked;
     document.querySelectorAll('#pending-body .row-chk').forEach(cb=>{
-      cb.checked=checked;
-      const id=cb.dataset.id;
+      cb.checked=checked;const id=cb.dataset.id;
       if(checked)selectedIds.add(id);else selectedIds.delete(id);
-    });
-    updateBulkBar();
+    });updateBulkBar();
   });
 
-  // Visibility
+  // History: filter pills
+  document.getElementById('filter-pills').addEventListener('click',e=>{
+    const pill=e.target.closest('.pill');if(!pill)return;
+    document.querySelectorAll('#filter-pills .pill').forEach(p=>p.classList.remove('active'));
+    pill.classList.add('active');
+    histActiveFilter=pill.dataset.filter;
+    applyHistFilters();
+  });
+
+  // History: search
+  document.getElementById('hist-search').addEventListener('input',function(){
+    histSearch=this.value.trim().toLowerCase();applyHistFilters();
+  });
+
+  // History table: expand on click
+  document.getElementById('hist-body').addEventListener('click',e=>{
+    const row=e.target.closest('tr.row');if(!row)return;
+    const det=row.nextElementSibling;if(!det||!det.classList.contains('detail-row'))return;
+    det.classList.toggle('open');
+  });
+
+  // Visibility change
   document.addEventListener('visibilitychange',()=>{
-    if(document.hidden){clearTimeout(pollTimer)}
+    if(document.hidden)clearTimeout(pollTimer);
     else if(connected)poll();
-  });
-
-  // Resizable columns
-  document.querySelectorAll('.tbl th').forEach(th=>{
-    if(th.querySelector('.resize-handle'))return;
-    if(th.classList.contains('chk-cell'))return;
-    const handle=document.createElement('div');
-    handle.className='resize-handle';
-    th.appendChild(handle);
-    let startX,startW;
-    handle.addEventListener('mousedown',e=>{
-      e.preventDefault();e.stopPropagation();
-      startX=e.pageX;startW=th.offsetWidth;
-      handle.classList.add('active');
-      const table=th.closest('table');
-      table.style.tableLayout='fixed';
-      function onMove(e){th.style.width=(startW+(e.pageX-startX))+'px';th.style.minWidth=th.style.width}
-      function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);saveColWidths(table)}
-      document.addEventListener('mousemove',onMove);
-      document.addEventListener('mouseup',onUp);
-    });
   });
 })();
 
+// ── Helpers ────────────────────────────────────────────────────────────────
 function todayStr(){return new Date().toISOString().slice(0,10)}
-function setDot(cls){const d=document.getElementById('conn-dot');d.className='conn-dot '+cls}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function setConnected(yes){
+  const input=document.getElementById('token-input');
+  const btn=document.getElementById('connect-btn');
+  const connDiv=document.getElementById('auth-connected');
+  const help=document.getElementById('auth-help');
+  if(yes){
+    input.style.display='none';btn.style.display='none';
+    connDiv.style.display='flex';
+    document.getElementById('token-hint').textContent=token.slice(0,8)+'…';
+    if(help)help.style.display='none';
+  }else{
+    input.style.display='';btn.style.display='';
+    connDiv.style.display='none';
+  }
+}
+function setDot(cls){/* dot now inside auth-connected, update via setConnected */}
 function showError(msg){const b=document.getElementById('error-banner');b.style.display='flex';document.getElementById('error-msg').textContent=msg}
 function hideError(){document.getElementById('error-banner').style.display='none'}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000)}
-
-function connect(){
-  token=document.getElementById('token-input').value.trim();
-  if(!token)return;
-  localStorage.setItem('rampart_token',token);
-  initialPoll=true;
-  setDot('wait');
-  document.getElementById('stat-status').textContent='connecting';
-  document.getElementById('stat-status').style.color='var(--orange)';
-  poll();
-}
-function reconnect(){hideError();connect()}
-
 async function api(path,opts={}){
   const r=await fetch(path,{...opts,headers:{'Authorization':'Bearer '+token,...(opts.headers||{})}});
+  if(r.status===401||r.status===403){throw new Error('__auth__')}
   if(!r.ok)throw new Error(r.status+' '+r.statusText);
   return r;
 }
 
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  const btn=document.querySelector(`.tab-btn[data-tab="${name}"]`);
+  if(btn)btn.classList.add('active');
+  const panel=document.getElementById('panel-'+name);
+  if(panel)panel.classList.add('active');
+  if(name==='history')onHistoryTabOpen();
+  if(name==='policy')onPolicyTabOpen();
+}
+
+// ── Connection / Poll ──────────────────────────────────────────────────────
+function connect(){
+  token=document.getElementById('token-input').value.trim();if(!token)return;
+  localStorage.setItem('rampart_token',token);
+  const p=document.getElementById('auth-prompt');if(p)p.style.display='none';
+  hideError();
+  initialPoll=true;
+  poll();
+}
+function reconnect(){hideError();connect()}
+
 async function poll(){
   clearTimeout(pollTimer);
   try{
-    const r=await api('/v1/approvals');
-    const data=await r.json();
+    const r=await api('/v1/approvals');const data=await r.json();
     initialPoll=false;
-    if(!connected){connected=true;setDot('ok');hideError();document.getElementById('stat-status').textContent='connected';document.getElementById('stat-status').style.color='var(--green)'}
+    if(!connected){
+      connected=true;setConnected(true);hideError();
+      document.getElementById('main-content').classList.add('visible');
+      if(!_denialsStarted){_denialsStarted=true;loadRecentDenials()}
+    }
     updatePending(data.approvals||[]);
     const delay=pendingMap.size>0?2000:5000;
     if(!document.hidden)pollTimer=setTimeout(poll,delay);
   }catch(e){
-    if(initialPoll){
-      // Fix #1: suppress error on first poll, silently retry
-      initialPoll=false;
-      pollTimer=setTimeout(poll,2000);
-      return;
+    if(e.message==='__auth__'){
+      connected=false;setConnected(false);
+      showError('Invalid token — paste the token from rampart serve output and click Connect.');
+      return; // don't retry on auth failure
     }
-    connected=false;setDot('err');
-    document.getElementById('stat-status').textContent='error';document.getElementById('stat-status').style.color='var(--red)';
-    showError('Connection failed: '+e.message);
+    if(initialPoll){initialPoll=false;pollTimer=setTimeout(poll,2000);return}
+    connected=false;_denialsStarted=false;
+    setConnected(false);
+    document.getElementById('main-content').classList.remove('visible');
+    showError('Cannot reach Rampart — is rampart serve running on this machine?');
     pollTimer=setTimeout(poll,10000);
   }
 }
 
+// ── Pending (Active tab) ───────────────────────────────────────────────────
+function extractCmd(a){
+  // approval objects: top-level command
+  if(a.command)return a.command;
+  // audit events: nested under request
+  if(a.request&&a.request.command)return Array.isArray(a.request.command)?a.request.command.join(' '):a.request.command;
+  if(a.description)return a.description;
+  return a.id||'unknown';
+}
+function extractAction(ev){
+  // audit events: nested under decision
+  if(ev.decision&&ev.decision.action)return ev.decision.action;
+  return ev.action||'';
+}
+
 function updatePending(approvals){
   const incoming=new Map(approvals.map(a=>[a.id,a]));
-  // Remove resolved
   for(const[id]of pendingMap){
     if(!incoming.has(id)){
-      const el=document.getElementById('row-'+id);
-      const det=document.getElementById('det-'+id);
-      if(el)el.remove();if(det)det.remove();
-      pendingMap.delete(id);
-      selectedIds.delete(id);
+      document.getElementById('row-'+id)?.remove();
+      document.getElementById('det-'+id)?.remove();
+      pendingMap.delete(id);selectedIds.delete(id);
     }
   }
-  // Add/update
   const tbody=document.getElementById('pending-body');
   const sorted=[...approvals].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
   for(const a of sorted){
-    if(pendingMap.has(a.id)){
-      pendingMap.set(a.id,a);
-      updateTimerCell(a);
-    }else{
+    if(pendingMap.has(a.id)){pendingMap.set(a.id,a);updateTimerCell(a)}
+    else{
       pendingMap.set(a.id,a);
       const{row,detail}=createPendingRow(a);
       tbody.prepend(detail);tbody.prepend(row);
       row.classList.add('new-item');
     }
   }
-  // Stats
-  document.getElementById('stat-pending').textContent=pendingMap.size;
-  const pe=document.getElementById('pending-empty');
-  pe.style.display=pendingMap.size?'none':'block';
-  updateTimers();
-  updateBulkBar();
-}
-
-function extractCmd(a){
-  if(a.command)return a.command;
-  if(a.request&&a.request.command)return Array.isArray(a.request.command)?a.request.command.join(' '):a.request.command;
-  if(a.description)return a.description;
-  return a.id||'unknown';
+  // Update badge
+  const n=pendingMap.size;
+  const badge=document.getElementById('badge-active');
+  badge.textContent=n;badge.style.display=n?'':'none';
+  document.getElementById('pending-empty').style.display=n?'none':'block';
+  updateTimers();updateBulkBar();
 }
 
 function createPendingRow(a){
   const cmd=extractCmd(a);const danger=isDangerous(cmd);
-  const tr=document.createElement('tr');tr.className='row'+(danger?' dangerous':'');tr.id='row-'+a.id;tr.dataset.id=a.id;
-  const seq=getSeq(a.id);
-  tr.innerHTML=`<td class="chk-cell"><input type="checkbox" class="row-chk" data-id="${a.id}"></td>
-    <td class="mono" style="color:#52525b;font-size:11px">#${seq}</td>
-    <td><span class="dot pending"></span>${danger?'<span style="color:var(--orange);margin-left:2px" title="Potentially dangerous">⚠</span>':''}</td>
-    <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
-    <td class="col-tool">${esc(a.tool||'')}</td>
-    <td class="col-agent">${esc(a.agent||'')}</td>
-    <td style="text-align:right"><span class="timer" id="timer-${a.id}"></span></td>
-    <td><div class="actions">
-      <button class="act-btn approve" data-action="approve" data-id="${a.id}" title="Approve">✓</button>
-      <button class="act-btn always" data-action="always" data-id="${a.id}" title="Always allow this command pattern (creates permanent rule)">★ Always</button>
-      <button class="act-btn deny" data-action="deny" data-id="${a.id}" title="Deny">✗</button>
-    </div></td>`;
+  const item=document.createElement('div');
+  item.className='pend-item'+(danger?' dangerous':'');
+  item.id='row-'+a.id;item.dataset.id=a.id;
+  item.innerHTML=`
+    <div class="pend-left">
+      <input type="checkbox" class="row-chk" data-id="${esc(a.id)}">
+      <span class="dot pending"></span>
+    </div>
+    <div class="pend-body">
+      <div class="pend-cmd">${esc(cmd)}</div>
+      <div class="pend-meta">
+        <span class="pend-tool-badge">${esc(a.tool||'exec')}</span>
+        <span>${esc(a.agent||'')}</span>
+      </div>
+    </div>
+    <div class="pend-right">
+      <span class="pend-timer" id="timer-${esc(a.id)}"></span>
+      <div class="pend-actions">
+        <button class="act-btn approve" data-action="approve" data-id="${esc(a.id)}" title="Approve once">Allow</button>
+        <button class="act-btn always" data-action="always" data-id="${esc(a.id)}" title="Always allow this command pattern">Always</button>
+        <button class="act-btn deny" data-action="deny" data-id="${esc(a.id)}" title="Deny">Deny</button>
+      </div>
+    </div>`;
 
-  const det=document.createElement('tr');det.className='detail-row';det.id='det-'+a.id;
-  det.innerHTML=`<td colspan="8"><div class="detail-inner"><dl class="kv">
+  const det=document.createElement('div');det.className='pend-detail';det.id='det-'+a.id;
+  det.innerHTML=`<div class="detail-inner"><dl class="kv">
     <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(a.tool||'—')}</dd>
@@ -514,72 +638,50 @@ function createPendingRow(a){
     <dt>Message</dt><dd>${esc(a.message||a.description||'—')}</dd>
     <dt>Created</dt><dd>${a.created_at?new Date(a.created_at).toLocaleString():'—'}</dd>
     <dt>Expires</dt><dd>${a.expires_at?new Date(a.expires_at).toLocaleString():'—'}</dd>
-  </dl></div></td>`;
-  return{row:tr,detail:det};
+  </dl></div>`;
+  return{row:item,detail:det};
 }
 
 function handlePendingClick(e){
-  // Checkbox clicks
   if(e.target.classList.contains('row-chk')){
     e.stopPropagation();
     const id=e.target.dataset.id;
     if(e.target.checked)selectedIds.add(id);else selectedIds.delete(id);
-    updateBulkBar();
-    return;
+    updateBulkBar();return;
   }
   const btn=e.target.closest('.act-btn');
   if(btn){
     e.stopPropagation();
     if(btn.dataset.action==='always'){
       const cmd=extractCmd(pendingMap.get(btn.dataset.id)||{});
-      if(!confirm('Always Allow will create a permanent rule that auto-approves similar commands.\n\nCommand: '+cmd+'\n\nThis can be revoked later in the Rules tab. Continue?'))return;
+      if(!confirm('Always Allow will create a permanent rule that auto-approves similar commands.\n\nCommand: '+cmd+'\n\nThis can be revoked later in the Policy tab. Continue?'))return;
     }
-    resolveApproval(btn.dataset.id,btn.dataset.action);
-    return;
+    resolveApproval(btn.dataset.id,btn.dataset.action);return;
   }
-  // Don't expand when clicking checkbox cell
-  if(e.target.closest('.chk-cell'))return;
-  const row=e.target.closest('tr.row');
-  if(!row)return;
+  if(e.target.closest('.pend-left'))return;
+  const row=e.target.closest('.pend-item');if(!row)return;
   const id=row.dataset.id;
   const det=document.getElementById('det-'+id);if(!det)return;
-  if(expandedId&&expandedId!==id){document.getElementById('det-'+expandedId)?.classList.remove('open')}
+  if(expandedId&&expandedId!==id)document.getElementById('det-'+expandedId)?.classList.remove('open');
   det.classList.toggle('open');
   expandedId=det.classList.contains('open')?id:null;
 }
 
-function handleHistoryClick(e){
-  const row=e.target.closest('tr.row');if(!row)return;
-  const det=row.nextElementSibling;if(!det||!det.classList.contains('detail-row'))return;
-  det.classList.toggle('open');
-}
-
-// Bulk actions (Feature #7)
 function updateBulkBar(){
-  const bar=document.getElementById('bulk-bar');
   const n=selectedIds.size;
-  if(n>0){
-    bar.style.display='flex';
-    document.getElementById('bulk-count').textContent=n+' selected';
-  }else{
-    bar.style.display='none';
-  }
-  // Update select-all state
+  const bar=document.getElementById('bulk-bar');
+  bar.style.display=n?'flex':'none';
+  document.getElementById('bulk-count').textContent=n+' selected';
   const allCbs=document.querySelectorAll('#pending-body .row-chk');
   const selAll=document.getElementById('select-all');
-  if(allCbs.length&&[...allCbs].every(cb=>cb.checked))selAll.checked=true;
-  else selAll.checked=false;
+  selAll.checked=allCbs.length&&[...allCbs].every(cb=>cb.checked);
 }
 
 async function bulkAction(action){
-  const ids=[...selectedIds];
-  if(!ids.length)return;
+  const ids=[...selectedIds];if(!ids.length)return;
   if(!confirm(`${action==='approve'?'Approve':'Deny'} ${ids.length} pending approval(s)?`))return;
-  for(const id of ids){
-    try{await resolveApproval(id,action)}catch(e){}
-  }
-  selectedIds.clear();
-  updateBulkBar();
+  for(const id of ids){try{await resolveApproval(id,action)}catch(e){}}
+  selectedIds.clear();updateBulkBar();
 }
 
 async function resolveApproval(id,action){
@@ -588,105 +690,28 @@ async function resolveApproval(id,action){
   if(row)row.classList.add(approved?'flash-green':'flash-red');
   try{
     await api('/v1/approvals/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved,resolved_by:'dashboard',persist})});
-    const a=pendingMap.get(id);
-    if(a){
-      a.resolution=action==='always'?'always-allowed':(approved?'approved':'denied');
-      a.resolved_at=new Date().toISOString();a.resolved_by='dashboard';
-      addToHistory(a);
-    }
     setTimeout(()=>{
       document.getElementById('row-'+id)?.remove();
       document.getElementById('det-'+id)?.remove();
-      pendingMap.delete(id);
-      selectedIds.delete(id);
-      document.getElementById('stat-pending').textContent=pendingMap.size;
-      if(!pendingMap.size)document.getElementById('pending-empty').style.display='block';
-      updateHistoryStats(action);
+      pendingMap.delete(id);selectedIds.delete(id);
+      const n=pendingMap.size;
+      const badge=document.getElementById('badge-active');
+      badge.textContent=n;badge.style.display=n?'':'none';
+      if(!n){
+        document.getElementById('pending-empty').style.display='block';
+        document.getElementById('select-all').checked=false;
+      }
       updateBulkBar();
+      // If denied, quietly refresh the denials feed after a short delay
+      if(!approved)setTimeout(loadRecentDenials,600);
     },400);
     if(persist)toast('Rule saved — always allowed');
   }catch(e){toast('Error: '+e.message)}
 }
 
-let approvedToday=0,deniedToday=0;
-function updateHistoryStats(action){
-  if(action==='deny'){deniedToday++;document.getElementById('stat-denied').textContent=deniedToday}
-  else{approvedToday++;document.getElementById('stat-approved').textContent=approvedToday}
-}
-
-function addToHistory(a){
-  history.unshift(a);if(history.length>100)history.pop();
-  renderHistoryRow(a,true);
-  document.getElementById('history-empty').style.display='none';
-}
-
-// Fix #2: Load history from audit events
-async function loadHistory(){
-  try{
-    const r=await api('/v1/audit/events?limit=50&offset=0');
-    const data=await r.json();
-    const events=(data.events||[]).filter(ev=>
-      ev.action==='allow'||ev.action==='deny'||ev.action==='denied'||ev.action==='approved'||
-      (ev.request&&ev.request.resolution)
-    );
-    if(!events.length&&!history.length)return;
-    // Merge: keep in-memory history, add audit events not already present
-    const existingIds=new Set(history.map(h=>h.id));
-    const tbody=document.getElementById('history-body');
-    for(const ev of events){
-      const id=ev.id||(ev.request&&ev.request.id)||('audit-'+ev.timestamp);
-      if(existingIds.has(id))continue;
-      existingIds.add(id);
-      const a={
-        id:id,
-        command:ev.command||(ev.request&&ev.request.command)||ev.description||'—',
-        tool:ev.tool||(ev.request&&ev.request.tool)||'',
-        agent:ev.agent||(ev.request&&ev.request.agent)||'',
-        resolution:ev.action==='deny'||ev.action==='denied'?'denied':
-                   (ev.request&&ev.request.resolution)||'approved',
-        resolved_by:(ev.request&&ev.request.resolved_by)||'',
-        resolved_at:ev.timestamp||'',
-      };
-      history.push(a);
-      renderHistoryRow(a,false);
-    }
-    document.getElementById('history-empty').style.display=history.length?'none':'block';
-  }catch(e){/* silently fail if audit not available */}
-}
-
-function renderHistoryRow(a,prepend){
-  const cmd=extractCmd(a);
-  const tbody=document.getElementById('history-body');
-  const tr=document.createElement('tr');tr.className='row';tr.dataset.id=a.id;
-  const res=a.resolution||'approved';
-  const dotCls=res==='denied'?'denied':(res==='always-allowed'?'always':'approved');
-  const seq=getSeq(a.id);
-  let ruleBadge='';
-  if(res==='always-allowed'){
-    const ruleActive=rulesCache.some(r=>r.tool===(a.tool||'')&&(r.command_pattern===cmd||r.command_pattern===engine_generalize(cmd)));
-    ruleBadge=ruleActive?
-      ' <span class="rule-link active" onclick="event.stopPropagation();switchTab(\'rules\')">Rule active</span>':
-      ' <span class="rule-link revoked">Rule revoked</span>';
-  }
-  tr.innerHTML=`<td class="mono" style="color:#52525b;font-size:11px">#${seq}</td>
-    <td><span class="dot ${dotCls}"></span></td>
-    <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
-    <td class="col-tool">${esc(a.tool||'')}</td>
-    <td class="col-agent">${esc(a.agent||'')}</td>
-    <td><span class="badge ${res}">${res}</span>${ruleBadge}</td>
-    <td style="text-align:right;font-size:11px">${a.resolved_at?timeAgo(a.resolved_at):''}</td>`;
-  const det=document.createElement('tr');det.className='detail-row';
-  det.innerHTML=`<td colspan="7"><div class="detail-inner"><dl class="kv">
-    <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
-    <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
-    <dt>Resolved by</dt><dd>${esc(a.resolved_by||'—')}</dd>
-    <dt>Resolved at</dt><dd>${a.resolved_at?new Date(a.resolved_at).toLocaleString():'—'}</dd>
-  </dl></div></td>`;
-  if(prepend){tbody.prepend(det);tbody.prepend(tr)}else{tbody.append(tr);tbody.append(det)}
-}
-
+// ── Timers ─────────────────────────────────────────────────────────────────
 function updateTimers(){
-  for(const[id,a]of pendingMap)updateTimerCell(a);
+  for(const[,a]of pendingMap)updateTimerCell(a);
   if(pendingMap.size&&!document.hidden)requestAnimationFrame(()=>setTimeout(updateTimers,1000));
 }
 function updateTimerCell(a){
@@ -695,109 +720,244 @@ function updateTimerCell(a){
   const rem=Math.max(0,Math.floor((new Date(a.expires_at)-Date.now())/1000));
   const m=Math.floor(rem/60),s=rem%60;
   el.textContent=m+':'+String(s).padStart(2,'0');
-  if(rem<30)el.style.color='var(--red)';else if(rem<60)el.style.color='var(--orange)';else el.style.color='';
+  el.style.color=rem<30?'var(--red)':rem<60?'var(--orange)':'';
 }
 
-function timeAgo(iso){
-  const s=Math.floor((Date.now()-new Date(iso))/1000);
-  if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';
-  return Math.floor(s/3600)+'h ago';
-}
+// ── Recent Denials ─────────────────────────────────────────────────────────
+let denialsTimer=null;
 
-// Audit
-async function loadAudit(reset){
-  if(reset)auditOffset=0;
-  const date=document.getElementById('audit-date').value;if(!date)return;
-  const tool=document.getElementById('audit-tool').value;
-  const action=document.getElementById('audit-action').value;
-  const agent=document.getElementById('audit-agent').value;
-  let url=`/v1/audit/events?date=${date}&limit=50&offset=${auditOffset}`;
-  if(tool)url+=`&tool=${tool}`;if(action)url+=`&action=${action}`;if(agent)url+=`&agent=${agent}`;
+async function loadRecentDenials(){
+  clearTimeout(denialsTimer);
   try{
-    const r=await api(url);const data=await r.json();
-    const tbody=document.getElementById('audit-body');
-    if(reset)tbody.innerHTML='';
-    const events=data.events||[];
-    events.forEach(ev=>{
-      const tr=document.createElement('tr');tr.className='row';
-      const t=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString():'';
-      const cmd=ev.command||ev.description||'—';
-      tr.innerHTML=`<td style="font-size:11px">${t}</td>
-        <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
-        <td class="col-tool">${esc(ev.tool||'')}</td>
-        <td><span class="badge ${ev.action||''}">${esc(ev.action||'')}</span></td>
-        <td class="col-agent">${esc(ev.agent||'')}</td>`;
-      tbody.append(tr);
-    });
-    auditOffset+=events.length;
-    auditHasMore=events.length>=50;
-    document.getElementById('audit-more').style.display=auditHasMore?'block':'none';
-    document.getElementById('audit-empty').style.display=(!reset&&!events.length)||(reset&&!events.length)?'block':'none';
-  }catch(e){toast('Audit error: '+e.message)}
+    const [r1,r2]=await Promise.allSettled([
+      api('/v1/audit/events?action=denied&limit=10'),
+      api('/v1/audit/events?action=deny&limit=10'),
+    ]);
+    const e1=r1.status==='fulfilled'?(await r1.value.json()).events||[]:[];
+    const e2=r2.status==='fulfilled'?(await r2.value.json()).events||[]:[];
+    const seen=new Set();
+    const combined=[...e1,...e2].filter(ev=>{
+      const k=ev.id||(ev.timestamp+extractCmd(ev));
+      if(seen.has(k))return false;seen.add(k);
+      // Only show actual denials/blocks
+      const a=extractAction(ev);
+      return a==='denied'||a==='deny'||a==='blocked';
+    }).sort((a,b)=>(b.timestamp||'').localeCompare(a.timestamp||'')).slice(0,10);
+    renderDenials(combined);
+  }catch(e){/* silently ignore */}
+  denialsTimer=setTimeout(loadRecentDenials,30000);
 }
 
-// Fix #3: Audit stats
-async function loadAuditStats(){
-  const date=document.getElementById('audit-date').value;if(!date)return;
+function renderDenials(events){
+  const feed=document.getElementById('denials-feed');
+  const empty=document.getElementById('denials-empty');
+  const badge=document.getElementById('denials-badge');
+  feed.innerHTML='';
+  if(events.length){
+    badge.textContent=events.length;badge.style.display='';
+  }else{
+    badge.style.display='none';
+  }
+  if(!events.length){empty.style.display='block';return}
+  empty.style.display='none';
+  events.forEach(ev=>{
+    const cmd=extractCmd(ev);
+    const t=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString():'—';
+    const reason=(ev.decision&&ev.decision.message)||ev.reason||ev.message||'';
+    const div=document.createElement('div');div.className='denial-row';
+    div.innerHTML=`<span class="denial-time">${esc(t)}</span><span class="denial-tool">${esc(ev.tool||'exec')}</span><span class="denial-cmd" title="${esc(cmd)}">${esc(cmd)}</span>${reason?`<span class="denial-reason" title="${esc(reason)}">${esc(reason)}</span>`:''}`;
+    feed.append(div);
+  });
+}
+
+let _denialsStarted=false;
+
+// ── History Tab ────────────────────────────────────────────────────────────
+let histEvents=[];let histFiltered=[];
+let histOffset=0;let histHasMore=false;
+let histActiveFilter='all';let histSearch='';
+let histObserver=null;let histLoading=false;
+const HIST_PAGE=100;
+
+function onHistoryTabOpen(){
+  if(!document.getElementById('hist-date').value)
+    document.getElementById('hist-date').value=todayStr();
+  loadHistoryTab(true);
+}
+
+async function loadHistoryTab(reset){
+  if(histLoading)return;histLoading=true;
+  if(reset){histOffset=0;histEvents=[];document.getElementById('hist-body').innerHTML=''}
+  const date=document.getElementById('hist-date').value||todayStr();
   try{
-    const r=await api(`/v1/audit/stats?from=${date}&to=${date}`);const s=await r.json();
-    const el=document.getElementById('audit-stats');
-    const byAction=s.by_action||{};
-    el.innerHTML=`<div class="stat">Total: <b>${s.total_events||0}</b></div>
-      <div class="stat">Allowed: <b>${byAction.allow||0}</b></div>
-      <div class="stat">Denied: <b>${byAction.deny||0}</b></div>
-      <div class="stat">Approval resolved: <b>${byAction.require_approval||0}</b></div>`;
-  }catch(e){}
+    const r=await api(`/v1/audit/events?date=${date}&limit=${HIST_PAGE}&offset=${histOffset}`);
+    const data=await r.json();
+    const evs=data.events||[];
+    histEvents=[...histEvents,...evs];
+    histOffset+=evs.length;
+    histHasMore=evs.length>=HIST_PAGE;
+    applyHistFilters();
+    await loadHistStats(date);
+  }catch(e){toast('History error: '+e.message)}
+  histLoading=false;
 }
 
-async function exportAudit(){
-  const date=document.getElementById('audit-date').value;if(!date)return;
+async function loadHistStats(date){
+  try{
+    const r=await api(`/v1/audit/stats?from=${date}&to=${date}`);
+    const s=await r.json();
+    const ba=s.by_action||{};
+    const approved=(ba.approved||0)+(ba.allow||0);
+    const denied=(ba.denied||0);
+    const blocked=(ba.deny||0);
+    document.getElementById('hs-total').textContent=s.total_events||0;
+    document.getElementById('hs-approved').textContent=approved;
+    document.getElementById('hs-denied').textContent=denied;
+    document.getElementById('hs-blocked').textContent=blocked;
+  }catch(e){/* silently ignore if stats endpoint unavailable */}
+}
+
+function applyHistFilters(){
+  const f=histActiveFilter;const q=histSearch;
+  histFiltered=histEvents.filter(ev=>{
+    if(q){const cmd=extractCmd(ev).toLowerCase();if(!cmd.includes(q))return false}
+    const a=extractAction(ev);
+    if(f==='all')return true;
+    if(f==='approved')return a==='approved'||a==='allow';
+    if(f==='denied')return a==='denied';
+    if(f==='blocked')return a==='deny';
+    if(f==='allowed')return a==='allow';
+    return true;
+  });
+  renderHistEvents();
+}
+
+function renderHistEvents(){
+  const tbody=document.getElementById('hist-body');
+  const empty=document.getElementById('hist-empty');
+  tbody.innerHTML='';
+  if(!histFiltered.length){empty.style.display='block';return}
+  empty.style.display='none';
+  histFiltered.forEach(ev=>appendHistRow(ev,tbody));
+  // Sentinel for infinite scroll
+  if(histHasMore){
+    const sentinel=document.createElement('tr');sentinel.id='hist-sentinel-row';
+    sentinel.innerHTML='<td colspan="5" style="text-align:center;padding:8px;color:#52525b;font-size:11px">Loading more…</td>';
+    tbody.append(sentinel);
+    if(histObserver)histObserver.disconnect();
+    const wrapper=document.getElementById('hist-scroll-wrap');
+    histObserver=new IntersectionObserver(entries=>{
+      if(entries[0].isIntersecting){histObserver.disconnect();loadHistoryTab(false)}
+    },{root:wrapper,threshold:0.1});
+    histObserver.observe(sentinel);
+  }
+}
+
+function appendHistRow(ev,tbody){
+  const cmd=extractCmd(ev);
+  const danger=isDangerous(cmd);
+  const action=extractAction(ev);
+  const t=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString():'—';
+  const tr=document.createElement('tr');
+  tr.className='row'+(danger?' dangerous':'');
+  // Normalize action labels for display
+  const actionLabel=action==='deny'?'blocked':action==='denied'?'denied':action==='allow'?'allow':action==='approved'?'approved':action==='watch'?'watch':action||'—';
+  const badgeCls=action==='allow'?'allow':(action==='deny'||action==='denied'||action==='blocked')?'deny':action==='approved'?'approved':action==='require_approval'?'require_approval':action==='watch'?'watch':'';
+  tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
+    <td class="col-agent">${esc(ev.agent||'—')}</td>
+    <td class="col-tool">${esc(ev.tool||'—')}</td>
+    <td class="cmd-col mono"><span class="cmd-text">${esc(cmd)}</span></td>
+    <td><span class="badge ${badgeCls}">${esc(actionLabel)}</span></td>`;
+  const det=document.createElement('tr');det.className='detail-row';
+  det.innerHTML=`<td colspan="5"><div class="detail-inner"><dl class="kv">
+    <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
+    <dt>Tool</dt><dd>${esc(ev.tool||'—')}</dd>
+    <dt>Agent</dt><dd>${esc(ev.agent||'—')}</dd>
+    <dt>Action</dt><dd>${esc(action||'—')}</dd>
+    <dt>Reason</dt><dd>${esc((ev.decision&&ev.decision.message)||ev.reason||ev.message||'—')}</dd>
+    <dt>Time</dt><dd>${ev.timestamp?new Date(ev.timestamp).toLocaleString():'—'}</dd>
+  </dl></div></td>`;
+  tbody.append(tr);tbody.append(det);
+}
+
+async function exportHistoryAudit(){
+  const date=document.getElementById('hist-date').value||todayStr();
   try{
     const r=await api(`/v1/audit/export?date=${date}`);const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`audit-${date}.jsonl`;a.click();
   }catch(e){toast('Export error: '+e.message)}
 }
 
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+// ── Policy Tab ─────────────────────────────────────────────────────────────
+let rulesCache=[];
 
-function engine_generalize(cmd){
-  if(!cmd)return'*';const t=cmd.trim().split(/\s+/);
-  if(t.length<=1)return t[0]||'*';
-  if(t.length<=2)return t.join(' ')+' *';
-  return t[0]+' '+t[1]+' *';
+function onPolicyTabOpen(){
+  loadPolicyInfo();
+  loadRules();
 }
 
-function switchTab(name){
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
-  const btn=document.querySelector(`.tab-btn[data-tab="${name}"]`);
-  if(btn)btn.classList.add('active');
-  document.getElementById('panel-'+name)?.classList.add('active');
-  if(name==='rules')loadRules();
-  if(name==='history')loadHistory();
+async function loadPolicyInfo(){
+  const card=document.getElementById('policy-card');
+  card.innerHTML='<div class="policy-unavail">Loading policy info…</div>';
+  try{
+    const r=await api('/v1/policy');
+    if(r.status===404){throw new Error('not implemented')}
+    const p=await r.json();
+    const path=p.config_path||'embedded:standard';
+    card.innerHTML=`
+      <button class="policy-reload-btn" id="reload-btn" onclick="reloadPolicy()" title="Reload policy files">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 6A4 4 0 1 1 8.5 2.5"/><polyline points="10 1 10 4 7 4"/></svg>
+        Reload
+      </button>
+      <div class="policy-card-grid">
+        <div class="policy-kv"><span class="pk-label">Config path</span><span class="pk-value mono">${esc(path)}</span></div>
+        <div class="policy-kv"><span class="pk-label">Mode</span><span class="pk-value">${esc(p.mode||'—')}</span></div>
+        <div class="policy-kv"><span class="pk-label">Default action</span><span class="pk-value">${esc(p.default_action||'—')}</span></div>
+        <div class="policy-kv"><span class="pk-label">Policies</span><span class="pk-value">${esc(String(p.policy_count??'—'))}</span></div>
+        <div class="policy-kv"><span class="pk-label">Rules</span><span class="pk-value">${esc(String(p.rule_count??'—'))}</span></div>
+      </div>`;
+  }catch(e){
+    card.innerHTML='<div class="policy-unavail">Policy info unavailable — endpoint not yet implemented.</div>';
+  }
+}
+
+async function reloadPolicy(){
+  const hint=document.getElementById('reload-hint');
+  const btn=document.getElementById('reload-btn');
+  if(btn)btn.classList.add('spinning');
+  try{
+    await api('/v1/policy/reload',{method:'POST'});
+    toast('Policy reloaded');
+    if(hint){hint.textContent='';hint.classList.remove('visible')}
+    loadPolicyInfo();
+  }catch(e){
+    if(hint){
+      hint.textContent=e.message.includes('404')||e.message.includes('405')?'Restart serve to pick up changes':'Reload failed: '+e.message;
+      hint.classList.add('visible');
+    }
+  }finally{
+    if(btn)btn.classList.remove('spinning');
+  }
 }
 
 async function loadRules(){
   try{
     const r=await api('/v1/rules/auto-allowed');
     const data=await r.json();
-    rulesCache=data.rules||[];
-    renderRules(rulesCache);
+    rulesCache=data.rules||[];renderRules(rulesCache);
   }catch(e){toast('Rules error: '+e.message)}
 }
 
 function renderRules(rules){
-  const tbody=document.getElementById('rules-body');
-  tbody.innerHTML='';
+  const tbody=document.getElementById('rules-body');tbody.innerHTML='';
   document.getElementById('rules-empty').style.display=rules.length?'none':'block';
-  rules.forEach((r,i)=>{
+  rules.forEach(r=>{
     const tr=document.createElement('tr');tr.className='row';
     const pattern=r.command_pattern||r.path_pattern||'(default)';
     const created=r.created?new Date(r.created).toLocaleString():'—';
-    tr.innerHTML=`<td class="mono" style="color:#52525b;font-size:11px">${r.index}</td>
-      <td class="cmd-col mono" title="${esc(pattern)}">${esc(pattern)}</td>
+    tr.innerHTML=`<td class="cmd-col mono" title="${esc(pattern)}">${esc(pattern)}</td>
       <td class="col-tool">${esc(r.tool||'')}</td>
-      <td style="font-size:11px">${created}</td>
+      <td style="font-size:11px">${esc(created)}</td>
       <td style="text-align:right"><button class="act-btn revoke" onclick="revokeRule(${r.index})">Revoke</button></td>`;
     tbody.append(tr);
   });
@@ -807,8 +967,7 @@ async function revokeRule(index){
   if(!confirm('Revoke this auto-allowed rule?'))return;
   try{
     await api('/v1/rules/auto-allowed/'+index,{method:'DELETE'});
-    toast('Rule revoked');
-    loadRules();
+    toast('Rule revoked');loadRules();
   }catch(e){toast('Revoke error: '+e.message)}
 }
 </script>

@@ -46,6 +46,8 @@ var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" e
         <key>RAMPART_TOKEN</key>
         <string>{{.Token}}</string>
     </dict>
+    <key>WorkingDirectory</key>
+    <string>{{.HomeDir}}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -79,6 +81,7 @@ type serviceConfig struct {
 	Args    []string
 	Token   string
 	LogPath string
+	HomeDir string
 }
 
 // commandRunner abstracts exec.Command so we can mock in tests.
@@ -200,12 +203,23 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 				return err
 			}
 
+			// Warn only if a custom config path was given but the file doesn't exist.
+			// When using the default path, rampart serve falls back to the embedded
+			// standard policy automatically — no warning needed.
+			if opts.configPath != "" && opts.configPath != "rampart.yaml" {
+				if _, err := os.Stat(opts.configPath); os.IsNotExist(err) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: policy file not found: %s\n   The service may fail to start. Run `rampart init --detect` to create one.\n\n", opts.configPath)
+				}
+			}
+
+			homeDir, _ := os.UserHomeDir()
 			args := buildServiceArgs(port, opts.configPath, configDir, auditDir, mode, approvalTimeout)
 			cfg := serviceConfig{
 				Binary:  binary,
 				Args:    args,
 				Token:   token,
 				LogPath: logPath(),
+				HomeDir: homeDir,
 			}
 
 			switch runtime.GOOS {
@@ -314,7 +328,9 @@ func printSuccess(cmd *cobra.Command, token string, generated bool, port int, pa
 	if generated {
 		fmt.Fprintf(w, "\n🔑 Generated token (save this — you'll need it for hooks):\n")
 		fmt.Fprintf(w, "   export RAMPART_TOKEN=%s\n\n", token)
-		fmt.Fprintf(w, "   Add this to your shell profile (~/.bashrc or ~/.zshrc) so it persists.\n\n")
+		fmt.Fprintf(w, "   Add to your shell profile so it persists across sessions:\n")
+		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc   # zsh (macOS default)\n", token)
+		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.bashrc  # bash\n\n", token)
 	} else {
 		display := token
 		if len(token) > 8 {

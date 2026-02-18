@@ -31,6 +31,7 @@ import (
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/proxy"
 	"github.com/peg/rampart/internal/signing"
+	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
 
@@ -50,6 +51,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var auditDir string
 	var mode string
 	var port int
+	var listenAddr string
 	var syslogAddr string
 	var cef bool
 	var resolveBaseURL string
@@ -84,7 +86,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
 			// Build policy store: file, dir, or both.
+			// If the default config path is used, the file doesn't exist, and
+			// no --config-dir is set, fall back to the embedded standard policy.
 			var store engine.PolicyStore
+			usingEmbedded := false
+
 			effectiveDir := configDir
 			if effectiveDir == "" {
 				// Default: include ~/.rampart/policies/ so auto-allowed rules are picked up.
@@ -96,7 +102,27 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 			}
 
-			if effectiveDir != "" {
+			configExists := true
+			if _, statErr := os.Stat(opts.configPath); os.IsNotExist(statErr) {
+				configExists = false
+			}
+
+			if !configExists && opts.configPath == "rampart.yaml" && configDir == "" {
+				// No config file and no explicit config-dir: use embedded standard policy.
+				embeddedData, embErr := policies.Profile("standard")
+				if embErr != nil {
+					return fmt.Errorf("serve: load embedded standard policy: %w", embErr)
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "serve: using embedded standard policy (no config file found — create one with 'rampart init')\n")
+				usingEmbedded = true
+				if effectiveDir != "" {
+					// Combine embedded standard with the ~/.rampart/policies/ dir.
+					memStore := engine.NewMemoryStore(embeddedData, "embedded:standard")
+					store = engine.NewMixedStore(memStore, effectiveDir, logger)
+				} else {
+					store = engine.NewMemoryStore(embeddedData, "embedded:standard")
+				}
+			} else if effectiveDir != "" {
 				store = engine.NewMultiStore(opts.configPath, effectiveDir, logger)
 			} else {
 				store = engine.NewFileStore(opts.configPath)
@@ -158,12 +184,15 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				_ = watcher.Close()
 			}()
 
-			configAbs, err := filepath.Abs(opts.configPath)
-			if err != nil {
-				return fmt.Errorf("serve: resolve config path %s: %w", opts.configPath, err)
-			}
-			if err := watcher.Add(configAbs); err != nil {
-				return fmt.Errorf("serve: watch config file %s: %w", configAbs, err)
+			var configAbs string
+			if !usingEmbedded {
+				configAbs, err = filepath.Abs(opts.configPath)
+				if err != nil {
+					return fmt.Errorf("serve: resolve config path %s: %w", opts.configPath, err)
+				}
+				if err := watcher.Add(configAbs); err != nil {
+					return fmt.Errorf("serve: watch config file %s: %w", configAbs, err)
+				}
 			}
 
 			logger.Info("serve: started",
@@ -179,7 +208,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			)
 			if port > 0 {
 				var proxyOpts []proxy.Option
-				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics), proxy.WithAuditDir(auditDir))
+				configPathDisplay := opts.configPath
+				if usingEmbedded {
+					configPathDisplay = "embedded:standard"
+				}
+				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics), proxy.WithAuditDir(auditDir), proxy.WithConfigPath(configPathDisplay))
 				if approvalTimeout > 0 {
 					proxyOpts = append(proxyOpts, proxy.WithApprovalTimeout(approvalTimeout))
 				}
@@ -228,7 +261,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				proxyErrCh = make(chan error, 1)
 				go func() {
-					proxyErrCh <- proxyServer.ListenAndServe(fmt.Sprintf(":%d", port))
+					proxyErrCh <- proxyServer.ListenAndServe(fmt.Sprintf("%s:%d", listenAddr, port))
 				}()
 			}
 
@@ -263,7 +296,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					if !ok {
 						return nil
 					}
-					if !isWriteEvent(event) || !samePath(configAbs, event.Name) {
+					if usingEmbedded || !isWriteEvent(event) || !samePath(configAbs, event.Name) {
 						continue
 					}
 					now := time.Now()
@@ -297,6 +330,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&auditDir, "audit-dir", defaultAuditDir, "Directory for audit logs")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")
 	cmd.Flags().IntVar(&port, "port", 9090, "Proxy listen port (0 = SDK-only mode)")
+	cmd.Flags().StringVar(&listenAddr, "addr", "", "Bind address (default: all interfaces). Use 127.0.0.1 to bind localhost only")
 	cmd.Flags().StringVar(&syslogAddr, "syslog", "", "Syslog server address (e.g. localhost:514)")
 	cmd.Flags().BoolVar(&cef, "cef", false, "Use CEF format (with --syslog: CEF over syslog; standalone: write ~/.rampart/audit/cef.log)")
 	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")

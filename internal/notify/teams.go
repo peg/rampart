@@ -61,7 +61,7 @@ func (n *TeamsNotifier) Send(event NotifyEvent) error {
 	themeColor := "f85149" // red for deny
 	title := "🛡️ Rampart: Command Denied"
 	summary := "Rampart policy engine denied a command"
-	if event.Action == "log" {
+	if event.Action == "watch" || event.Action == "log" {
 		themeColor = "d29922" // orange for log
 		title = "🛡️ Rampart: Command Logged"
 		summary = "Rampart policy engine logged a command"

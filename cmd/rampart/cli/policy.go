@@ -130,7 +130,7 @@ func newPolicyTestCmd(opts *rootOptions) *cobra.Command {
 					allowCount++
 				case engine.ActionDeny:
 					denyCount++
-				case engine.ActionLog:
+				case engine.ActionWatch:
 					logCount++
 				}
 			}

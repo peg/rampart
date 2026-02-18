@@ -162,7 +162,7 @@ func TestAuditStats_Counts(t *testing.T) {
 	assert.Contains(t, stdout, "Total events:  5")
 	assert.Contains(t, stdout, "allow")
 	assert.Contains(t, stdout, "deny")
-	assert.Contains(t, stdout, "log")
+	assert.Contains(t, stdout, "watch")
 }
 
 func TestAuditStats_SinceFilter(t *testing.T) {

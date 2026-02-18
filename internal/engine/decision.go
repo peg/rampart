@@ -37,9 +37,11 @@ const (
 	// ActionDeny blocks the tool call. The agent receives an error.
 	ActionDeny
 
-	// ActionLog permits the tool call but flags it for review in the
-	// audit trail. Use for suspicious-but-not-blocked activity.
-	ActionLog
+	// ActionWatch permits the tool call but surfaces it prominently in the
+	// dashboard Active tab. Use for "allow but I want to see this" behavior.
+	// Previously named ActionWatch — "log" was misleading since all actions are logged.
+	// The string "log" in policy YAML still works but emits a deprecation lint warning.
+	ActionWatch
 
 	// ActionRequireApproval blocks the tool call until a human approves it.
 	// The call is held pending with a unique approval ID. Resolve via CLI
@@ -59,8 +61,8 @@ func (a Action) String() string {
 		return "allow"
 	case ActionDeny:
 		return "deny"
-	case ActionLog:
-		return "log"
+	case ActionWatch:
+		return "watch"
 	case ActionRequireApproval:
 		return "require_approval"
 	case ActionWebhook:
@@ -144,8 +146,10 @@ func ParseAction(s string) (Action, error) {
 		return ActionAllow, nil
 	case "deny":
 		return ActionDeny, nil
-	case "log":
-		return ActionLog, nil
+	case "watch":
+		return ActionWatch, nil
+	case "log": // deprecated alias for watch
+		return ActionWatch, nil
 	case "require_approval":
 		return ActionRequireApproval, nil
 	case "webhook":

@@ -108,7 +108,7 @@ func (s *SDK) Preflight(ctx context.Context, toolName string, params map[string]
 	decision := s.engine.Evaluate(call)
 
 	return PreflightResult{
-		Allowed:   decision.Action == engine.ActionAllow || decision.Action == engine.ActionLog,
+		Allowed:   decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch,
 		Action:    decision.Action.String(),
 		Message:   decision.Message,
 		Policies:  decision.MatchedPolicies,

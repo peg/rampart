@@ -202,7 +202,7 @@ policies:
 `)
 
 	got := e.Evaluate(execCall("main", "sudo apt update"))
-	if got.Action != ActionLog {
+	if got.Action != ActionWatch {
 		t.Errorf("want log, got %s", got.Action)
 	}
 }

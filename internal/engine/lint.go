@@ -70,7 +70,8 @@ type LintResult struct {
 var validActions = map[string]bool{
 	"allow":            true,
 	"deny":             true,
-	"log":              true,
+	"watch":            true,
+	"log":              true, // deprecated alias for watch
 	"require_approval": true,
 	"webhook":          true,
 }
@@ -194,6 +195,14 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 			msg += fmt.Sprintf(" (did you mean %q?)", suggestion)
 		}
 		result.add(LintFinding{File: filename, Severity: LintError, Message: msg})
+	}
+	// Deprecation warning for action: log
+	if actionLower == "log" {
+		result.add(LintFinding{
+			File:     filename,
+			Severity: LintWarning,
+			Message:  fmt.Sprintf("policy %q rule %d: action \"log\" is deprecated — use \"watch\" instead (same behavior, clearer name)", p.Name, ruleIdx+1),
+		})
 	}
 
 	// Check for empty when block (matches all tool calls in scope).

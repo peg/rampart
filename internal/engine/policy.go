@@ -185,8 +185,8 @@ func (r Rule) ParseAction() (Action, error) {
 		return ActionAllow, nil
 	case "deny":
 		return ActionDeny, nil
-	case "log":
-		return ActionLog, nil
+	case "watch", "log": // "log" kept as deprecated alias
+		return ActionWatch, nil
 	case "require_approval":
 		return ActionRequireApproval, nil
 	case "webhook":
@@ -282,6 +282,36 @@ func (s *StringOrSlice) UnmarshalYAML(value *yaml.Node) error {
 	default:
 		return fmt.Errorf("engine: tool must be a string or list of strings")
 	}
+}
+
+// MemoryStore loads policies from an in-memory byte slice.
+// Used when no config file is present and an embedded default is loaded.
+type MemoryStore struct {
+	data []byte
+	path string
+}
+
+// NewMemoryStore creates a policy store backed by raw YAML bytes.
+// path is used only for display purposes (e.g. "embedded:standard").
+func NewMemoryStore(data []byte, path string) *MemoryStore {
+	return &MemoryStore{data: data, path: path}
+}
+
+// Load parses the in-memory YAML configuration.
+func (s *MemoryStore) Load() (*Config, error) {
+	var cfg Config
+	if err := yaml.Unmarshal(s.data, &cfg); err != nil {
+		return nil, fmt.Errorf("engine: parse embedded policy: %w", err)
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+// Path returns the display path for this store.
+func (s *MemoryStore) Path() string {
+	return s.path
 }
 
 // FileStore loads policies from a YAML file on disk.
