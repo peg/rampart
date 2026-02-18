@@ -67,7 +67,7 @@ policies:
       - action: require_approval
         when:
           command_matches:
-            - "sudo *"
+            - "sudo **"
         message: "sudo requires approval"
 
   - name: block-credential-access
