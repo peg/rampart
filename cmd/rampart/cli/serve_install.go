@@ -380,17 +380,10 @@ func printSuccess(cmd *cobra.Command, token string, generated bool, port int, pa
 	w := cmd.ErrOrStderr()
 	fmt.Fprintf(w, "\n✅ Rampart service installed: %s\n", path)
 	fmt.Fprintf(w, "   Dashboard: http://localhost:%d/dashboard/\n", port)
+	fmt.Fprintf(w, "   Token:     %s\n", token)
+	fmt.Fprintf(w, "   (token also saved to ~/.rampart/token — hooks read it automatically)\n")
 	if generated {
-		fmt.Fprintf(w, "\n🔑 Generated token (save this — you'll need it for hooks):\n")
-		fmt.Fprintf(w, "   export RAMPART_TOKEN=%s\n\n", token)
-		fmt.Fprintf(w, "   Add to your shell profile so it persists across sessions:\n")
-		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc   # zsh (macOS default)\n", token)
-		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.bashrc  # bash\n\n", token)
-	} else {
-		display := token
-		if len(token) > 8 {
-			display = token[:8] + "..."
-		}
-		fmt.Fprintf(w, "   Token: %s\n", display)
+		fmt.Fprintf(w, "\n   To persist across shell sessions:\n")
+		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc\n", token)
 	}
 }
