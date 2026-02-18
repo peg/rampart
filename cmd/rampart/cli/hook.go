@@ -363,7 +363,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						autoDiscovered: serveAutoDiscovered,
 					}
 					command, _ := call.Params["command"].(string)
-					path, _ := call.Params["path"].(string)
+					path := call.Path() // handles both "file_path" (Claude Code) and "path"
 					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, decision.Message, 5*time.Minute)
 					return outputHookResult(cmd, format, result, false, decision.Message, cmdStr)
 				}

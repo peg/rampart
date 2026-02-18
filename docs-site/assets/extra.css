@@ -50,6 +50,16 @@
   margin-bottom: 2rem;
 }
 
+@media screen and (max-width: 600px) {
+  .md-typeset .hero-title {
+    font-size: 1.75rem;
+    letter-spacing: -0.02em;
+  }
+  .md-typeset .hero-subtitle {
+    font-size: 1rem;
+  }
+}
+
 /* Navigation */
 .md-nav__link {
   font-size: 0.82rem;

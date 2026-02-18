@@ -111,8 +111,12 @@ func (tc ToolCall) Command() string {
 }
 
 // Path extracts the file path from a read/write tool call's params.
+// Claude Code uses "file_path" for Read/Write/Edit; other agents may use "path".
 // Returns empty string if not present or not a string.
 func (tc ToolCall) Path() string {
+	if p, _ := tc.Params["file_path"].(string); p != "" {
+		return p
+	}
 	p, _ := tc.Params["path"].(string)
 	return p
 }
