@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-02-18
+
+### Added
+- **Session identity**: Every hook audit event now carries a `session` field auto-derived from `git rev-parse` (format: `repo/branch`, e.g. `rampart/staging`). Zero config — falls back to `""` outside git repos. `RAMPART_SESSION` env var overrides for orchestrators and CI.
+- **Policy: session conditions**: New `session_matches` / `session_not_matches` condition fields in `when:` blocks, plus `session:` at the `match:` level to scope an entire policy to specific sessions (glob patterns, same semantics as `agent:`).
+- **Audit API: session filter**: `GET /v1/audit/events?session=<value>` filters events by session. `GET /v1/audit/stats` now includes `by_session` breakdown.
+- **Dashboard History**: Session column added between Agent and Tool; session is included in search; detail panel shows Session field.
+- **`rampart doctor --json`**: Structured JSON output `{checks, issues, warnings}` for CI integration.
+- **`rampart doctor` new checks**: PATH (`rampart` in PATH), Token (persisted or env), Hook binary path (verifies absolute paths in settings.json exist), Token auth (validates token against `/v1/policy`), Policies via API (checks `policy_count > 0`), Pending approvals (warns if any pending).
+- **`rampart doctor` exit code**: Exits 1 when issues > 0 (previously always exited 0).
+- **`/healthz` version field**: The health endpoint now includes `"version"` in the JSON response.
+- **`rampart test --json`**: Emits `{passed, failed, errors, total, tests:[...]}` to stdout.
+- **`rampart test` zero-arg**: When called with no arguments, auto-discovers `rampart-tests.yaml` then `rampart.yaml` in the current directory.
+- **`rampart policy test`**: Alias for `rampart test` available under the `policy` subcommand.
+
+### Fixed
+- **`rampart doctor`**: Fixed server check port from 19090/9090 to **18275** (canonical serve port).
+
 ## [0.2.36] — 2026-02-18
 
 ### Fixed
