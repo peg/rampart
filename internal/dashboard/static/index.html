@@ -159,7 +159,7 @@
         <div class="k">Created</div><div class="v">${escape(fmt.ts(item.created_at))}</div>
         <div class="k">${inHistory ? 'Resolved' : 'Expires'}</div><div class="v">${escape(fmt.ts(inHistory ? item._resolvedAt : item.expires_at))}</div>
       </div>
-      ${inHistory ? '' : `<div class="actions"><button class="btn ok" data-action="approve" data-id="${escape(item.id)}">Approve</button><button class="btn deny" data-action="deny" data-id="${escape(item.id)}">Deny</button></div>`}
+      ${inHistory ? '' : `<div class="actions"><button class="btn ok" data-action="approve" data-id="${escape(item.id)}">Approve</button><button class="btn ok" data-action="always" data-id="${escape(item.id)}" style="background:#1d8348">Always Allow</button><button class="btn deny" data-action="deny" data-id="${escape(item.id)}">Deny</button></div>`}
     `;
     return card;
   }
@@ -236,7 +236,7 @@
     }
   }
 
-  async function resolve(id, approved, button) {
+  async function resolve(id, approved, button, persist) {
     const original = button.textContent;
     button.disabled = true;
     button.textContent = approved ? 'Approving...' : 'Denying...';
@@ -244,7 +244,7 @@
       const r = await fetch(`/v1/approvals/${encodeURIComponent(id)}/resolve`, {
         method: 'POST',
         headers: headers(true),
-        body: JSON.stringify({ approved, resolved_by: 'dashboard' })
+        body: JSON.stringify({ approved, resolved_by: 'dashboard', persist: !!persist })
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
@@ -271,7 +271,8 @@
   el.pending.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-action]');
     if (!b) return;
-    resolve(b.dataset.id, b.dataset.action === 'approve', b);
+    const persist = b.dataset.action === 'always';
+    resolve(b.dataset.id, b.dataset.action === 'approve' || persist, b, persist);
   });
 
   setInterval(() => {
