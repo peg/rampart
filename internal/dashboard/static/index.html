@@ -62,6 +62,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .tbl{width:100%;border-collapse:collapse}
 /* Pending table: fixed layout so the actions column width is enforced */
 #pending-table{table-layout:fixed}
+/* Actions cell is the last column — safe to let it overflow visibly */
+#pending-table td:last-child{overflow:visible}
 .tbl th{text-align:left;padding:6px 8px;font-size:11px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1;overflow:hidden;position:relative}
 .tbl th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;background:transparent;z-index:2}
 .tbl th .resize-handle:hover,.tbl th .resize-handle.active{background:var(--accent)}
@@ -243,7 +245,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
         <th class="col-tool" style="width:50px">Tool</th>
         <th class="cmd-col">Command</th>
         <th style="width:50px;text-align:right">Time</th>
-        <th style="width:160px">Actions</th>
+        <th style="width:185px">Actions</th>
       </tr></thead>
       <tbody id="pending-body"></tbody>
     </table>
