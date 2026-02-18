@@ -51,6 +51,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var auditDir string
 	var mode string
 	var port int
+	var listenAddr string
 	var syslogAddr string
 	var cef bool
 	var resolveBaseURL string
@@ -260,7 +261,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				proxyErrCh = make(chan error, 1)
 				go func() {
-					proxyErrCh <- proxyServer.ListenAndServe(fmt.Sprintf(":%d", port))
+					proxyErrCh <- proxyServer.ListenAndServe(fmt.Sprintf("%s:%d", listenAddr, port))
 				}()
 			}
 
@@ -329,6 +330,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&auditDir, "audit-dir", defaultAuditDir, "Directory for audit logs")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")
 	cmd.Flags().IntVar(&port, "port", 9090, "Proxy listen port (0 = SDK-only mode)")
+	cmd.Flags().StringVar(&listenAddr, "addr", "", "Bind address (default: all interfaces). Use 127.0.0.1 to bind localhost only")
 	cmd.Flags().StringVar(&syslogAddr, "syslog", "", "Syslog server address (e.g. localhost:514)")
 	cmd.Flags().BoolVar(&cef, "cef", false, "Use CEF format (with --syslog: CEF over syslog; standalone: write ~/.rampart/audit/cef.log)")
 	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")
