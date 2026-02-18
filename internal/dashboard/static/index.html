@@ -600,13 +600,15 @@ async function poll(){
 function extractCmd(a){
   // approval objects: top-level command
   if(a.command)return a.command;
-  // write/read tool calls: path field
+  // write/read tool calls: path field (Claude Code uses file_path, others use path)
+  if(a.file_path)return a.file_path;
   if(a.path)return a.path;
   // audit events: nested under request
   if(a.request&&a.request.command)return Array.isArray(a.request.command)?a.request.command.join(' '):a.request.command;
+  if(a.request&&a.request.file_path)return a.request.file_path;
   if(a.request&&a.request.path)return a.request.path;
   if(a.description)return a.description;
-  return a.id||'unknown';
+  return '—';
 }
 function extractAction(ev){
   // audit events: nested under decision
