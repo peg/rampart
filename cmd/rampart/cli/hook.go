@@ -124,6 +124,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if serveToken == "" {
 				serveToken = os.Getenv("RAMPART_TOKEN")
 			}
+			// Auto-read token from ~/.rampart/token when not set via env/flag.
+			// This means settings.json never needs to contain credentials —
+			// the hook discovers both the URL and the token from standard locations.
+			if serveToken == "" {
+				if tok, err := readPersistedToken(); err == nil {
+					serveToken = tok
+				}
+			}
 
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)

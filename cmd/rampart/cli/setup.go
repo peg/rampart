@@ -97,26 +97,15 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			// Build the hook config — no --serve-url needed, hook auto-discovers on localhost:18275.
 			// Use absolute path so the hook works regardless of Claude Code's PATH.
+			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
+			// settings.json never needs to contain credentials.
 			hookBin := "rampart"
 			if exe, err := os.Executable(); err == nil {
 				hookBin = exe
 			} else if p, err := execLookPath("rampart"); err == nil {
 				hookBin = p
 			}
-
-			// Claude Code hooks don't inherit the user's shell environment, so
-			// RAMPART_TOKEN won't be set. Inline the token directly in the command
-			// so the hook can authenticate with rampart serve.
-			// Priority: RAMPART_TOKEN env > ~/.rampart/token file > no token (local mode).
-			hookToken := os.Getenv("RAMPART_TOKEN")
-			if hookToken == "" {
-				hookToken, _ = readPersistedToken()
-			}
-
 			hookCommand := hookBin + " hook"
-			if hookToken != "" {
-				hookCommand = "RAMPART_TOKEN=" + hookToken + " " + hookBin + " hook"
-			}
 
 			rampartHook := map[string]any{
 				"type":    "command",
@@ -983,10 +972,9 @@ func hasRampartInMatcher(matcher map[string]any) bool {
 	for _, h := range hooks {
 		if m, ok := h.(map[string]any); ok {
 			if cmd, ok := m["command"].(string); ok {
-				// Match bare, absolute-path, and RAMPART_TOKEN=xxx prefixed variants.
+				// Match bare "rampart hook" or absolute path variants like "/usr/local/bin/rampart hook"
 				if cmd == "rampart hook" || strings.HasPrefix(cmd, "rampart hook ") ||
-					strings.HasSuffix(cmd, "/rampart hook") || strings.Contains(cmd, "/rampart hook ") ||
-					strings.Contains(cmd, "RAMPART_TOKEN=") {
+					strings.HasSuffix(cmd, "/rampart hook") || strings.Contains(cmd, "/rampart hook ") {
 					return true
 				}
 			}

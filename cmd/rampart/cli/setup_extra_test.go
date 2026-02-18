@@ -111,67 +111,6 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 	}
 }
 
-func TestSetupClaudeCode_InlinesToken(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-	t.Setenv("RAMPART_TOKEN", "test-token-abc123")
-
-	old := execLookPath
-	execLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { execLookPath = old }()
-
-	opts := &rootOptions{}
-	cmd := newSetupClaudeCodeCmd(opts)
-	cmd.SetArgs([]string{"--force"})
-	cmd.SetOut(&strings.Builder{})
-	cmd.SetErr(&strings.Builder{})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	settingsPath := filepath.Join(tmpHome, ".claude", "settings.json")
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.Contains(string(data), "RAMPART_TOKEN=test-token-abc123") {
-		t.Errorf("token not inlined in hook command; got: %s", data)
-	}
-}
-
-func TestSetupClaudeCode_InlinesTokenFromFile(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-	os.Unsetenv("RAMPART_TOKEN")
-
-	// Write token file as serve install would.
-	tokenDir := filepath.Join(tmpHome, ".rampart")
-	os.MkdirAll(tokenDir, 0o700)
-	os.WriteFile(filepath.Join(tokenDir, "token"), []byte("file-token-xyz"), 0o600)
-
-	old := execLookPath
-	execLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { execLookPath = old }()
-
-	opts := &rootOptions{}
-	cmd := newSetupClaudeCodeCmd(opts)
-	cmd.SetArgs([]string{"--force"})
-	cmd.SetOut(&strings.Builder{})
-	cmd.SetErr(&strings.Builder{})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	settingsPath := filepath.Join(tmpHome, ".claude", "settings.json")
-	data, _ := os.ReadFile(settingsPath)
-	if !strings.Contains(string(data), "RAMPART_TOKEN=file-token-xyz") {
-		t.Errorf("token from file not inlined; got: %s", data)
-	}
-}
-
 func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
