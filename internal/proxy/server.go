@@ -368,6 +368,18 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && decision.Action == engine.ActionRequireApproval {
+		// Check if the user has previously "Always Allowed" this pattern.
+		// Auto-allow decisions override require_approval from global policies.
+		if engine.MatchesAutoAllowFile(engine.DefaultAutoAllowedPath(), call) {
+			s.logger.Debug("proxy: auto-allow matched, bypassing approval queue", "tool", toolName)
+			decision.Action = engine.ActionAllow
+			decision.Message = "auto-allowed by user rule"
+			decision.MatchedPolicies = append([]string{"auto-allowed"}, decision.MatchedPolicies...)
+			s.writeAudit(req, toolName, decision)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
 		pending, err := s.approvals.Create(call, decision)
 		if err != nil {
 			s.logger.Error("proxy: approval store full", "error", err)
