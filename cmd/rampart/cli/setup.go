@@ -97,6 +97,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			// Build the hook config — no --serve-url needed, hook auto-discovers on localhost:18275.
 			// Use absolute path so the hook works regardless of Claude Code's PATH.
+			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
+			// settings.json never needs to contain credentials.
 			hookBin := "rampart"
 			if exe, err := os.Executable(); err == nil {
 				hookBin = exe
@@ -168,10 +170,18 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route Bash commands through Rampart.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
 			fmt.Fprintln(cmd.OutOrStdout(), "")
-			fmt.Fprintln(cmd.OutOrStdout(), "  Dashboard approvals:")
-			fmt.Fprintln(cmd.OutOrStdout(), "    Run 'rampart serve' to enable dashboard-based approvals.")
-			fmt.Fprintln(cmd.OutOrStdout(), "    The hook auto-discovers serve on localhost:18275.")
-			fmt.Fprintln(cmd.OutOrStdout(), "    Set RAMPART_TOKEN env var to authenticate with serve.")
+
+			// Tell the user whether dashboard auth is wired up.
+			if tok, _ := readPersistedToken(); tok != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), "  Dashboard: token auto-detected from ~/.rampart/token ✓")
+				fmt.Fprintln(cmd.OutOrStdout(), "  Events will appear in the dashboard automatically.")
+			} else if os.Getenv("RAMPART_TOKEN") != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), "  Dashboard: token detected from RAMPART_TOKEN env ✓")
+				fmt.Fprintln(cmd.OutOrStdout(), "  Events will appear in the dashboard automatically.")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "  Dashboard: no token found — running in local-only mode.")
+				fmt.Fprintln(cmd.OutOrStdout(), "  Run 'rampart serve install' first to enable the dashboard.")
+			}
 
 			// Check if rampart is in system PATH.
 			if _, err := execLookPath("rampart"); err != nil {

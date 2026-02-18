@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.35] — 2026-02-18
+
+### Fixed
+- `rampart hook` now auto-reads the token from `~/.rampart/token` when `RAMPART_TOKEN` is not set in the environment. Claude Code hooks don't inherit the user's shell environment, so the token was never available at hook runtime — events silently fell back to local-only evaluation and never reached the dashboard. The hook now discovers both the serve URL (`localhost:18275`) and the token from standard locations, with no credentials needed in `settings.json`.
+- `rampart serve install` now persists the generated token to `~/.rampart/token` (mode 0600). This is the canonical token location the hook reads from automatically.
+- Dashboard now shows hook events. The hook and serve both write to `~/.rampart/audit/` but used different filename prefixes (`audit-hook-YYYY-MM-DD.jsonl` vs `YYYY-MM-DD.jsonl`). The audit API now reads both, so all events appear in the History tab regardless of which component wrote them.
+
 ## [0.2.34] — 2026-02-18
 
 ### Fixed

@@ -119,11 +119,54 @@ func resolveServiceToken(tokenFlag string) (string, bool, error) {
 	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
 		return env, false, nil
 	}
+	// Check persisted token file written by a previous serve install.
+	if tok, err := readPersistedToken(); err == nil && tok != "" {
+		return tok, false, nil
+	}
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", false, fmt.Errorf("generate token: %w", err)
 	}
 	return hex.EncodeToString(b), true, nil
+}
+
+// tokenFilePath returns the path to the persisted token file.
+func tokenFilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".rampart", "token"), nil
+}
+
+// persistToken writes the token to ~/.rampart/token (0600).
+// If the file already exists, permissions are explicitly set to 0o600 regardless
+// of what they were before — os.WriteFile only applies the mode on creation.
+func persistToken(token string) error {
+	p, err := tokenFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(p, []byte(token), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(p, 0o600)
+}
+
+// readPersistedToken reads the token from ~/.rampart/token if it exists.
+func readPersistedToken() (string, error) {
+	p, err := tokenFilePath()
+	if err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 func plistPath() (string, error) {
@@ -261,6 +304,12 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return nil
 	}
 
+	// Unload any existing service before writing new plist.
+	// Best-effort: ignore errors if the service wasn't loaded.
+	if _, err := os.Stat(path); err == nil {
+		_, _ = runner("launchctl", "unload", path).CombinedOutput()
+	}
+
 	content, err := generatePlist(cfg)
 	if err != nil {
 		return fmt.Errorf("generate plist: %w", err)
@@ -280,6 +329,10 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return fmt.Errorf("launchctl load: %w\n%s", err, out)
 	}
 
+	if err := persistToken(cfg.Token); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", cfg.Token)
+	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
 }
@@ -310,6 +363,9 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return fmt.Errorf("write unit: %w", err)
 	}
 
+	// Stop the old service before reload so the new binary/token take effect.
+	_, _ = runner("systemctl", "--user", "stop", "rampart-serve.service").CombinedOutput()
+
 	if out, err := runner("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w\n%s", err, out)
 	}
@@ -317,6 +373,10 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return fmt.Errorf("systemctl enable: %w\n%s", err, out)
 	}
 
+	if err := persistToken(cfg.Token); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", cfg.Token)
+	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
 }
@@ -325,17 +385,10 @@ func printSuccess(cmd *cobra.Command, token string, generated bool, port int, pa
 	w := cmd.ErrOrStderr()
 	fmt.Fprintf(w, "\n✅ Rampart service installed: %s\n", path)
 	fmt.Fprintf(w, "   Dashboard: http://localhost:%d/dashboard/\n", port)
+	fmt.Fprintf(w, "   Token:     %s\n", token)
+	fmt.Fprintf(w, "   (token also saved to ~/.rampart/token — hooks read it automatically)\n")
 	if generated {
-		fmt.Fprintf(w, "\n🔑 Generated token (save this — you'll need it for hooks):\n")
-		fmt.Fprintf(w, "   export RAMPART_TOKEN=%s\n\n", token)
-		fmt.Fprintf(w, "   Add to your shell profile so it persists across sessions:\n")
-		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc   # zsh (macOS default)\n", token)
-		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.bashrc  # bash\n\n", token)
-	} else {
-		display := token
-		if len(token) > 8 {
-			display = token[:8] + "..."
-		}
-		fmt.Fprintf(w, "   Token: %s\n", display)
+		fmt.Fprintf(w, "\n   To persist across shell sessions:\n")
+		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc\n", token)
 	}
 }

@@ -14,7 +14,9 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -93,6 +95,7 @@ func TestResolveToken_FromEnv(t *testing.T) {
 
 func TestResolveToken_Generated(t *testing.T) {
 	t.Setenv("RAMPART_TOKEN", "")
+	t.Setenv("HOME", t.TempDir()) // prevent reading ~/.rampart/token from real home
 	tok, gen, err := resolveServiceToken("")
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +105,86 @@ func TestResolveToken_Generated(t *testing.T) {
 	}
 	if len(tok) != 32 {
 		t.Errorf("expected 32-char hex token, got %d chars: %s", len(tok), tok)
+	}
+}
+
+func TestPersistAndReadToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// File doesn't exist yet — readPersistedToken should return an error.
+	if _, err := readPersistedToken(); err == nil {
+		t.Fatal("expected error reading token from empty home, got nil")
+	}
+
+	// Persist a token.
+	const want = "abc123deadbeef"
+	if err := persistToken(want); err != nil {
+		t.Fatalf("persistToken: %v", err)
+	}
+
+	// File must be 0o600.
+	p, _ := tokenFilePath()
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("stat token file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("token file permissions: got %04o, want 0600", info.Mode().Perm())
+	}
+
+	// Round-trip: read back the token.
+	got, err := readPersistedToken()
+	if err != nil {
+		t.Fatalf("readPersistedToken: %v", err)
+	}
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestPersistToken_FixesPermissions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create the token file manually with wrong permissions.
+	p, _ := tokenFilePath()
+	_ = os.MkdirAll(filepath.Dir(p), 0o700)
+	_ = os.WriteFile(p, []byte("oldtoken"), 0o644)
+
+	// persistToken must fix permissions, not just overwrite content.
+	if err := persistToken("newtoken"); err != nil {
+		t.Fatalf("persistToken: %v", err)
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("permissions not fixed: got %04o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestResolveToken_FromFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("RAMPART_TOKEN", "")
+
+	// Write a token to the file.
+	const want = "filetokendeadbeef"
+	if err := persistToken(want); err != nil {
+		t.Fatalf("persistToken: %v", err)
+	}
+
+	tok, gen, err := resolveServiceToken("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen {
+		t.Error("expected generated=false when token comes from file")
+	}
+	if tok != want {
+		t.Errorf("got %q, want %q", tok, want)
 	}
 }
 

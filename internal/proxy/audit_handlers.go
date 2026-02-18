@@ -170,8 +170,12 @@ func (s *Server) handleAuditDates(w http.ResponseWriter, r *http.Request) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		// Extract date from filename: "2026-02-18.jsonl" or "2026-02-18.p1.jsonl"
+		// Extract date from filename: "2026-02-18.jsonl", "2026-02-18.p1.jsonl",
+		// or hook's "audit-hook-2026-02-18.jsonl".
 		name := e.Name()
+		if strings.HasPrefix(name, "audit-hook-") {
+			name = strings.TrimPrefix(name, "audit-hook-")
+		}
 		if len(name) >= 10 {
 			d := name[:10]
 			if _, err := time.Parse("2006-01-02", d); err == nil {
@@ -313,7 +317,9 @@ func (s *Server) auditFilesForDate(date string) []string {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		if strings.HasPrefix(e.Name(), date) {
+		// Match serve's own files ("YYYY-MM-DD.jsonl", "YYYY-MM-DD.pN.jsonl")
+		// and hook's files ("audit-hook-YYYY-MM-DD.jsonl") — both land in the same dir.
+		if strings.HasPrefix(e.Name(), date) || strings.HasPrefix(e.Name(), "audit-hook-"+date) {
 			files = append(files, filepath.Join(s.auditDir, e.Name()))
 		}
 	}
