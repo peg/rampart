@@ -10,30 +10,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] — 2026-02-18
 
 ### Added
-- **`rampart quickstart`**: one-shot setup command — detects AI coding environment, installs service, configures hooks, runs health check.
-- **`rampart init --project`**: scaffolds `.rampart/policy.yaml` with a commented template for team-shared project rules. Errors clearly if the file already exists (no silent overwrites). Commit the generated file to enforce rules for all team members.
-- **`rampart doctor` project policy check**: shows whether a project policy is active in the current repo (`.rampart/policy.yaml`). Purely informational — never a failure. Skipped outside git repos. Included in `--json` output as `status: "ok"` or `status: "info"`.
-- **`rampart doctor` colored output**: `✓` green, `✗` red, `⚠` yellow in terminal output. Colors are suppressed when `--json` is set or `NO_COLOR` is set.
-- **Project-local policy files**: drop `.rampart/policy.yaml` in any git repo and Rampart automatically loads and enforces those rules when Claude Code runs in that directory. No configuration required — rules are additive on top of the global policy. Committed to git, so all team members get the same rules automatically. Set `RAMPART_NO_PROJECT_POLICY=1` to disable.
-- **Session identity**: Every hook audit event now carries a `session` field auto-derived from `git rev-parse` (format: `repo/branch`, e.g. `rampart/staging`). Zero config — falls back to `""` outside git repos. `RAMPART_SESSION` env var overrides for orchestrators and CI.
-- **Policy: session conditions**: New `session_matches` / `session_not_matches` condition fields in `when:` blocks, plus `session:` at the `match:` level to scope an entire policy to specific sessions (glob patterns, same semantics as `agent:`).
-- **Audit API: session filter**: `GET /v1/audit/events?session=<value>` filters events by session. `GET /v1/audit/stats` now includes `by_session` breakdown.
-- **Dashboard History**: Session column added between Agent and Tool; session is included in search; detail panel shows Session field.
-- **`rampart doctor --json`**: Structured JSON output `{checks, issues, warnings}` for CI integration.
-- **`rampart doctor` new checks**: PATH (`rampart` in PATH), Token (persisted or env), Hook binary path (verifies absolute paths in settings.json exist), Token auth (validates token against `/v1/policy`), Policies via API (checks `policy_count > 0`), Pending approvals (warns if any pending).
-- **`rampart doctor` exit code**: Exits 1 when issues > 0 (previously always exited 0).
-- **`/healthz` version field**: The health endpoint now includes `"version"` in the JSON response.
-- **`rampart test --json`**: Emits `{passed, failed, errors, total, tests:[...]}` to stdout.
+
+- **`rampart quickstart`**: One-shot setup command — detects your AI coding environment (Claude Code, Codex, etc.), installs the service, wires up hooks, and runs `rampart doctor`. Get protected in a single command.
+- **`rampart init --project`**: Scaffolds `.rampart/policy.yaml` in the current git repo with a commented template for team-shared project rules. Errors clearly if the file already exists (no silent overwrites). Commit the generated file to share guardrails with your team.
+- **Project-local policy files**: Drop `.rampart/policy.yaml` in any git repo and Rampart automatically loads and layers those rules on top of your global policy — no configuration required. Rules are additive. Set `RAMPART_NO_PROJECT_POLICY=1` to disable. (`LayeredStore`)
+- **Session identity**: Every hook audit event now carries a `session` field auto-derived from `git rev-parse` (format: `repo/branch`, e.g. `rampart/staging`). Zero configuration — falls back to `""` outside git repos. Override with the `RAMPART_SESSION` env var for orchestrators and CI.
+- **Policy session conditions**: New `session_matches` / `session_not_matches` condition fields in `when:` blocks. Use `session:` at the `match:` level to scope an entire policy to specific sessions (glob patterns, same semantics as `agent:`).
+- **Policy REPL**: The dashboard Policy tab now has a "Try a Command" tester — type any `exec`, `write`, or `read` command and instantly see what your loaded policy would do (allow / deny / require_approval / watch), including which rule matched. Backed by the new `POST /v1/test` endpoint.
+- **Dashboard: session in approval cards**: Active approval cards show the session (repo/branch) the request came from. The Active tab groups pending approvals by session for easier triage.
+- **Dashboard: write/read path display**: The denials feed and approval cards now correctly display the file path for `write` and `read` tool calls (previously only `exec` commands were shown).
+- **Dashboard History: Session column**: Session field added between Agent and Tool in the History tab; included in search; detail panel shows Session field.
+- **`rampart doctor` overhaul**:
+  - Colored terminal output: `✓` green, `✗` red, `⚠` yellow. Colors suppressed when `--json` is set or `NO_COLOR` is present.
+  - `--json` flag: Structured output `{checks, issues, warnings}` for CI integration.
+  - Project policy check: Shows whether a `.rampart/policy.yaml` is active in the current repo (informational, never a failure).
+  - 6 new health checks: PATH (rampart binary in PATH), Token (persisted or env), Hook binary path (verifies absolute paths in `settings.json` exist), Token auth (validates token against `/v1/policy`), Policies via API (checks `policy_count > 0`), Pending approvals (warns if any pending).
+  - Fixed port from 19090/9090 to the canonical **18275**.
+  - Exits 1 when issues > 0 (previously always exited 0).
+- **`rampart test --json`**: `--json` flag on `rampart test` (and bare `rampart <file>`) emits `{passed, failed, errors, total, tests:[...]}` to stdout for CI integration.
 - **`rampart test` zero-arg**: When called with no arguments, auto-discovers `rampart-tests.yaml` then `rampart.yaml` in the current directory.
 - **`rampart policy test`**: Alias for `rampart test` available under the `policy` subcommand.
-
-### Fixed
-- **`rampart doctor`**: Fixed server check port from 19090/9090 to **18275** (canonical serve port).
-- **Duplicate policy log in `mergeYAMLFiles`**: Downgraded from WARN to DEBUG. Same-directory YAML files with overlapping policy names no longer spam the log at warn level.
+- **`/healthz` version field**: The health endpoint now includes `"version"` in the JSON response.
+- **Audit API session filter**: `GET /v1/audit/events?session=<value>` filters events by session. `GET /v1/audit/stats` now includes a `by_session` breakdown.
 
 ### Changed
-- **Default approval timeout**: Increased from 5 minutes to 1 hour. Override with `--approval-timeout` flag (e.g. `--approval-timeout=30m`).
-- **Dashboard Policy tab**: Added "Try a command" REPL input — type any command and instantly see what the global policy would do (allow / deny / require_approval / watch), including which rule matched.
+
+- **Default approval timeout**: Increased from **5 minutes to 1 hour**. Override with `--approval-timeout` (e.g. `--approval-timeout=30m`).
+
+### Fixed
+
+- **`sudo **` glob**: `sudo *` in standard.yaml did not match commands containing path arguments (e.g. `sudo rm -rf /`) because `*` does not cross `/` in glob matching. Changed to `sudo **` throughout.
+- **`**` glob patterns in standard.yaml**: Pipe-to-shell patterns (`curl * | bash`, `wget * | sh`, etc.) and other path-based rules now use `**` consistently so URLs and file paths with `/` are correctly matched.
+- **Policy REPL JSON parse**: The dashboard REPL was calling `api(...)` and treating the result as parsed JSON. `api()` returns a `Response` object — fixed to `await api(...).then(r => r.json())`.
+- **`extractCmd` write/read path**: Dashboard denials feed was only extracting the command field from `exec` tool calls. Fixed to also extract the `path` field from `write` and `read` tool calls.
+- **`doctorPending` key**: Doctor's pending approval check was reading the wrong key from the `/v1/approvals` response, always showing 0 pending regardless of actual state.
+- **`responseRegexCache` deep copy**: Response-side regex cache was aliased across evaluations, causing cross-request cache pollution. Now deep-copied per evaluation.
+- **`RAMPART_SESSION` env priority**: Environment variable now correctly takes priority over the git-derived session value when both are present.
+- **Duplicate policy log in `mergeYAMLFiles`**: Downgraded from WARN to DEBUG. Same-directory YAML files with overlapping policy names no longer spam the log.
 
 ## [0.2.36] — 2026-02-18
 
@@ -309,10 +322,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.2.25...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/peg/rampart/compare/v0.2.36...v0.3.0
+[0.2.36]: https://github.com/peg/rampart/compare/v0.2.35...v0.2.36
+[0.2.35]: https://github.com/peg/rampart/compare/v0.2.34...v0.2.35
+[0.2.34]: https://github.com/peg/rampart/compare/v0.2.33...v0.2.34
+[0.2.33]: https://github.com/peg/rampart/compare/v0.2.3...v0.2.33
+[0.2.3]: https://github.com/peg/rampart/compare/v0.2.26...v0.2.3
+[0.2.26]: https://github.com/peg/rampart/compare/v0.2.25...v0.2.26
 [0.2.25]: https://github.com/peg/rampart/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/peg/rampart/compare/v0.2.23...v0.2.24
-[0.2.26]: https://github.com/peg/rampart/compare/v0.2.25...v0.2.26
 [0.2.23]: https://github.com/peg/rampart/compare/v0.2.22...v0.2.23
 [0.2.22]: https://github.com/peg/rampart/compare/v0.2.21...v0.2.22
 [0.2.21]: https://github.com/peg/rampart/compare/v0.2.2...v0.2.21
