@@ -299,6 +299,12 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return nil
 	}
 
+	// Unload any existing service before writing new plist.
+	// Best-effort: ignore errors if the service wasn't loaded.
+	if _, err := os.Stat(path); err == nil {
+		_, _ = runner("launchctl", "unload", path).CombinedOutput()
+	}
+
 	content, err := generatePlist(cfg)
 	if err != nil {
 		return fmt.Errorf("generate plist: %w", err)
@@ -318,7 +324,10 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return fmt.Errorf("launchctl load: %w\n%s", err, out)
 	}
 
-	_ = persistToken(cfg.Token) // best-effort; failure doesn't block install
+	if err := persistToken(cfg.Token); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", cfg.Token)
+	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
 }
@@ -349,6 +358,9 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return fmt.Errorf("write unit: %w", err)
 	}
 
+	// Stop the old service before reload so the new binary/token take effect.
+	_, _ = runner("systemctl", "--user", "stop", "rampart-serve.service").CombinedOutput()
+
 	if out, err := runner("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w\n%s", err, out)
 	}
@@ -356,7 +368,10 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return fmt.Errorf("systemctl enable: %w\n%s", err, out)
 	}
 
-	_ = persistToken(cfg.Token) // best-effort; failure doesn't block install
+	if err := persistToken(cfg.Token); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", cfg.Token)
+	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
 }
