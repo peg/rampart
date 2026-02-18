@@ -25,15 +25,76 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const projectPolicyTemplate = `# Rampart project policy
+# Commit this file to enforce these rules for all team members.
+# Rules here are applied on top of your global policy (~/.rampart/policies/).
+# Global default_action always takes precedence; project rules can only ADD restrictions.
+#
+# Set RAMPART_NO_PROJECT_POLICY=1 to skip loading this file.
+# Docs: https://docs.rampart.sh/features/policy-engine/#project-policies
+version: "1"
+
+policies:
+  # Example: block destructive commands in this repo
+  # - name: myproject-no-destructive
+  #   match:
+  #     tool: exec
+  #   rules:
+  #     - action: deny
+  #       when:
+  #         command_matches:
+  #           - "rm -rf *"
+  #           - "DROP TABLE *"
+  #       message: "Destructive commands blocked by project policy"
+
+  # Example: protect production secrets
+  # - name: myproject-secrets-readonly
+  #   match:
+  #     tool: write
+  #   rules:
+  #     - action: deny
+  #       when:
+  #         path_matches:
+  #           - "*.env.production"
+  #           - "*/secrets/**"
+  #       message: "Production secrets are read-only for AI agents"
+`
+
+func runInitProject(cmd *cobra.Command) error {
+	dir := ".rampart"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("cli: create %s directory: %w", dir, err)
+	}
+
+	dest := filepath.Join(dir, "policy.yaml")
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("cli: %s already exists — delete it first if you want to regenerate", dest)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("cli: check %s: %w", dest, err)
+	}
+
+	if err := os.WriteFile(dest, []byte(projectPolicyTemplate), 0o644); err != nil {
+		return fmt.Errorf("cli: write %s: %w", dest, err)
+	}
+
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), "Created .rampart/policy.yaml — commit this file to share rules with your team.")
+	return err
+}
+
 func newInitCmd(opts *rootOptions) *cobra.Command {
 	var force bool
 	var profile string
 	var detectEnv bool
+	var project bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Rampart configuration and default policies",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if project {
+				return runInitProject(cmd)
+			}
+
 			path := opts.configPath
 			if path == "" {
 				path = "rampart.yaml"
@@ -180,6 +241,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing config/profile files")
 	cmd.Flags().StringVar(&profile, "profile", "standard", "Default policy profile: standard, paranoid, or yolo")
 	cmd.Flags().BoolVar(&detectEnv, "detect", false, "Auto-detect installed tools and generate tailored policy")
+	cmd.Flags().BoolVar(&project, "project", false, "Create .rampart/policy.yaml in the current directory for team-shared project rules")
 
 	return cmd
 }

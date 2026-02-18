@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,17 +60,33 @@ func newDoctorCmd() *cobra.Command {
 func runDoctor(w io.Writer, jsonOut bool) error {
 	var results []checkResult
 	collect := jsonOut // only accumulate when --json is set
+	useColor := !jsonOut && !noColor() && isTerminal(os.Stdout)
 
 	emit := func(name, status, msg string) {
 		if collect {
 			results = append(results, checkResult{Name: name, Status: status, Message: msg})
 			return
 		}
-		icon := "✓"
-		if status == "fail" {
-			icon = "✗"
-		} else if status == "warn" {
-			icon = "⚠"
+		var icon string
+		switch status {
+		case "fail":
+			if useColor {
+				icon = colorRed + "✗" + colorReset
+			} else {
+				icon = "✗"
+			}
+		case "warn":
+			if useColor {
+				icon = colorYellow + "⚠" + colorReset
+			} else {
+				icon = "⚠"
+			}
+		default:
+			if useColor {
+				icon = colorGreen + "✓" + colorReset
+			} else {
+				icon = "✓"
+			}
 		}
 		fmt.Fprintf(w, "%s %s: %s\n", icon, name, msg)
 	}
@@ -140,6 +157,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 
 	// 12. System info
 	emit("System", "ok", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+
+	// 13. Project policy (informational only — not a failure)
+	doctorProjectPolicy(w, emit, collect)
 
 	if collect {
 		// JSON output
@@ -591,6 +611,33 @@ func doctorVersionCheck(w io.Writer, silent bool) int {
 		fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n%s\n", current, release.TagName, hint)
 	}
 	return 0 // informational, not an issue
+}
+
+// doctorProjectPolicy checks if the current git repo has a .rampart/policy.yaml project policy.
+// This check is purely informational — it never counts as a failure.
+func doctorProjectPolicy(w io.Writer, emit emitFn, collect bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		// Not in a git repo (or git not installed) — skip silently.
+		return
+	}
+
+	gitRoot := strings.TrimSpace(string(out))
+	policyPath := filepath.Join(gitRoot, ".rampart", "policy.yaml")
+
+	if _, err := os.Stat(policyPath); err == nil {
+		emit("Project policy", "ok", ".rampart/policy.yaml")
+	} else {
+		// Informational — not a failure. For JSON, use status "info".
+		if collect {
+			emit("Project policy", "info", "No project policy (.rampart/policy.yaml not found in this repo)")
+		} else {
+			fmt.Fprintf(w, "  No project policy (.rampart/policy.yaml not found in this repo)\n")
+		}
+	}
 }
 
 func relHome(path, home string) string {

@@ -11,7 +11,7 @@
 :root {
   --bg: #09090b; --surface: #18181b; --surface-2: #1e1e22; --surface-3: #27272a;
   --border: #27272a; --border-light: #3f3f46;
-  --text: #a1a1aa; --text-bright: #e4e4e7; --heading: #fafafa;
+  --text: #a1a1aa; --text-bright: #e4e4e7; --heading: #fafafa; --text-dim: #52525b;
   --accent: #FF6392; --accent-dim: #cc4f75;
   --green: #22c55e; --red: #ef4444; --orange: #f59e0b;
   --radius: 6px;
@@ -19,7 +19,7 @@
 [data-theme="light"] {
   --bg: #f8f9fa; --surface: #ffffff; --surface-2: #f1f3f5; --surface-3: #e9ecef;
   --border: #dee2e6; --border-light: #ced4da;
-  --text: #495057; --text-bright: #212529; --heading: #000000;
+  --text: #495057; --text-bright: #212529; --heading: #000000; --text-dim: #868e96;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
@@ -86,7 +86,13 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .pend-body{flex:1;min-width:0}
 .pend-cmd{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-bright);word-break:break-word;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .pend-meta{display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:var(--text)}
+.pend-session{color:var(--text-dim);font-size:11px;font-family:monospace}
 .pend-tool-badge{background:var(--surface-3);color:var(--text-bright);padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+/* Session group headers in Active tab */
+.session-group-header{display:flex;align-items:center;gap:8px;padding:6px 12px 4px;border-top:1px solid var(--border);margin-top:4px}
+.session-group-header:first-child{border-top:none;margin-top:0}
+.session-group-label{font-size:11px;font-weight:600;color:var(--text-dim);font-family:monospace;letter-spacing:.2px}
+.session-group-count{font-size:10px;color:var(--text-dim);background:var(--surface-3);padding:1px 5px;border-radius:10px}
 /* pend-right: horizontal row — timer left, buttons right */
 .pend-right{display:flex;align-items:center;gap:12px;flex-shrink:0}
 .pend-timer{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text);min-width:44px;text-align:right;white-space:nowrap}
@@ -578,30 +584,51 @@ function extractAction(ev){
 
 function updatePending(approvals){
   const incoming=new Map(approvals.map(a=>[a.id,a]));
-  for(const[id]of pendingMap){
-    if(!incoming.has(id)){
-      document.getElementById('row-'+id)?.remove();
-      document.getElementById('det-'+id)?.remove();
-      pendingMap.delete(id);selectedIds.delete(id);
-    }
-  }
+  // Track which IDs are brand-new before mutating the map
+  const newIds=new Set();
+  for(const[id]of incoming){if(!pendingMap.has(id))newIds.add(id);}
+  // Remove resolved items
+  for(const[id]of pendingMap){if(!incoming.has(id)){pendingMap.delete(id);selectedIds.delete(id);}}
+  // Upsert all current approvals
+  for(const[id,a]of incoming){pendingMap.set(id,a);}
+  renderPending(newIds);
+  updateTimers();updateBulkBar();
+}
+
+function renderPending(newIds){
   const tbody=document.getElementById('pending-body');
-  const sorted=[...approvals].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
-  for(const a of sorted){
-    if(pendingMap.has(a.id)){pendingMap.set(a.id,a);updateTimerCell(a)}
-    else{
-      pendingMap.set(a.id,a);
-      const{row,detail}=createPendingRow(a);
-      tbody.prepend(detail);tbody.prepend(row);
-      row.classList.add('new-item');
+  // Sort by session name (empty sorts last), then by created_at ascending
+  const entries=[...pendingMap.values()].sort((a,b)=>{
+    const sa=a.session||'',sb=b.session||'';
+    if(sa===''&&sb!=='')return 1;if(sa!==''&&sb==='')return -1;
+    if(sa!==sb)return sa.localeCompare(sb);
+    return (a.created_at||'').localeCompare(b.created_at||'');
+  });
+  // Show group headers only when more than one distinct session exists
+  const sessions=[...new Set(entries.map(a=>a.session||''))];
+  const showHeaders=sessions.length>1;
+  // Rebuild container from scratch
+  tbody.innerHTML='';
+  let lastSession=undefined;
+  for(const a of entries){
+    const session=a.session||'';
+    if(showHeaders&&session!==lastSession){
+      const count=entries.filter(x=>(x.session||'')===session).length;
+      const hdr=document.createElement('div');hdr.className='session-group-header';
+      hdr.innerHTML=`<span class="session-group-label">${esc(session||'(no session)')}</span><span class="session-group-count">${count}</span>`;
+      tbody.appendChild(hdr);lastSession=session;
     }
+    const{row,detail}=createPendingRow(a);
+    if(newIds&&newIds.has(a.id))row.classList.add('new-item');
+    row.querySelector('.row-chk').checked=selectedIds.has(a.id);
+    tbody.appendChild(row);tbody.appendChild(detail);
+    if(expandedId===a.id)detail.classList.add('open');
   }
-  // Update badge
+  // Badge and empty state
   const n=pendingMap.size;
   const badge=document.getElementById('badge-active');
   badge.textContent=n;badge.style.display=n?'':'none';
   document.getElementById('pending-empty').style.display=n?'none':'block';
-  updateTimers();updateBulkBar();
 }
 
 function createPendingRow(a){
@@ -619,6 +646,7 @@ function createPendingRow(a){
       <div class="pend-meta">
         <span class="pend-tool-badge">${esc(a.tool||'exec')}</span>
         <span>${esc(a.agent||'')}</span>
+        ${a.session?`<span class="pend-session">${esc(a.session)}</span>`:''}
       </div>
     </div>
     <div class="pend-right">
@@ -636,6 +664,7 @@ function createPendingRow(a){
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(a.tool||'—')}</dd>
     <dt>Agent</dt><dd>${esc(a.agent||'—')}</dd>
+    <dt>Session</dt><dd class="mono">${esc(a.session||'—')}</dd>
     <dt>Message</dt><dd>${esc(a.message||a.description||'—')}</dd>
     <dt>Created</dt><dd>${a.created_at?new Date(a.created_at).toLocaleString():'—'}</dd>
     <dt>Expires</dt><dd>${a.expires_at?new Date(a.expires_at).toLocaleString():'—'}</dd>
@@ -692,16 +721,8 @@ async function resolveApproval(id,action){
   try{
     await api('/v1/approvals/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved,resolved_by:'dashboard',persist})});
     setTimeout(()=>{
-      document.getElementById('row-'+id)?.remove();
-      document.getElementById('det-'+id)?.remove();
       pendingMap.delete(id);selectedIds.delete(id);
-      const n=pendingMap.size;
-      const badge=document.getElementById('badge-active');
-      badge.textContent=n;badge.style.display=n?'':'none';
-      if(!n){
-        document.getElementById('pending-empty').style.display='block';
-        document.getElementById('select-all').checked=false;
-      }
+      renderPending(new Set());
       updateBulkBar();
       // If denied, quietly refresh the denials feed after a short delay
       if(!approved)setTimeout(loadRecentDenials,600);
