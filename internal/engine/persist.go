@@ -186,9 +186,19 @@ func AppendAllowRule(policyPath string, call ToolCall) error {
 		cfg.DefaultAction = "deny"
 	}
 
+	// Dedup: skip if an identical rule already exists (same tool + command/path pattern).
+	for _, existing := range cfg.Policies {
+		if len(existing.Match.Tool) > 0 && len(policy.Match.Tool) > 0 &&
+			existing.Match.Tool[0] == policy.Match.Tool[0] &&
+			len(existing.Rules) > 0 && len(policy.Rules) > 0 &&
+			conditionsEqual(existing.Rules[0].When, policy.Rules[0].When) {
+			return nil // already exists
+		}
+	}
+
 	cfg.Policies = append(cfg.Policies, policy)
 
-	out, err := yaml.Marshal(&cfg)
+	out, err := marshalCleanYAML(&cfg)
 	if err != nil {
 		return fmt.Errorf("persist: marshal policy: %w", err)
 	}
@@ -242,4 +252,77 @@ func sanitizeName(s string) string {
 		name = name[:50]
 	}
 	return name
+}
+
+// conditionsEqual checks if two Conditions match the same patterns.
+func conditionsEqual(a, b Condition) bool {
+	return slicesEqual(a.CommandMatches, b.CommandMatches) &&
+		slicesEqual(a.PathMatches, b.PathMatches) &&
+		a.Default == b.Default
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanRule is a minimal YAML representation that omits empty fields.
+type cleanRule struct {
+	Action string     `yaml:"action"`
+	When   cleanWhen  `yaml:"when"`
+}
+
+type cleanWhen struct {
+	CommandMatches []string `yaml:"command_matches,omitempty"`
+	PathMatches    []string `yaml:"path_matches,omitempty"`
+	Default        bool     `yaml:"default,omitempty"`
+}
+
+type cleanPolicy struct {
+	Name  string        `yaml:"name"`
+	Match cleanMatch    `yaml:"match"`
+	Rules []cleanRule   `yaml:"rules"`
+}
+
+type cleanMatch struct {
+	Tool []string `yaml:"tool"`
+}
+
+type cleanConfig struct {
+	Version       string        `yaml:"version"`
+	DefaultAction string        `yaml:"default_action"`
+	Policies      []cleanPolicy `yaml:"policies"`
+}
+
+// marshalCleanYAML converts a Config to clean YAML without empty fields.
+func marshalCleanYAML(cfg *Config) ([]byte, error) {
+	clean := cleanConfig{
+		Version:       cfg.Version,
+		DefaultAction: cfg.DefaultAction,
+	}
+	for _, p := range cfg.Policies {
+		cp := cleanPolicy{
+			Name:  p.Name,
+			Match: cleanMatch{Tool: []string(p.Match.Tool)},
+		}
+		for _, r := range p.Rules {
+			cp.Rules = append(cp.Rules, cleanRule{
+				Action: r.Action,
+				When: cleanWhen{
+					CommandMatches: r.When.CommandMatches,
+					PathMatches:    r.When.PathMatches,
+					Default:        r.When.Default,
+				},
+			})
+		}
+		clean.Policies = append(clean.Policies, cp)
+	}
+	return yaml.Marshal(&clean)
 }
