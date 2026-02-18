@@ -333,7 +333,9 @@ func printSuccess(cmd *cobra.Command, token string, generated bool, port int, pa
 	if generated {
 		fmt.Fprintf(w, "\n🔑 Generated token (save this — you'll need it for hooks):\n")
 		fmt.Fprintf(w, "   export RAMPART_TOKEN=%s\n\n", token)
-		fmt.Fprintf(w, "   Add this to your shell profile (~/.bashrc or ~/.zshrc) so it persists.\n\n")
+		fmt.Fprintf(w, "   Add to your shell profile so it persists across sessions:\n")
+		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc   # zsh (macOS default)\n", token)
+		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.bashrc  # bash\n\n", token)
 	} else {
 		display := token
 		if len(token) > 8 {
