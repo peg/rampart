@@ -12,6 +12,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// TestDeriveHookSession_EnvVar verifies RAMPART_SESSION overrides git detection.
+func TestDeriveHookSession_EnvVar(t *testing.T) {
+	t.Setenv("RAMPART_SESSION", "myproject/feature-x")
+	got := deriveHookSession()
+	if got != "myproject/feature-x" {
+		t.Errorf("deriveHookSession() = %q, want %q", got, "myproject/feature-x")
+	}
+}
+
+// TestDeriveHookSession_NoGit verifies that a non-git directory returns "".
+func TestDeriveHookSession_NoGit(t *testing.T) {
+	// Make sure RAMPART_SESSION is not set.
+	t.Setenv("RAMPART_SESSION", "")
+
+	// Change to a temp dir that has no git repo.
+	tmp := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+
+	got := deriveHookSession()
+	if got != "" {
+		t.Errorf("deriveHookSession() = %q, want %q (empty — no git repo)", got, "")
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

@@ -93,6 +93,10 @@ type Match struct {
 	// Default: "*".
 	Agent string `yaml:"agent"`
 
+	// Session is a glob pattern for session identity (e.g. "myrepo/main").
+	// "*" matches all sessions. "" defaults to "*".
+	Session string `yaml:"session"`
+
 	// Tool is a glob pattern or list of tool names.
 	// "exec" matches only exec. "fs.*" matches "fs.read", "fs.write".
 	// Can be a string or list of strings in YAML.
@@ -105,6 +109,14 @@ func (m Match) EffectiveAgent() string {
 		return "*"
 	}
 	return m.Agent
+}
+
+// EffectiveSession returns the session pattern, defaulting to "*".
+func (m Match) EffectiveSession() string {
+	if m.Session == "" {
+		return "*"
+	}
+	return m.Session
 }
 
 // Rule is a single allow/deny/log rule within a policy.
@@ -225,6 +237,14 @@ type Condition struct {
 	// ResponseNotMatches excludes response bodies from matching.
 	ResponseNotMatches []string `yaml:"response_not_matches"`
 
+	// SessionMatches is a list of glob patterns for session identity.
+	// Any matching pattern triggers the rule.
+	SessionMatches []string `yaml:"session_matches"`
+
+	// SessionNotMatches excludes sessions from matching.
+	// If a session matches any of these, the rule does not apply.
+	SessionNotMatches []string `yaml:"session_not_matches"`
+
 	// Default, when true, makes this rule match all tool calls.
 	// Use as a catch-all at the end of a rules list.
 	Default bool `yaml:"default"`
@@ -241,7 +261,9 @@ func (c Condition) IsEmpty() bool {
 		len(c.URLMatches) == 0 &&
 		len(c.DomainMatches) == 0 &&
 		len(c.ResponseMatches) == 0 &&
-		len(c.ResponseNotMatches) == 0
+		len(c.ResponseNotMatches) == 0 &&
+		len(c.SessionMatches) == 0 &&
+		len(c.SessionNotMatches) == 0
 }
 
 // StringOrSlice handles YAML fields that can be either a single string

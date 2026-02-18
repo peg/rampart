@@ -298,6 +298,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
         <thead><tr>
           <th style="width:80px">Time</th>
           <th class="col-agent" style="width:80px">Agent</th>
+          <th style="width:100px">Session</th>
           <th class="col-tool" style="width:60px">Tool</th>
           <th class="cmd-col">Command</th>
 
@@ -820,7 +821,7 @@ async function loadHistStats(date){
 function applyHistFilters(){
   const f=histActiveFilter;const q=histSearch;
   histFiltered=histEvents.filter(ev=>{
-    if(q){const cmd=extractCmd(ev).toLowerCase();if(!cmd.includes(q))return false}
+    if(q){const cmd=extractCmd(ev).toLowerCase();if(!cmd.includes(q)&&!(ev.agent||'').toLowerCase().includes(q)&&!(ev.session||'').toLowerCase().includes(q))return false}
     const a=extractAction(ev);
     if(f==='all')return true;
     if(f==='approved')return a==='approved'||a==='allow';
@@ -842,7 +843,7 @@ function renderHistEvents(){
   // Sentinel for infinite scroll
   if(histHasMore){
     const sentinel=document.createElement('tr');sentinel.id='hist-sentinel-row';
-    sentinel.innerHTML='<td colspan="5" style="text-align:center;padding:8px;color:#52525b;font-size:11px">Loading more…</td>';
+    sentinel.innerHTML='<td colspan="6" style="text-align:center;padding:8px;color:#52525b;font-size:11px">Loading more…</td>';
     tbody.append(sentinel);
     if(histObserver)histObserver.disconnect();
     const wrapper=document.getElementById('hist-scroll-wrap');
@@ -865,14 +866,16 @@ function appendHistRow(ev,tbody){
   const badgeCls=action==='allow'?'allow':(action==='deny'||action==='denied'||action==='blocked')?'deny':action==='approved'?'approved':action==='require_approval'?'require_approval':action==='watch'?'watch':'';
   tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
     <td class="col-agent">${esc(ev.agent||'—')}</td>
+    <td style="font-size:11px">${esc(ev.session||'—')}</td>
     <td class="col-tool">${esc(ev.tool||'—')}</td>
     <td class="cmd-col mono"><span class="cmd-text">${esc(cmd)}</span></td>
     <td><span class="badge ${badgeCls}">${esc(actionLabel)}</span></td>`;
   const det=document.createElement('tr');det.className='detail-row';
-  det.innerHTML=`<td colspan="5"><div class="detail-inner"><dl class="kv">
+  det.innerHTML=`<td colspan="6"><div class="detail-inner"><dl class="kv">
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(ev.tool||'—')}</dd>
     <dt>Agent</dt><dd>${esc(ev.agent||'—')}</dd>
+    <dt>Session</dt><dd>${esc(ev.session||'—')}</dd>
     <dt>Action</dt><dd>${esc(action||'—')}</dd>
     <dt>Reason</dt><dd>${esc((ev.decision&&ev.decision.message)||ev.reason||ev.message||'—')}</dd>
     <dt>Time</dt><dd>${ev.timestamp?new Date(ev.timestamp).toLocaleString():'—'}</dd>

@@ -5,10 +5,12 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -72,6 +74,28 @@ type hookParseResult struct {
 	Response string // non-empty for PostToolUse events
 }
 
+// deriveHookSession returns a "repo/branch" string for the current working
+// directory's git repository. The RAMPART_SESSION env var overrides if set.
+// Returns "" if not in a git repo or git is unavailable.
+func deriveHookSession() string {
+	if s := strings.TrimSpace(os.Getenv("RAMPART_SESSION")); s != "" {
+		return s
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	repoOut, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil || len(repoOut) == 0 {
+		return ""
+	}
+	repo := filepath.Base(strings.TrimSpace(string(repoOut)))
+	branchOut, _ := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	branch := strings.TrimSpace(string(branchOut))
+	if branch == "" || branch == "HEAD" {
+		branch = "detached"
+	}
+	return repo + "/" + branch
+}
+
 func newHookCmd(opts *rootOptions) *cobra.Command {
 	var auditDir string
 	var mode string
@@ -109,6 +133,9 @@ Claude Code setup (add to ~/.claude/settings.json):
 
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Derive session identity once at the top (git repo/branch or RAMPART_SESSION env).
+			hookSession := deriveHookSession()
+
 			// Resolve serve-url and serve-token from env if not set via flags.
 			serveAutoDiscovered := false
 			if serveURL == "" {
@@ -216,7 +243,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					ID:        audit.NewEventID(),
 					Timestamp: time.Now().UTC(),
 					Agent:     format,
-					Session:   "hook",
+					Session:   hookSession,
 					Tool:      "unknown",
 					Request:   map[string]any{"raw_error": err.Error()},
 					Decision: audit.EventDecision{
@@ -235,7 +262,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			call := engine.ToolCall{
 				ID:        audit.NewEventID(),
 				Agent:     parsed.Agent,
-				Session:   "hook",
+				Session:   hookSession,
 				Tool:      parsed.Tool,
 				Params:    parsed.Params,
 				Timestamp: time.Now().UTC(),

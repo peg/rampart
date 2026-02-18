@@ -74,6 +74,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	toolFilter := q.Get("tool")
 	actionFilter := q.Get("action")
 	agentFilter := q.Get("agent")
+	sessionFilter := q.Get("session")
 
 	// Find matching files for this date (may have rotation parts like 2026-02-18.p1.jsonl).
 	files := s.auditFilesForDate(date)
@@ -112,6 +113,9 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if agentFilter != "" && evt.Agent != agentFilter {
+			continue
+		}
+		if sessionFilter != "" && evt.Session != sessionFilter {
 			continue
 		}
 		filtered = append(filtered, evt)
@@ -277,6 +281,7 @@ func (s *Server) handleAuditStats(w http.ResponseWriter, r *http.Request) {
 	byAction := map[string]int{}
 	byTool := map[string]int{}
 	byAgent := map[string]int{}
+	bySession := map[string]int{}
 
 	for d := fromDate; !d.After(toDate); d = d.AddDate(0, 0, 1) {
 		dateStr := d.Format("2006-01-02")
@@ -293,6 +298,9 @@ func (s *Server) handleAuditStats(w http.ResponseWriter, r *http.Request) {
 				if evt.Agent != "" {
 					byAgent[evt.Agent]++
 				}
+				if evt.Session != "" {
+					bySession[evt.Session]++
+				}
 			}
 		}
 	}
@@ -302,6 +310,7 @@ func (s *Server) handleAuditStats(w http.ResponseWriter, r *http.Request) {
 		"by_action":    byAction,
 		"by_tool":      byTool,
 		"by_agent":     byAgent,
+		"by_session":   bySession,
 	})
 }
 
