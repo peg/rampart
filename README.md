@@ -20,12 +20,11 @@
 # Install
 brew install peg/rampart/rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
 
-# Set up hooks
-rampart setup claude-code
-
-# Start approval server (runs on boot after this)
+# Start approval server (runs on boot, saves token to ~/.rampart/token)
 rampart serve install
-# Follow the printed instructions to set RAMPART_TOKEN in your shell profile
+
+# Set up hooks (auto-detects the token — no env vars needed)
+rampart setup claude-code
 
 claude   # use Claude Code normally
 ```
@@ -140,12 +139,11 @@ Native integration through Claude Code's hook system:
 # Install
 brew install peg/rampart/rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
 
-# Set up hooks
-rampart setup claude-code
-
-# Start approval server (runs on boot after this)
+# Start approval server (runs on boot, saves token to ~/.rampart/token)
 rampart serve install
-# Follow the printed instructions to set RAMPART_TOKEN in your shell profile
+
+# Set up hooks (auto-detects the token — no env vars needed)
+rampart setup claude-code
 ```
 
 Every Bash command, file read, and file write goes through Rampart's policy engine before execution. Blocked commands never run. The hook auto-discovers `rampart serve` — no `--serve-url` flag needed.
