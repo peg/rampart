@@ -702,6 +702,8 @@ async function resolveApproval(id,action){
         document.getElementById('select-all').checked=false;
       }
       updateBulkBar();
+      // If denied, quietly refresh the denials feed after a short delay
+      if(!approved)setTimeout(loadRecentDenials,600);
     },400);
     if(persist)toast('Rule saved — always allowed');
   }catch(e){toast('Error: '+e.message)}
