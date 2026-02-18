@@ -52,6 +52,10 @@ func newPolicyCmd(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newPolicyExplainCmd(opts))
 	cmd.AddCommand(newPolicyLintCmd())
 
+	// `rampart policy test` is an alias for `rampart test` — same command,
+	// discoverable under the policy subcommand for users who expect it there.
+	cmd.AddCommand(newTestCmd(opts))
+
 	return cmd
 }
 
