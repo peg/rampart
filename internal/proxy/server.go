@@ -374,7 +374,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			s.logger.Debug("proxy: auto-allow matched, bypassing approval queue", "tool", toolName)
 			decision.Action = engine.ActionAllow
 			decision.Message = "auto-allowed by user rule"
-			decision.MatchedPolicies = append([]string{"auto-allowed"}, decision.MatchedPolicies...)
+			decision.MatchedPolicies = []string{"auto-allowed"}
+			resp["decision"] = decision.Action.String()
+			resp["message"] = decision.Message
+			resp["policy"] = "auto-allowed"
 			s.writeAudit(req, toolName, decision)
 			writeJSON(w, http.StatusOK, resp)
 			return
