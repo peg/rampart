@@ -39,6 +39,7 @@ type Engine struct {
 	responseRegex map[string]*regexp.Regexp
 	logger        *slog.Logger
 	stopReload    chan struct{} // closed to stop periodic reload goroutine
+	stopOnce      sync.Once
 }
 
 // New creates an engine from a policy store.
@@ -441,9 +442,11 @@ func (e *Engine) StartPeriodicReload(interval time.Duration) {
 
 // Stop terminates the periodic reload goroutine, if running.
 func (e *Engine) Stop() {
-	if e.stopReload != nil {
-		close(e.stopReload)
-	}
+	e.stopOnce.Do(func() {
+		if e.stopReload != nil {
+			close(e.stopReload)
+		}
+	})
 }
 
 // parseDefaultAction converts a string default action to an Action constant.

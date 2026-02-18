@@ -188,7 +188,7 @@ func (s *Server) handleAuditDates(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"dates":     dates,
-		"audit_dir": s.auditDir,
+		"configured": s.auditDir != "",
 	})
 }
 

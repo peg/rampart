@@ -149,7 +149,7 @@ func TestAuditDates(t *testing.T) {
 	assert.Equal(t, 2, len(dates))
 	// Most recent first
 	assert.Equal(t, "2026-02-18", dates[0])
-	assert.Equal(t, dir, body["audit_dir"])
+	assert.Equal(t, true, body["configured"])
 }
 
 func TestAuditExport(t *testing.T) {

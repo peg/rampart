@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-02-18
+
+### Added
+- **Unified approval system** — `rampart hook` now delegates `require_approval` to a running `rampart serve` instance via `--serve-url`. Approvals can be resolved from the dashboard, `rampart watch`, API, or native Claude Code prompt (fallback).
+- **Dashboard v2** — Complete redesign with compact table layout, 4 tabs (Pending, History, Audit Log, Rules), dark/light theme toggle, bulk approve/deny, resizable columns, dangerous command detection.
+- **Persist-to-policy** — "Always Allow" creates auto-generated rules in `~/.rampart/policies/auto-allowed.yaml` with clean YAML output and deduplication.
+- **Rules management** — View and revoke auto-allowed rules from the dashboard or API (`GET/DELETE /v1/rules/auto-allowed`).
+- **Audit API** — `GET /v1/audit/events` (query with filters), `/dates`, `/stats`, `/export` (JSONL download).
+- **Directory-based policy loading** — Engine loads all `*.yaml` from a policies directory with `--config-dir`. Auto-includes `~/.rampart/policies/`.
+- **Hot reload** — Policies re-read every 30 seconds (configurable via `--reload-interval`), so auto-allowed rules take effect without restart.
+- **Configurable approval timeout** — `--approval-timeout` flag on `rampart serve` (default: 5 minutes).
+- **Interactive `rampart watch`** — Keybindings: `a` approve, `d` deny, `A` always-allow, `1-9` select, `q` quit.
+- **Approval deduplication** — Same tool+command+agent within 60 seconds returns existing approval ID.
+- **Hash-chained audit events** for all approval resolutions (approved/denied/always-allowed).
+- **Explicit `permissionDecision: "allow"`** for PreToolUse hooks (contributed by @aegixx, PR #51).
+
+### Changed
+- **⚠️ Breaking: Empty `when:` clause now matches all tool calls.** Previously, rules with no `when:` conditions silently matched nothing. Now they act as catch-all rules within their policy scope. **If you have rules with empty `when:` clauses, they will now activate.** Review your policies before upgrading.
+- Dashboard redesigned from card layout to compact table rows.
+- `--serve-token` flag deprecated — prefer `RAMPART_TOKEN` environment variable (flag visible in `ps aux`).
+- Lint message for empty `when:` downgraded from warning to info (correct behavior now).
+
+### Fixed
+- Approval ordering now deterministic (sorted by creation time).
+- Dangerous commands (`rm`, `kill`, `chmod`, `dd`, etc.) never generalized in persist-to-policy.
+- Single-token commands kept exact in generalization (`ls` stays `ls`, not `ls *`).
+- Atomic policy file writes prevent corruption on concurrent "Always Allow".
+- Hook polling respects context cancellation for clean Ctrl-C.
+- Dashboard timer updates no longer cause layout shift.
+- Double `Stop()` on engine no longer panics.
+- Audit dates endpoint no longer leaks server filesystem path.
+
+### Security
+- All new API endpoints require Bearer token authentication.
+- "Always Allow" button requires confirmation dialog.
+- Auto-generated YAML uses `yaml.Marshal` (prevents YAML injection).
+- HMAC-signed approval resolve URLs for webhook notifications.
+
 ## [0.2.26] — 2026-02-16
 
 ### Added
