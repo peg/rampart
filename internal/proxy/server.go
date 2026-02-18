@@ -59,6 +59,7 @@ type Server struct {
 	startedAt      time.Time
 	notifyConfig   *engine.NotifyConfig
 	metricsEnabled bool
+	auditDir       string
 }
 
 // Option configures a proxy server.
@@ -236,6 +237,10 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
 	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
+	mux.HandleFunc("GET /v1/audit/events", s.handleAuditEvents)
+	mux.HandleFunc("GET /v1/audit/dates", s.handleAuditDates)
+	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)
+	mux.HandleFunc("GET /v1/audit/stats", s.handleAuditStats)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	if s.metricsEnabled {
 		mux.Handle("GET /metrics", MetricsHandler())
