@@ -185,7 +185,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					line = append(line, '\n')
 					_, _ = auditFile.Write(line)
 				}
-				return outputHookResult(cmd, format, hookAllow, "", "")
+				return outputHookResult(cmd, format, hookAllow, false, "", "")
 			}
 
 			// Build tool call for evaluation
@@ -246,19 +246,19 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Return decision
 			cmdStr := extractCommand(call)
 			if mode != "enforce" {
-				return outputHookResult(cmd, format, hookAllow, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookAllow, isPostToolUse, decision.Message, cmdStr)
 			}
 
 			switch decision.Action {
 			case engine.ActionDeny:
 				if isPostToolUse {
-					return outputHookResult(cmd, format, hookBlock, decision.Message, cmdStr)
+					return outputHookResult(cmd, format, hookBlock, true, decision.Message, cmdStr)
 				}
-				return outputHookResult(cmd, format, hookDeny, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr)
 			case engine.ActionRequireApproval:
-				return outputHookResult(cmd, format, hookAsk, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
 			default:
-				return outputHookResult(cmd, format, hookAllow, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookAllow, isPostToolUse, decision.Message, cmdStr)
 			}
 		},
 	}
@@ -421,7 +421,7 @@ const (
 // When denied or blocked, it prints a branded message to stderr.
 // When ask, Claude Code shows its native permission prompt; Cline cancels
 // (Cline has no native ask equivalent).
-func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, reason string, command string) error {
+func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, isPostToolUse bool, reason string, command string) error {
 	if decision == hookDeny || decision == hookBlock {
 		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason))
 	}
@@ -455,12 +455,22 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 				PermissionDecision:       "ask",
 				PermissionDecisionReason: "Rampart: " + reason,
 			}
+		case hookAllow:
+			// PreToolUse: explicit permissionDecision bypasses Claude Code's
+			// permission system, which is the correct semantics after rampart
+			// has evaluated and approved the command.
+			// PostToolUse: empty JSON — PostToolUse only supports "block" or omission.
+			if !isPostToolUse {
+				out.HookSpecificOutput = &hookDecision{
+					HookEventName:      "PreToolUse",
+					PermissionDecision: "allow",
+				}
+			}
 		case hookBlock:
 			// PostToolUse uses top-level decision/reason per Claude Code docs.
 			out.Decision = "block"
 			out.Reason = "Rampart: " + reason
 		}
-		// hookAllow: empty JSON (Claude Code treats absent fields as allow)
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
 }

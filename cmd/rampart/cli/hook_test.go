@@ -173,48 +173,83 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 func TestOutputHookResult_ClaudeCode(t *testing.T) {
-	cmd := &cobra.Command{}
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
+	t.Run("PreToolUse allow sends explicit permissionDecision", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		out := &bytes.Buffer{}
+		cmd.SetOut(out)
 
-	err := outputHookResult(cmd, "claude-code", hookAllow, "", "")
-	if err != nil {
-		t.Fatalf("allow outputHookResult error: %v", err)
-	}
+		err := outputHookResult(cmd, "claude-code", hookAllow, false, "", "")
+		if err != nil {
+			t.Fatalf("allow outputHookResult error: %v", err)
+		}
 
-	var allow hookOutput
-	if err := json.Unmarshal(out.Bytes(), &allow); err != nil {
-		t.Fatalf("unmarshal allow output: %v", err)
-	}
-	// Allow outputs empty JSON — no hookSpecificOutput or decision fields.
-	if allow.HookSpecificOutput != nil {
-		t.Fatalf("expected nil HookSpecificOutput for allow, got %+v", allow.HookSpecificOutput)
-	}
-	if allow.Decision != "" {
-		t.Fatalf("expected empty Decision for allow, got %q", allow.Decision)
-	}
-
-	out.Reset()
-	stderr := captureStderr(t, func() {
-		err = outputHookResult(cmd, "claude-code", hookDeny, "blocked by policy", "rm -rf /")
+		var allow hookOutput
+		if err := json.Unmarshal(out.Bytes(), &allow); err != nil {
+			t.Fatalf("unmarshal allow output: %v", err)
+		}
+		if allow.HookSpecificOutput == nil {
+			t.Fatal("expected non-nil HookSpecificOutput for PreToolUse allow")
+		}
+		if allow.HookSpecificOutput.HookEventName != "PreToolUse" {
+			t.Fatalf("HookEventName = %q, want PreToolUse", allow.HookSpecificOutput.HookEventName)
+		}
+		if allow.HookSpecificOutput.PermissionDecision != "allow" {
+			t.Fatalf("PermissionDecision = %q, want allow", allow.HookSpecificOutput.PermissionDecision)
+		}
+		if allow.Decision != "" {
+			t.Fatalf("expected empty top-level Decision for PreToolUse allow, got %q", allow.Decision)
+		}
 	})
-	if err != nil {
-		t.Fatalf("deny outputHookResult error: %v", err)
-	}
-	if !strings.Contains(stderr, "Rampart blocked: rm -rf /") {
-		t.Fatalf("stderr missing deny message: %q", stderr)
-	}
 
-	var deny hookOutput
-	if err := json.Unmarshal(out.Bytes(), &deny); err != nil {
-		t.Fatalf("unmarshal deny output: %v", err)
-	}
-	if deny.HookSpecificOutput.PermissionDecision != "deny" {
-		t.Fatalf("PermissionDecision = %q, want deny", deny.HookSpecificOutput.PermissionDecision)
-	}
-	if deny.HookSpecificOutput.PermissionDecisionReason != "Rampart: blocked by policy" {
-		t.Fatalf("PermissionDecisionReason = %q", deny.HookSpecificOutput.PermissionDecisionReason)
-	}
+	t.Run("PostToolUse allow sends empty JSON", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		out := &bytes.Buffer{}
+		cmd.SetOut(out)
+
+		err := outputHookResult(cmd, "claude-code", hookAllow, true, "", "")
+		if err != nil {
+			t.Fatalf("allow outputHookResult error: %v", err)
+		}
+
+		var allow hookOutput
+		if err := json.Unmarshal(out.Bytes(), &allow); err != nil {
+			t.Fatalf("unmarshal allow output: %v", err)
+		}
+		if allow.HookSpecificOutput != nil {
+			t.Fatalf("expected nil HookSpecificOutput for PostToolUse allow, got %+v", allow.HookSpecificOutput)
+		}
+		if allow.Decision != "" {
+			t.Fatalf("expected empty Decision for PostToolUse allow, got %q", allow.Decision)
+		}
+	})
+
+	t.Run("deny", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		out := &bytes.Buffer{}
+		cmd.SetOut(out)
+
+		var err error
+		stderr := captureStderr(t, func() {
+			err = outputHookResult(cmd, "claude-code", hookDeny, false, "blocked by policy", "rm -rf /")
+		})
+		if err != nil {
+			t.Fatalf("deny outputHookResult error: %v", err)
+		}
+		if !strings.Contains(stderr, "Rampart blocked: rm -rf /") {
+			t.Fatalf("stderr missing deny message: %q", stderr)
+		}
+
+		var deny hookOutput
+		if err := json.Unmarshal(out.Bytes(), &deny); err != nil {
+			t.Fatalf("unmarshal deny output: %v", err)
+		}
+		if deny.HookSpecificOutput.PermissionDecision != "deny" {
+			t.Fatalf("PermissionDecision = %q, want deny", deny.HookSpecificOutput.PermissionDecision)
+		}
+		if deny.HookSpecificOutput.PermissionDecisionReason != "Rampart: blocked by policy" {
+			t.Fatalf("PermissionDecisionReason = %q", deny.HookSpecificOutput.PermissionDecisionReason)
+		}
+	})
 }
 
 func TestOutputHookResult_Cline(t *testing.T) {
@@ -222,7 +257,7 @@ func TestOutputHookResult_Cline(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	err := outputHookResult(cmd, "cline", hookAllow, "approval required", "echo hi")
+	err := outputHookResult(cmd, "cline", hookAllow, false, "approval required", "echo hi")
 	if err != nil {
 		t.Fatalf("allow outputHookResult error: %v", err)
 	}
@@ -240,7 +275,7 @@ func TestOutputHookResult_Cline(t *testing.T) {
 
 	out.Reset()
 	stderr := captureStderr(t, func() {
-		err = outputHookResult(cmd, "cline", hookDeny, "requires approval", "kubectl delete")
+		err = outputHookResult(cmd, "cline", hookDeny, false, "requires approval", "kubectl delete")
 	})
 	if err != nil {
 		t.Fatalf("deny outputHookResult error: %v", err)
@@ -267,7 +302,7 @@ func TestOutputHookResult_ClaudeCode_Ask(t *testing.T) {
 	cmd.SetOut(out)
 
 	stderr := captureStderr(t, func() {
-		err := outputHookResult(cmd, "claude-code", hookAsk, "deployment needs approval", "kubectl apply -f deploy.yaml")
+		err := outputHookResult(cmd, "claude-code", hookAsk, false, "deployment needs approval", "kubectl apply -f deploy.yaml")
 		if err != nil {
 			t.Fatalf("ask outputHookResult error: %v", err)
 		}
@@ -333,7 +368,7 @@ func TestOutputHookResult_Cline_Ask(t *testing.T) {
 	cmd.SetOut(out)
 
 	stderr := captureStderr(t, func() {
-		err := outputHookResult(cmd, "cline", hookAsk, "deployment needs approval", "kubectl apply -f deploy.yaml")
+		err := outputHookResult(cmd, "cline", hookAsk, false, "deployment needs approval", "kubectl apply -f deploy.yaml")
 		if err != nil {
 			t.Fatalf("ask outputHookResult error: %v", err)
 		}
