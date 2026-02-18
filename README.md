@@ -17,9 +17,17 @@
 ### Try it in 30 seconds
 
 ```bash
-brew tap peg/rampart && brew install rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
-rampart setup claude-code                       # one command — done
-claude                                          # use Claude Code normally
+# Install
+brew install peg/rampart/rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
+
+# Set up hooks
+rampart setup claude-code
+
+# Start approval server (runs on boot after this)
+rampart serve install
+# Follow the printed instructions to set RAMPART_TOKEN in your shell profile
+
+claude   # use Claude Code normally
 ```
 
 That's it. Every command Claude runs now goes through Rampart. Safe stuff passes instantly. Dangerous stuff gets blocked before it executes:
@@ -109,7 +117,7 @@ graph LR
 
 ```bash
 # Homebrew (macOS and Linux)
-brew tap peg/rampart && brew install rampart
+brew install peg/rampart/rampart
 
 # Go install (requires Go 1.24+)
 go install github.com/peg/rampart/cmd/rampart@latest
@@ -119,25 +127,33 @@ go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
 > **Note:** Make sure `rampart` is in your PATH. For `go install`, add `$(go env GOPATH)/bin` to your shell profile, or symlink: `sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart`
+>
+> Run `rampart version` to confirm the installed version.
 
 ---
 
 ## Claude Code Integration
 
-Native integration through Claude Code's hook system. One command, no wrapper needed:
+Native integration through Claude Code's hook system:
 
 ```bash
+# Install
+brew install peg/rampart/rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
+
+# Set up hooks
 rampart setup claude-code
+
+# Start approval server (runs on boot after this)
+rampart serve install
+# Follow the printed instructions to set RAMPART_TOKEN in your shell profile
 ```
 
-That's it. Every Bash command, file read, and file write goes through Rampart's policy engine before execution. Blocked commands never run.
+Every Bash command, file read, and file write goes through Rampart's policy engine before execution. Blocked commands never run. The hook auto-discovers `rampart serve` — no `--serve-url` flag needed.
 
 Then just use Claude Code normally:
 ```bash
 claude
 ```
-
-Rampart evaluates every tool call in microseconds. Safe commands pass through transparently. Dangerous commands get blocked before the agent can execute them.
 
 See what's happening in real time:
 ```bash
@@ -375,8 +391,18 @@ Why hash-chained: in regulated environments, you need to prove what your agent d
 ## Live Dashboard
 
 ```bash
-rampart watch
+rampart watch           # TUI — live colored event stream in your terminal
 ```
+
+When `rampart serve` is running, a web dashboard is also available at **http://localhost:18275/dashboard/**
+
+The v2 dashboard has four tabs:
+- **Pending** — approve or deny queued requests in real time
+- **History** — browse past tool calls with filtering
+- **Audit Log** — hash-chained log viewer
+- **Rules** — manage policy rules; "Always Allow" persists a rule to your policy file
+
+Supports dark and light theme. No extra setup needed — it's built into `rampart serve`.
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -607,7 +633,8 @@ rampart log -n 50 --today                    # Last 50 events from today
 
 # Policy
 rampart init [--profile standard|paranoid|yolo]
-rampart serve [--port 9090]
+rampart serve [--port 9090]                  # Start approval + dashboard server
+rampart serve install                        # Install as a boot service (systemd/launchd)
 rampart serve --syslog localhost:514         # With syslog output
 rampart policy check                         # Validate YAML
 rampart policy explain "git status"          # Trace evaluation
