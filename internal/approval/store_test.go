@@ -113,8 +113,12 @@ func TestExpiry(t *testing.T) {
 
 func TestListPending(t *testing.T) {
 	store := NewStore()
-	_, _ = store.Create(testCall(), testDecision())
-	_, _ = store.Create(testCall(), testDecision())
+	call1 := testCall()
+	call1.Params = map[string]any{"command": "cmd-1"}
+	call2 := testCall()
+	call2.Params = map[string]any{"command": "cmd-2"}
+	_, _ = store.Create(call1, testDecision())
+	_, _ = store.Create(call2, testDecision())
 
 	pending := store.List()
 	assert.Len(t, pending, 2)
@@ -133,6 +137,29 @@ func TestCleanup(t *testing.T) {
 	req.ResolvedAt = time.Now().Add(-2 * time.Hour)
 	removed = store.Cleanup(1 * time.Hour)
 	assert.Equal(t, 1, removed)
+}
+
+func TestDeduplicateWithinWindow(t *testing.T) {
+	store := NewStore()
+	call := testCall()
+	decision := testDecision()
+
+	req1, err := store.Create(call, decision)
+	require.NoError(t, err)
+
+	// Same call within window should return the same approval.
+	req2, err := store.Create(call, decision)
+	require.NoError(t, err)
+
+	assert.Equal(t, req1.ID, req2.ID, "duplicate call within window should return same approval")
+
+	// Different call should get a new approval.
+	call2 := testCall()
+	call2.Params = map[string]any{"command": "echo different"}
+	req3, err := store.Create(call2, decision)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, req1.ID, req3.ID, "different call should get different approval")
 }
 
 func TestWaitForResolution(t *testing.T) {

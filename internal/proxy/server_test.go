@@ -630,6 +630,55 @@ policies: []`
 	}
 }
 
+func TestResolveApproval_AuditTrail(t *testing.T) {
+	tests := []struct {
+		name       string
+		approved   bool
+		persist    bool
+		wantResolution string
+	}{
+		{"approved", true, false, "approved"},
+		{"denied", false, false, "denied"},
+		{"always_allowed", true, true, "always_allowed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eng := buildApprovalEngine(t)
+			sink := &mockSink{}
+			srv := New(eng, sink, WithToken("tok"), WithMode("enforce"),
+				WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+			handler := srv.handler()
+
+			pending, err := srv.approvals.Create(engine.ToolCall{
+				Tool:    "exec",
+				Params:  map[string]any{"command": "rm -rf /tmp/test"},
+				Agent:   "claude",
+				Session: "s1",
+			}, engine.Decision{Action: engine.ActionRequireApproval, Message: "needs approval"})
+			require.NoError(t, err)
+
+			body := fmt.Sprintf(`{"approved":%t,"resolved_by":"dashboard","persist":%t}`, tt.approved, tt.persist)
+			req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID), strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer tok")
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			assert.Equal(t, http.StatusOK, rr.Code)
+
+			// Verify audit event was written.
+			require.GreaterOrEqual(t, sink.count(), 1, "expected at least one audit event")
+			last := sink.lastEvent()
+			assert.Equal(t, "approval_resolved", last.Request["action"])
+			assert.Equal(t, "exec", last.Request["tool"])
+			assert.Equal(t, tt.wantResolution, last.Request["resolution"])
+			assert.Equal(t, "dashboard", last.Request["resolved_by"])
+			assert.Equal(t, pending.ID, last.Request["approval_id"])
+			assert.Equal(t, tt.approved && tt.persist, last.Request["persist"])
+		})
+	}
+}
+
 func TestCreateApproval_NoAuth(t *testing.T) {
 	configYAML := `version: "1"
 default_action: allow

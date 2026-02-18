@@ -671,6 +671,41 @@ authorized:
 		"resolved_by", req.ResolvedBy,
 	)
 
+	// Write audit event for the resolution.
+	if s.sink != nil {
+		resolution := "denied"
+		if req.Approved && req.Persist {
+			resolution = "always_allowed"
+		} else if req.Approved {
+			resolution = "approved"
+		}
+
+		auditEvent := audit.Event{
+			ID:        audit.NewEventID(),
+			Timestamp: time.Now().UTC(),
+			Agent:     resolved.Call.Agent,
+			Session:   resolved.Call.Session,
+			Tool:      resolved.Call.Tool,
+			Request: map[string]any{
+				"action":      "approval_resolved",
+				"tool":        resolved.Call.Tool,
+				"command":     resolved.Call.Command(),
+				"resolution":  resolution,
+				"resolved_by": req.ResolvedBy,
+				"approval_id": id,
+				"persist":     req.Approved && req.Persist,
+			},
+			Decision: audit.EventDecision{
+				Action:  resolution,
+				Message: fmt.Sprintf("approval %s by %s", resolution, req.ResolvedBy),
+			},
+		}
+
+		if err := s.sink.Write(auditEvent); err != nil {
+			s.logger.Error("proxy: audit write for approval resolution failed", "error", err)
+		}
+	}
+
 	// Persist as auto-allow rule if requested.
 	var persisted bool
 	if req.Approved && req.Persist {
