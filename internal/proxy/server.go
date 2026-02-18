@@ -749,6 +749,10 @@ authorized:
 		} else {
 			persisted = true
 			s.logger.Info("proxy: allow rule persisted", "path", policyPath, "tool", resolved.Call.Tool)
+			// Force immediate reload so the new rule takes effect without waiting for hot-reload.
+			if s.engine != nil {
+				_ = s.engine.Reload()
+			}
 		}
 	}
 
