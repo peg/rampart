@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -16,6 +16,11 @@
   --green: #22c55e; --red: #ef4444; --orange: #f59e0b;
   --radius: 6px;
 }
+[data-theme="light"] {
+  --bg: #f8f9fa; --surface: #ffffff; --surface-2: #f1f3f5; --surface-3: #e9ecef;
+  --border: #dee2e6; --border-light: #ced4da;
+  --text: #495057; --text-bright: #212529; --heading: #000000;
+}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
 .mono{font-family:'JetBrains Mono',monospace;font-size:12px}
@@ -30,6 +35,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 #token-input::placeholder{color:#52525b}
 #connect-btn{background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:var(--radius);font-size:12px;font-weight:600;cursor:pointer}
 #connect-btn:hover{background:var(--accent-dim)}
+#theme-toggle{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:4px 8px;border-radius:var(--radius);font-size:14px;cursor:pointer;line-height:1}
+#theme-toggle:hover{border-color:var(--accent)}
 .conn-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-left:4px}
 .conn-dot.ok{background:var(--green)}.conn-dot.err{background:var(--red)}.conn-dot.wait{background:var(--orange)}
 
@@ -87,6 +94,9 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .badge.approved{background:rgba(34,197,94,.15);color:var(--green)}
 .badge.denied{background:rgba(239,68,68,.12);color:var(--red)}
 .badge.always-allowed{background:rgba(255,99,146,.12);color:var(--accent)}
+.badge.allow{background:rgba(34,197,94,.15);color:var(--green)}
+.badge.deny{background:rgba(239,68,68,.12);color:var(--red)}
+.badge.require_approval{background:rgba(245,158,11,.12);color:var(--orange)}
 
 /* Audit controls */
 .audit-controls{display:flex;gap:8px;align-items:center;padding:10px 0;flex-wrap:wrap}
@@ -121,6 +131,16 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .rule-link.active:hover{text-decoration:underline}
 .rule-link.revoked{color:#52525b;cursor:default}
 
+/* Bulk action bar */
+#bulk-bar{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(24,24,27,.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--border-light);color:var(--text-bright);padding:10px 20px;border-radius:var(--radius);font-size:13px;display:none;align-items:center;gap:12px;z-index:200;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+[data-theme="light"] #bulk-bar{background:rgba(255,255,255,.85)}
+#bulk-bar .bulk-count{font-weight:600;min-width:80px}
+#bulk-bar .act-btn{padding:4px 12px;font-size:12px}
+
+/* Checkbox in table */
+.tbl .chk-cell{width:28px;text-align:center;cursor:default}
+.tbl .chk-cell input[type="checkbox"]{cursor:pointer;accent-color:var(--accent)}
+
 /* Responsive */
 @media(max-width:640px){
   .col-tool,.col-agent{display:none}
@@ -136,11 +156,12 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
   <!-- Auth -->
   <div id="auth-bar">
     <div class="logo"><span>◆</span> Rampart Dashboard</div>
+    <button id="theme-toggle" title="Toggle theme">🌙</button>
     <input type="password" id="token-input" placeholder="API token" autocomplete="off">
     <button id="connect-btn">Connect</button>
     <span class="conn-dot" id="conn-dot"></span>
   </div>
-  <p class="auth-help">Unauthorized? Check your token or run <code>rampart token</code> to generate one.</p>
+  <p class="auth-help">Unauthorized? Check your token. Run <code>rampart serve</code> to see the full token on startup.</p>
 
   <div id="error-banner"><span id="error-msg"></span><button onclick="reconnect()">Retry</button></div>
 
@@ -164,6 +185,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
   <div class="tab-panel active" id="panel-pending">
     <table class="tbl" id="pending-table">
       <thead><tr>
+        <th class="chk-cell"><input type="checkbox" id="select-all" title="Select all"></th>
         <th style="width:40px">#</th>
         <th style="width:20px"></th>
         <th class="cmd-col">Command</th>
@@ -236,30 +258,84 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
 <div id="toast"></div>
 
+<!-- Bulk action bar -->
+<div id="bulk-bar">
+  <span class="bulk-count" id="bulk-count">0 selected</span>
+  <button class="act-btn approve" onclick="bulkAction('approve')">✓ Approve All</button>
+  <button class="act-btn deny" onclick="bulkAction('deny')">✗ Deny All</button>
+</div>
+
 <script>
 'use strict';
 const DANGEROUS=[/^rm\s/,/^chmod\s/,/^chown\s/,/^kill\s/,/^killall\s/,/^pkill\s/,/^dd\s/,/^mkfs/,/^fdisk/,/^reboot/,/^shutdown/,/^halt/,/^systemctl\s+(stop|disable|restart)/,/\bsudo\b/,/\brm\s+-rf\b/,/^ssh\b.*\breboot\b/,/^curl\b.*\|\s*(ba)?sh/];
 function isDangerous(cmd){return DANGEROUS.some(r=>r.test(cmd||''))}
 
 let token='',pollTimer=null,connected=false,expandedId=null;
+let initialPoll=true; // Fix #1: suppress error on first poll
 const pendingMap=new Map(),history=[];
 let auditOffset=0,auditHasMore=false;
+const selectedIds=new Set(); // Bulk selection
 
 // Sequential numbering
 let seqCounter=0;
-const seqMap=new Map(); // approval ID → seq number
+const seqMap=new Map();
 function getSeq(id){if(!seqMap.has(id))seqMap.set(id,++seqCounter);return seqMap.get(id)}
 
 // Rules state
 let rulesCache=[];
 
+// Theme toggle (Fix #6)
+function initTheme(){
+  const saved=localStorage.getItem('rampart_theme')||'dark';
+  document.documentElement.setAttribute('data-theme',saved);
+  document.getElementById('theme-toggle').textContent=saved==='dark'?'🌙':'☀️';
+}
+function toggleTheme(){
+  const cur=document.documentElement.getAttribute('data-theme');
+  const next=cur==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',next);
+  localStorage.setItem('rampart_theme',next);
+  document.getElementById('theme-toggle').textContent=next==='dark'?'🌙':'☀️';
+}
+
+// Column resize persistence (Fix #5)
+function saveColWidths(table){
+  const id=table.id;if(!id)return;
+  const widths={};
+  table.querySelectorAll('thead th').forEach((th,i)=>{
+    if(th.style.width)widths[id+'_'+i]=th.style.width;
+  });
+  const all=JSON.parse(localStorage.getItem('rampart_col_widths')||'{}');
+  Object.assign(all,widths);
+  localStorage.setItem('rampart_col_widths',JSON.stringify(all));
+}
+function restoreColWidths(){
+  const all=JSON.parse(localStorage.getItem('rampart_col_widths')||'{}');
+  document.querySelectorAll('.tbl').forEach(table=>{
+    if(!table.id)return;
+    const ths=table.querySelectorAll('thead th');
+    let hasWidths=false;
+    ths.forEach((th,i)=>{
+      const w=all[table.id+'_'+i];
+      if(w){th.style.width=w;th.style.minWidth=w;hasWidths=true}
+    });
+    if(hasWidths)table.style.tableLayout='fixed';
+  });
+}
+
 // Init
 (function(){
+  initTheme();
+  restoreColWidths();
+
   const p=new URLSearchParams(location.search).get('token');
   if(p){token=p;localStorage.setItem('rampart_token',p)}
   else token=localStorage.getItem('rampart_token')||'';
   document.getElementById('token-input').value=token;
   if(token)connect();
+
+  // Theme toggle
+  document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
 
   // Tab switching
   document.querySelector('.tabs').addEventListener('click',e=>{
@@ -272,6 +348,7 @@ let rulesCache=[];
       document.getElementById('audit-date').value=todayStr();loadAudit(true);loadAuditStats();
     }
     if(btn.dataset.tab==='rules')loadRules();
+    if(btn.dataset.tab==='history')loadHistory();
   });
 
   // Connect
@@ -282,6 +359,18 @@ let rulesCache=[];
   document.getElementById('pending-table').addEventListener('click',handlePendingClick);
   document.getElementById('history-table').addEventListener('click',handleHistoryClick);
 
+  // Select all checkbox
+  document.getElementById('select-all').addEventListener('change',function(e){
+    e.stopPropagation();
+    const checked=this.checked;
+    document.querySelectorAll('#pending-body .row-chk').forEach(cb=>{
+      cb.checked=checked;
+      const id=cb.dataset.id;
+      if(checked)selectedIds.add(id);else selectedIds.delete(id);
+    });
+    updateBulkBar();
+  });
+
   // Visibility
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){clearTimeout(pollTimer)}
@@ -291,6 +380,7 @@ let rulesCache=[];
   // Resizable columns
   document.querySelectorAll('.tbl th').forEach(th=>{
     if(th.querySelector('.resize-handle'))return;
+    if(th.classList.contains('chk-cell'))return;
     const handle=document.createElement('div');
     handle.className='resize-handle';
     th.appendChild(handle);
@@ -302,7 +392,7 @@ let rulesCache=[];
       const table=th.closest('table');
       table.style.tableLayout='fixed';
       function onMove(e){th.style.width=(startW+(e.pageX-startX))+'px';th.style.minWidth=th.style.width}
-      function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp)}
+      function onUp(){handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);saveColWidths(table)}
       document.addEventListener('mousemove',onMove);
       document.addEventListener('mouseup',onUp);
     });
@@ -319,6 +409,7 @@ function connect(){
   token=document.getElementById('token-input').value.trim();
   if(!token)return;
   localStorage.setItem('rampart_token',token);
+  initialPoll=true;
   setDot('wait');
   document.getElementById('stat-status').textContent='connecting';
   document.getElementById('stat-status').style.color='var(--orange)';
@@ -337,11 +428,18 @@ async function poll(){
   try{
     const r=await api('/v1/approvals');
     const data=await r.json();
+    initialPoll=false;
     if(!connected){connected=true;setDot('ok');hideError();document.getElementById('stat-status').textContent='connected';document.getElementById('stat-status').style.color='var(--green)'}
     updatePending(data.approvals||[]);
     const delay=pendingMap.size>0?2000:5000;
     if(!document.hidden)pollTimer=setTimeout(poll,delay);
   }catch(e){
+    if(initialPoll){
+      // Fix #1: suppress error on first poll, silently retry
+      initialPoll=false;
+      pollTimer=setTimeout(poll,2000);
+      return;
+    }
     connected=false;setDot('err');
     document.getElementById('stat-status').textContent='error';document.getElementById('stat-status').style.color='var(--red)';
     showError('Connection failed: '+e.message);
@@ -358,9 +456,10 @@ function updatePending(approvals){
       const det=document.getElementById('det-'+id);
       if(el)el.remove();if(det)det.remove();
       pendingMap.delete(id);
+      selectedIds.delete(id);
     }
   }
-  // Add/update (sort oldest-first so prepend results in newest-on-top)
+  // Add/update
   const tbody=document.getElementById('pending-body');
   const sorted=[...approvals].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
   for(const a of sorted){
@@ -379,6 +478,7 @@ function updatePending(approvals){
   const pe=document.getElementById('pending-empty');
   pe.style.display=pendingMap.size?'none':'block';
   updateTimers();
+  updateBulkBar();
 }
 
 function extractCmd(a){
@@ -392,7 +492,8 @@ function createPendingRow(a){
   const cmd=extractCmd(a);const danger=isDangerous(cmd);
   const tr=document.createElement('tr');tr.className='row'+(danger?' dangerous':'');tr.id='row-'+a.id;tr.dataset.id=a.id;
   const seq=getSeq(a.id);
-  tr.innerHTML=`<td class="mono" style="color:#52525b;font-size:11px">#${seq}</td>
+  tr.innerHTML=`<td class="chk-cell"><input type="checkbox" class="row-chk" data-id="${a.id}"></td>
+    <td class="mono" style="color:#52525b;font-size:11px">#${seq}</td>
     <td><span class="dot pending"></span>${danger?'<span style="color:var(--orange);margin-left:2px" title="Potentially dangerous">⚠</span>':''}</td>
     <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
     <td class="col-tool">${esc(a.tool||'')}</td>
@@ -405,7 +506,7 @@ function createPendingRow(a){
     </div></td>`;
 
   const det=document.createElement('tr');det.className='detail-row';det.id='det-'+a.id;
-  det.innerHTML=`<td colspan="7"><div class="detail-inner"><dl class="kv">
+  det.innerHTML=`<td colspan="8"><div class="detail-inner"><dl class="kv">
     <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(a.tool||'—')}</dd>
@@ -418,6 +519,14 @@ function createPendingRow(a){
 }
 
 function handlePendingClick(e){
+  // Checkbox clicks
+  if(e.target.classList.contains('row-chk')){
+    e.stopPropagation();
+    const id=e.target.dataset.id;
+    if(e.target.checked)selectedIds.add(id);else selectedIds.delete(id);
+    updateBulkBar();
+    return;
+  }
   const btn=e.target.closest('.act-btn');
   if(btn){
     e.stopPropagation();
@@ -428,6 +537,8 @@ function handlePendingClick(e){
     resolveApproval(btn.dataset.id,btn.dataset.action);
     return;
   }
+  // Don't expand when clicking checkbox cell
+  if(e.target.closest('.chk-cell'))return;
   const row=e.target.closest('tr.row');
   if(!row)return;
   const id=row.dataset.id;
@@ -441,6 +552,34 @@ function handleHistoryClick(e){
   const row=e.target.closest('tr.row');if(!row)return;
   const det=row.nextElementSibling;if(!det||!det.classList.contains('detail-row'))return;
   det.classList.toggle('open');
+}
+
+// Bulk actions (Feature #7)
+function updateBulkBar(){
+  const bar=document.getElementById('bulk-bar');
+  const n=selectedIds.size;
+  if(n>0){
+    bar.style.display='flex';
+    document.getElementById('bulk-count').textContent=n+' selected';
+  }else{
+    bar.style.display='none';
+  }
+  // Update select-all state
+  const allCbs=document.querySelectorAll('#pending-body .row-chk');
+  const selAll=document.getElementById('select-all');
+  if(allCbs.length&&[...allCbs].every(cb=>cb.checked))selAll.checked=true;
+  else selAll.checked=false;
+}
+
+async function bulkAction(action){
+  const ids=[...selectedIds];
+  if(!ids.length)return;
+  if(!confirm(`${action==='approve'?'Approve':'Deny'} ${ids.length} pending approval(s)?`))return;
+  for(const id of ids){
+    try{await resolveApproval(id,action)}catch(e){}
+  }
+  selectedIds.clear();
+  updateBulkBar();
 }
 
 async function resolveApproval(id,action){
@@ -459,9 +598,11 @@ async function resolveApproval(id,action){
       document.getElementById('row-'+id)?.remove();
       document.getElementById('det-'+id)?.remove();
       pendingMap.delete(id);
+      selectedIds.delete(id);
       document.getElementById('stat-pending').textContent=pendingMap.size;
       if(!pendingMap.size)document.getElementById('pending-empty').style.display='block';
       updateHistoryStats(action);
+      updateBulkBar();
     },400);
     if(persist)toast('Rule saved — always allowed');
   }catch(e){toast('Error: '+e.message)}
@@ -477,6 +618,40 @@ function addToHistory(a){
   history.unshift(a);if(history.length>100)history.pop();
   renderHistoryRow(a,true);
   document.getElementById('history-empty').style.display='none';
+}
+
+// Fix #2: Load history from audit events
+async function loadHistory(){
+  try{
+    const r=await api('/v1/audit/events?limit=50&offset=0');
+    const data=await r.json();
+    const events=(data.events||[]).filter(ev=>
+      ev.action==='allow'||ev.action==='deny'||ev.action==='denied'||ev.action==='approved'||
+      (ev.request&&ev.request.resolution)
+    );
+    if(!events.length&&!history.length)return;
+    // Merge: keep in-memory history, add audit events not already present
+    const existingIds=new Set(history.map(h=>h.id));
+    const tbody=document.getElementById('history-body');
+    for(const ev of events){
+      const id=ev.id||(ev.request&&ev.request.id)||('audit-'+ev.timestamp);
+      if(existingIds.has(id))continue;
+      existingIds.add(id);
+      const a={
+        id:id,
+        command:ev.command||(ev.request&&ev.request.command)||ev.description||'—',
+        tool:ev.tool||(ev.request&&ev.request.tool)||'',
+        agent:ev.agent||(ev.request&&ev.request.agent)||'',
+        resolution:ev.action==='deny'||ev.action==='denied'?'denied':
+                   (ev.request&&ev.request.resolution)||'approved',
+        resolved_by:(ev.request&&ev.request.resolved_by)||'',
+        resolved_at:ev.timestamp||'',
+      };
+      history.push(a);
+      renderHistoryRow(a,false);
+    }
+    document.getElementById('history-empty').style.display=history.length?'none':'block';
+  }catch(e){/* silently fail if audit not available */}
 }
 
 function renderHistoryRow(a,prepend){
@@ -561,13 +736,17 @@ async function loadAudit(reset){
   }catch(e){toast('Audit error: '+e.message)}
 }
 
+// Fix #3: Audit stats
 async function loadAuditStats(){
   const date=document.getElementById('audit-date').value;if(!date)return;
   try{
     const r=await api(`/v1/audit/stats?from=${date}&to=${date}`);const s=await r.json();
     const el=document.getElementById('audit-stats');
-    el.innerHTML=`<div class="stat">Total: <b>${s.total_events||0}</b></div>`+
-      Object.entries(s.by_action||{}).map(([k,v])=>`<div class="stat">${k}: <b>${v}</b></div>`).join('');
+    const byAction=s.by_action||{};
+    el.innerHTML=`<div class="stat">Total: <b>${s.total_events||0}</b></div>
+      <div class="stat">Allowed: <b>${byAction.allow||0}</b></div>
+      <div class="stat">Denied: <b>${byAction.deny||0}</b></div>
+      <div class="stat">Approval resolved: <b>${byAction.require_approval||0}</b></div>`;
   }catch(e){}
 }
 
@@ -581,7 +760,6 @@ async function exportAudit(){
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
-// Simplified client-side generalize (for rule matching heuristic)
 function engine_generalize(cmd){
   if(!cmd)return'*';const t=cmd.trim().split(/\s+/);
   if(t.length<=1)return t[0]||'*';
@@ -596,6 +774,7 @@ function switchTab(name){
   if(btn)btn.classList.add('active');
   document.getElementById('panel-'+name)?.classList.add('active');
   if(name==='rules')loadRules();
+  if(name==='history')loadHistory();
 }
 
 async function loadRules(){
