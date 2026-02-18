@@ -323,6 +323,7 @@ function updatePending(approvals){
 }
 
 function extractCmd(a){
+  if(a.command)return a.command;
   if(a.request&&a.request.command)return Array.isArray(a.request.command)?a.request.command.join(' '):a.request.command;
   if(a.description)return a.description;
   return a.id||'unknown';
