@@ -110,8 +110,13 @@ Claude Code setup (add to ~/.claude/settings.json):
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Resolve serve-url and serve-token from env if not set via flags.
+			serveAutoDiscovered := false
 			if serveURL == "" {
 				serveURL = os.Getenv("RAMPART_SERVE_URL")
+			}
+			if serveURL == "" {
+				serveURL = "http://localhost:18275"
+				serveAutoDiscovered = true
 			}
 			if cmd.Flags().Changed("serve-token") {
 				fmt.Fprintln(os.Stderr, "Warning: --serve-token is visible in process list. Prefer RAMPART_TOKEN env var.")
@@ -288,9 +293,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			case engine.ActionRequireApproval:
 				if serveURL != "" {
 					approvalClient := &hookApprovalClient{
-						serveURL: strings.TrimRight(serveURL, "/"),
-						token:    serveToken,
-						logger:   logger,
+						serveURL:       strings.TrimRight(serveURL, "/"),
+						token:          serveToken,
+						logger:         logger,
+						autoDiscovered: serveAutoDiscovered,
 					}
 					command, _ := call.Params["command"].(string)
 					path, _ := call.Params["path"].(string)
@@ -307,7 +313,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
 	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
-	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of running rampart serve instance (env: RAMPART_SERVE_URL)")
+	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of rampart serve instance (default: auto-discover on localhost:18275, env: RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Auth token for rampart serve (env: RAMPART_TOKEN)")
 	cmd.Flags().MarkDeprecated("serve-token", "use RAMPART_TOKEN env var instead (--serve-token is visible in process list)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")

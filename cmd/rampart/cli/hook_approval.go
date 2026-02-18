@@ -20,9 +20,10 @@ import (
 // rampart serve instance. It creates an approval via the API, then polls
 // until the approval is resolved or times out.
 type hookApprovalClient struct {
-	serveURL string
-	token    string
-	logger   *slog.Logger
+	serveURL       string
+	token          string
+	logger         *slog.Logger
+	autoDiscovered bool // true when serve URL was auto-discovered, not explicitly set
 }
 
 // createApprovalRequest is the JSON body POSTed to POST /v1/approvals.
@@ -83,8 +84,12 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ Rampart serve unreachable (%s), falling back to native prompt\n", c.serveURL)
-		c.logger.Warn("hook: serve unreachable, falling back to hookAsk", "url", c.serveURL, "error", err)
+		if c.autoDiscovered {
+			c.logger.Debug("hook: auto-discovered serve unreachable, falling back to hookAsk", "url", c.serveURL, "error", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "⚠ Rampart serve unreachable (%s), falling back to native prompt\n", c.serveURL)
+			c.logger.Warn("hook: serve unreachable, falling back to hookAsk", "url", c.serveURL, "error", err)
+		}
 		return hookAsk
 	}
 	defer resp.Body.Close()
