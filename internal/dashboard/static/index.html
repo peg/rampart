@@ -55,6 +55,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .tab-btn:hover{color:var(--text-bright)}.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
 .tab-badge{background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:10px;min-width:18px;text-align:center}
 .tab-panel{display:none}.tab-panel.active{display:block}
+#main-content{display:none}
+#main-content.visible{display:block}
 
 /* Table */
 .tbl{width:100%;border-collapse:collapse}
@@ -217,6 +219,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
   <div id="error-banner"><span id="error-msg"></span><button onclick="reconnect()">Retry</button></div>
 
+<div id="main-content">
   <!-- Tabs -->
   <div class="tabs">
     <button class="tab-btn active" data-tab="active">Active<span class="tab-badge" id="badge-active" style="display:none">0</span></button>
@@ -315,6 +318,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
   </div>
 </div>
 
+</div><!-- /main-content -->
+
 <div id="toast"></div>
 
 <!-- Bulk action bar -->
@@ -398,6 +403,8 @@ function initResizeHandles(){
     localStorage.removeItem('rampart_token');
     setConnected(false);hideError();
     document.getElementById('token-input').value='';
+    document.getElementById('main-content').classList.remove('visible');
+    const p=document.getElementById('auth-prompt');if(p)p.style.display='block';
   });
 
   // Tab switching
@@ -511,6 +518,8 @@ async function poll(){
     initialPoll=false;
     if(!connected){
       connected=true;setConnected(true);hideError();
+      document.getElementById('main-content').classList.add('visible');
+      if(!_denialsStarted){_denialsStarted=true;loadRecentDenials()}
     }
     updatePending(data.approvals||[]);
     const delay=pendingMap.size>0?2000:5000;
@@ -530,10 +539,17 @@ async function poll(){
 
 // ── Pending (Active tab) ───────────────────────────────────────────────────
 function extractCmd(a){
+  // approval objects: top-level command
   if(a.command)return a.command;
+  // audit events: nested under request
   if(a.request&&a.request.command)return Array.isArray(a.request.command)?a.request.command.join(' '):a.request.command;
   if(a.description)return a.description;
   return a.id||'unknown';
+}
+function extractAction(ev){
+  // audit events: nested under decision
+  if(ev.decision&&ev.decision.action)return ev.decision.action;
+  return ev.action||'';
 }
 
 function updatePending(approvals){
@@ -703,30 +719,16 @@ function renderDenials(events){
   if(!events.length){empty.style.display='block';return}
   empty.style.display='none';
   events.forEach(ev=>{
-    const cmd=ev.command||ev.description||'—';
+    const cmd=extractCmd(ev);
     const t=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString():'—';
-    const reason=ev.reason||ev.message||'';
+    const reason=(ev.decision&&ev.decision.message)||ev.reason||ev.message||'';
     const div=document.createElement('div');div.className='denial-row';
     div.innerHTML=`<span class="denial-time">${esc(t)}</span><span class="denial-tool">${esc(ev.tool||'exec')}</span><span class="denial-cmd" title="${esc(cmd)}">${esc(cmd)}</span>${reason?`<span class="denial-reason" title="${esc(reason)}">${esc(reason)}</span>`:''}`;
     feed.append(div);
   });
 }
 
-// Start denials polling when connected
-const _origPoll=poll;
 let _denialsStarted=false;
-async function pollAndStartDenials(){
-  await _origPoll.apply(this,arguments);
-  if(connected&&!_denialsStarted){_denialsStarted=true;loadRecentDenials()}
-}
-// Patch poll to kick denials feed on first connect
-(()=>{
-  const orig=poll;
-  window.poll=async function(){
-    await orig();
-    if(connected&&!_denialsStarted){_denialsStarted=true;loadRecentDenials()}
-  };
-})();
 
 // ── History Tab ────────────────────────────────────────────────────────────
 let histEvents=[];let histFiltered=[];
@@ -777,12 +779,13 @@ async function loadHistStats(date){
 function applyHistFilters(){
   const f=histActiveFilter;const q=histSearch;
   histFiltered=histEvents.filter(ev=>{
-    if(q){const cmd=(ev.command||ev.description||'').toLowerCase();if(!cmd.includes(q))return false}
+    if(q){const cmd=extractCmd(ev).toLowerCase();if(!cmd.includes(q))return false}
+    const a=extractAction(ev);
     if(f==='all')return true;
-    if(f==='approved')return ev.action==='approved'||ev.action==='allow';
-    if(f==='denied')return ev.action==='denied';
-    if(f==='blocked')return ev.action==='deny';
-    if(f==='allowed')return ev.action==='allow';
+    if(f==='approved')return a==='approved'||a==='allow';
+    if(f==='denied')return a==='denied';
+    if(f==='blocked')return a==='deny';
+    if(f==='allowed')return a==='allow';
     return true;
   });
   renderHistEvents();
@@ -810,9 +813,9 @@ function renderHistEvents(){
 }
 
 function appendHistRow(ev,tbody){
-  const cmd=ev.command||ev.description||'—';
+  const cmd=extractCmd(ev);
   const danger=isDangerous(cmd);
-  const action=ev.action||'';
+  const action=extractAction(ev);
   const t=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString():'—';
   const tr=document.createElement('tr');
   tr.className='row'+(danger?' dangerous':'');
