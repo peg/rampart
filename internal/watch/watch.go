@@ -381,7 +381,7 @@ func (m *Model) updateStats(event audit.Event) {
 		m.stats.Allow++
 	case "deny":
 		m.stats.Deny++
-	case "log":
+	case "watch", "log":
 		m.stats.Log++
 	case "webhook":
 		m.stats.Webhook++
@@ -524,7 +524,7 @@ func (m *Model) colorizeLine(line, action string) string {
 		return m.allowStyle.Render(line)
 	case "deny":
 		return m.denyStyle.Render(line)
-	case "log":
+	case "watch", "log":
 		return m.logStyle.Render(line)
 	case "webhook":
 		return m.webhookStyle.Render(line)

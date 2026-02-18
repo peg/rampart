@@ -59,7 +59,7 @@ func (n *DiscordNotifier) Send(event NotifyEvent) error {
 	// Choose color and title based on action
 	color := 0xf85149 // red for deny
 	title := "Rampart: Command Denied"
-	if event.Action == "log" {
+	if event.Action == "watch" || event.Action == "log" {
 		color = 0xd29922 // orange for log
 		title = "Rampart: Command Logged"
 	} else if event.Action == "require_approval" {

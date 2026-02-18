@@ -474,7 +474,7 @@ func (e *Engine) parseDefaultAction(s string) Action {
 		return ActionAllow
 	case "deny":
 		return ActionDeny
-	case "log":
+	case "watch", "log": // "log" kept as deprecated alias
 		return ActionWatch
 	default:
 		// If unspecified or invalid, default to deny (fail closed).

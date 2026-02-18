@@ -576,7 +576,7 @@ func (s *decisionCounterSink) Write(event audit.Event) error {
 	switch strings.ToLower(event.Decision.Action) {
 	case "deny":
 		s.denied++
-	case "log":
+	case "watch", "log":
 		s.logged++
 	}
 	s.mu.Unlock()

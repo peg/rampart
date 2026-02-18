@@ -134,7 +134,7 @@ func renderAuditEventLine(event audit.Event, noColor bool) string {
 		icon = "🔴"
 		action = "DENY"
 		color = colorRed
-	case "log":
+	case "watch", "log":
 		icon = "🟡"
 		color = colorYel
 	}
@@ -220,7 +220,7 @@ func filterEventsBySince(events []audit.Event, since string) ([]audit.Event, str
 func computeAuditStats(events []audit.Event) auditStats {
 	stats := auditStats{
 		Total:      len(events),
-		ByDecision: map[string]int{"allow": 0, "deny": 0, "log": 0},
+		ByDecision: map[string]int{"allow": 0, "deny": 0, "watch": 0},
 		ByTool:     map[string]int{},
 		ByAgent:    map[string]int{},
 	}
@@ -244,7 +244,7 @@ func formatAuditStats(stats auditStats, windowLabel string, noColor bool) string
 	_, _ = b.WriteString(fmt.Sprintf("Total events:  %d\n\n", stats.Total))
 
 	_, _ = b.WriteString("By decision:\n")
-	for _, decision := range []string{"allow", "deny", "log"} {
+	for _, decision := range []string{"allow", "deny", "watch"} {
 		count := stats.ByDecision[decision]
 		pct := 0.0
 		if stats.Total > 0 {
@@ -258,7 +258,7 @@ func formatAuditStats(stats auditStats, windowLabel string, noColor bool) string
 				label = colorGreen + decision + colorReset
 			case "deny":
 				label = colorRed + decision + colorReset
-			case "log":
+			case "watch", "log":
 				label = colorYel + decision + colorReset
 			}
 		}
