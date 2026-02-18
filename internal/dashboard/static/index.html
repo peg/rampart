@@ -241,7 +241,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       </tr></thead>
       <tbody id="pending-body"></tbody>
     </table>
-    <div class="empty" id="pending-empty"><div class="icon">✓</div>No pending approvals — all clear</div>
+    <div class="empty" id="pending-empty">No pending approvals</div>
 
     <!-- Recent Denials feed -->
     <div class="section-divider" style="margin-top:24px">
@@ -399,12 +399,22 @@ function initResizeHandles(){
   document.getElementById('connect-btn').addEventListener('click',connect);
   document.getElementById('token-input').addEventListener('keydown',e=>{if(e.key==='Enter')connect()});
   document.getElementById('disconnect-btn').addEventListener('click',()=>{
-    clearTimeout(pollTimer);connected=false;token='';
+    clearTimeout(pollTimer);clearTimeout(denialsTimer);
+    connected=false;token='';_denialsStarted=false;
+    histEvents=[];histOffset=0;histFiltered=[];
+    pendingMap.clear();selectedIds.clear();
     localStorage.removeItem('rampart_token');
     setConnected(false);hideError();
     document.getElementById('token-input').value='';
     document.getElementById('main-content').classList.remove('visible');
+    document.getElementById('pending-body').innerHTML='';
+    document.getElementById('denials-feed').innerHTML='';
+    document.getElementById('hist-body').innerHTML='';
+    document.getElementById('badge-active').style.display='none';
+    document.getElementById('pending-empty').style.display='block';
+    document.getElementById('denials-empty').style.display='block';
     const p=document.getElementById('auth-prompt');if(p)p.style.display='block';
+    document.getElementById('auth-help').style.display='';
   });
 
   // Tab switching
@@ -475,12 +485,6 @@ function setDot(cls){/* dot now inside auth-connected, update via setConnected *
 function showError(msg){const b=document.getElementById('error-banner');b.style.display='flex';document.getElementById('error-msg').textContent=msg}
 function hideError(){document.getElementById('error-banner').style.display='none'}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000)}
-function timeAgo(iso){
-  const s=Math.floor((Date.now()-new Date(iso))/1000);
-  if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';
-  return Math.floor(s/3600)+'h ago';
-}
-
 async function api(path,opts={}){
   const r=await fetch(path,{...opts,headers:{'Authorization':'Bearer '+token,...(opts.headers||{})}});
   if(r.status===401||r.status===403){throw new Error('__auth__')}
@@ -531,7 +535,9 @@ async function poll(){
       return; // don't retry on auth failure
     }
     if(initialPoll){initialPoll=false;pollTimer=setTimeout(poll,2000);return}
-    connected=false;setConnected(false);
+    connected=false;_denialsStarted=false;
+    setConnected(false);
+    document.getElementById('main-content').classList.remove('visible');
     showError('Cannot reach Rampart — is rampart serve running on this machine?');
     pollTimer=setTimeout(poll,10000);
   }
@@ -663,7 +669,10 @@ async function resolveApproval(id,action){
       const n=pendingMap.size;
       const badge=document.getElementById('badge-active');
       badge.textContent=n;badge.style.display=n?'':'none';
-      if(!n)document.getElementById('pending-empty').style.display='block';
+      if(!n){
+        document.getElementById('pending-empty').style.display='block';
+        document.getElementById('select-all').checked=false;
+      }
       updateBulkBar();
     },400);
     if(persist)toast('Rule saved — always allowed');
@@ -698,8 +707,11 @@ async function loadRecentDenials(){
     const e2=r2.status==='fulfilled'?(await r2.value.json()).events||[]:[];
     const seen=new Set();
     const combined=[...e1,...e2].filter(ev=>{
-      const k=ev.id||(ev.timestamp+ev.command);
-      if(seen.has(k))return false;seen.add(k);return true;
+      const k=ev.id||(ev.timestamp+extractCmd(ev));
+      if(seen.has(k))return false;seen.add(k);
+      // Only show actual denials/blocks
+      const a=extractAction(ev);
+      return a==='denied'||a==='deny'||a==='blocked';
     }).sort((a,b)=>(b.timestamp||'').localeCompare(a.timestamp||'')).slice(0,10);
     renderDenials(combined);
   }catch(e){/* silently ignore */}
@@ -738,10 +750,9 @@ let histObserver=null;let histLoading=false;
 const HIST_PAGE=100;
 
 function onHistoryTabOpen(){
-  if(!histEvents.length){
+  if(!document.getElementById('hist-date').value)
     document.getElementById('hist-date').value=todayStr();
-    loadHistoryTab(true);
-  }
+  loadHistoryTab(true);
 }
 
 async function loadHistoryTab(reset){
@@ -831,7 +842,7 @@ function appendHistRow(ev,tbody){
     <dt>Tool</dt><dd>${esc(ev.tool||'—')}</dd>
     <dt>Agent</dt><dd>${esc(ev.agent||'—')}</dd>
     <dt>Action</dt><dd>${esc(action||'—')}</dd>
-    <dt>Reason</dt><dd>${esc(ev.reason||ev.message||'—')}</dd>
+    <dt>Reason</dt><dd>${esc((ev.decision&&ev.decision.message)||ev.reason||ev.message||'—')}</dd>
     <dt>Time</dt><dd>${ev.timestamp?new Date(ev.timestamp).toLocaleString():'—'}</dd>
   </dl></div></td>`;
   tbody.append(tr);tbody.append(det);
