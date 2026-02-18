@@ -179,7 +179,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			)
 			if port > 0 {
 				var proxyOpts []proxy.Option
-				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics))
+				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics), proxy.WithAuditDir(auditDir))
 				if approvalTimeout > 0 {
 					proxyOpts = append(proxyOpts, proxy.WithApprovalTimeout(approvalTimeout))
 				}
