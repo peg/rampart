@@ -15,11 +15,30 @@
 //
 // Values are injected at compile time via ldflags:
 //
-//	go build -ldflags "-X .../build.Version=v0.1.0"
+//	go build -ldflags "-X .../build.versionFromLDFlags=v0.1.0"
+//
+// When installed via `go install`, the module version is read from the
+// embedded build info as a fallback.
 package build
 
+import "runtime/debug"
+
 // Version is the semantic version. Set by ldflags at build time.
-var Version = "dev"
+// Falls back to the module version embedded by `go install`.
+var Version = func() string {
+	if versionFromLDFlags != "dev" {
+		return versionFromLDFlags
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+	}
+	return "dev"
+}()
+
+// versionFromLDFlags holds the raw ldflag-injected value before fallback.
+var versionFromLDFlags = "dev"
 
 // Commit is the short git commit hash. Set by ldflags at build time.
 var Commit = "unknown"
