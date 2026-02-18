@@ -103,8 +103,11 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 
 	var settings map[string]any
 	json.Unmarshal(data, &settings)
-	if !hasRampartHook(settings) {
-		t.Error("rampart hook not found in settings")
+	// setup now writes an absolute path (e.g. "/usr/local/bin/rampart hook"),
+	// so hasRampartHook (which checks for bare "rampart hook") won't match in tests.
+	// Instead, verify a hook command ending in " hook" exists in the raw JSON.
+	if !strings.Contains(string(data), " hook\"") {
+		t.Errorf("rampart hook not found in settings; got: %s", data)
 	}
 }
 

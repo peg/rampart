@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.34] — 2026-02-18
+
+### Fixed
+- `rampart setup claude-code` now writes the absolute binary path in the hook command (e.g. `/usr/local/bin/rampart hook`) instead of bare `rampart hook`. Claude Code hooks do not inherit the user's shell `PATH`, so the bare name silently failed at runtime.
+- Hook removal (`rampart setup claude-code --remove`) now correctly identifies absolute-path hook entries written by the above fix.
+- `rampart serve --addr` now validates the value is a valid IP address and returns a clear error on bad input.
+- Success output for `rampart setup claude-code` now shows the resolved hook command path so users can verify the correct binary is registered.
+
+### Tests
+- Added `TestMemoryStore_Load` and `TestMixedStore_Load` covering embedded policy loading, directory merging, duplicate skipping, and error propagation.
+
 ## [0.2.33] — 2026-02-18
 
 ### Added

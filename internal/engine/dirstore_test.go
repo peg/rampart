@@ -310,3 +310,140 @@ func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
+
+func TestMemoryStore_Load(t *testing.T) {
+	t.Run("valid yaml", func(t *testing.T) {
+		data := []byte(`
+version: "1"
+default_action: allow
+policies:
+  - name: test-policy
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm -rf *"]
+        message: "no rm -rf"
+`)
+		store := NewMemoryStore(data, "test:inline")
+		cfg, err := store.Load()
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "allow", cfg.DefaultAction)
+		assert.Len(t, cfg.Policies, 1)
+		assert.Equal(t, "test-policy", cfg.Policies[0].Name)
+		assert.Equal(t, "test:inline", store.Path())
+	})
+
+	t.Run("invalid yaml returns error", func(t *testing.T) {
+		store := NewMemoryStore([]byte("not: valid: yaml: :::"), "bad:yaml")
+		_, err := store.Load()
+		assert.Error(t, err)
+	})
+
+	t.Run("empty data returns empty config", func(t *testing.T) {
+		store := NewMemoryStore([]byte(`version: "1"`), "empty")
+		cfg, err := store.Load()
+		require.NoError(t, err)
+		assert.Empty(t, cfg.Policies)
+	})
+}
+
+func TestMixedStore_Load(t *testing.T) {
+	primaryYAML := []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: primary-policy
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm *"]
+        message: "no rm"
+`)
+
+	t.Run("merges primary with directory files", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "extra.yaml"), `
+version: "1"
+policies:
+  - name: extra-policy
+    match:
+      tool: read
+    rules:
+      - action: allow
+        when:
+          command_matches: ["*"]
+        message: "allow all reads"
+`)
+		primary := NewMemoryStore(primaryYAML, "primary")
+		store := NewMixedStore(primary, dir, nil)
+		cfg, err := store.Load()
+		require.NoError(t, err)
+		assert.Equal(t, "deny", cfg.DefaultAction)
+		assert.Len(t, cfg.Policies, 2)
+		names := []string{cfg.Policies[0].Name, cfg.Policies[1].Name}
+		assert.Contains(t, names, "primary-policy")
+		assert.Contains(t, names, "extra-policy")
+		assert.Contains(t, store.Path(), "primary")
+	})
+
+	t.Run("empty directory returns primary only", func(t *testing.T) {
+		dir := t.TempDir()
+		primary := NewMemoryStore(primaryYAML, "primary")
+		store := NewMixedStore(primary, dir, nil)
+		cfg, err := store.Load()
+		require.NoError(t, err)
+		assert.Len(t, cfg.Policies, 1)
+		assert.Equal(t, "primary-policy", cfg.Policies[0].Name)
+	})
+
+	t.Run("nonexistent directory returns primary only", func(t *testing.T) {
+		primary := NewMemoryStore(primaryYAML, "primary")
+		store := NewMixedStore(primary, "/nonexistent/path/xyz", nil)
+		cfg, err := store.Load()
+		require.NoError(t, err)
+		assert.Len(t, cfg.Policies, 1)
+	})
+
+	t.Run("skips duplicate policy names from directory", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "dup.yaml"), `
+version: "1"
+policies:
+  - name: primary-policy
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["*"]
+        message: "allow all"
+`)
+		primary := NewMemoryStore(primaryYAML, "primary")
+		store := NewMixedStore(primary, dir, nil)
+		cfg, err := store.Load()
+		require.NoError(t, err)
+		// Duplicate should be skipped — only 1 policy.
+		assert.Len(t, cfg.Policies, 1)
+		assert.Equal(t, "primary-policy", cfg.Policies[0].Name)
+	})
+
+	t.Run("empty dir path returns primary only", func(t *testing.T) {
+		primary := NewMemoryStore(primaryYAML, "primary")
+		store := NewMixedStore(primary, "", nil)
+		cfg, err := store.Load()
+		require.NoError(t, err)
+		assert.Len(t, cfg.Policies, 1)
+	})
+
+	t.Run("primary load error propagates", func(t *testing.T) {
+		primary := NewMemoryStore([]byte("not: valid: yaml: :::"), "bad")
+		store := NewMixedStore(primary, t.TempDir(), nil)
+		_, err := store.Load()
+		assert.Error(t, err)
+	})
+}
