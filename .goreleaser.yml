@@ -56,7 +56,8 @@ release:
 # Requires HOMEBREW_TAP_GITHUB_TOKEN secret in GitHub Actions — a PAT with repo scope
 # that has write access to the peg/homebrew-rampart repository.
 brews:
-  - repository:
+  - directory: Formula
+    repository:
       owner: peg
       name: homebrew-rampart
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
