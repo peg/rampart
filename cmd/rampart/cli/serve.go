@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -77,6 +78,10 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if mode != "enforce" && mode != "monitor" && mode != "disabled" {
 				return fmt.Errorf("serve: invalid mode %q (must be enforce, monitor, or disabled)", mode)
+			}
+
+			if listenAddr != "" && net.ParseIP(listenAddr) == nil {
+				return fmt.Errorf("serve: invalid --addr %q (must be a valid IP address, e.g. 127.0.0.1 or ::1)", listenAddr)
 			}
 
 			level := slog.LevelInfo

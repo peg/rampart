@@ -164,6 +164,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
 			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route Bash commands through Rampart.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
 			fmt.Fprintln(cmd.OutOrStdout(), "")
