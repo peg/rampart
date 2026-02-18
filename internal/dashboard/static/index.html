@@ -27,7 +27,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .wrap{max-width:1200px;margin:0 auto;padding:0 16px}
 
 /* Auth bar */
-#auth-bar{padding:12px 0;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+#auth-bar{padding:10px 0;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
 #auth-bar .logo{font-weight:700;font-size:15px;color:var(--heading);margin-right:auto;display:flex;align-items:center;gap:6px}
 #auth-bar .logo span{color:var(--accent)}
 #token-input{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:6px 10px;border-radius:var(--radius);width:260px;font-size:12px;outline:none}
@@ -37,7 +37,12 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 #connect-btn:hover{background:var(--accent-dim)}
 #theme-toggle{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:4px 8px;border-radius:var(--radius);font-size:14px;cursor:pointer;line-height:1}
 #theme-toggle:hover{border-color:var(--accent)}
-.conn-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-left:4px}
+/* Connected state — replaces input+button after auth */
+#auth-connected{display:none;align-items:center;gap:8px;font-size:12px;color:var(--text)}
+#auth-connected .token-hint{color:#52525b;font-family:'JetBrains Mono',monospace;font-size:11px}
+#auth-connected .disconnect-btn{background:none;border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:var(--radius);font-size:11px;cursor:pointer}
+#auth-connected .disconnect-btn:hover{border-color:var(--red);color:var(--red)}
+.conn-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
 .conn-dot.ok{background:var(--green)}.conn-dot.err{background:var(--red)}.conn-dot.wait{background:var(--orange)}
 
 /* Error banner */
@@ -60,7 +65,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .tbl tr.row:hover{background:var(--surface)}
 .tbl tr.row{cursor:pointer;transition:background .15s}
 .tbl tr.row.new-item{animation:fadeHighlight 2s ease-out}
-.tbl tr.row.dangerous{border-left:3px solid var(--orange)}
+.tbl tr.row.dangerous .cmd-col::before{content:'!';display:inline-block;background:rgba(245,158,11,.2);color:var(--orange);font-size:10px;font-weight:700;padding:0 4px;border-radius:3px;margin-right:5px;font-family:'JetBrains Mono',monospace;vertical-align:middle}
 .tbl tr.flash-green{background:rgba(34,197,94,.15)!important}
 .tbl tr.flash-red{background:rgba(239,68,68,.15)!important}
 @keyframes fadeHighlight{from{background:rgba(255,99,146,.12)}to{background:transparent}}
@@ -149,7 +154,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .tbl-scroll{overflow-y:auto;max-height:60vh}
 
 /* Policy card */
-.policy-card{border:1px solid var(--border);border-radius:var(--radius);margin:12px 0;overflow:hidden}
+.policy-card{border:1px solid var(--border);border-radius:var(--radius);margin:12px 0;overflow:hidden;position:relative}
 .policy-card-grid{display:flex;flex-wrap:wrap}
 .policy-kv{display:flex;flex-direction:column;gap:3px;padding:12px 16px;border-right:1px solid var(--border)}
 .policy-kv:last-child{border-right:none}
@@ -157,8 +162,21 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .policy-kv .pk-value{font-size:14px;color:var(--text-bright);font-weight:600}
 .policy-kv .pk-value.mono{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;word-break:break-all}
 .policy-unavail{color:#52525b;font-size:13px;font-style:italic;padding:12px 16px}
-.policy-actions{padding:8px 0 4px;display:flex;gap:8px;align-items:center}
-.policy-actions .hint{font-size:11px;color:#52525b}
+/* Reload button lives in top-right of the card */
+.policy-reload-btn{position:absolute;top:8px;right:8px;background:none;border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:var(--radius);font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px}
+.policy-reload-btn:hover{border-color:var(--border-light);color:var(--text-bright)}
+.policy-reload-btn.spinning svg{animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.policy-reload-hint{font-size:11px;color:#52525b;padding:4px 16px 8px;display:none}
+.policy-reload-hint.visible{display:block}
+
+/* Denial feed — compact, no table */
+.denial-row{display:flex;align-items:baseline;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px}
+.denial-row:last-child{border-bottom:none}
+.denial-time{color:#52525b;font-size:11px;font-family:'JetBrains Mono',monospace;white-space:nowrap;flex-shrink:0}
+.denial-tool{color:var(--text);flex-shrink:0;min-width:36px}
+.denial-cmd{color:var(--text-bright);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.denial-reason{color:#52525b;font-size:11px;flex-shrink:0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Sentinel for infinite scroll */
 #hist-sentinel{height:4px;margin:4px 0}
@@ -177,13 +195,19 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 <div class="wrap">
   <!-- Auth -->
   <div id="auth-bar">
-    <div class="logo"><span>◆</span> Rampart Dashboard</div>
+    <div class="logo"><span>◆</span> Rampart</div>
     <button id="theme-toggle" title="Toggle theme">🌙</button>
+    <!-- Pre-auth -->
     <input type="password" id="token-input" placeholder="API token" autocomplete="off">
     <button id="connect-btn">Connect</button>
-    <span class="conn-dot" id="conn-dot"></span>
+    <!-- Post-auth (shown after connect) -->
+    <div id="auth-connected">
+      <span class="conn-dot ok"></span>
+      <span class="token-hint" id="token-hint"></span>
+      <button class="disconnect-btn" id="disconnect-btn">disconnect</button>
+    </div>
   </div>
-  <p class="auth-help">Unauthorized? Check your token. Run <code>rampart serve</code> to see the full token on startup.</p>
+  <p class="auth-help" id="auth-help">Unauthorized? Run <code>rampart serve</code> — the token prints on startup.</p>
 
   <div id="error-banner"><span id="error-msg"></span><button onclick="reconnect()">Retry</button></div>
 
@@ -211,20 +235,12 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <div class="empty" id="pending-empty"><div class="icon">✓</div>No pending approvals — all clear</div>
 
     <!-- Recent Denials feed -->
-    <div class="section-divider">
+    <div class="section-divider" style="margin-top:24px">
       <span class="section-title">Recent Denials</span>
-      <span class="count-badge" id="denials-badge">0</span>
+      <span class="count-badge" id="denials-badge" style="display:none"></span>
     </div>
-    <table class="tbl" id="denials-table">
-      <thead><tr>
-        <th style="width:90px">Time</th>
-        <th style="width:70px">Tool</th>
-        <th class="cmd-col">Command</th>
-        <th style="width:160px">Reason</th>
-      </tr></thead>
-      <tbody id="denials-body"></tbody>
-    </table>
-    <div class="empty" id="denials-empty" style="display:none"><span style="color:#52525b">No recent denials — all clear ✓</span></div>
+    <div id="denials-feed"></div>
+    <div id="denials-empty" style="color:#52525b;font-size:12px;padding:6px 0">No recent denials</div>
   </div>
 
   <!-- ═══ HISTORY TAB ═══ -->
@@ -269,15 +285,11 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
   <!-- ═══ POLICY TAB ═══ -->
   <div class="tab-panel" id="panel-policy">
-    <!-- Policy info card -->
+    <!-- Policy info card (reload button lives inside) -->
     <div class="policy-card" id="policy-card">
       <div class="policy-unavail">Loading policy info…</div>
     </div>
-
-    <div class="policy-actions">
-      <button class="act-btn reload" onclick="reloadPolicy()">↺ Reload Policy</button>
-      <span class="hint" id="reload-hint"></span>
-    </div>
+    <div class="policy-reload-hint" id="reload-hint"></div>
 
     <!-- Auto-Allowed Rules -->
     <div class="section-divider">
@@ -374,6 +386,12 @@ function initResizeHandles(){
   document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
   document.getElementById('connect-btn').addEventListener('click',connect);
   document.getElementById('token-input').addEventListener('keydown',e=>{if(e.key==='Enter')connect()});
+  document.getElementById('disconnect-btn').addEventListener('click',()=>{
+    clearTimeout(pollTimer);connected=false;token='';
+    localStorage.removeItem('rampart_token');
+    setConnected(false);hideError();
+    document.getElementById('token-input').value='';
+  });
 
   // Tab switching
   document.querySelector('.tabs').addEventListener('click',e=>{
@@ -424,7 +442,23 @@ function initResizeHandles(){
 // ── Helpers ────────────────────────────────────────────────────────────────
 function todayStr(){return new Date().toISOString().slice(0,10)}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function setDot(cls){document.getElementById('conn-dot').className='conn-dot '+cls}
+function setConnected(yes){
+  const input=document.getElementById('token-input');
+  const btn=document.getElementById('connect-btn');
+  const connDiv=document.getElementById('auth-connected');
+  const help=document.getElementById('auth-help');
+  if(yes){
+    input.style.display='none';btn.style.display='none';
+    connDiv.style.display='flex';
+    document.getElementById('token-hint').textContent=token.slice(0,8)+'…';
+    if(help)help.style.display='none';
+  }else{
+    input.style.display='';btn.style.display='';
+    connDiv.style.display='none';
+    if(help)help.style.display='';
+  }
+}
+function setDot(cls){/* dot now inside auth-connected, update via setConnected */}
 function showError(msg){const b=document.getElementById('error-banner');b.style.display='flex';document.getElementById('error-msg').textContent=msg}
 function hideError(){document.getElementById('error-banner').style.display='none'}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000)}
@@ -467,14 +501,14 @@ async function poll(){
     const r=await api('/v1/approvals');const data=await r.json();
     initialPoll=false;
     if(!connected){
-      connected=true;setDot('ok');hideError();
+      connected=true;setConnected(true);hideError();
     }
     updatePending(data.approvals||[]);
     const delay=pendingMap.size>0?2000:5000;
     if(!document.hidden)pollTimer=setTimeout(poll,delay);
   }catch(e){
     if(initialPoll){initialPoll=false;pollTimer=setTimeout(poll,2000);return}
-    connected=false;setDot('err');
+    connected=false;setConnected(false);
     showError('Connection failed: '+e.message);
     pollTimer=setTimeout(poll,10000);
   }
@@ -643,25 +677,24 @@ async function loadRecentDenials(){
 }
 
 function renderDenials(events){
-  const tbody=document.getElementById('denials-body');
+  const feed=document.getElementById('denials-feed');
   const empty=document.getElementById('denials-empty');
   const badge=document.getElementById('denials-badge');
-  tbody.innerHTML='';
-  badge.textContent=events.length;
-  badge.className='count-badge'+(events.length?' has-items':'');
+  feed.innerHTML='';
+  if(events.length){
+    badge.textContent=events.length;badge.style.display='';
+  }else{
+    badge.style.display='none';
+  }
   if(!events.length){empty.style.display='block';return}
   empty.style.display='none';
   events.forEach(ev=>{
     const cmd=ev.command||ev.description||'—';
-    const danger=isDangerous(cmd);
-    const tr=document.createElement('tr');
-    tr.className='row'+(danger?' dangerous':'');
     const t=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString():'—';
-    tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
-      <td>${esc(ev.tool||'—')}</td>
-      <td class="cmd-col mono" title="${esc(cmd)}">${esc(cmd)}</td>
-      <td style="font-size:11px;color:#52525b">${esc(ev.reason||ev.message||'—')}</td>`;
-    tbody.append(tr);
+    const reason=ev.reason||ev.message||'';
+    const div=document.createElement('div');div.className='denial-row';
+    div.innerHTML=`<span class="denial-time">${esc(t)}</span><span class="denial-tool">${esc(ev.tool||'exec')}</span><span class="denial-cmd" title="${esc(cmd)}">${esc(cmd)}</span>${reason?`<span class="denial-reason" title="${esc(reason)}">${esc(reason)}</span>`:''}`;
+    feed.append(div);
   });
 }
 
@@ -810,14 +843,19 @@ async function loadPolicyInfo(){
     const r=await api('/v1/policy');
     if(r.status===404){throw new Error('not implemented')}
     const p=await r.json();
-    const path=p.config_path||'Default (embedded standard policy)';
-    card.innerHTML=`<div class="policy-card-grid">
-      <div class="policy-kv"><span class="pk-label">Config Path</span><span class="pk-value mono">${esc(path)}</span></div>
-      <div class="policy-kv"><span class="pk-label">Mode</span><span class="pk-value">${esc(p.mode||'—')}</span></div>
-      <div class="policy-kv"><span class="pk-label">Default Action</span><span class="pk-value">${esc(p.default_action||'—')}</span></div>
-      <div class="policy-kv"><span class="pk-label">Policies</span><span class="pk-value">${esc(String(p.policy_count??'—'))}</span></div>
-      <div class="policy-kv"><span class="pk-label">Rules</span><span class="pk-value">${esc(String(p.rule_count??'—'))}</span></div>
-    </div>`;
+    const path=p.config_path||'embedded:standard';
+    card.innerHTML=`
+      <button class="policy-reload-btn" id="reload-btn" onclick="reloadPolicy()" title="Reload policy files">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 6A4 4 0 1 1 8.5 2.5"/><polyline points="10 1 10 4 7 4"/></svg>
+        Reload
+      </button>
+      <div class="policy-card-grid">
+        <div class="policy-kv"><span class="pk-label">Config path</span><span class="pk-value mono">${esc(path)}</span></div>
+        <div class="policy-kv"><span class="pk-label">Mode</span><span class="pk-value">${esc(p.mode||'—')}</span></div>
+        <div class="policy-kv"><span class="pk-label">Default action</span><span class="pk-value">${esc(p.default_action||'—')}</span></div>
+        <div class="policy-kv"><span class="pk-label">Policies</span><span class="pk-value">${esc(String(p.policy_count??'—'))}</span></div>
+        <div class="policy-kv"><span class="pk-label">Rules</span><span class="pk-value">${esc(String(p.rule_count??'—'))}</span></div>
+      </div>`;
   }catch(e){
     card.innerHTML='<div class="policy-unavail">Policy info unavailable — endpoint not yet implemented.</div>';
   }
@@ -825,16 +863,20 @@ async function loadPolicyInfo(){
 
 async function reloadPolicy(){
   const hint=document.getElementById('reload-hint');
+  const btn=document.getElementById('reload-btn');
+  if(btn)btn.classList.add('spinning');
   try{
     await api('/v1/policy/reload',{method:'POST'});
-    toast('Policy reloaded');hint.textContent='';
+    toast('Policy reloaded');
+    if(hint){hint.textContent='';hint.classList.remove('visible')}
     loadPolicyInfo();
   }catch(e){
-    if(e.message.includes('404')||e.message.includes('405')){
-      hint.textContent='Restart serve to reload policies';
-    }else{
-      hint.textContent='Reload failed: '+e.message;
+    if(hint){
+      hint.textContent=e.message.includes('404')||e.message.includes('405')?'Restart serve to pick up changes':'Reload failed: '+e.message;
+      hint.classList.add('visible');
     }
+  }finally{
+    if(btn)btn.classList.remove('spinning');
   }
 }
 
