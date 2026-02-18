@@ -32,7 +32,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const doctorServePort = 18275
+// defaultServePort is the default port for rampart serve.
+// Referenced by doctor, hook, quickstart, and serve install.
+const defaultServePort = 18275
 
 // checkResult holds the outcome of a single doctor check for --json output.
 type checkResult struct {
@@ -130,7 +132,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// 7. Audit directory
 	issues += doctorAudit(emit)
 
-	// 8. Server running on port 18275
+	// 8. Server running on default port
 	serverIssues, serveURL := doctorServer(emit)
 	issues += serverIssues
 
@@ -315,14 +317,14 @@ func doctorPolicies(emit emitFn) int {
 	return issues
 }
 
-// doctorServer checks if rampart serve is running on port 18275.
+// doctorServer checks if rampart serve is running on defaultServePort.
 // Returns (issue count, serve URL for subsequent API checks).
 func doctorServer(emit emitFn) (int, string) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	url := fmt.Sprintf("http://localhost:%d/healthz", doctorServePort)
+	url := fmt.Sprintf("http://localhost:%d/healthz", defaultServePort)
 	resp, err := client.Get(url)
 	if err != nil {
-		emit("Server", "fail", fmt.Sprintf("not running on :%d (run 'rampart serve')", doctorServePort))
+		emit("Server", "fail", fmt.Sprintf("not running on :%d (run 'rampart serve')", defaultServePort))
 		return 1, ""
 	}
 	defer resp.Body.Close()
@@ -336,8 +338,8 @@ func doctorServer(emit emitFn) (int, string) {
 		}
 	}
 
-	serveURL := fmt.Sprintf("http://localhost:%d", doctorServePort)
-	emit("Server", "ok", fmt.Sprintf("rampart serve%s running on :%d", versionStr, doctorServePort))
+	serveURL := fmt.Sprintf("http://localhost:%d", defaultServePort)
+	emit("Server", "ok", fmt.Sprintf("rampart serve%s running on :%d", versionStr, defaultServePort))
 	return 0, serveURL
 }
 

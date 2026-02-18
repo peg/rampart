@@ -540,3 +540,60 @@ func TestLayeredStore_NoExtraFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "deny", cfg.DefaultAction)
 }
+
+// TestLayeredStore_ResponseRegexCacheDeepCopy verifies that the deep-copy fix for
+// responseRegexCache in mergeProjectPolicy prevents aliasing between base and result.
+// Without the fix, modifying the result's cache would corrupt the base config's cache.
+func TestLayeredStore_ResponseRegexCacheDeepCopy(t *testing.T) {
+	dir := t.TempDir()
+
+	// Base has a response_matches rule — this populates responseRegexCache.
+	base := filepath.Join(dir, "base.yaml")
+	os.WriteFile(base, []byte(`version: "1"
+default_action: allow
+policies:
+  - name: block-aws-keys
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when:
+          response_matches: ["AKIA[0-9A-Z]{16}"]
+        message: "AWS key in response"
+`), 0644)
+
+	// Project adds another response rule.
+	proj := filepath.Join(dir, "project.yaml")
+	os.WriteFile(proj, []byte(`version: "1"
+policies:
+  - name: block-gh-tokens
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when:
+          response_matches: ["ghp_[a-zA-Z0-9]{36}"]
+        message: "GitHub token in response"
+`), 0644)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewLayeredStore(NewFileStore(base), proj, logger)
+
+	// Load twice — both loads should be independent.
+	cfg1, err := store.Load()
+	require.NoError(t, err)
+	cfg2, err := store.Load()
+	require.NoError(t, err)
+
+	// Both configs should have 2 policies.
+	assert.Len(t, cfg1.Policies, 2)
+	assert.Len(t, cfg2.Policies, 2)
+
+	// The responseRegexCache on cfg1 and cfg2 must be distinct maps
+	// (deep-copy ensures no aliasing between separate Load() calls).
+	require.NotNil(t, cfg1.responseRegexCache)
+	require.NotNil(t, cfg2.responseRegexCache)
+
+	// Adding an entry to cfg1's cache must not affect cfg2's.
+	cfg1.responseRegexCache["__test_sentinel__"] = nil
+	_, poisoned := cfg2.responseRegexCache["__test_sentinel__"]
+	assert.False(t, poisoned, "cfg2 cache should not be aliased to cfg1 cache after deep-copy fix")
+}

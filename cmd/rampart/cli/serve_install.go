@@ -282,7 +282,7 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 		defaultAudit = filepath.Join(home, ".rampart", "audit")
 	}
 
-	cmd.Flags().IntVar(&port, "port", 18275, "Port for the serve proxy")
+	cmd.Flags().IntVar(&port, "port", defaultServePort, "Port for the serve proxy")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Policy directory")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", defaultAudit, "Audit log directory")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")

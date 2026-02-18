@@ -168,7 +168,7 @@ func windsurfSettingsPath() string {
 
 // quickstartServiceURL returns the base URL for the Rampart service.
 func quickstartServiceURL() string {
-	return fmt.Sprintf("http://localhost:%d", doctorServePort)
+	return fmt.Sprintf("http://localhost:%d", defaultServePort)
 }
 
 // quickstartServeRunning checks whether the Rampart service is reachable.

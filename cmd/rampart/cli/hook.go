@@ -162,7 +162,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				serveURL = os.Getenv("RAMPART_SERVE_URL")
 			}
 			if serveURL == "" {
-				serveURL = "http://localhost:18275"
+				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
 				serveAutoDiscovered = true
 			}
 			if cmd.Flags().Changed("serve-token") {
