@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.33] — 2026-02-18
+
+### Added
+- `rampart serve --addr` flag to bind to a specific interface (e.g. `127.0.0.1` to avoid conflicts with Tailscale/VPN listeners)
+- Default embedded policy: `rampart serve` now works out of the box with no `--config` file required
+- `/v1/policy` API endpoint for runtime policy introspection (mode, counts, config path)
+- Dashboard: 3-tab layout (Active / History / Policy), flex card layout for pending approvals, action:watch badge style
+
+### Changed
+- **`action: watch`** replaces `action: log` as the canonical name for the observe-but-allow action. `log` still works but emits a lint deprecation warning. All CLI output, TUI, and webhook formatters updated to use `watch`.
+- **Default policy change:** `sudo *` commands now trigger `require_approval` instead of `log`. If you rely on sudo passing through silently, set `action: watch` or `action: allow` explicitly.
+- `log-network-exfil` policy removed from standard.yaml — plain `curl`/`wget` are now allowed by default. Only piped execution (`curl ... | bash`) is blocked.
+- `rampart serve install` (macOS launchd): added `WorkingDirectory` to plist to prevent CWD issues
+
+### Fixed
+- `action: watch` now correctly parsed in all contexts (`ParseAction`, `parseDefaultAction`, policy lint)
+- Action rename fully propagated to all consumers (audit CLI stats, status, watch TUI, wrap, Slack/Discord/Teams webhooks)
+- Shell profile echo commands shown after `serve install` on macOS and Linux
+
 ## [0.2.3] — 2026-02-18
 
 ### Added

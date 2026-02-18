@@ -308,7 +308,7 @@ policies:
         message: "Exfiltration domain blocked"
 ```
 
-**Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `require_approval`, `log`, `allow`.
+**Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `require_approval`, `watch`, `allow`. (`log` is a deprecated alias for `watch`.)
 
 ---
 
