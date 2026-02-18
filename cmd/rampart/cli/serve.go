@@ -343,7 +343,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().BoolVar(&metrics, "metrics", false, "Enable Prometheus metrics endpoint on /metrics")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 30*time.Second, "How often to re-read policy files (0 to disable)")
-	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 5m)")
+	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 1h)")
 
 	cmd.AddCommand(newServeInstallCmd(opts, nil))
 	cmd.AddCommand(newServeUninstallCmd(nil))

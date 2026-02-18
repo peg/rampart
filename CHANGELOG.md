@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **`rampart doctor`**: Fixed server check port from 19090/9090 to **18275** (canonical serve port).
+- **Duplicate policy log in `mergeYAMLFiles`**: Downgraded from WARN to DEBUG. Same-directory YAML files with overlapping policy names no longer spam the log at warn level.
+
+### Changed
+- **Default approval timeout**: Increased from 5 minutes to 1 hour. Override with `--approval-timeout` flag (e.g. `--approval-timeout=30m`).
+- **Dashboard Policy tab**: Added "Try a command" REPL input — type any command and instantly see what the global policy would do (allow / deny / require_approval / watch), including which rule matched.
 
 ## [0.2.36] — 2026-02-18
 

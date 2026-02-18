@@ -318,7 +318,7 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 				continue
 			}
 			if seen[p.Name] {
-				logger.Warn("engine: skip duplicate policy", "name", p.Name, "path", f)
+				logger.Debug("engine: skip duplicate policy", "name", p.Name, "path", f)
 				continue
 			}
 			seen[p.Name] = true

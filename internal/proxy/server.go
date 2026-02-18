@@ -254,6 +254,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)
 	mux.HandleFunc("GET /v1/audit/stats", s.handleAuditStats)
 	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
+	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	if s.metricsEnabled {
 		mux.Handle("GET /metrics", MetricsHandler())
@@ -806,6 +807,49 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 		"default_action": defaultAction,
 		"policy_count":   policyCount,
 		"rule_count":     ruleCount,
+	})
+}
+
+// handleTest evaluates a command against the loaded policy engine and returns
+// the decision. This powers the "Try a command" REPL in the dashboard Policy tab.
+func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	var req struct {
+		Command string `json:"command"`
+		Tool    string `json:"tool"`  // optional, defaults to "exec"
+		Agent   string `json:"agent"` // optional
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Command == "" {
+		writeError(w, http.StatusBadRequest, "command is required")
+		return
+	}
+	if req.Tool == "" {
+		req.Tool = "exec"
+	}
+
+	call := engine.ToolCall{
+		Tool:      req.Tool,
+		Agent:     req.Agent,
+		Params:    map[string]any{"command": req.Command},
+		Timestamp: time.Now(),
+	}
+
+	decision := s.engine.Evaluate(call)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"command":          req.Command,
+		"tool":             req.Tool,
+		"action":           decision.Action.String(),
+		"message":          decision.Message,
+		"matched_policies": decision.MatchedPolicies,
+		"policy_scope":     "global", // project policies are hook-side only
 	})
 }
 
