@@ -23,6 +23,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -267,6 +268,10 @@ func (s *Store) List() []*Request {
 			result = append(result, req)
 		}
 	}
+	// Sort by creation time (oldest first) for deterministic ordering.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
 	return result
 }
 
