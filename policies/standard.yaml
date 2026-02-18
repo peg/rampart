@@ -50,14 +50,14 @@ policies:
       - action: deny
         when:
           command_matches:
-            - "curl * | bash"
-            - "curl * | sh"
-            - "wget * | bash"
-            - "wget * | sh"
-            - "curl * | python*"
-            - "curl * | perl*"
-            - "curl -s * | *"
-            - "wget -q * | *"
+            - "curl ** | bash"
+            - "curl ** | sh"
+            - "wget ** | bash"
+            - "wget ** | sh"
+            - "curl ** | python*"
+            - "curl ** | perl*"
+            - "curl -s ** | *"
+            - "wget -q ** | *"
         message: "Piped execution blocked (supply chain risk)"
 
   - name: require-privileged-approval
