@@ -915,14 +915,16 @@ function appendHistRow(ev,tbody){
   const tr=document.createElement('tr');
   tr.className='row'+(danger?' dangerous':'');
   // Normalize action labels for display
-  const actionLabel=action==='deny'?'blocked':action==='denied'?'denied':action==='allow'?'allow':action==='approved'?'approved':action==='watch'?'watch':action||'—';
-  const badgeCls=action==='allow'?'allow':(action==='deny'||action==='denied'||action==='blocked')?'deny':action==='approved'?'approved':action==='require_approval'?'require_approval':action==='watch'?'watch':'';
+  // Normalise legacy 'log' alias → 'watch'; normalise 'blocked'/'denied' → 'deny'
+  const normAction=action==='log'?'watch':action==='blocked'?'deny':action==='denied'?'deny':action||'';
+  const actionLabel=normAction==='deny'?'blocked':normAction==='allow'?'allow':normAction==='approved'?'approved':normAction==='watch'?'watch':normAction==='require_approval'?'pending':normAction||'—';
+  const badgeCls=normAction==='allow'?'allow':normAction==='deny'?'deny':normAction==='approved'?'approved':normAction==='require_approval'?'require_approval':normAction==='watch'?'watch':'';
   tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
     <td class="col-agent">${esc(ev.agent||'—')}</td>
     <td style="font-size:11px">${esc(ev.session||'—')}</td>
-    <td class="col-tool">${esc(ev.tool||'—')}</td>
-    <td class="cmd-col mono"><span class="cmd-text">${esc(cmd)}</span></td>
-    <td><span class="badge ${badgeCls}">${esc(actionLabel)}</span></td>`;
+    <td class="col-tool">${esc(ev.tool==='unknown'&&ev.request&&ev.request.raw_error?'parse-err':ev.tool||'—')}</td>
+    <td class="cmd-col mono"><span class="cmd-text" title="${esc(cmd)}">${esc(cmd||ev.decision&&ev.decision.message||'—')}</span></td>
+    <td><span class="badge ${badgeCls}" title="${esc(ev.decision&&ev.decision.message||'')}">${esc(actionLabel)}</span></td>`;
   const det=document.createElement('tr');det.className='detail-row';
   det.innerHTML=`<td colspan="6"><div class="detail-inner"><dl class="kv">
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
