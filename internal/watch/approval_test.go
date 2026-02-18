@@ -125,7 +125,7 @@ func TestApprovalClientResolve(t *testing.T) {
 	defer srv.Close()
 
 	client := NewApprovalClient(srv.URL, "")
-	err := client.Resolve(t.Context(), "abc123", true)
+	err := client.Resolve(t.Context(), "abc123", true, false)
 	require.NoError(t, err)
 }
 

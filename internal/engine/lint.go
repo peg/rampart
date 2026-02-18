@@ -196,12 +196,12 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 		result.add(LintFinding{File: filename, Severity: LintError, Message: msg})
 	}
 
-	// Check for empty when block (matches nothing, not everything).
+	// Check for empty when block (matches all tool calls in scope).
 	if r.When.IsEmpty() {
 		result.add(LintFinding{
 			File:     filename,
-			Severity: LintWarning,
-			Message:  fmt.Sprintf("policy %q rule %d has no conditions — will match all tool calls", p.Name, ruleIdx+1),
+			Severity: LintInfo,
+			Message:  fmt.Sprintf("policy %q rule %d has no conditions — matches all tool calls in scope", p.Name, ruleIdx+1),
 		})
 	}
 

@@ -92,11 +92,13 @@ func (c *ApprovalClient) ListPending(ctx context.Context) ([]PendingApproval, er
 	return pending, nil
 }
 
-// Resolve resolves an approval (approve or deny).
-func (c *ApprovalClient) Resolve(ctx context.Context, id string, approved bool) error {
+// Resolve resolves an approval (approve or deny). If persist is true,
+// the server should create an auto-allow rule for future matching calls.
+func (c *ApprovalClient) Resolve(ctx context.Context, id string, approved bool, persist bool) error {
 	body, _ := json.Marshal(map[string]any{
 		"approved":    approved,
 		"resolved_by": "watch-tui",
+		"persist":     persist,
 	})
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/approvals/"+id+"/resolve", bytes.NewReader(body))

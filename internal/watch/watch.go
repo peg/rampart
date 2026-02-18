@@ -210,12 +210,12 @@ func (m *Model) pollApprovalsAfterDelay() tea.Cmd {
 	}
 }
 
-func (m *Model) resolveApproval(id string, approved bool) tea.Cmd {
+func (m *Model) resolveApproval(id string, approved bool, persist bool) tea.Cmd {
 	client := m.approvalClient
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		err := client.Resolve(ctx, id, approved)
+		err := client.Resolve(ctx, id, approved, persist)
 		return resolveResultMsg{id: id, approved: approved, err: err}
 	}
 }
@@ -264,20 +264,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.approvalClient != nil && m.selectedApproval >= 1 && m.selectedApproval <= len(m.pendingApprovals) {
 				a := m.pendingApprovals[m.selectedApproval-1]
 				m.resolveStatus = fmt.Sprintf("Approving %s...", a.ID)
-				return m, m.resolveApproval(a.ID, true)
+				return m, m.resolveApproval(a.ID, true, false)
 			}
 		case "d":
 			if m.approvalClient != nil && m.selectedApproval >= 1 && m.selectedApproval <= len(m.pendingApprovals) {
 				a := m.pendingApprovals[m.selectedApproval-1]
 				m.resolveStatus = fmt.Sprintf("Denying %s...", a.ID)
-				return m, m.resolveApproval(a.ID, false)
+				return m, m.resolveApproval(a.ID, false, false)
 			}
 		case "A":
-			// Approve + persist (same as approve for now; persist flag TBD).
+			// Approve + persist: creates an auto-allow rule for future matching calls.
 			if m.approvalClient != nil && m.selectedApproval >= 1 && m.selectedApproval <= len(m.pendingApprovals) {
 				a := m.pendingApprovals[m.selectedApproval-1]
 				m.resolveStatus = fmt.Sprintf("Approving (always) %s...", a.ID)
-				return m, m.resolveApproval(a.ID, true)
+				return m, m.resolveApproval(a.ID, true, true)
 			}
 		}
 	case tea.WindowSizeMsg:

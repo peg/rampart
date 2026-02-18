@@ -112,6 +112,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if serveURL == "" {
 				serveURL = os.Getenv("RAMPART_SERVE_URL")
 			}
+			if cmd.Flags().Changed("serve-token") {
+				fmt.Fprintln(os.Stderr, "Warning: --serve-token is visible in process list. Prefer RAMPART_TOKEN env var.")
+			}
 			if serveToken == "" {
 				serveToken = os.Getenv("RAMPART_TOKEN")
 			}
@@ -274,7 +277,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					command, _ := call.Params["command"].(string)
 					path, _ := call.Params["path"].(string)
-					result := approvalClient.requestApproval(call.Tool, command, call.Agent, path, decision.Message, 5*time.Minute)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, decision.Message, 5*time.Minute)
 					return outputHookResult(cmd, format, result, decision.Message, cmdStr)
 				}
 				return outputHookResult(cmd, format, hookAsk, decision.Message, cmdStr)
@@ -289,6 +292,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of running rampart serve instance (env: RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Auth token for rampart serve (env: RAMPART_TOKEN)")
+	cmd.Flags().MarkDeprecated("serve-token", "use RAMPART_TOKEN env var instead (--serve-token is visible in process list)")
 
 	return cmd
 }

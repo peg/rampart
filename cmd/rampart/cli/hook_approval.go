@@ -6,6 +6,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,7 +50,13 @@ type pollApprovalResponse struct {
 // requestApproval creates an approval and polls until resolved.
 // Returns hookAllow if approved, hookDeny if denied/expired/error.
 // Falls back to hookAsk if the serve instance is unreachable.
+// The context allows cancellation (e.g., user Ctrl-C).
 func (c *hookApprovalClient) requestApproval(tool, command, agent, path, message string, timeout time.Duration) hookDecisionType {
+	return c.requestApprovalCtx(context.Background(), tool, command, agent, path, message, timeout)
+}
+
+// requestApprovalCtx is like requestApproval but accepts a context for cancellation.
+func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, message string, timeout time.Duration) hookDecisionType {
 	// Create the approval
 	body := createApprovalRequest{
 		Tool:    tool,
@@ -65,7 +72,7 @@ func (c *hookApprovalClient) requestApproval(tool, command, agent, path, message
 		return hookAsk
 	}
 
-	req, err := http.NewRequest("POST", c.serveURL+"/v1/approvals", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.serveURL+"/v1/approvals", bytes.NewReader(data))
 	if err != nil {
 		c.logger.Error("hook: create approval request", "error", err)
 		return hookAsk
@@ -100,11 +107,16 @@ func (c *hookApprovalClient) requestApproval(tool, command, agent, path, message
 	fmt.Fprintf(os.Stderr, "   Approval ID: %s\n", created.ID)
 
 	// Poll until resolved
-	return c.pollApproval(created.ID, timeout)
+	return c.pollApprovalCtx(ctx, created.ID, timeout)
 }
 
 // pollApproval polls GET /v1/approvals/{id} every 500ms until resolved.
 func (c *hookApprovalClient) pollApproval(id string, timeout time.Duration) hookDecisionType {
+	return c.pollApprovalCtx(context.Background(), id, timeout)
+}
+
+// pollApprovalCtx polls with context support for cancellation.
+func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, timeout time.Duration) hookDecisionType {
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -112,11 +124,14 @@ func (c *hookApprovalClient) pollApproval(id string, timeout time.Duration) hook
 
 	for {
 		select {
+		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "⚠ Approval cancelled\n")
+			return hookDeny
 		case <-deadline:
 			fmt.Fprintf(os.Stderr, "⏰ Approval timed out after %s\n", timeout)
 			return hookDeny
 		case <-ticker.C:
-			req, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/approvals/%s", c.serveURL, id), nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/approvals/%s", c.serveURL, id), nil)
 			if err != nil {
 				continue
 			}

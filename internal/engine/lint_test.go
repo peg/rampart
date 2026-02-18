@@ -140,12 +140,12 @@ policies:
 	result := LintPolicyFile(path)
 	found := false
 	for _, f := range result.Findings {
-		if f.Severity == LintWarning && strings.Contains(f.Message, "no conditions") {
+		if f.Severity == LintInfo && strings.Contains(f.Message, "no conditions") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected empty conditions warning, findings: %v", result.Findings)
+		t.Errorf("expected empty conditions info finding, findings: %v", result.Findings)
 	}
 }
 

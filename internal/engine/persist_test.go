@@ -21,10 +21,17 @@ func TestGeneralizeCommand(t *testing.T) {
 		{"kubectl apply -f deployment.yaml", "kubectl apply *"},
 		{"npm install express", "npm install *"},
 		{"git push origin main", "git push *"},
-		{"ls", "ls *"},
+		{"ls", "ls"},
 		{"cat /etc/passwd", "cat /etc/passwd *"},
 		{"", "*"},
 		{"  kubectl   apply  -f  foo  ", "kubectl apply *"},
+		// Dangerous commands: never generalized.
+		{"rm -rf /tmp/build", "rm -rf /tmp/build"},
+		{"rm foo.txt", "rm foo.txt"},
+		{"chmod 755 /usr/bin/foo", "chmod 755 /usr/bin/foo"},
+		{"kill 1234", "kill 1234"},
+		{"reboot", "reboot"},
+		{"systemctl stop nginx", "systemctl stop nginx"},
 	}
 	for _, tt := range tests {
 		got := GeneralizeCommand(tt.input)
