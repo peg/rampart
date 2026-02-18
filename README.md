@@ -21,11 +21,8 @@ It works in `--dangerously-skip-permissions` mode. [Full setup guide →](https:
 ### Get started in one command
 
 ```bash
-# Install the binary first
-brew install peg/rampart/rampart   # or: go install github.com/peg/rampart/cmd/rampart@latest
-
-# Then: one-shot setup — detects your agent, installs the service, wires up hooks
-rampart quickstart
+# Install and set up in one command:
+curl -fsSL https://rampart.sh/install | bash
 ```
 
 `rampart quickstart` auto-detects Claude Code, Cursor, or Windsurf, installs `rampart serve` as a boot service, configures hooks, and runs a health check. Done.
@@ -119,6 +116,13 @@ graph LR
 ## Install
 
 ```bash
+# One-line install (macOS & Linux, no sudo required):
+curl -fsSL https://rampart.sh/install | bash
+```
+
+Or pick your preferred method:
+
+```bash
 # Homebrew (macOS and Linux)
 brew install peg/rampart/rampart
 
@@ -129,7 +133,8 @@ go install github.com/peg/rampart/cmd/rampart@latest
 # https://github.com/peg/rampart/releases
 ```
 
-> **Note:** Make sure `rampart` is in your PATH. For `go install`, add `$(go env GOPATH)/bin` to your shell profile, or symlink: `sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart`
+> **Tip:** The curl installer drops the binary in `~/.local/bin` and runs `rampart quickstart` automatically.
+> Pin a version with `RAMPART_VERSION=v0.3.0 curl -fsSL https://rampart.sh/install | bash`.
 >
 > Run `rampart version` to confirm.
 

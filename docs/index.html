@@ -841,19 +841,30 @@
     <div class="container">
         <h2 class="section-title">Start protecting your <span style="color:var(--accent)">agents</span></h2>
         <p class="sub">Install in seconds. No account, no API key, no cloud dependency.</p>
-        <div class="install-options">
-            <div class="install-card">
-                <div class="label">Homebrew</div>
-                <pre>brew tap peg/rampart
-brew install rampart</pre>
+        <div class="install-options" style="grid-template-columns: 1fr; max-width: 560px;">
+            <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent)20;">
+                <div class="label" style="color: var(--accent);">One-line install</div>
+                <pre>curl -fsSL https://rampart.sh/install | bash</pre>
                 <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-            </div>
-            <div class="install-card">
-                <div class="label">Go install</div>
-                <pre>go install github.com/peg/rampart/cmd/rampart@latest</pre>
-                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                <p style="font-size:0.78rem; color:var(--text-dim); margin: 8px 0 0; line-height:1.5;">
+                    Installs to <code>~/.local/bin</code>. No sudo required. Works on macOS &amp; Linux.
+                </p>
             </div>
         </div>
+        <details style="max-width:560px; margin: 0 auto 32px; text-align:left; border:1px solid var(--border); border-radius:8px; padding:14px 18px;">
+            <summary style="cursor:pointer; font-size:0.85rem; color:var(--text); font-weight:500;">Alternative install methods</summary>
+            <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
+                <div>
+                    <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Homebrew (macOS)</div>
+                    <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">brew tap peg/rampart
+brew install rampart</pre>
+                </div>
+                <div>
+                    <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Go install</div>
+                    <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">go install github.com/peg/rampart/cmd/rampart@latest</pre>
+                </div>
+            </div>
+        </details>
         <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost" style="margin-right: 12px;">Download binary</a>
         <a href="https://docs.rampart.sh" class="btn btn-ghost">Full documentation →</a>
     </div>
