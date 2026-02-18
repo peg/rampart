@@ -8,11 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -93,10 +95,15 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				return nil
 			}
 
-			// Build the hook config
+			// Build the hook config — include --serve-url if serve is reachable.
+			hookCommand := "rampart hook"
+			if serveReachable("http://localhost:8275") {
+				hookCommand = "rampart hook --serve-url http://localhost:8275"
+			}
+
 			rampartHook := map[string]any{
 				"type":    "command",
-				"command": "rampart hook",
+				"command": hookCommand,
 			}
 
 			bashMatcher := map[string]any{
@@ -934,6 +941,17 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 	return nil
 }
 
+// serveReachable checks if a rampart serve instance is reachable at the given URL.
+func serveReachable(url string) bool {
+	client := &http.Client{Timeout: 1 * time.Second}
+	resp, err := client.Get(url + "/healthz")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 func hasRampartInMatcher(matcher map[string]any) bool {
 	hooks, ok := matcher["hooks"].([]any)
 	if !ok {
@@ -942,7 +960,7 @@ func hasRampartInMatcher(matcher map[string]any) bool {
 	for _, h := range hooks {
 		if m, ok := h.(map[string]any); ok {
 			if cmd, ok := m["command"].(string); ok {
-				if cmd == "rampart hook" {
+				if cmd == "rampart hook" || strings.HasPrefix(cmd, "rampart hook ") {
 					return true
 				}
 			}

@@ -76,6 +76,8 @@ func newHookCmd(opts *rootOptions) *cobra.Command {
 	var auditDir string
 	var mode string
 	var format string
+	var serveURL string
+	var serveToken string
 
 	cmd := &cobra.Command{
 		Use:   "hook",
@@ -106,6 +108,14 @@ Claude Code setup (add to ~/.claude/settings.json):
 
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Resolve serve-url and serve-token from env if not set via flags.
+			if serveURL == "" {
+				serveURL = os.Getenv("RAMPART_SERVE_URL")
+			}
+			if serveToken == "" {
+				serveToken = os.Getenv("RAMPART_TOKEN")
+			}
+
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
@@ -256,6 +266,17 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 				return outputHookResult(cmd, format, hookDeny, decision.Message, cmdStr)
 			case engine.ActionRequireApproval:
+				if serveURL != "" {
+					approvalClient := &hookApprovalClient{
+						serveURL: strings.TrimRight(serveURL, "/"),
+						token:    serveToken,
+						logger:   logger,
+					}
+					command, _ := call.Params["command"].(string)
+					path, _ := call.Params["path"].(string)
+					result := approvalClient.requestApproval(call.Tool, command, call.Agent, path, decision.Message, 5*time.Minute)
+					return outputHookResult(cmd, format, result, decision.Message, cmdStr)
+				}
 				return outputHookResult(cmd, format, hookAsk, decision.Message, cmdStr)
 			default:
 				return outputHookResult(cmd, format, hookAllow, decision.Message, cmdStr)
@@ -266,6 +287,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
 	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
+	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of running rampart serve instance (env: RAMPART_SERVE_URL)")
+	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Auth token for rampart serve (env: RAMPART_TOKEN)")
 
 	return cmd
 }

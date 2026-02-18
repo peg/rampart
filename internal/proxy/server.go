@@ -217,6 +217,7 @@ func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/tool/{toolName}", s.handleToolCall)
 	mux.HandleFunc("POST /v1/preflight/{toolName}", s.handlePreflight)
+	mux.HandleFunc("POST /v1/approvals", s.handleCreateApproval)
 	mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
 	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
@@ -492,6 +493,74 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// createApprovalRequest is the JSON body for POST /v1/approvals.
+type createApprovalRequest struct {
+	Tool    string `json:"tool"`
+	Command string `json:"command,omitempty"`
+	Agent   string `json:"agent"`
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message"`
+}
+
+func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	var req createApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	params := map[string]any{}
+	if req.Command != "" {
+		params["command"] = req.Command
+	}
+	if req.Path != "" {
+		params["path"] = req.Path
+	}
+
+	call := engine.ToolCall{
+		ID:        audit.NewEventID(),
+		Agent:     req.Agent,
+		Session:   "hook",
+		Tool:      req.Tool,
+		Params:    params,
+		Timestamp: time.Now().UTC(),
+	}
+
+	decision := engine.Decision{
+		Action:  engine.ActionRequireApproval,
+		Message: req.Message,
+	}
+
+	pending, err := s.approvals.Create(call, decision)
+	if err != nil {
+		s.logger.Error("proxy: approval store full", "error", err)
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+
+	s.logger.Info("proxy: external approval created",
+		"id", pending.ID,
+		"tool", req.Tool,
+		"command", req.Command,
+		"agent", req.Agent,
+		"message", req.Message,
+	)
+
+	if s.shouldNotify(decision.Action.String()) {
+		go s.sendApprovalWebhook(call, decision, pending)
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":         pending.ID,
+		"status":     pending.Status.String(),
+		"expires_at": pending.ExpiresAt.Format(time.RFC3339),
+	})
+}
+
 func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return
@@ -551,6 +620,7 @@ func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
 type resolveRequest struct {
 	Approved   bool   `json:"approved"`
 	ResolvedBy string `json:"resolved_by"`
+	Persist    bool   `json:"persist"`
 }
 
 func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
@@ -601,10 +671,23 @@ authorized:
 		"resolved_by", req.ResolvedBy,
 	)
 
+	// Persist as auto-allow rule if requested.
+	var persisted bool
+	if req.Approved && req.Persist {
+		policyPath := engine.DefaultAutoAllowedPath()
+		if err := engine.AppendAllowRule(policyPath, resolved.Call); err != nil {
+			s.logger.Error("proxy: failed to persist allow rule", "error", err)
+		} else {
+			persisted = true
+			s.logger.Info("proxy: allow rule persisted", "path", policyPath, "tool", resolved.Call.Tool)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":       id,
-		"status":   resolved.Status.String(),
-		"approved": req.Approved,
+		"id":        id,
+		"status":    resolved.Status.String(),
+		"approved":  req.Approved,
+		"persisted": persisted,
 	})
 }
 
