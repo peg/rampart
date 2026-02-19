@@ -925,7 +925,10 @@ policies: []`
 	getStatus := func(id string) string {
 		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/approvals/"+id, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, _ := http.DefaultClient.Do(req)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return ""
+		}
 		defer resp.Body.Close()
 		var r map[string]any
 		_ = json.NewDecoder(resp.Body).Decode(&r)
