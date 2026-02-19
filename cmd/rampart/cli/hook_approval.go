@@ -86,6 +86,13 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		// If the context was cancelled (e.g. user Ctrl-C), deny rather than
+		// falling back to Claude Code's native prompt — Rampart should fail closed.
+		if ctx.Err() != nil {
+			c.logger.Debug("hook: context cancelled during approval create, denying", "error", err)
+			fmt.Fprintf(os.Stderr, "⚠ Approval cancelled — denying\n")
+			return hookDeny
+		}
 		if c.autoDiscovered {
 			c.logger.Debug("hook: auto-discovered serve unreachable, falling back to hookAsk", "url", c.serveURL, "error", err)
 		} else {
@@ -96,14 +103,22 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	}
 	defer resp.Body.Close()
 
-	// 200 means the run was already bulk-approved — no queuing needed.
+	// 200 means the approval was already resolved (auto-approve or bulk-resolve).
+	// Status field determines the outcome — don't assume approved.
 	if resp.StatusCode == http.StatusOK {
 		var autoResp struct {
 			Status string `json:"status"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&autoResp); err == nil && autoResp.Status == "approved" {
-			c.logger.Debug("hook: run auto-approved by bulk-resolve, skipping queue")
-			return hookAllow
+		if err := json.NewDecoder(resp.Body).Decode(&autoResp); err == nil {
+			switch autoResp.Status {
+			case "approved":
+				c.logger.Debug("hook: run auto-approved by bulk-resolve, skipping queue")
+				return hookAllow
+			case "denied":
+				c.logger.Debug("hook: run auto-denied by bulk-resolve, skipping queue")
+				fmt.Fprintf(os.Stderr, "❌ Auto-denied (run was bulk-denied)\n")
+				return hookDeny
+			}
 		}
 		c.logger.Error("hook: unexpected 200 from approval create", "url", c.serveURL)
 		return hookAsk

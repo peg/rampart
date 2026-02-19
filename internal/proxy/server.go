@@ -888,10 +888,27 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	approved := strings.ToLower(req.Action) != "deny"
+	// Validate action explicitly — default-to-approve on typos/empty is a security gap.
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action != "approve" && action != "deny" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("action must be \"approve\" or \"deny\", got %q", req.Action))
+		return
+	}
+	approved := action == "approve"
+
 	resolvedBy := req.ResolvedBy
 	if resolvedBy == "" {
 		resolvedBy = "api"
+	}
+
+	// Set auto-approve BEFORE resolving so any new approvals created from
+	// the same run during the loop window are also auto-approved (fixes TOCTOU).
+	if approved {
+		ttl := s.approvalTimeout
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
+		s.approvals.AutoApproveRun(req.RunID, ttl)
 	}
 
 	// Collect all pending approvals that belong to this run.
@@ -909,16 +926,6 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		}
 		resolved++
 		ids = append(ids, ap.ID)
-	}
-
-	// Cache the run for auto-approve so future calls from the same run
-	// skip the approval queue entirely.
-	if approved {
-		ttl := s.approvalTimeout
-		if ttl <= 0 {
-			ttl = time.Hour
-		}
-		s.approvals.AutoApproveRun(req.RunID, ttl)
 	}
 
 	s.logger.Info("proxy: bulk-resolve completed",

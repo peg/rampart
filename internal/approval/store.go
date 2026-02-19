@@ -256,10 +256,17 @@ func (s *Store) Get(id string) (*Request, bool) {
 	defer s.mu.Unlock()
 
 	req, ok := s.pending[id]
-	return req, ok
+	if !ok {
+		return nil, false
+	}
+	// Return a snapshot so callers don't race with watchExpiry writes.
+	cp := *req
+	return &cp, true
 }
 
-// List returns all pending requests.
+// List returns snapshots of all pending requests.
+// Callers receive copies, not live pointers, so reads don't race with
+// concurrent writes from watchExpiry or Resolve.
 func (s *Store) List() []*Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -267,7 +274,8 @@ func (s *Store) List() []*Request {
 	result := make([]*Request, 0, len(s.pending))
 	for _, req := range s.pending {
 		if req.Status == StatusPending {
-			result = append(result, req)
+			cp := *req
+			result = append(result, &cp)
 		}
 	}
 	// Sort by creation time (oldest first) for deterministic ordering.
