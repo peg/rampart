@@ -503,6 +503,9 @@ func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog
 		Tool:   toolType,
 		Params: params,
 		Agent:  "cline",
+		// Cline's taskId is scoped to a single task/conversation — equivalent
+		// to Claude Code's session_id for run grouping purposes.
+		RunID: deriveRunID(input.TaskID),
 	}
 
 	// For PostToolUse, extract output from parameters if present
