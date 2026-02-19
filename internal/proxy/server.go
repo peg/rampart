@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -647,6 +648,13 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	pending := s.approvals.List()
 	items := make([]map[string]any, 0, len(pending))
 
+	// Track per-run-id grouping data for the run_groups response field.
+	type runGroupEntry struct {
+		minCreatedAt time.Time
+		items        []map[string]any
+	}
+	runGroupMap := make(map[string]*runGroupEntry)
+
 	for _, req := range pending {
 		item := map[string]any{
 			"id":         req.ID,
@@ -661,11 +669,54 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Call.RunID != "" {
 			item["run_id"] = req.Call.RunID
+			// Accumulate into run group tracking.
+			g, exists := runGroupMap[req.Call.RunID]
+			if !exists {
+				g = &runGroupEntry{minCreatedAt: req.CreatedAt}
+				runGroupMap[req.Call.RunID] = g
+			} else if req.CreatedAt.Before(g.minCreatedAt) {
+				g.minCreatedAt = req.CreatedAt
+			}
+			g.items = append(g.items, item)
 		}
 		items = append(items, item)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"approvals": items})
+	// Build run_groups: only groups with 2+ items, sorted by MIN(created_at).
+	type runGroup struct {
+		runID        string
+		minCreatedAt time.Time
+		items        []map[string]any
+	}
+	var groups []runGroup
+	for runID, g := range runGroupMap {
+		if len(g.items) >= 2 {
+			groups = append(groups, runGroup{
+				runID:        runID,
+				minCreatedAt: g.minCreatedAt,
+				items:        g.items,
+			})
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].minCreatedAt.Before(groups[j].minCreatedAt)
+	})
+
+	// Serialize run_groups for JSON output.
+	runGroupsJSON := make([]map[string]any, 0, len(groups))
+	for _, g := range groups {
+		runGroupsJSON = append(runGroupsJSON, map[string]any{
+			"run_id":              g.runID,
+			"count":               len(g.items),
+			"earliest_created_at": g.minCreatedAt.Format(time.RFC3339),
+			"items":               g.items,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"approvals":  items,
+		"run_groups": runGroupsJSON,
+	})
 }
 
 func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
