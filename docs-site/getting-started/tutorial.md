@@ -11,20 +11,14 @@ Let's set it up.
 ## Prerequisites
 
 - **macOS or Linux** (Windows WSL works too)
-- **Homebrew** (recommended) or **Go 1.24+** for building from source
+- **Go 1.24+** (recommended) or the install script for a no-Go option
 - **Claude Code, Codex, or Cline** — this guide uses Claude Code, but Rampart works with [many agents](../integrations/index.md)
 
 ---
 
 ## Step 1: Install
 
-=== "Homebrew (recommended)"
-
-    ```bash
-    brew tap peg/rampart && brew install rampart
-    ```
-
-=== "Go install"
+=== "Go install (recommended)"
 
     ```bash
     go install github.com/peg/rampart/cmd/rampart@latest
@@ -34,6 +28,12 @@ Let's set it up.
 
     ```bash
     curl -fsSL https://rampart.sh/install.sh | sh
+    ```
+
+=== "Homebrew"
+
+    ```bash
+    brew tap peg/rampart && brew install rampart
     ```
 
 Verify:
