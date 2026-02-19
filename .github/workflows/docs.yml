@@ -10,7 +10,7 @@ on:
       - '.github/workflows/docs.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   deploy:
@@ -24,4 +24,22 @@ jobs:
 
       - run: pip install mkdocs-material mkdocs-minify-plugin
 
-      - run: mkdocs gh-deploy --force
+      - name: Build docs
+        run: mkdocs build
+
+      # Deploy to peg/rampart-docs (the repo that serves docs.rampart.sh via GitHub Pages).
+      # Requires a PAT with contents:write on peg/rampart-docs stored as DOCS_DEPLOY_TOKEN.
+      - name: Push to peg/rampart-docs
+        env:
+          DOCS_DEPLOY_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cd /tmp
+          git clone --depth=1 https://x-access-token:${DOCS_DEPLOY_TOKEN}@github.com/peg/rampart-docs.git rampart-docs
+          rsync -a --delete --exclude='.git' "${GITHUB_WORKSPACE}/site/" rampart-docs/
+          cd rampart-docs
+          git add -A
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "docs: deploy from peg/rampart@${GITHUB_SHA::8}"
+          git push origin gh-pages
