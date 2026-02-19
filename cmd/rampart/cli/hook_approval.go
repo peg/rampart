@@ -96,6 +96,19 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	}
 	defer resp.Body.Close()
 
+	// 200 means the run was already bulk-approved — no queuing needed.
+	if resp.StatusCode == http.StatusOK {
+		var autoResp struct {
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&autoResp); err == nil && autoResp.Status == "approved" {
+			c.logger.Debug("hook: run auto-approved by bulk-resolve, skipping queue")
+			return hookAllow
+		}
+		c.logger.Error("hook: unexpected 200 from approval create", "url", c.serveURL)
+		return hookAsk
+	}
+
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		c.logger.Error("hook: create approval failed", "status", resp.StatusCode, "body", string(respBody))
