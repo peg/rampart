@@ -868,3 +868,305 @@ func TestHandleTest_HTTP(t *testing.T) {
 		assert.NotEmpty(t, result["action"])
 	})
 }
+
+// ── W2: Bulk resolve + auto-approve cache ──────────────────────────────────
+
+func TestBulkResolve_ApprovesAllInRun(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	runID := "run-test-abc123"
+
+	// Create two approvals with the same run_id.
+	createApproval := func(cmd string) string {
+		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":"claude-code","run_id":%q,"message":"needs approval"}`, cmd, runID)
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		return result["id"].(string)
+	}
+
+	id1 := createApproval("rm -rf /tmp/a")
+	id2 := createApproval("rm -rf /tmp/b")
+
+	// Bulk-resolve: approve the run.
+	bulkBody := fmt.Sprintf(`{"run_id":%q,"action":"approve","resolved_by":"test"}`, runID)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(bulkBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var bulkResult map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&bulkResult))
+	assert.Equal(t, float64(2), bulkResult["resolved"])
+
+	ids, ok := bulkResult["ids"].([]any)
+	require.True(t, ok)
+	assert.Len(t, ids, 2)
+	gotIDs := map[string]bool{ids[0].(string): true, ids[1].(string): true}
+	assert.True(t, gotIDs[id1], "id1 should be in resolved ids")
+	assert.True(t, gotIDs[id2], "id2 should be in resolved ids")
+
+	// Both approvals should now be resolved.
+	getStatus := func(id string) string {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/approvals/"+id, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return ""
+		}
+		defer resp.Body.Close()
+		var r map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&r)
+		s, _ := r["status"].(string)
+		return s
+	}
+	assert.Equal(t, "approved", getStatus(id1))
+	assert.Equal(t, "approved", getStatus(id2))
+}
+
+func TestBulkResolve_EmptyRunIDRejected(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	// Empty run_id must return 400 — never batch-approve everything.
+	for _, body := range []string{
+		`{"run_id":"","action":"approve"}`,
+		`{"run_id":"   ","action":"approve"}`,
+		`{"action":"approve"}`,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "body: %s", body)
+	}
+}
+
+func TestBulkResolve_NoAuth(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, _, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve",
+		strings.NewReader(`{"run_id":"x","action":"approve"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestBulkResolve_ZeroResolved_WhenNoPendingForRun(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	// Bulk-resolve a run that has no pending approvals.
+	body := `{"run_id":"run-nonexistent","action":"approve"}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, float64(0), result["resolved"])
+	// ids should be an empty array, not null.
+	ids, ok := result["ids"].([]any)
+	assert.True(t, ok, "ids should be a JSON array")
+	assert.Empty(t, ids)
+}
+
+func TestAutoApproveCache_SubsequentCallsSkipQueue(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	runID := "run-auto-approve-test"
+
+	// Create and bulk-approve two approvals to seed the auto-approve cache.
+	for _, cmd := range []string{"rm /tmp/x", "rm /tmp/y"} {
+		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":"claude-code","run_id":%q,"message":"needs approval"}`, cmd, runID)
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := http.DefaultClient.Do(req)
+		resp.Body.Close()
+	}
+
+	bulkBody := fmt.Sprintf(`{"run_id":%q,"action":"approve"}`, runID)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(bulkBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(req)
+	resp.Body.Close()
+
+	// Now a NEW approval from the same run should be auto-approved (status="approved", not "pending").
+	newBody := fmt.Sprintf(`{"tool":"exec","command":"rm /tmp/z","agent":"claude-code","run_id":%q,"message":"new call"}`, runID)
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(newBody))
+	req2.Header.Set("Authorization", "Bearer "+token)
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req2)
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp2.StatusCode, "auto-approved should return 200 not 201")
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&result))
+	assert.Equal(t, "approved", result["status"], "subsequent call from auto-approved run should be auto-approved")
+}
+
+// ── W3: run_groups in list response ───────────────────────────────────────
+
+func TestListApprovals_RunGroups(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	runID := "run-group-test-xyz"
+
+	// Create 3 approvals: 2 with same run_id (should form a group), 1 solo.
+	createApproval := func(cmd, rid string) {
+		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":"claude-code","run_id":%q,"message":"approval"}`, cmd, rid)
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := http.DefaultClient.Do(req)
+		resp.Body.Close()
+	}
+
+	createApproval("cmd-a", runID)
+	time.Sleep(5 * time.Millisecond) // ensure distinct created_at ordering
+	createApproval("cmd-b", runID)
+	createApproval("cmd-solo", "") // no run_id — should not appear in run_groups
+
+	// List approvals.
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/approvals", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+
+	// run_groups must be present.
+	runGroups, ok := result["run_groups"].([]any)
+	require.True(t, ok, "run_groups should be a JSON array")
+
+	// Exactly one group with our run_id.
+	var found map[string]any
+	for _, g := range runGroups {
+		group := g.(map[string]any)
+		if group["run_id"] == runID {
+			found = group
+			break
+		}
+	}
+	require.NotNil(t, found, "run_id %q should appear in run_groups", runID)
+	assert.Equal(t, float64(2), found["count"])
+	assert.NotEmpty(t, found["earliest_created_at"])
+
+	items, ok := found["items"].([]any)
+	require.True(t, ok)
+	assert.Len(t, items, 2)
+
+	// Solo approval should not create a group.
+	for _, g := range runGroups {
+		group := g.(map[string]any)
+		assert.NotEqual(t, "", group["run_id"], "solo (empty run_id) should not appear in run_groups")
+	}
+
+	// Flat approvals array should still have all 3 items.
+	approvals, ok := result["approvals"].([]any)
+	require.True(t, ok)
+	assert.Len(t, approvals, 3)
+}
+
+func TestListApprovals_RunGroupsSortedByEarliestCreatedAt(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	// Create two groups: group B created first, group A created second.
+	// run_groups should return B before A (chronological, not by run_id).
+	// Use distinct commands per group to avoid deduplication.
+	createPair := func(runID, cmdPrefix string) {
+		for i, cmd := range []string{cmdPrefix + "-1", cmdPrefix + "-2"} {
+			_ = i
+			body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":"claude-code","run_id":%q,"message":"m"}`, cmd, runID)
+			req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			resp, _ := http.DefaultClient.Do(req)
+			resp.Body.Close()
+		}
+	}
+
+	createPair("run-B", "sort-b-cmd")
+	time.Sleep(10 * time.Millisecond)
+	createPair("run-A", "sort-a-cmd")
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/approvals", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+
+	runGroups := result["run_groups"].([]any)
+	require.Len(t, runGroups, 2)
+
+	first := runGroups[0].(map[string]any)["run_id"].(string)
+	second := runGroups[1].(map[string]any)["run_id"].(string)
+	assert.Equal(t, "run-B", first, "group created first should sort first")
+	assert.Equal(t, "run-A", second)
+}
