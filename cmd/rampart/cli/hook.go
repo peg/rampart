@@ -21,8 +21,21 @@ import (
 )
 
 // hookInput is the JSON sent by Claude Code on stdin for PreToolUse/PostToolUse hooks.
-// PostToolUse includes tool_response (free-form object whose schema varies by tool).
+// The base object (from oZ() in Claude Code source) includes session_id, transcript_path,
+// cwd, and permission_mode. PreToolUse adds hook_event_name, tool_name, tool_input, and
+// tool_use_id. PostToolUse additionally includes tool_response.
 type hookInput struct {
+	// Base fields (present on all hook events)
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
+
+	// Event-type fields
+	HookEventName string `json:"hook_event_name,omitempty"`
+	ToolUseID     string `json:"tool_use_id,omitempty"`
+
+	// Tool-specific fields
 	ToolName     string         `json:"tool_name"`
 	ToolInput    map[string]any `json:"tool_input"`
 	ToolResponse map[string]any `json:"tool_response,omitempty"`
@@ -72,12 +85,35 @@ type hookParseResult struct {
 	Params   map[string]any
 	Agent    string
 	Response string // non-empty for PostToolUse events
+	RunID    string // run ID derived from session_id (or env overrides)
 }
 
 // gitContext holds the git repository context for the current working directory.
 type gitContext struct {
 	session string // "reponame/branch" e.g. "myapp/main"
 	root    string // absolute git root path e.g. "/home/user/projects/myapp"
+}
+
+// deriveRunID returns the run ID for the current hook invocation, used to group
+// all tool calls from the same agent orchestration run.
+//
+// Priority order:
+//  1. RAMPART_RUN env var — explicit override, useful for scripted orchestration
+//  2. sessionID — the session_id field from Claude Code's hook stdin JSON,
+//     shared across all agents in the same Claude Code session
+//  3. CLAUDE_CONVERSATION_ID env var — fallback for future Claude Code versions
+//  4. "" — no grouping; each call is standalone
+func deriveRunID(sessionID string) string {
+	if v := strings.TrimSpace(os.Getenv("RAMPART_RUN")); v != "" {
+		return v
+	}
+	if sessionID != "" {
+		return sessionID
+	}
+	if v := strings.TrimSpace(os.Getenv("CLAUDE_CONVERSATION_ID")); v != "" {
+		return v
+	}
+	return ""
 }
 
 // deriveGitContext returns the git context for the current working directory.
@@ -292,6 +328,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				ID:        audit.NewEventID(),
 				Agent:     parsed.Agent,
 				Session:   hookSession,
+				RunID:     parsed.RunID,
 				Tool:      parsed.Tool,
 				Params:    parsed.Params,
 				Timestamp: time.Now().UTC(),
@@ -320,6 +357,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Timestamp: call.Timestamp,
 				Agent:     call.Agent,
 				Session:   call.Session,
+				RunID:     call.RunID,
 				Tool:      call.Tool,
 				Request:   parsed.Params,
 				Decision:  eventDecision,
@@ -364,7 +402,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					command, _ := call.Params["command"].(string)
 					path := call.Path() // handles both "file_path" (Claude Code) and "path"
-					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, decision.Message, 5*time.Minute)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, decision.Message, 5*time.Minute)
 					return outputHookResult(cmd, format, result, false, decision.Message, cmdStr)
 				}
 				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
@@ -403,6 +441,7 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 		Tool:   toolType,
 		Params: params,
 		Agent:  "claude-code",
+		RunID:  deriveRunID(input.SessionID),
 	}
 
 	// Extract response text from PostToolUse tool_response.

@@ -549,6 +549,7 @@ type createApprovalRequest struct {
 	Agent   string `json:"agent"`
 	Path    string `json:"path,omitempty"`
 	Message string `json:"message"`
+	RunID   string `json:"run_id,omitempty"`
 }
 
 func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
@@ -574,6 +575,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 		ID:        audit.NewEventID(),
 		Agent:     req.Agent,
 		Session:   "hook",
+		RunID:     req.RunID,
 		Tool:      req.Tool,
 		Params:    params,
 		Timestamp: time.Now().UTC(),
@@ -619,7 +621,7 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0, len(pending))
 
 	for _, req := range pending {
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"id":         req.ID,
 			"tool":       req.Call.Tool,
 			"command":    req.Call.Command(),
@@ -629,7 +631,11 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"status":     req.Status.String(),
 			"created_at": req.CreatedAt.Format(time.RFC3339),
 			"expires_at": req.ExpiresAt.Format(time.RFC3339),
-		})
+		}
+		if req.Call.RunID != "" {
+			item["run_id"] = req.Call.RunID
+		}
+		items = append(items, item)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"approvals": items})

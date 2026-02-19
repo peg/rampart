@@ -85,6 +85,12 @@ type ToolCall struct {
 	// Session identifies the agent's current session.
 	Session string
 
+	// RunID groups tool calls from the same orchestration run.
+	// Sourced from Claude Code's session_id (shared across all agents in a session),
+	// RAMPART_RUN env override, or CLAUDE_CONVERSATION_ID fallback.
+	// Empty string means no grouping (standalone call).
+	RunID string
+
 	// Tool is the tool being invoked (e.g., "exec", "read", "write").
 	Tool string
 
