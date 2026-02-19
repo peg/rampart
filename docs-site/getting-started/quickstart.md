@@ -8,6 +8,26 @@ Get Rampart protecting your AI agent in one command.
 !!! tip "Zero risk to try"
     Rampart **fails open** — if the service is unreachable or the policy engine crashes, your tools keep working. You'll never get locked out of your own machine.
 
+## Install
+
+=== "Go install (recommended)"
+
+    ```bash
+    go install github.com/peg/rampart/cmd/rampart@latest
+    ```
+
+=== "Script"
+
+    ```bash
+    curl -fsSL https://rampart.sh/install.sh | sh
+    ```
+
+=== "Homebrew"
+
+    ```bash
+    brew tap peg/rampart && brew install rampart
+    ```
+
 ## One-Command Setup
 
 ```bash
