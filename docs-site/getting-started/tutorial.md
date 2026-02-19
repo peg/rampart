@@ -1,20 +1,22 @@
 # Protect Your First Agent in 5 Minutes
 
-So you've got an AI agent writing code on your machine. Maybe it's Claude Code, maybe it's Codex, maybe it's something else. Either way, it can run commands, read your files, and — if you're not careful — do things you didn't ask for.
+So you've got an AI agent writing code on your machine. Maybe it's Claude Code, maybe it's Codex, maybe it's Cline. It can run commands, read your files, and — if you're not careful — do things you didn't ask for.
 
-Rampart is a firewall for AI agents. It sits between your agent and your system, checking every action against rules you define. Good commands get through instantly, dangerous ones get stopped at the door.
+Rampart sits between your agent and your system, checking every action against rules you define. Safe commands pass through in microseconds. Dangerous ones stop at the door. Risky ones pause for your approval.
 
 Let's set it up.
 
-## Prerequisites
+---
 
-You'll need:
+## Prerequisites
 
 - **macOS or Linux** (Windows WSL works too)
 - **Homebrew** (recommended) or **Go 1.24+** for building from source
-- **An AI agent** — this tutorial uses Claude Code, but Rampart works with [many agents](../integrations/index.md)
+- **Claude Code, Codex, or Cline** — this guide uses Claude Code, but Rampart works with [many agents](../integrations/index.md)
 
-## Step 1: Install Rampart
+---
+
+## Step 1: Install
 
 === "Homebrew (recommended)"
 
@@ -28,74 +30,124 @@ You'll need:
     go install github.com/peg/rampart/cmd/rampart@latest
     ```
 
-Verify it's working:
+=== "Script"
+
+    ```bash
+    curl -fsSL https://rampart.sh/install.sh | sh
+    ```
+
+Verify:
 
 ```bash
 rampart version
 ```
 
-!!! tip "Don't see it?"
-    If you get `command not found`, make sure `$(go env GOPATH)/bin` is in your PATH, or symlink: `sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart`. See the [troubleshooting guide](troubleshooting.md#rampart-command-not-found) for more.
+!!! tip "Command not found?"
+    Make sure `$(go env GOPATH)/bin` is in your `PATH`, or symlink: `sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart`
 
-## Step 2: Set Up for Claude Code
+---
 
-One command:
+## Step 2: One Command to Get Protected
 
 ```bash
-rampart setup claude-code
+rampart quickstart
 ```
 
-That's it. Rampart just:
+That's it. This single command:
 
-1. Created a **policy file** with sensible defaults (block destructive commands, log suspicious ones, allow everything else)
-2. Installed **hooks** into Claude Code's `~/.claude/settings.json` so every tool call gets checked before it runs
+1. Detects your AI agent (Claude Code, Codex, Cline, etc.)
+2. Installs the Rampart service with a secure token
+3. Wires up hooks so every tool call is evaluated before it runs
+4. Runs `rampart doctor` to verify everything is healthy
 
-!!! info "What are hooks?"
-    Claude Code has a [hook system](https://docs.anthropic.com/en/docs/claude-code/hooks) that lets external tools intercept tool calls. Rampart registers as a `PreToolUse` hook — it sees every command *before* it executes and can block it.
+```
+✓ Detected Claude Code
+✓ Rampart service installed and running
+✓ Hooks registered in ~/.claude/settings.json
+✓ Hook binary path verified
+✓ Token auth working
+✓ 1 policy loaded
 
-## Step 3: Try It
+🛡️  Rampart is active. Use Claude Code normally.
+```
 
-Start Claude Code normally:
+Now start Claude Code:
 
 ```bash
 claude
 ```
 
-Ask it to do something that should be blocked:
+Every command Claude attempts runs through Rampart first. Most will pass through instantly — you'll never notice. The dangerous ones stop before they execute.
+
+---
+
+## Step 3: See It in Action
+
+### Blocked commands
+
+Ask Claude to do something destructive:
 
 > "Delete everything in the root directory"
 
-Claude Code will try to run `rm -rf /`, and Rampart blocks it:
+Claude Code will attempt `rm -rf /`. Rampart stops it:
 
 ```
 🛡️ Rampart blocked: rm -rf /
    Reason: Destructive command blocked
 ```
 
-The command never ran. Meanwhile, safe commands work without you noticing:
+The command never ran.
 
-> "Run the tests"
+### Approved commands
 
-```bash
-npm test  # ✅ Passes through instantly
+Safe commands pass through transparently:
+
+> "Run the tests, then commit the result"
+
 ```
+npm test      ✅ allowed
+git add .     ✅ allowed
+git commit    ✅ allowed
+```
+
+No friction, no delays.
+
+### Commands requiring approval
+
+Some commands are too impactful to auto-allow or auto-deny — they should pause for a human decision. For example, deploying to production:
+
+> "Push this to main and deploy"
+
+```
+⏳ Approval required — "git push origin main"
+   Approve at: http://localhost:18275/dashboard/
+   Approval ID: 01KHT3...
+```
+
+Rampart pauses Claude Code and waits. Open the dashboard, review the request, and approve or deny it:
+
+```
+open http://localhost:18275/dashboard/
+```
+
+![Dashboard approval card showing the pending command with Approve and Deny buttons]
+
+Approve it → Claude continues. Deny it → Claude gets an explanation and tries a different approach.
+
+!!! tip "Working with an agent team?"
+    If you run multiple Claude Code sub-agents in the same session, they all share a run ID. The dashboard groups their pending approvals together — one click to **Approve All** for the whole team run.
+
+---
 
 ## Step 4: Customize Your Policy
 
-The default `standard` policy is a great start, but your project is unique. Copy an example template and customize it:
+The default policy blocks destructive commands. Your project probably needs more nuance. Open the policy file and edit it:
 
 ```bash
-# Copy a template as your starting point
-cp $(brew --prefix)/share/rampart/policies/examples/web-developer.yaml ~/.rampart/policy.yaml
+$EDITOR ~/.rampart/policy.yaml
 ```
 
-Or grab one from the repo:
-
-```bash
-curl -o ~/.rampart/policy.yaml https://raw.githubusercontent.com/peg/rampart/main/policies/examples/web-developer.yaml
-```
-
-Here's what a policy looks like:
+Here's what a real policy looks like:
 
 ```yaml
 version: "1"
@@ -125,7 +177,7 @@ policies:
             - "git push *main*"
             - "npm publish*"
             - "docker push *"
-        message: "Production deployment — approve?"
+        message: "Production deploy — approve?"
 
   - name: block-credentials
     match:
@@ -140,129 +192,75 @@ policies:
         message: "Credential file access blocked"
 ```
 
-After editing, validate your changes:
+After editing, validate before trusting it:
 
 ```bash
-# Lint for common mistakes
+# Check for syntax errors and common mistakes
 rampart policy lint ~/.rampart/policy.yaml
 
-# Run inline tests if your policy has them
-rampart test ~/.rampart/policy.yaml
+# Test a specific command against your policy
+rampart test "git push origin main"
+# → require_approval (approve-deploys)
 
-# Dry-run a specific command
 rampart test "rm -rf /"
+# → deny (block-destructive)
 ```
 
-!!! warning "Test before you trust"
-    Always run `rampart policy lint` and `rampart test` after editing. A typo in a pattern can block everything — or nothing.
+The dashboard also has a built-in **Policy REPL** — type any command and instantly see what your policy would do.
 
-## Step 5: Monitor in Real Time
+!!! tip "Start permissive, tighten later"
+    Keep `default_action: allow` and use `action: watch` rules to observe what your agent actually does before you start blocking things. Check the audit trail after a day of work, then write deny rules for what concerns you.
 
-Open a second terminal and watch decisions as they happen:
+---
+
+## Verify Everything Is Healthy
+
+At any point, run:
 
 ```bash
-rampart watch
+rampart doctor
 ```
 
-Or review the audit log:
-
-```bash
-rampart log --tail 20
+```
+✓ rampart in PATH
+✓ Token configured
+✓ Hook binary path verified
+✓ Service reachable (localhost:18275)
+✓ Token auth working
+✓ 4 policies loaded
+⚠ 2 pending approvals
 ```
 
-Every decision (allow, deny, log, approval) is written to a hash-chained audit trail at `~/.rampart/audit/`.
+Green across the board means you're fully protected.
 
-## What Just Happened?
+---
 
-Here's the flow, every time your agent tries to use a tool:
+## What Happens on Every Tool Call
 
 ```
 Agent wants to run "npm test"
         │
         ▼
-Claude Code hook fires (PreToolUse)
+Claude Code PreToolUse hook fires
         │
         ▼
 Rampart evaluates against YAML policies (~20μs):
-  1. Does "npm test" match block-destructive? No.
-  2. Does "npm test" match approve-deploys? No.
+  1. Does "npm test" match block-destructive?  No.
+  2. Does "npm test" match approve-deploys?    No.
   3. No rules matched → default_action: allow
         │
         ▼
 ✅ Command executes normally
 ```
 
-The whole evaluation takes **microseconds**. Your agent doesn't slow down. But if it tries `rm -rf /`, it hits the deny rule and stops dead.
+The evaluation takes **microseconds**. Your agent doesn't slow down.
 
-## Bonus: Protect MCP Servers Too
-
-If you're using MCP servers (for Claude Desktop, Cursor, or any MCP client), Rampart can proxy those too. This works alongside the Claude Code hooks above — both can run at the same time.
-
-### What's MCP?
-
-[Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets AI agents talk to external tools through a standard interface — file systems, GitHub, Slack, databases, and more. MCP servers expose "tools" that agents can call.
-
-The problem: these servers often have broad access, and there's no built-in way to limit what tools an agent can use.
-
-### Wrap an MCP Server
-
-Instead of pointing your agent directly at an MCP server, put Rampart in front:
-
-```bash
-# Before (no guardrails):
-npx @modelcontextprotocol/server-filesystem /path/to/project
-
-# After (with Rampart):
-rampart mcp -- npx @modelcontextprotocol/server-filesystem /path/to/project
-```
-
-In your MCP client config (e.g., `claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "rampart",
-      "args": ["mcp", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "."]
-    }
-  }
-}
-```
-
-### Auto-Generate a Policy from MCP Tools
-
-Don't write rules from scratch — scan what tools the server exposes:
-
-```bash
-rampart mcp scan -- npx @modelcontextprotocol/server-filesystem .
-```
-
-This generates a deny-by-default policy with a rule for each tool. Review it, tweak it, and you're done.
-
-### What Happens
-
-When the agent calls an MCP tool:
-
-- **Allowed tools** pass through instantly — the server handles them normally
-- **Denied tools** get a JSON-RPC error back — the server never sees them
-- **Tools with destructive keywords** (delete, destroy, remove) are blocked automatically
-
-```bash
-# Watch MCP decisions alongside everything else:
-rampart watch
-```
-
-For more details, see the [MCP Proxy feature guide](../features/mcp-proxy.md) and the [Claude Desktop integration](../integrations/claude-desktop.md).
+---
 
 ## Next Steps
 
-You're protected. Here's where to go from here:
-
-- **[Example Policies](https://github.com/peg/rampart/tree/main/policies/examples)** — Ready-to-use templates for web dev, infrastructure, data science, and lockdown mode
-- **[Policy Engine](../features/policy-engine.md)** — Deep dive into matching, rule priority, and condition types
-- **[Approval Flow](../features/dashboard.md)** — Set up human-in-the-loop approval for risky commands
-- **[Audit Trail](../features/audit-trail.md)** — Ship logs to your SIEM or review them locally
-- **[Integration Guides](../integrations/index.md)** — Set up Rampart with Cline, Cursor, Codex, or any agent
-
-!!! tip "Start permissive, tighten later"
-    The `standard` profile with `default_action: allow` is the best way to start. Watch the logs for a day, see what your agent actually does, then add deny rules for things that concern you.
+- **[Example Policies](https://github.com/peg/rampart/tree/main/policies/examples)** — Ready-to-use templates for web dev, infrastructure, data science, and lockdown
+- **[Policy Engine →](../features/policy-engine.md)** — Condition types, rule priority, glob patterns
+- **[Dashboard →](../features/dashboard.md)** — Approval flow, audit history, policy management
+- **[Integration Guides →](../integrations/index.md)** — Cline, Cursor, Codex, MCP servers
+- **[Configuration →](configuration.md)** — Advanced options, webhooks, signing

@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -247,6 +248,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
 	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
+	mux.HandleFunc("POST /v1/approvals/bulk-resolve", s.handleBulkResolve)
 	mux.HandleFunc("GET /v1/rules/auto-allowed", s.handleGetAutoAllowed)
 	mux.HandleFunc("DELETE /v1/rules/auto-allowed/{index}", s.handleDeleteAutoAllowed)
 	mux.HandleFunc("GET /v1/audit/events", s.handleAuditEvents)
@@ -270,6 +272,7 @@ func (s *Server) handler() http.Handler {
 type toolRequest struct {
 	Agent   string         `json:"agent"`
 	Session string         `json:"session"`
+	RunID   string         `json:"run_id,omitempty"`
 	Params  map[string]any `json:"params"`
 
 	// Response is the tool's output for response-side policy evaluation.
@@ -303,6 +306,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		ID:        audit.NewEventID(),
 		Agent:     req.Agent,
 		Session:   req.Session,
+		RunID:     req.RunID,
 		Tool:      toolName,
 		Params:    req.Params,
 		Timestamp: time.Now().UTC(),
@@ -368,6 +372,20 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && decision.Action == engine.ActionRequireApproval {
+		// Check if this run has been bulk-approved (auto-approve cache).
+		if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
+			s.logger.Debug("proxy: run auto-approved, bypassing approval queue", "tool", toolName, "run_id", call.RunID)
+			decision.Action = engine.ActionAllow
+			decision.Message = "auto-approved by bulk-resolve"
+			decision.MatchedPolicies = []string{"auto-approved"}
+			resp["decision"] = decision.Action.String()
+			resp["message"] = decision.Message
+			resp["policy"] = "auto-approved"
+			s.writeAudit(req, toolName, decision)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
 		// Check if the user has previously "Always Allowed" this pattern.
 		// Auto-allow decisions override require_approval from global policies.
 		if engine.MatchesAutoAllowFile(engine.DefaultAutoAllowedPath(), call) {
@@ -549,6 +567,7 @@ type createApprovalRequest struct {
 	Agent   string `json:"agent"`
 	Path    string `json:"path,omitempty"`
 	Message string `json:"message"`
+	RunID   string `json:"run_id,omitempty"`
 }
 
 func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
@@ -574,6 +593,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 		ID:        audit.NewEventID(),
 		Agent:     req.Agent,
 		Session:   "hook",
+		RunID:     req.RunID,
 		Tool:      req.Tool,
 		Params:    params,
 		Timestamp: time.Now().UTC(),
@@ -582,6 +602,16 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	decision := engine.Decision{
 		Action:  engine.ActionRequireApproval,
 		Message: req.Message,
+	}
+
+	// Short-circuit if this run has been bulk-approved.
+	if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
+		s.logger.Debug("proxy: run auto-approved (hook), bypassing approval queue", "tool", req.Tool, "run_id", call.RunID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "approved",
+			"message": "auto-approved by bulk-resolve",
+		})
+		return
 	}
 
 	pending, err := s.approvals.Create(call, decision)
@@ -618,8 +648,15 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	pending := s.approvals.List()
 	items := make([]map[string]any, 0, len(pending))
 
+	// Track per-run-id grouping data for the run_groups response field.
+	type runGroupEntry struct {
+		minCreatedAt time.Time
+		items        []map[string]any
+	}
+	runGroupMap := make(map[string]*runGroupEntry)
+
 	for _, req := range pending {
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"id":         req.ID,
 			"tool":       req.Call.Tool,
 			"command":    req.Call.Command(),
@@ -629,10 +666,57 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"status":     req.Status.String(),
 			"created_at": req.CreatedAt.Format(time.RFC3339),
 			"expires_at": req.ExpiresAt.Format(time.RFC3339),
+		}
+		if req.Call.RunID != "" {
+			item["run_id"] = req.Call.RunID
+			// Accumulate into run group tracking.
+			g, exists := runGroupMap[req.Call.RunID]
+			if !exists {
+				g = &runGroupEntry{minCreatedAt: req.CreatedAt}
+				runGroupMap[req.Call.RunID] = g
+			} else if req.CreatedAt.Before(g.minCreatedAt) {
+				g.minCreatedAt = req.CreatedAt
+			}
+			g.items = append(g.items, item)
+		}
+		items = append(items, item)
+	}
+
+	// Build run_groups: only groups with 2+ items, sorted by MIN(created_at).
+	type runGroup struct {
+		runID        string
+		minCreatedAt time.Time
+		items        []map[string]any
+	}
+	var groups []runGroup
+	for runID, g := range runGroupMap {
+		if len(g.items) >= 2 {
+			groups = append(groups, runGroup{
+				runID:        runID,
+				minCreatedAt: g.minCreatedAt,
+				items:        g.items,
+			})
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].minCreatedAt.Before(groups[j].minCreatedAt)
+	})
+
+	// Serialize run_groups for JSON output.
+	runGroupsJSON := make([]map[string]any, 0, len(groups))
+	for _, g := range groups {
+		runGroupsJSON = append(runGroupsJSON, map[string]any{
+			"run_id":              g.runID,
+			"count":               len(g.items),
+			"earliest_created_at": g.minCreatedAt.Format(time.RFC3339),
+			"items":               g.items,
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"approvals": items})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"approvals":  items,
+		"run_groups": runGroupsJSON,
+	})
 }
 
 func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
@@ -776,6 +860,80 @@ authorized:
 		"status":    resolved.Status.String(),
 		"approved":  req.Approved,
 		"persisted": persisted,
+	})
+}
+
+// bulkResolveRequest is the JSON body for POST /v1/approvals/bulk-resolve.
+type bulkResolveRequest struct {
+	RunID      string `json:"run_id"`
+	Action     string `json:"action"`      // "approve" or "deny"
+	ResolvedBy string `json:"resolved_by"` // e.g. "api", "cli"
+}
+
+// handleBulkResolve resolves all pending approvals for a given run_id.
+// Returns 400 if run_id is empty to prevent inadvertent mass-approval.
+func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	var req bulkResolveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	if strings.TrimSpace(req.RunID) == "" {
+		writeError(w, http.StatusBadRequest, "run_id is required; refusing to bulk-resolve without a run_id")
+		return
+	}
+
+	approved := strings.ToLower(req.Action) != "deny"
+	resolvedBy := req.ResolvedBy
+	if resolvedBy == "" {
+		resolvedBy = "api"
+	}
+
+	// Collect all pending approvals that belong to this run.
+	pending := s.approvals.List()
+	var resolved int
+	var ids []string
+
+	for _, ap := range pending {
+		if ap.Call.RunID != req.RunID {
+			continue
+		}
+		if err := s.approvals.Resolve(ap.ID, approved, resolvedBy); err != nil {
+			s.logger.Warn("proxy: bulk-resolve skipped approval", "id", ap.ID, "error", err)
+			continue
+		}
+		resolved++
+		ids = append(ids, ap.ID)
+	}
+
+	// Cache the run for auto-approve so future calls from the same run
+	// skip the approval queue entirely.
+	if approved {
+		ttl := s.approvalTimeout
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
+		s.approvals.AutoApproveRun(req.RunID, ttl)
+	}
+
+	s.logger.Info("proxy: bulk-resolve completed",
+		"run_id", req.RunID,
+		"action", req.Action,
+		"resolved", resolved,
+		"resolved_by", resolvedBy,
+	)
+
+	if ids == nil {
+		ids = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"resolved": resolved,
+		"ids":      ids,
 	})
 }
 
