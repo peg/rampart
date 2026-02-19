@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-02-19
+
+### Added
+
+- **Agent team run grouping**: Every tool call is now tagged with a `run_id` derived from Claude Code's `session_id` (shared across all agents in the same session). Cline users get `taskId` as the run ID. Override with `RAMPART_RUN` env var; `CLAUDE_CONVERSATION_ID` used as fallback. Zero configuration required — existing policies and users see no change.
+- **`POST /v1/approvals/bulk-resolve`**: Resolve all pending approvals for an agent team run in one API call. Body: `{"run_id": "...", "action": "approve|deny", "resolved_by": "..."}`. Returns `{"resolved": N, "ids": [...]}`. Empty or missing `run_id` is hard-rejected with 400 to prevent accidental mass-approval.
+- **Auto-approve cache**: After bulk-approving a run, subsequent tool calls from that run bypass the approval queue automatically for the duration of the approval timeout (default 1h). Cache is TTL-based and cleaned up in the regular `Cleanup()` cycle — no goroutine leaks.
+- **Dashboard run clusters**: When 2+ pending approvals share a `run_id`, the Active tab groups them into a collapsible cluster card showing `Run: {id[:8]}… (N pending)`. Clusters have **Approve All** and **Deny All** buttons with confirmation dialogs. Solo items (no `run_id`, or unique `run_id`) render exactly as before.
+- **`GET /v1/approvals` run_groups field**: The approvals list response now includes a `run_groups` array alongside the flat `approvals` array. Each entry has `run_id`, `count`, `earliest_created_at`, and `items`. Only groups with 2+ pending items are included; groups are sorted by `MIN(created_at)` (chronological, not UUID order). Fully backwards compatible — existing consumers ignore the new field.
+- **Full PreToolUse hook schema**: `hookInput` now captures all fields Claude Code sends: `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `tool_use_id`. Previously only `tool_name` and `tool_input` were parsed.
+- **`run_id` in audit events**: Audit log entries include `"run_id"` (omitempty) so team runs are traceable across the full audit trail.
+
+### Fixed
+
+- **CI docs deploy**: The Deploy Docs workflow was pushing compiled output to `peg/rampart`'s own `gh-pages` branch instead of `peg/rampart-docs`, which is the repo actually serving `docs.rampart.sh`. Fixed to clone and push to `peg/rampart-docs`. Requires `DOCS_DEPLOY_TOKEN` secret (PAT with `contents:write` on `peg/rampart-docs`).
+
+## [0.3.1] — 2026-02-18
+
+### Fixed
+
+- **Mobile hero font size**: `.hero-title` heading was 2.5rem on narrow screens (≤600px), causing word-wrap on small phones. Reduced to 1.75rem via media query.
+- **`file_path` parameter support**: Claude Code sends `file_path` (not `path`) in `Read`, `Write`, and `Edit` tool input. `Path()` method and dashboard `extractCmd` function now check `file_path` first, then fall back to `path`. Previously the file path was silently dropped from audit events and approval cards for all file operations.
+
+### Changed
+
+- **Docs subtitle**: Updated from "Open-source firewall for AI agents" to "Open-source guardrails for AI agents. A policy firewall for shell commands, file access, and MCP tools."
+
 ## [0.3.0] — 2026-02-18
 
 ### Added

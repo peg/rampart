@@ -94,11 +94,12 @@ type Request struct {
 
 // Store manages pending approval requests.
 type Store struct {
-	mu       sync.Mutex
-	pending  map[string]*Request
-	timeout  time.Duration
-	onExpire func(*Request)
-	stop     chan struct{}
+	mu              sync.Mutex
+	pending         map[string]*Request
+	autoApproveRuns map[string]time.Time // run_id -> expiry
+	timeout         time.Duration
+	onExpire        func(*Request)
+	stop            chan struct{}
 }
 
 // Option configures a Store.
@@ -122,9 +123,10 @@ func WithExpireCallback(fn func(*Request)) Option {
 // Starts a background goroutine that cleans up resolved requests every 5 minutes.
 func NewStore(opts ...Option) *Store {
 	s := &Store{
-		pending: make(map[string]*Request),
-		timeout: 1 * time.Hour,
-		stop:    make(chan struct{}),
+		pending:         make(map[string]*Request),
+		autoApproveRuns: make(map[string]time.Time),
+		timeout:         1 * time.Hour,
+		stop:            make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -280,7 +282,8 @@ func (r *Request) Done() <-chan struct{} {
 	return r.done
 }
 
-// Cleanup removes resolved/expired requests older than the given duration.
+// Cleanup removes resolved/expired requests older than the given duration
+// and evicts expired auto-approve cache entries.
 func (s *Store) Cleanup(olderThan time.Duration) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -295,7 +298,37 @@ func (s *Store) Cleanup(olderThan time.Duration) int {
 		}
 	}
 
+	s.cleanAutoApproveCache()
+
 	return removed
+}
+
+// AutoApproveRun marks a run_id for auto-approval until the TTL elapses.
+// Subsequent tool calls from that run will be allowed without human review.
+func (s *Store) AutoApproveRun(runID string, ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.autoApproveRuns[runID] = time.Now().Add(ttl)
+}
+
+// IsAutoApproved reports whether the given run_id has been bulk-approved and
+// the approval has not yet expired.
+func (s *Store) IsAutoApproved(runID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expiry, ok := s.autoApproveRuns[runID]
+	return ok && time.Now().Before(expiry)
+}
+
+// cleanAutoApproveCache removes expired run_id entries from the cache.
+// Must be called with s.mu held.
+func (s *Store) cleanAutoApproveCache() {
+	now := time.Now()
+	for id, expiry := range s.autoApproveRuns {
+		if now.After(expiry) {
+			delete(s.autoApproveRuns, id)
+		}
+	}
 }
 
 func (s *Store) watchExpiry(req *Request) {

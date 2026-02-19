@@ -33,6 +33,7 @@ type createApprovalRequest struct {
 	Agent   string `json:"agent"`
 	Path    string `json:"path,omitempty"`
 	Message string `json:"message"`
+	RunID   string `json:"run_id,omitempty"`
 }
 
 // createApprovalResponse is the JSON returned from POST /v1/approvals.
@@ -52,12 +53,12 @@ type pollApprovalResponse struct {
 // Returns hookAllow if approved, hookDeny if denied/expired/error.
 // Falls back to hookAsk if the serve instance is unreachable.
 // The context allows cancellation (e.g., user Ctrl-C).
-func (c *hookApprovalClient) requestApproval(tool, command, agent, path, message string, timeout time.Duration) hookDecisionType {
-	return c.requestApprovalCtx(context.Background(), tool, command, agent, path, message, timeout)
+func (c *hookApprovalClient) requestApproval(tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
+	return c.requestApprovalCtx(context.Background(), tool, command, agent, path, runID, message, timeout)
 }
 
 // requestApprovalCtx is like requestApproval but accepts a context for cancellation.
-func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, message string, timeout time.Duration) hookDecisionType {
+func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
 	// Create the approval
 	body := createApprovalRequest{
 		Tool:    tool,
@@ -65,6 +66,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 		Agent:   agent,
 		Path:    path,
 		Message: message,
+		RunID:   runID,
 	}
 
 	data, err := json.Marshal(body)
@@ -93,6 +95,19 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 		return hookAsk
 	}
 	defer resp.Body.Close()
+
+	// 200 means the run was already bulk-approved — no queuing needed.
+	if resp.StatusCode == http.StatusOK {
+		var autoResp struct {
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&autoResp); err == nil && autoResp.Status == "approved" {
+			c.logger.Debug("hook: run auto-approved by bulk-resolve, skipping queue")
+			return hookAllow
+		}
+		c.logger.Error("hook: unexpected 200 from approval create", "url", c.serveURL)
+		return hookAsk
+	}
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)

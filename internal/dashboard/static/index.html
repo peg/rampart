@@ -225,6 +225,21 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .denial-cmd{color:var(--text-bright);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .denial-reason{color:#52525b;font-size:11px;flex-shrink:0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* Run cluster — grouped approvals sharing a run_id */
+.run-cluster{border:1px solid var(--border);border-radius:var(--radius);margin:8px 0;overflow:hidden}
+.run-cluster-header{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.run-cluster-chevron{font-size:10px;color:var(--text-dim);transition:transform .2s;flex-shrink:0}
+.run-cluster.collapsed .run-cluster-chevron{transform:rotate(-90deg)}
+.run-cluster-label{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--text-bright);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.run-cluster-count{font-size:10px;color:var(--text-dim);background:var(--surface-3);padding:1px 7px;border-radius:10px;flex-shrink:0}
+.run-cluster-actions{display:flex;gap:5px;flex-shrink:0}
+.run-cluster-body{display:block}
+.run-cluster.collapsed .run-cluster-body{display:none}
+/* Items inside a cluster get a subtle left inset */
+.run-cluster .pend-item{padding-left:20px}
+.run-cluster .pend-detail{border-bottom:1px solid var(--border)}
+.run-cluster .pend-item:hover{background:var(--surface-2)}
+
 /* Sentinel for infinite scroll */
 #hist-sentinel{height:4px;margin:4px 0}
 
@@ -390,6 +405,7 @@ function isDangerous(cmd){return DANGEROUS.some(r=>r.test(cmd||''))}
 let token='',pollTimer=null,connected=false,expandedId=null,initialPoll=true;
 const pendingMap=new Map();
 const selectedIds=new Set();
+let runGroupsData=[];
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 function initTheme(){
@@ -476,7 +492,7 @@ function initResizeHandles(){
     switchTab(btn.dataset.tab);
   });
 
-  // Pending table events
+  // Pending table events (including run-cluster bulk buttons)
   document.getElementById('pending-body').addEventListener('click',handlePendingClick);
 
   // Select-all
@@ -578,7 +594,7 @@ async function poll(){
       document.getElementById('main-content').classList.add('visible');
       if(!_denialsStarted){_denialsStarted=true;loadRecentDenials()}
     }
-    updatePending(data.approvals||[]);
+    updatePending(data.approvals||[],data.run_groups||[]);
     const delay=pendingMap.size>0?2000:5000;
     if(!document.hidden)pollTimer=setTimeout(poll,delay);
   }catch(e){
@@ -616,7 +632,8 @@ function extractAction(ev){
   return ev.action||'';
 }
 
-function updatePending(approvals){
+function updatePending(approvals,runGroups){
+  runGroupsData=runGroups||[];
   const incoming=new Map(approvals.map(a=>[a.id,a]));
   // Track which IDs are brand-new before mutating the map
   const newIds=new Set();
@@ -631,23 +648,44 @@ function updatePending(approvals){
 
 function renderPending(newIds){
   const tbody=document.getElementById('pending-body');
-  // Sort by session name (empty sorts last), then by created_at ascending
-  const entries=[...pendingMap.values()].sort((a,b)=>{
+  // Build set of IDs that belong to a run group (2+ items sharing run_id)
+  const groupedIds=new Set();
+  for(const g of runGroupsData){for(const item of g.items){groupedIds.add(item.id);}}
+
+  // Rebuild container from scratch
+  tbody.innerHTML='';
+
+  // 1. Render run clusters (groups with 2+ items) sorted by earliest_created_at
+  for(const g of runGroupsData){
+    // Filter to currently-pending items from this group
+    const groupItems=g.items.filter(item=>pendingMap.has(item.id));
+    if(groupItems.length<2)continue; // cluster dissolved to 0 or 1 — render remaining as solo below
+    const cluster=createRunCluster(g,groupItems,newIds);
+    tbody.appendChild(cluster);
+  }
+
+  // 2. Render solo items: either no run_id, or run_id unique (not in any current group)
+  const soloEntries=[...pendingMap.values()].filter(a=>{
+    if(!groupedIds.has(a.id))return true;
+    // Still in groupedIds but group dissolved to <2 currently pending
+    const g=runGroupsData.find(g=>g.items.some(item=>item.id===a.id));
+    if(!g)return true;
+    const stillPending=g.items.filter(item=>pendingMap.has(item.id));
+    return stillPending.length<2;
+  }).sort((a,b)=>{
     const sa=a.session||'',sb=b.session||'';
     if(sa===''&&sb!=='')return 1;if(sa!==''&&sb==='')return -1;
     if(sa!==sb)return sa.localeCompare(sb);
     return (a.created_at||'').localeCompare(b.created_at||'');
   });
-  // Show group headers only when more than one distinct session exists
-  const sessions=[...new Set(entries.map(a=>a.session||''))];
+  // Show session headers only when more than one distinct session exists among solo items
+  const sessions=[...new Set(soloEntries.map(a=>a.session||''))];
   const showHeaders=sessions.length>1;
-  // Rebuild container from scratch
-  tbody.innerHTML='';
   let lastSession=undefined;
-  for(const a of entries){
+  for(const a of soloEntries){
     const session=a.session||'';
     if(showHeaders&&session!==lastSession){
-      const count=entries.filter(x=>(x.session||'')===session).length;
+      const count=soloEntries.filter(x=>(x.session||'')===session).length;
       const hdr=document.createElement('div');hdr.className='session-group-header';
       hdr.innerHTML=`<span class="session-group-label">${esc(session||'(no session)')}</span><span class="session-group-count">${count}</span>`;
       tbody.appendChild(hdr);lastSession=session;
@@ -658,11 +696,87 @@ function renderPending(newIds){
     tbody.appendChild(row);tbody.appendChild(detail);
     if(expandedId===a.id)detail.classList.add('open');
   }
+
   // Badge and empty state
   const n=pendingMap.size;
   const badge=document.getElementById('badge-active');
   badge.textContent=n;badge.style.display=n?'':'none';
   document.getElementById('pending-empty').style.display=n?'none':'block';
+}
+
+function createRunCluster(g,groupItems,newIds){
+  const cluster=document.createElement('div');
+  cluster.className='run-cluster';
+  cluster.dataset.runId=g.run_id;
+
+  const shortId=g.run_id.slice(0,8);
+  const count=groupItems.length;
+
+  const header=document.createElement('div');
+  header.className='run-cluster-header';
+  header.innerHTML=`
+    <span class="run-cluster-chevron">▾</span>
+    <span class="run-cluster-label" title="${esc(g.run_id)}">Run: ${esc(shortId)}…</span>
+    <span class="run-cluster-count">${count} pending</span>
+    <div class="run-cluster-actions">
+      <button class="act-btn approve run-approve-all" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Approve all pending calls from this run">✓ Approve All</button>
+      <button class="act-btn deny run-deny-all" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Deny all pending calls from this run">✗ Deny All</button>
+    </div>`;
+  // Toggle collapse on header click (but not button clicks)
+  header.addEventListener('click',e=>{
+    if(e.target.closest('button'))return;
+    cluster.classList.toggle('collapsed');
+    header.querySelector('.run-cluster-chevron').textContent=cluster.classList.contains('collapsed')?'▸':'▾';
+  });
+  cluster.appendChild(header);
+
+  const body=document.createElement('div');
+  body.className='run-cluster-body';
+  // Sort items within cluster by created_at ascending
+  const sorted=[...groupItems].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  for(const a of sorted){
+    const{row,detail}=createPendingRow(a);
+    if(newIds&&newIds.has(a.id))row.classList.add('new-item');
+    row.querySelector('.row-chk').checked=selectedIds.has(a.id);
+    body.appendChild(row);body.appendChild(detail);
+    if(expandedId===a.id)detail.classList.add('open');
+  }
+  cluster.appendChild(body);
+  return cluster;
+}
+
+async function bulkResolveRun(runId,action,count){
+  const label=action==='approve'?'Approve':'Deny';
+  const actionVerb=action==='approve'?'Approve':'Deny';
+  if(!confirm(`${actionVerb} all ${count} pending call${count===1?'':'s'} from this run?`))return;
+  try{
+    await api('/v1/approvals/bulk-resolve',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({run_id:runId,action})
+    });
+    toast(`${label}d run ${runId.slice(0,8)}…`);
+    // Re-poll immediately to update the dashboard
+    clearTimeout(pollTimer);poll();
+  }catch(e){
+    // Bulk-resolve endpoint may not be deployed yet (built by W2 in parallel).
+    // Fall back to resolving each pending item in the group individually.
+    if(e.message&&(e.message.includes('404')||e.message.includes('405'))){
+      const group=runGroupsData.find(g=>g.run_id===runId);
+      if(group){
+        const ids=group.items.filter(item=>pendingMap.has(item.id)).map(item=>item.id);
+        const approved=action==='approve';
+        for(const id of ids){
+          try{await api('/v1/approvals/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved,resolved_by:'dashboard'})})}
+          catch(err){/* best effort */}
+        }
+        clearTimeout(pollTimer);poll();
+        toast(`${label}d ${ids.length} approval${ids.length===1?'':'s'}`);
+      }
+    }else{
+      toast('Error: '+e.message);
+    }
+  }
 }
 
 function createPendingRow(a){
@@ -707,6 +821,19 @@ function createPendingRow(a){
 }
 
 function handlePendingClick(e){
+  // Run cluster: Approve All / Deny All buttons
+  const runApprove=e.target.closest('.run-approve-all');
+  if(runApprove){
+    e.stopPropagation();
+    bulkResolveRun(runApprove.dataset.runId,'approve',parseInt(runApprove.dataset.count,10));
+    return;
+  }
+  const runDeny=e.target.closest('.run-deny-all');
+  if(runDeny){
+    e.stopPropagation();
+    bulkResolveRun(runDeny.dataset.runId,'deny',parseInt(runDeny.dataset.count,10));
+    return;
+  }
   if(e.target.classList.contains('row-chk')){
     e.stopPropagation();
     const id=e.target.dataset.id;

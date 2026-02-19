@@ -1,100 +1,73 @@
 # Quick Start
 
-!!! tip "New to Rampart?"
-    Start with the [5-minute tutorial](tutorial.md) for a hands-on walkthrough from install to first blocked command.
+!!! tip "First time?"
+    Check out the [5-minute tutorial](tutorial.md) — it walks you through install, your first blocked command, and approval flow hands-on.
 
-Get Rampart protecting your AI agent in under a minute.
-
-![Rampart Architecture](../assets/architecture.png)
+Get Rampart protecting your AI agent in one command.
 
 !!! tip "Zero risk to try"
-    Rampart **fails open** — if the policy engine crashes or is unreachable, your tools keep working normally. You'll never get locked out of your own machine. Use `default_action: allow` with `action: log` rules to observe without blocking anything.
+    Rampart **fails open** — if the service is unreachable or the policy engine crashes, your tools keep working. You'll never get locked out of your own machine.
 
-## Claude Code (Recommended)
-
-If you're using Claude Code, this is a one-liner:
+## One-Command Setup
 
 ```bash
-rampart setup claude-code
+rampart quickstart
 ```
 
-This installs native hooks into Claude Code's hook system. Every Bash command, file read, and file write gets evaluated against Rampart's policy engine before execution.
+This detects your agent (Claude Code, Codex, Cline), installs the service, wires up hooks, and verifies everything is working. Done.
 
-Then just use Claude Code normally:
-
-```bash
-claude
-```
-
-Rampart is completely transparent — safe commands pass through in microseconds, dangerous commands get blocked before they execute.
-
-### See It Working
-
-Open a second terminal and watch decisions in real time:
-
-```bash
-rampart watch
-```
-
-```
-╔══════════════════════════════════════════════════════════════╗
-║  RAMPART — enforce — 4 policies                             ║
-╠══════════════════════════════════════════════════════════════╣
-║  ✅ 21:03:42 exec  "git push origin main"     [allow-git]   ║
-║  ✅ 21:03:41 read  ~/project/src/main.go      [default]     ║
-║  🔴 21:03:38 exec  "rm -rf /tmp/*"            [protect-sys] ║
-║  👤 21:03:36 exec  "kubectl apply -f ..."     [approve-k8s] ║
-║  ✅ 21:03:35 exec  "npm test"                 [allow-dev]   ║
-║  🟡 21:03:33 exec  "curl https://api.io"      [log-http]    ║
-╠══════════════════════════════════════════════════════════════╣
-║  1,247 total │ 1,201 allow │ 12 deny │ 34 log │ 3 approval  ║
-╚══════════════════════════════════════════════════════════════╝
-```
+Then use your agent normally. Rampart is invisible until something needs to be blocked or approved.
 
 ## Other Agents
 
-=== "Any CLI Agent"
+=== "Claude Code"
 
     ```bash
-    # Wrap any agent that reads $SHELL
-    rampart wrap -- aider
-    rampart wrap -- opencode
-    rampart wrap -- python my_agent.py
+    rampart setup claude-code
+    ```
+
+=== "Cline"
+
+    ```bash
+    rampart setup cline
+    ```
+
+=== "Codex / Any CLI Agent"
+
+    ```bash
+    # LD_PRELOAD shim — works with any dynamically-linked process
+    rampart preload -- codex
+    rampart preload -- node agent.js
     ```
 
 === "MCP Servers"
 
     ```bash
-    # Proxy MCP with policy enforcement
-    rampart mcp -- npx @modelcontextprotocol/server-fs .
+    # Proxy an MCP server with policy enforcement
+    rampart mcp -- npx @modelcontextprotocol/server-filesystem .
     ```
 
-=== "LD_PRELOAD"
-
-    ```bash
-    # Universal — works with any dynamically-linked process
-    rampart preload -- codex
-    rampart preload -- node agent.js
-    ```
-
-## Built-in Profiles
-
-Rampart ships with three profiles to get you started:
-
-| Profile | Default Action | Description |
-|---------|---------------|-------------|
-| `standard` | allow | Block dangerous commands, log suspicious ones, allow the rest |
-| `paranoid` | deny | Explicit allowlist — everything is blocked unless you say otherwise |
-| `yolo` | allow | Log everything, block nothing — for auditing only |
+## Verify It's Working
 
 ```bash
-# Initialize with a specific profile
-rampart init --profile standard
+rampart doctor
 ```
+
+Green across the board means you're fully protected. If something's off, doctor tells you exactly what to fix.
 
 ## Test the Policy Engine
 
-You can test decisions without running an agent:
+Test decisions without running an agent:
+
+```bash
+rampart test "rm -rf /"
+# → deny (block-destructive)
+
+rampart test "git push origin main"
+# → allow (or require_approval if you've configured it)
+```
+
+Or pipe a raw hook payload:
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
@@ -104,8 +77,33 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 {"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"Rampart: Destructive command blocked"}}
 ```
 
+## Approve Risky Commands
+
+When a command hits a `require_approval` rule, Rampart pauses the agent and waits. Approve or deny it from the dashboard:
+
+```bash
+open http://localhost:18275/dashboard/
+```
+
+The dashboard shows pending approvals, audit history, and your loaded policy. For agent team runs (multiple sub-agents in one session), approvals are grouped — one click to approve the whole run.
+
+## Built-in Profiles
+
+Rampart ships with three starting policies:
+
+| Profile | Default Action | What it does |
+|---------|---------------|--------------|
+| `standard` | allow | Block dangerous commands, watch suspicious ones, allow the rest |
+| `paranoid` | deny | Explicit allowlist — everything blocked unless permitted |
+| `yolo` | allow | Watch everything, block nothing — observation only |
+
+```bash
+rampart init --profile standard
+```
+
 ## What's Next?
 
+- [5-Minute Tutorial →](tutorial.md) — Hands-on walkthrough with real examples
 - [Configuration →](configuration.md) — Write custom policies
-- [Integration Guides →](../integrations/index.md) — Set up your specific agent
-- [Policy Engine →](../features/policy-engine.md) — Deep dive into matching rules
+- [Integration Guides →](../integrations/index.md) — Cline, Cursor, Codex, MCP
+- [Policy Engine →](../features/policy-engine.md) — Conditions, rule priority, glob patterns

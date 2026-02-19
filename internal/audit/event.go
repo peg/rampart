@@ -46,8 +46,13 @@ type Event struct {
 	// Agent identifies which agent made the call.
 	Agent string `json:"agent"`
 
-	// Session identifies the agent's session.
+	// Session identifies the agent's session (git repo/branch or RAMPART_SESSION).
 	Session string `json:"session"`
+
+	// RunID groups events from the same orchestration run.
+	// Sourced from Claude Code's session_id field, RAMPART_RUN env override,
+	// or CLAUDE_CONVERSATION_ID fallback. Empty if no grouping applies.
+	RunID string `json:"run_id,omitempty"`
 
 	// Tool is the tool that was invoked (e.g., "exec", "read").
 	Tool string `json:"tool"`
