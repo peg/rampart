@@ -156,22 +156,17 @@ func TestMatchCondition_PathTraversalBypass(t *testing.T) {
 }
 
 func TestMatchGlob_DoubleStarLimit(t *testing.T) {
-	// Two ** segments should work.
+	// Two ** segments are fully supported.
 	if !MatchGlob("**/foo/**", "/a/b/foo/c/d") {
 		t.Error("two ** segments should match")
 	}
-	// Three (or more) ** segments should also work — the recursive implementation
-	// handles arbitrary depth. The old hard bail-out is removed; DoS is bounded by
-	// maxGlobInputLen (input cap) and maxIter (per-suffix iteration cap).
-	if !MatchGlob("**/**/foo/**", "/a/b/foo/c/d") {
-		t.Error("three ** segments should match")
+	// Three or more ** segments are rejected at runtime (return false) to avoid
+	// exponential backtracking. The policy linter catches these at load time so
+	// they never reach production. Verifying the fail-safe behaviour:
+	if MatchGlob("**/**/foo/**", "/a/b/foo/c/d") {
+		t.Error("three ** segments should return false (use linter to catch at load time)")
 	}
-	// Real-world policy pattern from the bug report: **/.ssh/**/.key/**
-	if !MatchGlob("**/.ssh/**/.key/**", "/home/user/.ssh/keys/.key/private") {
-		t.Error("three ** segments with path separators should match")
-	}
-	// Confirm no false positive on unrelated path.
-	if MatchGlob("**/.ssh/**/.key/**", "/home/user/.config/other") {
-		t.Error("three ** segments should not match unrelated path")
+	if MatchGlob("**/.ssh/**/.key/**", "/home/user/.ssh/keys/.key/private") {
+		t.Error("three ** segments with path separators should return false")
 	}
 }

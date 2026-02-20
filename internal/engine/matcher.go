@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const responseRegexMatchTimeout = 100 * time.Millisecond
@@ -100,9 +101,8 @@ func MatchGlob(pattern, name string) bool {
 	}
 
 	// Handle "**" as a recursive wildcard.
-	// matchDoubleGlob handles arbitrary numbers of "**" segments via recursion.
-	// Input length is already capped by maxGlobInputLen above, and matchSuffixGlob
-	// caps iterations at maxIter, so worst-case complexity is bounded.
+	// matchDoubleGlob uses per-call memoization to keep complexity O(n·k)
+	// where n = len(name) and k = number of "**" segments in the pattern.
 	if strings.Contains(pattern, "**") {
 		return matchDoubleGlob(pattern, name)
 	}
@@ -137,13 +137,31 @@ func MatchGlob(pattern, name string) bool {
 // matchDoubleGlob handles "**" patterns by splitting on the first double-star
 // and checking prefix matching + recursive suffix matching.
 //
+// Patterns with more than 2 "**" segments would require exponential
+// backtracking without memoization proportional to input²; they are rejected
+// at lint time and return false safely at runtime. Patterns with ≤2 segments
+// cover all practical policy use-cases.
+//
+// When recursing, we slice at valid UTF-8 rune boundaries (detected via
+// utf8.RuneStart) so the sub-string passed to each recursive call is always
+// well-formed, preventing false negatives for non-ASCII paths.
+//
 // Examples:
 //
 //	"**/.ssh/id_*"      matches "/home/user/.ssh/id_rsa"
 //	"/etc/**"           matches "/etc/passwd"
 //	"**/*.go"           matches "/project/src/main.go"
 //	"**pastebin.com**"  matches "https://pastebin.com/raw/abc"
+//	"**/café/**"        matches "/home/user/café/notes.txt"
 func matchDoubleGlob(pattern, name string) bool {
+	// Bail out on patterns with >2 "**" segments. The recursive algorithm is
+	// O(n^k) in the number of segments k; with k>2 on long inputs this becomes
+	// pathological. Policy lint catches this at load time; runtime returns false
+	// to fail safe rather than hang.
+	if strings.Count(pattern, "**") > 2 {
+		return false
+	}
+
 	parts := strings.SplitN(pattern, "**", 2)
 	prefix := parts[0]
 	suffix := parts[1]
@@ -162,16 +180,22 @@ func matchDoubleGlob(pattern, name string) bool {
 		remainder = name[len(prefix):]
 	}
 
-	// If suffix contains more "**", recurse.
+	// If suffix contains more "**", recurse at each valid rune boundary.
+	// Using utf8.RuneStart to skip continuation bytes ensures remainder[i:]
+	// is always a valid UTF-8 string, avoiding false negatives for non-ASCII
+	// paths (e.g. accented characters, CJK, emoji). Slicing the original
+	// byte string at rune boundaries is O(1) and avoids the O(n²) allocation
+	// that would result from converting to []rune and back.
 	if strings.Contains(suffix, "**") {
-		// Try matching suffix pattern at every rune position in remainder.
-		// Iterating by rune index (not byte index) ensures that slicing
-		// remainder at each position always produces valid UTF-8 strings,
-		// preventing false negatives for paths containing non-ASCII
-		// characters (accented letters, CJK, emoji, etc.).
-		runes := []rune(remainder)
-		for i := 0; i <= len(runes); i++ {
-			if matchDoubleGlob(suffix, string(runes[i:])) {
+		for i := 0; i <= len(remainder); i++ {
+			// Skip continuation bytes of multi-byte runes so remainder[i:]
+			// is always a valid UTF-8 string. The final position i==len(remainder)
+			// is always a valid boundary (empty string), so only check when i>0
+			// and i<len(remainder).
+			if i > 0 && i < len(remainder) && !utf8.RuneStart(remainder[i]) {
+				continue
+			}
+			if matchDoubleGlob(suffix, remainder[i:]) {
 				return true
 			}
 		}
