@@ -251,7 +251,10 @@ type Condition struct {
 }
 
 // IsEmpty returns true if no conditions are specified.
-// An empty condition with Default=false matches nothing.
+// An empty condition with Default=false matches everything (unconditional rule).
+// This is the correct runtime behavior: a rule with an empty when: block fires
+// on every tool call, acting as a catch-all. Use Default=true to make this
+// intent explicit.
 func (c Condition) IsEmpty() bool {
 	return !c.Default &&
 		len(c.CommandMatches) == 0 &&

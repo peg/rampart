@@ -55,6 +55,13 @@ func TestMatchGlob(t *testing.T) {
 		{"curl ** | bash", "curl foo | bash", true},
 		{"curl ** | sh", "curl https://get.example.com/setup.sh | sh", true},
 		{"wget ** | bash", "wget https://example.com/install.sh | bash", true},
+
+		// Unicode paths: ** must not slice in the middle of a multi-byte rune.
+		// "café" is 5 bytes (c-a-f-é where é is 2 bytes), so byte-based slicing
+		// would produce an invalid UTF-8 substring that filepath.Match rejects,
+		// causing a false negative. Rune-based iteration fixes this.
+		{"**/café/**", "/home/user/café/notes.txt", true},
+		{"**/café/**", "/home/user/other/notes.txt", false},
 	}
 
 	for _, tt := range tests {
@@ -149,12 +156,17 @@ func TestMatchCondition_PathTraversalBypass(t *testing.T) {
 }
 
 func TestMatchGlob_DoubleStarLimit(t *testing.T) {
-	// Two ** segments should work (allowed).
+	// Two ** segments are fully supported.
 	if !MatchGlob("**/foo/**", "/a/b/foo/c/d") {
 		t.Error("two ** segments should match")
 	}
-	// Three ** segments should be rejected (DoS protection).
+	// Three or more ** segments are rejected at runtime (return false) to avoid
+	// exponential backtracking. The policy linter catches these at load time so
+	// they never reach production. Verifying the fail-safe behaviour:
 	if MatchGlob("**/**/foo/**", "/a/b/foo/c/d") {
-		t.Error("three ** segments should be rejected")
+		t.Error("three ** segments should return false (use linter to catch at load time)")
+	}
+	if MatchGlob("**/.ssh/**/.key/**", "/home/user/.ssh/keys/.key/private") {
+		t.Error("three ** segments with path separators should return false")
 	}
 }

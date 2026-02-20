@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -108,7 +109,7 @@ type Proxy struct {
 
 	pendingMu       sync.Mutex
 	pendingCalls    map[string]pendingCall
-	pendingToolList map[string]struct{}
+	pendingToolList map[string]time.Time
 }
 
 type pendingCall struct {
@@ -128,7 +129,7 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 		childOut:        childOut,
 		stopCh:          make(chan struct{}),
 		pendingCalls:    make(map[string]pendingCall),
-		pendingToolList: make(map[string]struct{}),
+		pendingToolList: make(map[string]time.Time),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -196,7 +197,7 @@ func joinProxyErrors(a, b error) error {
 }
 
 func (p *Proxy) proxyClientToChild(ctx context.Context, parentIn io.Reader) error {
-	reader := bufio.NewReader(parentIn)
+	reader := bufio.NewReaderSize(parentIn, maxLineBytes)
 	for {
 		line, err := readLine(reader)
 		if err != nil {
@@ -215,7 +216,7 @@ func (p *Proxy) proxyClientToChild(ctx context.Context, parentIn io.Reader) erro
 }
 
 func (p *Proxy) proxyChildToClient(parentOut io.Writer) error {
-	reader := bufio.NewReader(p.childOut)
+	reader := bufio.NewReaderSize(p.childOut, maxLineBytes)
 	for {
 		line, err := readLine(reader)
 		if err != nil {
@@ -233,15 +234,37 @@ func (p *Proxy) proxyChildToClient(parentOut io.Writer) error {
 	}
 }
 
+// maxLineBytes is the maximum number of bytes allowed in a single JSON-RPC line.
+// Lines exceeding this limit are rejected to prevent OOM from malicious peers.
+const maxLineBytes = 4 * 1024 * 1024 // 4 MB
+
+// readLine reads a newline-terminated line from reader, enforcing maxLineBytes.
+// It uses ReadSlice to read in buffer-sized chunks so we can detect an
+// oversized line before the full allocation occurs.
 func readLine(reader *bufio.Reader) ([]byte, error) {
-	line, err := reader.ReadBytes('\n')
-	if err != nil {
-		if err == io.EOF && len(line) > 0 {
-			return line, nil
+	var result []byte
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		result = append(result, chunk...)
+		if len(result) > maxLineBytes {
+			return nil, fmt.Errorf("mcp: line exceeds %d-byte limit", maxLineBytes)
+		}
+		if err == nil {
+			// Delimiter found — full line is in result.
+			return result, nil
+		}
+		if err == bufio.ErrBufferFull {
+			// Buffer full but no delimiter yet; keep accumulating.
+			continue
+		}
+		if err == io.EOF {
+			if len(result) > 0 {
+				return result, nil
+			}
+			return nil, err
 		}
 		return nil, err
 	}
-	return line, nil
 }
 
 func (p *Proxy) handleClientLine(line []byte) error {
@@ -263,7 +286,8 @@ func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) er
 
 	if p.filterTools && req.Method == "tools/list" && HasID(req.ID) {
 		p.pendingMu.Lock()
-		p.pendingToolList[NormalizedID(req.ID)] = struct{}{}
+		p.pendingToolList[NormalizedID(req.ID)] = time.Now()
+		p.evictStalePendingCalls()
 		p.pendingMu.Unlock()
 	}
 
@@ -354,6 +378,21 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		}
 	}
 
+	if p.mode == "enforce" && decision.Action == engine.ActionWebhook {
+		webhookDecision := p.executeWebhookAction(call, decision)
+		if webhookDecision.Action == engine.ActionDeny {
+			denyMsg := strings.TrimSpace(webhookDecision.Message)
+			if denyMsg == "" {
+				denyMsg = "request denied by webhook"
+			}
+			if HasID(req.ID) {
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: "+denyMsg)
+			}
+			return nil
+		}
+		// Webhook allowed — fall through to forward the call.
+	}
+
 	if HasID(req.ID) {
 		id := NormalizedID(req.ID)
 		p.pendingMu.Lock()
@@ -365,8 +404,8 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 	return p.writeToChild(rawLine)
 }
 
-// evictStalePendingCalls removes pending calls older than 5 minutes.
-// Must be called with pendingMu held.
+// evictStalePendingCalls removes pending calls and pending tool-list requests
+// older than 5 minutes. Must be called with pendingMu held.
 func (p *Proxy) evictStalePendingCalls() {
 	const maxAge = 5 * time.Minute
 	const maxPending = 1000
@@ -374,6 +413,12 @@ func (p *Proxy) evictStalePendingCalls() {
 	for id, pc := range p.pendingCalls {
 		if now.Sub(pc.createdAt) > maxAge {
 			delete(p.pendingCalls, id)
+		}
+	}
+	// Evict stale pendingToolList entries using the same TTL.
+	for id, insertedAt := range p.pendingToolList {
+		if now.Sub(insertedAt) > maxAge {
+			delete(p.pendingToolList, id)
 		}
 	}
 	// Hard cap: if still too many, evict oldest
@@ -389,6 +434,114 @@ func (p *Proxy) evictStalePendingCalls() {
 		if oldestID != "" {
 			delete(p.pendingCalls, oldestID)
 		}
+	}
+}
+
+// webhookActionRequest is the payload POSTed to a webhook action endpoint.
+type webhookActionRequest struct {
+	Tool      string         `json:"tool"`
+	Params    map[string]any `json:"params"`
+	Agent     string         `json:"agent"`
+	Session   string         `json:"session"`
+	Policy    string         `json:"policy"`
+	Timestamp string         `json:"timestamp"`
+}
+
+// webhookActionResponse is the expected response from a webhook action endpoint.
+type webhookActionResponse struct {
+	Decision string `json:"decision"` // "allow" or "deny"
+	Reason   string `json:"reason"`
+}
+
+// executeWebhookAction calls the configured webhook URL and returns an allow or
+// deny decision based on the response. Mirrors proxy.Server.executeWebhookAction.
+func (p *Proxy) executeWebhookAction(call engine.ToolCall, decision engine.Decision) engine.Decision {
+	cfg := decision.WebhookConfig
+	if cfg == nil || cfg.URL == "" {
+		p.logger.Error("mcp: webhook action missing config")
+		return engine.Decision{
+			Action:  engine.ActionDeny,
+			Message: "webhook action misconfigured; denying for safety",
+		}
+	}
+
+	policyName := "unknown"
+	if len(decision.MatchedPolicies) > 0 {
+		policyName = decision.MatchedPolicies[0]
+	}
+
+	payload := webhookActionRequest{
+		Tool:      call.Tool,
+		Params:    call.Params,
+		Agent:     call.Agent,
+		Session:   call.Session,
+		Policy:    policyName,
+		Timestamp: call.Timestamp.Format(time.RFC3339),
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		p.logger.Error("mcp: webhook marshal failed", "error", err)
+		return p.webhookFallback(cfg, "marshal error")
+	}
+
+	client := &http.Client{Timeout: cfg.EffectiveTimeout()}
+	resp, err := client.Post(cfg.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		p.logger.Error("mcp: webhook call failed", "url", cfg.URL, "error", err)
+		return p.webhookFallback(cfg, fmt.Sprintf("webhook error: %v", err))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		p.logger.Error("mcp: webhook returned non-2xx", "url", cfg.URL, "status", resp.StatusCode)
+		return p.webhookFallback(cfg, fmt.Sprintf("webhook returned HTTP %d", resp.StatusCode))
+	}
+
+	var whResp webhookActionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&whResp); err != nil {
+		p.logger.Error("mcp: webhook response parse failed", "error", err)
+		return p.webhookFallback(cfg, "invalid webhook response")
+	}
+
+	switch strings.ToLower(whResp.Decision) {
+	case "allow":
+		p.logger.Info("mcp: webhook allowed", "url", cfg.URL, "tool", call.Tool)
+		return engine.Decision{
+			Action:          engine.ActionAllow,
+			MatchedPolicies: decision.MatchedPolicies,
+			Message:         "allowed by webhook",
+		}
+	case "deny":
+		reason := whResp.Reason
+		if reason == "" {
+			reason = "denied by webhook"
+		}
+		p.logger.Info("mcp: webhook denied", "url", cfg.URL, "tool", call.Tool, "reason", reason)
+		return engine.Decision{
+			Action:          engine.ActionDeny,
+			MatchedPolicies: decision.MatchedPolicies,
+			Message:         reason,
+		}
+	default:
+		p.logger.Error("mcp: webhook returned unknown decision", "decision", whResp.Decision)
+		return p.webhookFallback(cfg, fmt.Sprintf("unknown webhook decision: %q", whResp.Decision))
+	}
+}
+
+// webhookFallback returns the appropriate decision when a webhook call fails.
+func (p *Proxy) webhookFallback(cfg *engine.WebhookActionConfig, reason string) engine.Decision {
+	if cfg.EffectiveFailOpen() {
+		p.logger.Warn("mcp: webhook fail-open", "reason", reason)
+		return engine.Decision{
+			Action:  engine.ActionAllow,
+			Message: fmt.Sprintf("webhook unavailable, failing open: %s", reason),
+		}
+	}
+	p.logger.Warn("mcp: webhook fail-closed", "reason", reason)
+	return engine.Decision{
+		Action:  engine.ActionDeny,
+		Message: fmt.Sprintf("webhook unavailable, failing closed: %s", reason),
 	}
 }
 

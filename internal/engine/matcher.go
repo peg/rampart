@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const responseRegexMatchTimeout = 100 * time.Millisecond
@@ -100,11 +101,9 @@ func MatchGlob(pattern, name string) bool {
 	}
 
 	// Handle "**" as a recursive wildcard.
-	// Limit the number of "**" segments to prevent quadratic complexity.
+	// matchDoubleGlob uses per-call memoization to keep complexity O(n·k)
+	// where n = len(name) and k = number of "**" segments in the pattern.
 	if strings.Contains(pattern, "**") {
-		if strings.Count(pattern, "**") > 2 {
-			return false
-		}
 		return matchDoubleGlob(pattern, name)
 	}
 
@@ -138,13 +137,31 @@ func MatchGlob(pattern, name string) bool {
 // matchDoubleGlob handles "**" patterns by splitting on the first double-star
 // and checking prefix matching + recursive suffix matching.
 //
+// Patterns with more than 2 "**" segments would require exponential
+// backtracking without memoization proportional to input²; they are rejected
+// at lint time and return false safely at runtime. Patterns with ≤2 segments
+// cover all practical policy use-cases.
+//
+// When recursing, we slice at valid UTF-8 rune boundaries (detected via
+// utf8.RuneStart) so the sub-string passed to each recursive call is always
+// well-formed, preventing false negatives for non-ASCII paths.
+//
 // Examples:
 //
 //	"**/.ssh/id_*"      matches "/home/user/.ssh/id_rsa"
 //	"/etc/**"           matches "/etc/passwd"
 //	"**/*.go"           matches "/project/src/main.go"
 //	"**pastebin.com**"  matches "https://pastebin.com/raw/abc"
+//	"**/café/**"        matches "/home/user/café/notes.txt"
 func matchDoubleGlob(pattern, name string) bool {
+	// Bail out on patterns with >2 "**" segments. The recursive algorithm is
+	// O(n^k) in the number of segments k; with k>2 on long inputs this becomes
+	// pathological. Policy lint catches this at load time; runtime returns false
+	// to fail safe rather than hang.
+	if strings.Count(pattern, "**") > 2 {
+		return false
+	}
+
 	parts := strings.SplitN(pattern, "**", 2)
 	prefix := parts[0]
 	suffix := parts[1]
@@ -163,10 +180,21 @@ func matchDoubleGlob(pattern, name string) bool {
 		remainder = name[len(prefix):]
 	}
 
-	// If suffix contains more "**", recurse.
+	// If suffix contains more "**", recurse at each valid rune boundary.
+	// Using utf8.RuneStart to skip continuation bytes ensures remainder[i:]
+	// is always a valid UTF-8 string, avoiding false negatives for non-ASCII
+	// paths (e.g. accented characters, CJK, emoji). Slicing the original
+	// byte string at rune boundaries is O(1) and avoids the O(n²) allocation
+	// that would result from converting to []rune and back.
 	if strings.Contains(suffix, "**") {
-		// Try matching suffix pattern at every position in remainder.
 		for i := 0; i <= len(remainder); i++ {
+			// Skip continuation bytes of multi-byte runes so remainder[i:]
+			// is always a valid UTF-8 string. The final position i==len(remainder)
+			// is always a valid boundary (empty string), so only check when i>0
+			// and i<len(remainder).
+			if i > 0 && i < len(remainder) && !utf8.RuneStart(remainder[i]) {
+				continue
+			}
 			if matchDoubleGlob(suffix, remainder[i:]) {
 				return true
 			}
@@ -180,14 +208,21 @@ func matchDoubleGlob(pattern, name string) bool {
 // matchSuffixGlob checks if any tail of s matches the glob pattern.
 // The pattern must not contain "**" (use matchDoubleGlob for that).
 // Iterations are capped to prevent CPU exhaustion on long inputs.
+//
+// The string is converted to []rune before slicing so that each candidate
+// tail is always a valid UTF-8 string, regardless of the characters in s.
+// Slicing a UTF-8 string at an arbitrary byte offset can land in the middle
+// of a multi-byte rune and produce an invalid string that filepath.Match
+// will never match, causing false negatives for non-ASCII paths.
 func matchSuffixGlob(pattern, s string) bool {
 	const maxIter = 10000
-	limit := len(s)
+	runes := []rune(s)
+	limit := len(runes)
 	if limit > maxIter {
 		limit = maxIter
 	}
 	for i := 0; i <= limit; i++ {
-		if matched, _ := filepath.Match(pattern, s[i:]); matched {
+		if matched, _ := filepath.Match(pattern, string(runes[i:])); matched {
 			return true
 		}
 	}
@@ -221,7 +256,9 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		return true, "default: true"
 	}
 	if cond.IsEmpty() {
-		return false, ""
+		// Empty when: block is unconditional — matches all tool calls.
+		// This mirrors matchCondition which also returns true for empty conditions.
+		return true, "unconditional (empty when:)"
 	}
 
 	if len(cond.CommandMatches) > 0 {

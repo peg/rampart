@@ -34,7 +34,8 @@ import (
 
 // defaultServePort is the default port for rampart serve.
 // Referenced by doctor, hook, quickstart, and serve install.
-const defaultServePort = 18275
+// Must match the --port flag default in newServeCmd.
+const defaultServePort = 9090
 
 // checkResult holds the outcome of a single doctor check for --json output.
 type checkResult struct {
@@ -305,9 +306,22 @@ func doctorPolicies(emit emitFn) int {
 		if err != nil {
 			emit("Policy", "fail", fmt.Sprintf("~/%s (%s)", relHome(path, home), err))
 			issues++
-		} else {
-			count := len(cfg.Policies)
-			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", relHome(path, home), count))
+			continue
+		}
+
+		// Run lint to catch silent issues (e.g. condition field typos that yaml
+		// unmarshaling ignores, making rules silently match everything).
+		lintResult := engine.LintPolicyFile(path)
+		count := len(cfg.Policies)
+		rel := relHome(path, home)
+		switch {
+		case lintResult.HasErrors():
+			emit("Policy", "fail", fmt.Sprintf("~/%s (%d policies, %d lint error(s) — run 'rampart policy lint %s')", rel, count, lintResult.Errors, path))
+			issues++
+		case lintResult.Warnings > 0:
+			emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, %d lint warning(s) — run 'rampart policy lint %s')", rel, count, lintResult.Warnings, path))
+		default:
+			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
 		}
 	}
 	if !found {
@@ -538,7 +552,9 @@ func doctorAudit(emit emitFn) int {
 		emit("Audit", "fail", fmt.Sprintf("%s (not writable)", auditDir))
 		return 1
 	}
-	os.Remove(testFile)
+	// Defer removal so the temp file is cleaned up on every exit path,
+	// including early returns and panics, not just the happy path.
+	defer os.Remove(testFile)
 
 	// Count files and find latest
 	var files []os.DirEntry

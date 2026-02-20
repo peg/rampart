@@ -262,7 +262,13 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	if s.metricsEnabled {
-		mux.Handle("GET /metrics", MetricsHandler())
+		metricsHandler := MetricsHandler()
+		mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+			if !s.checkAuth(w, r) {
+				return
+			}
+			metricsHandler.ServeHTTP(w, r)
+		})
 	}
 	mux.Handle("/dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
 	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.Handler()))
@@ -610,9 +616,15 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	// Short-circuit if this run has been bulk-approved.
 	if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
 		s.logger.Debug("proxy: run auto-approved (hook), bypassing approval queue", "tool", req.Tool, "run_id", call.RunID)
+		ttl := s.approvalTimeout
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":  "approved",
-			"message": "auto-approved by bulk-resolve",
+			"id":         audit.NewEventID(),
+			"status":     "approved",
+			"message":    "auto-approved by bulk-resolve",
+			"expires_at": time.Now().Add(ttl).Format(time.RFC3339),
 		})
 		return
 	}

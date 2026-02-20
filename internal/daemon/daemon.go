@@ -372,7 +372,9 @@ func (d *Daemon) handleApproval(ctx context.Context, req approvalRequest) {
 			Message:         decision.Message,
 		},
 	}
-	d.sink.Write(event)
+	if err := d.sink.Write(event); err != nil {
+		d.logger.Error("daemon: audit write failed", "error", err)
+	}
 
 	// Resolve the approval.
 	switch decision.Action {
