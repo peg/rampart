@@ -507,7 +507,7 @@ func TestMaybeFilterToolsList_FiltersBlockedTools(t *testing.T) {
 
 	// Register pending tools/list
 	p.pendingMu.Lock()
-	p.pendingToolList["1"] = struct{}{}
+	p.pendingToolList["1"] = time.Now()
 	p.pendingMu.Unlock()
 
 	toolsResult := map[string]any{
@@ -581,7 +581,7 @@ func TestMaybeFilterToolsList_RequireApprovalVisible(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	p.pendingMu.Lock()
-	p.pendingToolList["1"] = struct{}{}
+	p.pendingToolList["1"] = time.Now()
 	p.pendingMu.Unlock()
 
 	toolsResult := map[string]any{

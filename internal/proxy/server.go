@@ -616,9 +616,15 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	// Short-circuit if this run has been bulk-approved.
 	if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
 		s.logger.Debug("proxy: run auto-approved (hook), bypassing approval queue", "tool", req.Tool, "run_id", call.RunID)
+		ttl := s.approvalTimeout
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":  "approved",
-			"message": "auto-approved by bulk-resolve",
+			"id":         audit.NewEventID(),
+			"status":     "approved",
+			"message":    "auto-approved by bulk-resolve",
+			"expires_at": time.Now().Add(ttl).Format(time.RFC3339),
 		})
 		return
 	}

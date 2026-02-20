@@ -55,6 +55,13 @@ func TestMatchGlob(t *testing.T) {
 		{"curl ** | bash", "curl foo | bash", true},
 		{"curl ** | sh", "curl https://get.example.com/setup.sh | sh", true},
 		{"wget ** | bash", "wget https://example.com/install.sh | bash", true},
+
+		// Unicode paths: ** must not slice in the middle of a multi-byte rune.
+		// "café" is 5 bytes (c-a-f-é where é is 2 bytes), so byte-based slicing
+		// would produce an invalid UTF-8 substring that filepath.Match rejects,
+		// causing a false negative. Rune-based iteration fixes this.
+		{"**/café/**", "/home/user/café/notes.txt", true},
+		{"**/café/**", "/home/user/other/notes.txt", false},
 	}
 
 	for _, tt := range tests {

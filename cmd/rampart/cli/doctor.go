@@ -552,7 +552,9 @@ func doctorAudit(emit emitFn) int {
 		emit("Audit", "fail", fmt.Sprintf("%s (not writable)", auditDir))
 		return 1
 	}
-	os.Remove(testFile)
+	// Defer removal so the temp file is cleaned up on every exit path,
+	// including early returns and panics, not just the happy path.
+	defer os.Remove(testFile)
 
 	// Count files and find latest
 	var files []os.DirEntry

@@ -109,7 +109,7 @@ type Proxy struct {
 
 	pendingMu       sync.Mutex
 	pendingCalls    map[string]pendingCall
-	pendingToolList map[string]struct{}
+	pendingToolList map[string]time.Time
 }
 
 type pendingCall struct {
@@ -129,7 +129,7 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 		childOut:        childOut,
 		stopCh:          make(chan struct{}),
 		pendingCalls:    make(map[string]pendingCall),
-		pendingToolList: make(map[string]struct{}),
+		pendingToolList: make(map[string]time.Time),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -286,7 +286,8 @@ func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) er
 
 	if p.filterTools && req.Method == "tools/list" && HasID(req.ID) {
 		p.pendingMu.Lock()
-		p.pendingToolList[NormalizedID(req.ID)] = struct{}{}
+		p.pendingToolList[NormalizedID(req.ID)] = time.Now()
+		p.evictStalePendingCalls()
 		p.pendingMu.Unlock()
 	}
 
@@ -403,8 +404,8 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 	return p.writeToChild(rawLine)
 }
 
-// evictStalePendingCalls removes pending calls older than 5 minutes.
-// Must be called with pendingMu held.
+// evictStalePendingCalls removes pending calls and pending tool-list requests
+// older than 5 minutes. Must be called with pendingMu held.
 func (p *Proxy) evictStalePendingCalls() {
 	const maxAge = 5 * time.Minute
 	const maxPending = 1000
@@ -412,6 +413,12 @@ func (p *Proxy) evictStalePendingCalls() {
 	for id, pc := range p.pendingCalls {
 		if now.Sub(pc.createdAt) > maxAge {
 			delete(p.pendingCalls, id)
+		}
+	}
+	// Evict stale pendingToolList entries using the same TTL.
+	for id, insertedAt := range p.pendingToolList {
+		if now.Sub(insertedAt) > maxAge {
+			delete(p.pendingToolList, id)
 		}
 	}
 	// Hard cap: if still too many, evict oldest

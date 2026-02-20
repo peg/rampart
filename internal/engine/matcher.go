@@ -164,9 +164,14 @@ func matchDoubleGlob(pattern, name string) bool {
 
 	// If suffix contains more "**", recurse.
 	if strings.Contains(suffix, "**") {
-		// Try matching suffix pattern at every position in remainder.
-		for i := 0; i <= len(remainder); i++ {
-			if matchDoubleGlob(suffix, remainder[i:]) {
+		// Try matching suffix pattern at every rune position in remainder.
+		// Iterating by rune index (not byte index) ensures that slicing
+		// remainder at each position always produces valid UTF-8 strings,
+		// preventing false negatives for paths containing non-ASCII
+		// characters (accented letters, CJK, emoji, etc.).
+		runes := []rune(remainder)
+		for i := 0; i <= len(runes); i++ {
+			if matchDoubleGlob(suffix, string(runes[i:])) {
 				return true
 			}
 		}
@@ -179,14 +184,21 @@ func matchDoubleGlob(pattern, name string) bool {
 // matchSuffixGlob checks if any tail of s matches the glob pattern.
 // The pattern must not contain "**" (use matchDoubleGlob for that).
 // Iterations are capped to prevent CPU exhaustion on long inputs.
+//
+// The string is converted to []rune before slicing so that each candidate
+// tail is always a valid UTF-8 string, regardless of the characters in s.
+// Slicing a UTF-8 string at an arbitrary byte offset can land in the middle
+// of a multi-byte rune and produce an invalid string that filepath.Match
+// will never match, causing false negatives for non-ASCII paths.
 func matchSuffixGlob(pattern, s string) bool {
 	const maxIter = 10000
-	limit := len(s)
+	runes := []rune(s)
+	limit := len(runes)
 	if limit > maxIter {
 		limit = maxIter
 	}
 	for i := 0; i <= limit; i++ {
-		if matched, _ := filepath.Match(pattern, s[i:]); matched {
+		if matched, _ := filepath.Match(pattern, string(runes[i:])); matched {
 			return true
 		}
 	}
