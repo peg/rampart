@@ -262,7 +262,13 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	if s.metricsEnabled {
-		mux.Handle("GET /metrics", MetricsHandler())
+		metricsHandler := MetricsHandler()
+		mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+			if !s.checkAuth(w, r) {
+				return
+			}
+			metricsHandler.ServeHTTP(w, r)
+		})
 	}
 	mux.Handle("/dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
 	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.Handler()))

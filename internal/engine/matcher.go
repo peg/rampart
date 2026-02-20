@@ -100,11 +100,10 @@ func MatchGlob(pattern, name string) bool {
 	}
 
 	// Handle "**" as a recursive wildcard.
-	// Limit the number of "**" segments to prevent quadratic complexity.
+	// matchDoubleGlob handles arbitrary numbers of "**" segments via recursion.
+	// Input length is already capped by maxGlobInputLen above, and matchSuffixGlob
+	// caps iterations at maxIter, so worst-case complexity is bounded.
 	if strings.Contains(pattern, "**") {
-		if strings.Count(pattern, "**") > 2 {
-			return false
-		}
 		return matchDoubleGlob(pattern, name)
 	}
 
@@ -221,7 +220,9 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		return true, "default: true"
 	}
 	if cond.IsEmpty() {
-		return false, ""
+		// Empty when: block is unconditional — matches all tool calls.
+		// This mirrors matchCondition which also returns true for empty conditions.
+		return true, "unconditional (empty when:)"
 	}
 
 	if len(cond.CommandMatches) > 0 {
