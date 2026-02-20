@@ -56,16 +56,22 @@ func FormatCEF(e Event) string {
 	}
 	policyNames := strings.Join(e.Decision.MatchedPolicies, ",")
 
-	// Escape CEF extension values (\ and =).
+	// Escape CEF extension values (\ and = and newlines).
+	// Newlines must be escaped to prevent an agent from injecting forged
+	// CEF fields into the audit log via tool parameters (log injection).
 	esc := func(s string) string {
 		s = strings.ReplaceAll(s, `\`, `\\`)
 		s = strings.ReplaceAll(s, `=`, `\=`)
+		s = strings.ReplaceAll(s, "\n", `\n`)
+		s = strings.ReplaceAll(s, "\r", `\r`)
 		return s
 	}
-	// Escape CEF header pipes.
+	// Escape CEF header pipes and newlines.
 	escH := func(s string) string {
 		s = strings.ReplaceAll(s, `\`, `\\`)
 		s = strings.ReplaceAll(s, `|`, `\|`)
+		s = strings.ReplaceAll(s, "\n", `\n`)
+		s = strings.ReplaceAll(s, "\r", `\r`)
 		return s
 	}
 
