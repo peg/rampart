@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"text/template"
+	"html/template"
 
 	"github.com/spf13/cobra"
 )
@@ -257,10 +257,14 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 
 			homeDir, _ := os.UserHomeDir()
 			args := buildServiceArgs(port, opts.configPath, configDir, auditDir, mode, approvalTimeout)
+			// Strip control characters from token before embedding in
+			// service files. Newlines in a systemd Environment= directive
+			// or plist <string> could inject arbitrary directives.
+			safeToken := strings.NewReplacer("\n", "", "\r", "", "\t", "").Replace(token)
 			cfg := serviceConfig{
 				Binary:  binary,
 				Args:    args,
-				Token:   token,
+				Token:   safeToken,
 				LogPath: logPath(),
 				HomeDir: homeDir,
 			}
@@ -321,9 +325,13 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 	// Ensure log directory exists.
 	_ = os.MkdirAll(filepath.Dir(cfg.LogPath), 0o755)
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	// 0o600: plist contains RAMPART_TOKEN — must not be world-readable.
+	// Chmod after write because os.WriteFile only applies the mode on creation;
+	// an existing file with wrong permissions would not be updated otherwise.
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write plist: %w", err)
 	}
+	_ = os.Chmod(path, 0o600)
 
 	if out, err := runner("launchctl", "load", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl load: %w\n%s", err, out)
@@ -359,9 +367,12 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 	// Ensure log directory exists.
 	_ = os.MkdirAll(filepath.Dir(cfg.LogPath), 0o755)
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	// 0o600: unit file contains RAMPART_TOKEN — must not be world-readable.
+	// Chmod after write because os.WriteFile only applies the mode on creation.
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
+	_ = os.Chmod(path, 0o600)
 
 	// Stop the old service before reload so the new binary/token take effect.
 	_, _ = runner("systemctl", "--user", "stop", "rampart-serve.service").CombinedOutput()

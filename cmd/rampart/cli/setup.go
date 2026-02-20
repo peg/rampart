@@ -588,6 +588,26 @@ func installService(cmd *cobra.Command, home, rampartBin, policyPath, token stri
 	return installSystemd(cmd, home, rampartBin, policyPath, token, port)
 }
 
+// plistXMLEscape escapes a string for safe embedding inside a plist <string>
+// element. Unescaped '<' or '&' in a value would break the XML structure or
+// allow a crafted path/token to inject arbitrary plist keys.
+func plistXMLEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	return s
+}
+
+// systemdEnvEscape strips characters that would break a systemd
+// Environment= line (newlines introduce new directives).
+func systemdEnvEscape(s string) string {
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
+}
+
 func installSystemd(cmd *cobra.Command, home, rampartBin, policyPath, token string, port int) error {
 	serviceDir := filepath.Join(home, ".config", "systemd", "user")
 	if err := os.MkdirAll(serviceDir, 0o700); err != nil {
@@ -607,11 +627,14 @@ Environment=RAMPART_TOKEN=%s
 
 [Install]
 WantedBy=default.target
-`, rampartBin, port, policyPath, home, token)
+`, rampartBin, port, policyPath, home, systemdEnvEscape(token))
 
-	if err := os.WriteFile(servicePath, []byte(serviceContent), 0o644); err != nil {
+	// 0o600: unit file contains RAMPART_TOKEN — must not be world-readable.
+	// Chmod after write because os.WriteFile only applies the mode on creation.
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0o600); err != nil {
 		return fmt.Errorf("setup: write service file: %w", err)
 	}
+	_ = os.Chmod(servicePath, 0o600)
 	fmt.Fprintf(cmd.OutOrStdout(), "✓ Systemd service written to %s\n", servicePath)
 	return nil
 }
@@ -622,6 +645,7 @@ func installLaunchd(cmd *cobra.Command, home, rampartBin, policyPath, token stri
 		return fmt.Errorf("setup: create LaunchAgents dir: %w", err)
 	}
 	plistPath := filepath.Join(agentDir, "com.rampart.proxy.plist")
+	logPath := filepath.Join(home, ".rampart", "rampart-proxy.log")
 	plistContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -654,13 +678,22 @@ func installLaunchd(cmd *cobra.Command, home, rampartBin, policyPath, token stri
     <string>%s</string>
 </dict>
 </plist>
-`, rampartBin, port, policyPath, home, token,
-		filepath.Join(home, ".rampart", "rampart-proxy.log"),
-		filepath.Join(home, ".rampart", "rampart-proxy.log"))
+`,
+		plistXMLEscape(rampartBin),
+		port,
+		plistXMLEscape(policyPath),
+		plistXMLEscape(home),
+		plistXMLEscape(token),
+		plistXMLEscape(logPath),
+		plistXMLEscape(logPath),
+	)
 
-	if err := os.WriteFile(plistPath, []byte(plistContent), 0o644); err != nil {
+	// 0o600: plist contains RAMPART_TOKEN — must not be world-readable.
+	// Chmod after write because os.WriteFile only applies the mode on creation.
+	if err := os.WriteFile(plistPath, []byte(plistContent), 0o600); err != nil {
 		return fmt.Errorf("setup: write plist: %w", err)
 	}
+	_ = os.Chmod(plistPath, 0o600)
 	fmt.Fprintf(cmd.OutOrStdout(), "✓ LaunchAgent written to %s\n", plistPath)
 	return nil
 }
