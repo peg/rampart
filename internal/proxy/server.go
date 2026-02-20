@@ -222,7 +222,7 @@ func (s *Server) newHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-// Shutdown gracefully stops the proxy server.
+// Shutdown gracefully stops the proxy server and releases all resources.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	srv := s.server
@@ -234,6 +234,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if err := srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("proxy: shutdown: %w", err)
 	}
+	// Stop the approval store's background cleanup goroutine and
+	// unblock any watchExpiry goroutines waiting on pending approvals.
+	s.approvals.Close()
 	return nil
 }
 

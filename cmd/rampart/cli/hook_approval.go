@@ -137,6 +137,14 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 		return hookAsk
 	}
 
+	// Guard against a serve bug returning 201 with an empty ID — polling
+	// /v1/approvals/ (no ID) would spin silently for the full timeout.
+	if created.ID == "" {
+		c.logger.Error("hook: server returned 201 with empty approval ID, falling back to native prompt")
+		fmt.Fprintf(os.Stderr, "⚠ Rampart serve returned empty approval ID, falling back to native prompt\n")
+		return hookAsk
+	}
+
 	// Print waiting message
 	fmt.Fprintf(os.Stderr, "⏳ Approval required — approve via dashboard (%s/dashboard/) or `rampart watch`\n", c.serveURL)
 	fmt.Fprintf(os.Stderr, "   Approval ID: %s\n", created.ID)
@@ -175,6 +183,20 @@ func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, tim
 			resp, err := client.Do(req)
 			if err != nil {
 				c.logger.Debug("hook: poll error", "error", err)
+				continue
+			}
+
+			// Non-2xx status codes (404, 500, etc.) mean the approval is
+			// gone or the server is broken — don't spin silently until timeout.
+			if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
+				resp.Body.Close()
+				fmt.Fprintf(os.Stderr, "⚠ Approval %s no longer exists (status %d) — denying\n", id, resp.StatusCode)
+				c.logger.Warn("hook: approval gone during poll, denying", "id", id, "status", resp.StatusCode)
+				return hookDeny
+			}
+			if resp.StatusCode >= 500 {
+				resp.Body.Close()
+				c.logger.Warn("hook: server error during poll, retrying", "id", id, "status", resp.StatusCode)
 				continue
 			}
 
