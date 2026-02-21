@@ -253,9 +253,10 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 }
 
 func resolveExplainPolicyPath(cmd *cobra.Command, configPath string) (string, error) {
-	explicit := cmd.Flags().Changed("config")
 	candidate := strings.TrimSpace(configPath)
-	if explicit {
+
+	// Explicit --config flag always wins.
+	if cmd.Flags().Changed("config") {
 		if candidate == "" {
 			return "", fmt.Errorf("policy: --config cannot be empty")
 		}
@@ -268,6 +269,16 @@ func resolveExplainPolicyPath(cmd *cobra.Command, configPath string) (string, er
 		return candidate, nil
 	}
 
+	// If configPath was set programmatically to a non-default path that exists
+	// on disk (e.g. in tests or via opts struct), use it directly rather than
+	// triggering auto-discovery.
+	if candidate != "" && candidate != "rampart.yaml" {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+
+	// Auto-discover: prefer ~/.rampart/policies/standard.yaml, then cwd rampart.yaml.
 	home, err := os.UserHomeDir()
 	if err == nil {
 		standardPath := filepath.Join(home, ".rampart", "policies", "standard.yaml")
