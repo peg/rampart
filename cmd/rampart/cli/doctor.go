@@ -457,15 +457,15 @@ func doctorHooks(emit emitFn) int {
 				if count > 0 {
 					emit("Hooks", "ok", fmt.Sprintf("Claude Code (%d matchers in settings.json)", count))
 				} else {
-					emit("Hooks", "fail", "Claude Code (no Rampart hooks in settings.json)")
+					emit("Hooks", "fail", fmt.Sprintf("Claude Code hook not installed - expected hook in %s\n  Run: rampart setup claude-code", claudeSettingsPath))
 					issues++
 				}
 			} else {
-				emit("Hooks", "fail", "Claude Code (invalid settings.json)")
+				emit("Hooks", "fail", fmt.Sprintf("Claude Code settings invalid at %s\n  Run: rampart setup claude-code", claudeSettingsPath))
 				issues++
 			}
 		} else {
-			emit("Hooks", "fail", "Claude Code (no settings.json found)")
+			emit("Hooks", "fail", fmt.Sprintf("Claude Code hook not installed - expected hook in %s\n  Run: rampart setup claude-code", claudeSettingsPath))
 			issues++
 		}
 	}
@@ -484,11 +484,11 @@ func doctorHooks(emit emitFn) int {
 			if hookCount > 0 {
 				emit("Hooks", "ok", fmt.Sprintf("Cline (%d hook scripts)", hookCount))
 			} else {
-				emit("Hooks", "fail", "Cline (no Rampart hooks found)")
+				emit("Hooks", "fail", fmt.Sprintf("Cline hook not installed - expected Rampart hook scripts in %s\n  Run: rampart setup cline", clineDir))
 				issues++
 			}
 		} else {
-			emit("Hooks", "fail", "Cline (no Hooks directory found)")
+			emit("Hooks", "fail", fmt.Sprintf("Cline hook not installed - expected Rampart hook scripts in %s\n  Run: rampart setup cline", clineDir))
 			issues++
 		}
 	}

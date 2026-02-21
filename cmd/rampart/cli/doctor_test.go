@@ -17,11 +17,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
-
 
 func TestRunDoctor(t *testing.T) {
 	var buf bytes.Buffer
@@ -158,4 +159,43 @@ func TestDoctorToken_Missing(t *testing.T) {
 	// With empty env var, will fall through to persisted token check.
 	// Just verify no panic.
 	_, _ = doctorToken(emit)
+}
+
+func TestDoctorHooks_PathHints(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	claudeDir := filepath.Join(home, ".claude")
+	requireNoErr(t, os.MkdirAll(claudeDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"hooks":{}}`), 0o644))
+
+	clineHooksDir := filepath.Join(home, "Documents", "Cline", "Hooks")
+	requireNoErr(t, os.MkdirAll(clineHooksDir, 0o755))
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	issues := doctorHooks(emit)
+	if issues != 2 {
+		t.Fatalf("expected 2 issues, got %d (%+v)", issues, results)
+	}
+
+	out := ""
+	for _, r := range results {
+		out += r.Message + "\n"
+	}
+	if !strings.Contains(out, filepath.Join(home, ".claude", "settings.json")) {
+		t.Fatalf("expected Claude settings path in output, got: %s", out)
+	}
+	if !strings.Contains(out, filepath.Join(home, "Documents", "Cline", "Hooks")) {
+		t.Fatalf("expected Cline hooks path in output, got: %s", out)
+	}
+}
+
+func requireNoErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
