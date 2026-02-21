@@ -226,6 +226,32 @@ policies:
 	}
 }
 
+func TestLint_DefaultActionAllowWarning(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: test
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm *"]
+        message: blocked
+`)
+	result := LintPolicyFile(path)
+	found := false
+	for _, f := range result.Findings {
+		if f.Severity == LintWarning && strings.Contains(f.Message, `default_action is "allow"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected default_action allow warning, findings: %v", result.Findings)
+	}
+}
+
 func TestLint_NoPolicies(t *testing.T) {
 	path := writeTempPolicy(t, `
 version: "1"

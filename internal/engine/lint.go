@@ -161,6 +161,12 @@ func LintPolicyFile(path string) LintResult {
 	// Check default_action.
 	if cfg.DefaultAction == "" {
 		result.add(LintFinding{File: filename, Severity: LintInfo, Message: "default_action not explicitly set (implicit deny)"})
+	} else if strings.EqualFold(cfg.DefaultAction, "allow") {
+		result.add(LintFinding{
+			File:     filename,
+			Severity: LintWarning,
+			Message:  `default_action is "allow" - tool calls not matched by any policy will be permitted. Consider using default_action: deny with explicit allow rules for stronger security.`,
+		})
 	}
 
 	// Check policies array.

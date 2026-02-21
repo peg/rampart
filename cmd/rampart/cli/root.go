@@ -102,6 +102,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(newSetupCmd(opts))
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newStatusCmd())
+	cmd.AddCommand(newTokenShowCmd())
 	cmd.AddCommand(newTestCmd(opts))
 	cmd.AddCommand(newQuickstartCmd())
 	cmd.AddCommand(newUpgradeCmd(opts))
