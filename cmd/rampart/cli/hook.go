@@ -360,9 +360,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					_, _ = auditFile.Write(line)
 				}
 
+				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
-					"if an operation is restricted, report it to the user and stop."
+					"if an operation is restricted, report it to the user and stop.\n\n" +
+					"To diagnose: run `" + explainCmd + "` to see which policy applies, " +
+					"or `rampart watch` to view the live audit log. " +
+					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
+					"see https://rampart.sh/docs/exceptions for guidance."
 				out := hookOutput{
 					HookSpecificOutput: &hookDecision{
 						HookEventName:     "PostToolUseFailure",

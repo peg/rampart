@@ -425,6 +425,35 @@ policies:
             - "eyJ[a-zA-Z0-9_-]+\\.eyJ[a-zA-Z0-9_-]+"
         message: "Sensitive credential detected in response"
 
+  - name: watch-prompt-injection
+    description: "Detect prompt injection attempts in tool responses — logs suspicious patterns for review"
+    match:
+      tool: ["fetch", "web_search", "read", "exec", "mcp"]
+    rules:
+        # High-confidence injection markers — log for review (action: watch, not deny, to avoid false positives)
+      - action: watch
+        when:
+          response_matches:
+            # Classic instruction override attempts
+            - "(?i)ignore (all |your |previous |prior )?instructions"
+            - "(?i)disregard (all |your |previous |prior )?(instructions|rules|guidelines)"
+            - "(?i)forget (all |your |previous |prior )?instructions"
+            # Role/persona hijack
+            - "(?i)you are now (a|an) "
+            - "(?i)your new (instructions|role|purpose|task) (is|are)"
+            - "(?i)your real instructions"
+            - "(?i)new persona:"
+            # System prompt injection — model-specific special tokens
+            - "(?i)<\\|im_start\\|>system"
+            - "(?i)<\\|system\\|>"
+            - "(?i)\\[SYSTEM\\]"
+            - "(?i)###\\s*(INSTRUCTIONS|SYSTEM|NEW PROMPT)###"
+            - "(?i)---BEGIN (SYSTEM |NEW )?(PROMPT|INSTRUCTIONS)---"
+            # Explicit exfiltration instructions embedded in content
+            - "(?i)(send|POST|exfiltrate|transmit) (this|the following|these|it) to (https?://|the server)"
+            - "(?i)leak the (following|contents|file)"
+        message: "Possible prompt injection detected in tool response — logged for review"
+
 # ---------------------------------------------------------------------------
 # APPROVAL EXAMPLES (uncomment and customize)
 # ---------------------------------------------------------------------------
