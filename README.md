@@ -48,39 +48,7 @@ Once running, every command Claude executes goes through Rampart's policy engine
 
 ## How it works
 
-```mermaid
-graph LR
-    subgraph "AI Agents"
-        CC[Claude Code]
-        CL[Cline]
-        OC[OpenClaw]
-        CX[Codex]
-        O[Others]
-    end
-
-    CC & CL --> H[Native Hooks]
-    OC --> S[Shell Shim]
-    CX --> P[LD_PRELOAD]
-    O --> M[MCP Proxy]
-
-    H & S & P & M --> PE[YAML Policy Eval<br/>~20μs]
-
-    PE --> AU[📋 Hash-Chained Audit<br/>Syslog · CEF · Webhooks]
-
-    AU --> PASS[✅ Execute]
-    AU --> BLOCK[❌ Blocked]
-    AU --> APR[👤 Approval]
-
-    PE -. "ambiguous ⚠️" .-> SB["⚡ rampart-verify<br/>(optional sidecar)<br/>gpt-4o-mini · Haiku · Ollama"]
-    SB -. allow/deny .-> PE
-
-    style PE fill:#238636,stroke:#fff,color:#fff
-    style AU fill:#1f6feb,stroke:#fff,color:#fff
-    style BLOCK fill:#da3633,stroke:#fff,color:#fff
-    style APR fill:#d29922,stroke:#fff,color:#fff
-    style PASS fill:#238636,stroke:#fff,color:#fff
-    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
-```
+<img src="docs/architecture.svg" alt="Rampart architecture — agents flow through interception layer into policy engine, with audit trail and outcomes" width="100%">
 
 *Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions go to a hash-chained audit trail.*
 
@@ -419,7 +387,7 @@ graph LR
     D -->|Webhook| WH["Signed URL<br/>(click to approve)"]
     D -->|CLI / API| CLI["rampart approve &lt;id&gt;"]
 
-    CC -->|user responds| R[✅ Resolved]
+    CC -->|user responds| R[Resolved]
     MCP -->|via API / dashboard| R
     OC -->|via API| R
     WH -->|HMAC-verified link| R

@@ -1,0 +1,36 @@
+name: Render Diagrams
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - 'docs/architecture.d2'
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install D2
+        run: curl -fsSL https://d2lang.com/install.sh | sh -s --
+        env:
+          SHELL: /bin/bash
+
+      - name: Render architecture.svg
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          d2 --theme 200 --layout elk --pad 40 \
+            docs/architecture.d2 \
+            docs/architecture.svg
+
+      - name: Commit updated SVG
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/architecture.svg
+          git diff --staged --quiet || git commit -m "chore: re-render architecture.svg from docs/architecture.d2"
+          git push
