@@ -20,15 +20,36 @@ policies:
       - action: deny
         when:
           command_matches:
+            # Filesystem nukes
             - "rm -rf /"
             - "rm -rf ~"
             - "rm -rf /**"
             - "rm -rf ~/**"
             - ":(){ :|:& };:"
-            - "dd if=*"
-            - "mkfs*"
-            - "chmod -R 777 /"
             - "> /dev/sda"
+            # Disk/data destruction tools
+            - "dd if=*"
+            - "shred **"
+            - "wipe **"
+            - "wipefs **"
+            # Filesystem formatting
+            - "mkfs*"
+            - "mkswap **"
+            # Partition manipulation
+            - "fdisk **"
+            - "parted **"
+            - "gdisk **"
+            # Privilege escalation
+            - "pkexec **"
+            # Filesystem attribute tricks (hide files, make immutable)
+            - "chattr **"
+            # System shutdown/power
+            - "halt"
+            - "halt *"
+            - "poweroff"
+            - "poweroff *"
+            # Mass permission change
+            - "chmod -R 777 /"
         message: "Destructive command blocked"
       - action: deny
         when:
@@ -88,11 +109,34 @@ policies:
       - action: deny
         when:
           path_matches:
+            # Cloud credentials
             - "**/.aws/credentials"
+            - "**/.aws/config"
+            - "**/.azure/accessTokens.json"
+            - "**/.azure/azureProfile.json"
+            - "**/.config/gcloud/application_default_credentials.json"
+            - "**/.config/gcloud/credentials.db"
+            - "**/.config/gcloud/legacy_credentials/**"
+            # Container / orchestration
+            - "**/.kube/config"
+            - "**/.docker/config.json"
+            # Token / secrets files
             - "**/.env"
+            - "**/.envrc"
             - "**/.netrc"
             - "**/token*"
             - "**/.git-credentials"
+            - "**/.vault-token"
+            - "**/.npmrc"
+            - "**/.pypirc"
+            - "**/.terraform.d/credentials.tfrc.json"
+            # GPG / keyring
+            - "**/.gnupg/**"
+            # Generic secrets dirs
+            - "**/.credentials/**"
+            - "**/.secrets/**"
+            - "**/.keys/**"
+            - "**/.pki/**"
         message: "Credential file access blocked"
 
   - name: block-credential-commands
@@ -102,37 +146,53 @@ policies:
       - action: deny
         when:
           command_matches:
+            # SSH keys
             - "cat **/.ssh/**"
-            - "cat **/.aws/**"
-            - "cat **/.env"
-            - "cat **/.netrc"
-            - "cat **/.git-credentials"
             - "head **/.ssh/**"
             - "tail **/.ssh/**"
             - "less **/.ssh/**"
             - "more **/.ssh/**"
             - "base64 **/.ssh/**"
-            - "base64 **/.aws/**"
             - "cp **/.ssh/**"
-            - "cp **/.aws/**"
-            # Catch-all: any command referencing SSH private keys or AWS creds by path,
-            # regardless of tool (ssh-keygen, openssl, strings, xxd, etc.)
             - "**/.ssh/id_*"
+            # AWS / cloud creds
+            - "cat **/.aws/**"
+            - "base64 **/.aws/**"
+            - "cp **/.aws/**"
             - "**/.aws/credentials"
             - "**/.aws/config"
-            # /etc sensitive files — catch-all covers appended shell operators
-            # (2>&1, pipes, etc). Redirect edge case (> /tmp/out) not caught here
-            # but response scanner (block-credential-leaks) covers exfiltration.
+            - "**/.azure/accessTokens.json"
+            - "**/.config/gcloud/application_default_credentials.json"
+            # Container / orchestration
+            - "cat **/.kube/config"
+            - "cat **/.docker/config.json"
+            - "**/.kube/config"
+            - "**/.docker/config.json"
+            # Token / secrets files
+            - "cat **/.env"
+            - "cat **/.envrc"
+            - "cat **/.netrc"
+            - "cat **/.git-credentials"
+            - "cat **/.vault-token"
+            - "cat **/.npmrc"
+            - "cat **/.pypirc"
+            - "cat **/.terraform.d/credentials.tfrc.json"
+            - "**/.vault-token"
+            - "**/.terraform.d/credentials.tfrc.json"
+            # GPG keyring
+            - "**/.gnupg/**"
+            # /etc sensitive files
             - "**/etc/shadow*"
             - "**/etc/gshadow*"
             - "**/etc/master.passwd*"
             - "**/etc/sudoers*"
-            # /etc/passwd is world-readable by design; only block explicit dumps
             - "cat /etc/passwd"
+            # Shell history
             - "cat **/.bash_history"
             - "cat **/.zsh_history"
             - "cat **/.python_history"
             - "cat **/.*_history"
+            # Process environment (can contain secrets)
             - "cat /proc/**/environ"
           command_not_matches:
             # Allow .pub files — public keys are not sensitive.
@@ -146,17 +206,63 @@ policies:
       - action: deny
         when:
           path_matches:
+            # System paths
             - "/etc/**"
             - "/usr/**"
             - "/bin/**"
             - "/sbin/**"
+            # Credentials and keys
             - "**/.ssh/**"
             - "**/.aws/**"
+            - "**/.gnupg/**"
+            # Shell configs (often contain secrets or PATH manipulation)
             - "**/.bashrc"
             - "**/.bash_profile"
+            - "**/.bash_login"
+            - "**/.bash_logout"
             - "**/.zshrc"
+            - "**/.zprofile"
+            - "**/.zshenv"
+            - "**/.zlogin"
+            - "**/.zlogout"
             - "**/.profile"
+            - "**/.config/fish/**"
+            # direnv environment files (frequently hold API keys)
+            - "**/.envrc"
+            - "**/.env"
         message: "Write to sensitive path blocked"
+
+  - name: block-browser-data
+    match:
+      tool: ["read", "write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            # Browser profile directories contain saved passwords, cookies, session tokens
+            - "**/.config/google-chrome/**"
+            - "**/.config/chromium/**"
+            - "**/.mozilla/firefox/**"
+            - "**/.config/microsoft-edge/**"
+            - "**/.config/BraveSoftware/**"
+        message: "Browser profile access blocked (contains saved passwords and session tokens)"
+
+  - name: block-browser-data-exec
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "cat **/.config/google-chrome/**"
+            - "cat **/.config/chromium/**"
+            - "cat **/.mozilla/firefox/**"
+            - "cat **/.config/microsoft-edge/**"
+            - "cat **/.config/BraveSoftware/**"
+            - "cp **/.config/google-chrome/**"
+            - "cp **/.config/chromium/**"
+            - "cp **/.mozilla/firefox/**"
+        message: "Browser profile access blocked (contains saved passwords and session tokens)"
 
   - name: block-exfil-domains
     match:
