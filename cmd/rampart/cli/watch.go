@@ -40,6 +40,10 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 		Use:   "watch",
 		Short: "Live TUI dashboard for audit decisions",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			resolvedServeURL, resolvedServeToken, err := resolveWatchServeConfig(cmd, serveURL, serveToken)
+			if err != nil {
+				return err
+			}
 			resolvedDir, err := expandHome(auditFile)
 			if err != nil {
 				return err
@@ -63,8 +67,8 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 				Decision:   decision,
 				Tool:       tool,
 				Out:        cmd.OutOrStdout(),
-				ServeURL:   serveURL,
-				ServeToken: serveToken,
+				ServeURL:   resolvedServeURL,
+				ServeToken: resolvedServeToken,
 			})
 		},
 	}
@@ -75,10 +79,36 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "all", "Filter to a single agent in view")
 	cmd.Flags().StringVar(&decision, "decision", "", "Filter by decision (allow, deny, log, webhook)")
 	cmd.Flags().StringVar(&tool, "tool", "", "Filter by tool name (e.g., exec, read, write)")
-	cmd.Flags().StringVar(&serveURL, "serve-url", os.Getenv("RAMPART_SERVE_URL"), "Serve API URL for interactive approvals")
-	cmd.Flags().StringVar(&serveToken, "serve-token", os.Getenv("RAMPART_TOKEN"), "Bearer token for serve API")
+	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Serve API URL for interactive approvals")
+	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Bearer token for serve API")
 
 	return cmd
+}
+
+func resolveWatchServeConfig(cmd *cobra.Command, serveURL, serveToken string) (string, string, error) {
+	resolvedURL := strings.TrimSpace(serveURL)
+	resolvedToken := strings.TrimSpace(serveToken)
+	errW := cmd.ErrOrStderr()
+
+	if !cmd.Flags().Changed("serve-url") && resolvedURL == "" {
+		if envURL := strings.TrimSpace(os.Getenv("RAMPART_SERVE_URL")); envURL != "" {
+			resolvedURL = envURL
+		} else {
+			resolvedURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
+			fmt.Fprintf(errW, "Note: using auto-discovered serve URL %s\n", resolvedURL)
+		}
+	}
+
+	if !cmd.Flags().Changed("serve-token") && resolvedToken == "" {
+		if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
+			resolvedToken = envToken
+		} else if tok, err := readPersistedToken(); err == nil && tok != "" {
+			resolvedToken = tok
+			fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")
+		}
+	}
+
+	return resolvedURL, resolvedToken, nil
 }
 
 // latestAuditFile returns the most recently modified *.jsonl file in dir.

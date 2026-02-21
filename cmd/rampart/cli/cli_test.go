@@ -35,6 +35,12 @@ func TestVersionCommand(t *testing.T) {
 	assert.Contains(t, stdout, "rampart "+build.Version)
 }
 
+func TestVersionFlag(t *testing.T) {
+	stdout, _, err := runCLI(t, "--version")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "rampart "+build.Version)
+}
+
 func TestInitCreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

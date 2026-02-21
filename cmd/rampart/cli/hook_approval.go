@@ -24,6 +24,7 @@ type hookApprovalClient struct {
 	token          string
 	logger         *slog.Logger
 	autoDiscovered bool // true when serve URL was auto-discovered, not explicitly set
+	errWriter      io.Writer
 }
 
 // createApprovalRequest is the JSON body POSTed to POST /v1/approvals.
@@ -90,13 +91,13 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 		// falling back to Claude Code's native prompt — Rampart should fail closed.
 		if ctx.Err() != nil {
 			c.logger.Debug("hook: context cancelled during approval create, denying", "error", err)
-			fmt.Fprintf(os.Stderr, "⚠ Approval cancelled — denying\n")
+			fmt.Fprintf(c.stderrWriter(), "⚠ Approval cancelled — denying\n")
 			return hookDeny
 		}
+		fmt.Fprintf(c.stderrWriter(), "WARNING: rampart serve unreachable at %s — running without policy enforcement\n", c.serveURL)
 		if c.autoDiscovered {
 			c.logger.Debug("hook: auto-discovered serve unreachable, falling back to hookAsk", "url", c.serveURL, "error", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "⚠ Rampart serve unreachable (%s), falling back to native prompt\n", c.serveURL)
 			c.logger.Warn("hook: serve unreachable, falling back to hookAsk", "url", c.serveURL, "error", err)
 		}
 		return hookAsk
@@ -127,7 +128,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		c.logger.Error("hook: create approval failed", "status", resp.StatusCode, "body", string(respBody))
-		fmt.Fprintf(os.Stderr, "⚠ Rampart serve returned %d, falling back to native prompt\n", resp.StatusCode)
+		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned %d, falling back to native prompt\n", resp.StatusCode)
 		return hookAsk
 	}
 
@@ -141,13 +142,13 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	// /v1/approvals/ (no ID) would spin silently for the full timeout.
 	if created.ID == "" {
 		c.logger.Error("hook: server returned 201 with empty approval ID, falling back to native prompt")
-		fmt.Fprintf(os.Stderr, "⚠ Rampart serve returned empty approval ID, falling back to native prompt\n")
+		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned empty approval ID, falling back to native prompt\n")
 		return hookAsk
 	}
 
 	// Print waiting message
-	fmt.Fprintf(os.Stderr, "⏳ Approval required — approve via dashboard (%s/dashboard/) or `rampart watch`\n", c.serveURL)
-	fmt.Fprintf(os.Stderr, "   Approval ID: %s\n", created.ID)
+	fmt.Fprintf(c.stderrWriter(), "⏳ Approval required — approve via dashboard (%s/dashboard/) or `rampart watch`\n", c.serveURL)
+	fmt.Fprintf(c.stderrWriter(), "   Approval ID: %s\n", created.ID)
 
 	// Poll until resolved
 	return c.pollApprovalCtx(ctx, created.ID, timeout)
@@ -168,10 +169,10 @@ func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, tim
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Fprintf(os.Stderr, "⚠ Approval cancelled\n")
+			fmt.Fprintf(c.stderrWriter(), "⚠ Approval cancelled\n")
 			return hookDeny
 		case <-deadline:
-			fmt.Fprintf(os.Stderr, "⏰ Approval timed out — no response received within %s\n", timeout)
+			fmt.Fprintf(c.stderrWriter(), "⏰ Approval timed out — no response received within %s\n", timeout)
 			return hookDeny
 		case <-ticker.C:
 			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/approvals/%s", c.serveURL, id), nil)
@@ -190,7 +191,7 @@ func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, tim
 			// gone or the server is broken — don't spin silently until timeout.
 			if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
 				resp.Body.Close()
-				fmt.Fprintf(os.Stderr, "⚠ Approval %s no longer exists (status %d) — denying\n", id, resp.StatusCode)
+				fmt.Fprintf(c.stderrWriter(), "⚠ Approval %s no longer exists (status %d) — denying\n", id, resp.StatusCode)
 				c.logger.Warn("hook: approval gone during poll, denying", "id", id, "status", resp.StatusCode)
 				return hookDeny
 			}
@@ -209,16 +210,23 @@ func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, tim
 
 			switch status.Status {
 			case "approved":
-				fmt.Fprintf(os.Stderr, "✅ Approved\n")
+				fmt.Fprintf(c.stderrWriter(), "✅ Approved\n")
 				return hookAllow
 			case "denied":
-				fmt.Fprintf(os.Stderr, "❌ Denied\n")
+				fmt.Fprintf(c.stderrWriter(), "❌ Denied\n")
 				return hookDeny
 			case "expired":
-				fmt.Fprintf(os.Stderr, "⏰ Expired\n")
+				fmt.Fprintf(c.stderrWriter(), "⏰ Expired\n")
 				return hookDeny
 			}
 			// still pending, continue polling
 		}
 	}
+}
+
+func (c *hookApprovalClient) stderrWriter() io.Writer {
+	if c.errWriter != nil {
+		return c.errWriter
+	}
+	return os.Stderr
 }

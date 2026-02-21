@@ -62,6 +62,7 @@ func ExitCode(err error) int {
 // NewRootCmd builds the rampart root command.
 func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Command {
 	opts := &rootOptions{}
+	var showVersion bool
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -72,6 +73,9 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if showVersion {
+				return writeVersion(cmd.OutOrStdout())
+			}
 			return cmd.Help()
 		},
 	}
@@ -81,6 +85,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 
 	cmd.PersistentFlags().StringVar(&opts.configPath, "config", "rampart.yaml", "Path to policy config file")
 	cmd.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, "Enable debug logging")
+	cmd.PersistentFlags().BoolVar(&showVersion, "version", false, "Print version information and exit")
 
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newInitCmd(opts))
