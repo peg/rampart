@@ -25,7 +25,7 @@ import (
 type LintSeverity int
 
 const (
-	LintInfo    LintSeverity = iota
+	LintInfo LintSeverity = iota
 	LintWarning
 	LintError
 )
@@ -89,6 +89,8 @@ var validConditionFields = map[string]bool{
 	"response_not_matches": true,
 	"session_matches":      true,
 	"session_not_matches":  true,
+	"agent_depth":          true,
+	"tool_param_matches":   true,
 	"default":              true,
 }
 
@@ -97,15 +99,15 @@ var commonFieldTypos = map[string]string{
 	"command_match":    "command_matches",
 	"commands_match":   "command_matches",
 	"commands_matches": "command_matches",
-	"path_match":      "path_matches",
-	"paths_match":     "path_matches",
-	"paths_matches":   "path_matches",
-	"url_match":       "url_matches",
-	"urls_match":      "url_matches",
-	"urls_matches":    "url_matches",
-	"domain_match":    "domain_matches",
-	"domains_match":   "domain_matches",
-	"domains_matches": "domain_matches",
+	"path_match":       "path_matches",
+	"paths_match":      "path_matches",
+	"paths_matches":    "path_matches",
+	"url_match":        "url_matches",
+	"urls_match":       "url_matches",
+	"urls_matches":     "url_matches",
+	"domain_match":     "domain_matches",
+	"domains_match":    "domain_matches",
+	"domains_matches":  "domain_matches",
 }
 
 // commonActionTypos maps common action typos to suggestions.

@@ -317,6 +317,7 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		Session:   "mcp-proxy",
 		Tool:      mappedTool,
 		Params:    requestData,
+		Input:     params.Arguments,
 		Timestamp: time.Now().UTC(),
 	}
 

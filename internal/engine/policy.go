@@ -252,9 +252,24 @@ type Condition struct {
 	// If a session matches any of these, the rule does not apply.
 	SessionNotMatches []string `yaml:"session_not_matches"`
 
+	// AgentDepth matches on nested sub-agent depth.
+	AgentDepth *IntRangeCondition `yaml:"agent_depth,omitempty" json:"agent_depth,omitempty"`
+
+	// ToolParamMatches matches MCP tool input parameters by glob pattern.
+	// Keys are parameter names, values are glob patterns.
+	// Condition matches if any specified parameter value matches.
+	ToolParamMatches map[string]string `yaml:"tool_param_matches,omitempty" json:"tool_param_matches,omitempty"`
+
 	// Default, when true, makes this rule match all tool calls.
 	// Use as a catch-all at the end of a rules list.
 	Default bool `yaml:"default"`
+}
+
+// IntRangeCondition matches integer values using gte/lte/eq operators.
+type IntRangeCondition struct {
+	Gte *int `yaml:"gte,omitempty"`
+	Lte *int `yaml:"lte,omitempty"`
+	Eq  *int `yaml:"eq,omitempty"`
 }
 
 // IsEmpty returns true if no conditions are specified.
@@ -274,7 +289,9 @@ func (c Condition) IsEmpty() bool {
 		len(c.ResponseMatches) == 0 &&
 		len(c.ResponseNotMatches) == 0 &&
 		len(c.SessionMatches) == 0 &&
-		len(c.SessionNotMatches) == 0
+		len(c.SessionNotMatches) == 0 &&
+		c.AgentDepth == nil &&
+		len(c.ToolParamMatches) == 0
 }
 
 // StringOrSlice handles YAML fields that can be either a single string

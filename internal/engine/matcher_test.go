@@ -220,3 +220,101 @@ func TestMatchGlob_DoubleStarLimit(t *testing.T) {
 		t.Error("three ** segments with path separators should return false")
 	}
 }
+
+func TestMatchCondition_AgentDepth(t *testing.T) {
+	gte1 := 1
+	lte2 := 2
+	eq0 := 0
+
+	tests := []struct {
+		name  string
+		cond  Condition
+		depth int
+		want  bool
+	}{
+		{
+			name:  "range match",
+			cond:  Condition{AgentDepth: &IntRangeCondition{Gte: &gte1, Lte: &lte2}},
+			depth: 2,
+			want:  true,
+		},
+		{
+			name:  "range miss",
+			cond:  Condition{AgentDepth: &IntRangeCondition{Gte: &gte1, Lte: &lte2}},
+			depth: 3,
+			want:  false,
+		},
+		{
+			name:  "eq match",
+			cond:  Condition{AgentDepth: &IntRangeCondition{Eq: &eq0}},
+			depth: 0,
+			want:  true,
+		},
+		{
+			name:  "eq miss",
+			cond:  Condition{AgentDepth: &IntRangeCondition{Eq: &eq0}},
+			depth: 1,
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := ToolCall{Tool: "agent", AgentDepth: tt.depth}
+			got := matchCondition(tt.cond, call)
+			if got != tt.want {
+				t.Fatalf("matchCondition(agent_depth, depth=%d) = %v, want %v", tt.depth, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchCondition_ToolParamMatches(t *testing.T) {
+	tests := []struct {
+		name  string
+		cond  Condition
+		input map[string]any
+		want  bool
+	}{
+		{
+			name:  "matches by param glob",
+			cond:  Condition{ToolParamMatches: map[string]string{"path": "*.md"}},
+			input: map[string]any{"path": "README.md"},
+			want:  true,
+		},
+		{
+			name:  "case insensitive",
+			cond:  Condition{ToolParamMatches: map[string]string{"path": "*.md"}},
+			input: map[string]any{"path": "readme.MD"},
+			want:  true,
+		},
+		{
+			name:  "no matching params",
+			cond:  Condition{ToolParamMatches: map[string]string{"path": "*.md"}},
+			input: map[string]any{"path": "main.go"},
+			want:  false,
+		},
+		{
+			name:  "missing param",
+			cond:  Condition{ToolParamMatches: map[string]string{"path": "*.md"}},
+			input: map[string]any{"command": "cat README.md"},
+			want:  false,
+		},
+		{
+			name:  "any param can match",
+			cond:  Condition{ToolParamMatches: map[string]string{"path": "*.md", "url": "*example.com*"}},
+			input: map[string]any{"url": "EXAMPLE.COM"},
+			want:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := ToolCall{Tool: "mcp", Input: tt.input}
+			got := matchCondition(tt.cond, call)
+			if got != tt.want {
+				t.Fatalf("matchCondition(tool_param_matches, input=%v) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -354,14 +355,20 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 
 			// Build tool call for evaluation
+			depth, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("RAMPART_AGENT_DEPTH")))
+			if parsed.Tool == "agent" {
+				depth++
+			}
 			call := engine.ToolCall{
-				ID:        audit.NewEventID(),
-				Agent:     parsed.Agent,
-				Session:   hookSession,
-				RunID:     parsed.RunID,
-				Tool:      parsed.Tool,
-				Params:    parsed.Params,
-				Timestamp: time.Now().UTC(),
+				ID:         audit.NewEventID(),
+				Agent:      parsed.Agent,
+				AgentDepth: depth,
+				Session:    hookSession,
+				RunID:      parsed.RunID,
+				Tool:       parsed.Tool,
+				Params:     parsed.Params,
+				Input:      parsed.Params,
+				Timestamp:  time.Now().UTC(),
 			}
 
 			isPostToolUse := parsed.Response != ""
