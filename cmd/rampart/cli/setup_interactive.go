@@ -62,9 +62,9 @@ func detectAgents() []agentInfo {
 			ManualCmd: "rampart mcp -- cursor",
 		},
 		{
-			Name:      "Codex",
-			HasSetup:  false,
-			ManualCmd: "rampart preload -- codex",
+			Name:     "Codex",
+			HasSetup: true,
+			SetupCmd: "codex",
 		},
 	}
 
