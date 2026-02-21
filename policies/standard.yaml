@@ -110,6 +110,11 @@ policies:
             - "base64 **/.aws/**"
             - "cp **/.ssh/**"
             - "cp **/.aws/**"
+            # Catch-all: any command referencing SSH private keys or AWS creds by path,
+            # regardless of the tool used (ssh-keygen, openssl, strings, xxd, etc.)
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.aws/config"
             - "cat /etc/shadow"
             - "cat /etc/passwd"
             - "cat /etc/gshadow"
