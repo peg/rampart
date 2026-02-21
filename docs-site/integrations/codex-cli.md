@@ -1,3 +1,8 @@
+---
+title: Securing Codex CLI
+description: "Secure Codex CLI with Rampart using LD_PRELOAD syscall interception. Block dangerous commands and log execution decisions even without native hooks."
+---
+
 # Codex CLI
 
 Codex CLI doesn't have a hook system or `$SHELL` support. Rampart uses **LD_PRELOAD** to intercept exec syscalls at the OS level — the universal fallback.

@@ -1,3 +1,8 @@
+---
+title: Upgrade
+description: "Upgrade Rampart safely with Homebrew, Go, or install script workflows. Keep policy protections current for Claude Code and other AI coding agents."
+---
+
 # Upgrade
 
 ## Check Your Version

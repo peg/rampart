@@ -1,3 +1,8 @@
+---
+title: Policy Engine
+description: "Rampart's YAML policy engine checks every AI agent tool call in microseconds. Deny, allow, log, or require approval by command, path, URL, or pattern."
+---
+
 # Policy Engine
 
 Rampart's policy engine evaluates every AI agent tool call against YAML rules in single-digit microseconds. No network calls, no external dependencies — just fast pattern matching.

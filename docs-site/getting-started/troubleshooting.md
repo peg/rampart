@@ -1,3 +1,8 @@
+---
+title: Troubleshooting
+description: "Fix common Rampart setup issues for Claude Code, Cline, OpenClaw, and CLI environments. Diagnose PATH, hooks, services, and policy connection problems."
+---
+
 # Troubleshooting
 
 Common issues and how to fix them.

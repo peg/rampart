@@ -1,3 +1,8 @@
+---
+title: Approval Dashboard
+description: "Use Rampart's approval dashboard to review and decide risky AI agent actions in real time. Approve, deny, and audit every pending command from one view."
+---
+
 # Approval Dashboard
 
 Rampart includes an embedded web dashboard for managing `require_approval` decisions. View pending approvals, approve or deny them, and review decision history — all from your browser.

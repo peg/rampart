@@ -1,4 +1,6 @@
 ---
+title: Rampart
+description: "Rampart is an open-source security policy engine for AI coding agents. Block dangerous commands, detect prompt injection, and audit every tool call."
 hide:
   - navigation
   - toc
@@ -68,6 +70,26 @@ claude
 ```
 
 That's it. Every tool call now goes through Rampart's policy engine. [Full setup guide →](getting-started/quickstart.md)
+
+## Frequently Asked Questions
+
+**Is Claude Code safe to use in --dangerously-skip-permissions mode?**  
+It can be — with guardrails. `--dangerously-skip-permissions` gives Claude Code full shell access, which is powerful but risky. Rampart provides those guardrails: every command is evaluated against your policy before it runs. [Full guide →](guides/securing-claude-code.md)
+
+**What happens if my AI agent runs a destructive command?**  
+Without Rampart: it runs. With Rampart: the command is evaluated against your policy in under 10μs. If it matches a deny rule, it's blocked before execution and logged. Claude Code receives the denial reason and explains it to you.
+
+**Can AI agents be manipulated by prompt injection?**  
+Yes — a webpage or MCP tool response can contain instructions that try to override an agent's behavior. Rampart's `watch-prompt-injection` policy monitors tool responses for these patterns and logs them for review. [Learn more →](guides/prompt-injection.md)
+
+**Does Rampart work with OpenClaw?**  
+Yes. `rampart setup openclaw` protects shell commands, and `--patch-tools` adds file access protection. [OpenClaw guide →](integrations/openclaw.md)
+
+**Will Rampart slow down my agent?**  
+Policy evaluation takes under 10 microseconds per tool call. In practice, you won't notice it.
+
+**What if I need to allow a command that's blocked?**  
+Add an allow rule to `~/.rampart/policies/standard.yaml`, or use `require_approval` so you decide per-instance rather than changing the policy.
 
 ## How It Works
 

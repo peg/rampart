@@ -1,3 +1,8 @@
+---
+title: Securing OpenClaw
+description: "Protect OpenClaw agents with Rampart guardrails for shell commands and file access. Use --patch-tools for full coverage and audit every risky action."
+---
+
 # OpenClaw
 
 For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart provides a shell shim, background service, and optional file tool patching.

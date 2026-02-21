@@ -1,3 +1,8 @@
+---
+title: CLI Commands
+description: "Reference every Rampart CLI command for setup, policy checks, auditing, MCP proxying, and integrations with Claude Code, Cline, OpenClaw, and Codex."
+---
+
 # CLI Commands
 
 Complete reference for all `rampart` commands.

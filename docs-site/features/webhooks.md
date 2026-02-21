@@ -1,3 +1,8 @@
+---
+title: Webhook Notifications
+description: "Send Rampart deny and approval events to Slack, Discord, Teams, or any webhook. Get immediate alerts when AI agents attempt risky commands or access."
+---
+
 # Webhook Notifications
 
 Get real-time alerts when Rampart blocks something. Works with Discord, Slack, Teams, or any HTTP endpoint.

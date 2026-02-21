@@ -1,3 +1,8 @@
+---
+title: Integration Guides
+description: "Find the right Rampart integration for Claude Code, Cline, Cursor, OpenClaw, Codex, and custom agents. Compare hooks, MCP proxy, wrapping, and preload."
+---
+
 # Integration Guides
 
 Rampart works with every major AI agent through multiple integration methods. Choose the guide for your agent below.

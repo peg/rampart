@@ -1,3 +1,8 @@
+---
+title: Securing Python Agents
+description: "Protect Python AI agents with Rampart's HTTP preflight API. Check commands before execution, enforce policy decisions, and log every tool action."
+---
+
 # Python Agents
 
 Integrate Rampart with any Python agent framework — LangChain, CrewAI, AutoGen, or custom code.

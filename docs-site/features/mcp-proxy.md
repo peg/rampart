@@ -1,3 +1,8 @@
+---
+title: MCP Proxy
+description: "Secure MCP tools with Rampart's transparent proxy. Enforce policy on every tools/call request so AI agents can use MCP servers without unchecked access."
+---
+
 # MCP Proxy
 
 ## What is MCP?

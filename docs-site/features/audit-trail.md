@@ -1,3 +1,8 @@
+---
+title: Audit Trail
+description: "Rampart logs every AI agent action to a hash-chained audit trail. Verify integrity, stream events live, and prove what commands were allowed or blocked."
+---
+
 # Audit Trail
 
 Every tool call Rampart evaluates is logged to a hash-chained JSONL audit trail. Each entry includes a SHA-256 hash of the previous entry — tamper with any record and the chain breaks.

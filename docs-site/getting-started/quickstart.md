@@ -1,3 +1,8 @@
+---
+title: Quick Start
+description: "Get Rampart protecting your AI coding agent in minutes. Install, connect Claude Code or Cline, and start blocking dangerous commands with policy checks."
+---
+
 # Quick Start
 
 !!! tip "First time?"

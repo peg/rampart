@@ -1,3 +1,8 @@
+---
+title: Semantic Verification
+description: "Rampart adds optional LLM semantic verification for ambiguous AI agent commands. Combine fast rule matching with intent checks for safer automation."
+---
+
 # Semantic Verification
 
 Pattern matching handles 95%+ of decisions instantly. For the ambiguous rest, Rampart supports LLM-based intent classification via the optional **rampart-verify** sidecar.

@@ -1,3 +1,8 @@
+---
+title: Uninstall
+description: "Uninstall Rampart cleanly by removing agent hooks, stopping services, and deleting local state. Restore Claude Code, Cline, or OpenClaw to original behavior."
+---
+
 # Uninstall
 
 ## 1. Remove Agent Hooks

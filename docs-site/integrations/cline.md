@@ -1,3 +1,8 @@
+---
+title: Securing Cline
+description: "Secure Cline with Rampart native hooks. Evaluate shell commands and file operations before execution, block risky behavior, and keep full audit visibility."
+---
+
 # Cline
 
 [Cline](https://github.com/cline/cline) is an AI coding assistant for VS Code. Rampart integrates via Cline's native hook system — every command, file read, and file write gets evaluated before execution.

@@ -114,6 +114,9 @@ nav:
     - Troubleshooting: getting-started/troubleshooting.md
     - Upgrade: getting-started/upgrade.md
     - Uninstall: getting-started/uninstall.md
+  - Security Guides:
+    - Securing Claude Code: guides/securing-claude-code.md
+    - Prompt Injection Protection: guides/prompt-injection.md
   - Integration Guides:
     - Overview: integrations/index.md
     - Claude Code: integrations/claude-code.md

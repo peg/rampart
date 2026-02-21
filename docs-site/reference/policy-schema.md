@@ -1,3 +1,8 @@
+---
+title: Policy Schema
+description: "Learn the Rampart YAML policy schema for exec, read, write, fetch, and notify rules. Build precise AI agent security guardrails with clear examples."
+---
+
 # Policy Schema
 
 Complete YAML reference for Rampart policy files.
