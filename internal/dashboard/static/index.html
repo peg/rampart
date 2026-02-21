@@ -598,6 +598,14 @@ function startSSE(){
       if(msg.type==="audit"){
         prependAuditEvent(msg.event);
       }
+      if(msg.type==="audit_batch"){
+        // Bulk-resolve produced multiple audit events — reload History rather
+        // than flooding SSE with N individual events.
+        histTabLoaded=false;
+        if(document.getElementById('tab-history').classList.contains('active')){
+          loadHistoryTab();
+        }
+      }
       if(msg.type==="approvals"){
         poll();
       }

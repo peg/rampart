@@ -1048,12 +1048,16 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 			if err := s.sink.Write(ev); err != nil {
 				s.logger.Error("proxy: audit write for bulk-resolve failed", "error", err)
 			}
-			s.broadcastSSE(map[string]any{"type": "audit", "event": ev})
+			// Individual audit SSE events intentionally omitted here —
+			// a single audit_batch broadcast fires after the loop instead.
 		}
 	}
 
 	if resolved > 0 {
+		// Broadcast a single audit_batch event instead of N individual audit
+		// events to avoid flooding the SSE channel on large bulk-resolves.
 		s.broadcastSSE(map[string]any{"type": "approvals"})
+		s.broadcastSSE(map[string]any{"type": "audit_batch", "run_id": req.RunID})
 	}
 
 	s.logger.Info("proxy: bulk-resolve completed",
