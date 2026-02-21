@@ -2,7 +2,7 @@
 
 # 🛡️ Rampart
 
-**See everything your AI agent does. Block the dangerous stuff.**
+**The security layer for AI coding agents.**
 
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -14,15 +14,11 @@
 
 ---
 
-Rampart is a runtime policy engine for AI coding agents. Every tool call — bash commands, file reads, file writes, HTTP fetches — is evaluated against your YAML policies before it executes. Dangerous calls are blocked in microseconds. Everything is written to a hash-chained audit trail. Ambiguous calls can be held for human approval.
+Claude Code's `--dangerously-skip-permissions` mode — and similar autonomous modes in Cursor, Cline, and Codex — give agents unrestricted shell access. Rampart sits between the agent and your system: every command, file access, and network request is evaluated against your YAML policy before it executes. Dangerous commands are blocked in microseconds. Everything is logged.
 
-It works in `--dangerously-skip-permissions` mode. [Full setup guide →](https://docs.rampart.sh/getting-started/quickstart/)
-
-### Get started in one command
-
+One command to get protected:
 ```bash
-# Install and set up in one command:
-curl -fsSL https://rampart.sh/install | bash
+rampart setup claude-code
 ```
 
 `rampart quickstart` auto-detects Claude Code, Cursor, or Windsurf, installs `rampart serve` as a boot service, configures hooks, and runs a health check. Done.

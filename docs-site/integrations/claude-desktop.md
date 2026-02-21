@@ -1,3 +1,8 @@
+---
+title: Securing Claude Desktop
+description: "Protect Claude Desktop MCP tool access with Rampart. Enforce guardrails on filesystem and API actions, and reduce prompt injection-driven exfiltration."
+---
+
 # Claude Desktop
 
 Claude Desktop uses MCP servers for filesystem access, databases, APIs, and more. Rampart protects all of them with a single proxy layer.

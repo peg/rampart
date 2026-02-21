@@ -1,3 +1,8 @@
+---
+title: Installation
+description: "Install Rampart on macOS or Linux with Homebrew, Go, or script methods. Get the security layer needed to control and audit AI agent tool actions."
+---
+
 # Installation
 
 ## Homebrew (macOS & Linux)

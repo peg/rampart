@@ -1,3 +1,8 @@
+---
+title: Architecture
+description: "Understand Rampart's architecture: hooks and proxies feed a local policy engine that evaluates AI agent tool calls, then writes tamper-evident audit logs."
+---
+
 # Architecture
 
 ## Overview

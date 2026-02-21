@@ -1,3 +1,8 @@
+---
+title: Securing Cursor
+description: "Secure Cursor MCP integrations with Rampart's proxy layer. Enforce command and tool policies before execution to reduce prompt injection risk."
+---
+
 # Cursor
 
 Cursor uses MCP servers for tool access. Rampart sits between Cursor and the MCP server as a transparent proxy.

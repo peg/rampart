@@ -1,3 +1,8 @@
+---
+title: Threat Model
+description: "See what Rampart protects against: hallucinated destructive commands, prompt injection, and accidental secret access, plus clear non-goals and trust boundaries."
+---
+
 # Threat Model
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.

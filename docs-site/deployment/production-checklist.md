@@ -1,3 +1,8 @@
+---
+title: Production Checklist
+description: "Use Rampart's production checklist to harden AI agent deployments with user separation, monitoring, alerting, and policy controls before unsupervised runs."
+---
+
 # Production Checklist
 
 Before running AI agents unsupervised in production, verify each item.

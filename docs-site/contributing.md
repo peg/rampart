@@ -1,3 +1,8 @@
+---
+title: Contributing
+description: "Contribute to Rampart with a clean workflow for issues, branches, tests, and pull requests. Learn how to ship secure AI agent guardrail improvements fast."
+---
+
 # Contributing
 
 Contributions are welcome! Please open an issue first for anything beyond small fixes — we want to discuss the approach before you invest time.

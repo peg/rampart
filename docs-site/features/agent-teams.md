@@ -1,3 +1,8 @@
+---
+title: Agent Team Oversight
+description: "Rampart groups sub-agent approvals by shared run ID so you can supervise agent teams safely. Review and approve parallel Claude Code or Cline actions together."
+---
+
 # Agent Team Oversight
 
 When you run Claude Code with multiple sub-agents — or any orchestrator spawning parallel workers — every agent in the session shares the same **run ID**. Rampart groups their pending approvals together so you can review and approve the whole team in one click.
