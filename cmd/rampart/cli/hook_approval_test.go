@@ -84,15 +84,20 @@ func TestHookApprovalClient_Denied(t *testing.T) {
 }
 
 func TestHookApprovalClient_Unreachable(t *testing.T) {
+	var errBuf bytes.Buffer
 	client := &hookApprovalClient{
-		serveURL: "http://127.0.0.1:19999", // nothing listening
-		token:    "test-token",
-		logger:   testLogger(),
+		serveURL:  "http://127.0.0.1:19999", // nothing listening
+		token:     "test-token",
+		logger:    testLogger(),
+		errWriter: &errBuf,
 	}
 
 	result := client.requestApproval("exec", "echo hi", "claude-code", "/tmp", "", "test", 2*time.Second)
 	if result != hookAsk {
 		t.Fatalf("expected hookAsk (fallback), got %d", result)
+	}
+	if !strings.Contains(errBuf.String(), "WARNING: rampart serve unreachable at") {
+		t.Fatalf("expected unreachable warning, got: %s", errBuf.String())
 	}
 }
 
@@ -153,9 +158,9 @@ func TestHookApprovalClient_AutoDiscoverApproved(t *testing.T) {
 }
 
 func TestHookApprovalClient_AutoDiscoverUnreachableSilent(t *testing.T) {
-	// When auto-discovered and unreachable, should NOT print warning to stderr,
-	// and should log at DEBUG level, not WARN.
+	// Auto-discovered URLs still emit the fail-closed warning, but logs remain DEBUG.
 	var logBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	client := &hookApprovalClient{
@@ -163,6 +168,7 @@ func TestHookApprovalClient_AutoDiscoverUnreachableSilent(t *testing.T) {
 		token:          "test-token",
 		logger:         logger,
 		autoDiscovered: true,
+		errWriter:      &errBuf,
 	}
 
 	result := client.requestApproval("exec", "echo hi", "claude-code", "/tmp", "", "test", 5*time.Second)
@@ -174,6 +180,9 @@ func TestHookApprovalClient_AutoDiscoverUnreachableSilent(t *testing.T) {
 	// Should have DEBUG-level log about auto-discovered serve being unreachable.
 	if !strings.Contains(logOutput, "auto-discovered serve unreachable") {
 		t.Fatalf("expected debug log about auto-discovered serve, got: %s", logOutput)
+	}
+	if !strings.Contains(errBuf.String(), "WARNING: rampart serve unreachable at") {
+		t.Fatalf("expected stderr warning, got: %s", errBuf.String())
 	}
 	// Should NOT have WARN-level log.
 	if strings.Contains(logOutput, "level=WARN") {

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -168,7 +169,11 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			command := args[0]
 
-			store := engine.NewFileStore(opts.configPath)
+			policyPath, err := resolveExplainPolicyPath(cmd, opts.configPath)
+			if err != nil {
+				return err
+			}
+			store := engine.NewFileStore(policyPath)
 			cfg, err := store.Load()
 			if err != nil {
 				return fmt.Errorf("policy: load config: %w", err)
@@ -245,6 +250,38 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "*", "Agent identity to evaluate")
 
 	return cmd
+}
+
+func resolveExplainPolicyPath(cmd *cobra.Command, configPath string) (string, error) {
+	explicit := cmd.Flags().Changed("config")
+	candidate := strings.TrimSpace(configPath)
+	if explicit {
+		if candidate == "" {
+			return "", fmt.Errorf("policy: --config cannot be empty")
+		}
+		if _, err := os.Stat(candidate); err != nil {
+			if os.IsNotExist(err) {
+				return "", fmt.Errorf("policy: config file not found at %s", candidate)
+			}
+			return "", fmt.Errorf("policy: check config %s: %w", candidate, err)
+		}
+		return candidate, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		standardPath := filepath.Join(home, ".rampart", "policies", "standard.yaml")
+		if _, statErr := os.Stat(standardPath); statErr == nil {
+			return standardPath, nil
+		}
+	}
+
+	cwdPath := "rampart.yaml"
+	if _, err := os.Stat(cwdPath); err == nil {
+		return cwdPath, nil
+	}
+
+	return "", fmt.Errorf("policy: no config found. Tried ~/.rampart/policies/standard.yaml and %s; pass --config <path> or run 'rampart init'", cwdPath)
 }
 
 func collectExplanations(cfg *engine.Config, call engine.ToolCall) []explanation {

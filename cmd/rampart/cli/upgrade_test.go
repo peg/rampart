@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"os"
@@ -138,6 +140,52 @@ func TestNewUpgradeCmdDryRun(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "would download") || !strings.Contains(got, "would restart rampart serve") {
 		t.Fatalf("dry-run output missing expected lines: %q", got)
+	}
+}
+
+func TestNewUpgradeCmdSuccessShowsRestartReminder(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "rampart")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+
+	archive := makeArchive(t, "rampart", []byte("new-binary"))
+	sum := sha256.Sum256(archive)
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+
+	deps := &upgradeDeps{
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.0.0", nil
+		},
+		executablePath: func() (string, error) { return exe, nil },
+		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
+			return 0, false, nil
+		},
+		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
+			if strings.HasSuffix(url, "checksums.txt") {
+				return checksums, nil
+			}
+			return archive, nil
+		},
+		pathEnv: func() string { return "" },
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"v1.1.0", "--yes", "--no-policy-update"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "✓ rampart upgraded to v1.1.0") {
+		t.Fatalf("missing success line: %q", got)
+	}
+	if !strings.Contains(got, "Reminder: restart rampart serve") {
+		t.Fatalf("missing restart reminder: %q", got)
 	}
 }
 

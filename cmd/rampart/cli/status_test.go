@@ -66,3 +66,21 @@ func TestExtractEventCommandFallback(t *testing.T) {
 		t.Errorf("expected tool name fallback, got %q", got)
 	}
 }
+
+func TestIsUnknownOrEmpty(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"", true},
+		{"unknown", true},
+		{"UNKNOWN", true},
+		{"(unknown)", true},
+		{"exec ls", false},
+	}
+	for _, tt := range tests {
+		if got := isUnknownOrEmpty(tt.input); got != tt.want {
+			t.Errorf("isUnknownOrEmpty(%q)=%v want %v", tt.input, got, tt.want)
+		}
+	}
+}

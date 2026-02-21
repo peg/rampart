@@ -15,6 +15,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"runtime"
 
 	"github.com/peg/rampart/internal/build"
@@ -26,11 +27,14 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print build and runtime version information",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "rampart %s (%s) built %s\nGo %s\n", build.Version, build.Commit, build.Date, runtime.Version())
-			if err != nil {
-				return fmt.Errorf("cli: write version output: %w", err)
-			}
-			return nil
+			return writeVersion(cmd.OutOrStdout())
 		},
 	}
+}
+
+func writeVersion(w io.Writer) error {
+	if _, err := fmt.Fprintf(w, "rampart %s (%s) built %s\nGo %s\n", build.Version, build.Commit, build.Date, runtime.Version()); err != nil {
+		return fmt.Errorf("cli: write version output: %w", err)
+	}
+	return nil
 }

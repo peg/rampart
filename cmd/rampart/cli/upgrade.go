@@ -306,6 +306,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart upgraded to %s\n", target)
+			fmt.Fprintln(cmd.OutOrStdout(), "Reminder: restart rampart serve to ensure it uses the new binary.")
 
 			// Refresh standard.yaml so security fixes reach existing users.
 			// Only updates the named profile files (standard.yaml, paranoid.yaml, yolo.yaml).

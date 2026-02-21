@@ -67,7 +67,11 @@ func runStatus(w io.Writer) error {
 		if len(lastDeny.Decision.MatchedPolicies) > 0 {
 			policy = lastDeny.Decision.MatchedPolicies[0]
 		}
-		fmt.Fprintf(w, "Last deny: %s — %s (%s)\n", ago, cmd, policy)
+		if isUnknownOrEmpty(cmd) || isUnknownOrEmpty(policy) {
+			fmt.Fprintf(w, "Last deny: %s — %s\n", ago, cmd)
+		} else {
+			fmt.Fprintf(w, "Last deny: %s — %s (%s)\n", ago, cmd, policy)
+		}
 	}
 
 	return nil
@@ -217,4 +221,9 @@ func formatAgo(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
+}
+
+func isUnknownOrEmpty(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == "" || normalized == "unknown" || normalized == "(unknown)"
 }

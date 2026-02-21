@@ -429,6 +429,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						token:          serveToken,
 						logger:         logger,
 						autoDiscovered: serveAutoDiscovered,
+						errWriter:      cmd.ErrOrStderr(),
 					}
 					command, _ := call.Params["command"].(string)
 					path := call.Path() // handles both "file_path" (Claude Code) and "path"

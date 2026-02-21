@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestDefaultParams(t *testing.T) {
@@ -134,5 +136,94 @@ policies: []
 
 	if !strings.Contains(out.String(), "valid") {
 		t.Errorf("expected valid message: %s", out.String())
+	}
+}
+
+func TestResolveExplainPolicyPath_ExplicitConfig(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "custom.yaml")
+	if err := os.WriteFile(p, []byte("version: \"1\"\npolicies: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCmd(nil, &strings.Builder{}, &strings.Builder{})
+	root.SetArgs([]string{"policy", "explain", "echo hi", "--config", p})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("expected explain to load explicit config, got: %v", err)
+	}
+}
+
+func TestResolveExplainPolicyPath_AutoDiscoverStandard(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	policiesDir := filepath.Join(home, ".rampart", "policies")
+	if err := os.MkdirAll(policiesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	std := filepath.Join(policiesDir, "standard.yaml")
+	if err := os.WriteFile(std, []byte("version: \"1\"\ndefault_action: allow\npolicies: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	got, err := resolveExplainPolicyPath(cmd, "rampart.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != std {
+		t.Fatalf("expected %s, got %s", std, got)
+	}
+}
+
+func TestResolveExplainPolicyPath_AutoDiscoverCWD(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	cwdPolicy := filepath.Join(dir, "rampart.yaml")
+	if err := os.WriteFile(cwdPolicy, []byte("version: \"1\"\ndefault_action: allow\npolicies: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	got, err := resolveExplainPolicyPath(cmd, "rampart.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "rampart.yaml" {
+		t.Fatalf("expected rampart.yaml, got %s", got)
+	}
+}
+
+func TestResolveExplainPolicyPath_NotFound(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	cmd := &cobra.Command{}
+	_, err = resolveExplainPolicyPath(cmd, "rampart.yaml")
+	if err == nil {
+		t.Fatal("expected error when no config exists")
+	}
+	if !strings.Contains(err.Error(), "no config found") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
