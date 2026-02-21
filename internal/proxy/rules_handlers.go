@@ -140,6 +140,8 @@ func (s *Server) handleDeleteAutoAllowed(w http.ResponseWriter, r *http.Request)
 		if s.engine != nil {
 			if reloadErr := s.engine.Reload(); reloadErr != nil {
 				s.logger.Error("proxy: post-change reload failed", "error", reloadErr)
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("policy removed but reload failed: %v", reloadErr))
+				return
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
@@ -185,6 +187,8 @@ func (s *Server) handleDeleteAutoAllowed(w http.ResponseWriter, r *http.Request)
 	if s.engine != nil {
 		if reloadErr := s.engine.Reload(); reloadErr != nil {
 			s.logger.Error("proxy: post-change reload failed", "error", reloadErr)
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("policy written but reload failed: %v", reloadErr))
+			return
 		}
 	}
 

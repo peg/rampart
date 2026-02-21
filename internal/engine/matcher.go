@@ -342,8 +342,7 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 				continue
 			}
 			str := fmt.Sprintf("%v", val)
-			matched, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(str))
-			if matched {
+			if MatchGlob(strings.ToLower(pattern), strings.ToLower(str)) {
 				return true, fmt.Sprintf("tool_param_matches [%s=%q]", param, pattern)
 			}
 		}
@@ -514,8 +513,7 @@ func matchCondition(cond Condition, call ToolCall) bool {
 				continue
 			}
 			str := fmt.Sprintf("%v", val)
-			m, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(str))
-			if m {
+			if MatchGlob(strings.ToLower(pattern), strings.ToLower(str)) {
 				paramMatched = true
 				break
 			}

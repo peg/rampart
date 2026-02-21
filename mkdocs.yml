@@ -133,6 +133,10 @@ nav:
     - MCP Proxy: features/mcp-proxy.md
     - Semantic Verification: features/semantic-verification.md
     - SIEM Integration: features/siem-integration.md
+  - Security Guides:
+    - Securing Claude Code: guides/securing-claude-code.md
+    - Prompt Injection Protection: guides/prompt-injection.md
+    - Install via an AI Agent: guides/agent-install.md
   - Deployment:
     - User Separation: deployment/user-separation.md
     - Production Checklist: deployment/production-checklist.md

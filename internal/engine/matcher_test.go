@@ -306,6 +306,20 @@ func TestMatchCondition_ToolParamMatches(t *testing.T) {
 			input: map[string]any{"url": "EXAMPLE.COM"},
 			want:  true,
 		},
+		{
+			// filepath.Match would fail here — * doesn't cross path separators.
+			// MatchGlob supports ** for multi-segment matching.
+			name:  "double-star path matches nested .env",
+			cond:  Condition{ToolParamMatches: map[string]string{"path": "**/.env*"}},
+			input: map[string]any{"path": "/home/user/project/.env.production"},
+			want:  true,
+		},
+		{
+			name:  "double-star does not match unrelated path",
+			cond:  Condition{ToolParamMatches: map[string]string{"path": "**/.env*"}},
+			input: map[string]any{"path": "/home/user/project/main.go"},
+			want:  false,
+		},
 	}
 
 	for _, tt := range tests {
