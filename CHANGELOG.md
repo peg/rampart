@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Stale port 18275 in `rampart hook --help` and `rampart setup` comment — both now correctly show port 9090 (matching `defaultServePort`)
+- `rampart preload` defaulted to port 19090 while `rampart serve` defaults to 9090 — they couldn't talk to each other at their defaults. Port now defaults to `defaultServePort` (9090). `RAMPART_URL` env var is also now respected and takes precedence over `--port`.
 
 ### Added
 - **`block-env-var-injection` policy** in `standard.yaml` — hard-denies env var injection with no legitimate agent use: `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `LD_AUDIT`, `PYTHONSTARTUP`, `PYTHONHOME`, `DOTNET_STARTUP_HOOKS`, `BASH_ENV`, `_JAVA_OPTIONS`, `PERL5OPT`, `GIT_EXEC_PATH`. These were previously bypassing glob rules because env-var prefixes are stripped before command matching.
