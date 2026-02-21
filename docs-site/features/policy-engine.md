@@ -9,32 +9,73 @@ Rampart's policy engine evaluates every AI agent tool call against YAML rules in
 
 ## Evaluation Flow
 
-```mermaid
-graph TD
-    TC[Tool Call] --> M{Match policies<br/>by tool type}
-    M --> R[Evaluate rules<br/>top-to-bottom]
-    R --> D{Any deny?}
-    D -->|Yes| DENY[❌ Denied]
-    D -->|No| WH{Any webhook?}
-    WH -->|Yes| WEBHOOK[🔗 Webhook Decides]
-    WH -->|No| AP{Any require_approval?}
-    AP -->|Yes| APPROVAL[👤 Pending Approval]
-    AP -->|No| L{Any log?}
-    L -->|Yes| LOG[🟡 Logged + Allowed]
-    L -->|No| A{Any allow?}
-    A -->|Yes| ALLOW[✅ Allowed]
-    A -->|No| DEF[Default Action]
-    DENY --> AU[Audit Trail]
-    WEBHOOK --> AU
-    APPROVAL --> AU
-    LOG --> AU
-    ALLOW --> AU
-    DEF --> AU
+```d2
+direction: down
 
-    style DENY fill:#da3633,stroke:#fff,color:#fff
-    style WEBHOOK fill:#1f6feb,stroke:#fff,color:#fff
-    style APPROVAL fill:#d29922,stroke:#fff,color:#fff
-    style ALLOW fill:#238636,stroke:#fff,color:#fff
+call: "Tool Call" {shape: oval}
+
+match: "Match policies
+by tool type" {shape: diamond}
+
+rules: "Evaluate rules
+top-to-bottom" {shape: diamond}
+
+deny: "Denied" {
+  style.fill: "#2d1b1b"
+  style.stroke: "#da3633"
+  style.font-color: "#f85149"
+  style.border-radius: 6
+}
+
+webhook: "Webhook" {
+  style.border-radius: 6
+}
+
+approval: "Approval" {
+  style.fill: "#2d2508"
+  style.stroke: "#d29922"
+  style.font-color: "#d29922"
+  style.border-radius: 6
+}
+
+watch: "Logged + Allowed" {
+  style.fill: "#2d2508"
+  style.stroke: "#d29922"
+  style.font-color: "#d29922"
+  style.border-radius: 6
+}
+
+allow: "Allowed" {
+  style.fill: "#1d3320"
+  style.stroke: "#2ea043"
+  style.font-color: "#3fb950"
+  style.border-radius: 6
+}
+
+default: "Default Action
+(allow or deny)" {
+  style.border-radius: 6
+  style.stroke-dash: 4
+}
+
+audit: "Audit Trail" {shape: cylinder}
+
+call -> match
+match -> rules: "policies found"
+match -> default: "no match"
+
+rules -> deny: "deny rule"
+rules -> webhook: "webhook rule"
+rules -> approval: "require_approval"
+rules -> watch: "watch rule"
+rules -> allow: "allow rule"
+
+deny -> audit
+webhook -> audit
+approval -> audit
+watch -> audit
+allow -> audit
+default -> audit
 ```
 
 ### Evaluation Order
