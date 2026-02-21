@@ -50,7 +50,7 @@ To disable the cache for a specific run, use the API directly:
 
 ```bash
 # Deny a run, preventing future auto-approvals
-curl -X POST http://localhost:18275/v1/approvals/bulk-resolve \
+curl -X POST http://localhost:9090/v1/approvals/bulk-resolve \
   -H "Authorization: Bearer $RAMPART_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"run_id": "YOUR_RUN_ID", "action": "deny"}'

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stale port 18275 in `rampart hook --help` and `rampart setup` comment — both now correctly show port 9090 (matching `defaultServePort`)
 
 ### Added
-- **`block-env-var-injection` policy** in `standard.yaml` — blocks interpreter hijacking via environment variable prefix injection (`LD_PRELOAD`, `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS`, `PYTHONSTARTUP`, `RUBYOPT`, `PERL5OPT`, `DYLD_INSERT_LIBRARIES`). These patterns were previously bypassing glob rules because env-var prefixes are stripped before command matching.
+- **`block-env-var-injection` policy** in `standard.yaml` — blocks interpreter hijacking via environment variable prefix injection (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`, `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PYTHONHOME`, `RUBYOPT`, `PERL5OPT`, `BASH_ENV`, `DOTNET_STARTUP_HOOKS`, and more). These patterns were previously bypassing glob rules because env-var prefixes are stripped before command matching.
 - **PostToolUseFailure hook feedback** — when Rampart denies a `PreToolUse` event, the `PostToolUseFailure` handler now injects `additionalContext` telling Claude Code not to retry the blocked action. Prevents Claude from burning 3–5 turns on workarounds after a deny.
 
 ## [0.4.5] — 2026-02-21

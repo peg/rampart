@@ -102,7 +102,7 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 When a command hits a `require_approval` rule, Rampart pauses the agent and waits. Approve or deny it from the dashboard:
 
 ```bash
-open http://localhost:18275/dashboard/
+open http://localhost:9090/dashboard/
 ```
 
 The dashboard shows pending approvals, audit history, and your loaded policy. For agent team runs (multiple sub-agents in one session), approvals are grouped — one click to approve the whole run.
