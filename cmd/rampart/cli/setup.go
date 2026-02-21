@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
 
@@ -351,7 +352,7 @@ Use --remove to uninstall the shim and service (preserves policies and audit log
 			// Copy default policy if none exists
 			policyPath := filepath.Join(home, ".rampart", "policies", "standard.yaml")
 			if _, err := os.Stat(policyPath); os.IsNotExist(err) {
-				if err := os.WriteFile(policyPath, []byte(defaultPolicy), 0o600); err != nil {
+				if err := os.WriteFile(policyPath, []byte(defaultPolicyContent()), 0o600); err != nil {
 					return fmt.Errorf("setup: write default policy: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "✓ Default policy written to %s\n", policyPath)
@@ -720,99 +721,13 @@ func startService(cmd *cobra.Command) error {
 	return enable.Run()
 }
 
-const defaultPolicy = `version: "1"
-default_action: allow
-policies:
-  - name: block-destructive
-    match:
-      tool: ["exec"]
-    rules:
-      - action: deny
-        when:
-          command_matches:
-            - "rm -rf /"
-            - "rm -rf ~"
-            - "rm -rf /*"
-            - "rm -rf ~/*"
-            - ":(){ :|:& };:"
-            - "dd if=*"
-            - "mkfs*"
-            - "chmod -R 777 /"
-            - "> /dev/sda"
-        message: "Destructive command blocked"
-      - action: deny
-        when:
-          command_matches:
-            - "nc -e *"
-            - "nc -c *"
-            - "ncat -e *"
-            - "bash -i >*"
-        message: "Reverse shell detected"
-      - action: deny
-        when:
-          command_matches:
-            - "crontab -r"
-            - "crontab -r *"
-        message: "Crontab deletion blocked"
-
-  - name: require-privileged-approval
-    # sudo and destructive cluster/container ops require explicit approval.
-    # Risk asymmetry: approving takes 2s, unchecked sudo can own the machine.
-    match:
-      tool: ["exec"]
-    rules:
-      - action: require_approval
-        when:
-          command_matches:
-            - "sudo *"
-            - "kubectl delete *"
-            - "docker rm *"
-            - "docker rmi *"
-        message: "Privileged command requires approval"
-
-  - name: log-network-tools
-    match:
-      tool: ["exec"]
-    rules:
-      - action: log
-        when:
-          command_matches:
-            - "curl *"
-            - "wget *"
-            - "nc *"
-            - "ncat *"
-        message: "Network tool usage logged"
-
-  - name: block-credential-commands
-    match:
-      tool: ["exec"]
-    rules:
-      - action: deny
-        when:
-          command_matches:
-            - "cat */.ssh/id_*"
-            - "cat */.aws/credentials"
-            - "cat */.env"
-            - "cat */.netrc"
-            - "cat */credentials"
-            - "cat */.git-credentials"
-            - "cat /etc/shadow"
-            - "cat /etc/passwd"
-            - "cat /etc/gshadow"
-            - "cat /etc/master.passwd"
-            - "head /etc/shadow"
-            - "tail /etc/shadow"
-            - "less /etc/shadow"
-            - "more /etc/shadow"
-            - "grep * /etc/shadow"
-            - "cat /etc/sudoers"
-            - "cat /etc/sudoers.d/*"
-            - "cat */.bash_history"
-            - "cat */.zsh_history"
-            - "cat */.*_history"
-            - "cat /proc/**/environ"
-        message: "Credential access blocked"
-`
+func defaultPolicyContent() string {
+	b, err := policies.Profile("standard")
+	if err != nil {
+		panic("embedded standard policy missing: " + err.Error())
+	}
+	return string(b)
+}
 
 func hasRampartHook(settings claudeSettings) bool {
 	hooks, ok := settings["hooks"].(map[string]any)

@@ -24,6 +24,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// maxPolicyFileSize is the maximum size of a policy YAML file we will parse.
+// This prevents billion-laughs / anchor-expansion DoS where a small YAML input
+// expands to an arbitrarily large in-memory structure.
+// 1MB is orders of magnitude larger than any reasonable policy file.
+const maxPolicyFileSize = 1 << 20 // 1 MiB
+
+// safeUnmarshal wraps yaml.Unmarshal with two protections:
+//  1. Input size cap — rejects data larger than maxPolicyFileSize.
+//  2. Panic recovery — catches panics from malformed/adversarial YAML and
+//     returns them as errors instead of crashing the process.
+func safeUnmarshal(data []byte, v any) (retErr error) {
+	if len(data) > maxPolicyFileSize {
+		return fmt.Errorf("policy file too large (%d bytes, max %d)", len(data), maxPolicyFileSize)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("yaml parse panic: %v", r)
+		}
+	}()
+	return yaml.Unmarshal(data, v)
+}
+
 // PolicyStore is the interface for loading policy configurations.
 // Implemented by FileStore, DirStore, and MultiStore.
 type PolicyStore interface {
@@ -289,6 +311,11 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 	var loadedFiles []string
 
 	for _, f := range files {
+		// Check file size before reading to avoid loading huge files into memory.
+		if info, statErr := os.Stat(f); statErr == nil && info.Size() > maxPolicyFileSize {
+			logger.Error("engine: skip oversized policy file", "path", f, "size", info.Size(), "max", maxPolicyFileSize)
+			continue
+		}
 		data, err := os.ReadFile(f)
 		if err != nil {
 			logger.Error("engine: skip unreadable file", "path", f, "error", err)
@@ -296,7 +323,7 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 		}
 
 		var cfg Config
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
+		if err := safeUnmarshal(data, &cfg); err != nil {
 			logger.Error("engine: skip invalid yaml", "path", f, "error", err)
 			continue
 		}
@@ -380,13 +407,17 @@ func (s *LayeredStore) Load() (*Config, error) {
 	if s.extra == "" {
 		return cfg, nil
 	}
+	if info, statErr := os.Stat(s.extra); statErr == nil && info.Size() > maxPolicyFileSize {
+		s.logger.Warn("project policy too large, using global policy only", "path", s.extra, "size", info.Size())
+		return cfg, nil
+	}
 	data, err := os.ReadFile(s.extra)
 	if err != nil {
 		s.logger.Warn("project policy unreadable, using global policy only", "path", s.extra, "error", err)
 		return cfg, nil
 	}
 	var extraCfg Config
-	if err := yaml.Unmarshal(data, &extraCfg); err != nil {
+	if err := safeUnmarshal(data, &extraCfg); err != nil {
 		s.logger.Warn("project policy parse error, using global policy only", "path", s.extra, "error", err)
 		return cfg, nil
 	}

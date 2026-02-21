@@ -370,6 +370,41 @@ func installPolicy(out io.Writer, home, profile string) error {
 		return fmt.Errorf("setup: write policy: %w", err)
 	}
 	fmt.Fprintf(out, "✓ Policy written to %s\n", policyPath)
+
+	// Create custom.yaml template if it doesn't exist.
+	// This is where users put their own rules — it's never touched by 'rampart upgrade'.
+	customPath := filepath.Join(policyDir, "custom.yaml")
+	if _, err := os.Stat(customPath); os.IsNotExist(err) {
+		customTemplate := `# custom.yaml — your personal Rampart policy overrides
+#
+# This file is NEVER overwritten by 'rampart upgrade'.
+# Put your project-specific or personal rules here.
+#
+# Files in ~/.rampart/policies/ are loaded alphabetically. This file loads
+# after standard.yaml so your rules take effect first (first-match-wins).
+# Name it z-custom.yaml if you want it to load last instead.
+#
+# Example: allow a specific command your workflow needs
+#
+# version: "1"
+# policies:
+#   - name: allow-my-tools
+#     match:
+#       tool: ["exec"]
+#     rules:
+#       - action: allow
+#         when:
+#           command_matches:
+#             - "my-trusted-script *"
+#         message: "personal allowlist"
+`
+		if writeErr := os.WriteFile(customPath, []byte(customTemplate), 0o600); writeErr != nil {
+			// Non-fatal — log and continue.
+			fmt.Fprintf(out, "  (note: could not create custom.yaml template: %v)\n", writeErr)
+		} else {
+			fmt.Fprintf(out, "✓ Custom policy template created at %s\n", customPath)
+		}
+	}
 	return nil
 }
 

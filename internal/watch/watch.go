@@ -303,6 +303,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		action := strings.ToLower(strings.TrimSpace(typed.event.Decision.Action))
 		tool := strings.ToLower(strings.TrimSpace(typed.event.Tool))
 
+		// require_approval events are shown in the PENDING APPROVALS section;
+		// skip them from the live feed so only outcomes (denied/approved/deny) appear.
+		if action == "require_approval" {
+			return m, waitForTailer(m.tailerCh)
+		}
 		// Apply decision filter.
 		if m.cfg.Decision != "" && !strings.EqualFold(m.cfg.Decision, action) {
 			return m, waitForTailer(m.tailerCh)
@@ -322,7 +327,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.events = append([]audit.Event{typed.event}, m.events...)
 		m.events = trimEvents(m.events)
 
-		if action == "deny" {
+		if action == "deny" || action == "denied" {
 			m.denyFlash[0] = time.Now()
 		}
 
@@ -377,9 +382,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) updateStats(event audit.Event) {
 	m.stats.Total++
 	switch strings.ToLower(strings.TrimSpace(event.Decision.Action)) {
-	case "allow":
+	case "allow", "approved", "always_allowed":
 		m.stats.Allow++
-	case "deny":
+	case "deny", "denied":
 		m.stats.Deny++
 	case "watch", "log":
 		m.stats.Log++
@@ -520,14 +525,16 @@ func (m *Model) visibleEvents(rows int) []audit.Event {
 
 func (m *Model) colorizeLine(line, action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "allow":
+	case "allow", "approved", "always_allowed":
 		return m.allowStyle.Render(line)
-	case "deny":
+	case "deny", "denied":
 		return m.denyStyle.Render(line)
 	case "watch", "log":
 		return m.logStyle.Render(line)
 	case "webhook":
 		return m.webhookStyle.Render(line)
+	case "require_approval":
+		return m.pendingStyle.Render(line)
 	default:
 		return line
 	}

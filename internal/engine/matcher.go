@@ -261,19 +261,31 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		return true, "unconditional (empty when:)"
 	}
 
-	if len(cond.CommandMatches) > 0 {
+	if len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0 {
 		cmd := call.Command()
 		if cmd == "" {
 			return false, ""
 		}
-		matched := matchFirst(cond.CommandMatches, cmd)
-		if matched == "" {
-			return false, ""
-		}
+		// Exclusions apply to both command_matches and command_contains.
 		if matchAny(cond.CommandNotMatches, cmd) {
 			return false, ""
 		}
-		return true, fmt.Sprintf("command_matches [%q]", matched)
+		// command_matches (glob) — OR with command_contains below.
+		if len(cond.CommandMatches) > 0 {
+			if matched := matchFirst(cond.CommandMatches, cmd); matched != "" {
+				return true, fmt.Sprintf("command_matches [%q]", matched)
+			}
+		}
+		// command_contains (case-insensitive substring) — catches patterns glob can't
+		// express, e.g. bash <(curl URL) where the URL's / breaks glob * matching.
+		// Case-insensitive so BASH <(CURL URL) doesn't bypass.
+		cmdLower := strings.ToLower(cmd)
+		for _, sub := range cond.CommandContains {
+			if strings.Contains(cmdLower, strings.ToLower(sub)) {
+				return true, fmt.Sprintf("command_contains [%q]", sub)
+			}
+		}
+		return false, ""
 	}
 
 	if len(cond.PathMatches) > 0 {
@@ -337,47 +349,66 @@ func matchCondition(cond Condition, call ToolCall) bool {
 	// backslash escapes, and env var prefixes. Also match against each
 	// segment of compound commands. We match against BOTH raw and
 	// normalized forms for backward compatibility.
-	if len(cond.CommandMatches) > 0 {
+	if len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0 {
 		cmd := call.Command()
 		if cmd == "" {
 			return false
 		}
-		cmdMatch := matchAny(cond.CommandMatches, cmd)
-		if !cmdMatch {
-			// Try normalized form.
-			norm := NormalizeCommand(cmd)
-			if norm != cmd {
-				cmdMatch = matchAny(cond.CommandMatches, norm)
-			}
-			// Try each segment of compound commands.
+		cmdMatch := false
+
+		if len(cond.CommandMatches) > 0 {
+			cmdMatch = matchAny(cond.CommandMatches, cmd)
 			if !cmdMatch {
-				for _, seg := range SplitCompoundCommand(cmd) {
-					if matchAny(cond.CommandMatches, seg) {
-						cmdMatch = true
-						break
+				// Try normalized form.
+				norm := NormalizeCommand(cmd)
+				if norm != cmd {
+					cmdMatch = matchAny(cond.CommandMatches, norm)
+				}
+				// Try each segment of compound commands.
+				if !cmdMatch {
+					for _, seg := range SplitCompoundCommand(cmd) {
+						if matchAny(cond.CommandMatches, seg) {
+							cmdMatch = true
+							break
+						}
+						nseg := NormalizeCommand(seg)
+						if nseg != seg && matchAny(cond.CommandMatches, nseg) {
+							cmdMatch = true
+							break
+						}
 					}
-					nseg := NormalizeCommand(seg)
-					if nseg != seg && matchAny(cond.CommandMatches, nseg) {
-						cmdMatch = true
-						break
+				}
+				// Check subcommands (command substitution, backticks, eval).
+				if !cmdMatch {
+					for _, sub := range ExtractSubcommands(cmd) {
+						if matchAny(cond.CommandMatches, sub) {
+							cmdMatch = true
+							break
+						}
+						nsub := NormalizeCommand(sub)
+						if nsub != sub && matchAny(cond.CommandMatches, nsub) {
+							cmdMatch = true
+							break
+						}
 					}
 				}
 			}
 		}
-		// Check subcommands (command substitution, backticks, eval).
+
+		// command_contains: OR with command_matches — case-insensitive substring match.
+		// Useful for patterns that globs can't express (e.g. bash <(curl URL)
+		// where the URL's / prevents glob * from matching across separators).
+		// Case-insensitive so adversarially-prompted agents can't bypass via CURL/BASH.
 		if !cmdMatch {
-			for _, sub := range ExtractSubcommands(cmd) {
-				if matchAny(cond.CommandMatches, sub) {
-					cmdMatch = true
-					break
-				}
-				nsub := NormalizeCommand(sub)
-				if nsub != sub && matchAny(cond.CommandMatches, nsub) {
+			cmdLower := strings.ToLower(cmd)
+			for _, sub := range cond.CommandContains {
+				if strings.Contains(cmdLower, strings.ToLower(sub)) {
 					cmdMatch = true
 					break
 				}
 			}
 		}
+
 		if !cmdMatch {
 			return false
 		}

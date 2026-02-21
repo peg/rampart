@@ -80,6 +80,7 @@ var validActions = map[string]bool{
 var validConditionFields = map[string]bool{
 	"command_matches":      true,
 	"command_not_matches":  true,
+	"command_contains":     true,
 	"path_matches":         true,
 	"path_not_matches":     true,
 	"url_matches":          true,
