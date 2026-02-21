@@ -39,15 +39,16 @@ func TestExtractRampartBinary(t *testing.T) {
 // format which bundles LICENSE and README.md alongside the binary.
 // Regression test for: "archive contains 4 files; expected a single binary"
 func TestExtractRampartBinary_GoreleaserLayout(t *testing.T) {
-	// Mimic: rampart_0.4.4_linux_amd64.tar.gz contents
-	//   rampart_0.4.4_linux_amd64/rampart    ← the binary
-	//   rampart_0.4.4_linux_amd64/LICENSE
-	//   rampart_0.4.4_linux_amd64/README.md
+	// Mimic actual goreleaser archive layout (flat, no subdirectory prefix):
+	//   rampart        ← the binary
+	//   LICENSE
+	//   README.md
+	//   CHANGELOG.md
 	archive := makeMultiFileArchive(t, map[string][]byte{
-		"rampart_0.4.4_linux_amd64/rampart":    []byte("real-binary"),
-		"rampart_0.4.4_linux_amd64/LICENSE":     []byte("Apache 2.0"),
-		"rampart_0.4.4_linux_amd64/README.md":   []byte("# Rampart"),
-		"rampart_0.4.4_linux_amd64/CHANGELOG.md": []byte("## v0.4.4"),
+		"rampart":      []byte("real-binary"),
+		"LICENSE":      []byte("Apache 2.0"),
+		"README.md":    []byte("# Rampart"),
+		"CHANGELOG.md": []byte("## v0.4.4"),
 	})
 	got, err := extractRampartBinary(archive)
 	if err != nil {
