@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -126,6 +127,7 @@ func TestNewUpgradeCmdDryRun(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 1234, true, nil
 		},
+		detectSystemdService: func(commandRunner) string { return "" },
 	}
 
 	var out bytes.Buffer
@@ -143,7 +145,40 @@ func TestNewUpgradeCmdDryRun(t *testing.T) {
 	}
 }
 
-func TestNewUpgradeCmdSuccessShowsRestartReminder(t *testing.T) {
+func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "rampart")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+
+	deps := &upgradeDeps{
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.0.0", nil
+		},
+		executablePath: func() (string, error) { return exe, nil },
+		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
+			return 0, false, nil
+		},
+		detectSystemdService: func(commandRunner) string { return "rampart-proxy.service" },
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"v1.1.0", "--dry-run", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "would restart systemd service: rampart-proxy.service") {
+		t.Fatalf("dry-run output missing systemd restart line: %q", got)
+	}
+}
+
+func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -161,6 +196,56 @@ func TestNewUpgradeCmdSuccessShowsRestartReminder(t *testing.T) {
 		executablePath: func() (string, error) { return exe, nil },
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
+		},
+		detectSystemdService: func(commandRunner) string { return "" },
+		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
+			if strings.HasSuffix(url, "checksums.txt") {
+				return checksums, nil
+			}
+			return archive, nil
+		},
+		pathEnv: func() string { return "" },
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"v1.1.0", "--yes", "--no-policy-update"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "✓ rampart upgraded to v1.1.0") {
+		t.Fatalf("missing success line: %q", out.String())
+	}
+}
+
+func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "rampart")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+
+	archive := makeArchive(t, "rampart", []byte("new-binary"))
+	sum := sha256.Sum256(archive)
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+
+	var restarted string
+	deps := &upgradeDeps{
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.0.0", nil
+		},
+		executablePath: func() (string, error) { return exe, nil },
+		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
+			return 0, false, nil
+		},
+		detectSystemdService: func(commandRunner) string { return "rampart-proxy.service" },
+		restartSystemdService: func(_ commandRunner, svc string, out io.Writer) error {
+			restarted = svc
+			fmt.Fprintf(out, "✓ restarted %s\n", svc)
+			return nil
 		},
 		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
 			if strings.HasSuffix(url, "checksums.txt") {
@@ -184,8 +269,68 @@ func TestNewUpgradeCmdSuccessShowsRestartReminder(t *testing.T) {
 	if !strings.Contains(got, "✓ rampart upgraded to v1.1.0") {
 		t.Fatalf("missing success line: %q", got)
 	}
-	if !strings.Contains(got, "Reminder: restart rampart serve") {
-		t.Fatalf("missing restart reminder: %q", got)
+	if restarted != "rampart-proxy.service" {
+		t.Fatalf("expected systemd restart of rampart-proxy.service, got %q", restarted)
+	}
+	if !strings.Contains(got, "✓ restarted rampart-proxy.service") {
+		t.Fatalf("missing restarted confirmation: %q", got)
+	}
+}
+
+func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
+	// If both a PID file AND a systemd service exist, systemd wins.
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "rampart")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+
+	archive := makeArchive(t, "rampart", []byte("new-binary"))
+	sum := sha256.Sum256(archive)
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+
+	pidStopped := false
+	var restarted string
+	deps := &upgradeDeps{
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.0.0", nil
+		},
+		executablePath: func() (string, error) { return exe, nil },
+		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
+			return 9999, true, nil // PID file exists
+		},
+		stopServe: func(int) error {
+			pidStopped = true
+			return nil
+		},
+		detectSystemdService: func(commandRunner) string { return "rampart-serve.service" },
+		restartSystemdService: func(_ commandRunner, svc string, out io.Writer) error {
+			restarted = svc
+			return nil
+		},
+		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
+			if strings.HasSuffix(url, "checksums.txt") {
+				return checksums, nil
+			}
+			return archive, nil
+		},
+		pathEnv: func() string { return "" },
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"v1.1.0", "--yes", "--no-policy-update"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if pidStopped {
+		t.Fatal("expected PID-based stop to be skipped when systemd service is active")
+	}
+	if restarted != "rampart-serve.service" {
+		t.Fatalf("expected systemd restart, got %q", restarted)
 	}
 }
 
