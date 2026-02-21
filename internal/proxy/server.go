@@ -944,7 +944,9 @@ authorized:
 			s.logger.Info("proxy: allow rule persisted", "path", policyPath, "tool", resolved.Call.Tool)
 			// Force immediate reload so the new rule takes effect without waiting for hot-reload.
 			if s.engine != nil {
-				_ = s.engine.Reload()
+				if reloadErr := s.engine.Reload(); reloadErr != nil {
+					s.logger.Error("proxy: post-change reload failed", "error", reloadErr)
+				}
 			}
 		}
 	}
