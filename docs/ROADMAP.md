@@ -21,6 +21,21 @@ What's coming next for Rampart. Priorities shift based on feedback — [open an 
 - ✅ Prometheus metrics endpoint (opt-in via `--metrics`)
 - ✅ Cross-platform release builds (goreleaser + Homebrew)
 - ✅ Security audit — govulncheck CI, SHA-pinned actions, audit file hardening
+- ✅ `rampart init --project` / project-local `.rampart/policy.yaml` (v0.3.0)
+- ✅ Session conditions `session_matches` / `session_not_matches` (v0.3.0)
+- ✅ `rampart doctor --json` and `rampart test --json` (v0.3.0)
+- ✅ Run grouping / `run_id` on audit events — team run traceability (v0.4.0)
+- ✅ `POST /v1/approvals/bulk-resolve` — resolve entire team run approvals in one call (v0.4.0)
+- ✅ Auto-approve cache for team runs (v0.4.0)
+- ✅ SSE live dashboard — real-time event streaming, no polling (v0.4.0)
+- ✅ `rampart serve --background` / `rampart serve stop` (v0.4.3)
+- ✅ `rampart upgrade` with `--no-policy-update` flag (v0.4.3/v0.4.4)
+- ✅ `command_contains` condition type — substring matching, case-insensitive (v0.4.4)
+- ✅ macOS hardening — 17 new built-in policies (Keychain, Gatekeeper, persistence, osascript) (v0.4.4)
+- ✅ `custom.yaml` template created on `rampart setup` (v0.4.4)
+- ✅ Policy files auto-refreshed on `rampart upgrade` (v0.4.4)
+- ✅ `rampart setup codex` — wrapper at `~/.local/bin/codex` (v0.4.5)
+- ✅ Upgrade archive fix — `rampart upgrade` now works correctly from v0.4.5 forward (v0.4.5)
 
 ## Up Next
 

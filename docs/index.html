@@ -567,11 +567,16 @@
         }
         @media (max-width: 480px) {
             .hero h1 { font-size: 1.8rem; }
-            .hero-buttons { flex-direction: column; align-items: center; }
+            .hero-buttons { flex-direction: column; align-items: stretch; gap: 10px; }
+            .hero-buttons .btn { justify-content: center; }
             .terminal-body { font-size: 0.72rem; padding: 16px; }
             .install-options { grid-template-columns: 1fr; }
             .feature-grid { grid-template-columns: 1fr; }
             .agent-grid { grid-template-columns: repeat(2, 1fr); }
+            .step-code { font-size: 0.75rem; }
+            .install-card pre { font-size: 0.75rem; }
+            .install-actions { flex-direction: column; align-items: stretch; gap: 10px; }
+            .install-actions .btn { justify-content: center; text-align: center; margin-right: 0 !important; }
         }
     </style>
 </head>
@@ -602,7 +607,7 @@
             rampart
         </span>
         <div class="links">
-            <a href="https://docs.rampart.sh" class="hide-mobile">Docs</a>
+            <a href="https://docs.rampart.sh">Docs</a>
             <a href="https://docs.rampart.sh/reference/threat-model/" class="hide-mobile">Threat Model</a>
             <a href="https://github.com/peg/rampart" class="btn-nav">GitHub</a>
         </div>
@@ -770,7 +775,7 @@
             <div class="feature-card">
                 <div class="feature-icon">🔌</div>
                 <h3>Works with every agent</h3>
-                <p>Native hooks for Claude Code and Cline. MCP proxy for Claude Desktop and Cursor. Shell wrapper and HTTP API for everything else. One tool, any agent.</p>
+                <p>Native hooks for Claude Code, Cline, and Codex. MCP proxy for Claude Desktop and Cursor. Shell wrapper and HTTP API for everything else. One tool, any agent.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🧠</div>
@@ -801,8 +806,8 @@
             <div class="step">
                 <div class="step-num">2</div>
                 <h3>Connect</h3>
-                <pre class="step-code">rampart setup claude-code</pre>
-                <p>One command per agent. Also supports <span style="color:var(--text-bright)">Cursor</span>, <span style="color:var(--text-bright)">Cline</span>, <span style="color:var(--text-bright)">Codex</span>, and more.</p>
+                <pre class="step-code">rampart setup</pre>
+                <p>Interactive wizard — detects Claude Code, Cline, Codex, and OpenClaw automatically and wires them all up. Or target a specific agent: <span style="color:var(--text-bright)">rampart setup claude-code</span>, <span style="color:var(--text-bright)">rampart setup codex</span>, etc.</p>
             </div>
             <div class="step">
                 <div class="step-num">3</div>
@@ -865,8 +870,10 @@ brew install rampart</pre>
                 </div>
             </div>
         </details>
-        <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost" style="margin-right: 12px;">Download binary</a>
-        <a href="https://docs.rampart.sh" class="btn btn-ghost">Full documentation →</a>
+        <div class="install-actions" style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:8px;">
+            <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost">Download binary</a>
+            <a href="https://docs.rampart.sh" class="btn btn-ghost">Full documentation →</a>
+        </div>
     </div>
 </section>
 

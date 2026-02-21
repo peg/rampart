@@ -33,10 +33,13 @@ notify:
 
 policies:
   - name: dangerous-commands
-    tools: [exec]
-    command_matches: ["^(rm|terraform|kubectl delete)"]
-    action: require_approval
-    message: "Requires human approval"
+    match:
+      tool: [exec]
+    rules:
+      - action: require_approval
+        when:
+          command_matches: ["^(rm|terraform|kubectl delete)"]
+        message: "Requires human approval"
 ```
 
 ## OpenClaw Integration
@@ -52,12 +55,12 @@ OpenClaw can act as the chat-side resolver:
 
 ```bash
 # Approve
-curl -X POST http://localhost:9091/v1/approvals/{id}/resolve \
+curl -X POST http://localhost:9090/v1/approvals/{id}/resolve \
   -H "Content-Type: application/json" \
   -d '{"approved": true, "resolved_by": "trevor@discord"}'
 
 # Deny
-curl -X POST http://localhost:9091/v1/approvals/{id}/resolve \
+curl -X POST http://localhost:9090/v1/approvals/{id}/resolve \
   -H "Content-Type: application/json" \
   -d '{"approved": false, "resolved_by": "trevor@discord"}'
 ```
