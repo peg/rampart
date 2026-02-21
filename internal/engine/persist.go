@@ -258,7 +258,17 @@ func sanitizeName(s string) string {
 func conditionsEqual(a, b Condition) bool {
 	return slicesEqual(a.CommandMatches, b.CommandMatches) &&
 		slicesEqual(a.PathMatches, b.PathMatches) &&
-		a.Default == b.Default
+		a.Default == b.Default &&
+		callCountEqual(a.CallCount, b.CallCount)
+}
+
+func callCountEqual(a, b *CallCountCondition) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Tool == b.Tool &&
+		a.Gte == b.Gte &&
+		a.Window == b.Window
 }
 
 func slicesEqual(a, b []string) bool {
@@ -275,8 +285,8 @@ func slicesEqual(a, b []string) bool {
 
 // cleanRule is a minimal YAML representation that omits empty fields.
 type cleanRule struct {
-	Action string     `yaml:"action"`
-	When   cleanWhen  `yaml:"when"`
+	Action string    `yaml:"action"`
+	When   cleanWhen `yaml:"when"`
 }
 
 type cleanWhen struct {
@@ -286,9 +296,9 @@ type cleanWhen struct {
 }
 
 type cleanPolicy struct {
-	Name  string        `yaml:"name"`
-	Match cleanMatch    `yaml:"match"`
-	Rules []cleanRule   `yaml:"rules"`
+	Name  string      `yaml:"name"`
+	Match cleanMatch  `yaml:"match"`
+	Rules []cleanRule `yaml:"rules"`
 }
 
 type cleanMatch struct {

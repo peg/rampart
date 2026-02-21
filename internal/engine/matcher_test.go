@@ -119,7 +119,7 @@ func TestMatchCondition_PathTraversalBypass(t *testing.T) {
 				Tool:   "read",
 				Params: map[string]interface{}{"path": tt.path},
 			}
-			got := matchCondition(cond, call)
+			got := matchCondition(cond, call, nil)
 			if got != tt.want {
 				t.Errorf("matchCondition(path_matches=/etc/shadow, path=%q) = %v, want %v",
 					tt.path, got, tt.want)
@@ -146,7 +146,7 @@ func TestMatchCondition_PathTraversalBypass(t *testing.T) {
 				Tool:   "read",
 				Params: map[string]interface{}{"path": tt.path},
 			}
-			got := matchCondition(condSSH, call)
+			got := matchCondition(condSSH, call, nil)
 			if got != tt.want {
 				t.Errorf("matchCondition(path_matches=%s/.ssh/*, path=%q) = %v, want %v",
 					home, tt.path, got, tt.want)
@@ -196,7 +196,7 @@ func TestMatchCondition_CommandContains(t *testing.T) {
 				Tool:   "exec",
 				Params: map[string]interface{}{"command": tt.cmd},
 			}
-			got := matchCondition(cond, call)
+			got := matchCondition(cond, call, nil)
 			if got != tt.want {
 				t.Errorf("matchCondition(command_contains=%v, cmd=%q) = %v, want %v",
 					tt.contains, tt.cmd, got, tt.want)
@@ -261,7 +261,7 @@ func TestMatchCondition_AgentDepth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			call := ToolCall{Tool: "agent", AgentDepth: tt.depth}
-			got := matchCondition(tt.cond, call)
+			got := matchCondition(tt.cond, call, nil)
 			if got != tt.want {
 				t.Fatalf("matchCondition(agent_depth, depth=%d) = %v, want %v", tt.depth, got, tt.want)
 			}
@@ -325,7 +325,7 @@ func TestMatchCondition_ToolParamMatches(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			call := ToolCall{Tool: "mcp", Input: tt.input}
-			got := matchCondition(tt.cond, call)
+			got := matchCondition(tt.cond, call, nil)
 			if got != tt.want {
 				t.Fatalf("matchCondition(tool_param_matches, input=%v) = %v, want %v", tt.input, got, tt.want)
 			}

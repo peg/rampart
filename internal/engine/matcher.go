@@ -362,7 +362,7 @@ func matchFirst(patterns []string, value string) string {
 	return ""
 }
 
-func matchCondition(cond Condition, call ToolCall) bool {
+func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 	if cond.Default {
 		return true
 	}
@@ -519,6 +519,32 @@ func matchCondition(cond Condition, call ToolCall) bool {
 			}
 		}
 		if !paramMatched {
+			return false
+		}
+		matched = true
+	}
+
+	// Per-tool call count matching over a sliding time window.
+	if cond.CallCount != nil {
+		if counter == nil {
+			return false
+		}
+
+		window, err := time.ParseDuration(strings.TrimSpace(cond.CallCount.Window))
+		if err != nil || window <= 0 {
+			return false
+		}
+
+		targetTool := strings.TrimSpace(cond.CallCount.Tool)
+		if targetTool == "" {
+			targetTool = call.Tool
+		}
+		if targetTool == "" {
+			return false
+		}
+
+		count := counter.Count(targetTool, window, time.Now().UTC())
+		if count < cond.CallCount.Gte {
 			return false
 		}
 		matched = true
