@@ -32,14 +32,15 @@ import (
 //
 // Engine is safe for concurrent use.
 type Engine struct {
-	mu            sync.RWMutex
-	config        *Config
-	store         PolicyStore
-	defaultAction Action
-	responseRegex map[string]*regexp.Regexp
-	logger        *slog.Logger
-	stopReload    chan struct{} // closed to stop periodic reload goroutine
-	stopOnce      sync.Once
+	mu             sync.RWMutex
+	config         *Config
+	store          PolicyStore
+	defaultAction  Action
+	lastConfigHash string
+	responseRegex  map[string]*regexp.Regexp
+	logger         *slog.Logger
+	stopReload     chan struct{} // closed to stop periodic reload goroutine
+	stopOnce       sync.Once
 }
 
 // New creates an engine from a policy store.
@@ -60,6 +61,7 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 		logger: logger,
 	}
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
+	e.lastConfigHash = configFingerprint(cfg)
 	e.responseRegex = cfg.responseRegexCache
 
 	logger.Info("engine: policies loaded",
@@ -234,14 +236,20 @@ func (e *Engine) Reload() error {
 	// This prevents accidental policy wipe from a bad config edit.
 	e.mu.RLock()
 	currentCount := len(e.config.Policies)
+	currentHash := e.lastConfigHash
 	e.mu.RUnlock()
 	if currentCount > 0 && len(cfg.Policies) == 0 {
 		return fmt.Errorf("engine: reload rejected — policy count dropped from %d to 0", currentCount)
+	}
+	nextHash := configFingerprint(cfg)
+	if nextHash == currentHash {
+		return nil
 	}
 
 	e.mu.Lock()
 	e.config = cfg
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
+	e.lastConfigHash = nextHash
 	e.responseRegex = cfg.responseRegexCache
 	e.mu.Unlock()
 
@@ -251,6 +259,14 @@ func (e *Engine) Reload() error {
 	)
 
 	return nil
+}
+
+func configFingerprint(cfg *Config) string {
+	fingerprint := ""
+	for _, p := range cfg.Policies {
+		fingerprint += fmt.Sprintf("%s:%d;", p.Name, len(p.Rules))
+	}
+	return fmt.Sprintf("default=%s|%s", cfg.DefaultAction, fingerprint)
 }
 
 // PolicyCount returns the number of loaded policies.
