@@ -342,6 +342,24 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
 			// burning 3-5 turns on workarounds.
 			if parsed.HookEventName == "PostToolUseFailure" {
+				postToolUseFailureEvent := audit.Event{
+					ID:        audit.NewEventID(),
+					Timestamp: time.Now().UTC(),
+					Agent:     parsed.Agent,
+					Session:   hookSession,
+					RunID:     parsed.RunID,
+					Tool:      parsed.Tool,
+					Request:   parsed.Params,
+					Decision: audit.EventDecision{
+						Action:  "allow",
+						Message: "PostToolUseFailure short-circuit feedback injection",
+					},
+				}
+				if line, marshalErr := json.Marshal(postToolUseFailureEvent); marshalErr == nil {
+					line = append(line, '\n')
+					_, _ = auditFile.Write(line)
+				}
+
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
 					"if an operation is restricted, report it to the user and stop."

@@ -131,7 +131,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	issues += doctorHooks(emit)
 
 	// 7. Audit directory
-	issues += doctorAudit(emit)
+	auditIssues, auditWarnings := doctorAudit(emit)
+	issues += auditIssues
+	warnings += auditWarnings
 
 	// 8. Server running on default port
 	serverIssues, serveURL := doctorServer(emit)
@@ -533,24 +535,24 @@ func countClaudeHookMatchers(settings map[string]any) int {
 	return count
 }
 
-func doctorAudit(emit emitFn) int {
+func doctorAudit(emit emitFn) (issues int, warnings int) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	auditDir := filepath.Join(home, ".rampart", "audit")
 
 	entries, err := os.ReadDir(auditDir)
 	if err != nil {
 		emit("Audit", "fail", fmt.Sprintf("%s (not found)", auditDir))
-		return 1
+		return 1, 0
 	}
 
 	// Check writable
 	testFile := filepath.Join(auditDir, ".doctor-write-test")
 	if err := os.WriteFile(testFile, []byte("test"), 0o600); err != nil {
 		emit("Audit", "fail", fmt.Sprintf("%s (not writable)", auditDir))
-		return 1
+		return 1, 0
 	}
 	// Defer removal so the temp file is cleaned up on every exit path,
 	// including early returns and panics, not just the happy path.
@@ -566,7 +568,7 @@ func doctorAudit(emit emitFn) int {
 
 	if len(files) == 0 {
 		emit("Audit", "ok", fmt.Sprintf("~/%s (0 files)", relHome(auditDir, home)))
-		return 0
+		return 0, 0
 	}
 
 	// Find latest modification time
@@ -579,7 +581,33 @@ func doctorAudit(emit emitFn) int {
 	}
 
 	emit("Audit", "ok", fmt.Sprintf("~/%s (%d files, latest: %s)", relHome(auditDir, home), len(files), latest))
-	return 0
+
+	worldReadable := make([]string, 0, 4)
+	_ = filepath.WalkDir(auditDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if info.Mode().Perm()&0o004 != 0 {
+			if len(worldReadable) < 3 {
+				worldReadable = append(worldReadable, relHome(path, home))
+			}
+			warnings++
+		}
+		return nil
+	})
+	if warnings > 0 {
+		sample := strings.Join(worldReadable, ", ")
+		msg := fmt.Sprintf("%d world-readable audit file(s) found", warnings)
+		if sample != "" {
+			msg += fmt.Sprintf(" (e.g. ~/%s)", sample)
+		}
+		emit("Audit perms", "warn", msg)
+	}
+	return 0, warnings
 }
 
 func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {

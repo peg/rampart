@@ -138,7 +138,9 @@ func (s *Server) handleDeleteAutoAllowed(w http.ResponseWriter, r *http.Request)
 		}
 		// Force immediate engine reload so the revoked rule stops applying right away.
 		if s.engine != nil {
-			_ = s.engine.Reload()
+			if reloadErr := s.engine.Reload(); reloadErr != nil {
+				s.logger.Error("proxy: post-change reload failed", "error", reloadErr)
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 		return
@@ -181,7 +183,9 @@ func (s *Server) handleDeleteAutoAllowed(w http.ResponseWriter, r *http.Request)
 
 	// Force immediate engine reload so the revoked rule stops applying right away.
 	if s.engine != nil {
-		_ = s.engine.Reload()
+		if reloadErr := s.engine.Reload(); reloadErr != nil {
+			s.logger.Error("proxy: post-change reload failed", "error", reloadErr)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})

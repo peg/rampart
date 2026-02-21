@@ -176,6 +176,7 @@ func (p *Proxy) Run(ctx context.Context, parentIn io.Reader, parentOut io.Writer
 		childErr := <-childErrCh
 		return joinProxyErrors(err, childErr)
 	case err := <-childErrCh:
+		_ = p.childIn.Close()
 		return err
 	}
 }
