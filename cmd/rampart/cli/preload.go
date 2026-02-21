@@ -57,6 +57,9 @@ func newPreloadCmd(_ *rootOptions) *cobra.Command {
 			}
 
 			baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+			if envURL := strings.TrimSpace(os.Getenv("RAMPART_URL")); envURL != "" {
+				baseURL = strings.TrimRight(envURL, "/")
+			}
 			if !isPreloadRuntimeReady(cmd.Context(), baseURL) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "preload: warning: rampart serve is not reachable at %s/healthz; continuing\n", baseURL)
 			}
@@ -107,7 +110,7 @@ func newPreloadCmd(_ *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&port, "port", 19090, "Port for rampart serve")
+	cmd.Flags().IntVar(&port, "port", defaultServePort, "Port for rampart serve (default matches 'rampart serve' default)")
 	cmd.Flags().StringVar(&token, "token", "", "Auth token (or set RAMPART_TOKEN)")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")
 	cmd.Flags().BoolVar(&failOpen, "fail-open", true, "Whether to fail open")
