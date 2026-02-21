@@ -930,6 +930,7 @@ authorized:
 		if err := s.sink.Write(auditEvent); err != nil {
 			s.logger.Error("proxy: audit write for approval resolution failed", "error", err)
 		}
+		s.broadcastSSE(map[string]any{"type": "audit", "event": auditEvent})
 	}
 
 	// Persist as auto-allow rule if requested.
