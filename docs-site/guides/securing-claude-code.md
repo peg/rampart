@@ -42,7 +42,7 @@ rampart doctor
 | Tool type | Example | Policy coverage |
 |-----------|---------|-----------------|
 | `exec` | `rm -rf /`, `curl ... | bash` | Block destructive and remote execution patterns, allow safe commands, or require approval |
-| `read` | `cat ~/.ssh/id_rsa`, `cat .env` | Deny sensitive paths and secret files, log policy matches |
+| `read` | `cat ~/.ssh/id_rsa`, `cat .env`, `cat .env.local` | Deny sensitive paths and secret files, log policy matches |
 | `write` | Editing `/etc/*` or production config | Enforce path rules, require approval for high-risk targets |
 | `fetch` | Web content, API responses, MCP output | Monitor for prompt injection and suspicious exfiltration directives |
 

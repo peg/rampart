@@ -27,7 +27,7 @@ The standard policy (`~/.rampart/policies/standard.yaml`) blocks:
 | `rm -rf /`, `rm -rf ~` | Destructive filesystem wipe |
 | `curl ... \| bash` | Remote code execution |
 | `cat ~/.ssh/id_rsa` | SSH private key exfiltration |
-| `cat .env` | API key / secret exposure |
+| `cat .env`, `cat .env.local`, `cat .env.production` | API key / secret exposure |
 | `dd if=/dev/urandom of=/dev/sda` | Disk destruction |
 | Credential patterns in responses | Data exfiltration detection |
 
