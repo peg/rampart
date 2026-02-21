@@ -118,7 +118,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: watch
         when:
           command_matches:
             - "env"
@@ -347,7 +347,7 @@ policies:
     match:
       tool: ["mcp-dangerous"]
     rules:
-      - action: log
+      - action: watch
         message: "Dangerous MCP operation logged (stop/restart/execute/modify)"
 
   - name: block-credential-leaks
