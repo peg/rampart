@@ -94,6 +94,11 @@ plugins:
   - search
   - minify:
       minify_html: true
+  - d2:
+      executable: d2
+      theme: 200
+      layout: elk
+      pad: 40
 
 extra:
   social:
@@ -114,6 +119,9 @@ nav:
     - Troubleshooting: getting-started/troubleshooting.md
     - Upgrade: getting-started/upgrade.md
     - Uninstall: getting-started/uninstall.md
+  - Security Guides:
+    - Securing Claude Code: guides/securing-claude-code.md
+    - Prompt Injection Protection: guides/prompt-injection.md
   - Integration Guides:
     - Overview: integrations/index.md
     - Claude Code: integrations/claude-code.md
@@ -133,6 +141,10 @@ nav:
     - MCP Proxy: features/mcp-proxy.md
     - Semantic Verification: features/semantic-verification.md
     - SIEM Integration: features/siem-integration.md
+  - Security Guides:
+    - Securing Claude Code: guides/securing-claude-code.md
+    - Prompt Injection Protection: guides/prompt-injection.md
+    - Install via an AI Agent: guides/agent-install.md
   - Deployment:
     - User Separation: deployment/user-separation.md
     - Production Checklist: deployment/production-checklist.md

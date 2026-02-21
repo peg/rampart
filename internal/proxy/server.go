@@ -345,6 +345,7 @@ type toolRequest struct {
 	Session string         `json:"session"`
 	RunID   string         `json:"run_id,omitempty"`
 	Params  map[string]any `json:"params"`
+	Input   map[string]any `json:"input,omitempty"`
 
 	// Response is the tool's output for response-side policy evaluation.
 	// The caller executes the tool and submits the output here for scanning
@@ -380,6 +381,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		RunID:     req.RunID,
 		Tool:      toolName,
 		Params:    req.Params,
+		Input:     extractToolInput(toolName, req.Params, req.Input),
 		Timestamp: time.Now().UTC(),
 	}
 
@@ -629,6 +631,7 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		Session:   req.Session,
 		Tool:      toolName,
 		Params:    req.Params,
+		Input:     extractToolInput(toolName, req.Params, req.Input),
 		Timestamp: time.Now().UTC(),
 	}
 
@@ -944,7 +947,9 @@ authorized:
 			s.logger.Info("proxy: allow rule persisted", "path", policyPath, "tool", resolved.Call.Tool)
 			// Force immediate reload so the new rule takes effect without waiting for hot-reload.
 			if s.engine != nil {
-				_ = s.engine.Reload()
+				if reloadErr := s.engine.Reload(); reloadErr != nil {
+					s.logger.Error("proxy: post-change reload failed", "error", reloadErr)
+				}
 			}
 		}
 	}
@@ -1466,6 +1471,25 @@ func generateToken(logger *slog.Logger) string {
 		panic("rampart: crypto/rand failed; refusing to start with insecure token")
 	}
 	return hex.EncodeToString(buf)
+}
+
+// extractToolInput returns the best-available input map for tool parameter
+// matching. For MCP-style requests, prefer nested argument objects; otherwise
+// fall back to the top-level params map.
+func extractToolInput(toolName string, params map[string]any, explicitInput map[string]any) map[string]any {
+	if len(explicitInput) > 0 {
+		return explicitInput
+	}
+	if args, ok := params["arguments"].(map[string]any); ok && len(args) > 0 {
+		return args
+	}
+	if input, ok := params["tool_input"].(map[string]any); ok && len(input) > 0 {
+		return input
+	}
+	if strings.HasPrefix(toolName, "mcp") {
+		return params
+	}
+	return params
 }
 
 // enrichParams adds derived fields to params for richer policy matching.

@@ -1,3 +1,8 @@
+---
+title: MCP Proxy
+description: "Secure MCP tools with Rampart's transparent proxy. Enforce policy on every tools/call request so AI agents can use MCP servers without unchecked access."
+---
+
 # MCP Proxy
 
 ## What is MCP?
@@ -35,20 +40,33 @@ In your agent's MCP config (Claude Desktop, Cursor, etc.):
 
 ## How It Works
 
-```mermaid
-graph LR
-    C[MCP Client] -->|"tools/call"| R[rampart mcp]
-    R -->|evaluate| P[Policy Engine]
-    P -->|allow| S[MCP Server]
-    P -->|deny| E[❌ JSON-RPC Error]
-    P -->|require_approval| W[⏳ Block & Wait]
-    W -->|approved| S
-    W -->|denied / timeout| E
-    S -->|response| R
-    R -->|response| C
+```d2
+direction: right
 
-    style W fill:#d29922,stroke:#fff,color:#fff
-    style E fill:#da3633,stroke:#fff,color:#fff
+client: "MCP Client
+(Claude Desktop, Cursor…)" {shape: oval}
+rampart: "rampart mcp" {style.border-radius: 8}
+engine: "Policy Engine" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 8
+}
+server: "MCP Server" {shape: oval}
+
+error: "Error Response" {
+  style.fill: "#2d1b1b"; style.stroke: "#da3633"; style.font-color: "#f85149"; style.border-radius: 6
+}
+pending: "Pending Approval" {
+  style.fill: "#2d2508"; style.stroke: "#d29922"; style.font-color: "#d29922"; style.border-radius: 6
+}
+
+client -> rampart: "tools/call"
+rampart -> engine: "evaluate"
+engine -> server: "allow"
+engine -> error: "deny"
+engine -> pending: "require_approval"
+pending -> server: "approved"
+pending -> error: "denied / timeout"
+server -> rampart: "response"
+rampart -> client: "response"
 ```
 
 Rampart speaks the MCP protocol natively. The client and server don't know it's there. Denied tool calls return a standard JSON-RPC error — the MCP server never sees them.

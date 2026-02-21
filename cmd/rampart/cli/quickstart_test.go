@@ -20,7 +20,17 @@ import (
 	"testing"
 )
 
+func TestDetectEnv_OpenClaw(t *testing.T) {
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "openclaw")
+	if got := detectEnv(); got != "openclaw" {
+		t.Errorf("expected openclaw, got %q", got)
+	}
+}
+
 func TestDetectEnv_ClaudeCode(t *testing.T) {
+	// Ensure OpenClaw marker is absent so Claude Code takes priority.
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
+
 	// Create a temp claude settings file
 	tmp := t.TempDir()
 	orig := os.Getenv("HOME")
@@ -40,6 +50,9 @@ func TestDetectEnv_ClaudeCode(t *testing.T) {
 }
 
 func TestDetectEnv_None(t *testing.T) {
+	// Ensure OpenClaw marker is absent.
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
+
 	tmp := t.TempDir()
 	orig := os.Getenv("HOME")
 	t.Setenv("HOME", tmp)
@@ -56,6 +69,7 @@ func TestDetectEnv_None(t *testing.T) {
 }
 
 func TestDetectEnv_Cursor(t *testing.T) {
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
 	tmp := t.TempDir()
 	orig := os.Getenv("HOME")
 	t.Setenv("HOME", tmp)
@@ -86,6 +100,7 @@ func TestDetectEnv_Cursor(t *testing.T) {
 }
 
 func TestDetectEnv_Windsurf(t *testing.T) {
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
 	tmp := t.TempDir()
 	orig := os.Getenv("HOME")
 	t.Setenv("HOME", tmp)
@@ -117,6 +132,7 @@ func TestDetectEnv_Windsurf(t *testing.T) {
 
 func TestDetectEnv_CursorBeatsWindsurf(t *testing.T) {
 	// When both Cursor and Windsurf are installed, Cursor should win (checked first).
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
 	tmp := t.TempDir()
 	orig := os.Getenv("HOME")
 	t.Setenv("HOME", tmp)

@@ -1,3 +1,8 @@
+---
+title: Semantic Verification
+description: "Rampart adds optional LLM semantic verification for ambiguous AI agent commands. Combine fast rule matching with intent checks for safer automation."
+---
+
 # Semantic Verification
 
 Pattern matching handles 95%+ of decisions instantly. For the ambiguous rest, Rampart supports LLM-based intent classification via the optional **rampart-verify** sidecar.
@@ -120,16 +125,54 @@ policies:
 
 ## How It Works
 
-```mermaid
-graph LR
-    A[Agent] -->|command| R[Rampart]
-    R -->|known pattern| D1[Allow/Deny]
-    R -->|ambiguous| V[rampart-verify]
-    V -->|redact secrets| V
-    V -->|classify intent| LLM[LLM]
-    LLM -->|ALLOW / DENY| V
-    V -->|decision| R
-    R -->|audit log| L[Audit Trail]
+```d2
+direction: right
+
+agent: "AI Agent" {shape: oval}
+rampart: "Rampart
+Policy Engine" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 8
+}
+
+allow: "Execute" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
+}
+deny: "Blocked" {
+  style.fill: "#2d1b1b"; style.stroke: "#da3633"; style.font-color: "#f85149"; style.border-radius: 6
+}
+
+verify: {
+  label: "rampart-verify sidecar"
+  style.stroke-dash: 4
+  style.border-radius: 8
+
+  redact: "Redact secrets
+from command" {style.border-radius: 6}
+  llm: "LLM
+(gpt-4o-mini / Haiku / Ollama)" {style.border-radius: 6}
+
+  redact -> llm: "sanitized command"
+}
+
+approval: "Human Approval" {
+  style.fill: "#2d2508"; style.stroke: "#d29922"; style.font-color: "#d29922"; style.border-radius: 6
+}
+
+audit: "Audit Trail" {shape: cylinder}
+
+agent -> rampart: "tool call"
+rampart -> allow: "clear allow"
+rampart -> deny: "clear deny"
+rampart -> verify.redact: "ambiguous / webhook"
+
+verify.llm -> allow: "ALLOW"
+verify.llm -> deny: "DENY"
+verify.llm -> approval: "ESCALATE"
+
+rampart -> audit
+allow -> audit
+deny -> audit
+approval -> audit
 ```
 
 1. Agent executes a command → Rampart evaluates policies

@@ -1,3 +1,8 @@
+---
+title: Protect Your First Agent in 5 Minutes
+description: "Follow Rampart's 5-minute tutorial to secure your first AI coding agent. Block unsafe commands, test policy decisions, and understand approval flow."
+---
+
 # Protect Your First Agent in 5 Minutes
 
 So you've got an AI agent writing code on your machine. Maybe it's Claude Code, maybe it's Codex, maybe it's Cline. It can run commands, read your files, and — if you're not careful — do things you didn't ask for.

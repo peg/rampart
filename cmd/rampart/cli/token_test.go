@@ -14,27 +14,22 @@
 package cli
 
 import (
-	"fmt"
-	"io"
-	"runtime"
+	"testing"
 
-	"github.com/peg/rampart/internal/build"
-	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print build and runtime version information",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return writeVersion(cmd.OutOrStdout())
-		},
-	}
-}
+func TestTokenShow_PrintsPersistedToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const want = "rampart_test_token_123"
+	require.NoError(t, persistToken(want))
 
-func writeVersion(w io.Writer) error {
-	if _, err := fmt.Fprintf(w, "rampart %s (%s) built %s\nGo %s\n", build.Version, build.Commit, build.Date, runtime.Version()); err != nil {
-		return fmt.Errorf("cli: write version output: %w", err)
-	}
-	return nil
+	stdout, _, err := runCLI(t, "token")
+	require.NoError(t, err)
+	assert.Equal(t, want, stdout)
+
+	stdout, _, err = runCLI(t, "token", "show")
+	require.NoError(t, err)
+	assert.Equal(t, want, stdout)
 }

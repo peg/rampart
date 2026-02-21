@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -341,9 +342,32 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
 			// burning 3-5 turns on workarounds.
 			if parsed.HookEventName == "PostToolUseFailure" {
+				postToolUseFailureEvent := audit.Event{
+					ID:        audit.NewEventID(),
+					Timestamp: time.Now().UTC(),
+					Agent:     parsed.Agent,
+					Session:   hookSession,
+					RunID:     parsed.RunID,
+					Tool:      parsed.Tool,
+					Request:   parsed.Params,
+					Decision: audit.EventDecision{
+						Action:  "feedback",
+						Message: "PostToolUseFailure short-circuit: injecting denial guidance to stop retry loops",
+					},
+				}
+				if line, marshalErr := json.Marshal(postToolUseFailureEvent); marshalErr == nil {
+					line = append(line, '\n')
+					_, _ = auditFile.Write(line)
+				}
+
+				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
-					"if an operation is restricted, report it to the user and stop."
+					"if an operation is restricted, report it to the user and stop.\n\n" +
+					"To diagnose: run `" + explainCmd + "` to see which policy applies, " +
+					"or `rampart watch` to view the live audit log. " +
+					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
+					"see https://rampart.sh/docs/exceptions for guidance."
 				out := hookOutput{
 					HookSpecificOutput: &hookDecision{
 						HookEventName:     "PostToolUseFailure",
@@ -354,14 +378,23 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 
 			// Build tool call for evaluation
+			depth, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("RAMPART_AGENT_DEPTH")))
+			if depth < 0 {
+				depth = 0
+			}
+			if parsed.Tool == "agent" {
+				depth++
+			}
 			call := engine.ToolCall{
-				ID:        audit.NewEventID(),
-				Agent:     parsed.Agent,
-				Session:   hookSession,
-				RunID:     parsed.RunID,
-				Tool:      parsed.Tool,
-				Params:    parsed.Params,
-				Timestamp: time.Now().UTC(),
+				ID:         audit.NewEventID(),
+				Agent:      parsed.Agent,
+				AgentDepth: depth,
+				Session:    hookSession,
+				RunID:      parsed.RunID,
+				Tool:       parsed.Tool,
+				Params:     parsed.Params,
+				Input:      parsed.Params,
+				Timestamp:  time.Now().UTC(),
 			}
 
 			isPostToolUse := parsed.Response != ""
@@ -429,6 +462,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						token:          serveToken,
 						logger:         logger,
 						autoDiscovered: serveAutoDiscovered,
+						errWriter:      cmd.ErrOrStderr(),
 					}
 					command, _ := call.Params["command"].(string)
 					path := call.Path() // handles both "file_path" (Claude Code) and "path"

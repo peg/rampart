@@ -416,7 +416,6 @@ func (m *Model) View() string {
 	lines = append(lines, frameLineBody(innerWidth, "  "+summaryLine))
 
 	// Pending approvals section.
-	approvalLines := 0
 	if len(m.pendingApprovals) > 0 {
 		lines = append(lines, frameLineMid(innerWidth))
 		lines = append(lines, frameLineBody(innerWidth, m.pendingStyle.Render("  ┌─ PENDING APPROVALS ─────────────────────────────────────┐")))
@@ -443,16 +442,13 @@ func (m *Model) View() string {
 			}
 		}
 		lines = append(lines, frameLineBody(innerWidth, m.pendingStyle.Render("  └─────────────────────────────────────────────────────────┘")))
-		approvalLines = 3 + len(m.pendingApprovals)*2 // header + footer + 2 per approval
 	}
 	if m.resolveStatus != "" {
 		lines = append(lines, frameLineBody(innerWidth, "  "+m.allowStyle.Render(m.resolveStatus)))
-		approvalLines++
 	}
 
 	lines = append(lines, frameLineMid(innerWidth))
 	lines = append(lines, frameLineBody(innerWidth, m.sectionStyle.Render("  LIVE FEED")))
-	_ = approvalLines
 
 	visible := m.visibleEvents(feedRows)
 	for i, event := range visible {

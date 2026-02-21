@@ -2,7 +2,7 @@
 
 # 🛡️ Rampart
 
-**See everything your AI agent does. Block the dangerous stuff.**
+**The security layer for AI coding agents.**
 
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -14,15 +14,11 @@
 
 ---
 
-Rampart is a runtime policy engine for AI coding agents. Every tool call — bash commands, file reads, file writes, HTTP fetches — is evaluated against your YAML policies before it executes. Dangerous calls are blocked in microseconds. Everything is written to a hash-chained audit trail. Ambiguous calls can be held for human approval.
+Claude Code's `--dangerously-skip-permissions` mode — and similar autonomous modes in Cursor, Cline, and Codex — give agents unrestricted shell access. Rampart sits between the agent and your system: every command, file access, and network request is evaluated against your YAML policy before it executes. Dangerous commands are blocked in microseconds. Everything is logged.
 
-It works in `--dangerously-skip-permissions` mode. [Full setup guide →](https://docs.rampart.sh/getting-started/quickstart/)
-
-### Get started in one command
-
+One command to get protected:
 ```bash
-# Install and set up in one command:
-curl -fsSL https://rampart.sh/install | bash
+rampart setup claude-code
 ```
 
 `rampart quickstart` auto-detects Claude Code, Cursor, or Windsurf, installs `rampart serve` as a boot service, configures hooks, and runs a health check. Done.
@@ -48,39 +44,7 @@ Once running, every command Claude executes goes through Rampart's policy engine
 
 ## How it works
 
-```mermaid
-graph LR
-    subgraph "AI Agents"
-        CC[Claude Code]
-        CL[Cline]
-        OC[OpenClaw]
-        CX[Codex]
-        O[Others]
-    end
-
-    CC & CL --> H[Native Hooks]
-    OC --> S[Shell Shim]
-    CX --> P[LD_PRELOAD]
-    O --> M[MCP Proxy]
-
-    H & S & P & M --> PE[YAML Policy Eval<br/>~20μs]
-
-    PE --> AU[📋 Hash-Chained Audit<br/>Syslog · CEF · Webhooks]
-
-    AU --> PASS[✅ Execute]
-    AU --> BLOCK[❌ Blocked]
-    AU --> APR[👤 Approval]
-
-    PE -. "ambiguous ⚠️" .-> SB["⚡ rampart-verify<br/>(optional sidecar)<br/>gpt-4o-mini · Haiku · Ollama"]
-    SB -. allow/deny .-> PE
-
-    style PE fill:#238636,stroke:#fff,color:#fff
-    style AU fill:#1f6feb,stroke:#fff,color:#fff
-    style BLOCK fill:#da3633,stroke:#fff,color:#fff
-    style APR fill:#d29922,stroke:#fff,color:#fff
-    style PASS fill:#238636,stroke:#fff,color:#fff
-    style SB fill:#2d333b,stroke:#f0883e,stroke-width:2px,stroke-dasharray: 5 5
-```
+<img src="docs/architecture.svg" alt="Rampart architecture — agents flow through interception layer into policy engine, with audit trail and outcomes" width="100%">
 
 *Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions go to a hash-chained audit trail.*
 
@@ -419,7 +383,7 @@ graph LR
     D -->|Webhook| WH["Signed URL<br/>(click to approve)"]
     D -->|CLI / API| CLI["rampart approve &lt;id&gt;"]
 
-    CC -->|user responds| R[✅ Resolved]
+    CC -->|user responds| R[Resolved]
     MCP -->|via API / dashboard| R
     OC -->|via API| R
     WH -->|HMAC-verified link| R

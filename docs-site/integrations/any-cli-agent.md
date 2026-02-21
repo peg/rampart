@@ -1,3 +1,8 @@
+---
+title: Securing Any CLI Agent
+description: "Secure any CLI AI agent that respects SHELL by wrapping it with Rampart. Apply policy checks to commands, block dangerous actions, and keep audit logs."
+---
+
 # Any CLI Agent
 
 `rampart wrap` works with **any agent** that reads the `$SHELL` environment variable. This covers most CLI-based AI agents.

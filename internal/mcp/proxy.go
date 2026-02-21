@@ -176,6 +176,7 @@ func (p *Proxy) Run(ctx context.Context, parentIn io.Reader, parentOut io.Writer
 		childErr := <-childErrCh
 		return joinProxyErrors(err, childErr)
 	case err := <-childErrCh:
+		_ = p.childIn.Close()
 		return err
 	}
 }
@@ -317,6 +318,7 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		Session:   "mcp-proxy",
 		Tool:      mappedTool,
 		Params:    requestData,
+		Input:     params.Arguments,
 		Timestamp: time.Now().UTC(),
 	}
 

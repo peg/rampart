@@ -15,26 +15,35 @@ package cli
 
 import (
 	"fmt"
-	"io"
-	"runtime"
 
-	"github.com/peg/rampart/internal/build"
 	"github.com/spf13/cobra"
 )
 
-func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print build and runtime version information",
+func newTokenShowCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "token",
+		Short: "Print the current bearer token for rampart serve",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return writeVersion(cmd.OutOrStdout())
+			return printPersistedToken(cmd)
 		},
 	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "show",
+		Short: "Print the current bearer token for rampart serve",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return printPersistedToken(cmd)
+		},
+	})
+
+	return cmd
 }
 
-func writeVersion(w io.Writer) error {
-	if _, err := fmt.Fprintf(w, "rampart %s (%s) built %s\nGo %s\n", build.Version, build.Commit, build.Date, runtime.Version()); err != nil {
-		return fmt.Errorf("cli: write version output: %w", err)
+func printPersistedToken(cmd *cobra.Command) error {
+	tok, err := readPersistedToken()
+	if err != nil || tok == "" {
+		return fmt.Errorf("no token found - run 'rampart serve' to generate one")
 	}
+	fmt.Fprintln(cmd.OutOrStdout(), tok)
 	return nil
 }

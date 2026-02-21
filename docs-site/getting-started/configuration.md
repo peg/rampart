@@ -1,3 +1,8 @@
+---
+title: Configuration
+description: "Configure Rampart YAML policies to control what AI agents can execute, read, write, and fetch. Tune rules, defaults, and approvals for your workflow."
+---
+
 # Configuration
 
 Rampart policies are YAML files that define what your AI agent can and can't do. Policies are evaluated in microseconds and hot-reload when you edit them.

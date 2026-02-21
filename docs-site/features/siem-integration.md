@@ -1,3 +1,8 @@
+---
+title: SIEM Integration
+description: "Forward Rampart security events to your SIEM in syslog or CEF format. Monitor blocked commands, approvals, and agent behavior in your existing SOC tools."
+---
+
 # SIEM Integration
 
 Send Rampart audit events to your existing security stack. Three output formats, works with any SIEM.

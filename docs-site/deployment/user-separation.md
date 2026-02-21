@@ -1,3 +1,8 @@
+---
+title: User Separation
+description: "Deploy Rampart with user separation to prevent AI agents from editing policies or audit logs. Protect enforcement integrity in production environments."
+---
+
 # User Separation
 
 By default, Rampart runs as the same user as your AI agent. This is fine for development but means the agent can read audit logs and modify policy files.
