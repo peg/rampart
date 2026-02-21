@@ -62,10 +62,18 @@ rules:
     when:                   # Optional. Conditions (omit for unconditional).
       command_matches: list
       command_not_matches: list
+      command_contains: list
       path_matches: list
       path_not_matches: list
       url_matches: list
       domain_matches: list
+      session_matches: list
+      session_not_matches: list
+      agent_depth:
+        gte: integer
+        lte: integer
+        eq: integer
+      tool_param_matches: map[string]string
       response_matches: list
       response_not_matches: list
       default: boolean          # Catch-all — matches when true
@@ -142,6 +150,38 @@ when:
     - "AKIA[0-9A-Z]{16}"                           # AWS key
     - "-----BEGIN (RSA |EC )?PRIVATE KEY-----"      # Private key
     - "ghp_[a-zA-Z0-9]{36}"                        # GitHub PAT
+```
+
+#### `agent_depth`
+
+Match nested sub-agent depth (`0` = top-level agent, `1+` = sub-agents):
+
+```yaml
+when:
+  agent_depth:
+    gte: 1
+    lte: 2
+```
+
+Exact match:
+
+```yaml
+when:
+  agent_depth:
+    eq: 0
+```
+
+#### `tool_param_matches`
+
+Match MCP tool input parameters by case-insensitive glob pattern.
+Keys are parameter names, values are glob patterns. Rule matches if any
+parameter condition matches.
+
+```yaml
+when:
+  tool_param_matches:
+    path: "**/.env*"
+    url: "*webhook.site*"
 ```
 
 ### Webhook Configuration

@@ -33,13 +33,14 @@ const responseRegexMatchTimeout = 100 * time.Millisecond
 // with concurrent goroutines spawned by matchRegexWithTimeout.
 //
 // Usage pattern (tests only):
-//   regexMatchMu.Lock()
-//   regexMatchFunc = func(re *regexp.Regexp, s string) bool { ... }
-//   regexMatchMu.Unlock()
-//   defer func() { regexMatchMu.Lock(); regexMatchFunc = nil; regexMatchMu.Unlock() }()
+//
+//	regexMatchMu.Lock()
+//	regexMatchFunc = func(re *regexp.Regexp, s string) bool { ... }
+//	regexMatchMu.Unlock()
+//	defer func() { regexMatchMu.Lock(); regexMatchFunc = nil; regexMatchMu.Unlock() }()
 var (
-	regexMatchFunc  func(*regexp.Regexp, string) bool // test-only; see comment above
-	regexMatchMu    sync.RWMutex
+	regexMatchFunc func(*regexp.Regexp, string) bool // test-only; see comment above
+	regexMatchMu   sync.RWMutex
 )
 
 func regexMatchString(re *regexp.Regexp, value string) bool {
@@ -321,6 +322,34 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		return true, fmt.Sprintf("domain_matches [%q]", matched)
 	}
 
+	if cond.AgentDepth != nil {
+		if cond.AgentDepth.Gte != nil && call.AgentDepth < *cond.AgentDepth.Gte {
+			return false, ""
+		}
+		if cond.AgentDepth.Lte != nil && call.AgentDepth > *cond.AgentDepth.Lte {
+			return false, ""
+		}
+		if cond.AgentDepth.Eq != nil && call.AgentDepth != *cond.AgentDepth.Eq {
+			return false, ""
+		}
+		return true, fmt.Sprintf("agent_depth [%d]", call.AgentDepth)
+	}
+
+	if len(cond.ToolParamMatches) > 0 {
+		for param, pattern := range cond.ToolParamMatches {
+			val, ok := call.Input[param]
+			if !ok {
+				continue
+			}
+			str := fmt.Sprintf("%v", val)
+			matched, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(str))
+			if matched {
+				return true, fmt.Sprintf("tool_param_matches [%s=%q]", param, pattern)
+			}
+		}
+		return false, ""
+	}
+
 	return false, ""
 }
 
@@ -457,6 +486,41 @@ func matchCondition(cond Condition, call ToolCall) bool {
 	if len(cond.DomainMatches) > 0 {
 		domain, _ := call.Params["domain"].(string)
 		if domain == "" || !matchAny(cond.DomainMatches, domain) {
+			return false
+		}
+		matched = true
+	}
+
+	// Nested sub-agent depth matching.
+	if cond.AgentDepth != nil {
+		if cond.AgentDepth.Gte != nil && call.AgentDepth < *cond.AgentDepth.Gte {
+			return false
+		}
+		if cond.AgentDepth.Lte != nil && call.AgentDepth > *cond.AgentDepth.Lte {
+			return false
+		}
+		if cond.AgentDepth.Eq != nil && call.AgentDepth != *cond.AgentDepth.Eq {
+			return false
+		}
+		matched = true
+	}
+
+	// MCP tool input parameter matching (case-insensitive glob).
+	if len(cond.ToolParamMatches) > 0 {
+		paramMatched := false
+		for param, pattern := range cond.ToolParamMatches {
+			val, ok := call.Input[param]
+			if !ok {
+				continue
+			}
+			str := fmt.Sprintf("%v", val)
+			m, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(str))
+			if m {
+				paramMatched = true
+				break
+			}
+		}
+		if !paramMatched {
 			return false
 		}
 		matched = true

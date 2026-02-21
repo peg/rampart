@@ -82,6 +82,10 @@ type ToolCall struct {
 	// Used for agent-scoped policy matching.
 	Agent string
 
+	// AgentDepth is how deeply nested this call is in sub-agent orchestration.
+	// 0 is top-level agent; each sub-agent level increments by 1.
+	AgentDepth int `json:"agent_depth,omitempty"`
+
 	// Session identifies the agent's current session.
 	Session string
 
@@ -98,6 +102,9 @@ type ToolCall struct {
 	// For exec: {"command": "git push", "workdir": "/home/user/project"}
 	// For read: {"path": "/etc/passwd"}
 	Params map[string]any
+
+	// Input contains raw MCP tool input arguments (if available).
+	Input map[string]any `json:"input,omitempty"`
 
 	// Timestamp is when the tool call was initiated.
 	Timestamp time.Time
