@@ -19,7 +19,9 @@ func TestHasRampartHook(t *testing.T) {
 		{"empty", claudeSettings{}, false},
 		{"no hooks", claudeSettings{"other": "value"}, false},
 		{"hooks but no PreToolUse", claudeSettings{"hooks": map[string]any{}}, false},
-		{"with rampart hook", claudeSettings{
+		// PreToolUse alone is not enough — PostToolUseFailure must also be present
+		// so that existing installs are upgraded to include the new hook.
+		{"with rampart PreToolUse only (incomplete)", claudeSettings{
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
@@ -28,8 +30,24 @@ func TestHasRampartHook(t *testing.T) {
 					},
 				},
 			},
+		}, false},
+		{"with both PreToolUse and PostToolUseFailure (complete)", claudeSettings{
+			"hooks": map[string]any{
+				"PreToolUse": []any{
+					map[string]any{
+						"matcher": "Bash",
+						"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					},
+				},
+				"PostToolUseFailure": []any{
+					map[string]any{
+						"matcher": ".*",
+						"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					},
+				},
+			},
 		}, true},
-		{"with other hook", claudeSettings{
+		{"with other hook only", claudeSettings{
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
@@ -118,10 +136,14 @@ func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
 	claudeDir := filepath.Join(tmpHome, ".claude")
 	os.MkdirAll(claudeDir, 0o755)
 
+	// Both PreToolUse and PostToolUseFailure must be present for "already configured".
 	settings := map[string]any{
 		"hooks": map[string]any{
 			"PreToolUse": []any{
 				map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "rampart hook"}}},
+			},
+			"PostToolUseFailure": []any{
+				map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": "rampart hook"}}},
 			},
 		},
 	}
