@@ -333,7 +333,7 @@ func NewMemoryStore(data []byte, path string) *MemoryStore {
 // Load parses the in-memory YAML configuration.
 func (s *MemoryStore) Load() (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal(s.data, &cfg); err != nil {
+	if err := safeUnmarshal(s.data, &cfg); err != nil {
 		return nil, fmt.Errorf("engine: parse embedded policy: %w", err)
 	}
 	if err := cfg.validate(); err != nil {
@@ -365,13 +365,16 @@ func (s *FileStore) Load() (*Config, error) {
 		return nil, fmt.Errorf("engine: resolve path %q: %w", s.path, err)
 	}
 
+	if info, statErr := os.Stat(absPath); statErr == nil && info.Size() > maxPolicyFileSize {
+		return nil, fmt.Errorf("engine: policy file too large (%d bytes, max %d)", info.Size(), maxPolicyFileSize)
+	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("engine: read policy file: %w", err)
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeUnmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("engine: parse policy file: %w", err)
 	}
 

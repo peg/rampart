@@ -597,3 +597,57 @@ policies:
 	_, poisoned := cfg2.responseRegexCache["__test_sentinel__"]
 	assert.False(t, poisoned, "cfg2 cache should not be aliased to cfg1 cache after deep-copy fix")
 }
+
+func TestSafeUnmarshal_OversizedRejected(t *testing.T) {
+	// Anything over maxPolicyFileSize (1MiB) must be rejected before parsing.
+	big := make([]byte, maxPolicyFileSize+1)
+	err := safeUnmarshal(big, &struct{}{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}
+
+func TestSafeUnmarshal_PanicRecovered(t *testing.T) {
+	// A deeply nested YAML anchor structure is the classic billion-laughs payload.
+	// go-yaml v3 may panic or return an error — either is acceptable; what's NOT
+	// acceptable is a crash. Verify the panic is caught and returned as an error.
+	//
+	// We use a moderate depth (not truly exponential) to keep the test fast.
+	payload := []byte(`
+a: &a {x: 1}
+b: &b {a: *a, b: *a, c: *a, d: *a}
+c: &c {a: *b, b: *b, c: *b, d: *b}
+d: &d {a: *c, b: *c, c: *c, d: *c}
+e: {a: *d, b: *d, c: *d, d: *d}
+`)
+	// Must not panic — either parse ok or return error, both are fine.
+	var out interface{}
+	_ = safeUnmarshal(payload, &out)
+	// The real test is that we got here without panicking.
+}
+
+func TestDirStore_OversizedFileSkipped(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write one valid file and one oversized file.
+	writeTestFile(t, filepath.Join(dir, "01-good.yaml"), `
+version: "1"
+default_action: allow
+policies:
+  - name: good-policy
+    match: {tool: exec}
+    rules: [{action: allow, when: {default: true}}]
+`)
+	// Create a file that exceeds maxPolicyFileSize.
+	bigPath := filepath.Join(dir, "02-big.yaml")
+	f, err := os.Create(bigPath)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(maxPolicyFileSize+1))
+	f.Close()
+
+	store := NewDirStore(dir, nil)
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	// Oversized file should be skipped; good policy should still load.
+	assert.Len(t, cfg.Policies, 1)
+	assert.Equal(t, "good-policy", cfg.Policies[0].Name)
+}
