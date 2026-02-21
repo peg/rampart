@@ -351,8 +351,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					Tool:      parsed.Tool,
 					Request:   parsed.Params,
 					Decision: audit.EventDecision{
-						Action:  "allow",
-						Message: "PostToolUseFailure short-circuit feedback injection",
+						Action:  "feedback",
+						Message: "PostToolUseFailure short-circuit: injecting denial guidance to stop retry loops",
 					},
 				}
 				if line, marshalErr := json.Marshal(postToolUseFailureEvent); marshalErr == nil {
@@ -379,6 +379,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 			// Build tool call for evaluation
 			depth, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("RAMPART_AGENT_DEPTH")))
+			if depth < 0 {
+				depth = 0
+			}
 			if parsed.Tool == "agent" {
 				depth++
 			}

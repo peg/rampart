@@ -269,12 +269,18 @@ func resolveExplainPolicyPath(cmd *cobra.Command, configPath string) (string, er
 		return candidate, nil
 	}
 
-	// If configPath was set programmatically to a non-default path that exists
-	// on disk (e.g. in tests or via opts struct), use it directly rather than
-	// triggering auto-discovery.
+	// If configPath was set programmatically to a non-default path (e.g. in
+	// tests or via opts struct), use it directly. If the file doesn't exist,
+	// return an error — don't silently fall through to auto-discovery, which
+	// would produce a confusing mismatch between the configured path and what
+	// actually gets explained.
 	if candidate != "" && candidate != "rampart.yaml" {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
+		} else if os.IsNotExist(err) {
+			return "", fmt.Errorf("policy: config file not found at %s", candidate)
+		} else {
+			return "", fmt.Errorf("policy: check config %s: %w", candidate, err)
 		}
 	}
 

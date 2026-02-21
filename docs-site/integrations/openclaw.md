@@ -2,13 +2,23 @@
 
 For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart provides a shell shim, background service, and optional file tool patching.
 
+!!! tip "Fastest path"
+    If you want your OpenClaw agent to install and configure Rampart for you, just say:
+    > "Install Rampart and protect this machine."
+
+    The agent will run `rampart quickstart --yes` which handles everything automatically.
+    See the [agent install guide](../guides/agent-install.md) for full details.
+
 ## Setup
 
 ```bash
-# Shell command protection only
+# Fastest: auto-detect, install service, configure hooks, run health check
+rampart quickstart --yes
+
+# Manual: shell command protection only
 rampart setup openclaw
 
-# Full protection (shell commands + file reads/writes/edits)
+# Manual: full protection (shell commands + file reads/writes/edits)
 rampart setup openclaw --patch-tools
 ```
 

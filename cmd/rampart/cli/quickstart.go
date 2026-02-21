@@ -28,6 +28,7 @@ import (
 func newQuickstartCmd() *cobra.Command {
 	var envFlag string
 	var skipDoctor bool
+	var yes bool
 
 	cmd := &cobra.Command{
 		Use:   "quickstart",
@@ -35,19 +36,23 @@ func newQuickstartCmd() *cobra.Command {
 		Long: `quickstart detects your AI coding environment, installs the Rampart
 background service, wires up the tool-call hook, and runs a health check.
 
-Supported environments: claude-code, cursor, windsurf
-If --env is not set, quickstart will auto-detect.`,
+Supported environments: claude-code, cline, cursor, windsurf, openclaw
+If --env is not set, quickstart will auto-detect.
+
+Use --yes to run non-interactively (AI agents, CI, automated setup).
+For OpenClaw, --yes also enables --patch-tools for full file-operation coverage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuickstart(cmd, envFlag, skipDoctor)
+			return runQuickstart(cmd, envFlag, skipDoctor, yes)
 		},
 	}
 
-	cmd.Flags().StringVar(&envFlag, "env", "", "AI coding environment (claude-code|cursor|windsurf|none)")
+	cmd.Flags().StringVar(&envFlag, "env", "", "AI coding environment (claude-code|cline|cursor|windsurf|openclaw|none)")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "skip final health check")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive mode: for OpenClaw, also enables --patch-tools (full file coverage); safe to pass for any agent")
 	return cmd
 }
 
-func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool) error {
+func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool, yes bool) error {
 	w := cmd.OutOrStdout()
 
 	fmt.Fprintln(w, "◆ Rampart quickstart")
@@ -59,7 +64,7 @@ func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool) error {
 		env = detectEnv()
 		if env == "" {
 			fmt.Fprintln(w, "  ⚠  Could not detect AI coding environment.")
-			fmt.Fprintln(w, "     Use --env claude-code|cursor|windsurf to specify manually.")
+			fmt.Fprintln(w, "     Use --env claude-code|cline|cursor|windsurf|openclaw to specify manually.")
 			env = "none"
 		} else {
 			fmt.Fprintf(w, "  ✓  Detected environment: %s\n", env)
@@ -83,7 +88,12 @@ func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool) error {
 	// Step 3: setup hooks for detected env
 	if env != "none" {
 		fmt.Fprintf(w, "  Configuring hooks for %s...\n", env)
-		if err := runSubcmd("setup", env); err != nil {
+		setupArgs := []string{"setup", env}
+		// --yes enables full protection for OpenClaw (--patch-tools covers file reads/writes/edits)
+		if yes && env == "openclaw" {
+			setupArgs = append(setupArgs, "--patch-tools")
+		}
+		if err := runSubcmd(setupArgs...); err != nil {
 			fmt.Fprintf(w, "  ⚠  Hook setup failed: %v\n", err)
 			fmt.Fprintln(w, "     Run `rampart setup "+env+"` manually to retry.")
 		} else {
@@ -127,6 +137,11 @@ func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool) error {
 
 // detectEnv returns the first detected AI coding environment, or "".
 func detectEnv() string {
+	// OpenClaw: most reliable signal is OPENCLAW_SERVICE_MARKER env var,
+	// which OpenClaw gateway sets when it spawns an agent process.
+	if os.Getenv("OPENCLAW_SERVICE_MARKER") == "openclaw" {
+		return "openclaw"
+	}
 	// Claude Code: settings.json or binary
 	if _, err := os.Stat(claudeSettingsPath()); err == nil {
 		return "claude-code"
