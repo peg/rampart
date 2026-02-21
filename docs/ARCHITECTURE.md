@@ -5,7 +5,7 @@
 Rampart is a policy enforcement layer between AI agents and their tools. Every tool call passes through Rampart, which evaluates it against YAML policies and returns allow, deny, or log. Everything is audited to a hash-chained trail.
 
 ```
-Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Log
+Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
                                             → Audit (always)
 ```
 
@@ -83,6 +83,10 @@ WebSocket client that connects to an OpenClaw gateway. Receives `exec.approval.r
 **OpenClaw Daemon** — Connects via WebSocket, auto-resolves exec approvals. Best for: OpenClaw deployments where the approval system is already in use.
 
 **SDK** (`pkg/sdk/`) — Embed the engine directly in Go code. Zero network overhead, nanosecond evaluation. Best for: Go agents, performance-critical paths.
+
+## Policy Profiles
+
+Built-in profiles (`standard`, `paranoid`, `yolo`) provide ready-to-use policy sets for common use cases. Profiles include platform-specific policies where relevant — in v0.4.4, 17 macOS hardening policies were added covering Keychain access, Gatekeeper bypass, persistence mechanisms, user management, and osascript (AppleScript shell execution).
 
 ## Project Layout
 

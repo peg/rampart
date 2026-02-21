@@ -71,12 +71,12 @@ Create `/var/ossec/etc/rules/rampart_rules.xml` on the Wazuh manager:
     <group>rampart_allow</group>
   </rule>
 
-  <!-- Log actions (notable) -->
+  <!-- Watch actions (notable) -->
   <rule id="100302" level="5">
     <if_sid>100300</if_sid>
-    <field name="action">log</field>
-    <description>Rampart: AI agent tool call logged - $(tool) - $(command)</description>
-    <group>rampart_log</group>
+    <field name="action">watch</field>
+    <description>Rampart: AI agent tool call watched - $(tool) - $(command)</description>
+    <group>rampart_watch</group>
   </rule>
 
   <!-- Deny actions (security event) -->
@@ -133,7 +133,7 @@ Trigger a test deny event:
 
 ```bash
 # With rampart serve running
-curl -s http://localhost:19090/evaluate \
+curl -s http://localhost:9090/v1/tool/exec \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"tool":"exec","params":{"command":"cat ~/.ssh/id_rsa"}}'
@@ -141,7 +141,7 @@ curl -s http://localhost:19090/evaluate \
 
 Check the Wazuh dashboard for a level 10+ alert from rule 100303 or 100306.
 
-## Syslog Output (v0.1.7+)
+## Syslog Output
 
 For direct syslog integration without file monitoring:
 
@@ -164,7 +164,7 @@ CEF:0|Rampart|PolicyEngine|0.1.7|deny|Destructive command blocked|8|src=claude-c
 | Rampart Action | Wazuh Level | Description |
 |---------------|-------------|-------------|
 | allow | 3 | Informational — normal operation |
-| log | 5 | Notable — flagged for review |
+| watch | 5 | Notable — flagged for review |
 | require_approval | 8 | Security event — needs human approval |
 | deny | 10 | Alert — blocked by policy |
 | deny (credentials) | 12 | High alert — credential access attempt |

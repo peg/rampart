@@ -63,7 +63,8 @@ A typical config looks like:
 rampart init --profile standard
 
 # Start the policy server
-rampart serve &
+rampart serve --background
+# `rampart serve stop` stops it.
 ```
 
 ### 3. Wrap your MCP servers

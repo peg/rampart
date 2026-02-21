@@ -1,6 +1,6 @@
 # Rampart Preload — Syscall-Level Agent Protection
 
-**Status:** Shipped (v0.1.5+)  
+**Status:** Shipped (v0.1.5+) | **Last updated: v0.4.5**  
 **See also:** `rampart preload --help`, [README](../README.md#ld_preload)
 
 ## Overview
@@ -95,7 +95,7 @@ The library reads from env (set by `rampart preload` command):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAMPART_URL` | `http://127.0.0.1:19090` | Policy server URL |
+| `RAMPART_URL` | `http://127.0.0.1:9090` | Policy server URL |
 | `RAMPART_TOKEN` | (none) | Bearer auth token |
 | `RAMPART_MODE` | `enforce` | enforce / monitor / disabled |
 | `RAMPART_FAIL_OPEN` | `1` | Fail-open when serve unreachable |
@@ -161,31 +161,9 @@ Fallback path (if serve is unreachable): return immediately with allow. No retri
 - Fail-open (serve down): < 0.01ms
 - Library load time: < 5ms (one-time at process start)
 
-## Implementation Plan
+## Implementation History
 
-### Week 1: C library proof of concept
-- [ ] `preload/librampart.c` — intercept execve, execvp, system
-- [ ] HTTP client using libcurl
-- [ ] Test with `LD_PRELOAD=./librampart.so bash`
-- [ ] Verify against live `rampart serve`
-
-### Week 2: CLI integration
-- [ ] `cmd/rampart/cli/preload.go` — find library, start serve, set env, exec
-- [ ] `rampart preload -- <command>` working end-to-end
-- [ ] Auto-start `rampart serve` if not running
-
-### Week 3: macOS + polish
-- [ ] Build `librampart.dylib` for macOS
-- [ ] Test with DYLD_INSERT_LIBRARIES
-- [ ] Document SIP limitations
-- [ ] Add `posix_spawn` interception (macOS preference)
-- [ ] Goreleaser integration (ship library with releases)
-
-### Week 4: Testing + docs
-- [ ] Test with real agents: Codex CLI, Python agent, Node.js agent
-- [ ] Performance benchmarks
-- [ ] README section + docs page
-- [ ] Security review of C code
+LD_PRELOAD interception shipped in v0.1.5 with full coverage of `execve`, `execvp`, `execvpe`, `system`, `popen`, and `posix_spawn`. The macOS `librampart.dylib` (DYLD_INSERT_LIBRARIES) shipped alongside the Linux build via goreleaser. Performance targets (sub-1ms via Unix domain socket, sub-3ms via TCP) were met and validated in CI benchmarks.
 
 ## Example Policy (works with existing format)
 
