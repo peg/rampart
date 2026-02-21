@@ -82,8 +82,8 @@ Without Rampart: it runs. With Rampart: the command is evaluated against your po
 **Can AI agents be manipulated by prompt injection?**  
 Yes — a webpage or MCP tool response can contain instructions that try to override an agent's behavior. Rampart's `watch-prompt-injection` policy monitors tool responses for these patterns and logs them for review. [Learn more →](guides/prompt-injection.md)
 
-**Does Rampart work with OpenClaw?**  
-Yes. `rampart setup openclaw` protects shell commands, and `--patch-tools` adds file access protection. [OpenClaw guide →](integrations/openclaw.md)
+**Does Rampart send my commands to any external server?**  
+No. Rampart runs entirely on your machine. Policy evaluation, audit logging, and the dashboard are all local processes. No command data, file paths, or decisions are sent anywhere.
 
 **Will Rampart slow down my agent?**  
 Policy evaluation takes under 10 microseconds per tool call. In practice, you won't notice it.

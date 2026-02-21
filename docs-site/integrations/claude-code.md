@@ -1,6 +1,6 @@
 ---
 title: Securing Claude Code
-description: "Protect Claude Code with Rampart: block dangerous commands, restrict file access, detect prompt injection, and require human approval for risky operations. Works in --dangerously-skip-permissions mode."
+description: "Secure Claude Code with Rampart. Block dangerous commands, restrict file access, detect prompt injection, and audit everything — works in --dangerously-skip-permissions mode."
 ---
 
 # Securing Claude Code

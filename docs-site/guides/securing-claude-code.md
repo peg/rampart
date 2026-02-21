@@ -104,4 +104,4 @@ A: Add an allow rule to your policy, or use require_approval so you decide per-i
 A: Yes — Rampart hooks into Claude Code's hook system, which operates independently of the permissions mode.
 
 **Q: What if Rampart's service goes down?**  
-A: Claude Code will warn that Rampart serve is unreachable. The hook currently falls back to asking Claude Code's native permission system.
+A: Rampart prints `WARNING: rampart serve unreachable` to stderr and falls back to `hookAsk` — Claude Code shows its standard permission prompt for each tool call. You won't get locked out, but you lose policy enforcement until the service restarts.

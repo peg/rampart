@@ -60,15 +60,26 @@ Look for events tagged with `watch-prompt-injection`, then inspect the correspon
 
 ## Escalating to Deny
 
-If you want blocking behavior, override the policy with `action: deny` in your custom YAML.
+If you want blocking behavior, add a `deny` rule before the `watch` rule in your custom policy. Use narrow, high-confidence patterns to avoid interrupting normal documentation and web workflows.
 
 ```yaml
-- name: watch-prompt-injection
-  action: deny
-  tool: fetch
-  match:
-    response_patterns:
-      - '(?i)ignore\\s+previous\\s+instructions'
+policies:
+  - name: watch-prompt-injection
+    match:
+      tool: ["fetch", "web_search", "read", "exec", "mcp"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            # Only deny the highest-confidence, zero-ambiguity patterns
+            - "(?i)ignore (all |your |previous |prior )?instructions"
+            - "(?i)<\\|im_start\\|>system"
+        message: "Prompt injection blocked"
+      - action: watch
+        when:
+          response_matches:
+            - "(?i)you are now (a|an) "
+            - "(?i)your new (instructions|role|purpose|task) (is|are)"
+            # ... remaining watch patterns
+        message: "Possible prompt injection detected — logged for review"
 ```
-
-Start with narrow, high-confidence patterns. Deny is powerful, but overly broad matching can interrupt normal documentation and web workflows.
