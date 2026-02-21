@@ -115,21 +115,19 @@ policies:
             - "**/.ssh/id_*"
             - "**/.aws/credentials"
             - "**/.aws/config"
-            - "cat /etc/shadow"
+            # /etc sensitive files — catch-all covers appended shell operators
+            # (2>&1, pipes, etc). Redirect edge case (> /tmp/out) not caught here
+            # but response scanner (block-credential-leaks) covers exfiltration.
+            - "**/etc/shadow*"
+            - "**/etc/gshadow*"
+            - "**/etc/master.passwd*"
+            - "**/etc/sudoers*"
+            # /etc/passwd is world-readable by design; only block explicit dumps
             - "cat /etc/passwd"
-            - "cat /etc/gshadow"
-            - "cat /etc/master.passwd"
-            - "head /etc/shadow"
-            - "tail /etc/shadow"
-            - "less /etc/shadow"
-            - "more /etc/shadow"
-            - "grep * /etc/shadow"
-            - "cat /etc/sudoers"
             - "cat **/.bash_history"
             - "cat **/.zsh_history"
             - "cat **/.python_history"
             - "cat **/.*_history"
-            - "cat /etc/sudoers.d/*"
             - "cat /proc/**/environ"
           command_not_matches:
             # Allow .pub files — public keys are not sensitive.
