@@ -71,6 +71,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .tbl tr.flash-green{background:rgba(34,197,94,.15)!important}
 .tbl tr.flash-red{background:rgba(239,68,68,.15)!important}
 @keyframes fadeHighlight{from{background:rgba(255,99,146,.12)}to{background:transparent}}
+@keyframes rowFadeIn{from{opacity:0}to{opacity:1}}
+.tbl tr.new-entry{animation:rowFadeIn .3s ease-out}
 
 /* Pending items — flex cards, not table */
 .pending-bar{display:flex;align-items:center;padding:8px 0 6px;border-bottom:1px solid var(--border);margin-bottom:0}
@@ -402,7 +404,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 const DANGEROUS=[/^rm\s/,/^chmod\s/,/^chown\s/,/^kill\s/,/^killall\s/,/^pkill\s/,/^dd\s/,/^mkfs/,/^fdisk/,/^reboot/,/^shutdown/,/^halt/,/^systemctl\s+(stop|disable|restart)/,/\bsudo\b/,/\brm\s+-rf\b/,/^ssh\b.*\breboot\b/,/^curl\b.*\|\s*(ba)?sh/];
 function isDangerous(cmd){return DANGEROUS.some(r=>r.test(cmd||''))}
 
-let token='',pollTimer=null,connected=false,expandedId=null,initialPoll=true;
+let token='',pollTimer=null,connected=false,expandedId=null,initialPoll=true,evtSource=null;
 const pendingMap=new Map();
 const selectedIds=new Set();
 let runGroupsData=[];
@@ -469,6 +471,7 @@ function initResizeHandles(){
   document.getElementById('token-input').addEventListener('keydown',e=>{if(e.key==='Enter')connect()});
   document.getElementById('disconnect-btn').addEventListener('click',()=>{
     clearTimeout(pollTimer);clearTimeout(denialsTimer);
+    if(evtSource){evtSource.close();evtSource=null;}
     connected=false;token='';_denialsStarted=false;
     histEvents=[];histOffset=0;histFiltered=[];
     pendingMap.clear();selectedIds.clear();
@@ -576,6 +579,7 @@ function switchTab(name){
 // ── Connection / Poll ──────────────────────────────────────────────────────
 function connect(){
   token=document.getElementById('token-input').value.trim();if(!token)return;
+  if(evtSource){evtSource.close();evtSource=null;}
   localStorage.setItem('rampart_token',token);
   const p=document.getElementById('auth-prompt');if(p)p.style.display='none';
   hideError();
@@ -583,6 +587,27 @@ function connect(){
   poll();
 }
 function reconnect(){hideError();connect()}
+
+function startSSE(){
+  if(evtSource)evtSource.close();
+  evtSource=new EventSource(`/v1/events/stream?token=${encodeURIComponent(token)}`);
+  evtSource.onmessage=function(e){
+    try{
+      const msg=JSON.parse(e.data);
+      if(msg.type==="connected")return;
+      if(msg.type==="audit"){
+        prependAuditEvent(msg.event);
+      }
+      if(msg.type==="approvals"){
+        poll();
+      }
+    }catch(_){}
+  };
+  evtSource.onerror=function(){
+    if(pollTimer)clearTimeout(pollTimer);
+    pollTimer=setTimeout(poll,5000);
+  };
+}
 
 async function poll(){
   clearTimeout(pollTimer);
@@ -592,19 +617,22 @@ async function poll(){
     if(!connected){
       connected=true;setConnected(true);hideError();
       document.getElementById('main-content').classList.add('visible');
+      startSSE();
       if(!_denialsStarted){_denialsStarted=true;loadRecentDenials()}
     }
     updatePending(data.approvals||[],data.run_groups||[]);
-    const delay=pendingMap.size>0?2000:5000;
+    const delay=15000;
     if(!document.hidden)pollTimer=setTimeout(poll,delay);
   }catch(e){
     if(e.message==='__auth__'){
+      if(evtSource){evtSource.close();evtSource=null;}
       connected=false;setConnected(false);
       showError('Invalid token — paste the token from rampart serve output and click Connect.');
       return; // don't retry on auth failure
     }
-    if(initialPoll){initialPoll=false;pollTimer=setTimeout(poll,2000);return}
+    if(initialPoll){initialPoll=false;pollTimer=setTimeout(poll,15000);return}
     connected=false;_denialsStarted=false;
+    if(evtSource){evtSource.close();evtSource=null;}
     setConnected(false);
     document.getElementById('main-content').classList.remove('visible');
     showError('Cannot reach Rampart — is rampart serve running on this machine?');
@@ -1002,17 +1030,22 @@ async function loadHistStats(date){
 
 function applyHistFilters(){
   const f=histActiveFilter;const q=histSearch;
-  histFiltered=histEvents.filter(ev=>{
-    if(q){const cmd=extractCmd(ev).toLowerCase();if(!cmd.includes(q)&&!(ev.agent||'').toLowerCase().includes(q)&&!(ev.session||'').toLowerCase().includes(q))return false}
-    const a=extractAction(ev);
-    if(f==='all')return true;
-    if(f==='approved')return a==='approved'||a==='allow';
-    if(f==='denied')return a==='denied';
-    if(f==='blocked')return a==='deny';
-    if(f==='allowed')return a==='allow';
-    return true;
-  });
+  histFiltered=histEvents.filter(ev=>matchesHistFilter(ev,f,q));
   renderHistEvents();
+}
+
+function matchesHistFilter(ev,f,q){
+  if(q){
+    const cmd=extractCmd(ev).toLowerCase();
+    if(!cmd.includes(q)&&!(ev.agent||'').toLowerCase().includes(q)&&!(ev.session||'').toLowerCase().includes(q))return false;
+  }
+  const a=extractAction(ev);
+  if(f==='all')return true;
+  if(f==='approved')return a==='approved'||a==='allow';
+  if(f==='denied')return a==='denied';
+  if(f==='blocked')return a==='deny';
+  if(f==='allowed')return a==='allow';
+  return true;
 }
 
 function renderHistEvents(){
@@ -1065,6 +1098,28 @@ function appendHistRow(ev,tbody){
     <dt>Time</dt><dd>${ev.timestamp?new Date(ev.timestamp).toLocaleString():'—'}</dd>
   </dl></div></td>`;
   tbody.append(tr);tbody.append(det);
+}
+
+function prependAuditEvent(ev){
+  if(!ev||!ev.timestamp)return;
+  const dateInput=document.getElementById('hist-date');
+  const selected=(dateInput&&dateInput.value)||todayStr();
+  if(new Date(ev.timestamp).toISOString().slice(0,10)!==selected)return;
+
+  histEvents.unshift(ev);
+  if(!matchesHistFilter(ev,histActiveFilter,histSearch))return;
+  histFiltered.unshift(ev);
+
+  const tbody=document.getElementById('hist-body');
+  const empty=document.getElementById('hist-empty');
+  empty.style.display='none';
+  appendHistRow(ev,tbody);
+  const detail=tbody.lastElementChild;
+  const row=detail?detail.previousElementSibling:null;
+  if(!row||!detail)return;
+  row.classList.add('new-entry');
+  tbody.insertBefore(detail,tbody.firstChild);
+  tbody.insertBefore(row,detail);
 }
 
 async function exportHistoryAudit(){
