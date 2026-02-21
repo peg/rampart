@@ -53,11 +53,7 @@ This single command auto-detects the running AI environment, installs the backgr
 rampart quickstart --yes
 ```
 
-The `--yes` flag makes this fully non-interactive:
-
-- For **OpenClaw**: also enables `--patch-tools` (full coverage for file reads/writes/edits in addition to shell commands)
-- For **Claude Code / Cline**: configures PreToolUse and PostToolUse hooks in the agent settings file
-- For **Cursor / Windsurf**: configures MCP proxy hooks
+The `--yes` flag skips any prompts. For **OpenClaw** it also auto-enables `--patch-tools`, which extends coverage to file reads/writes/edits in addition to shell commands. For all other agents the flag is a safe no-op.
 
 !!! note "OpenClaw specifically"
     If running inside an OpenClaw agent, you are protecting future tool calls — not the current session. After step 2, restart the OpenClaw gateway for hooks to take effect.
@@ -72,27 +68,26 @@ rampart doctor
 
 Expected output: all checks pass (✓). If any check fails, follow the hint printed next to it.
 
-Check the service is running:
+Check the service is running and review recent activity:
 
 ```bash
 rampart status
 ```
 
-Expected: `rampart serve  running  port 9090`
+Expected output (example):
+```
+🛡️ Rampart Status
 
----
-
-## Step 4: Verify a command gets blocked
-
-```bash
-rampart test
+Protected: openclaw
+Mode: enforce (default_action: allow)
+Today: 0 allow · 0 deny · 0 log
 ```
 
-This runs a built-in behavioral test that attempts a known-dangerous command through the policy engine and verifies it's blocked.
+If you see `Protected:` with your agent listed, Rampart is active.
 
 ---
 
-## Step 5: Report back to the user
+## Step 4: Report back to the user
 
 Tell the user:
 
@@ -180,10 +175,9 @@ Then add an allow rule for your specific use case. See [Exceptions Guide](https:
 |---------|--------------|
 | `rampart quickstart --yes` | Full non-interactive setup |
 | `rampart doctor` | Health check — hooks, service, permissions |
-| `rampart status` | Show service state and active policy |
+| `rampart status` | Show protected agents, mode, today's allow/deny counts |
 | `rampart watch` | Live audit feed of all tool calls |
 | `rampart token` | Print bearer token for the dashboard |
-| `rampart test` | Behavioral test — verify blocking works |
 | `rampart policy explain '<tool>'` | Show which policy applies to a tool call |
 
 Docs: <https://docs.rampart.sh>  

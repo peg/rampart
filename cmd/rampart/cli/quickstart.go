@@ -48,7 +48,7 @@ For OpenClaw, --yes also enables --patch-tools for full file-operation coverage.
 
 	cmd.Flags().StringVar(&envFlag, "env", "", "AI coding environment (claude-code|cline|cursor|windsurf|openclaw|none)")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "skip final health check")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive: accept all defaults (use in scripts and AI agent instructions)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive mode: for OpenClaw, also enables --patch-tools (full file coverage); safe to pass for any agent")
 	return cmd
 }
 
