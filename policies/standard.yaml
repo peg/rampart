@@ -127,6 +127,44 @@ policies:
             - "printenv *"
         message: "Environment variable dump logged"
 
+  - name: block-env-var-injection
+    description: "Block dangerous environment variable injection used to hijack interpreters, preloaders, and runtimes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # Preloader / shared library injection (Linux + macOS)
+            # Note: command_contains runs on raw command string, bypassing env-assignment normalization.
+            # Rampart itself uses LD_PRELOAD at the process level (not in command strings) — no conflict.
+            - "LD_PRELOAD="
+            - "DYLD_INSERT_LIBRARIES="
+            - "LD_LIBRARY_PATH="
+            - "LD_AUDIT="
+            # Node.js: --require / --import inject arbitrary code before any script
+            - "NODE_OPTIONS="
+            - "NODE_PATH="
+            # JVM: -javaagent injects arbitrary bytecode into all JVM processes
+            - "JAVA_TOOL_OPTIONS="
+            - "JAVA_OPTS="
+            - "JVM_OPTS="
+            - "_JAVA_OPTIONS="
+            # .NET runtime startup hooks
+            - "DOTNET_STARTUP_HOOKS="
+            # Python: execute arbitrary file before REPL or script
+            - "PYTHONSTARTUP="
+            # Shell: sourced by bash/sh in non-interactive mode — code injection via environment
+            - "BASH_ENV="
+            # Perl / Ruby arbitrary module injection
+            - "PERL5OPT="
+            - "RUBYOPT="
+            # Git binary/SSH replacement — can redirect git operations to attacker-controlled binaries
+            - "GIT_EXEC_PATH="
+            - "GIT_SSH="
+            - "GIT_SSH_COMMAND="
+        message: "Dangerous environment variable injection blocked"
+
   - name: require-privileged-approval
     match:
       tool: ["exec"]
