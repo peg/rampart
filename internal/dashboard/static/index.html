@@ -988,25 +988,37 @@ let histEvents=[];let histFiltered=[];
 let histOffset=0;let histHasMore=false;
 let histActiveFilter='all';let histSearch='';
 let histObserver=null;let histLoading=false;
+let histSeenIds=new Set();let histTabLoaded=false;
 const HIST_PAGE=100;
 
 function onHistoryTabOpen(){
   if(!document.getElementById('hist-date').value)
     document.getElementById('hist-date').value=todayStr();
+  // If already loaded (SSE events may exist), just re-render; don't wipe.
+  if(histTabLoaded){applyHistFilters();return;}
   loadHistoryTab(true);
 }
 
 async function loadHistoryTab(reset){
   if(histLoading)return;histLoading=true;
-  if(reset){histOffset=0;histEvents=[];document.getElementById('hist-body').innerHTML=''}
+  if(reset){
+    histOffset=0;histEvents=[];histSeenIds=new Set();histTabLoaded=false;
+    document.getElementById('hist-body').innerHTML='';
+  }
   const date=document.getElementById('hist-date').value||todayStr();
   try{
     const r=await api(`/v1/audit/events?date=${date}&limit=${HIST_PAGE}&offset=${histOffset}`);
     const data=await r.json();
     const evs=data.events||[];
-    histEvents=[...histEvents,...evs];
+    // Deduplicate: SSE may have already added some events.
+    const fresh=evs.filter(ev=>!histSeenIds.has(ev.id));
+    fresh.forEach(ev=>histSeenIds.add(ev.id));
+    histEvents=[...histEvents,...fresh];
+    // Always keep sorted newest-first.
+    histEvents.sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp));
     histOffset+=evs.length;
     histHasMore=evs.length>=HIST_PAGE;
+    histTabLoaded=true;
     applyHistFilters();
     await loadHistStats(date);
   }catch(e){toast('History error: '+e.message)}
@@ -1105,21 +1117,23 @@ function prependAuditEvent(ev){
   const dateInput=document.getElementById('hist-date');
   const selected=(dateInput&&dateInput.value)||todayStr();
   if(new Date(ev.timestamp).toISOString().slice(0,10)!==selected)return;
+  // Deduplicate.
+  if(ev.id&&histSeenIds.has(ev.id))return;
+  if(ev.id)histSeenIds.add(ev.id);
 
   histEvents.unshift(ev);
-  if(!matchesHistFilter(ev,histActiveFilter,histSearch))return;
-  histFiltered.unshift(ev);
+  // Keep newest-first order.
+  histEvents.sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp));
+  histTabLoaded=true;
 
+  // Only update DOM if History tab is currently active; otherwise array update is enough.
+  const histPanel=document.getElementById('panel-history');
+  if(!histPanel||!histPanel.classList.contains('active'))return;
+
+  applyHistFilters();
+  // Flash the top row so the user notices the new entry.
   const tbody=document.getElementById('hist-body');
-  const empty=document.getElementById('hist-empty');
-  empty.style.display='none';
-  appendHistRow(ev,tbody);
-  const detail=tbody.lastElementChild;
-  const row=detail?detail.previousElementSibling:null;
-  if(!row||!detail)return;
-  row.classList.add('new-entry');
-  tbody.insertBefore(detail,tbody.firstChild);
-  tbody.insertBefore(row,detail);
+  if(tbody.firstElementChild)tbody.firstElementChild.classList.add('new-entry');
 }
 
 async function exportHistoryAudit(){
