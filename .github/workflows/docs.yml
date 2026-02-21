@@ -22,10 +22,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: pip install mkdocs-material mkdocs-minify-plugin
+      - run: pip install mkdocs-material mkdocs-minify-plugin mkdocs-d2-plugin
+
+      - name: Install D2
+        run: curl -fsSL https://d2lang.com/install.sh | sh -s --
+        env:
+          SHELL: /bin/bash
 
       - name: Build docs
         run: mkdocs build
+        env:
+          PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
       # Deploy to peg/rampart-docs (the repo that serves docs.rampart.sh via GitHub Pages).
       # Requires a PAT with contents:write on peg/rampart-docs stored as DOCS_DEPLOY_TOKEN.

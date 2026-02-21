@@ -94,6 +94,11 @@ plugins:
   - search
   - minify:
       minify_html: true
+  - d2:
+      executable: d2
+      theme: 200
+      layout: elk
+      pad: 40
 
 extra:
   social:

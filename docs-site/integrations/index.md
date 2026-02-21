@@ -43,16 +43,49 @@ When a policy action is `require_approval`, behavior varies by integration:
 
 ## Choosing an Integration
 
-```mermaid
-graph TD
-    A[Which agent?] -->|Claude Code| B["rampart setup claude-code"]
-    A -->|Cline| C["rampart setup cline"]
-    A -->|OpenClaw| OC["rampart setup openclaw"]
-    A -->|Claude Desktop / Cursor| D["rampart mcp --"]
-    A -->|Has $SHELL support?| E{Yes / No}
-    E -->|Yes| F["rampart wrap --"]
-    E -->|No| G["rampart preload --"]
-    A -->|Custom / Python| H[HTTP API / Go SDK]
+```d2
+direction: right
+
+start: "Your agent" {shape: oval}
+
+q: "Integration method?" {shape: diamond}
+
+hooks: "rampart setup claude-code
+rampart setup cline" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
+}
+shim: "rampart setup openclaw
+--patch-tools for full coverage" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
+}
+mcp: "rampart mcp --" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
+}
+wrap: "rampart wrap --" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
+}
+preload: "rampart preload --" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
+}
+api: "HTTP API / SDK
+localhost:9090" {
+  style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
+}
+
+start -> q
+
+q -> hooks: "Claude Code or Cline
+(native hooks, lowest overhead)"
+q -> shim: "OpenClaw
+(shell shim + file patching)"
+q -> mcp: "Cursor, Claude Desktop
+or any MCP-compatible client"
+q -> wrap: "Any CLI agent
+with \$SHELL support"
+q -> preload: "Any CLI agent
+without \$SHELL (e.g. Codex)"
+q -> api: "Custom / Python agent
+or CI pipeline"
 ```
 
 !!! tip "Start with the simplest method"
