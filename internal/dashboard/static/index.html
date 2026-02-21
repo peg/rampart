@@ -252,6 +252,15 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
   #token-input{width:160px}
   .stat:nth-child(n+4){display:none}
 }
+@media(max-width:480px){
+  #auth-bar{gap:6px;padding:8px 0}
+  #auth-bar .logo{flex-shrink:0;margin-right:0}
+  #token-input{flex:1;min-width:0;width:auto}
+  #connect-btn{flex-shrink:0}
+  #auth-connected{flex:1;min-width:0;justify-content:flex-end}
+  .tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tab-btn{padding:8px 12px;font-size:12px;white-space:nowrap}
+}
 </style>
 </head>
 <body>
