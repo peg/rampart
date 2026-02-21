@@ -303,6 +303,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		action := strings.ToLower(strings.TrimSpace(typed.event.Decision.Action))
 		tool := strings.ToLower(strings.TrimSpace(typed.event.Tool))
 
+		// require_approval events are shown in the PENDING APPROVALS section;
+		// skip them from the live feed so only outcomes (denied/approved/deny) appear.
+		if action == "require_approval" {
+			return m, waitForTailer(m.tailerCh)
+		}
 		// Apply decision filter.
 		if m.cfg.Decision != "" && !strings.EqualFold(m.cfg.Decision, action) {
 			return m, waitForTailer(m.tailerCh)
