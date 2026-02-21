@@ -128,46 +128,64 @@ policies:
         message: "Environment variable dump logged"
 
   - name: block-env-var-injection
-    description: "Block dangerous environment variable injection used to hijack interpreters, preloaders, and runtimes"
+    description: "Block environment variable injection with no legitimate agent use — preloaders, startup hooks, shell init files"
     match:
       tool: ["exec"]
     rules:
       - action: deny
         when:
           command_contains:
-            # Preloader / shared library injection (Linux + macOS)
-            # Note: command_contains runs on raw command string, bypassing env-assignment normalization.
-            # Rampart itself uses LD_PRELOAD at the process level (not in command strings) — no conflict.
+            # Shared library / preloader injection — hijacks every syscall in the process
+            # No legitimate reason for an AI agent to set these in a command string
             - "LD_PRELOAD="
             - "DYLD_INSERT_LIBRARIES="
-            - "LD_LIBRARY_PATH="
             - "LD_AUDIT="
-            # Node.js: --require / --import inject arbitrary code before any script
+            # Python startup file — executes arbitrary code before any script or REPL
+            - "PYTHONSTARTUP="
+            - "PYTHONHOME="       # replaces stdlib entirely; no legitimate inline use
+            # .NET startup hooks — injects arbitrary assembly into every .NET process
+            - "DOTNET_STARTUP_HOOKS="
+            # Shell init file loaded in non-interactive bash/sh — classic persistence vector
+            - "BASH_ENV="
+            # JVM undocumented/hidden option — higher severity than JAVA_OPTS
+            - "_JAVA_OPTIONS="
+            # Perl/Ruby option injection via env — rarely needed legitimately in agent context
+            - "PERL5OPT="
+            # Git binary replacement — redirects all git sub-process execution
+            - "GIT_EXEC_PATH="
+        message: "Dangerous environment variable injection blocked. These vars have no legitimate use in agent-issued commands."
+
+  - name: watch-env-var-override
+    description: "Audit environment variable overrides that are legitimate in dev workflows but are also injection vectors. Logged for review; not blocked."
+    match:
+      tool: ["exec"]
+    rules:
+      - action: watch
+        when:
+          command_contains:
+            # Library path overrides — legitimate for CUDA, conda, custom libs;
+            # also used for shared-library hijacking. Audited, not blocked.
+            - "LD_LIBRARY_PATH="
+            - "DYLD_LIBRARY_PATH="
+            # Node.js options — commonly set for memory limits, module resolution;
+            # also used for --require injection. Audited, not blocked.
             - "NODE_OPTIONS="
             - "NODE_PATH="
-            # JVM: -javaagent injects arbitrary bytecode into all JVM processes
-            - "JAVA_TOOL_OPTIONS="
+            # Python path — standard for local dev (PYTHONPATH=. pytest);
+            # also used for supply-chain injection. Audited, not blocked.
+            - "PYTHONPATH="
+            # JVM options — ubiquitous in Maven/Gradle/Tomcat builds;
+            # could carry -javaagent injection. Audited, not blocked.
             - "JAVA_OPTS="
             - "JVM_OPTS="
-            - "_JAVA_OPTIONS="
-            # .NET runtime startup hooks
-            - "DOTNET_STARTUP_HOOKS="
-            # Python: multiple injection vectors
-            - "PYTHONSTARTUP="   # execute arbitrary file before REPL or script
-            - "PYTHONPATH="      # prepend arbitrary dirs to module search path (supply chain)
-            - "PYTHONHOME="      # replace stdlib entirely
-            # macOS: dynamic linker library path override (analogous to LD_LIBRARY_PATH)
-            - "DYLD_LIBRARY_PATH="
-            # Shell: sourced by bash/sh in non-interactive mode — code injection via environment
-            - "BASH_ENV="
-            # Perl / Ruby arbitrary module injection
-            - "PERL5OPT="
-            - "RUBYOPT="
-            # Git binary/SSH replacement — can redirect git operations to attacker-controlled binaries
-            - "GIT_EXEC_PATH="
-            - "GIT_SSH="
+            - "JAVA_TOOL_OPTIONS="
+            # Git SSH override — standard for deploy keys / multiple accounts;
+            # could redirect to attacker-controlled SSH binary. Audited, not blocked.
             - "GIT_SSH_COMMAND="
-        message: "Dangerous environment variable injection blocked"
+            - "GIT_SSH="
+            # Ruby options — common in Bundler setups; could inject -r require. Audited, not blocked.
+            - "RUBYOPT="
+        message: "Environment variable override detected and logged"
 
   - name: require-privileged-approval
     match:
