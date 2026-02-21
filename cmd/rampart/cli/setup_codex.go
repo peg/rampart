@@ -59,7 +59,7 @@ Run 'rampart setup codex --remove' to uninstall.`,
 			wrapperPath := filepath.Join(wrapperDir, "codex")
 
 			if remove {
-				return removeCodexWrapper(out, wrapperPath, realCodex)
+				return removeCodexWrapper(out, wrapperPath)
 			}
 
 			// Safety: don't overwrite if it's already pointing somewhere else.
@@ -132,7 +132,7 @@ exec %s preload -- %s "$@"
 	return cmd
 }
 
-func removeCodexWrapper(out io.Writer, wrapperPath, realCodex string) error {
+func removeCodexWrapper(out io.Writer, wrapperPath string) error {
 	data, err := os.ReadFile(wrapperPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -144,12 +144,27 @@ func removeCodexWrapper(out io.Writer, wrapperPath, realCodex string) error {
 	if !containsRampartPreload(string(data)) {
 		return fmt.Errorf("setup codex: %s does not appear to be a Rampart wrapper — refusing to remove", wrapperPath)
 	}
+	// Extract real binary path from the wrapper comment before deleting.
+	realBin := extractRealBinFromWrapper(string(data))
 	if err := os.Remove(wrapperPath); err != nil {
 		return fmt.Errorf("setup codex: remove wrapper: %w", err)
 	}
 	fmt.Fprintf(out, "✓ Wrapper removed from %s\n", wrapperPath)
-	fmt.Fprintf(out, "  codex now points to: %s\n", realCodex)
+	if realBin != "" {
+		fmt.Fprintf(out, "  codex now points to: %s\n", realBin)
+	}
 	return nil
+}
+
+// extractRealBinFromWrapper parses "# Real codex: /path" from the wrapper script.
+func extractRealBinFromWrapper(content string) string {
+	const prefix = "# Real codex: "
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
 }
 
 func containsRampartPreload(content string) bool {
