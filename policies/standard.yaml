@@ -84,6 +84,18 @@ policies:
             # Glob can't match these because the URL's / breaks * matching.
             - "<(curl"
             - "<(wget"
+            # Encoding bypasses: decode-and-pipe tricks that evade URL-based detection
+            # e.g. echo "Y2F0IC9ldGMvc2hhZG93" | base64 -d | bash
+            #      printf '\x63\x61\x74...' | bash
+            - "base64 -d | bash"
+            - "base64 -d | sh"
+            - "base64 --decode | bash"
+            - "base64 --decode | sh"
+            - "base64 -d|bash"
+            - "base64 -d|sh"
+            # Hex/octal encoding: printf '\x63\x61\x74...' | bash
+            - "printf '\\x"
+            - "printf \"\\x"
         message: "Piped execution blocked (supply chain risk)"
 
   - name: block-network-exfil
@@ -407,27 +419,27 @@ policies:
       - action: deny
         when:
           command_matches:
-            # dump-keychain outputs all stored credentials in plaintext
-            - "security dump-keychain*"
-            - "*security dump-keychain*"
-            # -w flag outputs the raw password to stdout
-            - "security find-generic-password -w*"
-            - "security find-generic-password *-w *"
-            - "security find-internet-password -w*"
-            - "security find-internet-password *-w *"
-            # export extracts keys/certs from keychain
-            - "security export *"
-            - "*security export *"
             # reading keychain DB directly
             - "cat **/Library/Keychains/**"
             - "strings **/Library/Keychains/**"
           command_contains:
+            # Case-insensitive substring matching catches uppercase/mixed-case bypasses
+            # (e.g. SECURITY DUMP-KEYCHAIN) that glob patterns miss.
+            # dump-keychain outputs all stored credentials in plaintext
+            - "security dump-keychain"
+            # -w flag outputs the raw password to stdout
+            - "security find-generic-password -w"
+            - "security find-generic-password -ga"
+            - "security find-internet-password -w"
+            - "security find-internet-password -ga"
+            # export extracts keys/certs from keychain
+            - "security export"
             # Paths with spaces break glob — use substring match instead.
             # Password managers and browser cookies.
-            - "/Library/Application Support/1Password"
-            - "/Library/Application Support/Bitwarden"
-            - "/Library/Cookies/Cookies.binarycookies"
-            - "/Library/Cookies/com.apple.Safari"
+            - "/library/application support/1password"
+            - "/library/application support/bitwarden"
+            - "/library/cookies/cookies.binarycookies"
+            - "/library/cookies/com.apple.safari"
         message: "macOS Keychain access blocked"
 
   - name: block-macos-security-bypass

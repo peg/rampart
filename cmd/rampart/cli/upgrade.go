@@ -767,6 +767,7 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		"standard.yaml": true,
 		"paranoid.yaml": true,
 		"yolo.yaml":     true,
+		"demo.yaml":     true,
 	}
 
 	updated := 0
