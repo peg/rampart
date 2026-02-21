@@ -13,8 +13,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stale port 18275 in `rampart hook --help` and `rampart setup` comment — both now correctly show port 9090 (matching `defaultServePort`)
 
 ### Added
-- **`block-env-var-injection` policy** in `standard.yaml` — blocks interpreter hijacking via environment variable prefix injection (`LD_PRELOAD`, `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS`, `PYTHONSTARTUP`, `RUBYOPT`, `PERL5OPT`, `DYLD_INSERT_LIBRARIES`). These patterns were previously bypassing glob rules because env-var prefixes were stripped before command matching.
+- **`block-env-var-injection` policy** in `standard.yaml` — blocks interpreter hijacking via environment variable prefix injection (`LD_PRELOAD`, `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS`, `PYTHONSTARTUP`, `RUBYOPT`, `PERL5OPT`, `DYLD_INSERT_LIBRARIES`). These patterns were previously bypassing glob rules because env-var prefixes are stripped before command matching.
 - **PostToolUseFailure hook feedback** — when Rampart denies a `PreToolUse` event, the `PostToolUseFailure` handler now injects `additionalContext` telling Claude Code not to retry the blocked action. Prevents Claude from burning 3–5 turns on workarounds after a deny.
+
+## [0.4.5] — 2026-02-21
+
+### Added
+
+- **`rampart setup codex`**: First-class setup subcommand for Codex CLI. Creates `~/.local/bin/codex` wrapper that transparently routes all Codex tool calls through `rampart preload` (LD_PRELOAD syscall interception). Supports `--remove` (verified — only removes Rampart-owned wrappers), `--force`, and PATH detection with a warning if `~/.local/bin` is not on PATH. The interactive setup wizard now auto-wires Codex when detected rather than showing a manual instruction.
+
+### Fixed
+
+- **`rampart upgrade` archive extraction**: goreleaser produces flat archives (`rampart`, `LICENSE`, `README.md`, `CHANGELOG.md` at archive root — no subdirectory prefix). The extraction function incorrectly required exactly one archive member, causing every upgrade attempt to fail with "unexpected archive layout". Removed the single-file guard; binary is found by name regardless of archive member count. Regression test added with the correct flat layout.
+- **Deprecated `log` action in `standard.yaml`**: Two policies (`watch-env-access`, `log-mcp-dangerous`) used the legacy `action: log` (now `action: watch`). Updated to `action: watch` to match current schema.
+
+## [0.4.4] — 2026-02-21
+
+### Added
+
+- **`command_contains` condition**: New policy condition for substring matching — matches when the full command string contains any of the listed substrings. Case-insensitive by default (`strings.ToLower` on both sides). Enables patterns that break glob matching: paths with spaces, mixed-case commands, patterns that must appear anywhere in the string. Example: `command_contains: ["do shell script"]` catches AppleScript shell bypasses regardless of quoting.
+- **macOS hardening — 17 new policies** in `standard.yaml`:
+  - `block-macos-keychain`: `security dump-keychain`, `find-generic/internet-password -w/-ga`, Keychain DB reads, 1Password/Bitwarden/browser cookies
+  - `block-macos-security-bypass`: `spctl --master-disable`, `csrutil disable`, `csrutil authenticated-root disable`, `xattr -d com.apple.quarantine`
+  - `block-macos-persistence`: `launchctl load/bootstrap`, `defaults write * autoLoginUser *`
+  - `block-macos-user-management`: `dscl . -passwd/-create/-delete`
+  - `block-macos-osascript-exec`: AppleScript `do shell script` via `command_contains`
+  - Additional macOS paths added to `block-credential-access`
+- **YAML billion-laughs protection**: `safeUnmarshal()` in `internal/engine/dirstore.go` applies a 1MB cap and `defer/recover` panic recovery to all YAML load paths. `os.Stat` size check before `os.ReadFile` in all loaders. Defense-in-depth — policy files come from trusted disk locations, but bomb inputs are now rejected at the YAML layer.
+- **Policy upgrade on `rampart upgrade`**: After a binary upgrade, `upgradeStandardPolicies()` refreshes `standard.yaml`, `paranoid.yaml`, `yolo.yaml`, and `demo.yaml` from embedded profiles. `--no-policy-update` opts out. Custom files (`custom.yaml` and anything not in the built-in map) are never touched. Atomic write (temp + rename) with non-fatal failure.
+- **`custom.yaml` template on first setup**: `rampart setup` creates `~/.rampart/policies/custom.yaml` with explanatory comments if it doesn't exist. Documents the naming convention, first-match-wins semantics, and an example rule. Non-fatal on write failure.
+- **`block-network-exfil` policy**: Denies `/dev/tcp/` and `/dev/udp/` shell redirection patterns used for covert data exfiltration.
+- **`watch-env-access` policy**: Logs `env` and `printenv` invocations for audit trail.
+- **Encoding bypass patterns**: `base64 -d | bash`, `base64 --decode | sh`, `printf '\x` and `printf "\x` hex-encode-pipe patterns added to `block-destructive`.
+- **SSE bulk-resolve**: Dashboard receives a single `audit_batch` event after bulk-resolve instead of N individual SSE events. Prevents flood that caused browser hangs on large team runs. History tab reloads on `audit_batch`.
+- **Standard policy expansion**: Additional patterns across `block-credential-access`, `block-destructive`, and `block-network-exfil` to close coverage gaps on SSH keys, AWS credentials, and shell bypass techniques.
+
+### Fixed
+
+- **`command_contains` engine evaluation**: Condition was parsed but skipped in the real `matchCondition` path; evaluated only in `ExplainCondition`. Now correctly wired into `matchCondition`.
+- **Security audit — uppercase bypass**: macOS keychain policies switched from `command_matches` to `command_contains` (case-insensitive). `SECURITY DUMP-KEYCHAIN` and similar all-caps prompts now caught.
+- **Security audit — `-ga` flag variants**: `security find-generic-password -ga` and `find-internet-password -ga` added to keychain policy.
+- **`demo.yaml` missing from upgrade built-in map**: `rampart upgrade` previously skipped refreshing `demo.yaml`. Fixed.
+- **Auth review**: `subtle.ConstantTimeCompare` confirmed in token comparison; SSE endpoint returns 401 without valid token; token logged as prefix only.
+
+## [0.4.3] — 2026-02-20
+
+### Added
+
+- **`rampart upgrade`**: Downloads and installs the latest release from GitHub. Detects architecture, extracts binary, replaces in-place, and reports the new version. `--yes` skips confirmation prompt.
+- **`rampart serve --background`**: Starts the serve daemon in the background and exits immediately. PID written to `~/.rampart/rampart-proxy.pid`.
+- **`rampart serve stop`**: Sends SIGTERM to the background serve process and waits for it to exit.
+- **Silent reload on no-change**: Policy reload triggered by `inotify` now compares the loaded config hash; if policy is identical, the reload is skipped without logging.
+- **Task tool → `agent` type**: Claude Code's `Task` tool (which spawns sub-agents) now maps to tool type `"agent"` in `mapClaudeCodeTool()`. Audit events and policy conditions correctly identify sub-agent spawns.
+
+### Changed
+
+- **`sudo` default action**: Changed from `action: watch` (log) to `action: require_approval` in `standard.yaml`. Privileged commands now block and require explicit dashboard approval by default.
+
+### Fixed
+
+- **Windows cross-compilation**: `Setsid` and `EACCES` references moved to platform-specific files. `goreleaser` builds all 6 release targets without errors.
+- **Install order in docs**: `go install` promoted as recommended install method; Homebrew tap demoted to alternative.
+
+## [0.4.2] — 2026-02-19
+
+### Fixed
+
+- **`**` glob patterns with >2 segments**: Removed erroneous bail-out in `matchDoubleGlob`. Patterns like `**/.ssh/**/.key/**` now correctly match arbitrary-depth paths. Recursion already handled arbitrary `**` count.
+- **`ExplainCondition` / `matchCondition` contradiction**: Empty `when:` now consistently returns `true` (unconditional rule) in both runtime evaluation and explain output. `IsEmpty()` docstring corrected.
+- **MCP proxy ignores `ActionWebhook` decisions**: Added `case engine.ActionWebhook:` branch. Webhook is now consulted before forwarding to the child MCP server.
+- **`/metrics` endpoint unauthenticated**: Prometheus handler now gated behind `checkAuth`. Unauthenticated requests receive 401.
+- **`sink.Write()` return value discarded**: Write errors in the daemon's approval handler are now logged instead of silently dropped.
+- **No line-length cap on JSON-RPC reads**: Both client→proxy and proxy→server read paths now use `bufio.NewReaderSize` (4MB) with an explicit size check. A gigabyte-long line from a malicious MCP server previously caused OOM.
+- **`rampart doctor` port mismatch**: Doctor now uses the shared `defaultServePort` constant instead of a stale hardcoded `18275`. False negatives on directly-run serve are fixed.
+- **`DirStore` silently drops invalid policy files**: `rampart doctor` now runs `LintPolicyFile` on each loaded policy and surfaces rule typos and condition field errors as failures with a hint to run `rampart policy lint`.
+- **Unicode-correct glob matching**: Glob comparison now operates on Unicode code points rather than bytes. Non-ASCII characters in command strings or glob patterns match correctly.
+
+## [0.4.1] — 2026-02-19
+
+### Security
+
+- **CEF log injection**: `esc()` and `escH()` in `internal/audit/cef.go` now escape `\n`/`\r` in addition to `\` and `=`/`|`. An agent could previously inject newlines into command or path parameters to forge additional CEF fields in the audit log. JSONL output was unaffected.
+- **Service file token exposure**: Launchd plist and systemd unit files written with mode `0o600` (was `0o644`). Both files contain `RAMPART_TOKEN` inline. `os.Chmod` applied after `os.WriteFile` to fix permissions on existing files upgraded in-place.
+- **Template injection in service files**: Switched plist generation from `text/template` to `html/template`. Token sanitized (newlines/CR/tabs stripped) before embedding in `serviceConfig`. `plistXMLEscape()` helper added for the `fmt.Sprintf` path in `setup.go`.
+- **Parse failures fail closed**: Hook now returns `hookDeny` (not `hookAllow`) on stdin parse failure when `mode=enforce`. A bug or malformed hook payload must not silently allow a tool call. Monitor/audit modes remain fail-open.
+- **Ctrl-C → `hookDeny`**: Context cancellation during approval creation now fails closed instead of falling back to Claude Code's native permission prompt.
+- **200 denied → `hookDeny`**: Bulk-deny response (HTTP 200 with `status: "denied"`) now correctly maps to deny. Previously incorrectly returned `hookAsk`.
+
+### Fixed
+
+- **Goroutine leak on shutdown**: `Server.Shutdown()` now calls `s.approvals.Close()`, stopping the background cleanup goroutine and unblocking `watchExpiry` goroutines. Previously they leaked for up to 1 hour (the default approval timeout) after every graceful shutdown.
+- **Data races**: `Get()` and `List()` return snapshot copies (value, not pointer) eliminating races with concurrent `watchExpiry` writes. Race detector clean.
+- **Empty approval ID guard**: Hook now returns `hookAsk` immediately if serve returns 201 with an empty ID, instead of polling `/v1/approvals/` for the full timeout.
+- **Poll loop HTTP status codes**: 404/410 → immediate `hookDeny`; 5xx → log and retry. Previously all non-network errors spun silently until timeout.
+- **`bulk-resolve` action validation**: Empty or unrecognized action values previously defaulted to approve, silently bulk-approving entire runs on typos or empty request bodies. Now returns 400.
+- **`AutoApproveRun` TOCTOU**: Auto-approve cache is now set before the resolve loop. Approvals created between `List()` and end of loop are caught by the cache rather than remaining pending.
 
 ## [0.4.0] — 2026-02-19
 
