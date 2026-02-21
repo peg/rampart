@@ -120,14 +120,14 @@ Some commands are too impactful to auto-allow or auto-deny — they should pause
 
 ```
 ⏳ Approval required — "git push origin main"
-   Approve at: http://localhost:18275/dashboard/
+   Approve at: http://localhost:9090/dashboard/
    Approval ID: 01KHT3...
 ```
 
 Rampart pauses Claude Code and waits. Open the dashboard, review the request, and approve or deny it:
 
 ```
-open http://localhost:18275/dashboard/
+open http://localhost:9090/dashboard/
 ```
 
 ![Dashboard approval card showing the pending command with Approve and Deny buttons]
@@ -225,7 +225,7 @@ rampart doctor
 ✓ rampart in PATH
 ✓ Token configured
 ✓ Hook binary path verified
-✓ Service reachable (localhost:18275)
+✓ Service reachable (localhost:9090)
 ✓ Token auth working
 ✓ 4 policies loaded
 ⚠ 2 pending approvals

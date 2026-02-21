@@ -359,6 +359,79 @@ func TestOutputHookResult_ClaudeCode_Ask(t *testing.T) {
 	}
 }
 
+// TestPostToolUseFailure_ShortCircuit verifies that a PostToolUseFailure hook event
+// produces an additionalContext response without policy evaluation.
+func TestPostToolUseFailure_ShortCircuit(t *testing.T) {
+	t.Run("parseClaudeCodeInput extracts HookEventName", func(t *testing.T) {
+		input := map[string]any{
+			"hook_event_name": "PostToolUseFailure",
+			"tool_name":       "Bash",
+			"tool_input":      map[string]any{"command": "rm -rf /"},
+			"session_id":      "sess-abc",
+		}
+		data, _ := json.Marshal(input)
+		result, err := parseClaudeCodeInput(strings.NewReader(string(data)), testLogger())
+		if err != nil {
+			t.Fatalf("parseClaudeCodeInput error: %v", err)
+		}
+		if result.HookEventName != "PostToolUseFailure" {
+			t.Fatalf("HookEventName = %q, want PostToolUseFailure", result.HookEventName)
+		}
+		if result.Tool != "exec" {
+			t.Fatalf("Tool = %q, want exec", result.Tool)
+		}
+	})
+
+	t.Run("PostToolUseFailure output contains additionalContext", func(t *testing.T) {
+		// Simulate what the hook RunE short-circuit produces.
+		cmd := &cobra.Command{}
+		out := &bytes.Buffer{}
+		cmd.SetOut(out)
+
+		msg := "This tool call was blocked by a Rampart policy rule. " +
+			"This is a deliberate security constraint — do not attempt " +
+			"alternative approaches or workarounds. " +
+			"Tell the user the operation was blocked by policy and stop."
+		hookOut := hookOutput{
+			HookSpecificOutput: &hookDecision{
+				HookEventName:     "PostToolUseFailure",
+				AdditionalContext: msg,
+			},
+		}
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(hookOut); err != nil {
+			t.Fatalf("encode hookOutput: %v", err)
+		}
+
+		var got hookOutput
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("unmarshal output: %v", err)
+		}
+		if got.HookSpecificOutput == nil {
+			t.Fatal("expected non-nil hookSpecificOutput")
+		}
+		if got.HookSpecificOutput.HookEventName != "PostToolUseFailure" {
+			t.Fatalf("hookEventName = %q, want PostToolUseFailure", got.HookSpecificOutput.HookEventName)
+		}
+		if got.HookSpecificOutput.AdditionalContext == "" {
+			t.Fatal("additionalContext must not be empty")
+		}
+		if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "blocked by a Rampart policy rule") {
+			t.Fatalf("additionalContext = %q, want to contain 'blocked by a Rampart policy rule'", got.HookSpecificOutput.AdditionalContext)
+		}
+		if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "do not attempt") {
+			t.Fatalf("additionalContext = %q, should contain 'do not attempt'", got.HookSpecificOutput.AdditionalContext)
+		}
+		// Ensure no PermissionDecision field — this is not a PreToolUse response
+		if got.HookSpecificOutput.PermissionDecision != "" {
+			t.Fatalf("PermissionDecision should be empty for PostToolUseFailure, got %q", got.HookSpecificOutput.PermissionDecision)
+		}
+		// Ensure top-level decision is empty (PostToolUseFailure uses hookSpecificOutput)
+		if got.Decision != "" {
+			t.Fatalf("top-level Decision should be empty, got %q", got.Decision)
+		}
+	})
+}
+
 func TestMapClaudeCodeTool(t *testing.T) {
 	tests := []struct {
 		input string

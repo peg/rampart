@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-02-21
+
+### Fixed
+- Stale port 18275 in `rampart hook --help` and `rampart setup` comment — both now correctly show port 9090 (matching `defaultServePort`)
+- `rampart preload` defaulted to port 19090 while `rampart serve` defaults to 9090 — they couldn't talk to each other at their defaults. Port now defaults to `defaultServePort` (9090). `RAMPART_URL` env var is also now respected and takes precedence over `--port`.
+
+### Added
+- **`block-env-var-injection` policy** in `standard.yaml` — hard-denies env var injection with no legitimate agent use: `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `LD_AUDIT`, `PYTHONSTARTUP`, `PYTHONHOME`, `DOTNET_STARTUP_HOOKS`, `BASH_ENV`, `_JAVA_OPTIONS`, `PERL5OPT`, `GIT_EXEC_PATH`. These were previously bypassing glob rules because env-var prefixes are stripped before command matching.
+- **`watch-env-var-override` policy** in `standard.yaml` — audits (but does not block) env var overrides that are common in legitimate dev workflows but are also injection vectors: `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, `NODE_OPTIONS`, `NODE_PATH`, `PYTHONPATH`, `JAVA_OPTS`, `JVM_OPTS`, `JAVA_TOOL_OPTIONS`, `GIT_SSH_COMMAND`, `GIT_SSH`, `RUBYOPT`. Logged for audit trail; upgrade to `require_approval` in your `custom.yaml` if you want gating.
+- **PostToolUseFailure hook feedback** — when Rampart denies a `PreToolUse` event, the `PostToolUseFailure` handler now injects `additionalContext` telling Claude Code not to retry the blocked action. Prevents Claude from burning 3–5 turns on workarounds after a deny.
+
 ## [0.4.5] — 2026-02-21
 
 ### Added
