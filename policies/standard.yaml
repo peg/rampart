@@ -111,7 +111,7 @@ policies:
             - "cp **/.ssh/**"
             - "cp **/.aws/**"
             # Catch-all: any command referencing SSH private keys or AWS creds by path,
-            # regardless of the tool used (ssh-keygen, openssl, strings, xxd, etc.)
+            # regardless of tool (ssh-keygen, openssl, strings, xxd, etc.)
             - "**/.ssh/id_*"
             - "**/.aws/credentials"
             - "**/.aws/config"
@@ -131,6 +131,9 @@ policies:
             - "cat **/.*_history"
             - "cat /etc/sudoers.d/*"
             - "cat /proc/**/environ"
+          command_not_matches:
+            # Allow .pub files — public keys are not sensitive.
+            - "**/.ssh/*.pub"
         message: "Credential file access via shell blocked"
 
   - name: block-sensitive-writes
