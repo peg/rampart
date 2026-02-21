@@ -183,7 +183,9 @@ rampart wrap -- python my_agent.py
 For agents with no hook system and no `$SHELL` support, `preload` intercepts exec-family syscalls at the OS level. This is the universal fallback — it works with **any** dynamically-linked process:
 
 ```bash
-# Protect Codex CLI (no hooks, no $SHELL — preload is the only way)
+# Protect Codex CLI — use setup for a permanent wrapper
+rampart setup codex        # creates ~/.local/bin/codex wrapper
+# or invoke inline:
 rampart preload -- codex
 
 # Protect any Python agent
@@ -524,6 +526,8 @@ All three outputs run alongside the default JSONL audit trail — you don't lose
 
 **Wazuh users**: See [`docs/guides/wazuh-integration.md`](docs/guides/wazuh-integration.md) for a complete setup guide with custom decoder, alerting rules, and FIM recommendations for AI agent hosts.
 
+**Codex users**: See [`docs/guides/codex-integration.md`](docs/guides/codex-integration.md) for LD_PRELOAD setup, PATH configuration, and policy verification.
+
 ---
 
 ## Webhook actions
@@ -750,7 +754,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned. Priorities shift ba
 | Claude Code | `rampart setup claude-code` | Native hooks (exec + file), all platforms |
 | Cline | `rampart setup cline` | Native hooks (exec + file), all platforms |
 | OpenClaw | `rampart setup openclaw [--patch-tools]` | Exec shim + optional file tool patch, Linux/macOS |
-| Codex CLI | `rampart preload` | LD_PRELOAD, Linux + macOS |
+| Codex CLI | `rampart setup codex` | LD_PRELOAD wrapper, Linux |
 | Claude Desktop | `rampart mcp` | MCP server proxying, all platforms |
 | Aider | `rampart wrap` | Linux, macOS |
 | OpenCode | `rampart wrap` | Linux, macOS |
