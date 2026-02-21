@@ -53,10 +53,9 @@ This single command auto-detects the running AI environment, installs the backgr
 rampart quickstart --yes
 ```
 
-The `--yes` flag skips any prompts. For **OpenClaw** it also auto-enables `--patch-tools`, which extends coverage to file reads/writes/edits in addition to shell commands. For all other agents the flag is a safe no-op.
+The `--yes` flag skips any prompts. For **OpenClaw** it also auto-enables `--patch-tools` (full coverage for file reads/writes/edits in addition to shell commands). For all other agents the flag is a safe no-op.
 
-!!! note "OpenClaw specifically"
-    If running inside an OpenClaw agent, you are protecting future tool calls — not the current session. After step 2, restart the OpenClaw gateway for hooks to take effect.
+**OpenClaw note:** protection applies to future tool calls, not the current session. Restart the OpenClaw gateway after this step for hooks to take effect.
 
 ---
 

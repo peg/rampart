@@ -223,6 +223,7 @@ policies:
             - "**/.docker/config.json"
             # Token / secrets files
             - "**/.env"
+            - "**/.env.*"
             - "**/.envrc"
             - "**/.netrc"
             - "**/token*"
@@ -281,6 +282,7 @@ policies:
             - "**/.docker/config.json"
             # Token / secrets files
             - "cat **/.env"
+            - "cat **/.env.*"
             - "cat **/.envrc"
             - "cat **/.netrc"
             - "cat **/.git-credentials"
@@ -338,9 +340,10 @@ policies:
             - "**/.zlogout"
             - "**/.profile"
             - "**/.config/fish/**"
-            # direnv environment files (frequently hold API keys)
+            # direnv environment files and variants (frequently hold API keys)
             - "**/.envrc"
             - "**/.env"
+            - "**/.env.*"
         message: "Write to sensitive path blocked"
 
   - name: block-browser-data
