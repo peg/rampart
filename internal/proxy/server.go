@@ -1315,6 +1315,17 @@ func enrichParams(toolName string, params map[string]any) {
 		}
 	}
 
+	if toolName == "agent" {
+		// Claude Code Task tool sends the task prompt in "description".
+		// Expose it as "command" so command_matches policies work against
+		// the sub-agent's task description.
+		if desc, ok := params["description"].(string); ok && desc != "" {
+			params["command"] = desc
+		} else if prompt, ok := params["prompt"].(string); ok && prompt != "" {
+			params["command"] = prompt
+		}
+	}
+
 	if toolName == "fetch" || toolName == "http" || toolName == "web_fetch" {
 		rawURL, _ := params["url"].(string)
 		if rawURL == "" {

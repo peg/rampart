@@ -755,18 +755,20 @@ policies:
             - "crontab -r *"
         message: "Crontab deletion blocked"
 
-  - name: log-privileged
+  - name: require-privileged-approval
+    # sudo and destructive cluster/container ops require explicit approval.
+    # Risk asymmetry: approving takes 2s, unchecked sudo can own the machine.
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: require_approval
         when:
           command_matches:
             - "sudo *"
             - "kubectl delete *"
             - "docker rm *"
             - "docker rmi *"
-        message: "Privileged command logged"
+        message: "Privileged command requires approval"
 
   - name: log-network-tools
     match:
