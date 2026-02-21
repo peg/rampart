@@ -58,6 +58,11 @@ policies:
             - "curl ** | perl*"
             - "curl -s ** | **"
             - "wget -q ** | **"
+          command_contains:
+            # Process substitution bypasses: bash <(curl ...) / source <(wget ...)
+            # Glob can't match these because the URL's / breaks * matching.
+            - "<(curl"
+            - "<(wget"
         message: "Piped execution blocked (supply chain risk)"
 
   - name: require-privileged-approval

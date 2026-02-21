@@ -219,6 +219,13 @@ type Condition struct {
 	// If a command matches any of these, the rule does not apply.
 	CommandNotMatches []string `yaml:"command_not_matches"`
 
+	// CommandContains is a list of literal substrings.
+	// The command must contain ALL specified substrings (AND logic within a single
+	// entry is not supported; use multiple entries for OR logic).
+	// Useful for patterns that glob can't express, e.g. process substitution
+	// with URLs: bash <(curl ...) where the / in URLs breaks glob * matching.
+	CommandContains []string `yaml:"command_contains"`
+
 	// PathMatches is a list of glob patterns for file paths.
 	PathMatches []string `yaml:"path_matches"`
 
@@ -259,6 +266,7 @@ func (c Condition) IsEmpty() bool {
 	return !c.Default &&
 		len(c.CommandMatches) == 0 &&
 		len(c.CommandNotMatches) == 0 &&
+		len(c.CommandContains) == 0 &&
 		len(c.PathMatches) == 0 &&
 		len(c.PathNotMatches) == 0 &&
 		len(c.URLMatches) == 0 &&

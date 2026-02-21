@@ -261,19 +261,29 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		return true, "unconditional (empty when:)"
 	}
 
-	if len(cond.CommandMatches) > 0 {
+	if len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0 {
 		cmd := call.Command()
 		if cmd == "" {
 			return false, ""
 		}
-		matched := matchFirst(cond.CommandMatches, cmd)
-		if matched == "" {
-			return false, ""
-		}
+		// Exclusions apply to both command_matches and command_contains.
 		if matchAny(cond.CommandNotMatches, cmd) {
 			return false, ""
 		}
-		return true, fmt.Sprintf("command_matches [%q]", matched)
+		// command_matches (glob) — OR with command_contains below.
+		if len(cond.CommandMatches) > 0 {
+			if matched := matchFirst(cond.CommandMatches, cmd); matched != "" {
+				return true, fmt.Sprintf("command_matches [%q]", matched)
+			}
+		}
+		// command_contains (substring) — catches patterns glob can't express,
+		// e.g. bash <(curl URL) where the URL's / breaks glob * matching.
+		for _, sub := range cond.CommandContains {
+			if strings.Contains(cmd, sub) {
+				return true, fmt.Sprintf("command_contains [%q]", sub)
+			}
+		}
+		return false, ""
 	}
 
 	if len(cond.PathMatches) > 0 {
