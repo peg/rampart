@@ -195,8 +195,31 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 	if s.approvalTimeout > 0 {
 		storeOpts = append(storeOpts, approval.WithTimeout(s.approvalTimeout))
 	}
-	storeOpts = append(storeOpts, approval.WithExpireCallback(func(_ *approval.Request) {
+	storeOpts = append(storeOpts, approval.WithExpireCallback(func(req *approval.Request) {
 		s.broadcastSSE(map[string]any{"type": "approvals"})
+		// Write audit event so expired approvals appear in History as denied.
+		if s.sink != nil {
+			ev := audit.Event{
+				ID:        audit.NewEventID(),
+				Timestamp: time.Now().UTC(),
+				Agent:     req.Call.Agent,
+				Session:   req.Call.Session,
+				Tool:      req.Call.Tool,
+				Request: map[string]any{
+					"action":  "approval_expired",
+					"tool":    req.Call.Tool,
+					"command": req.Call.Command(),
+				},
+				Decision: audit.EventDecision{
+					Action:  "deny",
+					Message: "approval timed out — command blocked",
+				},
+			}
+			if err := s.sink.Write(ev); err != nil {
+				s.logger.Error("proxy: audit write for approval expiry failed", "error", err)
+			}
+			s.broadcastSSE(map[string]any{"type": "audit", "event": ev})
+		}
 	}))
 	s.approvals = approval.NewStore(storeOpts...)
 	if s.token == "" {
@@ -996,6 +1019,36 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		}
 		resolved++
 		ids = append(ids, ap.ID)
+		// Write audit event for each resolved approval.
+		if s.sink != nil {
+			resolution := "denied"
+			if approved {
+				resolution = "approved"
+			}
+			ev := audit.Event{
+				ID:        audit.NewEventID(),
+				Timestamp: time.Now().UTC(),
+				Agent:     ap.Call.Agent,
+				Session:   ap.Call.Session,
+				Tool:      ap.Call.Tool,
+				Request: map[string]any{
+					"action":      "approval_resolved",
+					"tool":        ap.Call.Tool,
+					"command":     ap.Call.Command(),
+					"resolution":  resolution,
+					"resolved_by": resolvedBy,
+					"approval_id": ap.ID,
+				},
+				Decision: audit.EventDecision{
+					Action:  resolution,
+					Message: fmt.Sprintf("bulk %s by %s", resolution, resolvedBy),
+				},
+			}
+			if err := s.sink.Write(ev); err != nil {
+				s.logger.Error("proxy: audit write for bulk-resolve failed", "error", err)
+			}
+			s.broadcastSSE(map[string]any{"type": "audit", "event": ev})
+		}
 	}
 
 	if resolved > 0 {
