@@ -547,6 +547,11 @@ func mapClaudeCodeTool(toolName string) string {
 		return "exec"
 	case "tool_search":
 		return "read"
+	case "Task":
+		// Sub-agent spawn: the orchestrator is delegating a task to a new agent.
+		// Mapped to "agent" so policies can match `tool: ["agent"]` and watch
+		// displays it distinctly from exec/read/write.
+		return "agent"
 	default:
 		slog.Warn("hook: unmapped Claude Code tool name, defaulting to unknown", "tool_name", toolName)
 		return "unknown"
