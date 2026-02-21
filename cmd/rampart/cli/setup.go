@@ -126,6 +126,13 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				"matcher": "Write|Edit",
 				"hooks":   []any{rampartHook},
 			}
+			// PostToolUseFailure: fires when Claude Code denies a tool after PreToolUse.
+			// Matcher ".*" catches all tools so Rampart can inject additionalContext
+			// telling Claude to stop retrying instead of burning turns on workarounds.
+			postToolUseFailureMatcher := map[string]any{
+				"matcher": ".*",
+				"hooks":   []any{rampartHook},
+			}
 
 			// Get or create hooks section
 			hooks, ok := settings["hooks"].(map[string]any)
@@ -133,7 +140,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				hooks = make(map[string]any)
 			}
 
-			// Get or create PreToolUse array
+			// Get or create PreToolUse array (dedup existing rampart entries)
 			var preToolUse []any
 			if existing, ok := hooks["PreToolUse"].([]any); ok {
 				// Filter out any existing rampart hooks
@@ -148,7 +155,22 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 			preToolUse = append(preToolUse, bashMatcher, readMatcher, writeMatcher)
 
+			// Get or create PostToolUseFailure array (dedup existing rampart entries)
+			var postToolUseFailure []any
+			if existing, ok := hooks["PostToolUseFailure"].([]any); ok {
+				for _, h := range existing {
+					if m, ok := h.(map[string]any); ok {
+						if hasRampartInMatcher(m) {
+							continue
+						}
+					}
+					postToolUseFailure = append(postToolUseFailure, h)
+				}
+			}
+			postToolUseFailure = append(postToolUseFailure, postToolUseFailureMatcher)
+
 			hooks["PreToolUse"] = preToolUse
+			hooks["PostToolUseFailure"] = postToolUseFailure
 			settings["hooks"] = hooks
 
 			// Ensure directory exists
@@ -231,22 +253,44 @@ func removeClaudeCodeHooks(cmd *cobra.Command) error {
 		return nil
 	}
 
-	preToolUse, ok := hooks["PreToolUse"].([]any)
-	if !ok {
-		fmt.Fprintln(cmd.OutOrStdout(), "No PreToolUse hooks found. Nothing to remove.")
-		return nil
+	var removedCount int
+
+	// Remove from PreToolUse
+	if preToolUse, ok := hooks["PreToolUse"].([]any); ok {
+		var kept []any
+		for _, h := range preToolUse {
+			if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
+				removedCount++
+				matcher, _ := m["matcher"].(string)
+				fmt.Fprintf(cmd.OutOrStdout(), "  Removed PreToolUse hook: matcher=%s\n", matcher)
+				continue
+			}
+			kept = append(kept, h)
+		}
+		if len(kept) == 0 {
+			delete(hooks, "PreToolUse")
+		} else {
+			hooks["PreToolUse"] = kept
+		}
 	}
 
-	var kept []any
-	var removedCount int
-	for _, h := range preToolUse {
-		if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
-			removedCount++
-			matcher, _ := m["matcher"].(string)
-			fmt.Fprintf(cmd.OutOrStdout(), "  Removed hook: matcher=%s\n", matcher)
-			continue
+	// Remove from PostToolUseFailure
+	if postToolUseFailure, ok := hooks["PostToolUseFailure"].([]any); ok {
+		var kept []any
+		for _, h := range postToolUseFailure {
+			if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
+				removedCount++
+				matcher, _ := m["matcher"].(string)
+				fmt.Fprintf(cmd.OutOrStdout(), "  Removed PostToolUseFailure hook: matcher=%s\n", matcher)
+				continue
+			}
+			kept = append(kept, h)
 		}
-		kept = append(kept, h)
+		if len(kept) == 0 {
+			delete(hooks, "PostToolUseFailure")
+		} else {
+			hooks["PostToolUseFailure"] = kept
+		}
 	}
 
 	if removedCount == 0 {
@@ -254,12 +298,6 @@ func removeClaudeCodeHooks(cmd *cobra.Command) error {
 		return nil
 	}
 
-	// Clean up empty structures
-	if len(kept) == 0 {
-		delete(hooks, "PreToolUse")
-	} else {
-		hooks["PreToolUse"] = kept
-	}
 	if len(hooks) == 0 {
 		delete(settings, "hooks")
 	} else {
@@ -735,11 +773,32 @@ func hasRampartHook(settings claudeSettings) bool {
 	if !ok {
 		return false
 	}
+
+	// Check PreToolUse
 	preToolUse, ok := hooks["PreToolUse"].([]any)
 	if !ok {
 		return false
 	}
+	hasPreToolUse := false
 	for _, h := range preToolUse {
+		if m, ok := h.(map[string]any); ok {
+			if hasRampartInMatcher(m) {
+				hasPreToolUse = true
+				break
+			}
+		}
+	}
+	if !hasPreToolUse {
+		return false
+	}
+
+	// Also require PostToolUseFailure to be registered; if it's missing,
+	// return false so setup re-runs and adds it (dedup handles PreToolUse).
+	postToolUseFailure, ok := hooks["PostToolUseFailure"].([]any)
+	if !ok {
+		return false
+	}
+	for _, h := range postToolUseFailure {
 		if m, ok := h.(map[string]any); ok {
 			if hasRampartInMatcher(m) {
 				return true

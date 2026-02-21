@@ -53,6 +53,7 @@ type hookDecision struct {
 	HookEventName            string `json:"hookEventName"`
 	PermissionDecision       string `json:"permissionDecision,omitempty"`
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
+	AdditionalContext        string `json:"additionalContext,omitempty"`
 }
 
 // clineHookInput is the JSON sent by Cline on stdin for PreToolUse hooks.
@@ -81,11 +82,12 @@ type clineHookOutput struct {
 
 // hookParseResult holds the parsed hook input including optional response data.
 type hookParseResult struct {
-	Tool     string
-	Params   map[string]any
-	Agent    string
-	Response string // non-empty for PostToolUse events
-	RunID    string // run ID derived from session_id (or env overrides)
+	Tool          string
+	Params        map[string]any
+	Agent         string
+	Response      string // non-empty for PostToolUse events
+	RunID         string // run ID derived from session_id (or env overrides)
+	HookEventName string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
 }
 
 // gitContext holds the git repository context for the current working directory.
@@ -335,6 +337,23 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookOutcome, false, fmt.Sprintf("parse failure: %v", err), "")
 			}
 
+			// Short-circuit for PostToolUseFailure: the previous PreToolUse was denied by
+			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
+			// burning 3-5 turns on workarounds.
+			if parsed.HookEventName == "PostToolUseFailure" {
+				msg := "This tool call was blocked by a Rampart policy rule. " +
+					"This is a deliberate security constraint — do not attempt " +
+					"alternative approaches or workarounds. " +
+					"Tell the user the operation was blocked by policy and stop."
+				out := hookOutput{
+					HookSpecificOutput: &hookDecision{
+						HookEventName:     "PostToolUseFailure",
+						AdditionalContext: msg,
+					},
+				}
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+			}
+
 			// Build tool call for evaluation
 			call := engine.ToolCall{
 				ID:        audit.NewEventID(),
@@ -450,10 +469,11 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	}
 
 	result := &hookParseResult{
-		Tool:   toolType,
-		Params: params,
-		Agent:  "claude-code",
-		RunID:  deriveRunID(input.SessionID),
+		Tool:          toolType,
+		Params:        params,
+		Agent:         "claude-code",
+		RunID:         deriveRunID(input.SessionID),
+		HookEventName: input.HookEventName,
 	}
 
 	// Extract response text from PostToolUse tool_response.
