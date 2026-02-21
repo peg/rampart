@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-02-21
+
+### Added
+
+- **`agent_depth` condition** — limit policy rules to sub-agents by nesting depth. Reads `RAMPART_AGENT_DEPTH` env var; increments automatically when a tool call maps to `agent` type (Claude Code `Task` tool). Supports `gte`, `lte`, `eq`. Closes #71.
+- **`tool_param_matches` condition** — case-insensitive glob matching against MCP tool input parameters. Patterns like `path: "**/.env*"` now correctly match nested paths (uses `MatchGlob`, not `filepath.Match`).
+- **`watch-prompt-injection` policy** in `standard.yaml` — 14 regex patterns covering instruction overrides (`ignore previous instructions`), role hijacks (`you are now a`), model-specific tokens (`<|im_start|>system`, `[SYSTEM]`, `###INSTRUCTIONS###`), and exfiltration directives. `action: watch` to avoid false positives on legitimate content.
+- **`rampart quickstart --yes` / `-y`** — non-interactive mode for AI agents and CI pipelines. For OpenClaw, also auto-enables `--patch-tools` for full file coverage.
+- **`rampart token` / `rampart token show`** — prints bearer token from `~/.rampart/token`.
+- **OpenClaw auto-detection** in `rampart quickstart` via `OPENCLAW_SERVICE_MARKER=openclaw` env var (set by the OpenClaw gateway on spawn). More reliable than PATH lookup.
+- **`docs/guides/agent-install.md`** — step-by-step guide written for an AI agent to read and execute when told "install Rampart and protect this machine".
+- **`docs/guides/securing-claude-code.md`** — dedicated security guide for Claude Code users covering `--dangerously-skip-permissions` risk, setup, standard policy, and prompt injection.
+- **`docs/guides/prompt-injection.md`** — explains the `watch-prompt-injection` policy, pattern categories, and how to escalate to deny.
+
+### Fixed
+
+- **`tool_param_matches` glob (B1)** — was using `filepath.Match` which does not cross path separators (`*` ≠ `**`). Patterns like `**/.env*` silently never matched. Now uses `MatchGlob`. Existing tests used flat patterns that happened to work; two `**` regression tests added.
+- **`RAMPART_AGENT_DEPTH` negative clamp** — `strconv.Atoi` parses negative strings; a crafted `RAMPART_AGENT_DEPTH=-999` could bypass `agent_depth: {gte: 1}` deny rules. Clamped to 0 after parse.
+- **`PostToolUseFailure` audit action** — was recorded as `action: "allow"`, which was semantically wrong and skewed dashboard allow/deny stats. Now `action: "feedback"`.
+- **`resolveExplainPolicyPath` fallthrough** — silently fell through to auto-discovery when a programmatically-set config path didn't exist. Now returns an explicit error, consistent with `--config` flag behavior.
+- **`Reload()` failure returns HTTP 500** — both the delete and write paths in `rules_handlers.go` were returning 200 OK after a successful disk operation but failed `engine.Reload()`. Callers now receive 500 so they know enforcement state may not match what was written.
+- **`rampart doctor` hook failure messages** — now include actual file paths checked and a `rampart setup <agent>` hint instead of a generic failure.
+- **`rampart policy explain` auto-discovers config** — `~/.rampart/policies/standard.yaml` → cwd `rampart.yaml` → helpful error. Was requiring explicit `--config` for most real-world setups.
+- **`rampart watch` auto-discovers token/URL** — reads `~/.rampart/token` and defaults to `localhost:9090`. Was requiring explicit flags.
+- **`rampart status`** — suppresses cryptic `unknown (unknown)` parenthetical.
+- **`rampart upgrade`** — prints restart reminder after successful upgrade.
+- **Hook fail-closed warning** — when `rampart serve` is unreachable, prints `WARNING: rampart serve unreachable` to stderr instead of silently falling back.
+- **Dashboard `conn-dot`** — CSS state classes (`.ok` / `.err` / `.wait`) were never applied in JS; dot was always green. Fixed.
+- **Dashboard empty states** — pending, history, and denials panes now show icons and descriptive text when empty.
+- **Dashboard mobile** — flex-wrap at ≤540px; bulk-bar fix at ≤420px.
+- **`default_action: allow`** in policy files now triggers a lint warning advising deny + explicit allow rules.
+- **Dead `approvalLines` variable** removed from TUI render.
+- **MCP proxy `childIn`** now closed on all error exit paths.
+
+### Changed
+
+- **PostToolUseFailure feedback** enriched with actionable guidance: `rampart policy explain '<tool>'` command, `rampart watch` link, `~/.rampart/policies/` path, `https://rampart.sh/docs/exceptions` URL.
+
+### Docs
+
+- All 20+ docs pages now have `description:` frontmatter (HTML meta descriptions for search engine snippets).
+- All Mermaid diagrams replaced with D2 (theme 200, ELK layout) — no emojis, cleaner rendering, node colours carry semantic meaning.
+- `architecture.png` replaced with inline D2 diagram (text-based, readable by LLMs and agents).
+- README "How it works" Mermaid → pre-rendered D2 SVG (`docs/architecture.svg`); GitHub Action auto-re-renders on source change.
+- Homepage FAQ with literal search queries as questions.
+- `integrations/claude-code.md` — "Why You Need This" section and "What Gets Blocked by Default" table.
+- README rewritten to open with security framing.
+
 ## [0.4.6] - 2026-02-21
 
 ### Fixed
