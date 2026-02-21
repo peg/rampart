@@ -276,10 +276,12 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 				return true, fmt.Sprintf("command_matches [%q]", matched)
 			}
 		}
-		// command_contains (substring) — catches patterns glob can't express,
-		// e.g. bash <(curl URL) where the URL's / breaks glob * matching.
+		// command_contains (case-insensitive substring) — catches patterns glob can't
+		// express, e.g. bash <(curl URL) where the URL's / breaks glob * matching.
+		// Case-insensitive so BASH <(CURL URL) doesn't bypass.
+		cmdLower := strings.ToLower(cmd)
 		for _, sub := range cond.CommandContains {
-			if strings.Contains(cmd, sub) {
+			if strings.Contains(cmdLower, strings.ToLower(sub)) {
 				return true, fmt.Sprintf("command_contains [%q]", sub)
 			}
 		}
@@ -393,12 +395,14 @@ func matchCondition(cond Condition, call ToolCall) bool {
 			}
 		}
 
-		// command_contains: OR with command_matches — simple substring match.
+		// command_contains: OR with command_matches — case-insensitive substring match.
 		// Useful for patterns that globs can't express (e.g. bash <(curl URL)
 		// where the URL's / prevents glob * from matching across separators).
+		// Case-insensitive so adversarially-prompted agents can't bypass via CURL/BASH.
 		if !cmdMatch {
+			cmdLower := strings.ToLower(cmd)
 			for _, sub := range cond.CommandContains {
-				if strings.Contains(cmd, sub) {
+				if strings.Contains(cmdLower, strings.ToLower(sub)) {
 					cmdMatch = true
 					break
 				}

@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/build"
+	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
 
@@ -172,6 +173,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 	var assumeYes bool
 	var dryRun bool
+	var skipPolicyUpdate bool
 
 	cmd := &cobra.Command{
 		Use:   "upgrade [version]",
@@ -304,12 +306,24 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart upgraded to %s\n", target)
+
+			// Refresh standard.yaml so security fixes reach existing users.
+			// Only updates the named profile files (standard.yaml, paranoid.yaml, yolo.yaml).
+			// Custom user policies (custom.yaml, anything else) are never touched.
+			if !skipPolicyUpdate {
+				if err := upgradeStandardPolicies(cmd.OutOrStdout(), dryRun); err != nil {
+					// Non-fatal — binary is already upgraded.
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed (binary upgrade succeeded): %v\n", err)
+					fmt.Fprintf(cmd.ErrOrStderr(), "  run 'rampart init --profile standard --force' to update manually\n")
+				}
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would happen without changing anything")
+	cmd.Flags().BoolVar(&skipPolicyUpdate, "no-policy-update", false, "Skip refreshing built-in policy profiles after upgrade")
 
 	return cmd
 }
@@ -728,4 +742,76 @@ func confirmUpgrade(in io.Reader, out io.Writer, current, target string) (bool, 
 		return true, nil
 	}
 	return false, nil
+}
+
+// upgradeStandardPolicies refreshes built-in profile files in ~/.rampart/policies/.
+// Only files whose names exactly match a known built-in profile are updated.
+// Custom user files (custom.yaml, org.yaml, etc.) are never touched.
+func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home dir: %w", err)
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no policy dir — nothing to do
+		}
+		return fmt.Errorf("read policy dir: %w", err)
+	}
+
+	// Built-in profile names — only these are ever auto-updated.
+	builtIn := map[string]bool{
+		"standard.yaml": true,
+		"paranoid.yaml": true,
+		"yolo.yaml":     true,
+	}
+
+	updated := 0
+	for _, e := range entries {
+		if e.IsDir() || !builtIn[e.Name()] {
+			continue
+		}
+		profileName := strings.TrimSuffix(e.Name(), ".yaml")
+		content, err := policies.Profile(profileName)
+		if err != nil {
+			fmt.Fprintf(out, "  ⚠ skip %s: %v\n", e.Name(), err)
+			continue
+		}
+		destPath := filepath.Join(policyDir, e.Name())
+		if dryRun {
+			fmt.Fprintf(out, "  would update policy: %s\n", destPath)
+			updated++
+			continue
+		}
+		// Atomic write: temp file + rename.
+		tmp, err := os.CreateTemp(policyDir, ".rampart-policy-upgrade-*.yaml.tmp")
+		if err != nil {
+			return fmt.Errorf("create temp file: %w", err)
+		}
+		tmpPath := tmp.Name()
+		if _, err := tmp.Write(content); err != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+			return fmt.Errorf("write temp policy: %w", err)
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmpPath)
+			return fmt.Errorf("close temp policy: %w", err)
+		}
+		if err := os.Rename(tmpPath, destPath); err != nil {
+			os.Remove(tmpPath)
+			return fmt.Errorf("replace %s: %w", e.Name(), err)
+		}
+		fmt.Fprintf(out, "✓ policy updated: %s\n", destPath)
+		updated++
+	}
+
+	if updated == 0 {
+		// No standard policy files found — user may be using a custom config path.
+		fmt.Fprintf(out, "  (no built-in policy files found in %s — skipped)\n", policyDir)
+	}
+	return nil
 }

