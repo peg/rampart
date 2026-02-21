@@ -97,7 +97,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				return nil
 			}
 
-			// Build the hook config — no --serve-url needed, hook auto-discovers on localhost:18275.
+			// Build the hook config — no --serve-url needed, hook auto-discovers on localhost:9090.
 			// Use absolute path so the hook works regardless of Claude Code's PATH.
 			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
 			// settings.json never needs to contain credentials.
