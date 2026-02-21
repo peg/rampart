@@ -548,11 +548,7 @@ func extractRampartBinary(archive []byte) ([]byte, error) {
 	}
 
 	if len(payload) == 0 {
-		return nil, fmt.Errorf("upgrade: rampart binary not found in archive")
-	}
-	if count > 1 {
-		// Keep strict behavior expected by release layout.
-		return nil, fmt.Errorf("upgrade: archive contains %d files; expected a single binary", count)
+		return nil, fmt.Errorf("upgrade: rampart binary not found in archive (archive had %d regular files)", count)
 	}
 	return payload, nil
 }
