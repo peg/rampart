@@ -48,48 +48,52 @@ const (
 )
 
 type upgradeDeps struct {
-	httpClient      *http.Client
-	executablePath  func() (string, error)
-	userHomeDir     func() (string, error)
-	readFile        func(string) ([]byte, error)
-	writeFile       func(string, []byte, os.FileMode) error
-	chmod           func(string, os.FileMode) error
-	rename          func(string, string) error
-	createTemp      func(string, string) (*os.File, error)
-	remove          func(string) error
-	commandRunner   commandRunner
-	currentVersion  func(context.Context, commandRunner, func() (string, error)) (string, error)
-	latestRelease   func(context.Context, *http.Client, string) (string, error)
-	downloadURL     func(context.Context, *http.Client, string) ([]byte, error)
-	inspectServePID func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
-	stopServe       func(int) error
-	restartServe    func(commandRunner, string, io.Writer, io.Writer) error
-	sleep           func(time.Duration)
-	pathEnv         func() string
-	stat            func(string) (os.FileInfo, error)
-	lstat           func(string) (os.FileInfo, error)
-	evalSymlinks    func(string) (string, error)
+	httpClient             *http.Client
+	executablePath         func() (string, error)
+	userHomeDir            func() (string, error)
+	readFile               func(string) ([]byte, error)
+	writeFile              func(string, []byte, os.FileMode) error
+	chmod                  func(string, os.FileMode) error
+	rename                 func(string, string) error
+	createTemp             func(string, string) (*os.File, error)
+	remove                 func(string) error
+	commandRunner          commandRunner
+	currentVersion         func(context.Context, commandRunner, func() (string, error)) (string, error)
+	latestRelease          func(context.Context, *http.Client, string) (string, error)
+	downloadURL            func(context.Context, *http.Client, string) ([]byte, error)
+	inspectServePID        func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
+	stopServe              func(int) error
+	restartServe           func(commandRunner, string, io.Writer, io.Writer) error
+	detectSystemdService   func(commandRunner) string
+	restartSystemdService  func(commandRunner, string, io.Writer) error
+	sleep                  func(time.Duration)
+	pathEnv                func() string
+	stat                   func(string) (os.FileInfo, error)
+	lstat                  func(string) (os.FileInfo, error)
+	evalSymlinks           func(string) (string, error)
 }
 
 func defaultUpgradeDeps() upgradeDeps {
 	return upgradeDeps{
-		httpClient:      &http.Client{Timeout: 20 * time.Second},
-		executablePath:  os.Executable,
-		userHomeDir:     os.UserHomeDir,
-		readFile:        os.ReadFile,
-		writeFile:       os.WriteFile,
-		chmod:           os.Chmod,
-		rename:          os.Rename,
-		createTemp:      os.CreateTemp,
-		remove:          os.Remove,
-		commandRunner:   exec.Command,
-		currentVersion:  currentVersion,
-		latestRelease:   fetchLatestRelease,
-		downloadURL:     downloadURL,
-		inspectServePID: inspectServePID,
-		stopServe:       stopServeProcess,
-		restartServe:    restartServe,
-		sleep:           time.Sleep,
+		httpClient:            &http.Client{Timeout: 20 * time.Second},
+		executablePath:        os.Executable,
+		userHomeDir:           os.UserHomeDir,
+		readFile:              os.ReadFile,
+		writeFile:             os.WriteFile,
+		chmod:                 os.Chmod,
+		rename:                os.Rename,
+		createTemp:            os.CreateTemp,
+		remove:                os.Remove,
+		commandRunner:         exec.Command,
+		currentVersion:        currentVersion,
+		latestRelease:         fetchLatestRelease,
+		downloadURL:           downloadURL,
+		inspectServePID:       inspectServePID,
+		stopServe:             stopServeProcess,
+		restartServe:          restartServe,
+		detectSystemdService:  detectActiveSystemdService,
+		restartSystemdService: restartSystemdUserService,
+		sleep:                 time.Sleep,
 		pathEnv: func() string {
 			return os.Getenv("PATH")
 		},
@@ -153,6 +157,12 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		}
 		if deps.restartServe != nil {
 			resolved.restartServe = deps.restartServe
+		}
+		if deps.detectSystemdService != nil {
+			resolved.detectSystemdService = deps.detectSystemdService
+		}
+		if deps.restartSystemdService != nil {
+			resolved.restartSystemdService = deps.restartSystemdService
 		}
 		if deps.sleep != nil {
 			resolved.sleep = deps.sleep
@@ -231,17 +241,23 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return err
 			}
 
+			// Systemd service takes priority over PID-file management.
+			activeSvc := resolved.detectSystemdService(resolved.commandRunner)
+			pidServeRunning := serveRunning && activeSvc == ""
+
 			if dryRun {
 				fmt.Fprintf(cmd.OutOrStdout(), "Dry run:\n")
 				fmt.Fprintf(cmd.OutOrStdout(), "- would upgrade from %s to %s\n", displayVersion(current), target)
 				fmt.Fprintf(cmd.OutOrStdout(), "- would download %s\n", archiveURL)
 				fmt.Fprintf(cmd.OutOrStdout(), "- would verify SHA256 from %s\n", checksumsURL)
-				if serveRunning {
+				if pidServeRunning {
 					fmt.Fprintf(cmd.OutOrStdout(), "- would stop rampart serve (pid %d)\n", servePID)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "- would atomically replace %s\n", exePath)
 				fmt.Fprintf(cmd.OutOrStdout(), "- would scan PATH and auto-fix stale rampart copies (symlink to new binary)\n")
-				if serveRunning {
+				if activeSvc != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "- would restart systemd service: %s\n", activeSvc)
+				} else if pidServeRunning {
 					fmt.Fprintf(cmd.OutOrStdout(), "- would restart rampart serve in background\n")
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "✓ dry run complete\n")
@@ -284,7 +300,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return err
 			}
 
-			if serveRunning {
+			if pidServeRunning {
 				if err := resolved.stopServe(servePID); err != nil {
 					return err
 				}
@@ -299,14 +315,17 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 			fixStalePathCopies(cmd.OutOrStdout(), exePath, resolved)
 
-			if serveRunning {
+			if activeSvc != "" {
+				if err := resolved.restartSystemdService(resolved.commandRunner, activeSvc, cmd.OutOrStdout()); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %v\n  run manually: systemctl --user restart %s\n", err, activeSvc)
+				}
+			} else if pidServeRunning {
 				if err := resolved.restartServe(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 					return err
 				}
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart upgraded to %s\n", target)
-			fmt.Fprintln(cmd.OutOrStdout(), "Reminder: restart rampart serve to ensure it uses the new binary.")
 
 			// Refresh standard.yaml so security fixes reach existing users.
 			// Only updates the named profile files (standard.yaml, paranoid.yaml, yolo.yaml).
@@ -613,6 +632,30 @@ func restartServe(runner commandRunner, binary string, stdout, stderr io.Writer)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("upgrade: restart rampart serve: %w", err)
 	}
+	return nil
+}
+
+// detectActiveSystemdService returns the name of an active rampart systemd user
+// service (rampart-proxy.service or rampart-serve.service), or "" if none are active.
+// systemd user services are the standard install path for openclaw and claude-code setups.
+func detectActiveSystemdService(runner commandRunner) string {
+	for _, svc := range []string{"rampart-proxy.service", "rampart-serve.service"} {
+		cmd := runner("systemctl", "--user", "is-active", "--quiet", svc)
+		if err := cmd.Run(); err == nil {
+			return svc
+		}
+	}
+	return ""
+}
+
+// restartSystemdUserService restarts a named systemd user service so it picks
+// up the newly installed binary without manual intervention.
+func restartSystemdUserService(runner commandRunner, svc string, out io.Writer) error {
+	cmd := runner("systemctl", "--user", "restart", svc)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("restart %s: %w\n%s", svc, err, strings.TrimSpace(string(output)))
+	}
+	fmt.Fprintf(out, "✓ restarted %s\n", svc)
 	return nil
 }
 
