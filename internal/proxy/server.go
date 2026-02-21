@@ -26,8 +26,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,25 +44,59 @@ import (
 const defaultMode = "enforce"
 const redactedResponse = "[REDACTED: sensitive content removed by Rampart]"
 
+type sseHub struct {
+	mu      sync.RWMutex
+	clients map[chan []byte]struct{}
+}
+
+func newSSEHub() *sseHub {
+	return &sseHub{clients: make(map[chan []byte]struct{})}
+}
+
+func (h *sseHub) subscribe() (chan []byte, func()) {
+	ch := make(chan []byte, 32)
+	h.mu.Lock()
+	h.clients[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch, func() {
+		h.mu.Lock()
+		delete(h.clients, ch)
+		close(ch)
+		h.mu.Unlock()
+	}
+}
+
+func (h *sseHub) broadcast(data []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for ch := range h.clients {
+		select {
+		case ch <- data:
+		default:
+		}
+	}
+}
+
 // Server is Rampart's HTTP proxy runtime for policy-aware tool calls.
 type Server struct {
-	engine         *engine.Engine
-	sink           audit.AuditSink
-	approvals        *approval.Store
-	approvalTimeout  time.Duration
-	token          string
-	mode           string
-	configPath     string
-	logger         *slog.Logger
-	resolveBaseURL string
-	listenAddr     string
-	signer         *signing.Signer
-	mu             sync.Mutex
-	server         *http.Server
-	startedAt      time.Time
-	notifyConfig   *engine.NotifyConfig
-	metricsEnabled bool
-	auditDir       string
+	engine          *engine.Engine
+	sink            audit.AuditSink
+	approvals       *approval.Store
+	approvalTimeout time.Duration
+	token           string
+	mode            string
+	configPath      string
+	logger          *slog.Logger
+	resolveBaseURL  string
+	listenAddr      string
+	signer          *signing.Signer
+	mu              sync.Mutex
+	server          *http.Server
+	startedAt       time.Time
+	notifyConfig    *engine.NotifyConfig
+	metricsEnabled  bool
+	auditDir        string
+	sse             *sseHub
 }
 
 // Option configures a proxy server.
@@ -143,6 +177,7 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 		mode:      defaultMode,
 		logger:    slog.Default(),
 		startedAt: time.Now().UTC(),
+		sse:       newSSEHub(),
 	}
 
 	for _, opt := range opts {
@@ -160,6 +195,9 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 	if s.approvalTimeout > 0 {
 		storeOpts = append(storeOpts, approval.WithTimeout(s.approvalTimeout))
 	}
+	storeOpts = append(storeOpts, approval.WithExpireCallback(func(_ *approval.Request) {
+		s.broadcastSSE(map[string]any{"type": "approvals"})
+	}))
 	s.approvals = approval.NewStore(storeOpts...)
 	if s.token == "" {
 		s.token = generateToken(s.logger)
@@ -258,6 +296,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit/dates", s.handleAuditDates)
 	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)
 	mux.HandleFunc("GET /v1/audit/stats", s.handleAuditStats)
+	mux.HandleFunc("GET /v1/events/stream", s.handleEventStream)
 	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
 	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -416,6 +455,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
+		s.broadcastSSE(map[string]any{"type": "approvals"})
 
 		s.logger.Info("proxy: approval required",
 			"id", pending.ID,
@@ -492,6 +532,7 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 	if err := s.sink.Write(event); err != nil {
 		s.logger.Error("proxy: audit write failed", "error", err)
 	}
+	s.broadcastSSE(map[string]any{"type": "audit", "event": event})
 
 	// Fire webhook notification if configured
 	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
@@ -508,6 +549,18 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 			go s.sendWebhook(call, decision)
 		}
 	}
+}
+
+func (s *Server) broadcastSSE(msg map[string]any) {
+	if s.sse == nil {
+		return
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		s.logger.Error("proxy: sse marshal failed", "error", err)
+		return
+	}
+	s.sse.broadcast([]byte("data: " + string(payload) + "\n\n"))
 }
 
 func (s *Server) shouldNotify(actionStr string) bool {
@@ -635,6 +688,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	s.broadcastSSE(map[string]any{"type": "approvals"})
 
 	s.logger.Info("proxy: external approval created",
 		"id", pending.ID,
@@ -813,6 +867,7 @@ authorized:
 	}
 
 	resolved, _ := s.approvals.Get(id)
+	s.broadcastSSE(map[string]any{"type": "approvals"})
 	s.logger.Info("proxy: approval resolved",
 		"id", id,
 		"approved", req.Approved,
@@ -940,6 +995,7 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		resolved++
+		s.broadcastSSE(map[string]any{"type": "approvals"})
 		ids = append(ids, ap.ID)
 	}
 
@@ -957,6 +1013,56 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		"resolved": resolved,
 		"ids":      ids,
 	})
+}
+
+func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuthOrTokenParam(r) {
+		writeError(w, http.StatusUnauthorized, "invalid authorization token")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ch, unsubscribe := s.sse.subscribe()
+	defer unsubscribe()
+
+	if _, err := w.Write([]byte("data: {\"type\":\"connected\"}\n\n")); err != nil {
+		return
+	}
+	flusher.Flush()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := w.Write(data); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) checkAuthOrTokenParam(r *http.Request) bool {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if auth != "" {
+		token := strings.TrimPrefix(auth, "Bearer ")
+		return token != auth && subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
+	}
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	return token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
 }
 
 // checkAuth validates the bearer token. Returns false if auth fails (error already written).
@@ -1023,8 +1129,8 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Command string `json:"command"`
-		Tool    string `json:"tool"`    // optional, defaults to "exec"
-		Agent   string `json:"agent"`   // optional
+		Tool    string `json:"tool"`              // optional, defaults to "exec"
+		Agent   string `json:"agent"`             // optional
 		Session string `json:"session,omitempty"` // optional; used for session_matches evaluation
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
