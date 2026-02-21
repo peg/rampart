@@ -567,11 +567,16 @@
         }
         @media (max-width: 480px) {
             .hero h1 { font-size: 1.8rem; }
-            .hero-buttons { flex-direction: column; align-items: center; }
+            .hero-buttons { flex-direction: column; align-items: stretch; gap: 10px; }
+            .hero-buttons .btn { justify-content: center; }
             .terminal-body { font-size: 0.72rem; padding: 16px; }
             .install-options { grid-template-columns: 1fr; }
             .feature-grid { grid-template-columns: 1fr; }
             .agent-grid { grid-template-columns: repeat(2, 1fr); }
+            .step-code { font-size: 0.75rem; }
+            .install-card pre { font-size: 0.75rem; }
+            .install-actions { flex-direction: column; align-items: stretch; gap: 10px; }
+            .install-actions .btn { justify-content: center; text-align: center; margin-right: 0 !important; }
         }
     </style>
 </head>
@@ -602,7 +607,7 @@
             rampart
         </span>
         <div class="links">
-            <a href="https://docs.rampart.sh" class="hide-mobile">Docs</a>
+            <a href="https://docs.rampart.sh">Docs</a>
             <a href="https://docs.rampart.sh/reference/threat-model/" class="hide-mobile">Threat Model</a>
             <a href="https://github.com/peg/rampart" class="btn-nav">GitHub</a>
         </div>
@@ -865,8 +870,10 @@ brew install rampart</pre>
                 </div>
             </div>
         </details>
-        <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost" style="margin-right: 12px;">Download binary</a>
-        <a href="https://docs.rampart.sh" class="btn btn-ghost">Full documentation →</a>
+        <div class="install-actions" style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:8px;">
+            <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost">Download binary</a>
+            <a href="https://docs.rampart.sh" class="btn btn-ghost">Full documentation →</a>
+        </div>
     </div>
 </section>
 
