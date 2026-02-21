@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var configDir string
 	var reloadInterval time.Duration
 	var approvalTimeout time.Duration
+	var background bool
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -76,6 +78,57 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 		Use:   "serve",
 		Short: "Start Rampart policy runtime and file watcher",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if background {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("serve: resolve home directory: %w", err)
+				}
+
+				rampartDir := filepath.Join(home, ".rampart")
+				if err := os.MkdirAll(rampartDir, 0o755); err != nil {
+					return fmt.Errorf("serve: create runtime directory: %w", err)
+				}
+
+				logPath := filepath.Join(rampartDir, "serve.log")
+				logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+				if err != nil {
+					return fmt.Errorf("serve: open log file: %w", err)
+				}
+				defer func() {
+					_ = logFile.Close()
+				}()
+
+				exePath, err := os.Executable()
+				if err != nil {
+					return fmt.Errorf("serve: resolve executable path: %w", err)
+				}
+
+				var childArgs []string
+				for _, arg := range os.Args[1:] {
+					if arg == "--background" || arg == "-b" || strings.HasPrefix(arg, "--background=") {
+						continue
+					}
+					childArgs = append(childArgs, arg)
+				}
+
+				child := exec.Command(exePath, childArgs...)
+				child.Stdout = logFile
+				child.Stderr = logFile
+				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+				if err := child.Start(); err != nil {
+					return fmt.Errorf("serve: start background process: %w", err)
+				}
+
+				pidPath := filepath.Join(rampartDir, "serve.pid")
+				if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o644); err != nil {
+					return fmt.Errorf("serve: write pid file: %w", err)
+				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=~/.rampart/serve.log)\n", child.Process.Pid)
+				return nil
+			}
+
 			if mode != "enforce" && mode != "monitor" && mode != "disabled" {
 				return fmt.Errorf("serve: invalid mode %q (must be enforce, monitor, or disabled)", mode)
 			}
@@ -341,14 +394,54 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")
 	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
 	cmd.Flags().BoolVar(&metrics, "metrics", false, "Enable Prometheus metrics endpoint on /metrics")
+	cmd.Flags().BoolVarP(&background, "background", "b", false, "Run serve in background and write logs to ~/.rampart/serve.log")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
-	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 30*time.Second, "How often to re-read policy files (0 to disable)")
+	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 0, "How often to re-read policy files (0 = disabled; fsnotify handles hot-reload automatically)")
 	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 1h)")
 
 	cmd.AddCommand(newServeInstallCmd(opts, nil))
 	cmd.AddCommand(newServeUninstallCmd(nil))
+	cmd.AddCommand(newServeStopCmd())
 
 	return cmd
+}
+
+func newServeStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Stop a background rampart serve process",
+		Long:  `Stop a rampart serve process started with --background by reading the PID from ~/.rampart/serve.pid and sending SIGTERM.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("serve stop: %w", err)
+			}
+			pidPath := filepath.Join(home, ".rampart", "serve.pid")
+			data, err := os.ReadFile(pidPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("serve stop: no PID file found at %s (is rampart serve --background running?)", pidPath)
+				}
+				return fmt.Errorf("serve stop: read pid file: %w", err)
+			}
+			pidStr := strings.TrimSpace(string(data))
+			pid := 0
+			if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 0 {
+				return fmt.Errorf("serve stop: invalid PID %q in %s", pidStr, pidPath)
+			}
+			proc, err := os.FindProcess(pid)
+			if err != nil {
+				return fmt.Errorf("serve stop: find process %d: %w", pid, err)
+			}
+			if err := proc.Signal(syscall.SIGTERM); err != nil {
+				_ = os.Remove(pidPath)
+				return fmt.Errorf("serve stop: signal pid %d: %w (process may have already exited)", pid, err)
+			}
+			_ = os.Remove(pidPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart serve (pid=%d) stopped\n", pid)
+			return nil
+		},
+	}
 }
 
 func isWriteEvent(event fsnotify.Event) bool {

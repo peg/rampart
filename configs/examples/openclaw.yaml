@@ -165,11 +165,13 @@ policies:
             - "*wget*requestbin.com*"
         message: "Data exfiltration to known staging domain blocked"
 
-  - name: log-privileged
+  - name: require-privileged-approval
+    # sudo and destructive ops require explicit approval.
+    # Risk asymmetry: approving takes 2s, unchecked sudo can own the machine.
     match:
       tool: "exec"
     rules:
-      - action: log
+      - action: require_approval
         when:
           command_matches:
             - "sudo *"
@@ -178,7 +180,7 @@ policies:
             - "docker stop *"
             - "kubectl delete *"
             - "kubectl apply *"
-        message: "Privileged command logged for review"
+        message: "Privileged command requires approval"
 
   - name: log-network
     match:
