@@ -152,8 +152,12 @@ policies:
             - "_JAVA_OPTIONS="
             # .NET runtime startup hooks
             - "DOTNET_STARTUP_HOOKS="
-            # Python: execute arbitrary file before REPL or script
-            - "PYTHONSTARTUP="
+            # Python: multiple injection vectors
+            - "PYTHONSTARTUP="   # execute arbitrary file before REPL or script
+            - "PYTHONPATH="      # prepend arbitrary dirs to module search path (supply chain)
+            - "PYTHONHOME="      # replace stdlib entirely
+            # macOS: dynamic linker library path override (analogous to LD_LIBRARY_PATH)
+            - "DYLD_LIBRARY_PATH="
             # Shell: sourced by bash/sh in non-interactive mode — code injection via environment
             - "BASH_ENV="
             # Perl / Ruby arbitrary module injection

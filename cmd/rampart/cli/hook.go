@@ -341,10 +341,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
 			// burning 3-5 turns on workarounds.
 			if parsed.HookEventName == "PostToolUseFailure" {
-				msg := "This tool call was blocked by a Rampart policy rule. " +
-					"This is a deliberate security constraint — do not attempt " +
-					"alternative approaches or workarounds. " +
-					"Tell the user the operation was blocked by policy and stop."
+				msg := "This tool call failed or was blocked by a security policy. " +
+					"Do not attempt alternative approaches or workarounds — " +
+					"if an operation is restricted, report it to the user and stop."
 				out := hookOutput{
 					HookSpecificOutput: &hookDecision{
 						HookEventName:     "PostToolUseFailure",
