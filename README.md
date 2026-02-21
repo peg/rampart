@@ -134,7 +134,7 @@ go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
 > **Tip:** The curl installer drops the binary in `~/.local/bin` and runs `rampart quickstart` automatically.
-> Pin a version with `RAMPART_VERSION=v0.3.0 curl -fsSL https://rampart.sh/install | bash`.
+> Pin a version with `RAMPART_VERSION=v0.4.5 curl -fsSL https://rampart.sh/install | bash`.
 >
 > Run `rampart version` to confirm.
 
@@ -183,7 +183,9 @@ rampart wrap -- python my_agent.py
 For agents with no hook system and no `$SHELL` support, `preload` intercepts exec-family syscalls at the OS level. This is the universal fallback — it works with **any** dynamically-linked process:
 
 ```bash
-# Protect Codex CLI (no hooks, no $SHELL — preload is the only way)
+# Protect Codex CLI — preferred: install wrapper (Linux)
+rampart setup codex                  # installs ~/.local/bin/codex wrapper (Linux only)
+# Fallback: LD_PRELOAD (Linux + macOS)
 rampart preload -- codex
 
 # Protect any Python agent
@@ -276,6 +278,8 @@ Three built-in profiles:
 
 Policies are YAML. Glob matching, hot-reload on file change.
 
+> Running `rampart setup` creates `~/.rampart/policies/custom.yaml` as a starter template. Unlike built-in profiles, it's never overwritten by `rampart upgrade`.
+
 ```yaml
 version: "1"
 default_action: allow
@@ -309,6 +313,23 @@ policies:
           domain_matches: ["*.ngrok-free.app", "*.requestbin.com", "webhook.site"]
         message: "Exfiltration domain blocked"
 ```
+
+Use `command_contains` for substring matching (case-insensitive, v0.4.4+):
+
+```yaml
+  - name: block-dangerous-substrings
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "DROP TABLE"    # substring match, case-insensitive (v0.4.4+)
+            - "rm -rf"
+        message: "Dangerous substring detected"
+```
+
+> `command_contains` uses substring matching (case-insensitive). `command_matches` uses glob patterns.
 
 **Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `require_approval`, `watch`, `allow`. (`log` is a deprecated alias for `watch` — update your policies if you use it.)
 
@@ -353,6 +374,16 @@ rules:
     when:
       session_matches: ["myapp/main", "myapp/production"]
     message: "Exec on production branch requires approval"
+```
+
+Use `session_not_matches` to apply rules to all sessions *except* listed ones:
+
+```yaml
+rules:
+  - action: deny
+    when:
+      session_not_matches: ["myapp/dev", "myapp/test"]
+    message: "Only dev/test branches may run this"
 ```
 
 Override the auto-detected label with `RAMPART_SESSION=my-label`.
@@ -443,7 +474,7 @@ Why hash-chained: in regulated environments, you need to prove what your agent d
 rampart watch           # TUI — live colored event stream in your terminal
 ```
 
-When `rampart serve` is running, a web dashboard is also available at **http://localhost:9090/dashboard/** (or **http://localhost:18275/dashboard/** if installed via `rampart serve install`).
+When `rampart serve` is running, a web dashboard is also available at **http://localhost:9090/dashboard/**.
 
 The dashboard has three tabs:
 
@@ -523,6 +554,8 @@ rampart serve --cef
 All three outputs run alongside the default JSONL audit trail — you don't lose anything by enabling SIEM output.
 
 **Wazuh users**: See [`docs/guides/wazuh-integration.md`](docs/guides/wazuh-integration.md) for a complete setup guide with custom decoder, alerting rules, and FIM recommendations for AI agent hosts.
+
+**Codex users**: See [`docs/guides/codex-integration.md`](docs/guides/codex-integration.md) for LD_PRELOAD setup, PATH configuration, and policy verification.
 
 ---
 
@@ -658,9 +691,11 @@ rampart setup                                # Interactive wizard — detects ag
 rampart setup claude-code                    # Install Claude Code hooks
 rampart setup cline                          # Install Cline hooks
 rampart setup openclaw                       # Install shim + systemd/launchd service
+rampart setup codex                          # Install ~/.local/bin/codex wrapper (Linux)
 rampart setup claude-code --remove           # Clean uninstall
 rampart setup cline --remove                 # Clean uninstall
 rampart setup openclaw --remove              # Clean uninstall
+rampart setup codex --remove                 # Remove wrapper
 
 # Wrap (any agent that reads $SHELL)
 rampart wrap -- <command>                    # Wrap any agent
@@ -692,11 +727,18 @@ rampart log -n 50 --today                    # Last 50 events from today
 rampart init [--profile standard|paranoid|yolo]   # Initialize global policy
 rampart init --project                             # Create .rampart/policy.yaml for team-shared rules
 rampart serve [--port 9090]                        # Start approval + dashboard server
-rampart serve install                              # Install as a boot service (systemd/launchd), default port 18275
+rampart serve --background                         # Start in background (no systemd/launchd required)
+rampart serve stop                                 # Stop a background server started with --background
+rampart serve install                              # Install as a boot service (systemd/launchd), default port 9090
 rampart serve --syslog localhost:514               # With syslog output
 rampart serve --approval-timeout 2h               # Custom approval expiry (default: 1h)
 rampart policy check                               # Validate YAML
 rampart policy explain "git status"                # Trace evaluation
+
+# Upgrade
+rampart upgrade                                    # Download latest binary + refresh built-in policies
+rampart upgrade --no-policy-update                 # Download binary only, keep existing policies as-is
+# Standard policies (standard.yaml, paranoid.yaml, yolo.yaml, demo.yaml) are refreshed on upgrade. Your custom.yaml is never touched.
 
 # Audit
 rampart audit tail [--follow]
@@ -750,7 +792,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned. Priorities shift ba
 | Claude Code | `rampart setup claude-code` | Native hooks (exec + file), all platforms |
 | Cline | `rampart setup cline` | Native hooks (exec + file), all platforms |
 | OpenClaw | `rampart setup openclaw [--patch-tools]` | Exec shim + optional file tool patch, Linux/macOS |
-| Codex CLI | `rampart preload` | LD_PRELOAD, Linux + macOS |
+| Codex CLI | `rampart setup codex` (Linux); `rampart preload` (macOS) | Wrapper at ~/.local/bin/codex (Linux), LD_PRELOAD |
 | Claude Desktop | `rampart mcp` | MCP server proxying, all platforms |
 | Aider | `rampart wrap` | Linux, macOS |
 | OpenCode | `rampart wrap` | Linux, macOS |
