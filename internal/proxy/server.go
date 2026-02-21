@@ -995,8 +995,11 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		resolved++
-		s.broadcastSSE(map[string]any{"type": "approvals"})
 		ids = append(ids, ap.ID)
+	}
+
+	if resolved > 0 {
+		s.broadcastSSE(map[string]any{"type": "approvals"})
 	}
 
 	s.logger.Info("proxy: bulk-resolve completed",
