@@ -1052,6 +1052,9 @@ function matchesHistFilter(ev,f,q){
     if(!cmd.includes(q)&&!(ev.agent||'').toLowerCase().includes(q)&&!(ev.session||'').toLowerCase().includes(q))return false;
   }
   const a=extractAction(ev);
+  // require_approval = the initial "pending" event; its resolution (denied/approved)
+  // already appears as a separate entry. Hide pending noise from History.
+  if(a==='require_approval')return false;
   if(f==='all')return true;
   if(f==='approved')return a==='approved'||a==='allow';
   if(f==='denied')return a==='denied';
