@@ -167,6 +167,16 @@ policies:
             - "**/.keys/**"
             - "**/.pki/**"
         message: "Credential file access blocked"
+      # macOS-specific sensitive paths
+      - action: deny
+        when:
+          path_matches:
+            - "**/Library/Keychains/**"
+            - "**/Library/Application Support/1Password/**"
+            - "**/Library/Application Support/Bitwarden/**"
+            - "**/Library/Cookies/Cookies.binarycookies"
+            - "**/Library/Cookies/com.apple.Safari.SafeBrowsing.db"
+        message: "macOS sensitive file access blocked (keychain/password manager/cookies)"
 
   - name: block-credential-commands
     match:
@@ -386,3 +396,100 @@ policies:
 
   # Note: block-credential-leaks above handles response-side scanning.
   # It detects credentials leaked in PostToolUse tool output (Claude Code, Cline).
+
+  # ── macOS-specific policies ────────────────────────────────────────────────
+
+  - name: block-macos-keychain
+    description: "Block macOS Keychain access — dumps, password extraction, export"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # dump-keychain outputs all stored credentials in plaintext
+            - "security dump-keychain*"
+            - "*security dump-keychain*"
+            # -w flag outputs the raw password to stdout
+            - "security find-generic-password -w*"
+            - "security find-generic-password *-w *"
+            - "security find-internet-password -w*"
+            - "security find-internet-password *-w *"
+            # export extracts keys/certs from keychain
+            - "security export *"
+            - "*security export *"
+            # reading keychain DB directly
+            - "cat **/Library/Keychains/**"
+            - "strings **/Library/Keychains/**"
+          command_contains:
+            # Paths with spaces break glob — use substring match instead.
+            # Password managers and browser cookies.
+            - "/Library/Application Support/1Password"
+            - "/Library/Application Support/Bitwarden"
+            - "/Library/Cookies/Cookies.binarycookies"
+            - "/Library/Cookies/com.apple.Safari"
+        message: "macOS Keychain access blocked"
+
+  - name: block-macos-security-bypass
+    description: "Block Gatekeeper, SIP, and quarantine bypasses"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # Gatekeeper — disabling allows running unsigned/malicious binaries
+            - "spctl --master-disable"
+            - "spctl --master-disable *"
+            # SIP (System Integrity Protection) — rarely legitimate in agent context
+            - "csrutil disable"
+            - "csrutil authenticated-root disable"
+            # Quarantine removal — strips the 'downloaded from internet' flag
+            - "xattr -d com.apple.quarantine *"
+        message: "macOS security bypass blocked (Gatekeeper/SIP/quarantine)"
+
+  - name: block-macos-persistence
+    description: "Block LaunchAgent/LaunchDaemon persistence installation"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "launchctl load *"
+            - "launchctl bootstrap *"
+        message: "launchctl persistence installation blocked"
+      - action: deny
+        when:
+          command_matches:
+            # Auto-login config change — allows passwordless login as any user
+            - "defaults write com.apple.loginwindow autoLoginUser *"
+            - "defaults write * autoLoginUser *"
+        message: "macOS auto-login configuration blocked"
+
+  - name: block-macos-user-management
+    description: "Block direct user/password manipulation via dscl without sudo"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # Password change via dscl (without sudo — may still work for some users)
+            - "dscl . -passwd *"
+            - "dscl . -create /Users/*"
+            - "dscl . -delete /Users/*"
+        message: "macOS user management via dscl blocked"
+
+  - name: block-macos-osascript-exec
+    description: "Block osascript used to run shell commands (AppleScript execution bypass)"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # 'do shell script' inside osascript executes arbitrary shell commands
+            # and can bypass exec-level policy by going through AppleScript
+            - "do shell script"
+        message: "osascript shell execution bypass blocked"
