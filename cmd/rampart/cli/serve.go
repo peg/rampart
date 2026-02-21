@@ -114,7 +114,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				child := exec.Command(exePath, childArgs...)
 				child.Stdout = logFile
 				child.Stderr = logFile
-				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+				setDetachAttrs(child)
 
 				if err := child.Start(); err != nil {
 					return fmt.Errorf("serve: start background process: %w", err)

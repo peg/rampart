@@ -637,7 +637,7 @@ func replaceExecutableAtomically(path string, payload []byte, deps upgradeDeps) 
 }
 
 func isPermissionError(err error) bool {
-	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+	return os.IsPermission(err) || errors.Is(err, os.ErrPermission)
 }
 
 func fixStalePathCopies(out io.Writer, installedBinary string, deps upgradeDeps) {
