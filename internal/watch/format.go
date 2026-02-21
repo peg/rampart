@@ -64,7 +64,11 @@ func decisionMeta(action string) (icon string, color lipgloss.Color) {
 		return "\u2705", lipgloss.Color("10")
 	case "deny":
 		return "\U0001f534", lipgloss.Color("9")
-	case "log":
+	case "denied": // approval resolved as denied by human
+		return "\U0001f534", lipgloss.Color("9")
+	case "approved", "always_allowed": // approval resolved as approved by human
+		return "\u2705", lipgloss.Color("10")
+	case "log", "watch":
 		return "\U0001f7e1", lipgloss.Color("11")
 	case "webhook":
 		return "\U0001f535", lipgloss.Color("14")
