@@ -199,9 +199,9 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 				// Use selected profile
 				selectedProfile := strings.TrimSpace(strings.ToLower(profile))
 				if !isSupportedProfile(selectedProfile) {
-					return fmt.Errorf("cli: invalid profile %q (valid: standard, paranoid, yolo)", profile)
+					return fmt.Errorf("cli: invalid profile %q (valid: standard, paranoid, yolo, block-prompt-injection)", profile)
 				}
-				
+
 				var err error
 				content, err = policies.FS.ReadFile(selectedProfile + ".yaml")
 				if err != nil {
@@ -239,7 +239,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing config/profile files")
-	cmd.Flags().StringVar(&profile, "profile", "standard", "Default policy profile: standard, paranoid, or yolo")
+	cmd.Flags().StringVar(&profile, "profile", "standard", "Default policy profile: standard, paranoid, yolo, or block-prompt-injection")
 	cmd.Flags().BoolVar(&detectEnv, "detect", false, "Auto-detect installed tools and generate tailored policy")
 	cmd.Flags().BoolVar(&project, "project", false, "Create .rampart/policy.yaml in the current directory for team-shared project rules")
 

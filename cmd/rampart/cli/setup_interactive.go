@@ -31,7 +31,7 @@ import (
 type agentInfo struct {
 	Name      string
 	Detected  bool
-	HasSetup  bool // true if we can auto-configure via setup subcommand
+	HasSetup  bool   // true if we can auto-configure via setup subcommand
 	SetupCmd  string // subcommand name (e.g. "claude-code")
 	ManualCmd string // fallback manual command for agents without native setup
 }
@@ -151,8 +151,8 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 
 	// 2. Auto-detect agents
 	agents := detectAgents()
-	detectedSetup := []agentInfo{}   // detected agents with auto-setup
-	detectedManual := []agentInfo{}  // detected agents without auto-setup
+	detectedSetup := []agentInfo{}  // detected agents with auto-setup
+	detectedManual := []agentInfo{} // detected agents without auto-setup
 
 	fmt.Fprintln(out, "Detected agents:")
 	for _, a := range agents {
@@ -217,11 +217,12 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 	}
 
 	// 4. Ask for policy profile
-	profileNames := []string{"standard", "paranoid", "yolo"}
+	profileNames := []string{"standard", "paranoid", "yolo", "block-prompt-injection"}
 	profileDescs := []string{
 		"standard (recommended) — blocks dangerous commands, logs everything",
 		"paranoid — blocks most commands, requires explicit allows",
 		"yolo — logs only, blocks nothing",
+		"block-prompt-injection — deny/approve prompt-injection directives",
 	}
 	selectedProfile := "standard"
 
@@ -239,6 +240,8 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 			selectedProfile = profileNames[1]
 		case "3":
 			selectedProfile = profileNames[2]
+		case "4":
+			selectedProfile = profileNames[3]
 		default:
 			selectedProfile = profileNames[0]
 		}
@@ -489,4 +492,3 @@ func readLine(scanner *bufio.Scanner) string {
 	// EOF (Ctrl+D) — return sentinel to abort.
 	return "\x00"
 }
-
