@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`rampart upgrade`** — auto-restarts the systemd `rampart-proxy` service after a successful upgrade (when running as a systemd service).
 
+
 ## [0.4.7] - 2026-02-21
 
 ### Added
