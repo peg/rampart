@@ -189,6 +189,18 @@ when:
     url: "*webhook.site*"
 ```
 
+#### `call_count`
+
+Sliding-window rate limiting for tool calls. Rampart increments the counter on every `PreToolUse` event.
+
+```yaml
+when:
+  call_count:
+    tool: fetch    # optional, omit for all tools
+    gte: 100       # trigger threshold
+    window: 1h     # sliding window (1h, 30m, 10m, 5m, 1m)
+```
+
 ### Webhook Configuration
 
 When `action: webhook`:

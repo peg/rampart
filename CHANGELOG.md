@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-02-21
+
+### Added
+
+- **`call_count` condition** — sliding window rate limiting per tool. `{ tool: fetch, gte: 100, window: 1h }` triggers `deny` or `require_approval` when a tool is called too frequently. Thread-safe in-memory counter injected into the Engine. Standard policy adds `rate-limit-fetch` (require_approval at 100 fetch/browser calls/hour). `/v1/status` now exposes `call_counts` map.
+- **Agent Transparency Mode** — `GET /v1/policy/summary` returns a plain-English breakdown of active rules (name, action, summary). On serve start and every hot-reload, `~/.rampart/ACTIVE_POLICY.md` is written as a markdown table so agents can self-describe their security posture.
+- **`rampart token rotate`** — generates a new random token, writes to `~/.rampart/token`, prints it to stdout. `--force` skips the confirmation prompt.
+- **Help command grouping** — 20+ CLI commands organized into sections via cobra `AddGroup()`: Setup, Policy, Runtime, Approvals, Hooks. `rampart --help` is now readable.
+
+### Fixed
+
+- **`rampart upgrade`** — auto-restarts the systemd `rampart-proxy` service after a successful upgrade (when running as a systemd service).
+
+
 ## [0.4.7] - 2026-02-21
 
 ### Added

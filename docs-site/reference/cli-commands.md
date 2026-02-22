@@ -9,6 +9,18 @@ Complete reference for all `rampart` commands.
 
 ## Agent Setup
 
+### `rampart quickstart`
+
+Auto-detects your environment, installs `rampart serve`, configures integration hooks, and runs a health check.
+
+```bash
+rampart quickstart                  # Interactive setup
+rampart quickstart --yes            # Non-interactive mode
+rampart quickstart -y               # Short form of --yes
+```
+
+`--yes` / `-y` skips prompts. For OpenClaw it also auto-enables `--patch-tools` for full file read/write/edit coverage. For all other agents it is a safe no-op.
+
 ### `rampart setup claude-code`
 
 Install native hooks into Claude Code.
@@ -280,4 +292,23 @@ Deny a pending command.
 
 ```bash
 rampart deny <id>
+```
+
+## Token
+
+### `rampart token`
+
+Print the current bearer token.
+
+```bash
+rampart token
+```
+
+### `rampart token rotate`
+
+Generate and persist a new bearer token.
+
+```bash
+rampart token rotate
+rampart token rotate --force
 ```

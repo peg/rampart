@@ -43,6 +43,7 @@ import (
 
 const defaultMode = "enforce"
 const redactedResponse = "[REDACTED: sensitive content removed by Rampart]"
+const statusCallCountWindow = time.Hour
 
 type sseHub struct {
 	mu      sync.RWMutex
@@ -321,6 +322,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit/stats", s.handleAuditStats)
 	mux.HandleFunc("GET /v1/events/stream", s.handleEventStream)
 	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
+	mux.HandleFunc("GET /v1/policy/summary", s.handlePolicySummary)
+	mux.HandleFunc("GET /v1/status", s.handleStatus)
 	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	if s.metricsEnabled {
@@ -383,6 +386,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		Params:    req.Params,
 		Input:     extractToolInput(toolName, req.Params, req.Input),
 		Timestamp: time.Now().UTC(),
+	}
+
+	// Count every PreToolUse event regardless of policy outcome.
+	if s.engine != nil {
+		s.engine.IncrementCallCount(call.Tool, call.Timestamp)
 	}
 
 	if s.mode == "disabled" {
@@ -1154,6 +1162,10 @@ func (s *Server) Approvals() *approval.Store {
 
 // handlePolicy returns a summary of the current active policy configuration.
 func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
+	s.handleStatus(w, r)
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return
 	}
@@ -1166,10 +1178,12 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	defaultAction := "allow"
 	policyCount := 0
 	ruleCount := 0
+	callCounts := map[string]int{}
 	if s.engine != nil {
 		defaultAction = s.engine.GetDefaultAction()
 		policyCount = s.engine.PolicyCount()
 		ruleCount = s.engine.RuleCount()
+		callCounts = s.engine.CallCounts(statusCallCountWindow)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1178,6 +1192,36 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 		"default_action": defaultAction,
 		"policy_count":   policyCount,
 		"rule_count":     ruleCount,
+		"call_counts":    callCounts,
+	})
+}
+
+// handlePolicySummary returns a transparency-oriented summary of active rules.
+func (s *Server) handlePolicySummary(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	defaultAction := "allow"
+	rules := make([]map[string]string, 0)
+	if s.engine != nil {
+		var summaryRules []engine.PolicySummaryRule
+		defaultAction, summaryRules = s.engine.GetPolicySummary()
+		rules = make([]map[string]string, 0, len(summaryRules))
+		for _, rule := range summaryRules {
+			rules = append(rules, map[string]string{
+				"name":    rule.Name,
+				"action":  rule.Action,
+				"summary": rule.Summary,
+			})
+		}
+	}
+
+	summary := fmt.Sprintf("%d active rules loaded; default action: %s", len(rules), defaultAction)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"default_action": defaultAction,
+		"rules":          rules,
+		"summary":        summary,
 	})
 }
 

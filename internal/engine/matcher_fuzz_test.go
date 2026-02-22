@@ -9,7 +9,7 @@ func FuzzMatchCondition(f *testing.F) {
 	// Add seed corpus with various condition and ToolCall combinations
 	f.Add("exec", "test-agent", "ssh root@example.com", "/etc/passwd", "https://evil.com", "evil.com")
 	f.Add("read", "admin", "cat secret.txt", "/home/user/.ssh/id_rsa", "", "")
-	f.Add("fetch", "bot-*", "curl webhook.site", "", "https://webhook.site/abc123", "webhook.site") 
+	f.Add("fetch", "bot-*", "curl webhook.site", "", "https://webhook.site/abc123", "webhook.site")
 	f.Add("write", "user", "rm -rf /", "/tmp/dangerous", "", "")
 	f.Add("", "", "", "", "", "")
 
@@ -48,16 +48,16 @@ func FuzzMatchCondition(f *testing.F) {
 			{ResponseNotMatches: []string{"safe", "allowed"}},
 			{
 				// Complex condition with multiple fields
-				CommandMatches:    []string{"ssh *", "wget *"},
-				PathNotMatches:    []string{"/safe/*"},
-				URLMatches:        []string{"https://*"},
-				ResponseMatches:   []string{".*"},
+				CommandMatches:  []string{"ssh *", "wget *"},
+				PathNotMatches:  []string{"/safe/*"},
+				URLMatches:      []string{"https://*"},
+				ResponseMatches: []string{".*"},
 			},
 		}
 
 		for _, cond := range conditions {
 			// Test matchCondition - should never panic
-			result := matchCondition(cond, call)
+			result := matchCondition(cond, call, nil)
 			_ = result
 
 			// Test ExplainCondition - should never panic
@@ -73,7 +73,7 @@ func FuzzMatchCondition(f *testing.F) {
 		for _, pattern := range patterns {
 			result := MatchGlob(pattern, command)
 			_ = result
-			result = MatchGlob(pattern, path)  
+			result = MatchGlob(pattern, path)
 			_ = result
 			result = MatchGlob(pattern, url)
 			_ = result
@@ -91,14 +91,14 @@ func FuzzMatchGlob(f *testing.F) {
 	f.Add("/etc/**", "/etc/passwd")
 	f.Add("*curl*webhook*", "curl https://webhook.site/abc")
 	f.Add("***", "test")
-	
+
 	f.Fuzz(func(t *testing.T, pattern, name string) {
 		defer func() {
 			if r := recover(); r != nil {
 				t.Errorf("Panic in MatchGlob(%q, %q): %v", pattern, name, r)
 			}
 		}()
-		
+
 		result := MatchGlob(pattern, name)
 		_ = result // We don't care about the result, just that it doesn't panic
 	})

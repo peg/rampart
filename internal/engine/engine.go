@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,9 +37,11 @@ type Engine struct {
 	config         *Config
 	store          PolicyStore
 	defaultAction  Action
+	lastLoadedAt   time.Time
 	lastConfigHash string
 	responseRegex  map[string]*regexp.Regexp
 	logger         *slog.Logger
+	callCounter    CallCounter
 	stopReload     chan struct{} // closed to stop periodic reload goroutine
 	stopOnce       sync.Once
 }
@@ -56,11 +59,13 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 	}
 
 	e := &Engine{
-		config: cfg,
-		store:  store,
-		logger: logger,
+		config:      cfg,
+		store:       store,
+		logger:      logger,
+		callCounter: NewSlidingWindowCounter(),
 	}
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
+	e.lastLoadedAt = time.Now().UTC()
 	e.lastConfigHash = configFingerprint(cfg)
 	e.responseRegex = cfg.responseRegexCache
 
@@ -249,6 +254,7 @@ func (e *Engine) Reload() error {
 	e.mu.Lock()
 	e.config = cfg
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
+	e.lastLoadedAt = time.Now().UTC()
 	e.lastConfigHash = nextHash
 	e.responseRegex = cfg.responseRegexCache
 	e.mu.Unlock()
@@ -292,6 +298,73 @@ func (e *Engine) GetDefaultAction() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.defaultAction.String()
+}
+
+// IncrementCallCount records one PreToolUse tool invocation.
+func (e *Engine) IncrementCallCount(tool string, at time.Time) {
+	if e == nil || e.callCounter == nil {
+		return
+	}
+	e.callCounter.Increment(tool, at)
+}
+
+// CallCounts returns per-tool invocation counts for the provided window.
+func (e *Engine) CallCounts(window time.Duration) map[string]int {
+	if e == nil || e.callCounter == nil {
+		return map[string]int{}
+	}
+	return e.callCounter.Snapshot(window, time.Now().UTC())
+}
+
+// PolicySummaryRule is a flattened policy rule summary for UI/API display.
+type PolicySummaryRule struct {
+	Name    string
+	Action  string
+	Summary string
+}
+
+// GetPolicySummary returns active default action and flattened rule summaries.
+func (e *Engine) GetPolicySummary() (string, []PolicySummaryRule) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	defaultAction := e.defaultAction.String()
+	rules := make([]PolicySummaryRule, 0)
+	for _, p := range e.config.Policies {
+		if !p.IsEnabled() {
+			continue
+		}
+		for _, r := range p.Rules {
+			summary := strings.TrimSpace(r.Message)
+			if summary == "" {
+				summary = deriveSummaryFromRuleName(p.Name)
+			}
+			rules = append(rules, PolicySummaryRule{
+				Name:    p.Name,
+				Action:  strings.TrimSpace(strings.ToLower(r.Action)),
+				Summary: summary,
+			})
+		}
+	}
+
+	return defaultAction, rules
+}
+
+// LastLoadedAt returns the UTC timestamp of the last successful load/reload.
+func (e *Engine) LastLoadedAt() time.Time {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.lastLoadedAt
+}
+
+func deriveSummaryFromRuleName(name string) string {
+	cleaned := strings.TrimSpace(name)
+	if cleaned == "" {
+		return "policy rule"
+	}
+	cleaned = strings.ReplaceAll(cleaned, "-", " ")
+	cleaned = strings.ReplaceAll(cleaned, "_", " ")
+	return cleaned
 }
 
 // collectMatching returns all enabled policies whose Match clause matches
@@ -341,7 +414,7 @@ func (e *Engine) matchesScope(m Match, call ToolCall) bool {
 // The returned *Rule pointer is non-nil when a rule matched (for webhook config access).
 func (e *Engine) evaluatePolicy(p Policy, call ToolCall) (Action, string, *Rule, bool) {
 	for i, rule := range p.Rules {
-		if !matchCondition(rule.When, call) {
+		if !matchCondition(rule.When, call, e.callCounter) {
 			continue
 		}
 

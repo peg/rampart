@@ -116,6 +116,19 @@ domain_matches:
   - "webhook.site"      # Exact domain match
 ```
 
+### `call_count` (sliding-window rate limiting)
+
+Use `call_count` to trigger rules once call volume reaches a threshold in a sliding window.
+Rampart increments this counter on every `PreToolUse`.
+
+```yaml
+when:
+  call_count:
+    tool: fetch    # optional, omit for all tools
+    gte: 100       # trigger threshold
+    window: 1h     # sliding window (1h, 30m, 10m, 5m, 1m)
+```
+
 ## Tool Types
 
 | Tool | Trigger | Available Matchers |

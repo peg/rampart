@@ -98,7 +98,7 @@ go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
 > **Tip:** The curl installer drops the binary in `~/.local/bin` and runs `rampart quickstart` automatically.
-> Pin a version with `RAMPART_VERSION=v0.4.5 curl -fsSL https://rampart.sh/install | bash`.
+> Pin a version with `RAMPART_VERSION=v0.4.7 curl -fsSL https://rampart.sh/install | bash`.
 >
 > Run `rampart version` to confirm.
 
@@ -714,6 +714,11 @@ rampart audit search [--tool exec] [--decision deny]
 rampart pending
 rampart approve <id>
 rampart deny <id>
+
+# Token
+rampart token                                      # Print current bearer token
+rampart token rotate                               # Generate and persist a new bearer token
+rampart token rotate --force                       # Skip confirmation prompt and rotate immediately
 ```
 
 ---

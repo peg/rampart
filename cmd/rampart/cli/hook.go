@@ -405,6 +405,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if isPostToolUse {
 				decision = eng.EvaluateResponse(call, parsed.Response)
 			} else {
+				eng.IncrementCallCount(call.Tool, call.Timestamp)
 				decision = eng.Evaluate(call)
 			}
 

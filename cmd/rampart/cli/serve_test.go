@@ -1,9 +1,17 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/peg/rampart/policies"
 )
 
 func TestIsWriteEvent(t *testing.T) {
@@ -46,5 +54,75 @@ func TestSamePath(t *testing.T) {
 				t.Errorf("samePath(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestActivePolicyMDWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	configPath := filepath.Join(home, "rampart.yaml")
+	content, err := policies.FS.ReadFile("standard.yaml")
+	if err != nil {
+		t.Fatalf("read embedded policy: %v", err)
+	}
+	if err := os.WriteFile(configPath, content, 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+
+	signalCh := make(chan os.Signal, 1)
+	deps := &serveDeps{
+		notifyContext: func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(parent)
+			go func() {
+				select {
+				case <-ctx.Done():
+				case <-signalCh:
+					cancel()
+				}
+			}()
+			return ctx, cancel
+		},
+	}
+
+	cmd := newServeCmd(&rootOptions{configPath: configPath}, deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"--addr", "127.0.0.1", "--port", fmt.Sprintf("%d", port)})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Execute()
+	}()
+
+	activePolicyPath := filepath.Join(home, ".rampart", "ACTIVE_POLICY.md")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(activePolicyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ACTIVE_POLICY.md was not created at %s", activePolicyPath)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	signalCh <- os.Interrupt
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("serve command failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("serve command did not shut down in time")
 	}
 }
