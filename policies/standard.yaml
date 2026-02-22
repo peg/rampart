@@ -399,6 +399,17 @@ policies:
             - "beeceptor.com"
         message: "Potential data exfiltration domain blocked"
 
+  - name: rate-limit-fetch
+    match:
+      tool: ["fetch", "web_search", "web_fetch", "browser"]
+    rules:
+      - action: require_approval
+        when:
+          call_count:
+            gte: 100
+            window: 1h
+        message: "High fetch volume — require approval to continue"
+
   - name: block-mcp-destructive
     match:
       tool: ["mcp-destructive"]

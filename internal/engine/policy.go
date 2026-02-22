@@ -260,6 +260,10 @@ type Condition struct {
 	// Condition matches if any specified parameter value matches.
 	ToolParamMatches map[string]string `yaml:"tool_param_matches,omitempty" json:"tool_param_matches,omitempty"`
 
+	// CallCount matches when tool invocation count within a sliding time window
+	// is greater than or equal to the configured threshold.
+	CallCount *CallCountCondition `yaml:"call_count,omitempty" json:"call_count,omitempty"`
+
 	// Default, when true, makes this rule match all tool calls.
 	// Use as a catch-all at the end of a rules list.
 	Default bool `yaml:"default"`
@@ -270,6 +274,18 @@ type IntRangeCondition struct {
 	Gte *int `yaml:"gte,omitempty"`
 	Lte *int `yaml:"lte,omitempty"`
 	Eq  *int `yaml:"eq,omitempty"`
+}
+
+// CallCountCondition matches call frequency in a time window.
+type CallCountCondition struct {
+	// Tool is optional. If empty, uses the current tool being evaluated.
+	Tool string `yaml:"tool,omitempty" json:"tool,omitempty"`
+
+	// Gte is the minimum number of calls in the window to match.
+	Gte int `yaml:"gte" json:"gte"`
+
+	// Window is a duration string (e.g. "1h", "30m", "10s").
+	Window string `yaml:"window" json:"window"`
 }
 
 // IsEmpty returns true if no conditions are specified.
@@ -291,7 +307,8 @@ func (c Condition) IsEmpty() bool {
 		len(c.SessionMatches) == 0 &&
 		len(c.SessionNotMatches) == 0 &&
 		c.AgentDepth == nil &&
-		len(c.ToolParamMatches) == 0
+		len(c.ToolParamMatches) == 0 &&
+		c.CallCount == nil
 }
 
 // StringOrSlice handles YAML fields that can be either a single string
@@ -438,6 +455,9 @@ func (cfg *Config) validate() error {
 			if err := compileResponseRegexes(r.When, cache); err != nil {
 				return fmt.Errorf("engine: policy %q rule %d: %w", p.Name, j, err)
 			}
+			if err := validateCallCountCondition(r.When.CallCount); err != nil {
+				return fmt.Errorf("engine: policy %q rule %d: %w", p.Name, j, err)
+			}
 		}
 	}
 
@@ -468,6 +488,26 @@ func compileResponseRegexes(cond Condition, cache map[string]*regexp.Regexp) err
 		cache[pattern] = re
 	}
 
+	return nil
+}
+
+func validateCallCountCondition(cond *CallCountCondition) error {
+	if cond == nil {
+		return nil
+	}
+	if cond.Gte < 0 {
+		return fmt.Errorf("call_count.gte must be >= 0")
+	}
+	if strings.TrimSpace(cond.Window) == "" {
+		return fmt.Errorf("call_count.window is required")
+	}
+	dur, err := time.ParseDuration(cond.Window)
+	if err != nil {
+		return fmt.Errorf("invalid call_count.window %q: %w", cond.Window, err)
+	}
+	if dur <= 0 {
+		return fmt.Errorf("call_count.window must be > 0")
+	}
 	return nil
 }
 

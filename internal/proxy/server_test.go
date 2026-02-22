@@ -738,6 +738,7 @@ func TestGetPolicy(t *testing.T) {
 			assert.NotNil(t, body["default_action"])
 			assert.NotNil(t, body["policy_count"])
 			assert.NotNil(t, body["rule_count"])
+			assert.NotNil(t, body["call_counts"])
 
 			// Verify counts are plausible.
 			policyCount, ok := body["policy_count"].(float64)
@@ -749,6 +750,36 @@ func TestGetPolicy(t *testing.T) {
 			assert.Greater(t, int(ruleCount), 0, "should have at least one rule")
 		})
 	}
+}
+
+func TestGetStatus(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	// Simulate a few PreToolUse calls.
+	resp1 := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"git status"}}`)
+	assert.Equal(t, http.StatusOK, resp1.StatusCode)
+	resp2 := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"git log"}}`)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/status", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	callCounts, ok := body["call_counts"].(map[string]any)
+	require.True(t, ok, "call_counts should be an object")
+	count, ok := callCounts["exec"].(float64)
+	require.True(t, ok, "exec count should be a number")
+	assert.GreaterOrEqual(t, int(count), 2)
 }
 
 func TestGetPolicy_NoAuth(t *testing.T) {

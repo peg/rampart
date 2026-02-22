@@ -41,6 +41,7 @@ type Engine struct {
 	lastConfigHash string
 	responseRegex  map[string]*regexp.Regexp
 	logger         *slog.Logger
+	callCounter    CallCounter
 	stopReload     chan struct{} // closed to stop periodic reload goroutine
 	stopOnce       sync.Once
 }
@@ -58,9 +59,10 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 	}
 
 	e := &Engine{
-		config: cfg,
-		store:  store,
-		logger: logger,
+		config:      cfg,
+		store:       store,
+		logger:      logger,
+		callCounter: NewSlidingWindowCounter(),
 	}
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
 	e.lastLoadedAt = time.Now().UTC()
@@ -298,6 +300,22 @@ func (e *Engine) GetDefaultAction() string {
 	return e.defaultAction.String()
 }
 
+// IncrementCallCount records one PreToolUse tool invocation.
+func (e *Engine) IncrementCallCount(tool string, at time.Time) {
+	if e == nil || e.callCounter == nil {
+		return
+	}
+	e.callCounter.Increment(tool, at)
+}
+
+// CallCounts returns per-tool invocation counts for the provided window.
+func (e *Engine) CallCounts(window time.Duration) map[string]int {
+	if e == nil || e.callCounter == nil {
+		return map[string]int{}
+	}
+	return e.callCounter.Snapshot(window, time.Now().UTC())
+}
+
 // PolicySummaryRule is a flattened policy rule summary for UI/API display.
 type PolicySummaryRule struct {
 	Name    string
@@ -396,7 +414,7 @@ func (e *Engine) matchesScope(m Match, call ToolCall) bool {
 // The returned *Rule pointer is non-nil when a rule matched (for webhook config access).
 func (e *Engine) evaluatePolicy(p Policy, call ToolCall) (Action, string, *Rule, bool) {
 	for i, rule := range p.Rules {
-		if !matchCondition(rule.When, call) {
+		if !matchCondition(rule.When, call, e.callCounter) {
 			continue
 		}
 
