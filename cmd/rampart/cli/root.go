@@ -87,30 +87,92 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, "Enable debug logging")
 	cmd.PersistentFlags().BoolVar(&showVersion, "version", false, "Print version information and exit")
 
-	cmd.AddCommand(newVersionCmd())
-	cmd.AddCommand(newInitCmd(opts))
-	cmd.AddCommand(newServeCmd(opts, nil))
-	cmd.AddCommand(newPolicyCmd(opts))
-	cmd.AddCommand(newAuditCmd(opts))
-	cmd.AddCommand(newReportCmd(opts))
-	cmd.AddCommand(newWatchCmd(opts))
-	cmd.AddCommand(newOpenClawCmd(opts))
-	cmd.AddCommand(newDaemonCmd(opts))
-	cmd.AddCommand(newApproveCmd(opts))
-	cmd.AddCommand(newDenyCmd(opts))
-	cmd.AddCommand(newPendingCmd(opts))
-	cmd.AddCommand(newWrapCmd(opts, nil))
-	cmd.AddCommand(newPreloadCmd(opts))
-	cmd.AddCommand(newMCPCmd(opts, nil))
-	cmd.AddCommand(newHookCmd(opts))
-	cmd.AddCommand(newLogCmd(opts))
-	cmd.AddCommand(newSetupCmd(opts))
-	cmd.AddCommand(newDoctorCmd())
-	cmd.AddCommand(newStatusCmd())
-	cmd.AddCommand(newTokenShowCmd())
-	cmd.AddCommand(newTestCmd(opts))
-	cmd.AddCommand(newQuickstartCmd())
-	cmd.AddCommand(newUpgradeCmd(opts))
+	const (
+		groupSetup     = "setup"
+		groupPolicy    = "policy"
+		groupRuntime   = "runtime"
+		groupApprovals = "approvals"
+		groupHooks     = "hooks"
+	)
+	cmd.AddGroup(
+		&cobra.Group{ID: groupSetup, Title: "Setup"},
+		&cobra.Group{ID: groupPolicy, Title: "Policy"},
+		&cobra.Group{ID: groupRuntime, Title: "Runtime"},
+		&cobra.Group{ID: groupApprovals, Title: "Approvals"},
+		&cobra.Group{ID: groupHooks, Title: "Hooks"},
+	)
+
+	versionCmd := newVersionCmd()
+	initCmd := newInitCmd(opts)
+	serveCmd := newServeCmd(opts, nil)
+	policyCmd := newPolicyCmd(opts)
+	auditCmd := newAuditCmd(opts)
+	reportCmd := newReportCmd(opts)
+	watchCmd := newWatchCmd(opts)
+	openClawCmd := newOpenClawCmd(opts)
+	daemonCmd := newDaemonCmd(opts)
+	approveCmd := newApproveCmd(opts)
+	denyCmd := newDenyCmd(opts)
+	pendingCmd := newPendingCmd(opts)
+	wrapCmd := newWrapCmd(opts, nil)
+	preloadCmd := newPreloadCmd(opts)
+	mcpCmd := newMCPCmd(opts, nil)
+	hookCmd := newHookCmd(opts)
+	logCmd := newLogCmd(opts)
+	setupCmd := newSetupCmd(opts)
+	doctorCmd := newDoctorCmd()
+	statusCmd := newStatusCmd()
+	tokenCmd := newTokenShowCmd()
+	testCmd := newTestCmd(opts)
+	quickstartCmd := newQuickstartCmd()
+	upgradeCmd := newUpgradeCmd(opts)
+
+	setupCmd.GroupID = groupSetup
+	quickstartCmd.GroupID = groupSetup
+	upgradeCmd.GroupID = groupSetup
+	doctorCmd.GroupID = groupSetup
+
+	policyCmd.GroupID = groupPolicy
+	testCmd.GroupID = groupPolicy
+	watchCmd.GroupID = groupPolicy
+
+	serveCmd.GroupID = groupRuntime
+	tokenCmd.GroupID = groupRuntime
+	statusCmd.GroupID = groupRuntime
+	logCmd.GroupID = groupRuntime
+
+	approveCmd.GroupID = groupApprovals
+	denyCmd.GroupID = groupApprovals
+	pendingCmd.GroupID = groupApprovals
+
+	hookCmd.GroupID = groupHooks
+	preloadCmd.GroupID = groupHooks
+	wrapCmd.GroupID = groupHooks
+
+	cmd.AddCommand(versionCmd)
+	cmd.AddCommand(initCmd)
+	cmd.AddCommand(serveCmd)
+	cmd.AddCommand(policyCmd)
+	cmd.AddCommand(auditCmd)
+	cmd.AddCommand(reportCmd)
+	cmd.AddCommand(watchCmd)
+	cmd.AddCommand(openClawCmd)
+	cmd.AddCommand(daemonCmd)
+	cmd.AddCommand(approveCmd)
+	cmd.AddCommand(denyCmd)
+	cmd.AddCommand(pendingCmd)
+	cmd.AddCommand(wrapCmd)
+	cmd.AddCommand(preloadCmd)
+	cmd.AddCommand(mcpCmd)
+	cmd.AddCommand(hookCmd)
+	cmd.AddCommand(logCmd)
+	cmd.AddCommand(setupCmd)
+	cmd.AddCommand(doctorCmd)
+	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(tokenCmd)
+	cmd.AddCommand(testCmd)
+	cmd.AddCommand(quickstartCmd)
+	cmd.AddCommand(upgradeCmd)
 
 	return cmd
 }

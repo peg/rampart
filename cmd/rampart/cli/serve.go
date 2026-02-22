@@ -302,15 +302,24 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					logger.Info("serve: webhook notifications enabled", "url", cfg.Notify.URL)
 				}
 				proxyServer = proxy.New(eng, sink, proxyOpts...)
+				listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", listenAddr, port))
+				if err != nil {
+					return fmt.Errorf("serve: proxy listen failed: %w", err)
+				}
+
+				if err := writeActivePolicyMarkdown(eng); err != nil {
+					logger.Warn("serve: failed to write ACTIVE_POLICY.md", "error", err)
+				}
 
 				token := proxyServer.Token()
 				display := token
 				if len(token) > 8 {
 					display = token[:8] + "..."
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "serve: proxy listening on :%d (token=%s)\n", port, display)
+				fmt.Fprintf(cmd.ErrOrStderr(), "serve: proxy listening on %s (token=%s)\n", listener.Addr().String(), display)
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: full token: %s\n", token)
-				fmt.Fprintf(cmd.ErrOrStderr(), "serve: dashboard: http://localhost:%d/dashboard/\n", port)
+				listenPort := listener.Addr().(*net.TCPAddr).Port
+				fmt.Fprintf(cmd.ErrOrStderr(), "serve: dashboard: http://localhost:%d/dashboard/\n", listenPort)
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: use the full token above to authenticate in the dashboard\n")
 
 				if metrics {
@@ -319,7 +328,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				proxyErrCh = make(chan error, 1)
 				go func() {
-					proxyErrCh <- proxyServer.ListenAndServe(fmt.Sprintf("%s:%d", listenAddr, port))
+					proxyErrCh <- proxyServer.Serve(listener)
 				}()
 			}
 
@@ -369,6 +378,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					if err := eng.Reload(); err != nil {
 						logger.Error("serve: reload failed", "error", err)
 						continue
+					}
+					if err := writeActivePolicyMarkdown(eng); err != nil {
+						logger.Warn("serve: failed to write ACTIVE_POLICY.md after reload", "error", err)
 					}
 					logger.Info("serve: policy reloaded", "path", configAbs, "policy_count", eng.PolicyCount())
 				case err, ok := <-watcher.Errors:
@@ -450,4 +462,50 @@ func isWriteEvent(event fsnotify.Event) bool {
 
 func samePath(a, b string) bool {
 	return filepath.Clean(strings.TrimSpace(a)) == filepath.Clean(strings.TrimSpace(b))
+}
+
+func writeActivePolicyMarkdown(eng *engine.Engine) error {
+	if eng == nil {
+		return nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
+	}
+	rampartDir := filepath.Join(home, ".rampart")
+	if err := os.MkdirAll(rampartDir, 0o755); err != nil {
+		return fmt.Errorf("create runtime directory: %w", err)
+	}
+
+	defaultAction, rules := eng.GetPolicySummary()
+	lastLoaded := eng.LastLoadedAt().UTC().Format(time.RFC3339)
+
+	var b strings.Builder
+	b.WriteString("# Rampart Active Policy\n\n")
+	b.WriteString(fmt.Sprintf("Last loaded: `%s`\n\n", lastLoaded))
+	b.WriteString(fmt.Sprintf("Default action: `%s`\n\n", defaultAction))
+	b.WriteString("| Name | Action | Summary |\n")
+	b.WriteString("| --- | --- | --- |\n")
+	for _, rule := range rules {
+		b.WriteString(fmt.Sprintf("| %s | %s | %s |\n",
+			escapeMarkdownCell(rule.Name),
+			escapeMarkdownCell(rule.Action),
+			escapeMarkdownCell(rule.Summary),
+		))
+	}
+	if len(rules) == 0 {
+		b.WriteString("| (none) | - | No active rules loaded |\n")
+	}
+	b.WriteString("\nUse `rampart watch`, `rampart log`, and `rampart approve` for live transparency and approvals.\n")
+
+	outPath := filepath.Join(rampartDir, "ACTIVE_POLICY.md")
+	if err := os.WriteFile(outPath, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", outPath, err)
+	}
+	return nil
+}
+
+func escapeMarkdownCell(v string) string {
+	return strings.ReplaceAll(strings.TrimSpace(v), "|", "\\|")
 }

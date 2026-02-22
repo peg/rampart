@@ -794,6 +794,39 @@ func TestGetPolicy_NoAuth(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
+func TestPolicySummaryEndpoint(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/policy/summary", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body struct {
+		DefaultAction string `json:"default_action"`
+		Rules         []struct {
+			Name    string `json:"name"`
+			Action  string `json:"action"`
+			Summary string `json:"summary"`
+		} `json:"rules"`
+		Summary string `json:"summary"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	assert.Equal(t, "allow", body.DefaultAction)
+	assert.NotEmpty(t, body.Summary)
+	require.Len(t, body.Rules, 3)
+	assert.Equal(t, "block-destructive", body.Rules[0].Name)
+	assert.Equal(t, "deny", body.Rules[0].Action)
+	assert.Equal(t, "destructive command blocked", body.Rules[0].Summary)
+}
+
 func TestCreateApproval_NoAuth(t *testing.T) {
 	configYAML := `version: "1"
 default_action: allow
