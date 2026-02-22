@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-02-22
+
+### Added
+
+- **`rampart policy generate`** — natural language to policy YAML. Describe what you want to block in plain English (`rampart policy generate "block all curl requests to external hosts"`) and get a ready-to-use policy file.
+- **`rampart bench`** — policy coverage scoring against a built-in attack corpus. Shows what percentage of known attack patterns your active policy catches, broken down by category.
+- **`block-prompt-injection` profile** — installable via `rampart init --profile block-prompt-injection`. Three tiers: `deny` (high-confidence role override attempts), `require_approval` (medium-confidence patterns), `watch` (existing standard patterns). Covers "ignore previous instructions", DAN-style jailbreaks, exfil directives, and more.
+- **Approval message enrichment** — install commands in approval messages now include a direct link to the package registry entry (npm, PyPI, crates.io) so reviewers can inspect the package before approving.
+
 ## [0.4.8] - 2026-02-21
 
 ### Added
