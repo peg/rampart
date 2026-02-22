@@ -19,11 +19,11 @@ import (
 	"fmt"
 )
 
-//go:embed standard.yaml paranoid.yaml yolo.yaml
+//go:embed standard.yaml paranoid.yaml yolo.yaml block-prompt-injection.yaml
 var FS embed.FS
 
 // ProfileNames lists the available built-in policy profiles.
-var ProfileNames = []string{"standard", "paranoid", "yolo"}
+var ProfileNames = []string{"standard", "paranoid", "yolo", "block-prompt-injection"}
 
 // Profile returns the embedded policy YAML for a named profile.
 func Profile(name string) ([]byte, error) {
