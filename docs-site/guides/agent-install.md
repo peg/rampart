@@ -164,7 +164,9 @@ rampart status          # verify
 rampart policy explain '<command>'   # see which rule matched
 ```
 
-Then add an allow rule for your specific use case. See [Exceptions Guide](https://rampart.sh/docs/exceptions).
+Then add an allow rule for your specific use case. See [Securing Claude Code](https://docs.rampart.sh/guides/securing-claude-code/).
+
+`rampart serve` also writes `~/.rampart/ACTIVE_POLICY.md`, a markdown table of active rules that agents can use for self-description.
 
 ---
 
