@@ -140,6 +140,7 @@ HTTP server for tool evaluation. Bearer token auth, localhost-only.
 |----------|---------|
 | `POST /v1/tool/{name}` | Evaluate and execute |
 | `POST /v1/preflight/{name}` | Dry-run check |
+| `GET /v1/policy/summary` | Auth required. Returns JSON with `default_action`, per-rule summaries, and a plain-English overall summary |
 | `GET /v1/approvals` | Pending approvals |
 | `POST /v1/approvals/{id}/resolve` | Approve/deny |
 | `GET /healthz` | Health check |
