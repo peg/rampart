@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`block-prompt-injection` profile** — installable via `rampart init --profile block-prompt-injection`. Three tiers: `deny` (high-confidence role override attempts), `require_approval` (medium-confidence patterns), `watch` (existing standard patterns). Covers "ignore previous instructions", DAN-style jailbreaks, exfil directives, and more.
 - **Approval message enrichment** — install commands in approval messages now include a direct link to the package registry entry (npm, PyPI, crates.io) so reviewers can inspect the package before approving.
 
+### Fixed
+
+- **Prompt injection pattern false positives** — tightened four patterns in `standard.yaml` and `block-prompt-injection.yaml` to reduce noise: bare `ignore instructions` now requires a qualifier; `you are now (a|an)` removed (matched any role-assignment sentence); `your new (role|task|purpose) is` narrowed to instructions-only context; `[SYSTEM]` token removed (outclassed by model-specific patterns, fired on IRC/chat/game logs). `developer mode enabled` moved from `deny` to `require_approval` in the block-prompt-injection profile (fired on dev tooling output).
+
 ## [0.4.8] - 2026-02-21
 
 ### Added
