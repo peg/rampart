@@ -553,8 +553,8 @@ func loadBenchCorpus(path string) ([]benchCorpusEntry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bench: corpus entry %d has invalid expected_action %q", i, entries[i].ExpectedAction)
 		}
-		if action != engine.ActionAllow && action != engine.ActionDeny && action != engine.ActionWatch {
-			return nil, fmt.Errorf("bench: corpus entry %d expected_action must be allow, deny, or watch", i)
+		if action != engine.ActionAllow && action != engine.ActionDeny && action != engine.ActionWatch && action != engine.ActionRequireApproval {
+			return nil, fmt.Errorf("bench: corpus entry %d expected_action must be allow, deny, watch, or require_approval", i)
 		}
 	}
 
