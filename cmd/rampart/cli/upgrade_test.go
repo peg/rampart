@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/peg/rampart/policies"
 )
 
 func TestLookupSHA256(t *testing.T) {
@@ -353,4 +355,57 @@ func makeArchive(t *testing.T, name string, payload []byte) []byte {
 		t.Fatalf("close gzip: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+
+	standardPath := filepath.Join(policyDir, "standard.yaml")
+	blockPath := filepath.Join(policyDir, "block-prompt-injection.yaml")
+	if err := os.WriteFile(standardPath, []byte("old-standard"), 0o644); err != nil {
+		t.Fatalf("write standard: %v", err)
+	}
+	if err := os.WriteFile(blockPath, []byte("old-block"), 0o644); err != nil {
+		t.Fatalf("write block-prompt-injection: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := upgradeStandardPolicies(&out, false); err != nil {
+		t.Fatalf("upgradeStandardPolicies: %v", err)
+	}
+
+	standardPayload, err := os.ReadFile(standardPath)
+	if err != nil {
+		t.Fatalf("read standard: %v", err)
+	}
+	blockPayload, err := os.ReadFile(blockPath)
+	if err != nil {
+		t.Fatalf("read block-prompt-injection: %v", err)
+	}
+
+	wantStandard, err := policies.Profile("standard")
+	if err != nil {
+		t.Fatalf("load standard profile: %v", err)
+	}
+	wantBlock, err := policies.Profile("block-prompt-injection")
+	if err != nil {
+		t.Fatalf("load block-prompt-injection profile: %v", err)
+	}
+
+	if !bytes.Equal(standardPayload, wantStandard) {
+		t.Fatal("standard.yaml was not updated to the embedded profile")
+	}
+	if !bytes.Equal(blockPayload, wantBlock) {
+		t.Fatal("block-prompt-injection.yaml was not updated to the embedded profile")
+	}
+
+	if !strings.Contains(out.String(), "Updated: block-prompt-injection.yaml, standard.yaml") {
+		t.Fatalf("missing updated summary line: %q", out.String())
+	}
 }

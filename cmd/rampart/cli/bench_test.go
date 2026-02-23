@@ -90,8 +90,22 @@ entries:
 	if got.Matched != 3 || got.Mismatched != 0 {
 		t.Fatalf("matched/mismatched = %d/%d, want 3/0", got.Matched, got.Mismatched)
 	}
+	if got.Strict {
+		t.Fatal("strict should default to false")
+	}
 	if got.Blocked != 1 || got.Watched != 1 || got.Allowed != 1 {
 		t.Fatalf("decision counts = deny:%d watch:%d allow:%d, want 1/1/1", got.Blocked, got.Watched, got.Allowed)
+	}
+	if got.Approval != 0 {
+		t.Fatalf("approval = %d, want 0", got.Approval)
+	}
+	if got.DenyTotal != 1 || got.HardDenied != 1 || got.ApprovalGated != 0 || got.Unhandled != 0 {
+		t.Fatalf("deny coverage counts = total:%d denied:%d approval:%d missed:%d, want 1/1/0/0",
+			got.DenyTotal,
+			got.HardDenied,
+			got.ApprovalGated,
+			got.Unhandled,
+		)
 	}
 	if len(got.Gaps) != 0 {
 		t.Fatalf("gaps = %d, want 0", len(got.Gaps))
@@ -196,6 +210,131 @@ entries:
 	}
 	if got.Category != "credential-theft" {
 		t.Fatalf("category = %q, want credential-theft", got.Category)
+	}
+}
+
+func TestBenchRequireApprovalCountsAsCoverage(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	corpusPath := filepath.Join(dir, "corpus.yaml")
+
+	policy := `
+default_action: allow
+policies:
+  - name: approval-only
+    match:
+      tool: "exec"
+    rules:
+      - action: require_approval
+        message: needs approval
+        when:
+          command_matches:
+            - "rm -rf *"
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	corpus := `
+entries:
+  - command: "rm -rf /tmp/foo"
+    expected_action: "deny"
+    category: "destructive"
+    description: "approval should count as covered"
+`
+	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+
+	stdout, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--json")
+	if err != nil {
+		t.Fatalf("run bench: %v", err)
+	}
+
+	var got benchSummary
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("parse JSON: %v\n%s", err, stdout)
+	}
+
+	if got.Mismatched != 0 {
+		t.Fatalf("mismatched = %d, want 0", got.Mismatched)
+	}
+	if got.HardDenied != 0 || got.ApprovalGated != 1 || got.Unhandled != 0 {
+		t.Fatalf("coverage counts = denied:%d approval:%d missed:%d, want 0/1/0",
+			got.HardDenied,
+			got.ApprovalGated,
+			got.Unhandled,
+		)
+	}
+	if got.Coverage != 100 {
+		t.Fatalf("coverage = %.1f, want 100", got.Coverage)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %d, want 0", len(got.Gaps))
+	}
+}
+
+func TestBenchRequireApprovalStrictCountsAsMiss(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	corpusPath := filepath.Join(dir, "corpus.yaml")
+
+	policy := `
+default_action: allow
+policies:
+  - name: approval-only
+    match:
+      tool: "exec"
+    rules:
+      - action: require_approval
+        message: needs approval
+        when:
+          command_matches:
+            - "rm -rf *"
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	corpus := `
+entries:
+  - command: "rm -rf /tmp/foo"
+    expected_action: "deny"
+    category: "destructive"
+    description: "approval counts as miss in strict mode"
+`
+	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+
+	stdout, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--json", "--strict")
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+
+	var got benchSummary
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("parse JSON: %v\n%s", err, stdout)
+	}
+
+	if !got.Strict {
+		t.Fatal("strict should be true")
+	}
+	if got.Mismatched != 1 {
+		t.Fatalf("mismatched = %d, want 1", got.Mismatched)
+	}
+	if got.HardDenied != 0 || got.ApprovalGated != 1 || got.Unhandled != 0 {
+		t.Fatalf("coverage counts = denied:%d approval:%d missed:%d, want 0/1/0",
+			got.HardDenied,
+			got.ApprovalGated,
+			got.Unhandled,
+		)
+	}
+	if got.Coverage != 0 {
+		t.Fatalf("coverage = %.1f, want 0", got.Coverage)
+	}
+	if len(got.Gaps) != 1 {
+		t.Fatalf("gaps = %d, want 1", len(got.Gaps))
 	}
 }
 

@@ -40,14 +40,23 @@ type benchCorpusDocument struct {
 }
 
 type benchCategorySummary struct {
-	Category   string  `json:"category"`
-	Total      int     `json:"total"`
-	Matched    int     `json:"matched"`
-	Mismatched int     `json:"mismatched"`
-	Blocked    int     `json:"blocked"`
-	Watched    int     `json:"watched"`
-	Allowed    int     `json:"allowed"`
-	Score      float64 `json:"score"`
+	Category       string  `json:"category"`
+	Total          int     `json:"total"`
+	Matched        int     `json:"matched"`
+	Mismatched     int     `json:"mismatched"`
+	Blocked        int     `json:"blocked"`
+	Approval       int     `json:"approval"`
+	Watched        int     `json:"watched"`
+	Allowed        int     `json:"allowed"`
+	DenyTotal      int     `json:"deny_total"`
+	HardDenied     int     `json:"hard_denied"`
+	ApprovalGated  int     `json:"approval_gated"`
+	Unhandled      int     `json:"unhandled"`
+	Coverage       float64 `json:"coverage"`
+	HardDeniedPct  float64 `json:"hard_denied_pct"`
+	ApprovalPct    float64 `json:"approval_gated_pct"`
+	UnhandledPct   float64 `json:"unhandled_pct"`
+	ExactMatchRate float64 `json:"exact_match_rate"`
 }
 
 type benchGap struct {
@@ -70,22 +79,33 @@ type benchCaseResult struct {
 }
 
 type benchSummary struct {
-	PolicyPath string                 `json:"policy_path"`
-	CorpusPath string                 `json:"corpus_path"`
-	Category   string                 `json:"category,omitempty"`
-	Total      int                    `json:"total"`
-	Matched    int                    `json:"matched"`
-	Mismatched int                    `json:"mismatched"`
-	Score      float64                `json:"score"`
-	Blocked    int                    `json:"blocked"`
-	BlockedPct float64                `json:"blocked_pct"`
-	Watched    int                    `json:"watched"`
-	WatchedPct float64                `json:"watched_pct"`
-	Allowed    int                    `json:"allowed"`
-	AllowedPct float64                `json:"allowed_pct"`
-	ByCategory []benchCategorySummary `json:"by_category"`
-	Gaps       []benchGap             `json:"gaps"`
-	Results    []benchCaseResult      `json:"results,omitempty"`
+	PolicyPath       string                 `json:"policy_path"`
+	CorpusPath       string                 `json:"corpus_path"`
+	Category         string                 `json:"category,omitempty"`
+	Strict           bool                   `json:"strict"`
+	Total            int                    `json:"total"`
+	Matched          int                    `json:"matched"`
+	Mismatched       int                    `json:"mismatched"`
+	Score            float64                `json:"score"`
+	Blocked          int                    `json:"blocked"`
+	BlockedPct       float64                `json:"blocked_pct"`
+	Approval         int                    `json:"approval"`
+	ApprovalPct      float64                `json:"approval_pct"`
+	Watched          int                    `json:"watched"`
+	WatchedPct       float64                `json:"watched_pct"`
+	Allowed          int                    `json:"allowed"`
+	AllowedPct       float64                `json:"allowed_pct"`
+	DenyTotal        int                    `json:"deny_total"`
+	HardDenied       int                    `json:"hard_denied"`
+	HardDeniedPct    float64                `json:"hard_denied_pct"`
+	ApprovalGated    int                    `json:"approval_gated"`
+	ApprovalGatedPct float64                `json:"approval_gated_pct"`
+	Unhandled        int                    `json:"unhandled"`
+	UnhandledPct     float64                `json:"unhandled_pct"`
+	Coverage         float64                `json:"coverage"`
+	ByCategory       []benchCategorySummary `json:"by_category"`
+	Gaps             []benchGap             `json:"gaps"`
+	Results          []benchCaseResult      `json:"results,omitempty"`
 }
 
 type benchRunOptions struct {
@@ -93,6 +113,7 @@ type benchRunOptions struct {
 	CorpusPath string
 	Category   string
 	Verbose    bool
+	Strict     bool
 }
 
 func newBenchCmd(_ *rootOptions) *cobra.Command {
@@ -102,6 +123,7 @@ func newBenchCmd(_ *rootOptions) *cobra.Command {
 		category   string
 		jsonOut    bool
 		verbose    bool
+		strict     bool
 	)
 
 	cmd := &cobra.Command{
@@ -114,6 +136,7 @@ func newBenchCmd(_ *rootOptions) *cobra.Command {
 				CorpusPath: corpusPath,
 				Category:   category,
 				Verbose:    verbose,
+				Strict:     strict,
 			})
 			if err != nil {
 				return err
@@ -143,6 +166,7 @@ func newBenchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&category, "category", "", "Filter to a single corpus category")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Include per-case results")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Treat require_approval as a miss for deny expectations")
 
 	return cmd
 }
@@ -188,12 +212,17 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 	}
 
 	type categoryCounter struct {
-		Total      int
-		Matched    int
-		Mismatched int
-		Blocked    int
-		Watched    int
-		Allowed    int
+		Total         int
+		Matched       int
+		Mismatched    int
+		Blocked       int
+		Approval      int
+		Watched       int
+		Allowed       int
+		DenyTotal     int
+		HardDenied    int
+		ApprovalGated int
+		Unhandled     int
 	}
 
 	byCategory := make(map[string]*categoryCounter)
@@ -201,6 +230,7 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 		PolicyPath: policyPath,
 		CorpusPath: corpusPath,
 		Category:   category,
+		Strict:     opts.Strict,
 		Total:      len(entries),
 	}
 	if opts.Verbose {
@@ -216,7 +246,7 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 		})
 
 		actual := decision.Action.String()
-		matched := actual == entry.ExpectedAction
+		matched := benchExpectedMatch(entry.ExpectedAction, actual, opts.Strict)
 
 		cat := strings.ToLower(strings.TrimSpace(entry.Category))
 		if byCategory[cat] == nil {
@@ -234,12 +264,31 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 		case "deny":
 			summary.Blocked++
 			categoryStats.Blocked++
+		case "require_approval":
+			summary.Approval++
+			categoryStats.Approval++
 		case "watch":
 			summary.Watched++
 			categoryStats.Watched++
 		default:
 			summary.Allowed++
 			categoryStats.Allowed++
+		}
+
+		if entry.ExpectedAction == "deny" {
+			summary.DenyTotal++
+			categoryStats.DenyTotal++
+			switch actual {
+			case "deny":
+				summary.HardDenied++
+				categoryStats.HardDenied++
+			case "require_approval":
+				summary.ApprovalGated++
+				categoryStats.ApprovalGated++
+			default:
+				summary.Unhandled++
+				categoryStats.Unhandled++
+			}
 		}
 
 		if matched {
@@ -271,8 +320,17 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 
 	summary.Score = percent(summary.Matched, summary.Total)
 	summary.BlockedPct = percent(summary.Blocked, summary.Total)
+	summary.ApprovalPct = percent(summary.Approval, summary.Total)
 	summary.WatchedPct = percent(summary.Watched, summary.Total)
 	summary.AllowedPct = percent(summary.Allowed, summary.Total)
+	summary.HardDeniedPct = percent(summary.HardDenied, summary.DenyTotal)
+	summary.ApprovalGatedPct = percent(summary.ApprovalGated, summary.DenyTotal)
+	summary.UnhandledPct = percent(summary.Unhandled, summary.DenyTotal)
+	if opts.Strict {
+		summary.Coverage = percent(summary.HardDenied, summary.DenyTotal)
+	} else {
+		summary.Coverage = percent(summary.HardDenied+summary.ApprovalGated, summary.DenyTotal)
+	}
 
 	categories := make([]string, 0, len(byCategory))
 	for name := range byCategory {
@@ -283,15 +341,30 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 	summary.ByCategory = make([]benchCategorySummary, 0, len(categories))
 	for _, name := range categories {
 		stats := byCategory[name]
+		var coverage float64
+		if opts.Strict {
+			coverage = percent(stats.HardDenied, stats.DenyTotal)
+		} else {
+			coverage = percent(stats.HardDenied+stats.ApprovalGated, stats.DenyTotal)
+		}
 		summary.ByCategory = append(summary.ByCategory, benchCategorySummary{
-			Category:   name,
-			Total:      stats.Total,
-			Matched:    stats.Matched,
-			Mismatched: stats.Mismatched,
-			Blocked:    stats.Blocked,
-			Watched:    stats.Watched,
-			Allowed:    stats.Allowed,
-			Score:      percent(stats.Matched, stats.Total),
+			Category:       name,
+			Total:          stats.Total,
+			Matched:        stats.Matched,
+			Mismatched:     stats.Mismatched,
+			Blocked:        stats.Blocked,
+			Approval:       stats.Approval,
+			Watched:        stats.Watched,
+			Allowed:        stats.Allowed,
+			DenyTotal:      stats.DenyTotal,
+			HardDenied:     stats.HardDenied,
+			ApprovalGated:  stats.ApprovalGated,
+			Unhandled:      stats.Unhandled,
+			Coverage:       coverage,
+			HardDeniedPct:  percent(stats.HardDenied, stats.DenyTotal),
+			ApprovalPct:    percent(stats.ApprovalGated, stats.DenyTotal),
+			UnhandledPct:   percent(stats.Unhandled, stats.DenyTotal),
+			ExactMatchRate: percent(stats.Matched, stats.Total),
 		})
 	}
 
@@ -319,16 +392,51 @@ func printBenchSummary(w io.Writer, summary benchSummary, verbose bool) error {
 	if _, err := fmt.Fprintf(w, "Total: %d\n", summary.Total); err != nil {
 		return fmt.Errorf("bench: write output: %w", err)
 	}
-	if _, err := fmt.Fprintf(w, "Score: %.1f%% (%d/%d matched)\n", summary.Score, summary.Matched, summary.Total); err != nil {
-		return fmt.Errorf("bench: write output: %w", err)
+	if summary.Strict {
+		if _, err := fmt.Fprintln(w, "Mode: strict (require_approval counts as unhandled)"); err != nil {
+			return fmt.Errorf("bench: write output: %w", err)
+		}
 	}
-	if _, err := fmt.Fprintf(w, "Blocked: %.1f%% (%d)\n", summary.BlockedPct, summary.Blocked); err != nil {
-		return fmt.Errorf("bench: write output: %w", err)
+	if summary.DenyTotal == 0 {
+		if _, err := fmt.Fprintln(w, "Coverage: n/a (no deny expectations in corpus)"); err != nil {
+			return fmt.Errorf("bench: write output: %w", err)
+		}
+	} else {
+		if _, err := fmt.Fprintf(
+			w,
+			"Coverage: %.1f%% (%.1f%% denied · %.1f%% approval-gated · %.1f%% unhandled)\n",
+			summary.Coverage,
+			summary.HardDeniedPct,
+			summary.ApprovalGatedPct,
+			summary.UnhandledPct,
+		); err != nil {
+			return fmt.Errorf("bench: write output: %w", err)
+		}
+		if _, err := fmt.Fprintf(
+			w,
+			"Counts: %d/%d denied · %d/%d approval-gated · %d/%d unhandled\n",
+			summary.HardDenied,
+			summary.DenyTotal,
+			summary.ApprovalGated,
+			summary.DenyTotal,
+			summary.Unhandled,
+			summary.DenyTotal,
+		); err != nil {
+			return fmt.Errorf("bench: write output: %w", err)
+		}
 	}
-	if _, err := fmt.Fprintf(w, "Watched: %.1f%% (%d)\n", summary.WatchedPct, summary.Watched); err != nil {
-		return fmt.Errorf("bench: write output: %w", err)
-	}
-	if _, err := fmt.Fprintf(w, "Allowed: %.1f%% (%d)\n", summary.AllowedPct, summary.Allowed); err != nil {
+	if _, err := fmt.Fprintf(
+		w,
+		"Decisions: %.1f%% deny (%d) · %.1f%% require_approval (%d) · %.1f%% watch (%d) · %.1f%% allow (%d)\n",
+		summary.BlockedPct,
+		summary.Blocked,
+		summary.ApprovalPct,
+		summary.Approval,
+		summary.WatchedPct,
+		summary.Watched,
+		summary.AllowedPct,
+		summary.Allowed,
+	); err != nil {
 		return fmt.Errorf("bench: write output: %w", err)
 	}
 
@@ -336,14 +444,25 @@ func printBenchSummary(w io.Writer, summary benchSummary, verbose bool) error {
 		return fmt.Errorf("bench: write output: %w", err)
 	}
 	for _, item := range summary.ByCategory {
+		if item.DenyTotal == 0 {
+			if _, err := fmt.Fprintf(w,
+				"  %-20s n/a    (0 deny, 0 approval, 0 missed)\n",
+				item.Category,
+			); err != nil {
+				return fmt.Errorf("bench: write output: %w", err)
+			}
+			continue
+		}
 		if _, err := fmt.Fprintf(w,
-			"  %-20s total:%3d score:%5.1f%% deny:%3d watch:%3d allow:%3d\n",
+			"  %-20s %5.1f%%  (%d/%d deny, %d/%d approval, %d/%d missed)\n",
 			item.Category,
-			item.Total,
-			item.Score,
-			item.Blocked,
-			item.Watched,
-			item.Allowed,
+			item.Coverage,
+			item.HardDenied,
+			item.DenyTotal,
+			item.ApprovalGated,
+			item.DenyTotal,
+			item.Unhandled,
+			item.DenyTotal,
 		); err != nil {
 			return fmt.Errorf("bench: write output: %w", err)
 		}
@@ -447,6 +566,16 @@ func percent(part, total int) float64 {
 		return 0
 	}
 	return float64(part) * 100 / float64(total)
+}
+
+func benchExpectedMatch(expected, actual string, strict bool) bool {
+	if actual == expected {
+		return true
+	}
+	if !strict && expected == "deny" && actual == "require_approval" {
+		return true
+	}
+	return false
 }
 
 func truncateBench(s string, n int) string {

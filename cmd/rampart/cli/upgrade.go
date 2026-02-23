@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,29 +49,29 @@ const (
 )
 
 type upgradeDeps struct {
-	httpClient             *http.Client
-	executablePath         func() (string, error)
-	userHomeDir            func() (string, error)
-	readFile               func(string) ([]byte, error)
-	writeFile              func(string, []byte, os.FileMode) error
-	chmod                  func(string, os.FileMode) error
-	rename                 func(string, string) error
-	createTemp             func(string, string) (*os.File, error)
-	remove                 func(string) error
-	commandRunner          commandRunner
-	currentVersion         func(context.Context, commandRunner, func() (string, error)) (string, error)
-	latestRelease          func(context.Context, *http.Client, string) (string, error)
-	downloadURL            func(context.Context, *http.Client, string) ([]byte, error)
-	inspectServePID        func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
-	stopServe              func(int) error
-	restartServe           func(commandRunner, string, io.Writer, io.Writer) error
-	detectSystemdService   func(commandRunner) string
-	restartSystemdService  func(commandRunner, string, io.Writer) error
-	sleep                  func(time.Duration)
-	pathEnv                func() string
-	stat                   func(string) (os.FileInfo, error)
-	lstat                  func(string) (os.FileInfo, error)
-	evalSymlinks           func(string) (string, error)
+	httpClient            *http.Client
+	executablePath        func() (string, error)
+	userHomeDir           func() (string, error)
+	readFile              func(string) ([]byte, error)
+	writeFile             func(string, []byte, os.FileMode) error
+	chmod                 func(string, os.FileMode) error
+	rename                func(string, string) error
+	createTemp            func(string, string) (*os.File, error)
+	remove                func(string) error
+	commandRunner         commandRunner
+	currentVersion        func(context.Context, commandRunner, func() (string, error)) (string, error)
+	latestRelease         func(context.Context, *http.Client, string) (string, error)
+	downloadURL           func(context.Context, *http.Client, string) ([]byte, error)
+	inspectServePID       func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
+	stopServe             func(int) error
+	restartServe          func(commandRunner, string, io.Writer, io.Writer) error
+	detectSystemdService  func(commandRunner) string
+	restartSystemdService func(commandRunner, string, io.Writer) error
+	sleep                 func(time.Duration)
+	pathEnv               func() string
+	stat                  func(string) (os.FileInfo, error)
+	lstat                 func(string) (os.FileInfo, error)
+	evalSymlinks          func(string) (string, error)
 }
 
 func defaultUpgradeDeps() upgradeDeps {
@@ -805,13 +806,15 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 
 	// Built-in profile names — only these are ever auto-updated.
 	builtIn := map[string]bool{
-		"standard.yaml": true,
-		"paranoid.yaml": true,
-		"yolo.yaml":     true,
-		"demo.yaml":     true,
+		"standard.yaml":               true,
+		"paranoid.yaml":               true,
+		"yolo.yaml":                   true,
+		"demo.yaml":                   true,
+		"block-prompt-injection.yaml": true,
 	}
 
 	updated := 0
+	updatedNames := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !builtIn[e.Name()] {
 			continue
@@ -826,6 +829,7 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		if dryRun {
 			fmt.Fprintf(out, "  would update policy: %s\n", destPath)
 			updated++
+			updatedNames = append(updatedNames, e.Name())
 			continue
 		}
 		// Atomic write: temp file + rename.
@@ -849,11 +853,19 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		}
 		fmt.Fprintf(out, "✓ policy updated: %s\n", destPath)
 		updated++
+		updatedNames = append(updatedNames, e.Name())
 	}
 
 	if updated == 0 {
 		// No standard policy files found — user may be using a custom config path.
 		fmt.Fprintf(out, "  (no built-in policy files found in %s — skipped)\n", policyDir)
+		return nil
+	}
+	sort.Strings(updatedNames)
+	if dryRun {
+		fmt.Fprintf(out, "  Would update: %s\n", strings.Join(updatedNames, ", "))
+	} else {
+		fmt.Fprintf(out, "Updated: %s\n", strings.Join(updatedNames, ", "))
 	}
 	return nil
 }

@@ -23,13 +23,23 @@ policies:
             # Filesystem nukes
             - "rm -rf /"
             - "rm -rf ~"
-            - "rm -rf /**"
             - "rm -rf ~/**"
+            - "rm -rf /home"
+            - "rm -rf /home/**"
+            - "rm -rf /root"
+            - "rm -rf /root/**"
+            - "rm -rf /etc"
+            - "rm -rf /etc/**"
+            - "rm -rf /usr"
+            - "rm -rf /usr/**"
+            - "rm -rf /boot"
+            - "rm -rf /boot/**"
+            - "rm -rf /var"
+            - "rm -rf /var/**"
             - ":(){ :|:& };:"
             - "> /dev/sda"
             # Disk/data destruction tools
             - "dd if=*"
-            - "shred **"
             - "wipe **"
             - "wipefs **"
             # Filesystem formatting
@@ -50,7 +60,18 @@ policies:
             - "poweroff *"
             # Mass permission change
             - "chmod -R 777 /"
+          command_not_matches:
+            # Allow temp/build cleanup
+            - "rm -rf /tmp"
+            - "rm -rf /tmp/**"
+            - "rm -rf /var/tmp"
+            - "rm -rf /var/tmp/**"
         message: "Destructive command blocked"
+      - action: require_approval
+        when:
+          command_matches:
+            - "shred **"
+        message: "Secure delete requires approval"
       - action: deny
         when:
           command_matches:
