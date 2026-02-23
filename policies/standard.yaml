@@ -66,6 +66,13 @@ policies:
             - "rm -rf /tmp/**"
             - "rm -rf /var/tmp"
             - "rm -rf /var/tmp/**"
+            # Allow legitimate /var subdir cleanup
+            - "rm -rf /var/log"
+            - "rm -rf /var/log/**"
+            - "rm -rf /var/run"
+            - "rm -rf /var/run/**"
+            - "rm -rf /var/cache"
+            - "rm -rf /var/cache/**"
         message: "Destructive command blocked"
       - action: require_approval
         when:

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Prompt injection pattern false positives** — tightened four patterns in `standard.yaml` and `block-prompt-injection.yaml` to reduce noise: bare `ignore instructions` now requires a qualifier; `you are now (a|an)` removed (matched any role-assignment sentence); `your new (role|task|purpose) is` narrowed to instructions-only context; `[SYSTEM]` token removed (outclassed by model-specific patterns, fired on IRC/chat/game logs). `developer mode enabled` moved from `deny` to `require_approval` in the block-prompt-injection profile (fired on dev tooling output).
+- **`rm -rf` deny scoped to dangerous paths** — standard policy no longer hard-denies `rm -rf` on all paths. Denies are scoped to home dirs, system dirs (`/etc`, `/usr`, `/boot`, `/root`), and `/var`; `/tmp`, `/var/tmp`, `/var/log`, `/var/run`, and `/var/cache` are explicitly excluded so agents can clean up build artifacts and logs without hitting a wall.
 
 ## [0.4.8] - 2026-02-21
 
