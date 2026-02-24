@@ -118,7 +118,7 @@ var (
 	}
 )
 
-func newPolicyGenerateCmd(_ *rootOptions) *cobra.Command {
+func newPolicyGenerateCmd(opts *rootOptions) *cobra.Command {
 	var output string
 	var appendMode bool
 	var interactive bool
@@ -185,6 +185,9 @@ Examples:
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "Launch interactive generation wizard")
 	cmd.Flags().StringVar(&strictness, "strictness", "balanced", "Policy strictness: strict|balanced|lenient")
 	cmd.Flags().StringVar(&exceptions, "exceptions", "", "Comma-separated exceptions to exclude from matching")
+
+	// Preset subcommand: rampart policy generate preset
+	cmd.AddCommand(newPolicyGeneratePresetCmd(opts))
 
 	return cmd
 }
