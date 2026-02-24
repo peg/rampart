@@ -184,6 +184,8 @@ func todayEvents() (allow, deny, log int, lastDeny *audit.Event) {
 				if lastDeny == nil || ev.Timestamp.After(lastDeny.Timestamp) {
 					lastDeny = ev
 				}
+			case "require_approval", "webhook":
+				deny++
 			case "watch", "log":
 				log++
 			}

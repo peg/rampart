@@ -55,11 +55,11 @@ type Policy struct {
 	// Priority controls evaluation order. Lower number = higher priority.
 	// Default: 100. When multiple policies match, deny always wins
 	// regardless of priority.
-	Priority int `yaml:"priority"`
+	Priority int `yaml:"priority,omitempty"`
 
 	// Enabled allows disabling a policy without removing it.
 	// Default: true.
-	Enabled *bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled,omitempty"`
 
 	// Match defines which tool calls this policy applies to.
 	Match Match `yaml:"match"`
@@ -91,11 +91,11 @@ type Match struct {
 	// Agent is a glob pattern for agent identity.
 	// "*" matches all agents. "ops-*" matches "ops-deploy", "ops-monitor".
 	// Default: "*".
-	Agent string `yaml:"agent"`
+	Agent string `yaml:"agent,omitempty"`
 
 	// Session is a glob pattern for session identity (e.g. "myrepo/main").
 	// "*" matches all sessions. "" defaults to "*".
-	Session string `yaml:"session"`
+	Session string `yaml:"session,omitempty"`
 
 	// Tool is a glob pattern or list of tool names.
 	// "exec" matches only exec. "fs.*" matches "fs.read", "fs.write".
@@ -213,44 +213,44 @@ func (r Rule) ParseAction() (Action, error) {
 type Condition struct {
 	// CommandMatches is a list of glob patterns for exec commands.
 	// Any matching pattern triggers the rule.
-	CommandMatches []string `yaml:"command_matches"`
+	CommandMatches []string `yaml:"command_matches,omitempty"`
 
 	// CommandNotMatches excludes commands from matching.
 	// If a command matches any of these, the rule does not apply.
-	CommandNotMatches []string `yaml:"command_not_matches"`
+	CommandNotMatches []string `yaml:"command_not_matches,omitempty"`
 
 	// CommandContains is a list of literal substrings.
 	// The command must contain ALL specified substrings (AND logic within a single
 	// entry is not supported; use multiple entries for OR logic).
 	// Useful for patterns that glob can't express, e.g. process substitution
 	// with URLs: bash <(curl ...) where the / in URLs breaks glob * matching.
-	CommandContains []string `yaml:"command_contains"`
+	CommandContains []string `yaml:"command_contains,omitempty"`
 
 	// PathMatches is a list of glob patterns for file paths.
-	PathMatches []string `yaml:"path_matches"`
+	PathMatches []string `yaml:"path_matches,omitempty"`
 
 	// PathNotMatches excludes file paths from matching.
-	PathNotMatches []string `yaml:"path_not_matches"`
+	PathNotMatches []string `yaml:"path_not_matches,omitempty"`
 
 	// URLMatches is a list of glob patterns for URLs.
-	URLMatches []string `yaml:"url_matches"`
+	URLMatches []string `yaml:"url_matches,omitempty"`
 
 	// DomainMatches is a list of glob patterns for domains.
-	DomainMatches []string `yaml:"domain_matches"`
+	DomainMatches []string `yaml:"domain_matches,omitempty"`
 
 	// ResponseMatches is a list of regex patterns for tool response bodies.
-	ResponseMatches []string `yaml:"response_matches"`
+	ResponseMatches []string `yaml:"response_matches,omitempty"`
 
 	// ResponseNotMatches excludes response bodies from matching.
-	ResponseNotMatches []string `yaml:"response_not_matches"`
+	ResponseNotMatches []string `yaml:"response_not_matches,omitempty"`
 
 	// SessionMatches is a list of glob patterns for session identity.
 	// Any matching pattern triggers the rule.
-	SessionMatches []string `yaml:"session_matches"`
+	SessionMatches []string `yaml:"session_matches,omitempty"`
 
 	// SessionNotMatches excludes sessions from matching.
 	// If a session matches any of these, the rule does not apply.
-	SessionNotMatches []string `yaml:"session_not_matches"`
+	SessionNotMatches []string `yaml:"session_not_matches,omitempty"`
 
 	// AgentDepth matches on nested sub-agent depth.
 	AgentDepth *IntRangeCondition `yaml:"agent_depth,omitempty" json:"agent_depth,omitempty"`
@@ -266,7 +266,7 @@ type Condition struct {
 
 	// Default, when true, makes this rule match all tool calls.
 	// Use as a catch-all at the end of a rules list.
-	Default bool `yaml:"default"`
+	Default bool `yaml:"default,omitempty"`
 }
 
 // IntRangeCondition matches integer values using gte/lte/eq operators.
