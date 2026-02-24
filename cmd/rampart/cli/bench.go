@@ -286,7 +286,7 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 			categoryStats.Allowed++
 		}
 
-		if entry.ExpectedAction == "deny" {
+		if entry.ExpectedAction == "deny" || entry.ExpectedAction == "require_approval" {
 			summary.DenyTotal++
 			categoryStats.DenyTotal++
 			switch actual {

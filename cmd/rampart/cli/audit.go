@@ -329,6 +329,11 @@ func newAuditReplayCmd() *cobra.Command {
 }
 
 func listAuditFiles(auditDir string) ([]string, error) {
+	auditDir, err := expandHome(auditDir)
+	if err != nil {
+		return nil, fmt.Errorf("audit: expand audit dir: %w", err)
+	}
+	auditDir = filepath.Clean(auditDir)
 	entries, err := os.ReadDir(auditDir)
 	if err != nil {
 		return nil, fmt.Errorf("audit: read audit dir: %w", err)
