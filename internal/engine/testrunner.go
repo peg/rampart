@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -75,6 +76,13 @@ func LoadTestSuite(path string) (*TestSuite, error) {
 
 	if len(suite.Tests) == 0 {
 		return nil, fmt.Errorf("test file contains no tests")
+	}
+
+	// Expand ~ in policy path before any other resolution.
+	if strings.HasPrefix(suite.Policy, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			suite.Policy = filepath.Join(home, suite.Policy[2:])
+		}
 	}
 
 	// Resolve policy path relative to the test file's directory.

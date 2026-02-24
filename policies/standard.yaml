@@ -272,6 +272,19 @@ policies:
             - "**/.keys/**"
             - "**/.pki/**"
         message: "Credential file access blocked"
+      # System authentication / privilege files
+      - action: deny
+        when:
+          path_matches:
+            - "**/etc/shadow"
+            - "**/etc/shadow-"
+            - "**/etc/gshadow"
+            - "**/etc/gshadow-"
+            - "**/etc/passwd"
+            - "**/etc/sudoers"
+            - "**/etc/sudoers.d/**"
+            - "**/etc/master.passwd"
+        message: "Sensitive system file blocked"
       # macOS-specific sensitive paths
       - action: deny
         when:
@@ -299,6 +312,17 @@ policies:
             - "base64 **/.ssh/**"
             - "cp **/.ssh/**"
             - "**/.ssh/id_*"
+          command_not_matches:
+            - "**/.ssh/*.pub"
+      - action: deny
+        when:
+          # scp/rsync of private keys — command_matches can't glob the full command
+          # string including destination, so use command_contains (AND semantics).
+          command_contains:
+            - ".ssh/id_"
+          command_matches:
+            - "scp *"
+            - "rsync *"
             # AWS / cloud creds
             - "cat **/.aws/**"
             - "base64 **/.aws/**"
