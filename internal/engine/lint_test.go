@@ -124,6 +124,30 @@ policies:
 	}
 }
 
+func TestLint_CallCountConditionValid(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: rate-limit
+    match:
+      tool: ["fetch"]
+    rules:
+      - action: require_approval
+        when:
+          call_count:
+            gte: 100
+            window: 1h
+        message: "High fetch volume"
+`)
+	result := LintPolicyFile(path)
+	for _, f := range result.Findings {
+		if f.Severity == LintError && strings.Contains(f.Message, "call_count") {
+			t.Errorf("call_count should be a valid condition field, got lint error: %s", f.Message)
+		}
+	}
+}
+
 func TestLint_EmptyConditions(t *testing.T) {
 	path := writeTempPolicy(t, `
 version: "1"
