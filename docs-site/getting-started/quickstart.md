@@ -126,9 +126,73 @@ Rampart ships with three starting policies:
 rampart init --profile standard
 ```
 
+## Customize Your Rules
+
+When Rampart blocks something it shouldn't, unblock it in one command — no YAML editing required.
+
+### Allow a blocked command
+
+```bash
+rampart allow "npm install *"
+```
+
+Adds an allow rule for `npm install <anything>` to your custom policy and hot-reloads the daemon immediately.
+
+For file-based overrides, use `--tool`:
+
+```bash
+rampart allow "/tmp/**" --tool read
+rampart allow "/tmp/**" --tool write
+```
+
+### Block an additional command
+
+```bash
+rampart block "curl * | bash"
+rampart block "npm publish *"
+```
+
+### See your custom rules
+
+```bash
+rampart rules
+```
+
+```
+  Custom Rules
+  ──────────────────────────────────────────────────────────────
+
+  Global  (~/.rampart/policies/custom.yaml)
+
+  #     ACTION   TOOL      PATTERN                ADDED
+     1  allow    exec      npm install *          just now
+     2  deny     exec      curl * | bash          2 hours ago
+```
+
+### Remove a rule
+
+```bash
+rampart rules remove 2    # removes curl * | bash
+```
+
+### Reset all custom rules
+
+```bash
+rampart rules reset
+```
+
+!!! info "Denial hints"
+    When Rampart blocks a command, the error message shows the exact `rampart allow` command to run. Copy-paste to unblock.
+
+!!! warning "Self-modification protection"
+    `rampart allow`, `rampart block`, and `rampart rules` are blocked when run **by an AI agent**. Run them yourself in a terminal. This prevents agents from bypassing their own constraints.
+
+For a full guide on scoping rules per-project and advanced options, see [Customizing Policy →](../guides/customizing-policy.md).
+
 ## What's Next?
 
 - [5-Minute Tutorial →](tutorial.md) — Hands-on walkthrough with real examples
 - [Configuration →](configuration.md) — Write custom policies
+- [Customizing Policy →](../guides/customizing-policy.md) — Full guide to allow/block/rules
 - [Integration Guides →](../integrations/index.md) — Cline, Cursor, Codex, MCP
 - [Policy Engine →](../features/policy-engine.md) — Conditions, rule priority, glob patterns

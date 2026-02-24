@@ -335,6 +335,164 @@ The normalizer handles:
 
 Commands are matched against **both** the raw and normalized forms, so existing policies continue to work without changes.
 
+## Custom Rules (`rampart allow` / `rampart block`)
+
+Instead of editing YAML directly, you can add rules from the CLI. Changes take effect immediately.
+
+### Adding rules
+
+```bash
+# Allow a command (exec tool, auto-detected)
+rampart allow "npm install *"
+rampart allow "go test ./..."
+
+# Block a command
+rampart block "curl * | bash"
+rampart block "npm publish *"
+
+# Allow a file path (read/write/edit tools, auto-detected)
+rampart allow "/tmp/**"
+
+# Force a specific tool type
+rampart allow "/var/log/app/**" --tool read
+```
+
+Pattern classification is automatic:
+
+- Patterns starting with `/`, `~/`, or containing `/` → file path → applies to `read`, `write`, `edit`
+- URL-shaped patterns (`curl https://...`, `wget https://...`) → command → applies to `exec`
+- Everything else → command → applies to `exec`
+
+Override with `--tool exec|read|write|edit` when auto-detection isn't right.
+
+### Rule scopes
+
+Rules are written to one of two files:
+
+| Scope | Path | When used |
+|-------|------|-----------|
+| Project | `.rampart/policy.yaml` | Current directory is inside a git repo (default) |
+| Global | `~/.rampart/policies/custom.yaml` | Outside a git repo (default) |
+
+Force a scope:
+
+```bash
+rampart allow "npm install *" --global   # always global
+rampart allow "npm install *" --project  # always project
+```
+
+Project rules travel with the repo (commit `.rampart/policy.yaml`). Global rules apply everywhere.
+
+### Listing and managing rules
+
+```bash
+rampart rules                  # list all custom rules
+rampart rules --global         # global rules only
+rampart rules --project        # project rules only
+rampart rules --json           # JSON output for scripting
+rampart rules remove 3         # remove rule #3 (shown by 'rampart rules')
+rampart rules reset            # remove all custom rules (prompts for confirmation)
+rampart rules reset --force    # skip confirmation
+```
+
+### The custom.yaml file
+
+Both scope files are standard Rampart policy YAML. You can edit them by hand:
+
+```yaml
+# ~/.rampart/policies/custom.yaml
+# Rampart custom policy — managed by `rampart allow` / `rampart block`.
+# You can edit this file manually. Changes take effect on reload.
+
+version: "1"
+policies:
+  - name: custom-allow-commands
+    match:
+      tool: [exec]
+    rules:
+      - action: allow
+        when:
+          command_matches: ["npm install *"]
+        message: "User-allowed: npm install *"
+        added: 2026-02-24T06:00:00Z
+
+  - name: custom-deny-commands
+    match:
+      tool: [exec]
+    rules:
+      - action: deny
+        when:
+          command_matches: ["curl * | bash"]
+        message: "User-blocked: curl * | bash"
+        added: 2026-02-24T07:00:00Z
+```
+
+!!! tip "Priority"
+    Custom rules are standard policy documents and participate in the normal evaluation order: **deny always wins**. A deny rule in `custom.yaml` overrides any allow rule in `standard.yaml`, and vice versa.
+
+### Denial suggestions
+
+When Rampart denies a tool call, the error message includes a ready-to-run `rampart allow` command:
+
+```
+Rampart: denied — command_matches "curl * | bash" (block-exfil)
+
+To allow this command, run:
+  rampart allow "curl https://api.example.com/data"
+  rampart allow "curl *"   # allows any curl command
+```
+
+The wildcard variant is only suggested when it's safe (not for `rm`, `shred`, `dd`, or sensitive paths).
+
+### Self-modification protection
+
+`rampart allow`, `rampart block`, and `rampart rules` are blocked when an AI agent tries to run them. The `block-self-modification` rule in `standard.yaml` matches these commands and denies them:
+
+```yaml
+- name: block-self-modification
+  description: "Prevent AI agents from modifying their own Rampart policy"
+  match:
+    tool: ["exec"]
+  rules:
+    - action: deny
+      when:
+        command_matches:
+          - "rampart allow *"
+          - "rampart block *"
+          - "rampart rules *"
+          - "rampart policy generate*"
+          - "rampart init *"
+      message: "Policy modification commands must be run by a human, not an agent"
+```
+
+Run these commands yourself in a terminal, not via your AI agent.
+
+## Policy Reload API
+
+Force an immediate reload without restarting `rampart serve`:
+
+```bash
+curl -X POST http://localhost:9090/v1/policy/reload \
+  -H "Authorization: Bearer $(rampart token)" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "policies_loaded": 3,
+  "rules_total": 26,
+  "reload_time_ms": 12
+}
+```
+
+A **1-second cooldown** is enforced between calls. Requests within the cooldown window return HTTP 429.
+
+`rampart allow` and `rampart block` call this endpoint automatically after writing rules — you don't need to call it yourself in normal usage.
+
 ## Hot Reload
 
 Policies hot-reload via `fsnotify`. Edit the YAML file and changes take effect immediately — no restart required.
