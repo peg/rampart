@@ -98,6 +98,7 @@ type Server struct {
 	metricsEnabled  bool
 	auditDir        string
 	sse             *sseHub
+	lastReloadAPI   time.Time // Rate limiting for /v1/policy/reload
 }
 
 // Option configures a proxy server.
@@ -323,6 +324,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/events/stream", s.handleEventStream)
 	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
 	mux.HandleFunc("GET /v1/policy/summary", s.handlePolicySummary)
+	mux.HandleFunc("POST /v1/policy/reload", s.handlePolicyReload)
 	mux.HandleFunc("GET /v1/status", s.handleStatus)
 	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
