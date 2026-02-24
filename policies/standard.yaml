@@ -311,6 +311,11 @@ policies:
             - "more **/.ssh/id_*"
             - "base64 **/.ssh/id_*"
             - "cp **/.ssh/id_*"
+            - "*mv*/.ssh/id_*"
+            - "xxd **/.ssh/id_*"
+            - "hexdump **/.ssh/id_*"
+            - "od **/.ssh/id_*"
+            - "strings **/.ssh/id_*"
           command_not_matches:
             - "cat **/.ssh/*.pub"
             - "head **/.ssh/*.pub"
@@ -319,18 +324,25 @@ policies:
             - "more **/.ssh/*.pub"
             - "base64 **/.ssh/*.pub"
             - "cp **/.ssh/*.pub"
+            - "*mv*/.ssh/*.pub"
+            - "xxd **/.ssh/*.pub"
+            - "hexdump **/.ssh/*.pub"
+            - "od **/.ssh/*.pub"
+            - "strings **/.ssh/*.pub"
         message: "SSH private key access blocked"
-      # Block scp/rsync exfil of SSH keys
-      # Match: scp <path-with-ssh-key> ... or rsync <path-with-ssh-key> ...
-      # Exclude: scp -i <key> (auth usage), .pub files
+      # Block scp/rsync/sftp exfil of SSH keys
+      # Note: -i flag exclusion removed — it's bypassable via dual-key attacks
+      # (scp -i auth_key exfil_key remote:). Users needing -i can use ssh-agent
+      # or add a local policy override.
       - action: deny
         when:
           command_matches:
             - "*scp*/.ssh/id_*"
             - "*rsync*/.ssh/id_*"
+            - "*sftp*/.ssh/id_*"
           command_not_matches:
-            - "scp -i **"
             - "*.pub *"
+            - "*.pub"
         message: "SSH key transfer blocked"
       - action: deny
         when:

