@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-02-24
+
+### Fixed
+
+- **`rampart upgrade` skipped policy refresh when already on latest** — the command returned early when the installed binary matched the latest release, bypassing the policy update step entirely. Users who upgraded binaries manually or were already on the latest version never received policy improvements from newer releases. Now always refreshes installed profiles unless `--no-policy-update` is set.
+
 ## [0.4.10] - 2026-02-24
 
 ### Fixed
