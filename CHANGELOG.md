@@ -9,9 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.12] - 2026-02-24
 
+### Added
+
+- **E2E test suite** — 36 test cases covering destructive commands, credential access, exfil patterns, env injection, and false positive regression. Run with `rampart test tests/e2e.yaml`. The `--config` flag overrides the policy path in test YAML for dev workflows.
+
 ### Fixed
 
 - **`rampart serve` generated a new random token on every restart** — the foreground serve path (including `--background`) only checked the `RAMPART_TOKEN` environment variable for the token; it never read `~/.rampart/token` and never wrote to it. Only the systemd/launchd install path called `resolveServiceToken`. Every restart broke existing tools and configs using the previous token. Now reads the persisted token before starting the proxy and writes it back after binding, consistent with the install path.
+- **SSH key policy false positives** — `cat ~/.ssh/id_rsa.pub` was incorrectly denied because the pattern `cat **/.ssh/**` was too broad. Narrowed to `cat **/.ssh/id_*` with explicit `.pub` exclusions for each read command (cat, head, tail, less, more, base64, cp).
+- **`scp -i` auth usage blocked** — using a private key for authentication (`scp -i ~/.ssh/id_rsa`) was incorrectly flagged as exfil. Added dedicated scp/rsync rule with proper exclusions: `scp -i **` for auth, `*.pub *` for public keys.
 
 ## [0.4.11] - 2026-02-24
 
