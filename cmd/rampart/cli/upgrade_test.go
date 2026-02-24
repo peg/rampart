@@ -114,6 +114,48 @@ func TestNewUpgradeCmdAlreadyLatest(t *testing.T) {
 	}
 }
 
+func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
+	// Regression test: when already on latest, upgrade should still refresh
+	// installed policy files from the embedded binary.
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	standardPath := filepath.Join(policyDir, "standard.yaml")
+	if err := os.WriteFile(standardPath, []byte("old-stale-policy"), 0o644); err != nil {
+		t.Fatalf("write stale policy: %v", err)
+	}
+
+	deps := &upgradeDeps{
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.2.3", nil
+		},
+		latestRelease: func(context.Context, *http.Client, string) (string, error) {
+			return "v1.2.3", nil
+		},
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	got, err := os.ReadFile(standardPath)
+	if err != nil {
+		t.Fatalf("read policy: %v", err)
+	}
+	if string(got) == "old-stale-policy" {
+		t.Fatal("policy was not refreshed even though already on latest version")
+	}
+}
+
 func TestNewUpgradeCmdDryRun(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
