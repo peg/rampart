@@ -300,20 +300,38 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Block SSH private key access (allow .pub files)
       - action: deny
         when:
           command_matches:
-            # SSH keys
-            - "cat **/.ssh/**"
-            - "head **/.ssh/**"
-            - "tail **/.ssh/**"
-            - "less **/.ssh/**"
-            - "more **/.ssh/**"
-            - "base64 **/.ssh/**"
-            - "cp **/.ssh/**"
-            - "**/.ssh/id_*"
+            - "cat **/.ssh/id_*"
+            - "head **/.ssh/id_*"
+            - "tail **/.ssh/id_*"
+            - "less **/.ssh/id_*"
+            - "more **/.ssh/id_*"
+            - "base64 **/.ssh/id_*"
+            - "cp **/.ssh/id_*"
           command_not_matches:
-            - "**/.ssh/*.pub"
+            - "cat **/.ssh/*.pub"
+            - "head **/.ssh/*.pub"
+            - "tail **/.ssh/*.pub"
+            - "less **/.ssh/*.pub"
+            - "more **/.ssh/*.pub"
+            - "base64 **/.ssh/*.pub"
+            - "cp **/.ssh/*.pub"
+        message: "SSH private key access blocked"
+      # Block scp/rsync exfil of SSH keys
+      # Match: scp <path-with-ssh-key> ... or rsync <path-with-ssh-key> ...
+      # Exclude: scp -i <key> (auth usage), .pub files
+      - action: deny
+        when:
+          command_matches:
+            - "*scp*/.ssh/id_*"
+            - "*rsync*/.ssh/id_*"
+          command_not_matches:
+            - "scp -i **"
+            - "*.pub *"
+        message: "SSH key transfer blocked"
       - action: deny
         when:
           command_matches:
