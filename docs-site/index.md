@@ -89,7 +89,7 @@ No. Rampart runs entirely on your machine. Policy evaluation, audit logging, and
 Policy evaluation takes under 10 microseconds per tool call. In practice, you won't notice it.
 
 **What if I need to allow a command that's blocked?**  
-Add an allow rule to `~/.rampart/policies/standard.yaml`, or use `require_approval` so you decide per-instance rather than changing the policy.
+Run `rampart allow "your command pattern"` and it's done — no YAML editing required. The rule takes effect immediately. For one-time exceptions, use `require_approval` in your policy so you can approve each instance. [Full guide →](guides/customizing-policy.md)
 
 ## How It Works
 
