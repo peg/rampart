@@ -91,6 +91,7 @@ var validConditionFields = map[string]bool{
 	"session_not_matches":  true,
 	"agent_depth":          true,
 	"tool_param_matches":   true,
+	"call_count":           true,
 	"default":              true,
 }
 

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-02-24
+
+### Fixed
+
+- **`rampart audit` subcommands crash with default path** — `tail`, `verify`, `stats`, `search`, and `replay` all failed with the default `--audit-dir` because `~` was never expanded. Fixed in `listAuditFiles` and `listAnchorFiles` helpers (covers all subcommands).
+- **`rampart bench` approval-gated coverage always 0%** — corpus entries with `expected_action: require_approval` were never included in coverage math. The 4 correctly-gated sudo/shred entries showed in decisions but were invisible to the coverage percentage. Both `deny` and `require_approval` expected entries now feed the coverage denominator. Coverage for privilege-escalation goes from 28% → 50%.
+- **`rampart bench` crashes with no args on installed binaries** — default corpus path `bench/corpus.yaml` was relative to CWD. Fixed by embedding the corpus in the binary. `rampart bench` now works anywhere; shows `Corpus: built-in`.
+- **`rampart doctor` lint error for `call_count`** — `call_count` was added to the engine in v0.4.8 but the linter's `validConditionFields` map was never updated. Any user with `standard.yaml` (which uses `call_count` in the rate-limit rule) saw a spurious lint error.
+- **`rampart status` undercounts blocking decisions** — `require_approval` and `webhook` decisions were silently dropped from today's event stats. Now counted alongside `deny`.
+- **`rampart policy generate` emits verbose null/empty fields** — generated YAML included `priority: 0`, `enabled: null`, `agent: ""`, and all-empty condition slices. Added `omitempty` to relevant struct fields; marshaling-only change, existing policy files parse identically.
+
 ## [0.4.9] - 2026-02-22
 
 ### Added

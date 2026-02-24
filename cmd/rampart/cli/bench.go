@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/bench"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -112,8 +113,9 @@ type benchRunOptions struct {
 	PolicyPath string
 	CorpusPath string
 	Category   string
-	Verbose    bool
-	Strict     bool
+	Verbose             bool
+	Strict              bool
+	UseEmbeddedCorpus   bool
 }
 
 func newBenchCmd(_ *rootOptions) *cobra.Command {
@@ -132,11 +134,12 @@ func newBenchCmd(_ *rootOptions) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			summary, err := runBench(benchRunOptions{
-				PolicyPath: policyPath,
-				CorpusPath: corpusPath,
-				Category:   category,
-				Verbose:    verbose,
-				Strict:     strict,
+				PolicyPath:          policyPath,
+				CorpusPath:          corpusPath,
+				Category:            category,
+				Verbose:             verbose,
+				Strict:              strict,
+				UseEmbeddedCorpus:   !cmd.Flags().Changed("corpus"),
 			})
 			if err != nil {
 				return err
@@ -177,18 +180,26 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 		return benchSummary{}, err
 	}
 
-	corpusPath, err := expandBenchPath(opts.CorpusPath)
-	if err != nil {
-		return benchSummary{}, err
-	}
-
 	store := engine.NewFileStore(policyPath)
 	eng, err := engine.New(store, nil)
 	if err != nil {
 		return benchSummary{}, fmt.Errorf("bench: load policy: %w", err)
 	}
 
-	entries, err := loadBenchCorpus(corpusPath)
+	var (
+		entries    []benchCorpusEntry
+		corpusPath string
+	)
+	if opts.UseEmbeddedCorpus {
+		corpusPath = "built-in"
+		entries, err = parseBenchCorpus(bench.CorpusYAML)
+	} else {
+		corpusPath, err = expandBenchPath(opts.CorpusPath)
+		if err != nil {
+			return benchSummary{}, err
+		}
+		entries, err = loadBenchCorpus(corpusPath)
+	}
 	if err != nil {
 		return benchSummary{}, err
 	}
@@ -275,7 +286,7 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 			categoryStats.Allowed++
 		}
 
-		if entry.ExpectedAction == "deny" {
+		if entry.ExpectedAction == "deny" || entry.ExpectedAction == "require_approval" {
 			summary.DenyTotal++
 			categoryStats.DenyTotal++
 			switch actual {
@@ -520,7 +531,10 @@ func loadBenchCorpus(path string) ([]benchCorpusEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bench: read corpus: %w", err)
 	}
+	return parseBenchCorpus(data)
+}
 
+func parseBenchCorpus(data []byte) ([]benchCorpusEntry, error) {
 	var doc benchCorpusDocument
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("bench: parse corpus YAML: %w", err)
