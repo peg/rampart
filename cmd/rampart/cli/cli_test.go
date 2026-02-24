@@ -16,6 +16,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,4 +192,81 @@ func runCLI(t *testing.T, args ...string) (string, string, error) {
 	err := cmd.Execute()
 
 	return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
+}
+
+func TestServeReadsAndPersistsToken(t *testing.T) {
+	// Regression test: rampart serve was generating a new random token on every
+	// start, ignoring ~/.rampart/token and never writing to it. The foreground
+	// serve path should read a persisted token and persist it after start.
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	configPath := filepath.Join(dir, "rampart.yaml")
+	content, err := policies.FS.ReadFile("standard.yaml")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, content, 0o644))
+
+	// Pre-write a known token to ~/.rampart/token.
+	rampartDir := filepath.Join(dir, ".rampart")
+	require.NoError(t, os.MkdirAll(rampartDir, 0o700))
+	knownToken := "deadbeef00112233deadbeef00112233"
+	tokenPath := filepath.Join(rampartDir, "token")
+	require.NoError(t, os.WriteFile(tokenPath, []byte(knownToken), 0o600))
+
+	// Find a free port so proxy starts (port>0 gate in serve.go).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+
+	signalCh := make(chan os.Signal, 1)
+	deps := &serveDeps{
+		notifyContext: func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(parent)
+			go func() {
+				select {
+				case <-ctx.Done():
+				case <-signalCh:
+					cancel()
+				}
+			}()
+			return ctx, cancel
+		},
+	}
+
+	var stderr bytes.Buffer
+	cmd := newServeCmd(&rootOptions{configPath: configPath}, deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"--port", fmt.Sprintf("%d", port)})
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- cmd.Execute() }()
+
+	time.Sleep(300 * time.Millisecond)
+	signalCh <- os.Interrupt
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("serve command did not shut down in time")
+	}
+
+	logs := stderr.String()
+
+	// Serve must log the persisted token, not a fresh random one.
+	if !strings.Contains(logs, knownToken) {
+		t.Fatalf("serve did not use persisted token from ~/.rampart/token.\nlogs:\n%s", logs)
+	}
+
+	// Token file must still contain the same value after serve writes it back.
+	written, err := os.ReadFile(tokenPath)
+	require.NoError(t, err)
+	if strings.TrimSpace(string(written)) != knownToken {
+		t.Fatalf("token file changed after serve; want %q got %q", knownToken, strings.TrimSpace(string(written)))
+	}
+
+	_ = os.RemoveAll(filepath.Join(".", "audit"))
 }

@@ -139,6 +139,10 @@ func runTestSuite(w, errW io.Writer, opts *rootOptions, arg string, noColor, ver
 	}
 
 	policyPath := suite.Policy
+	// --config flag overrides the policy path set in the test file.
+	if opts.configPath != "" && opts.configPath != "rampart.yaml" {
+		policyPath = opts.configPath
+	}
 	if policyPath == "" {
 		policyPath = arg
 	}

