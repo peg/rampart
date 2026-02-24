@@ -127,6 +127,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	benchCmd := newBenchCmd(opts)
 	quickstartCmd := newQuickstartCmd()
 	upgradeCmd := newUpgradeCmd(opts)
+	allowCmd := newAllowCmd(opts)
+	blockRuleCmd := newBlockCmd(opts)
 
 	setupCmd.GroupID = groupSetup
 	quickstartCmd.GroupID = groupSetup
@@ -137,6 +139,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	testCmd.GroupID = groupPolicy
 	benchCmd.GroupID = groupPolicy
 	watchCmd.GroupID = groupPolicy
+	allowCmd.GroupID = groupPolicy
+	blockRuleCmd.GroupID = groupPolicy
 
 	serveCmd.GroupID = groupRuntime
 	tokenCmd.GroupID = groupRuntime
@@ -176,6 +180,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(benchCmd)
 	cmd.AddCommand(quickstartCmd)
 	cmd.AddCommand(upgradeCmd)
+	cmd.AddCommand(allowCmd)
+	cmd.AddCommand(blockRuleCmd)
 
 	return cmd
 }
