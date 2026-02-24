@@ -274,8 +274,21 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if approvalTimeout > 0 {
 					proxyOpts = append(proxyOpts, proxy.WithApprovalTimeout(approvalTimeout))
 				}
-				if envToken := os.Getenv("RAMPART_TOKEN"); envToken != "" {
-					proxyOpts = append(proxyOpts, proxy.WithToken(envToken))
+				// Resolve token: flag > env > persisted file > generate new.
+				// Mirrors serve install behaviour so the token survives restarts.
+				{
+					var tok string
+					switch {
+					case os.Getenv("RAMPART_TOKEN") != "":
+						tok = os.Getenv("RAMPART_TOKEN")
+					default:
+						if persisted, err := readPersistedToken(); err == nil && persisted != "" {
+							tok = persisted
+						}
+					}
+					if tok != "" {
+						proxyOpts = append(proxyOpts, proxy.WithToken(tok))
+					}
 				}
 				if resolveBaseURL != "" {
 					proxyOpts = append(proxyOpts, proxy.WithResolveBaseURL(resolveBaseURL))
@@ -321,6 +334,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				listenPort := listener.Addr().(*net.TCPAddr).Port
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: dashboard: http://localhost:%d/dashboard/\n", listenPort)
 				fmt.Fprintf(cmd.ErrOrStderr(), "serve: use the full token above to authenticate in the dashboard\n")
+				// Persist the token so it survives restarts.
+				if err := persistToken(token); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
+					fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", token)
+				}
 
 				if metrics {
 					logger.Info("serve: metrics enabled on /metrics")
