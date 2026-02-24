@@ -423,7 +423,14 @@ func printTestResult(w io.Writer, d engine.Decision, noColor bool) {
 	fmt.Fprintf(w, "%s %s%s%s — %s\n", icon, color, label, reset, msg)
 
 	if len(d.MatchedPolicies) > 0 {
-		fmt.Fprintf(w, "   Policy: %s\n", strings.Join(d.MatchedPolicies, ", "))
+		if len(d.MatchedPolicies) <= 3 {
+			fmt.Fprintf(w, "   Policy: %s\n", strings.Join(d.MatchedPolicies, ", "))
+		} else {
+			fmt.Fprintf(w, "   Policies (%d):\n", len(d.MatchedPolicies))
+			for _, p := range d.MatchedPolicies {
+				fmt.Fprintf(w, "     • %s\n", p)
+			}
+		}
 	}
 
 	fmt.Fprintf(w, "   Eval: %s\n", formatDuration(d.EvalDuration))

@@ -268,6 +268,8 @@ func printRulesJSON(out io.Writer, entries []rulesEntry) error {
 
 func newRulesRemoveCmd(opts *rootOptions) *cobra.Command {
 	var force bool
+	var apiAddr string
+	var token string
 
 	cmd := &cobra.Command{
 		Use:   "remove <index>",
@@ -286,15 +288,17 @@ First run 'rampart rules' to see rule numbers, then:
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRulesRemove(cmd, opts, args[0], force)
+			return runRulesRemove(cmd, opts, args[0], force, apiAddr, token)
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
+	cmd.Flags().StringVar(&apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 	return cmd
 }
 
-func runRulesRemove(cmd *cobra.Command, opts *rootOptions, indexStr string, force bool) error {
+func runRulesRemove(cmd *cobra.Command, opts *rootOptions, indexStr string, force bool, apiAddr, token string) error {
 	displayIdx, err := strconv.Atoi(indexStr)
 	if err != nil || displayIdx < 1 {
 		return fmt.Errorf("rules: invalid index %q — must be a positive integer", indexStr)
@@ -374,9 +378,20 @@ func runRulesRemove(cmd *cobra.Command, opts *rootOptions, indexStr string, forc
 	totalAfter := len(globalEntries) + len(projectEntries) - 1
 	standardCount := countStandardRules(opts)
 	fmt.Fprintf(out, "  %s\n", rulesOkStyle.Render("✓ Rule removed"))
-	fmt.Fprintf(out, "  %s\n\n", rulesOkStyle.Render(
-		fmt.Sprintf("✓ Policy reloaded (%d rules active)", standardCount+totalAfter),
-	))
+
+	// Try to reload the daemon.
+	resolvedToken := resolveToken(token)
+	resolvedAddr := resolveAddrAllow(apiAddr)
+	reloaded, _ := reloadPolicy(cmd, resolvedAddr, resolvedToken)
+	if reloaded {
+		fmt.Fprintf(out, "  %s\n\n", rulesOkStyle.Render(
+			fmt.Sprintf("✓ Policy reloaded (%d rules active)", standardCount+totalAfter),
+		))
+	} else {
+		fmt.Fprintf(out, "  %s\n\n", rulesHintStyle.Render(
+			fmt.Sprintf("Saved (%d rules). Run 'rampart serve' to activate.", standardCount+totalAfter),
+		))
+	}
 
 	return nil
 }
@@ -407,21 +422,25 @@ func removeRuleFromSource(source string, sourceIdx int) error {
 
 func newRulesResetCmd(opts *rootOptions) *cobra.Command {
 	var force bool
+	var apiAddr string
+	var token string
 
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Remove all custom rules",
 		Long:  "Remove all custom rules added via 'rampart allow' and 'rampart block'.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRulesReset(cmd, opts, force)
+			return runRulesReset(cmd, opts, force, apiAddr, token)
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
+	cmd.Flags().StringVar(&apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 	return cmd
 }
 
-func runRulesReset(cmd *cobra.Command, opts *rootOptions, force bool) error {
+func runRulesReset(cmd *cobra.Command, opts *rootOptions, force bool, apiAddr, token string) error {
 	globalEntries, projectEntries, err := loadAllEntries(false, false)
 	if err != nil {
 		return err
@@ -483,9 +502,20 @@ func runRulesReset(cmd *cobra.Command, opts *rootOptions, force bool) error {
 	}
 
 	fmt.Fprintf(out, "  %s\n", rulesOkStyle.Render(fmt.Sprintf("✓ Removed %d custom rule(s)", totalCustom)))
-	fmt.Fprintf(out, "  %s\n\n", rulesOkStyle.Render(
-		fmt.Sprintf("✓ Policy reloaded (%d rules active)", standardCount),
-	))
+
+	// Try to reload the daemon.
+	resolvedToken := resolveToken(token)
+	resolvedAddr := resolveAddrAllow(apiAddr)
+	reloaded, _ := reloadPolicy(cmd, resolvedAddr, resolvedToken)
+	if reloaded {
+		fmt.Fprintf(out, "  %s\n\n", rulesOkStyle.Render(
+			fmt.Sprintf("✓ Policy reloaded (%d rules active)", standardCount),
+		))
+	} else {
+		fmt.Fprintf(out, "  %s\n\n", rulesHintStyle.Render(
+			fmt.Sprintf("Saved (%d rules). Run 'rampart serve' to activate.", standardCount),
+		))
+	}
 
 	return nil
 }

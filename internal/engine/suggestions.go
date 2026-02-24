@@ -19,6 +19,47 @@ import (
 	"strings"
 )
 
+// isExtremelyDangerous returns true if the command is so dangerous that
+// we should not suggest allowing it. These are commands that would cause
+// severe, likely unrecoverable damage to the system.
+func isExtremelyDangerous(cmd string) bool {
+	cmdLower := strings.ToLower(cmd)
+
+	// Filesystem destruction targeting root or home
+	if strings.Contains(cmdLower, "rm -rf /") && !strings.Contains(cmdLower, "rm -rf /tmp") && !strings.Contains(cmdLower, "rm -rf /var") {
+		// "rm -rf /" or "rm -rf /home" etc but not "rm -rf /tmp/foo"
+		parts := strings.Fields(cmdLower)
+		for i, p := range parts {
+			if p == "/" || p == "/*" || p == "~" || p == "~/*" {
+				return true
+			}
+			// Check for "rm -rf /something" where something is a root-level danger
+			if i > 0 && (p == "/bin" || p == "/usr" || p == "/etc" || p == "/home" || p == "/root" || p == "/lib" || p == "/sbin") {
+				return true
+			}
+		}
+	}
+
+	// Fork bomb
+	if strings.Contains(cmd, ":(){ :|:& };:") {
+		return true
+	}
+
+	// Disk wipe
+	if strings.Contains(cmdLower, "> /dev/sd") || strings.Contains(cmdLower, ">/dev/sd") {
+		return true
+	}
+
+	// Piped execution from URL
+	if (strings.Contains(cmdLower, "curl ") || strings.Contains(cmdLower, "wget ")) &&
+		(strings.Contains(cmdLower, "| bash") || strings.Contains(cmdLower, "| sh") ||
+			strings.Contains(cmdLower, "|bash") || strings.Contains(cmdLower, "|sh")) {
+		return true
+	}
+
+	return false
+}
+
 // dangerousBaseCommands lists command names whose wildcard expansions would be
 // unsafe to suggest. We never suggest "rm *", "shred *", "dd *", etc.
 var dangerousBaseCommands = []string{
@@ -188,6 +229,12 @@ func generateSuggestions(call ToolCall) []string {
 
 	cmd := call.Command()
 	if cmd != "" && call.Tool == "exec" {
+		// Skip suggestions for extremely dangerous commands.
+		// These should almost never be allowed, so don't suggest it.
+		if isExtremelyDangerous(cmd) {
+			return []string{"⚠️  This command matches a high-risk pattern. Allowing it is not recommended."}
+		}
+
 		// 1. Exact command.
 		suggestions = append(suggestions, fmt.Sprintf("rampart allow %q", cmd))
 

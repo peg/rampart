@@ -153,6 +153,13 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		return fmt.Errorf("load policy: %w", err)
 	}
 
+	// Check for duplicate pattern.
+	if exists, existingAction, existingTool := p.HasPattern(pattern); exists {
+		fmt.Fprintf(out, "\n  ⚠️  Pattern already exists: %s %s %q\n", existingAction, existingTool, pattern)
+		fmt.Fprintln(out, "  Use 'rampart rules' to view existing rules.")
+		return nil
+	}
+
 	// Build the message.
 	msg := opts.message
 	if msg == "" {
@@ -169,18 +176,12 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		return fmt.Errorf("save policy: %w", err)
 	}
 
-	// Print success.
+	// Print success (brief - details already shown in printRuleSummary).
 	ruleCount := p.TotalRules()
 	if useColor {
-		fmt.Fprintf(out, "\n  %s✓%s Rule added to %s\n\n", colorGreen, colorReset, filepath.Base(policyPath))
-		fmt.Fprintf(out, "    Action:  %s%s%s\n", actionColor(action, useColor), action, colorReset)
-		fmt.Fprintf(out, "    Pattern: %s\n", pattern)
-		fmt.Fprintf(out, "    Tool:    %s\n", detectedTool)
+		fmt.Fprintf(out, "\n  %s✓%s Rule added to %s\n", colorGreen, colorReset, filepath.Base(policyPath))
 	} else {
-		fmt.Fprintf(out, "\n  ✓ Rule added to %s\n\n", filepath.Base(policyPath))
-		fmt.Fprintf(out, "    Action:  %s\n", action)
-		fmt.Fprintf(out, "    Pattern: %s\n", pattern)
-		fmt.Fprintf(out, "    Tool:    %s\n", detectedTool)
+		fmt.Fprintf(out, "\n  ✓ Rule added to %s\n", filepath.Base(policyPath))
 	}
 
 	// Try to reload the daemon.

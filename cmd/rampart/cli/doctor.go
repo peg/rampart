@@ -217,6 +217,8 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	fmt.Fprintln(w)
 	if issues == 0 && warnings == 0 {
 		fmt.Fprintln(w, "No issues found.")
+	} else if issues == 0 && warnings > 0 {
+		fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
 	} else {
 		if issues > 0 {
 			noun := "issue"
@@ -269,8 +271,9 @@ func doctorHookBinary(emit emitFn) int {
 		return 0
 	}
 
-	// Find all hook commands and check absolute paths.
+	// Find all hook commands and check absolute paths (dedupe).
 	issues := 0
+	checked := make(map[string]bool)
 	hooks, _ := settings["hooks"].(map[string]any)
 	for _, v := range hooks {
 		arr, _ := v.([]any)
@@ -292,6 +295,10 @@ func doctorHookBinary(emit emitFn) int {
 				if !filepath.IsAbs(bin) {
 					continue // not absolute — skip (PATH lookup, not our concern)
 				}
+				if checked[bin] {
+					continue // already checked this path
+				}
+				checked[bin] = true
 				if _, statErr := os.Stat(bin); statErr != nil {
 					emit("Hook binary", "fail", fmt.Sprintf("%s not found", bin))
 					issues++

@@ -308,6 +308,17 @@ func ProjectCustomPath() string {
 	return filepath.Join(".rampart", "policy.yaml")
 }
 
+// HasPattern checks if a pattern already exists in the policy.
+// Returns true if the pattern exists, along with the action and tool.
+func (p *CustomPolicy) HasPattern(pattern string) (exists bool, action, tool string) {
+	for _, rule := range p.FlattenRules() {
+		if rule.Pattern == pattern {
+			return true, rule.Action, rule.Tool
+		}
+	}
+	return false, "", ""
+}
+
 // FlatRule is a simplified view of a rule for display purposes.
 // It flattens the nested structure into a single row.
 type FlatRule struct {
@@ -332,19 +343,20 @@ func (p *CustomPolicy) FlattenRules() []FlatRule {
 
 		for ri, rule := range entry.Rules {
 			// Extract pattern from condition
+			ruleTool := tool // Use local copy to avoid mutating outer variable
 			pattern := ""
 			if len(rule.When.CommandMatches) > 0 {
 				pattern = rule.When.CommandMatches[0]
 			} else if len(rule.When.PathMatches) > 0 {
 				pattern = rule.When.PathMatches[0]
-				if tool == "exec" {
-					tool = "read" // Path-based rules are typically read/write
+				if ruleTool == "exec" {
+					ruleTool = "read" // Path-based rules are typically read/write
 				}
 			}
 
 			result = append(result, FlatRule{
 				Action:   rule.Action,
-				Tool:     tool,
+				Tool:     ruleTool,
 				Pattern:  pattern,
 				Message:  rule.Message,
 				AddedAt:  rule.Added,
