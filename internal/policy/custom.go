@@ -249,3 +249,96 @@ func entryName(action string, isPath bool) string {
 	}
 	return fmt.Sprintf("custom-%s-%s", action, kind)
 }
+
+// GlobalCustomPath returns the path to the global custom policy file.
+// This is ~/.rampart/policies/custom.yaml.
+func GlobalCustomPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("policy: cannot determine home dir: %w", err)
+	}
+	return filepath.Join(home, ".rampart", "policies", "custom.yaml"), nil
+}
+
+// ProjectCustomPath returns the path to project-local custom policy.
+// This is .rampart/policy.yaml in the current directory.
+func ProjectCustomPath() string {
+	return filepath.Join(".rampart", "policy.yaml")
+}
+
+// FlatRule is a simplified view of a rule for display purposes.
+// It flattens the nested structure into a single row.
+type FlatRule struct {
+	Action   string
+	Tool     string
+	Pattern  string
+	Message  string
+	AddedAt  time.Time
+	EntryIdx int // Index in Policies array
+	RuleIdx  int // Index in Rules array within entry
+}
+
+// FlattenRules returns all rules as a flat list for display.
+func (p *CustomPolicy) FlattenRules() []FlatRule {
+	var result []FlatRule
+	for ei, entry := range p.Policies {
+		// Determine tool from match
+		tool := "exec"
+		if len(entry.Match.Tool) > 0 {
+			tool = entry.Match.Tool[0]
+		}
+
+		for ri, rule := range entry.Rules {
+			// Extract pattern from condition
+			pattern := ""
+			if len(rule.When.CommandMatches) > 0 {
+				pattern = rule.When.CommandMatches[0]
+			} else if len(rule.When.PathMatches) > 0 {
+				pattern = rule.When.PathMatches[0]
+				if tool == "exec" {
+					tool = "read" // Path-based rules are typically read/write
+				}
+			}
+
+			result = append(result, FlatRule{
+				Action:   rule.Action,
+				Tool:     tool,
+				Pattern:  pattern,
+				Message:  rule.Message,
+				AddedAt:  rule.Added,
+				EntryIdx: ei,
+				RuleIdx:  ri,
+			})
+		}
+	}
+	return result
+}
+
+// RemoveRuleAt removes the rule at the given flat index.
+// Returns an error if the index is out of range.
+func RemoveRuleAt(p *CustomPolicy, flatIdx int) error {
+	if flatIdx < 0 {
+		return fmt.Errorf("policy: invalid index %d", flatIdx)
+	}
+
+	// Walk through to find the rule at flatIdx
+	idx := 0
+	for ei := range p.Policies {
+		for ri := range p.Policies[ei].Rules {
+			if idx == flatIdx {
+				// Found it - remove this rule
+				rules := p.Policies[ei].Rules
+				p.Policies[ei].Rules = append(rules[:ri], rules[ri+1:]...)
+
+				// If entry is now empty, remove the entry
+				if len(p.Policies[ei].Rules) == 0 {
+					p.Policies = append(p.Policies[:ei], p.Policies[ei+1:]...)
+				}
+				return nil
+			}
+			idx++
+		}
+	}
+
+	return fmt.Errorf("policy: index %d out of range (have %d rules)", flatIdx, idx)
+}
