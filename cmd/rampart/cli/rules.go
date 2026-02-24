@@ -273,7 +273,18 @@ func newRulesRemoveCmd(opts *rootOptions) *cobra.Command {
 		Use:   "remove <index>",
 		Short: "Remove a custom rule by index",
 		Long:  "Remove a specific custom rule shown by 'rampart rules'.",
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf(`missing index argument
+
+Usage: rampart rules remove <index>
+
+First run 'rampart rules' to see rule numbers, then:
+  rampart rules remove 1    # Remove rule #1
+  rampart rules remove 3    # Remove rule #3`)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRulesRemove(cmd, opts, args[0], force)
 		},

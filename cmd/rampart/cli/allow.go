@@ -28,6 +28,40 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// makePatternArgs returns a cobra.Args function that validates pattern arguments
+// and provides helpful error messages.
+func makePatternArgs(cmdName string) cobra.PositionalArgs {
+	examples := map[string][]string{
+		"allow": {"npm install *", "go test ./...", "/tmp/**"},
+		"block": {"curl * | bash", "rm -rf *", "/etc/**"},
+	}
+	exs := examples[cmdName]
+	if exs == nil {
+		exs = []string{"pattern *"}
+	}
+
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf(`missing pattern argument
+
+Usage: rampart %s <pattern>
+
+Examples:
+  rampart %s "%s"
+  rampart %s "%s"
+  rampart %s "%s"
+
+Run 'rampart %s --help' for more options.`,
+				cmdName, cmdName, exs[0], cmdName, exs[1], cmdName, exs[2], cmdName)
+		}
+		if len(args) > 1 {
+			return fmt.Errorf("too many arguments: got %d, expected 1 pattern\n\nDid you forget to quote the pattern? Try: rampart %s \"%s\"",
+				len(args), cmdName, strings.Join(args, " "))
+		}
+		return nil
+	}
+}
+
 // allowBlockOptions holds shared flags for the allow/block commands.
 type allowBlockOptions struct {
 	global  bool
@@ -57,7 +91,7 @@ Examples:
   rampart allow "curl https://api.example.com/*"
 
 Changes take effect immediately if 'rampart serve' is running.`,
-		Args: cobra.ExactArgs(1),
+		Args: makePatternArgs("allow"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAllowBlock(cmd, args[0], "allow", opts)
 		},

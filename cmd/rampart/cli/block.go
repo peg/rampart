@@ -35,7 +35,7 @@ Examples:
   rampart block "npm publish *"        # block npm publish
 
 Changes take effect immediately if 'rampart serve' is running.`,
-		Args: cobra.ExactArgs(1),
+		Args: makePatternArgs("block"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAllowBlock(cmd, args[0], "deny", opts)
 		},

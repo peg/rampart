@@ -386,10 +386,12 @@ func printTestResult(w io.Writer, d engine.Decision, noColor bool) {
 		color string
 		reset string
 		label string
+		hint  string
 	)
 
 	if !noColor {
 		reset = "\033[0m"
+		hint = "\033[90m" // dim gray
 	}
 
 	switch d.Action {
@@ -425,6 +427,15 @@ func printTestResult(w io.Writer, d engine.Decision, noColor bool) {
 	}
 
 	fmt.Fprintf(w, "   Eval: %s\n", formatDuration(d.EvalDuration))
+
+	// Show suggestions for denials
+	if d.Action == engine.ActionDeny && len(d.Suggestions) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "   %s💡 To allow this:%s\n", hint, reset)
+		for _, s := range d.Suggestions {
+			fmt.Fprintf(w, "      %s\n", s)
+		}
+	}
 }
 
 func formatDuration(d time.Duration) string {
