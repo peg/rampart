@@ -101,48 +101,54 @@ func runRulesList(out io.Writer, opts *rootOptions, globalOnly, projectOnly, jso
 }
 
 // loadAllEntries reads custom rules from both (or one) source.
+// Indices are always global (sequential across all sources) to ensure
+// consistency between `rampart rules` and `rampart rules remove <index>`.
 func loadAllEntries(globalOnly, projectOnly bool) (globalEntries, projectEntries []rulesEntry, err error) {
+	// Always load both sources to compute correct global indices,
+	// but only return the requested entries.
 	idx := 1
 
-	if !projectOnly {
-		gPath, pathErr := custompolicy.GlobalCustomPath()
-		if pathErr != nil {
-			return nil, nil, pathErr
+	gPath, pathErr := custompolicy.GlobalCustomPath()
+	if pathErr != nil {
+		return nil, nil, pathErr
+	}
+	gp, loadErr := custompolicy.LoadCustomPolicy(gPath)
+	if loadErr != nil {
+		return nil, nil, fmt.Errorf("rules: load global custom rules: %w", loadErr)
+	}
+	for _, r := range gp.FlattenRules() {
+		entry := rulesEntry{
+			Index:   idx,
+			Source:  "global",
+			Action:  r.Action,
+			Tool:    r.Tool,
+			Pattern: r.Pattern,
+			AddedAt: r.AddedAt,
 		}
-		gp, loadErr := custompolicy.LoadCustomPolicy(gPath)
-		if loadErr != nil {
-			return nil, nil, fmt.Errorf("rules: load global custom rules: %w", loadErr)
+		if !projectOnly {
+			globalEntries = append(globalEntries, entry)
 		}
-		for _, r := range gp.FlattenRules() {
-			globalEntries = append(globalEntries, rulesEntry{
-				Index:   idx,
-				Source:  "global",
-				Action:  r.Action,
-				Tool:    r.Tool,
-				Pattern: r.Pattern,
-				AddedAt: r.AddedAt,
-			})
-			idx++
-		}
+		idx++
 	}
 
-	if !globalOnly {
-		pPath := custompolicy.ProjectCustomPath()
-		pp, loadErr := custompolicy.LoadCustomPolicy(pPath)
-		if loadErr != nil {
-			return nil, nil, fmt.Errorf("rules: load project custom rules: %w", loadErr)
+	pPath := custompolicy.ProjectCustomPath()
+	pp, loadErr := custompolicy.LoadCustomPolicy(pPath)
+	if loadErr != nil {
+		return nil, nil, fmt.Errorf("rules: load project custom rules: %w", loadErr)
+	}
+	for _, r := range pp.FlattenRules() {
+		entry := rulesEntry{
+			Index:   idx,
+			Source:  "project",
+			Action:  r.Action,
+			Tool:    r.Tool,
+			Pattern: r.Pattern,
+			AddedAt: r.AddedAt,
 		}
-		for _, r := range pp.FlattenRules() {
-			projectEntries = append(projectEntries, rulesEntry{
-				Index:   idx,
-				Source:  "project",
-				Action:  r.Action,
-				Tool:    r.Tool,
-				Pattern: r.Pattern,
-				AddedAt: r.AddedAt,
-			})
-			idx++
+		if !globalOnly {
+			projectEntries = append(projectEntries, entry)
 		}
+		idx++
 	}
 
 	return globalEntries, projectEntries, nil
