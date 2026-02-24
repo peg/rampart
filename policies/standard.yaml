@@ -13,6 +13,22 @@
 version: "1"
 default_action: allow
 policies:
+  # Self-modification protection: agents cannot change their own constraints
+  - name: block-self-modification
+    description: "Prevent AI agents from modifying their own Rampart policy"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "rampart allow *"
+            - "rampart block *"
+            - "rampart rules *"
+            - "rampart policy generate*"
+            - "rampart init *"
+        message: "Policy modification commands must be run by a human, not an agent"
+
   - name: block-destructive
     match:
       tool: ["exec"]

@@ -212,3 +212,26 @@ tests:
     tool: read
     params: {path: "/home/clap/.ssh/id_rsa.pub"}
     expect: allow
+
+  # ── Self-modification protection ────────────────────────────────────────────
+  # Agents cannot modify their own policy constraints
+
+  - name: "deny: rampart allow (self-modification)"
+    tool: exec
+    params: {command: "rampart allow 'npm install *'"}
+    expect: deny
+
+  - name: "deny: rampart block (self-modification)"
+    tool: exec
+    params: {command: "rampart block 'curl * | sh'"}
+    expect: deny
+
+  - name: "deny: rampart rules (self-modification)"
+    tool: exec
+    params: {command: "rampart rules remove 1"}
+    expect: deny
+
+  - name: "deny: rampart policy generate (self-modification)"
+    tool: exec
+    params: {command: "rampart policy generate --project"}
+    expect: deny
