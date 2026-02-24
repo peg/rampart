@@ -415,6 +415,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				MatchedPolicies: decision.MatchedPolicies,
 				Message:         decision.Message,
 				EvalTimeUS:      decision.EvalDuration.Microseconds(),
+				Suggestions:     decision.Suggestions,
 			}
 			event := audit.Event{
 				ID:        call.ID,
@@ -453,9 +454,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			switch decision.Action {
 			case engine.ActionDeny:
 				if isPostToolUse {
-					return outputHookResult(cmd, format, hookBlock, true, decision.Message, cmdStr)
+					return outputHookResult(cmd, format, hookBlock, true, decision.Message, cmdStr, decision.Suggestions...)
 				}
-				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr, decision.Suggestions...)
 			case engine.ActionRequireApproval:
 				if serveURL != "" {
 					approvalClient := &hookApprovalClient{
@@ -649,9 +650,10 @@ const (
 // When denied or blocked, it prints a branded message to stderr.
 // When ask, Claude Code shows its native permission prompt; Cline cancels
 // (Cline has no native ask equivalent).
-func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, isPostToolUse bool, reason string, command string) error {
+// suggestions contains ready-to-run "rampart allow ..." commands shown on deny.
+func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, isPostToolUse bool, reason string, command string, suggestions ...string) error {
 	if decision == hookDeny || decision == hookBlock {
-		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason))
+		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason, suggestions))
 	}
 	if decision == hookAsk {
 		fmt.Fprint(os.Stderr, formatApprovalRequiredMessage(command, reason))

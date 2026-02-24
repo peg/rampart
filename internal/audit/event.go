@@ -89,6 +89,10 @@ type EventDecision struct {
 
 	// Message is the human-readable reason for the decision.
 	Message string `json:"message,omitempty"`
+
+	// Suggestions contains ready-to-run "rampart allow ..." commands showing
+	// how to permit this call. Only populated for deny decisions.
+	Suggestions []string `json:"suggestions,omitempty"`
 }
 
 // ToolResponse captures the result of an allowed tool call.
