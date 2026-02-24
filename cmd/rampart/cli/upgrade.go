@@ -216,6 +216,11 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 			if current != "" && compareSemver(current, target) >= 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "Already on latest (%s)\n", target)
+				if !skipPolicyUpdate {
+					if err := upgradeStandardPolicies(cmd.OutOrStdout(), dryRun); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed: %v\n", err)
+					}
+				}
 				return nil
 			}
 
