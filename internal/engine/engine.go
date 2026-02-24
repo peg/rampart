@@ -130,6 +130,7 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				MatchedPolicies: append(matched, e.remainingNames(matching, p.Name)...),
 				Message:         message,
 				EvalDuration:    time.Since(start),
+				Suggestions:     generateSuggestions(call),
 			}
 		case ActionWebhook:
 			// Webhook wins over log and allow, but not deny.
