@@ -124,6 +124,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	statusCmd := newStatusCmd()
 	tokenCmd := newTokenShowCmd()
 	testCmd := newTestCmd(opts)
+	benchCmd := newBenchCmd(opts)
 	quickstartCmd := newQuickstartCmd()
 	upgradeCmd := newUpgradeCmd(opts)
 
@@ -134,6 +135,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 
 	policyCmd.GroupID = groupPolicy
 	testCmd.GroupID = groupPolicy
+	benchCmd.GroupID = groupPolicy
 	watchCmd.GroupID = groupPolicy
 
 	serveCmd.GroupID = groupRuntime
@@ -171,6 +173,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(statusCmd)
 	cmd.AddCommand(tokenCmd)
 	cmd.AddCommand(testCmd)
+	cmd.AddCommand(benchCmd)
 	cmd.AddCommand(quickstartCmd)
 	cmd.AddCommand(upgradeCmd)
 

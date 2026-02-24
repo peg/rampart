@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-02-22
+
+### Added
+
+- **`rampart policy generate`** — natural language to policy YAML. Describe what you want to block in plain English (`rampart policy generate "block all curl requests to external hosts"`) and get a ready-to-use policy file.
+- **`rampart bench`** — policy coverage scoring against a built-in attack corpus. Shows what percentage of known attack patterns your active policy catches, broken down by category.
+- **`block-prompt-injection` profile** — installable via `rampart init --profile block-prompt-injection`. Three tiers: `deny` (high-confidence role override attempts), `require_approval` (medium-confidence patterns), `watch` (existing standard patterns). Covers "ignore previous instructions", DAN-style jailbreaks, exfil directives, and more.
+- **Approval message enrichment** — install commands in approval messages now include a direct link to the package registry entry (npm, PyPI, crates.io) so reviewers can inspect the package before approving.
+
+### Fixed
+
+- **Prompt injection pattern false positives** — tightened four patterns in `standard.yaml` and `block-prompt-injection.yaml` to reduce noise: bare `ignore instructions` now requires a qualifier; `you are now (a|an)` removed (matched any role-assignment sentence); `your new (role|task|purpose) is` narrowed to instructions-only context; `[SYSTEM]` token removed (outclassed by model-specific patterns, fired on IRC/chat/game logs). `developer mode enabled` moved from `deny` to `require_approval` in the block-prompt-injection profile (fired on dev tooling output).
+- **`rm -rf` deny scoped to dangerous paths** — standard policy no longer hard-denies `rm -rf` on all paths. Denies are scoped to home dirs, system dirs (`/etc`, `/usr`, `/boot`, `/root`, `/lib`, `/lib64`), and `/var`; `/tmp`, `/var/tmp`, `/var/log`, `/var/run`, and `/var/cache` are explicitly excluded so agents can clean up build artifacts and logs without hitting a wall.
+- **`rampart bench` accepts `require_approval` in corpus** — corpus entries with `expected_action: require_approval` now parse correctly. Previously the parser rejected them with an error, causing `rampart bench` to fail immediately when run against the built-in corpus.
+- **`rampart upgrade` refreshes opt-in profiles** — upgrade now re-installs `block-prompt-injection.yaml` alongside `standard.yaml` when the profile is already active, keeping all installed profiles in sync with the current release.
+
 ## [0.4.8] - 2026-02-21
 
 ### Added

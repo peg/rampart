@@ -12,7 +12,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -60,6 +62,8 @@ func (c *hookApprovalClient) requestApproval(tool, command, agent, path, runID, 
 
 // requestApprovalCtx is like requestApproval but accepts a context for cancellation.
 func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
+	message = enrichApprovalMessage(message, command)
+
 	// Create the approval
 	body := createApprovalRequest{
 		Tool:    tool,
@@ -229,4 +233,228 @@ func (c *hookApprovalClient) stderrWriter() io.Writer {
 		return c.errWriter
 	}
 	return os.Stderr
+}
+
+func enrichApprovalMessage(message, toolInput string) string {
+	registryURL := detectPackageRegistryURL(toolInput)
+	if registryURL == "" {
+		return message
+	}
+	return message + "\nPackage info: " + registryURL
+}
+
+func detectPackageRegistryURL(toolInput string) string {
+	tokens := splitCommandTokens(toolInput)
+	if len(tokens) == 0 {
+		return ""
+	}
+
+	for len(tokens) > 0 {
+		tok := tokens[0]
+		if tok == "sudo" || strings.HasPrefix(tok, "sudo=") || isEnvAssignment(tok) {
+			tokens = tokens[1:]
+			continue
+		}
+		break
+	}
+	if len(tokens) < 2 {
+		return ""
+	}
+
+	switch tokens[0] {
+	case "npm":
+		if tokens[1] != "install" && tokens[1] != "i" {
+			return ""
+		}
+		name := extractInstallTarget(tokens[2:], map[string]bool{
+			"--tag":        true,
+			"--registry":   true,
+			"--prefix":     true,
+			"--workspace":  true,
+			"-w":           true,
+			"--userconfig": true,
+			"--cache":      true,
+		})
+		name = stripNPMVersion(name)
+		if name == "" {
+			return ""
+		}
+		return "https://www.npmjs.com/package/" + url.PathEscape(name)
+	case "pip":
+		if tokens[1] != "install" {
+			return ""
+		}
+		name := extractInstallTarget(tokens[2:], map[string]bool{
+			"-r":                true,
+			"--requirement":     true,
+			"-c":                true,
+			"--constraint":      true,
+			"-i":                true,
+			"--index-url":       true,
+			"--extra-index-url": true,
+			"--trusted-host":    true,
+			"-f":                true,
+			"--find-links":      true,
+		})
+		name = stripPipVersion(name)
+		if name == "" {
+			return ""
+		}
+		return "https://pypi.org/project/" + url.PathEscape(name) + "/"
+	case "cargo":
+		if tokens[1] != "add" {
+			return ""
+		}
+		name := extractInstallTarget(tokens[2:], map[string]bool{
+			"--features": true,
+			"-F":         true,
+			"--registry": true,
+		})
+		name = stripAtVersion(name)
+		if name == "" {
+			return ""
+		}
+		return "https://crates.io/crates/" + url.PathEscape(name)
+	case "go":
+		if tokens[1] != "get" {
+			return ""
+		}
+		path := extractInstallTarget(tokens[2:], nil)
+		path = stripAtVersion(path)
+		if path == "" {
+			return ""
+		}
+		return "https://pkg.go.dev/" + path
+	case "gem":
+		if tokens[1] != "install" {
+			return ""
+		}
+		name := extractInstallTarget(tokens[2:], map[string]bool{
+			"-v":        true,
+			"--version": true,
+			"-s":        true,
+			"--source":  true,
+		})
+		name = stripAtVersion(name)
+		if name == "" {
+			return ""
+		}
+		return "https://rubygems.org/gems/" + url.PathEscape(name)
+	case "brew":
+		if tokens[1] != "install" {
+			return ""
+		}
+		name := extractInstallTarget(tokens[2:], nil)
+		name = stripAtVersion(name)
+		if name == "" {
+			return ""
+		}
+		return "https://formulae.brew.sh/formula/" + url.PathEscape(name)
+	default:
+		return ""
+	}
+}
+
+func splitCommandTokens(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func() {
+		if cur.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, cur.String())
+		cur.Reset()
+	}
+
+	for _, r := range s {
+		switch {
+		case escaped:
+			cur.WriteRune(r)
+			escaped = false
+		case r == '\\' && !inSingle:
+			escaped = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case (r == ' ' || r == '\t' || r == '\n') && !inSingle && !inDouble:
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return tokens
+}
+
+func isEnvAssignment(tok string) bool {
+	if strings.HasPrefix(tok, "-") {
+		return false
+	}
+	eq := strings.IndexByte(tok, '=')
+	return eq > 0
+}
+
+func extractInstallTarget(tokens []string, flagsWithValue map[string]bool) string {
+	for i := 0; i < len(tokens); i++ {
+		tok := strings.TrimSpace(tokens[i])
+		if tok == "" {
+			continue
+		}
+		if strings.HasPrefix(tok, "-") {
+			if flagsWithValue != nil && flagsWithValue[tok] && !strings.Contains(tok, "=") && i+1 < len(tokens) {
+				i++
+			}
+			continue
+		}
+		return tok
+	}
+	return ""
+}
+
+func stripNPMVersion(name string) string {
+	if name == "" {
+		return ""
+	}
+	if strings.HasPrefix(name, "@") {
+		slash := strings.IndexByte(name, '/')
+		if slash == -1 {
+			return name
+		}
+		if at := strings.LastIndexByte(name, '@'); at > slash {
+			return name[:at]
+		}
+		return name
+	}
+	if at := strings.IndexByte(name, '@'); at > 0 {
+		return name[:at]
+	}
+	return name
+}
+
+func stripPipVersion(name string) string {
+	if name == "" {
+		return ""
+	}
+	for i, r := range name {
+		switch r {
+		case '=', '<', '>', '!', '~':
+			return name[:i]
+		}
+	}
+	return name
+}
+
+func stripAtVersion(name string) string {
+	if name == "" {
+		return ""
+	}
+	if at := strings.IndexByte(name, '@'); at > 0 {
+		return name[:at]
+	}
+	return name
 }

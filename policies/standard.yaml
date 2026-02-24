@@ -23,13 +23,27 @@ policies:
             # Filesystem nukes
             - "rm -rf /"
             - "rm -rf ~"
-            - "rm -rf /**"
             - "rm -rf ~/**"
+            - "rm -rf /home"
+            - "rm -rf /home/**"
+            - "rm -rf /root"
+            - "rm -rf /root/**"
+            - "rm -rf /etc"
+            - "rm -rf /etc/**"
+            - "rm -rf /usr"
+            - "rm -rf /usr/**"
+            - "rm -rf /boot"
+            - "rm -rf /boot/**"
+            - "rm -rf /lib"
+            - "rm -rf /lib/**"
+            - "rm -rf /lib64"
+            - "rm -rf /lib64/**"
+            - "rm -rf /var"
+            - "rm -rf /var/**"
             - ":(){ :|:& };:"
             - "> /dev/sda"
             # Disk/data destruction tools
             - "dd if=*"
-            - "shred **"
             - "wipe **"
             - "wipefs **"
             # Filesystem formatting
@@ -50,7 +64,25 @@ policies:
             - "poweroff *"
             # Mass permission change
             - "chmod -R 777 /"
+          command_not_matches:
+            # Allow temp/build cleanup
+            - "rm -rf /tmp"
+            - "rm -rf /tmp/**"
+            - "rm -rf /var/tmp"
+            - "rm -rf /var/tmp/**"
+            # Allow legitimate /var subdir cleanup
+            - "rm -rf /var/log"
+            - "rm -rf /var/log/**"
+            - "rm -rf /var/run"
+            - "rm -rf /var/run/**"
+            - "rm -rf /var/cache"
+            - "rm -rf /var/cache/**"
         message: "Destructive command blocked"
+      - action: require_approval
+        when:
+          command_matches:
+            - "shred **"
+        message: "Secure delete requires approval"
       - action: deny
         when:
           command_matches:
@@ -449,18 +481,16 @@ policies:
         when:
           response_matches:
             # Classic instruction override attempts
-            - "(?i)ignore (all |your |previous |prior )?instructions"
+            - "(?i)ignore (all |your |previous |prior )instructions"
             - "(?i)disregard (all |your |previous |prior )?(instructions|rules|guidelines)"
             - "(?i)forget (all |your |previous |prior )?instructions"
             # Role/persona hijack
-            - "(?i)you are now (a|an) "
-            - "(?i)your new (instructions|role|purpose|task) (is|are)"
+            - "(?i)your new instructions (is|are)"
             - "(?i)your real instructions"
             - "(?i)new persona:"
             # System prompt injection — model-specific special tokens
             - "(?i)<\\|im_start\\|>system"
             - "(?i)<\\|system\\|>"
-            - "(?i)\\[SYSTEM\\]"
             - "(?i)###\\s*(INSTRUCTIONS|SYSTEM|NEW PROMPT)###"
             - "(?i)---BEGIN (SYSTEM |NEW )?(PROMPT|INSTRUCTIONS)---"
             # Explicit exfiltration instructions embedded in content
