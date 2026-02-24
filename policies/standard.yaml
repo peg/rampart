@@ -316,13 +316,7 @@ policies:
             - "**/.ssh/*.pub"
       - action: deny
         when:
-          # scp/rsync of private keys — command_matches can't glob the full command
-          # string including destination, so use command_contains (AND semantics).
-          command_contains:
-            - ".ssh/id_"
           command_matches:
-            - "scp *"
-            - "rsync *"
             # AWS / cloud creds
             - "cat **/.aws/**"
             - "base64 **/.aws/**"
@@ -364,7 +358,6 @@ policies:
             # Process environment (can contain secrets)
             - "cat /proc/**/environ"
           command_not_matches:
-            # Allow .pub files — public keys are not sensitive.
             - "**/.ssh/*.pub"
         message: "Credential file access via shell blocked"
 
