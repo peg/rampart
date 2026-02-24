@@ -178,3 +178,35 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("rule count mismatch: got %d, want %d", loaded.TotalRules(), orig.TotalRules())
 	}
 }
+
+func TestIsPathPatternCommands(t *testing.T) {
+	// These should be detected as commands (exec), not paths
+	commands := []string{
+		"go build ./...",
+		"npm install lodash",
+		"git commit -m 'test'",
+		"docker run -v /tmp:/data alpine",
+		"kubectl get pods -n default",
+		"curl https://example.com",
+		"make all",
+	}
+	for _, cmd := range commands {
+		if policy.IsPathPattern(cmd) {
+			t.Errorf("IsPathPattern(%q) = true, want false (should be exec)", cmd)
+		}
+	}
+
+	// These should be detected as paths
+	paths := []string{
+		"/etc/passwd",
+		"~/Documents/file.txt",
+		"**/node_modules/**",
+		"./config.yaml",
+		"src/main.go",
+	}
+	for _, p := range paths {
+		if !policy.IsPathPattern(p) {
+			t.Errorf("IsPathPattern(%q) = false, want true (should be path)", p)
+		}
+	}
+}

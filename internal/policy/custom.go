@@ -213,6 +213,23 @@ func (p *CustomPolicy) TotalRules() int {
 	return n
 }
 
+// commonCommands are executable names that indicate a pattern is a command, not a path.
+var commonCommands = map[string]bool{
+	"go": true, "npm": true, "yarn": true, "pnpm": true, "node": true,
+	"python": true, "python3": true, "pip": true, "pip3": true,
+	"ruby": true, "gem": true, "bundle": true,
+	"cargo": true, "rustc": true,
+	"make": true, "cmake": true, "ninja": true,
+	"git": true, "gh": true,
+	"docker": true, "podman": true, "kubectl": true, "helm": true,
+	"terraform": true, "ansible": true,
+	"curl": true, "wget": true, "fetch": true,
+	"cat": true, "grep": true, "find": true, "ls": true, "rm": true,
+	"cp": true, "mv": true, "mkdir": true, "touch": true,
+	"ssh": true, "scp": true, "rsync": true,
+	"sudo": true, "env": true, "bash": true, "sh": true, "zsh": true,
+}
+
 // IsPathPattern returns true when the pattern looks like a file/directory path
 // rather than a shell command. URLs are NOT considered paths.
 func IsPathPattern(pattern string) bool {
@@ -220,17 +237,42 @@ func IsPathPattern(pattern string) bool {
 	if strings.HasPrefix(pattern, "http://") || strings.HasPrefix(pattern, "https://") {
 		return false
 	}
-	// Commands that start with common tools followed by URLs are not paths
-	// e.g., "curl https://example.com" should be exec, not path
-	for _, prefix := range []string{"curl ", "wget ", "fetch "} {
-		if strings.HasPrefix(pattern, prefix) {
+
+	// Check if pattern starts with a known command
+	fields := strings.Fields(pattern)
+	if len(fields) > 0 {
+		firstWord := fields[0]
+		// If it starts with a known command, it's exec not path
+		if commonCommands[firstWord] {
 			return false
 		}
 	}
-	return strings.HasPrefix(pattern, "/") ||
+
+	// Patterns starting with absolute paths or glob prefixes are paths
+	if strings.HasPrefix(pattern, "/") ||
 		strings.HasPrefix(pattern, "~/") ||
-		strings.HasPrefix(pattern, "**/") ||
-		strings.Contains(pattern, "/")
+		strings.HasPrefix(pattern, "**/") {
+		return true
+	}
+
+	// If pattern contains / but doesn't look like a command, check more carefully
+	// Patterns like "./...", "../", "foo/bar" without a command prefix are ambiguous
+	// Default to exec for command-like patterns
+	if strings.Contains(pattern, "/") {
+		// If no spaces (single token with /), likely a path
+		if !strings.Contains(pattern, " ") {
+			// But "./..." is a Go package pattern, not a path
+			if strings.HasPrefix(pattern, "./") && strings.HasSuffix(pattern, "...") {
+				return false
+			}
+			return true
+		}
+		// Has spaces and contains / - probably a command with path args
+		// Default to exec since there's a command
+		return false
+	}
+
+	return false
 }
 
 // DetectTool returns the likely tool type for a pattern ("exec" or "path").
