@@ -380,6 +380,48 @@ func TestCorpusFileHasCoverageAndSchema(t *testing.T) {
 	}
 }
 
+func TestBenchUsesEmbeddedCorpusWhenNoFlagSet(t *testing.T) {
+	// Verifies that 'rampart bench' with no --corpus flag uses the embedded
+	// built-in corpus rather than attempting to open bench/corpus.yaml from
+	// the current directory (which does not exist in an installed binary).
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	policy := `
+version: "1"
+default_action: allow
+policies:
+  - name: deny-rm
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm -rf /*"]
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	// Change to temp dir so there is no bench/corpus.yaml on disk.
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	stdout, _, err := runCLI(t, "bench", "--policy", policyPath)
+	// Gaps are expected (exit 1); we just want no "no such file" error.
+	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
+		t.Fatalf("bench used disk path instead of embedded corpus: %v", err)
+	}
+	if !strings.Contains(stdout, "built-in") {
+		t.Fatalf("expected 'built-in' in bench output, got:\n%s", stdout)
+	}
+}
+
 func TestLoadBenchCorpusRejectsInvalidExpectedAction(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "invalid-corpus.yaml")
