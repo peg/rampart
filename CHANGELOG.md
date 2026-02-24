@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-02-24
+
+### Fixed
+
+- **`rampart serve` generated a new random token on every restart** — the foreground serve path (including `--background`) only checked the `RAMPART_TOKEN` environment variable for the token; it never read `~/.rampart/token` and never wrote to it. Only the systemd/launchd install path called `resolveServiceToken`. Every restart broke existing tools and configs using the previous token. Now reads the persisted token before starting the proxy and writes it back after binding, consistent with the install path.
+
 ## [0.4.11] - 2026-02-24
 
 ### Fixed
