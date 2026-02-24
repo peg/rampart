@@ -357,6 +357,28 @@ func (e *Engine) LastLoadedAt() time.Time {
 	return e.lastLoadedAt
 }
 
+// EngineStats holds current engine statistics.
+type EngineStats struct {
+	PolicyCount int
+	RuleCount   int
+	LastReload  time.Time
+}
+
+// Stats returns current engine statistics in a single atomic read.
+func (e *Engine) Stats() EngineStats {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	total := 0
+	for _, p := range e.config.Policies {
+		total += len(p.Rules)
+	}
+	return EngineStats{
+		PolicyCount: len(e.config.Policies),
+		RuleCount:   total,
+		LastReload:  e.lastLoadedAt,
+	}
+}
+
 func deriveSummaryFromRuleName(name string) string {
 	cleaned := strings.TrimSpace(name)
 	if cleaned == "" {
