@@ -115,8 +115,12 @@ policies:
             - "sh -c **:(){ :|:& };:**"
             - ":(){ :|:& };:"
             - "> /dev/sda"
-            # Disk/data destruction tools
-            - "dd if=*"
+            # Disk/data destruction tools (target block devices, not all dd)
+            - "dd **of=/dev/sd**"
+            - "dd **of=/dev/nvme**"
+            - "dd **of=/dev/hd**"
+            - "dd **of=/dev/vd**"
+            - "dd **of=/dev/mmcblk**"
             - "wipe **"
             - "wipefs **"
             # Filesystem formatting

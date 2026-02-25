@@ -240,11 +240,11 @@ func checkGlobDepth(filename, policyName string, ruleIdx int, patterns []string,
 				globStarCount++
 			}
 		}
-		if globStarCount > 3 {
+		if globStarCount > 2 {
 			result.add(LintFinding{
 				File:     filename,
-				Severity: LintWarning,
-				Message:  fmt.Sprintf("policy %q rule %d: %s pattern %q has %d ** segments (quadratic complexity risk)", policyName, ruleIdx+1, field, pat, globStarCount),
+				Severity: LintError, // Error, not warning — pattern will silently fail at runtime
+				Message:  fmt.Sprintf("policy %q rule %d: %s pattern %q has %d ** segments (max 2); pattern will not match at runtime", policyName, ruleIdx+1, field, pat, globStarCount),
 			})
 		}
 	}

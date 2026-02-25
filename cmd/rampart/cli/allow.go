@@ -151,6 +151,9 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 	useColor := !noColor() && isTerminal(os.Stdout)
 	printRuleSummary(out, action, pattern, detectedTool, opts.message, scope, policyPath, useColor)
 
+	// Warn if pattern is overly permissive.
+	warnIfOverlyPermissive(out, pattern, useColor)
+
 	// Ask for confirmation unless --yes or non-interactive.
 	if !opts.yes && isTerminal(os.Stdin) {
 		if !promptConfirm(cmd.InOrStdin(), out, "Add this rule?") {
@@ -284,6 +287,48 @@ func validateGlobPattern(pattern string) error {
 		return fmt.Errorf("missing closing bracket ']'")
 	}
 	return nil
+}
+
+// warnIfOverlyPermissive prints a warning if the pattern would match too broadly.
+// Returns true if a warning was printed.
+func warnIfOverlyPermissive(w io.Writer, pattern string, useColor bool) bool {
+	var warnings []string
+
+	// Patterns that match everything
+	if pattern == "*" || pattern == "**" || pattern == "**/**" {
+		warnings = append(warnings, "matches ALL commands/paths — effectively disables policy")
+	}
+
+	// Root wildcards for paths
+	if pattern == "/*" || pattern == "/**" {
+		warnings = append(warnings, "matches ALL paths under / — very broad")
+	}
+
+	// Home directory wildcards
+	if pattern == "~/*" || pattern == "~/**" || pattern == "$HOME/*" || pattern == "$HOME/**" {
+		warnings = append(warnings, "matches ALL paths under home directory")
+	}
+
+	// Leading ** without specificity
+	if strings.HasPrefix(pattern, "**") && !strings.Contains(pattern[2:], "/") && len(pattern) < 5 {
+		warnings = append(warnings, "leading ** without path specificity — very broad")
+	}
+
+	if len(warnings) == 0 {
+		return false
+	}
+
+	fmt.Fprintln(w)
+	if useColor {
+		fmt.Fprintf(w, "  %s⚠️  Warning: Overly permissive pattern%s\n", colorYellow, colorReset)
+	} else {
+		fmt.Fprintln(w, "  ⚠️  Warning: Overly permissive pattern")
+	}
+	for _, warn := range warnings {
+		fmt.Fprintf(w, "     • %s\n", warn)
+	}
+	fmt.Fprintln(w)
+	return true
 }
 
 // printRuleSummary prints what rule will be added before prompting.
