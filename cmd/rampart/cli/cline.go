@@ -178,7 +178,8 @@ func createPreToolUseScript(rampartBin string) string {
 set -euo pipefail
 
 # Read Cline hook input from stdin and pass to rampart
-exec "%s" hook --format cline --config ~/.rampart/policies/standard.yaml
+# Config auto-discovered from ~/.rampart/config.yaml or rampart.yaml
+exec "%s" hook --format cline
 `, rampartBin)
 }
 
@@ -191,7 +192,8 @@ func createPostToolUseScript(rampartBin string) string {
 set -euo pipefail
 
 # Read Cline hook input from stdin and log to audit
-exec "%s" hook --format cline --mode audit --config ~/.rampart/policies/standard.yaml 2>/dev/null || true
+# Config auto-discovered from ~/.rampart/config.yaml or rampart.yaml
+exec "%s" hook --format cline --mode audit 2>/dev/null || true
 `, rampartBin)
 }
 
