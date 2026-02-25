@@ -22,11 +22,30 @@ policies:
       - action: deny
         when:
           command_matches:
+            # Standard invocation
             - "rampart allow *"
             - "rampart block *"
             - "rampart rules *"
             - "rampart policy generate*"
             - "rampart init *"
+            # Absolute path invocation (e.g., /usr/local/bin/rampart)
+            - "*/rampart allow *"
+            - "*/rampart block *"
+            - "*/rampart rules *"
+            - "*/rampart policy generate*"
+            - "*/rampart init *"
+            # Relative path invocation (e.g., ./rampart)
+            - "./rampart allow *"
+            - "./rampart block *"
+            - "./rampart rules *"
+            - "./rampart policy generate*"
+            - "./rampart init *"
+            # Global flags before subcommand (e.g., rampart --config ... allow)
+            - "rampart --* allow *"
+            - "rampart --* block *"
+            - "rampart --* rules *"
+            - "rampart --* policy generate*"
+            - "rampart --* init *"
         message: "Policy modification commands must be run by a human, not an agent"
 
   - name: block-destructive

@@ -332,3 +332,23 @@ func TestMatchCondition_ToolParamMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchGlob_SelfModificationPatterns(t *testing.T) {
+	tests := []struct {
+		pattern string
+		value   string
+		want    bool
+	}{
+		{"./rampart allow *", "./rampart allow foo", true},
+		{"*/rampart allow *", "/usr/local/bin/rampart allow foo", true},
+		{"rampart --* allow *", "rampart --config foo allow bar", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.pattern+"_vs_"+tc.value, func(t *testing.T) {
+			got := MatchGlob(tc.pattern, tc.value)
+			if got != tc.want {
+				t.Errorf("MatchGlob(%q, %q) = %v, want %v", tc.pattern, tc.value, got, tc.want)
+			}
+		})
+	}
+}

@@ -23,11 +23,14 @@ import (
 // we should not suggest allowing it. These are commands that would cause
 // severe, likely unrecoverable damage to the system.
 func isExtremelyDangerous(cmd string) bool {
+	// Normalize: lowercase, strip quotes and escapes for detection
 	cmdLower := strings.ToLower(cmd)
-	parts := strings.Fields(cmdLower)
+	cmdNorm := normalizeForDangerCheck(cmdLower)
+	parts := strings.Fields(cmdNorm)
 
-	// Check for rm -rf targeting dangerous locations
-	if strings.Contains(cmdLower, "rm ") && strings.Contains(cmdLower, "-rf") {
+	// Check for rm with recursive+force flags targeting dangerous locations
+	// Handles: rm -rf, rm -fr, rm -r -f, rm --recursive --force, etc.
+	if containsRmRecursiveForce(cmdNorm) {
 		for _, p := range parts {
 			// Exact dangerous targets
 			if p == "/" || p == "/*" || p == "~" || p == "~/*" {
@@ -62,14 +65,14 @@ func isExtremelyDangerous(cmd string) bool {
 	}
 
 	// dd targeting block devices
-	if strings.Contains(cmdLower, "dd ") &&
-		(strings.Contains(cmdLower, "of=/dev/sd") || strings.Contains(cmdLower, "of=/dev/nvme") ||
-			strings.Contains(cmdLower, "of=/dev/hd") || strings.Contains(cmdLower, "of=/dev/vd")) {
+	if strings.Contains(cmdNorm, "dd ") &&
+		(strings.Contains(cmdNorm, "of=/dev/sd") || strings.Contains(cmdNorm, "of=/dev/nvme") ||
+			strings.Contains(cmdNorm, "of=/dev/hd") || strings.Contains(cmdNorm, "of=/dev/vd")) {
 		return true
 	}
 
 	// mkfs on any device
-	if strings.HasPrefix(cmdLower, "mkfs") || strings.Contains(cmdLower, " mkfs") {
+	if strings.HasPrefix(cmdNorm, "mkfs") || strings.Contains(cmdNorm, " mkfs") {
 		for _, p := range parts {
 			if strings.HasPrefix(p, "/dev/") {
 				return true
@@ -77,14 +80,54 @@ func isExtremelyDangerous(cmd string) bool {
 		}
 	}
 
-	// Piped execution from URL
+	// Piped execution from URL (curl/wget | bash/sh)
 	if (strings.Contains(cmdLower, "curl ") || strings.Contains(cmdLower, "wget ")) &&
 		(strings.Contains(cmdLower, "| bash") || strings.Contains(cmdLower, "| sh") ||
 			strings.Contains(cmdLower, "|bash") || strings.Contains(cmdLower, "|sh")) {
 		return true
 	}
 
+	// Decode and execute patterns (base64 -d | bash, etc.)
+	if strings.Contains(cmdLower, "base64") && strings.Contains(cmdLower, "-d") &&
+		(strings.Contains(cmdLower, "| bash") || strings.Contains(cmdLower, "| sh") ||
+			strings.Contains(cmdLower, "|bash") || strings.Contains(cmdLower, "|sh")) {
+		return true
+	}
+
+	// Process substitution execution
+	if strings.Contains(cmdLower, "<(curl") || strings.Contains(cmdLower, "<(wget") {
+		return true
+	}
+
 	return false
+}
+
+// normalizeForDangerCheck strips quotes and common escape sequences
+// to catch evasion attempts like 'rm' -rf / or r\m -rf /
+func normalizeForDangerCheck(cmd string) string {
+	// Remove single and double quotes
+	cmd = strings.ReplaceAll(cmd, "'", "")
+	cmd = strings.ReplaceAll(cmd, "\"", "")
+	// Remove backslash escapes
+	cmd = strings.ReplaceAll(cmd, "\\", "")
+	return cmd
+}
+
+// containsRmRecursiveForce checks for rm with recursive+force flags
+// in any order: -rf, -fr, -r -f, --recursive --force, etc.
+func containsRmRecursiveForce(cmd string) bool {
+	// Must contain "rm " somewhere
+	if !strings.Contains(cmd, "rm ") {
+		return false
+	}
+	// Check for combined flags
+	if strings.Contains(cmd, "-rf") || strings.Contains(cmd, "-fr") {
+		return true
+	}
+	// Check for separate flags
+	hasRecursive := strings.Contains(cmd, "-r") || strings.Contains(cmd, "--recursive")
+	hasForce := strings.Contains(cmd, "-f") || strings.Contains(cmd, "--force")
+	return hasRecursive && hasForce
 }
 
 // dangerousBaseCommands lists command names whose wildcard expansions would be

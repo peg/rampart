@@ -78,8 +78,32 @@ func newRulesCmd(opts *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON for scripting")
 	cmd.MarkFlagsMutuallyExclusive("global", "project")
 
+	cmd.AddCommand(newRulesListCmd(opts))
 	cmd.AddCommand(newRulesRemoveCmd(opts))
 	cmd.AddCommand(newRulesResetCmd(opts))
+
+	return cmd
+}
+
+// newRulesListCmd creates the "rules list" subcommand as an alias for "rules".
+func newRulesListCmd(opts *rootOptions) *cobra.Command {
+	var globalOnly bool
+	var projectOnly bool
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List custom policy rules (alias for 'rampart rules')",
+		Long:  "View rules added via 'rampart allow' and 'rampart block'.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runRulesList(cmd.OutOrStdout(), opts, globalOnly, projectOnly, jsonOut)
+		},
+	}
+
+	cmd.Flags().BoolVar(&globalOnly, "global", false, "Show only global rules")
+	cmd.Flags().BoolVar(&projectOnly, "project", false, "Show only project rules")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON for scripting")
+	cmd.MarkFlagsMutuallyExclusive("global", "project")
 
 	return cmd
 }
