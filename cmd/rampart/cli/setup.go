@@ -43,6 +43,8 @@ Supported AI Agents:
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
 	cmd.AddCommand(newSetupClineCmd(opts))
+	cmd.AddCommand(newSetupCursorCmd(opts))
+	cmd.AddCommand(newSetupWindsurfCmd(opts))
 	cmd.AddCommand(newSetupOpenClawCmd(opts))
 	cmd.AddCommand(newSetupCodexCmd(opts))
 
