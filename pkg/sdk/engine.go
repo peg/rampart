@@ -51,7 +51,6 @@ type AuditSink interface {
 // SDK wraps the policy engine for agent runtime integrations.
 type SDK struct {
 	engine *engine.Engine
-	sink   AuditSink
 	logger *slog.Logger
 }
 

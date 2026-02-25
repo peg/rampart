@@ -216,7 +216,6 @@ func generatePolicyFromTools(tools []MCPTool, serverCmd string) PolicyConfig {
 	var dangerousTools []string
 	var destructiveTools []string
 	var writeTools []string
-	var readTools []string
 
 	for _, tool := range tools {
 		name := strings.ToLower(tool.Name)
@@ -229,9 +228,8 @@ func generatePolicyFromTools(tools []MCPTool, serverCmd string) PolicyConfig {
 			dangerousTools = append(dangerousTools, tool.Name)
 		} else if containsAny(combined, []string{"write", "create", "update", "modify", "edit", "save", "put", "post", "patch"}) {
 			writeTools = append(writeTools, tool.Name)
-		} else if containsAny(combined, []string{"read", "get", "list", "search", "query", "find", "fetch", "show", "view"}) {
-			readTools = append(readTools, tool.Name)
 		}
+		// Note: read tools are allowed by default, no policy generated
 	}
 
 	// Generate policies for destructive tools

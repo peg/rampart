@@ -8,13 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
@@ -971,17 +969,6 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 	fmt.Fprintln(cmd.OutOrStdout(), "")
 	fmt.Fprintln(cmd.OutOrStdout(), "⚠ File tool patches modify node_modules — re-run after OpenClaw upgrades.")
 	return nil
-}
-
-// serveReachable checks if a rampart serve instance is reachable at the given URL.
-func serveReachable(url string) bool {
-	client := &http.Client{Timeout: 1 * time.Second}
-	resp, err := client.Get(url + "/healthz")
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
 }
 
 func hasRampartInMatcher(matcher map[string]any) bool {

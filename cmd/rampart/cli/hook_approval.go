@@ -158,12 +158,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	return c.pollApprovalCtx(ctx, created.ID, timeout)
 }
 
-// pollApproval polls GET /v1/approvals/{id} every 500ms until resolved.
-func (c *hookApprovalClient) pollApproval(id string, timeout time.Duration) hookDecisionType {
-	return c.pollApprovalCtx(context.Background(), id, timeout)
-}
-
-// pollApprovalCtx polls with context support for cancellation.
+// pollApprovalCtx polls GET /v1/approvals/{id} every 500ms until resolved.
 func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, timeout time.Duration) hookDecisionType {
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.After(timeout)
