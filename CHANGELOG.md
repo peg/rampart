@@ -589,7 +589,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/peg/rampart/compare/v0.4.12...v0.5.0
+[0.4.12]: https://github.com/peg/rampart/compare/v0.4.11...v0.4.12
+[0.4.11]: https://github.com/peg/rampart/compare/v0.4.10...v0.4.11
+[0.4.10]: https://github.com/peg/rampart/compare/v0.4.9...v0.4.10
+[0.4.9]: https://github.com/peg/rampart/compare/v0.4.8...v0.4.9
+[0.4.8]: https://github.com/peg/rampart/compare/v0.4.7...v0.4.8
+[0.4.7]: https://github.com/peg/rampart/compare/v0.4.6...v0.4.7
+[0.4.6]: https://github.com/peg/rampart/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/peg/rampart/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/peg/rampart/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/peg/rampart/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/peg/rampart/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/peg/rampart/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/peg/rampart/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/peg/rampart/compare/v0.2.36...v0.3.0
 [0.2.36]: https://github.com/peg/rampart/compare/v0.2.35...v0.2.36
 [0.2.35]: https://github.com/peg/rampart/compare/v0.2.34...v0.2.35

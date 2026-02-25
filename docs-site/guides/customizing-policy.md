@@ -314,16 +314,19 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
   match:
     tool: ["exec"]
   rules:
+    # Substring matching catches ALL wrapper bypasses (bash -c, sh -c, etc.)
     - action: deny
       when:
-        command_matches:
-          - "rampart allow *"
-          - "rampart block *"
-          - "rampart rules *"
-          - "rampart policy generate*"
-          - "rampart init *"
+        command_contains:
+          - "rampart allow"
+          - "rampart block"
+          - "rampart rules"
+          - "rampart policy generate"
+          - "rampart init"
       message: "Policy modification commands must be run by a human, not an agent"
 ```
+
+The `command_contains` approach is robust against shell wrapper bypasses — `bash -c 'rampart allow ...'` is caught because the substring "rampart allow" appears in the command.
 
 This means:
 
