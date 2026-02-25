@@ -27,7 +27,7 @@ The following are in scope:
 - Denial of service against the proxy/daemon
 
 The following are **known limitations**, not vulnerabilities:
-- **Pattern evasion via shell encoding** (e.g., `bash -c 'rm -rf /'` bypassing `rm -rf *` rules). Rampart uses glob matching, not shell parsing. This is documented in the architecture docs.
+- **Pattern evasion via obfuscation** (e.g., variable expansion `$CMD`, base64 encoding). Rampart matches against the literal command string. For common shell wrappers (`bash -c`, `sh -c`), the standard policy includes explicit patterns. For obfuscation, combine with [semantic verification](https://github.com/peg/rampart-verify).
 - **Proxy bypass** when the agent has direct shell access and isn't using daemon mode. The proxy is voluntary; use daemon mode with OpenClaw for enforced evaluation.
 - **Agent modifying policy files** when it has write access to the filesystem. Restrict file permissions or use daemon mode.
 - **Shim token extraction** when using `rampart wrap`. The proxy auth token is embedded in the shim script and readable by the wrapped agent. Use `rampart hook` (Claude Code native integration) for stronger isolation — no token is exposed.

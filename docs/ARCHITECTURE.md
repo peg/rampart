@@ -106,7 +106,7 @@ policies/            Built-in profiles (standard, paranoid, yolo)
 
 ## Known Limitations
 
-**Pattern matching is bypassable.** An agent can dodge `rm -rf *` detection with `find / -delete` or encoded payloads. Static patterns are a first layer, not the last. Future work: capability-based restrictions, behavioral profiling, content analysis.
+**Pattern matching has gaps.** Common evasion techniques (shell wrappers like `bash -c`, quoted binaries, escaped characters) are handled via normalization and `command_contains` substring matching. However, novel obfuscation (`find / -delete`, variable expansion, encoded payloads) can bypass static patterns. Combine with [semantic verification](https://github.com/peg/rampart-verify) for intent-based classification.
 
 **Proxy mode is voluntary.** A compromised agent could bypass `localhost:9090` by making direct calls. `rampart wrap` is harder to bypass (it controls `$SHELL`), but not impossible. For mandatory enforcement, pair with network-level controls (iptables, network namespaces).
 
