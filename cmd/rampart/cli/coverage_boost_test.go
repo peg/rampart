@@ -155,6 +155,7 @@ func testCobraCmd(ctx context.Context) *cobra.Command {
 
 func TestResolveApproval(t *testing.T) {
 	t.Run("no token", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir()) // Avoid picking up real ~/.rampart/token
 		t.Setenv("RAMPART_TOKEN", "")
 		cmd := testCobraCmd(context.Background())
 		err := resolveApproval(cmd, "http://localhost", "", "abc12345678", true)
@@ -205,6 +206,7 @@ func TestResolveApproval(t *testing.T) {
 
 func TestListPending(t *testing.T) {
 	t.Run("no token", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir()) // Avoid picking up real ~/.rampart/token
 		t.Setenv("RAMPART_TOKEN", "")
 		cmd := testCobraCmd(context.Background())
 		err := listPending(cmd, "http://localhost", "")
