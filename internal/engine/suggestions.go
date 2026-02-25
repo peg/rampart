@@ -33,7 +33,8 @@ func isExtremelyDangerous(cmd string) bool {
 	if containsRmRecursiveForce(cmdNorm) {
 		for _, p := range parts {
 			// Exact dangerous targets
-			if p == "/" || p == "/*" || p == "~" || p == "~/*" {
+			if p == "/" || p == "/*" || p == "~" || p == "~/*" ||
+				p == "." || p == ".." || p == "./*" || p == "../*" {
 				return true
 			}
 			// Root-level directories

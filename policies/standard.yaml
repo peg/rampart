@@ -1,14 +1,20 @@
 # Rampart Standard Policy — default rules for common AI agent threats.
 #
-# IMPORTANT: Pattern matching limitations
-# These rules use glob patterns against the literal command string.
-# They protect against well-behaved AI agents, NOT adversarial humans.
-# Evasion techniques like quoted binaries ('rm' -rf /), escaped chars
-# (\rm -rf /), variable expansion ($CMD), or base64-encoded payloads
-# will bypass glob matching. For adversarial threat models, combine
-# Rampart with OS-level sandboxing (containers, seccomp, AppArmor).
+# MATCHING CAPABILITIES:
+# - Quote stripping: 'rm' → rm, "rm" → rm
+# - Backslash removal: \rm → rm
+# - Env prefix stripping: FOO=bar cmd → cmd
+# - Compound commands: cmd1 && cmd2 → matches both
+# - Subcommand extraction: $(cmd), `cmd`, eval 'cmd' → matches inner cmd
+# - Substring matching: command_contains catches wrapped commands
 #
-# See docs/THREAT-MODEL.md for the full discussion.
+# REMAINING GAPS (require OS-level sandboxing):
+# - Variable expansion: $CMD, ${CMD}
+# - Base64 payloads: echo dGVzdA== | base64 -d | bash
+# - Obfuscation: rev, xxd, printf escapes
+#
+# For adversarial threat models, combine Rampart with containers,
+# seccomp, or AppArmor. See docs/THREAT-MODEL.md.
 
 version: "1"
 default_action: allow
@@ -19,6 +25,18 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Substring matching catches ALL shell wrapper bypasses (bash -c, sh -c, etc.)
+      # This is the primary defense - simple but robust
+      - action: deny
+        when:
+          command_contains:
+            - "rampart allow"
+            - "rampart block"
+            - "rampart rules"
+            - "rampart policy generate"
+            - "rampart init"
+        message: "Policy modification commands must be run by a human, not an agent"
+      # Glob patterns for direct invocations (kept for compatibility and explicitness)
       - action: deny
         when:
           command_matches:
@@ -57,6 +75,10 @@ policies:
           command_matches:
             # Filesystem nukes
             - "rm -rf /"
+            - "rm -rf ."
+            - "rm -rf .."
+            - "rm -rf ./*"
+            - "rm -rf ../*"
             - "rm -rf ~"
             - "rm -rf ~/**"
             - "rm -rf /home"
@@ -75,6 +97,22 @@ policies:
             - "rm -rf /lib64/**"
             - "rm -rf /var"
             - "rm -rf /var/**"
+            # Shell wrappers executing destructive commands
+            # Use ** to match paths containing / (max 2 ** per pattern)
+            - "bash -c **rm -rf /**"
+            - "bash -c **rm -rf ~**"
+            - "sh -c **rm -rf /**"
+            - "sh -c **rm -rf ~**"
+            - "bash -c **mkfs /dev/**"
+            - "sh -c **mkfs /dev/**"
+            - "bash -c **mkfs.**"
+            - "sh -c **mkfs.**"
+            # dd of=/dev/ patterns (split to stay under 2 ** limit)
+            - "bash -c **of=/dev/**"
+            - "sh -c **of=/dev/**"
+            # Fork bombs in shell wrappers
+            - "bash -c **:(){ :|:& };:**"
+            - "sh -c **:(){ :|:& };:**"
             - ":(){ :|:& };:"
             - "> /dev/sda"
             # Disk/data destruction tools
