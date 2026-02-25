@@ -51,9 +51,10 @@ Once running, every command Claude executes goes through Rampart's policy engine
 | Agent | Setup | Integration |
 |-------|-------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks — works in `--dangerously-skip-permissions` mode |
-| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
+| **Cursor** | `rampart setup cursor` | Wraps MCP servers in `~/.cursor/mcp.json` |
+| **Windsurf** | `rampart setup windsurf` | Wraps MCP servers in `~/.codeium/windsurf/mcp_config.json` |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Cursor** | `rampart mcp -- cursor` | MCP proxy configuration |
+| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -692,10 +693,14 @@ rampart quickstart --skip-doctor             # Skip final health check
 # Setup (per-agent or interactive wizard)
 rampart setup                                # Interactive wizard — detects agents, guides setup
 rampart setup claude-code                    # Install Claude Code hooks
+rampart setup cursor                         # Wrap Cursor MCP servers
+rampart setup windsurf                       # Wrap Windsurf MCP servers
 rampart setup cline                          # Install Cline hooks
 rampart setup openclaw                       # Install shim + systemd/launchd service
 rampart setup codex                          # Install ~/.local/bin/codex wrapper (Linux)
 rampart setup claude-code --remove           # Clean uninstall
+rampart setup cursor --remove                # Unwrap MCP servers
+rampart setup windsurf --remove              # Unwrap MCP servers
 rampart setup cline --remove                 # Clean uninstall
 rampart setup openclaw --remove              # Clean uninstall
 rampart setup codex --remove                 # Remove wrapper
