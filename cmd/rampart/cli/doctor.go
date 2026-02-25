@@ -42,7 +42,12 @@ type checkResult struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"` // "ok", "warn", "fail", "info"
 	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"` // actionable suggestion on failure/warn
 }
+
+// hintSep is the separator embedded in doctor messages to carry a hint.
+// Format: "<msg>\n" + hintSep + "<hint>"
+const hintSep = "\n  💡 "
 
 func newDoctorCmd() *cobra.Command {
 	var jsonOut bool
@@ -66,8 +71,15 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	useColor := !jsonOut && !noColor() && isTerminal(os.Stdout)
 
 	emit := func(name, status, msg string) {
+		// Split hint from message (hint is appended with hintSep).
+		mainMsg, hint, _ := strings.Cut(msg, hintSep)
+
 		if collect {
-			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+			r := checkResult{Name: name, Status: status, Message: mainMsg}
+			if hint != "" {
+				r.Hint = hint
+			}
+			results = append(results, r)
 			return
 		}
 		var icon string
@@ -91,7 +103,16 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 				icon = "✓"
 			}
 		}
-		fmt.Fprintf(w, "%s %s: %s\n", icon, name, msg)
+		fmt.Fprintf(w, "%s %s: %s\n", icon, name, mainMsg)
+
+		// Print hint on its own indented line.
+		if hint != "" {
+			if useColor {
+				fmt.Fprintf(w, "    %s💡 Try this:%s %s\n", colorDim, colorReset, hint)
+			} else {
+				fmt.Fprintf(w, "    💡 Try this: %s\n", hint)
+			}
+		}
 	}
 
 	if !collect {
@@ -111,7 +132,8 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 
 	// 2. PATH check
 	if _, err := exec.LookPath("rampart"); err != nil {
-		emit("PATH", "fail", "rampart not found in PATH")
+		emit("PATH", "fail", "rampart not found in PATH"+hintSep+
+			`export PATH="$PATH:$(go env GOPATH)/bin"`)
 		issues++
 	} else {
 		emit("PATH", "ok", "rampart found in PATH")
@@ -195,6 +217,8 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	fmt.Fprintln(w)
 	if issues == 0 && warnings == 0 {
 		fmt.Fprintln(w, "No issues found.")
+	} else if issues == 0 && warnings > 0 {
+		fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
 	} else {
 		if issues > 0 {
 			noun := "issue"
@@ -227,7 +251,7 @@ func doctorToken(emit emitFn) (issues int, token string) {
 		emit("Token", "ok", "token found in ~/.rampart/token")
 		return 0, tok
 	}
-	emit("Token", "fail", "no token found (run 'rampart serve install' to create one)")
+	emit("Token", "fail", "no token found"+hintSep+"rampart serve install")
 	return 1, ""
 }
 
@@ -247,8 +271,9 @@ func doctorHookBinary(emit emitFn) int {
 		return 0
 	}
 
-	// Find all hook commands and check absolute paths.
+	// Find all hook commands and check absolute paths (dedupe).
 	issues := 0
+	checked := make(map[string]bool)
 	hooks, _ := settings["hooks"].(map[string]any)
 	for _, v := range hooks {
 		arr, _ := v.([]any)
@@ -270,6 +295,10 @@ func doctorHookBinary(emit emitFn) int {
 				if !filepath.IsAbs(bin) {
 					continue // not absolute — skip (PATH lookup, not our concern)
 				}
+				if checked[bin] {
+					continue // already checked this path
+				}
+				checked[bin] = true
 				if _, statErr := os.Stat(bin); statErr != nil {
 					emit("Hook binary", "fail", fmt.Sprintf("%s not found", bin))
 					issues++
@@ -292,7 +321,8 @@ func doctorPolicies(emit emitFn) int {
 
 	entries, err := os.ReadDir(policyDir)
 	if err != nil {
-		emit("Policy", "fail", fmt.Sprintf("%s (not found)", policyDir))
+		emit("Policy", "fail", fmt.Sprintf("%s (not found)", policyDir)+hintSep+
+			"rampart init --profile standard")
 		return 1
 	}
 
@@ -318,16 +348,22 @@ func doctorPolicies(emit emitFn) int {
 		rel := relHome(path, home)
 		switch {
 		case lintResult.HasErrors():
-			emit("Policy", "fail", fmt.Sprintf("~/%s (%d policies, %d lint error(s) — run 'rampart policy lint %s')", rel, count, lintResult.Errors, path))
+			emit("Policy", "fail",
+				fmt.Sprintf("~/%s (%d policies, %d lint error(s))", rel, count, lintResult.Errors)+
+					hintSep+fmt.Sprintf("rampart policy lint %s", path))
 			issues++
 		case lintResult.Warnings > 0:
-			emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, %d lint warning(s) — run 'rampart policy lint %s')", rel, count, lintResult.Warnings, path))
+			emit("Policy", "warn",
+				fmt.Sprintf("~/%s (%d policies, %d lint warning(s))", rel, count, lintResult.Warnings)+
+					hintSep+fmt.Sprintf("rampart policy lint %s", path))
 		default:
 			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
 		}
 	}
 	if !found {
-		emit("Policy", "fail", fmt.Sprintf("no .yaml files in %s", policyDir))
+		emit("Policy", "fail",
+			fmt.Sprintf("no .yaml files in %s", policyDir)+hintSep+
+				"rampart init --profile standard")
 		issues++
 	}
 	return issues
@@ -340,7 +376,9 @@ func doctorServer(emit emitFn) (int, string) {
 	url := fmt.Sprintf("http://localhost:%d/healthz", defaultServePort)
 	resp, err := client.Get(url)
 	if err != nil {
-		emit("Server", "fail", fmt.Sprintf("not running on :%d (run 'rampart serve')", defaultServePort))
+		emit("Server", "fail",
+			fmt.Sprintf("not running on :%d", defaultServePort)+hintSep+
+				"rampart serve --background")
 		return 1, ""
 	}
 	defer resp.Body.Close()
@@ -459,15 +497,21 @@ func doctorHooks(emit emitFn) int {
 				if count > 0 {
 					emit("Hooks", "ok", fmt.Sprintf("Claude Code (%d matchers in settings.json)", count))
 				} else {
-					emit("Hooks", "fail", fmt.Sprintf("Claude Code hook not installed - expected hook in %s\n  Run: rampart setup claude-code", claudeSettingsPath))
+					emit("Hooks", "fail",
+						fmt.Sprintf("Claude Code hook not installed (expected hook in %s)", claudeSettingsPath)+
+							hintSep+"rampart setup claude-code")
 					issues++
 				}
 			} else {
-				emit("Hooks", "fail", fmt.Sprintf("Claude Code settings invalid at %s\n  Run: rampart setup claude-code", claudeSettingsPath))
+				emit("Hooks", "fail",
+					fmt.Sprintf("Claude Code settings invalid at %s", claudeSettingsPath)+
+						hintSep+"rampart setup claude-code")
 				issues++
 			}
 		} else {
-			emit("Hooks", "fail", fmt.Sprintf("Claude Code hook not installed - expected hook in %s\n  Run: rampart setup claude-code", claudeSettingsPath))
+			emit("Hooks", "fail",
+				fmt.Sprintf("Claude Code hook not installed (expected hook in %s)", claudeSettingsPath)+
+					hintSep+"rampart setup claude-code")
 			issues++
 		}
 	}
@@ -486,11 +530,15 @@ func doctorHooks(emit emitFn) int {
 			if hookCount > 0 {
 				emit("Hooks", "ok", fmt.Sprintf("Cline (%d hook scripts)", hookCount))
 			} else {
-				emit("Hooks", "fail", fmt.Sprintf("Cline hook not installed - expected Rampart hook scripts in %s\n  Run: rampart setup cline", clineDir))
+				emit("Hooks", "fail",
+					fmt.Sprintf("Cline hook not installed (expected Rampart hook scripts in %s)", clineDir)+
+						hintSep+"rampart setup cline")
 				issues++
 			}
 		} else {
-			emit("Hooks", "fail", fmt.Sprintf("Cline hook not installed - expected Rampart hook scripts in %s\n  Run: rampart setup cline", clineDir))
+			emit("Hooks", "fail",
+				fmt.Sprintf("Cline hook not installed (expected Rampart hook scripts in %s)", clineDir)+
+					hintSep+"rampart setup cline")
 			issues++
 		}
 	}
@@ -544,14 +592,18 @@ func doctorAudit(emit emitFn) (issues int, warnings int) {
 
 	entries, err := os.ReadDir(auditDir)
 	if err != nil {
-		emit("Audit", "fail", fmt.Sprintf("%s (not found)", auditDir))
+		emit("Audit", "fail",
+			fmt.Sprintf("%s (not found)", auditDir)+hintSep+
+				"rampart serve --background  # creates the audit directory")
 		return 1, 0
 	}
 
 	// Check writable
 	testFile := filepath.Join(auditDir, ".doctor-write-test")
 	if err := os.WriteFile(testFile, []byte("test"), 0o600); err != nil {
-		emit("Audit", "fail", fmt.Sprintf("%s (not writable)", auditDir))
+		emit("Audit", "fail",
+			fmt.Sprintf("%s (not writable)", auditDir)+hintSep+
+				fmt.Sprintf("chmod u+w %s", auditDir))
 		return 1, 0
 	}
 	// Defer removal so the temp file is cleaned up on every exit path,

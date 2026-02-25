@@ -98,6 +98,7 @@ type Server struct {
 	metricsEnabled  bool
 	auditDir        string
 	sse             *sseHub
+	lastReloadAPI   time.Time // Rate limiting for /v1/policy/reload
 }
 
 // Option configures a proxy server.
@@ -323,6 +324,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/events/stream", s.handleEventStream)
 	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
 	mux.HandleFunc("GET /v1/policy/summary", s.handlePolicySummary)
+	mux.HandleFunc("POST /v1/policy/reload", s.handlePolicyReload)
 	mux.HandleFunc("GET /v1/status", s.handleStatus)
 	mux.HandleFunc("POST /v1/test", s.handleTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -427,6 +429,9 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && decision.Action == engine.ActionDeny {
+		if len(decision.Suggestions) > 0 {
+			resp["suggestions"] = decision.Suggestions
+		}
 		writeJSON(w, http.StatusForbidden, resp)
 		return
 	}
@@ -559,6 +564,7 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 			MatchedPolicies: decision.MatchedPolicies,
 			EvalTimeUS:      decision.EvalDuration.Microseconds(),
 			Message:         decision.Message,
+			Suggestions:     decision.Suggestions,
 		},
 	}
 
@@ -647,13 +653,17 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
 	s.writeAudit(req, toolName, decision)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	preflightResp := map[string]any{
 		"allowed":          allowed,
 		"decision":         decision.Action.String(),
 		"message":          decision.Message,
 		"matched_policies": decision.MatchedPolicies,
 		"eval_duration_us": decision.EvalDuration.Microseconds(),
-	})
+	}
+	if len(decision.Suggestions) > 0 {
+		preflightResp["suggestions"] = decision.Suggestions
+	}
+	writeJSON(w, http.StatusOK, preflightResp)
 }
 
 // createApprovalRequest is the JSON body for POST /v1/approvals.

@@ -28,8 +28,13 @@ func TestRunStatus(t *testing.T) {
 		t.Fatalf("runStatus returned error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "🛡️ Rampart Status") {
-		t.Error("missing status header")
+	// Verify the box header is present (either box-drawing or plain).
+	if !strings.Contains(out, "RAMPART") {
+		t.Error("missing RAMPART header in status output")
+	}
+	// Verify the status line is present.
+	if !strings.Contains(out, "Status") {
+		t.Error("missing Status row in status output")
 	}
 }
 

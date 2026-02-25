@@ -122,6 +122,7 @@ nav:
   - Security Guides:
     - Securing Claude Code: guides/securing-claude-code.md
     - Prompt Injection Protection: guides/prompt-injection.md
+    - Customizing Policy: guides/customizing-policy.md
   - Integration Guides:
     - Overview: integrations/index.md
     - Claude Code: integrations/claude-code.md
@@ -144,6 +145,7 @@ nav:
   - Security Guides:
     - Securing Claude Code: guides/securing-claude-code.md
     - Prompt Injection Protection: guides/prompt-injection.md
+    - Customizing Policy: guides/customizing-policy.md
     - Install via an AI Agent: guides/agent-install.md
   - Deployment:
     - User Separation: deployment/user-separation.md

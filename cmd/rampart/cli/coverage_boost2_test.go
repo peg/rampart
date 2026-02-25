@@ -175,7 +175,7 @@ func TestCreateShellShim_Coverage(t *testing.T) {
 // --- formatDenyMessage / formatApprovalRequiredMessage (color.go) ---
 
 func TestFormatDenyMessage(t *testing.T) {
-	msg := formatDenyMessage("rm -rf /", "too dangerous")
+	msg := formatDenyMessage("rm -rf /", "too dangerous", nil)
 	if msg == "" {
 		t.Error("expected non-empty message")
 	}

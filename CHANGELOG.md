@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-24
+
+### Added
+
+- **`rampart allow <pattern>`** — Add allow rules directly from the CLI without editing YAML. Auto-detects path vs command, confirms before writing, and hot-reloads the daemon immediately (`--global` / `--project` flags select the target file).
+- **`rampart block <pattern>`** — Add deny rules the same way. Supports `--tool`, `--message`, `--yes`, `--api`, `--token` flags.
+- **`rampart rules`** — List, remove, and reset custom rules added via `allow`/`block`. Subcommands: `rampart rules remove <index>`, `rampart rules reset`. JSON output with `--json`.
+- **`POST /v1/policy/reload`** — Force an immediate policy reload via the API without restarting `rampart serve`. Returns policies loaded, total rules, and reload time in milliseconds.
+- **Denial suggestions** — When a command is denied, the error message now includes ready-to-run `rampart allow` suggestions (exact and safe wildcard variants) so the user can quickly add an override.
+- **Rate limiting on reload endpoint** — The `/v1/policy/reload` endpoint enforces a 1-second cooldown to prevent abuse. Returns HTTP 429 when the cooldown is active.
+- **Self-modification protection** — `rampart allow`, `rampart block`, `rampart rules`, and `rampart policy generate` are blocked when run by AI agents (via `block-self-modification` rule in `standard.yaml`). Policy modifications must be made by a human.
+
+### Changed
+
+- **Atomic file writes for `custom.yaml`** — Rules are now written via a temp-file rename, preventing partial writes from corrupting the policy file on crash or power loss.
+- **Improved URL detection in pattern classification** — `curl https://...` and `wget https://...` patterns are now correctly classified as `exec` (not file path) rules by `rampart allow`.
+
+### Fixed
+
+- **`sudo`/`env` wrapper detection in dangerous command suggestions** — Suggestion generation now looks through transparent wrappers (`sudo`, `env`, `nice`, `timeout`, etc.) to check the real command for safety. `sudo rm file` no longer generates a `rm *` wildcard suggestion.
+- **`--tool` flag override now works correctly** — `rampart allow "/tmp/work" --tool write` no longer ignores the flag and generates a `path_matches` rule for the right tool type.
+- **Shell wrapper bypass for self-modification** — `bash -c 'rampart allow ...'` and similar shell wrappers could bypass the self-modification protection. Now uses `command_contains` substring matching which catches all wrapper techniques.
+- **Shell wrapper bypass for destructive commands** — Added `bash -c **rm -rf /**`, `sh -c **mkfs**`, etc. patterns to block destructive commands wrapped in shell invocations.
+- **`rm -rf .` and `rm -rf ..` not blocked** — Current and parent directory wipes are now denied and flagged as extremely dangerous (no allow suggestion).
+- **`dd if=*` overly broad** — Changed to `dd **of=/dev/sd**` etc. to only block writes to block devices, not all `dd` commands.
+- **Overly permissive patterns not warned** — `rampart allow "*"` and similar catch-all patterns now display a warning before adding.
+- **`>2 **` glob lint was warning, not error** — Patterns with more than 2 `**` segments silently fail at runtime; lint now reports this as an error, not a warning.
+
 ## [0.4.12] - 2026-02-24
 
 ### Added
@@ -561,7 +589,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/peg/rampart/compare/v0.4.12...v0.5.0
+[0.4.12]: https://github.com/peg/rampart/compare/v0.4.11...v0.4.12
+[0.4.11]: https://github.com/peg/rampart/compare/v0.4.10...v0.4.11
+[0.4.10]: https://github.com/peg/rampart/compare/v0.4.9...v0.4.10
+[0.4.9]: https://github.com/peg/rampart/compare/v0.4.8...v0.4.9
+[0.4.8]: https://github.com/peg/rampart/compare/v0.4.7...v0.4.8
+[0.4.7]: https://github.com/peg/rampart/compare/v0.4.6...v0.4.7
+[0.4.6]: https://github.com/peg/rampart/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/peg/rampart/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/peg/rampart/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/peg/rampart/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/peg/rampart/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/peg/rampart/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/peg/rampart/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/peg/rampart/compare/v0.2.36...v0.3.0
 [0.2.36]: https://github.com/peg/rampart/compare/v0.2.35...v0.2.36
 [0.2.35]: https://github.com/peg/rampart/compare/v0.2.34...v0.2.35

@@ -241,7 +241,66 @@ rampart audit replay --speed 2.0      # Replay at 2x speed
 rampart audit replay --speed 0        # Replay instantly (no delays)
 ```
 
-## Policy
+## Policy Customization
+
+### `rampart allow`
+
+Add an allow rule to your custom policy without editing YAML.
+
+```bash
+rampart allow "npm install *"                  # Auto-detect tool type
+rampart allow "go test ./..."                  # Commands with ./ detected as exec
+rampart allow "/tmp/**" --tool read            # Explicit tool type
+rampart allow "docker build *" --global        # Write to global policy
+rampart allow "pytest *" --project             # Write to project policy
+rampart allow "git push *" --yes               # Skip confirmation
+```
+
+### `rampart block`
+
+Add a deny rule to your custom policy.
+
+```bash
+rampart block "rm -rf /*"                      # Block dangerous command
+rampart block "curl * | bash" --global         # Global deny rule
+rampart block "**/.env" --tool read            # Block reading .env files
+```
+
+### `rampart rules`
+
+List, remove, and reset custom rules added via `allow`/`block`.
+
+```bash
+rampart rules                                  # List all custom rules
+rampart rules --global                         # List only global rules
+rampart rules --project                        # List only project rules
+rampart rules --json                           # JSON output for scripting
+rampart rules remove 1                         # Remove rule by index
+rampart rules reset                            # Remove all custom rules
+rampart rules reset --global                   # Reset only global rules
+```
+
+### `rampart policy generate preset`
+
+Generate a policy from a preset template.
+
+```bash
+rampart policy generate preset                         # Interactive wizard
+rampart policy generate preset --preset coding-agent   # Select preset
+rampart policy generate preset --preset ci-agent --dest .rampart/policy.yaml
+rampart policy generate preset --preset devops-agent --print   # Print to stdout
+```
+
+Available presets:
+
+| Preset | Description |
+|--------|-------------|
+| `coding-agent` | File edits, git, build tools, block credentials |
+| `research-agent` | Web fetch, file read, no writes |
+| `ci-agent` | Build/test only, no network, no secrets |
+| `devops-agent` | Docker, kubectl, ssh (with approval) |
+
+## Policy Inspection
 
 ### `rampart policy check`
 

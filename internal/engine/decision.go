@@ -154,6 +154,11 @@ type Decision struct {
 	// WebhookConfig is set when Action is ActionWebhook. Contains the
 	// webhook URL and behavior configuration for the proxy to execute.
 	WebhookConfig *WebhookActionConfig
+
+	// Suggestions contains human-readable CLI commands showing how to allow
+	// this call. Only populated for ActionDeny decisions. Each entry is a
+	// ready-to-run "rampart allow ..." command the user can copy and execute.
+	Suggestions []string
 }
 
 // ParseAction converts a string to an Action.

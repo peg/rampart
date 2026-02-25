@@ -260,6 +260,18 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				"port", port,
 			)
 
+			// Show a startup spinner when running in a terminal with a proxy port.
+			var startSpin *cliSpinner
+			var startSpinDone bool
+			if port > 0 {
+				startSpin = newCliSpinner(cmd.ErrOrStderr(), "Starting Rampart")
+				defer func() {
+					if !startSpinDone && startSpin != nil {
+						startSpin.Fail("Rampart failed to start")
+					}
+				}()
+			}
+
 			var (
 				proxyServer *proxy.Server
 				proxyErrCh  chan error
@@ -329,11 +341,17 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if len(token) > 8 {
 					display = token[:8] + "..."
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "serve: proxy listening on %s (token=%s)\n", listener.Addr().String(), display)
-				fmt.Fprintf(cmd.ErrOrStderr(), "serve: full token: %s\n", token)
 				listenPort := listener.Addr().(*net.TCPAddr).Port
-				fmt.Fprintf(cmd.ErrOrStderr(), "serve: dashboard: http://localhost:%d/dashboard/\n", listenPort)
-				fmt.Fprintf(cmd.ErrOrStderr(), "serve: use the full token above to authenticate in the dashboard\n")
+
+				// Stop the startup spinner and print a clean ready message.
+				if startSpin != nil {
+					startSpin.Stop(fmt.Sprintf("Rampart ready  —  :%d (token=%s)", listenPort, display))
+					startSpinDone = true
+				}
+
+				fmt.Fprintf(cmd.ErrOrStderr(), "  🔑 Full token : %s\n", token)
+				fmt.Fprintf(cmd.ErrOrStderr(), "  🌐 Dashboard  : http://localhost:%d/dashboard/\n", listenPort)
+
 				// Persist the token so it survives restarts.
 				if err := persistToken(token); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)

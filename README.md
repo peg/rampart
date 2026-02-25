@@ -238,6 +238,43 @@ Three built-in profiles:
 
 ---
 
+## Customizing rules
+
+**No YAML editing required.** When a command is blocked, Rampart suggests what to run:
+
+```bash
+# When "npm install lodash" gets denied, the error includes:
+#   💡 To allow this: rampart allow "npm install *"
+
+# Just run it:
+rampart allow "npm install *"
+#  ✓ Rule added — policy reloaded (12 rules active)
+```
+
+Common commands:
+
+```bash
+# Allow a command pattern
+rampart allow "go test ./..."
+rampart allow "docker build *"
+
+# Block a dangerous pattern
+rampart block "curl * | bash"
+
+# See your custom rules
+rampart rules
+
+# Remove a rule by number
+rampart rules remove 3
+
+# Start fresh
+rampart rules reset
+```
+
+Rules are stored separately from built-in policies and won't be overwritten by upgrades.
+
+---
+
 ## Writing policies
 
 Policies are YAML. Glob matching, hot-reload on file change.
@@ -611,6 +648,8 @@ The proxy adds negligible latency. Agents wait seconds for LLM responses — a f
 ---
 
 ## Security recommendations
+
+**Self-modification protection.** AI agents cannot bypass their own policy by running `rampart allow`, `rampart block`, or `rampart rules`. These commands are blocked by the standard policy when executed by an agent — policy modifications must be made by a human. This protection covers shell wrappers too (`bash -c 'rampart allow ...'`).
 
 **Don't run your AI agent as root.** If the agent runs as root, no user separation can protect policy files or audit logs — root can read everything. Run your agent framework (OpenClaw, Claude Code, etc.) as an unprivileged user.
 

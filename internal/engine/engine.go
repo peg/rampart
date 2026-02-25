@@ -130,6 +130,7 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				MatchedPolicies: append(matched, e.remainingNames(matching, p.Name)...),
 				Message:         message,
 				EvalDuration:    time.Since(start),
+				Suggestions:     generateSuggestions(call),
 			}
 		case ActionWebhook:
 			// Webhook wins over log and allow, but not deny.
@@ -355,6 +356,28 @@ func (e *Engine) LastLoadedAt() time.Time {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.lastLoadedAt
+}
+
+// EngineStats holds current engine statistics.
+type EngineStats struct {
+	PolicyCount int
+	RuleCount   int
+	LastReload  time.Time
+}
+
+// Stats returns current engine statistics in a single atomic read.
+func (e *Engine) Stats() EngineStats {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	total := 0
+	for _, p := range e.config.Policies {
+		total += len(p.Rules)
+	}
+	return EngineStats{
+		PolicyCount: len(e.config.Policies),
+		RuleCount:   total,
+		LastReload:  e.lastLoadedAt,
+	}
 }
 
 func deriveSummaryFromRuleName(name string) string {

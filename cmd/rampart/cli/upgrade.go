@@ -281,14 +281,18 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				}
 			}
 
+			dlSpin := newCliSpinner(cmd.OutOrStdout(), fmt.Sprintf("Downloading %s", target))
 			archiveBytes, err := resolved.downloadURL(ctx, resolved.httpClient, archiveURL)
 			if err != nil {
+				dlSpin.Fail("Download failed")
 				return err
 			}
 			checksumsBytes, err := resolved.downloadURL(ctx, resolved.httpClient, checksumsURL)
 			if err != nil {
+				dlSpin.Fail("Download failed")
 				return err
 			}
+			dlSpin.Stop(fmt.Sprintf("Downloaded %s", target))
 
 			expectedHash, err := lookupSHA256(checksumsBytes, archiveName)
 			if err != nil {
@@ -312,12 +316,15 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				}
 			}
 
+			installSpin := newCliSpinner(cmd.OutOrStdout(), "Installing")
 			if err := replaceExecutableAtomically(exePath, newBinary, resolved); err != nil {
+				installSpin.Fail("Installation failed")
 				if isPermissionError(err) {
-					return fmt.Errorf("upgrade: %w\ntry: sudo rampart upgrade", err)
+					return fmt.Errorf("upgrade: %w\n💡 Try this: sudo rampart upgrade", err)
 				}
 				return err
 			}
+			installSpin.Stop(fmt.Sprintf("Installed %s", target))
 
 			fixStalePathCopies(cmd.OutOrStdout(), exePath, resolved)
 

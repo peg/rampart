@@ -16,6 +16,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 const (
@@ -39,14 +40,30 @@ func stderrSupportsColor() bool {
 }
 
 // formatDenyMessage returns a branded deny message suitable for stderr.
-func formatDenyMessage(command, reason string) string {
+// The suggestions slice contains ready-to-run "rampart allow ..." commands.
+func formatDenyMessage(command, reason string, suggestions []string) string {
+	var sb strings.Builder
 	if stderrSupportsColor() {
-		return fmt.Sprintf("🛡️ %sRampart blocked: %s%s\n   %sReason: %s%s\n",
+		sb.WriteString(fmt.Sprintf("🛡️ %sRampart blocked: %s%s\n   %sReason: %s%s\n",
 			colorRed, command, colorReset,
 			colorDim, reason, colorReset,
-		)
+		))
+		if len(suggestions) > 0 {
+			sb.WriteString(fmt.Sprintf("   %sTo allow:%s\n", colorDim, colorReset))
+			for _, s := range suggestions {
+				sb.WriteString(fmt.Sprintf("     %s$ %s%s\n", colorDim, s, colorReset))
+			}
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("🛡️ Rampart blocked: %s\n   Reason: %s\n", command, reason))
+		if len(suggestions) > 0 {
+			sb.WriteString("   To allow:\n")
+			for _, s := range suggestions {
+				sb.WriteString(fmt.Sprintf("     $ %s\n", s))
+			}
+		}
 	}
-	return fmt.Sprintf("🛡️ Rampart blocked: %s\n   Reason: %s\n", command, reason)
+	return sb.String()
 }
 
 // formatApprovalRequiredMessage returns a branded approval-required message for stderr.

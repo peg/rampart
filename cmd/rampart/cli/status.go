@@ -23,7 +23,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/peg/rampart/internal/audit"
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
 )
@@ -40,41 +42,191 @@ func newStatusCmd() *cobra.Command {
 }
 
 func runStatus(w io.Writer) error {
-	fmt.Fprintln(w, "🛡️ Rampart Status")
-	fmt.Fprintln(w)
-
-	// Detect protected agents
 	protected := detectProtectedAgents()
-	if len(protected) == 0 {
-		fmt.Fprintln(w, "No agents protected. Run 'rampart setup' to get started.")
-		return nil
+	mode, defaultAction := detectMode()
+	allow, deny, pending, lastDeny := todayEvents()
+	serverRunning := isServeRunning()
+
+	useColor := !noColor() && isTerminal(os.Stdout)
+
+	box := buildStatusBox(protected, mode, defaultAction, allow, deny, pending, serverRunning, lastDeny, useColor)
+	fmt.Fprintln(w, box)
+	return nil
+}
+
+// Box dimensions.
+const (
+	statusBoxTotal   = 65 // total visual width including │ borders
+	statusBoxFrame   = 63 // dashes between corner chars (= statusBoxTotal - 2)
+	statusContentW   = 61 // visual content width between "│ " and " │"
+	statusLabelCol   = 14 // visual chars from start of content to value column
+)
+
+// renderProgressBar renders a progress bar like "███████░░░" (0–100 pct, `width` segments).
+func renderProgressBar(pct, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := pct * width / 100
+	empty := width - filled
+	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
+}
+
+// isServeRunning returns true if rampart serve is reachable on the default port.
+func isServeRunning() bool {
+	client := &http.Client{Timeout: time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/healthz", defaultServePort))
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 300
+}
+
+// buildStatusBox renders the full status panel.
+func buildStatusBox(
+	protected []string,
+	mode, defaultAction string,
+	allow, deny, pending int,
+	serverRunning bool,
+	lastDeny *audit.Event,
+	useColor bool,
+) string {
+	// Lipgloss styles – only applied when useColor is true.
+	accentSt  := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6392")).Bold(true)
+	successSt := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
+	dangerSt  := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+	warnSt    := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
+	faintSt   := lipgloss.NewStyle().Faint(true)
+	_ = warnSt
+
+	styled := func(s string, st lipgloss.Style) string {
+		if !useColor {
+			return s
+		}
+		return st.Render(s)
 	}
 
-	fmt.Fprintf(w, "Protected: %s\n", strings.Join(protected, ", "))
+	// Box frame lines.
+	top := "╭" + strings.Repeat("─", statusBoxFrame) + "╮"
+	sep := "├" + strings.Repeat("─", statusBoxFrame) + "┤"
+	bot := "╰" + strings.Repeat("─", statusBoxFrame) + "╯"
 
-	// Mode from policy
-	mode, defaultAction := detectMode()
-	fmt.Fprintf(w, "Mode: %s (default_action: %s)\n", mode, defaultAction)
+	// row wraps content in box borders, padding to statusContentW.
+	row := func(content string) string {
+		vw := lipgloss.Width(content)
+		pad := statusContentW - vw
+		if pad < 0 {
+			pad = 0
+		}
+		return "│ " + content + strings.Repeat(" ", pad) + " │"
+	}
 
-	// Today's events
-	allow, deny, log, lastDeny := todayEvents()
-	fmt.Fprintf(w, "Today: %d allow · %d deny · %d log\n", allow, deny, log)
+	// lbl returns a label of fixed visual width (statusLabelCol chars from left),
+	// styled faint, with leading indent.
+	lbl := func(s string) string {
+		lw := len(s) // safe: labels are plain ASCII
+		pad := statusLabelCol - 2 - lw
+		if pad < 0 {
+			pad = 0
+		}
+		return "  " + styled(s, faintSt) + strings.Repeat(" ", pad)
+	}
 
+	// ── Header ──────────────────────────────────────────────────────────────
+
+	version := build.Version
+	if version != "" && version != "dev" && !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+
+	shieldTitle := styled("🛡️  RAMPART", accentSt)
+	verStr := styled(version, faintSt)
+	stw := lipgloss.Width(shieldTitle)
+	vw2 := lipgloss.Width(verStr)
+	// "  " (2) + shieldTitle + gap + verStr fits inside statusContentW.
+	gap := statusContentW - 2 - stw - vw2
+	if gap < 1 {
+		gap = 1
+	}
+	headerContent := "  " + shieldTitle + strings.Repeat(" ", gap) + verStr
+
+	// ── Status ──────────────────────────────────────────────────────────────
+
+	var dotStr, statusVal string
+	if serverRunning {
+		dotStr = styled("●", successSt)
+		statusVal = "Running"
+	} else {
+		dotStr = styled("○", dangerSt)
+		statusVal = "Not running"
+	}
+	statusLine := lbl("Status") + dotStr + " " + statusVal
+
+	// ── Protected ───────────────────────────────────────────────────────────
+
+	protectedStr := "None — run 'rampart setup' to protect an agent"
+	if len(protected) > 0 {
+		protectedStr = strings.Join(protected, ", ")
+	}
+	protectedLine := lbl("Protected") + protectedStr
+
+	// ── Mode ────────────────────────────────────────────────────────────────
+
+	modeStr := mode
+	if defaultAction != "" {
+		modeStr = mode + " (default: " + defaultAction + ")"
+	}
+	modeLine := lbl("Mode") + modeStr
+
+	// ── Today's stats ───────────────────────────────────────────────────────
+
+	total := allow + deny + pending
+	pct := 0
+	if total > 0 {
+		pct = allow * 100 / total
+	}
+
+	bar := renderProgressBar(pct, 10)
+	barStyled := styled(bar, successSt)
+	todayLine := lbl("Today") + barStyled + fmt.Sprintf("  %d%% allowed", pct)
+
+	allowStr := styled(fmt.Sprintf("%d allow", allow), successSt)
+	denyStr := styled(fmt.Sprintf("%d deny", deny), dangerSt)
+	countsLine := strings.Repeat(" ", statusLabelCol) +
+		allowStr + " · " + denyStr + fmt.Sprintf(" · %d pending", pending)
+
+	// ── Last deny (optional) ─────────────────────────────────────────────────
+
+	var lastDenyLine string
 	if lastDeny != nil {
 		ago := formatAgo(time.Since(lastDeny.Timestamp))
 		cmd := extractEventCommand(lastDeny)
-		policy := "unknown"
-		if len(lastDeny.Decision.MatchedPolicies) > 0 {
-			policy = lastDeny.Decision.MatchedPolicies[0]
-		}
-		if isUnknownOrEmpty(cmd) || isUnknownOrEmpty(policy) {
-			fmt.Fprintf(w, "Last deny: %s — %s\n", ago, cmd)
-		} else {
-			fmt.Fprintf(w, "Last deny: %s — %s (%s)\n", ago, cmd, policy)
+		if !isUnknownOrEmpty(cmd) {
+			lastDenyLine = lbl("Last deny") + styled(ago, faintSt) + " — " + cmd
 		}
 	}
 
-	return nil
+	// ── Assemble ────────────────────────────────────────────────────────────
+
+	var sb strings.Builder
+	sb.WriteString(top + "\n")
+	sb.WriteString(row(headerContent) + "\n")
+	sb.WriteString(sep + "\n")
+	sb.WriteString(row(statusLine) + "\n")
+	sb.WriteString(row(protectedLine) + "\n")
+	sb.WriteString(row(modeLine) + "\n")
+	sb.WriteString(row(todayLine) + "\n")
+	sb.WriteString(row(countsLine) + "\n")
+	if lastDenyLine != "" {
+		sb.WriteString(row(lastDenyLine) + "\n")
+	}
+	sb.WriteString(bot)
+
+	return sb.String()
 }
 
 func detectProtectedAgents() []string {
@@ -145,7 +297,9 @@ func detectMode() (string, string) {
 	return "unknown", "unknown"
 }
 
-func todayEvents() (allow, deny, log int, lastDeny *audit.Event) {
+// todayEvents returns today's allow/deny/pending counts and the most recent deny event.
+// "pending" counts require_approval and webhook actions.
+func todayEvents() (allow, deny, pending int, lastDeny *audit.Event) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -154,7 +308,6 @@ func todayEvents() (allow, deny, log int, lastDeny *audit.Event) {
 
 	today := time.Now().UTC().Format("2006-01-02")
 
-	// Scan directory for any file containing today's date (deduplicated)
 	seen := make(map[string]bool)
 	var candidates []string
 	if entries, err := os.ReadDir(auditDir); err == nil {
@@ -185,9 +338,7 @@ func todayEvents() (allow, deny, log int, lastDeny *audit.Event) {
 					lastDeny = ev
 				}
 			case "require_approval", "webhook":
-				deny++
-			case "watch", "log":
-				log++
+				pending++
 			}
 		}
 	}
@@ -198,7 +349,6 @@ func extractEventCommand(ev *audit.Event) string {
 	if ev == nil {
 		return ""
 	}
-	// Try common request fields
 	for _, key := range []string{"command", "cmd", "input"} {
 		if v, ok := ev.Request[key]; ok {
 			if s, ok := v.(string); ok {

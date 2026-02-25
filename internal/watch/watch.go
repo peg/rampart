@@ -460,12 +460,23 @@ func (m *Model) View() string {
 		if action == "deny" {
 			if flashTime, ok := m.denyFlash[globalIdx]; ok && now.Sub(flashTime) < 3*time.Second {
 				lines = append(lines, frameLineBody(innerWidth, "  "+m.denyBgStyle.Render(line)))
+				// Show first suggestion hint even during flash.
+				if len(event.Decision.Suggestions) > 0 {
+					hint := m.mutedStyle.Render("    Fix: " + event.Decision.Suggestions[0])
+					lines = append(lines, frameLineBody(innerWidth, hint))
+				}
 				continue
 			}
 		}
 
 		colorLine := m.colorizeLine(line, event.Decision.Action)
 		lines = append(lines, frameLineBody(innerWidth, "  "+colorLine))
+
+		// Show suggestion hint below deny events.
+		if (action == "deny" || action == "denied") && len(event.Decision.Suggestions) > 0 {
+			hint := m.mutedStyle.Render("    Fix: " + event.Decision.Suggestions[0])
+			lines = append(lines, frameLineBody(innerWidth, truncateRunes(hint, innerWidth-2)))
+		}
 	}
 	for len(visible) < feedRows {
 		lines = append(lines, frameLineBody(innerWidth, ""))

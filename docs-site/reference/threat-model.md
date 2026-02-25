@@ -17,6 +17,18 @@ Rampart's target threat is an AI agent that:
 
 These agents aren't adversarial — they're confused, manipulated, or wrong. Rampart catches them reliably.
 
+## Self-Modification Protection
+
+Agents cannot weaken their own policy. The standard policy blocks:
+
+- `rampart allow *` / `rampart block *` / `rampart rules *`
+- Shell wrappers: `bash -c 'rampart allow ...'`, `sh -c '...'`
+- Path variations: `/usr/local/bin/rampart allow`, `./rampart allow`
+
+This is enforced via `command_contains` substring matching, which catches wrapper techniques that glob patterns would miss. Even if an agent is instructed via prompt injection to "add an allow rule for rm -rf /", the command itself is denied.
+
+**Note:** This protects the policy from the agent, not from a human. Humans can still run `rampart allow` normally — the protection only fires when commands come through Rampart's interception layer.
+
 ## Not the Target: Adversarial Humans
 
 Rampart does **not** claim to stop a skilled human who has already compromised your system. If an attacker has shell access, they can bypass Rampart the same way they'd bypass any userspace tool.

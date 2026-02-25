@@ -341,12 +341,13 @@ policies:
 	result := LintPolicyFile(path)
 	found := false
 	for _, f := range result.Findings {
-		if f.Severity == LintWarning && strings.Contains(f.Message, "**") {
+		// Changed from warning to error: >2 ** segments means pattern won't match at runtime
+		if f.Severity == LintError && strings.Contains(f.Message, "**") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected glob depth warning, findings: %v", result.Findings)
+		t.Errorf("expected glob depth error, findings: %v", result.Findings)
 	}
 }
 
