@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`sudo`/`env` wrapper detection in dangerous command suggestions** — Suggestion generation now looks through transparent wrappers (`sudo`, `env`, `nice`, `timeout`, etc.) to check the real command for safety. `sudo rm file` no longer generates a `rm *` wildcard suggestion.
 - **`--tool` flag override now works correctly** — `rampart allow "/tmp/work" --tool write` no longer ignores the flag and generates a `path_matches` rule for the right tool type.
+- **Shell wrapper bypass for self-modification** — `bash -c 'rampart allow ...'` and similar shell wrappers could bypass the self-modification protection. Now uses `command_contains` substring matching which catches all wrapper techniques.
+- **Shell wrapper bypass for destructive commands** — Added `bash -c **rm -rf /**`, `sh -c **mkfs**`, etc. patterns to block destructive commands wrapped in shell invocations.
+- **`rm -rf .` and `rm -rf ..` not blocked** — Current and parent directory wipes are now denied and flagged as extremely dangerous (no allow suggestion).
+- **`dd if=*` overly broad** — Changed to `dd **of=/dev/sd**` etc. to only block writes to block devices, not all `dd` commands.
+- **Overly permissive patterns not warned** — `rampart allow "*"` and similar catch-all patterns now display a warning before adding.
+- **`>2 **` glob lint was warning, not error** — Patterns with more than 2 `**` segments silently fail at runtime; lint now reports this as an error, not a warning.
 
 ## [0.4.12] - 2026-02-24
 
