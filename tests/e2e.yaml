@@ -235,3 +235,31 @@ tests:
     tool: exec
     params: {command: "rampart policy generate --project"}
     expect: deny
+
+  # ── Shell wrapper bypass protection (v0.5.0) ────────────────────────────────
+  # These patterns could bypass protections if not caught
+
+  - name: "deny: bash -c 'rampart allow' (shell wrapper self-mod)"
+    tool: exec
+    params: {command: "bash -c 'rampart allow test'"}
+    expect: deny
+
+  - name: "deny: sh -c 'rm -rf /' (shell wrapper destructive)"
+    tool: exec
+    params: {command: "sh -c 'rm -rf /'"}
+    expect: deny
+
+  - name: "deny: rm -rf . (current directory wipe)"
+    tool: exec
+    params: {command: "rm -rf ."}
+    expect: deny
+
+  - name: "deny: rm -rf .. (parent directory wipe)"
+    tool: exec
+    params: {command: "rm -rf .."}
+    expect: deny
+
+  - name: "deny: bash -c 'mkfs /dev/sda' (shell wrapper format)"
+    tool: exec
+    params: {command: "bash -c 'mkfs /dev/sda'"}
+    expect: deny
