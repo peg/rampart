@@ -261,9 +261,25 @@ func IsPathPattern(pattern string) bool {
 	if strings.Contains(pattern, "/") {
 		// If no spaces (single token with /), likely a path
 		if !strings.Contains(pattern, " ") {
-			// But "./..." is a Go package pattern, not a path
+			// "./..." is a Go package pattern, not a path
 			if strings.HasPrefix(pattern, "./") && strings.HasSuffix(pattern, "...") {
 				return false
+			}
+			// Executable scripts: ./script.sh, ./foo, ../bin/thing
+			// These are commonly run as commands, not read as files
+			if strings.HasPrefix(pattern, "./") || strings.HasPrefix(pattern, "../") {
+				// If it looks like an executable (no extension or common script extensions)
+				base := filepath.Base(pattern)
+				// Scripts with common extensions are typically executed
+				if strings.HasSuffix(base, ".sh") ||
+					strings.HasSuffix(base, ".bash") ||
+					strings.HasSuffix(base, ".py") ||
+					strings.HasSuffix(base, ".pl") ||
+					strings.HasSuffix(base, ".rb") ||
+					strings.HasSuffix(base, ".js") ||
+					!strings.Contains(base, ".") { // No extension = likely executable
+					return false
+				}
 			}
 			return true
 		}

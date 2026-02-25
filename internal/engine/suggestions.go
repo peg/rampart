@@ -24,17 +24,27 @@ import (
 // severe, likely unrecoverable damage to the system.
 func isExtremelyDangerous(cmd string) bool {
 	cmdLower := strings.ToLower(cmd)
+	parts := strings.Fields(cmdLower)
 
-	// Filesystem destruction targeting root or home
-	if strings.Contains(cmdLower, "rm -rf /") && !strings.Contains(cmdLower, "rm -rf /tmp") && !strings.Contains(cmdLower, "rm -rf /var") {
-		// "rm -rf /" or "rm -rf /home" etc but not "rm -rf /tmp/foo"
-		parts := strings.Fields(cmdLower)
-		for i, p := range parts {
+	// Check for rm -rf targeting dangerous locations
+	if strings.Contains(cmdLower, "rm ") && strings.Contains(cmdLower, "-rf") {
+		for _, p := range parts {
+			// Exact dangerous targets
 			if p == "/" || p == "/*" || p == "~" || p == "~/*" {
 				return true
 			}
-			// Check for "rm -rf /something" where something is a root-level danger
-			if i > 0 && (p == "/bin" || p == "/usr" || p == "/etc" || p == "/home" || p == "/root" || p == "/lib" || p == "/sbin") {
+			// Root-level directories
+			if p == "/bin" || p == "/usr" || p == "/etc" || p == "/home" ||
+				p == "/root" || p == "/lib" || p == "/lib64" || p == "/sbin" ||
+				p == "/boot" || p == "/var" {
+				return true
+			}
+			// Patterns targeting these directories
+			if strings.HasPrefix(p, "/bin/") || strings.HasPrefix(p, "/usr/") ||
+				strings.HasPrefix(p, "/etc/") || strings.HasPrefix(p, "/home/") ||
+				strings.HasPrefix(p, "/root/") || strings.HasPrefix(p, "/lib/") ||
+				strings.HasPrefix(p, "/sbin/") || strings.HasPrefix(p, "/boot/") ||
+				strings.HasPrefix(p, "~/") {
 				return true
 			}
 		}
@@ -45,9 +55,26 @@ func isExtremelyDangerous(cmd string) bool {
 		return true
 	}
 
-	// Disk wipe
-	if strings.Contains(cmdLower, "> /dev/sd") || strings.Contains(cmdLower, ">/dev/sd") {
+	// Disk wipe via redirection
+	if strings.Contains(cmdLower, "> /dev/sd") || strings.Contains(cmdLower, ">/dev/sd") ||
+		strings.Contains(cmdLower, "> /dev/nvme") || strings.Contains(cmdLower, ">/dev/nvme") {
 		return true
+	}
+
+	// dd targeting block devices
+	if strings.Contains(cmdLower, "dd ") &&
+		(strings.Contains(cmdLower, "of=/dev/sd") || strings.Contains(cmdLower, "of=/dev/nvme") ||
+			strings.Contains(cmdLower, "of=/dev/hd") || strings.Contains(cmdLower, "of=/dev/vd")) {
+		return true
+	}
+
+	// mkfs on any device
+	if strings.HasPrefix(cmdLower, "mkfs") || strings.Contains(cmdLower, " mkfs") {
+		for _, p := range parts {
+			if strings.HasPrefix(p, "/dev/") {
+				return true
+			}
+		}
 	}
 
 	// Piped execution from URL
@@ -252,6 +279,11 @@ func generateSuggestions(call ToolCall) []string {
 			tool = "read"
 		}
 
+		// Never suggest allowing access to extremely sensitive paths.
+		if isExtremelyDangerousPath(path, tool) {
+			return []string{"⚠️  This path is highly sensitive. Allowing access is not recommended."}
+		}
+
 		// 1. Exact path.
 		suggestions = append(suggestions, fmt.Sprintf("rampart allow %q --tool %s", path, tool))
 
@@ -268,4 +300,48 @@ func generateSuggestions(call ToolCall) []string {
 	}
 
 	return suggestions
+}
+
+// isExtremelyDangerousPath returns true if allowing access to this path would
+// be extremely dangerous and should not be suggested.
+func isExtremelyDangerousPath(path, tool string) bool {
+	pathLower := strings.ToLower(path)
+
+	// System credential files — never allow
+	extremelySensitive := []string{
+		"/etc/shadow",
+		"/etc/sudoers",
+		"/etc/gshadow",
+		"/etc/master.passwd", // BSD
+	}
+	for _, s := range extremelySensitive {
+		if pathLower == s || strings.HasSuffix(pathLower, s) {
+			return true
+		}
+	}
+
+	// SSH private keys — never allow (public keys are fine)
+	if strings.Contains(pathLower, "/.ssh/") || strings.Contains(pathLower, "\\.ssh\\") {
+		// Allow .pub files
+		if strings.HasSuffix(pathLower, ".pub") {
+			return false
+		}
+		// Block private key patterns
+		if strings.Contains(pathLower, "id_rsa") ||
+			strings.Contains(pathLower, "id_ed25519") ||
+			strings.Contains(pathLower, "id_ecdsa") ||
+			strings.Contains(pathLower, "id_dsa") ||
+			strings.HasSuffix(pathLower, "/authorized_keys") ||
+			strings.HasSuffix(pathLower, "/known_hosts") {
+			// known_hosts is less sensitive but still shouldn't be suggested
+			return true
+		}
+	}
+
+	// Write to /etc/passwd is extremely dangerous
+	if tool == "write" && (pathLower == "/etc/passwd" || strings.HasSuffix(pathLower, "/etc/passwd")) {
+		return true
+	}
+
+	return false
 }

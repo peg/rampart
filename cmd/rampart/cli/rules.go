@@ -53,6 +53,7 @@ type rulesEntry struct {
 	Action  string
 	Tool    string
 	Pattern string
+	Message string
 	AddedAt time.Time
 }
 
@@ -123,6 +124,7 @@ func loadAllEntries(globalOnly, projectOnly bool) (globalEntries, projectEntries
 			Action:  r.Action,
 			Tool:    r.Tool,
 			Pattern: r.Pattern,
+			Message: r.Message,
 			AddedAt: r.AddedAt,
 		}
 		if !projectOnly {
@@ -143,6 +145,7 @@ func loadAllEntries(globalOnly, projectOnly bool) (globalEntries, projectEntries
 			Action:  r.Action,
 			Tool:    r.Tool,
 			Pattern: r.Pattern,
+			Message: r.Message,
 			AddedAt: r.AddedAt,
 		}
 		if !globalOnly {
@@ -203,6 +206,10 @@ func printRulesTable(out io.Writer, opts *rootOptions, globalEntries, projectEnt
 				patStr,
 				timeStr,
 			)
+			// Show message as subline if present
+			if e.Message != "" {
+				fmt.Fprintf(out, "        %s\n", rulesHintStyle.Render("→ "+truncateStr(e.Message, 60)))
+			}
 		}
 	}
 
@@ -246,6 +253,7 @@ func printRulesJSON(out io.Writer, entries []rulesEntry) error {
 		Action  string `json:"action"`
 		Tool    string `json:"tool"`
 		Pattern string `json:"pattern"`
+		Message string `json:"message,omitempty"`
 		AddedAt string `json:"added_at"`
 	}
 	result := make([]jsonEntry, 0, len(entries))
@@ -256,6 +264,7 @@ func printRulesJSON(out io.Writer, entries []rulesEntry) error {
 			Action:  e.Action,
 			Tool:    e.Tool,
 			Pattern: e.Pattern,
+			Message: e.Message,
 			AddedAt: e.AddedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -285,16 +294,39 @@ First run 'rampart rules' to see rule numbers, then:
   rampart rules remove 1    # Remove rule #1
   rampart rules remove 3    # Remove rule #3`)
 			}
+			// Check if argument looks like a negative number (user mistake)
+			if strings.HasPrefix(args[0], "-") && len(args[0]) > 1 {
+				// Check if it's a number
+				if _, err := strconv.Atoi(args[0]); err == nil {
+					return fmt.Errorf("rules: invalid index %q — must be a positive integer", args[0])
+				}
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRulesRemove(cmd, opts, args[0], force, apiAddr, token)
 		},
+		SilenceUsage: true,
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 	cmd.Flags().StringVar(&apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
 	cmd.Flags().StringVar(&token, "token", "", "API auth token (or set RAMPART_TOKEN)")
+
+	// Custom error handler to catch negative numbers being parsed as flags
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		errStr := err.Error()
+		// Check if error is about a flag that looks like a negative number
+		if strings.Contains(errStr, "unknown shorthand flag") ||
+			strings.Contains(errStr, "unknown flag") {
+			// Extract what they tried to use
+			if strings.Contains(errStr, "-") {
+				return fmt.Errorf("rules: invalid index — must be a positive integer (indices start at 1)")
+			}
+		}
+		return err
+	})
+
 	return cmd
 }
 

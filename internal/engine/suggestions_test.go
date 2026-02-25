@@ -259,10 +259,10 @@ func TestGenerateSuggestions_FilePath(t *testing.T) {
 			wantWildcard: `rampart allow "/home/user/project/*" --tool read`,
 		},
 		{
-			name:       "read ssh key — no wildcard (sensitive)",
+			name:       "read ssh key — warning (extremely sensitive)",
 			tool:       "read",
 			path:       "/home/user/.ssh/id_rsa",
-			wantExact:  `rampart allow "/home/user/.ssh/id_rsa" --tool read`,
+			wantExact:  "⚠️  This path is highly sensitive. Allowing access is not recommended.",
 			wantNoWild: true,
 		},
 		{
@@ -273,7 +273,7 @@ func TestGenerateSuggestions_FilePath(t *testing.T) {
 			wantNoWild: true,
 		},
 		{
-			name:       "read /etc file — no wildcard (sensitive)",
+			name:       "read /etc/passwd — exact match only (sensitive but not extremely)",
 			tool:       "read",
 			path:       "/etc/passwd",
 			wantExact:  `rampart allow "/etc/passwd" --tool read`,

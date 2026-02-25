@@ -123,10 +123,22 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		return fmt.Errorf("invalid glob pattern: %w", err)
 	}
 
+	// Validate tool flag if provided.
+	if opts.tool != "" {
+		validTools := map[string]bool{"exec": true, "read": true, "write": true, "edit": true}
+		if !validTools[opts.tool] {
+			return fmt.Errorf("invalid --tool value %q; valid values are: exec, read, write, edit", opts.tool)
+		}
+	}
+
 	// Auto-detect tool from pattern.
 	detectedTool := opts.tool
 	if detectedTool == "" {
 		detectedTool = policy.DetectTool(pattern)
+	}
+	// Normalize "path" to "read" for display (DetectTool returns "path" for path patterns)
+	if detectedTool == "path" {
+		detectedTool = "read"
 	}
 
 	// Resolve target policy file.
@@ -137,7 +149,7 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 
 	// Print what we're about to do.
 	useColor := !noColor() && isTerminal(os.Stdout)
-	printRuleSummary(out, action, pattern, detectedTool, scope, policyPath, useColor)
+	printRuleSummary(out, action, pattern, detectedTool, opts.message, scope, policyPath, useColor)
 
 	// Ask for confirmation unless --yes or non-interactive.
 	if !opts.yes && isTerminal(os.Stdin) {
@@ -275,18 +287,24 @@ func validateGlobPattern(pattern string) error {
 }
 
 // printRuleSummary prints what rule will be added before prompting.
-func printRuleSummary(w io.Writer, action, pattern, tool, scope, path string, useColor bool) {
+func printRuleSummary(w io.Writer, action, pattern, tool, message, scope, path string, useColor bool) {
 	fmt.Fprintln(w)
 	if useColor {
 		fmt.Fprintf(w, "  Adding rule to %s policy (%s%s%s):\n\n", scope, colorDim, path, colorReset)
 		fmt.Fprintf(w, "    Action:  %s%s%s\n", actionColor(action, useColor), action, colorReset)
 		fmt.Fprintf(w, "    Pattern: %s\n", pattern)
 		fmt.Fprintf(w, "    Tool:    %s\n", tool)
+		if message != "" {
+			fmt.Fprintf(w, "    Message: %s%s%s\n", colorDim, message, colorReset)
+		}
 	} else {
 		fmt.Fprintf(w, "  Adding rule to %s policy (%s):\n\n", scope, path)
 		fmt.Fprintf(w, "    Action:  %s\n", action)
 		fmt.Fprintf(w, "    Pattern: %s\n", pattern)
 		fmt.Fprintf(w, "    Tool:    %s\n", tool)
+		if message != "" {
+			fmt.Fprintf(w, "    Message: %s\n", message)
+		}
 	}
 	fmt.Fprintln(w)
 }

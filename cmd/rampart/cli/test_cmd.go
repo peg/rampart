@@ -401,6 +401,12 @@ func printTestResult(w io.Writer, d engine.Decision, noColor bool) {
 		if !noColor {
 			color = "\033[31m"
 		}
+	case engine.ActionRequireApproval:
+		icon = "👤"
+		label = "APPROVAL"
+		if !noColor {
+			color = "\033[35m" // magenta
+		}
 	case engine.ActionWatch:
 		icon = "📝"
 		label = "LOG"
