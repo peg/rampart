@@ -431,3 +431,136 @@ policies:
 		t.Errorf("expected cross-policy shadow info, findings: %v", result.Findings)
 	}
 }
+
+// ── ActionAsk lint tests ──────────────────────────────────────────────────────
+
+func TestLint_ActionAsk_ValidWithClaudeCodeAgent(t *testing.T) {
+	// action: ask scoped to claude-code — no warning expected.
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: ask-sudo
+    match:
+      agent: "claude-code"
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo requires approval"
+`)
+	result := LintPolicyFile(path)
+	for _, f := range result.Findings {
+		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+			t.Errorf("unexpected ask warning for claude-code-scoped policy: %s", f.Message)
+		}
+	}
+}
+
+func TestLint_ActionAsk_WarnWithoutAgentScope(t *testing.T) {
+	// action: ask without agent scoping — warning expected.
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: ask-all-agents
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo requires approval"
+`)
+	result := LintPolicyFile(path)
+	found := false
+	for _, f := range result.Findings {
+		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected ask-without-agent-scope warning, findings: %v", result.Findings)
+	}
+}
+
+func TestLint_ActionAsk_WarnWithWildcardAgent(t *testing.T) {
+	// action: ask with explicit "*" agent — warning expected.
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: ask-wildcard
+    match:
+      agent: "*"
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo requires approval"
+`)
+	result := LintPolicyFile(path)
+	found := false
+	for _, f := range result.Findings {
+		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected ask-with-wildcard-agent warning, findings: %v", result.Findings)
+	}
+}
+
+func TestLint_ActionAsk_WarnWithOtherAgent(t *testing.T) {
+	// action: ask with agent: "cline" — warning expected.
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: ask-cline
+    match:
+      agent: "cline"
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo requires approval"
+`)
+	result := LintPolicyFile(path)
+	found := false
+	for _, f := range result.Findings {
+		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected ask-with-non-cc-agent warning, findings: %v", result.Findings)
+	}
+}
+
+func TestLint_ActionAsk_IsValidAction(t *testing.T) {
+	// action: ask should not produce an "unknown action" error.
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: ask-valid
+    match:
+      agent: "claude-code"
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo requires approval"
+`)
+	result := LintPolicyFile(path)
+	for _, f := range result.Findings {
+		if f.Severity == LintError && strings.Contains(f.Message, "unknown action") {
+			t.Errorf("action \"ask\" should be a valid action, got error: %s", f.Message)
+		}
+	}
+}

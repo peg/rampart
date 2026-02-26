@@ -203,6 +203,8 @@ func (r Rule) ParseAction() (Action, error) {
 		return ActionRequireApproval, nil
 	case "webhook":
 		return ActionWebhook, nil
+	case "ask":
+		return ActionAsk, nil
 	default:
 		return ActionAllow, fmt.Errorf("engine: unknown action %q", r.Action)
 	}

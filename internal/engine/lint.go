@@ -74,6 +74,7 @@ var validActions = map[string]bool{
 	"log":              true, // deprecated alias for watch
 	"require_approval": true,
 	"webhook":          true,
+	"ask":              true,
 }
 
 // validConditionFields are the known fields in a `when:` block.
@@ -215,6 +216,20 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 			Severity: LintWarning,
 			Message:  fmt.Sprintf("policy %q rule %d: action \"log\" is deprecated — use \"watch\" instead (same behavior, clearer name)", p.Name, ruleIdx+1),
 		})
+	}
+
+	// Agent-scoping warning for action: ask.
+	// The native Claude Code permission dialog only works for the claude-code agent.
+	// On Cline and other agents, this falls back to deny with no user prompt shown.
+	if actionLower == "ask" {
+		effectiveAgent := p.Match.EffectiveAgent()
+		if effectiveAgent != "claude-code" {
+			result.add(LintFinding{
+				File:     filename,
+				Severity: LintWarning,
+				Message:  fmt.Sprintf("policy %q rule %d: action \"ask\" is only supported for claude-code agent — other agents will deny. Add match.agent: [\"claude-code\"] to scope this rule.", p.Name, ruleIdx+1),
+			})
+		}
 	}
 
 	// Check for empty when block (matches all tool calls in scope).
