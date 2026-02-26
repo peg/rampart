@@ -18,6 +18,7 @@ import (
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -89,6 +90,8 @@ type hookParseResult struct {
 	Response      string // non-empty for PostToolUse events
 	RunID         string // run ID derived from session_id (or env overrides)
 	HookEventName string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
+	SessionID     string // raw session_id from Claude Code input (for session state)
+	ToolUseID     string // tool_use_id from Claude Code input (for ask correlation)
 }
 
 // gitContext holds the git repository context for the current working directory.
@@ -152,6 +155,16 @@ func gitRevParseTopLevel() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// sessionStateDir returns the directory used for per-session state files.
+// The directory is ~/.rampart/session-state/ by default.
+func sessionStateDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".rampart", "session-state")
 }
 
 func newHookCmd(opts *rootOptions) *cobra.Command {
@@ -245,6 +258,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
+			// Cleanup stale session state files in the background (best-effort).
+			// This runs once per hook invocation; typically fires every few seconds
+			// during active sessions, which is sufficient to keep the directory clean.
+			go func() {
+				mgr := session.NewManager(sessionStateDir(), "", logger)
+				_ = mgr.Cleanup(24 * time.Hour)
+			}()
+
 			// Load policies
 			policyPath, cleanupPolicy, err := resolveWrapPolicyPath(opts.configPath)
 			if err != nil {
@@ -297,9 +318,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 			switch format {
 			case "claude-code":
-				parsed, err = parseClaudeCodeInput(os.Stdin, logger)
+				parsed, err = parseClaudeCodeInput(cmd.InOrStdin(), logger)
 			case "cline":
-				parsed, err = parseClineInput(os.Stdin, logger)
+				parsed, err = parseClineInput(cmd.InOrStdin(), logger)
 			default:
 				// Should be unreachable — format is validated above.
 				// Explicit default prevents a nil parsed pointer reaching
@@ -445,6 +466,31 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				go sendNotification(config.Notify, call, decision, logger)
 			}
 
+			// PostToolUse: observe approval for any pending ask entries in session state.
+			// This fires when tool_response is present, indicating the user approved the ask.
+			// The observation is best-effort — errors are logged but do not block the hook.
+			if parsed.HookEventName == "PostToolUse" && parsed.ToolUseID != "" && parsed.SessionID != "" {
+				sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
+				record, obsErr := sessionMgr.ObserveApproval(parsed.ToolUseID)
+				if obsErr != nil {
+					// Not found means this PostToolUse was not preceded by an ActionAsk —
+					// that is normal (most tool calls are allowed/denied, not asked).
+					logger.Debug("hook: PostToolUse observe approval (no pending ask or other issue)",
+						"session_id", parsed.SessionID,
+						"tool_use_id", parsed.ToolUseID,
+						"error", obsErr,
+					)
+				} else {
+					logger.Info("hook: observed approval for ask",
+						"session_id", parsed.SessionID,
+						"tool_use_id", parsed.ToolUseID,
+						"tool", record.Tool,
+						"pattern", record.Pattern,
+						"approval_count", record.ApprovalCount,
+					)
+				}
+			}
+
 			// Return decision
 			cmdStr := extractCommand(call)
 			if mode != "enforce" {
@@ -457,6 +503,23 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					return outputHookResult(cmd, format, hookBlock, true, decision.Message, cmdStr, decision.Suggestions...)
 				}
 				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr, decision.Suggestions...)
+			case engine.ActionAsk:
+				// Write pending ask to session state so PostToolUse can correlate the outcome.
+				if parsed.SessionID != "" && parsed.ToolUseID != "" {
+					sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
+					// Build a generalised pattern for the command (use command as-is for now;
+					// Phase 2 will add pattern generalisation via engine.GeneralizePattern).
+					cmdStr2 := extractCommand(call)
+					policyName := ""
+					if len(decision.MatchedPolicies) > 0 {
+						policyName = decision.MatchedPolicies[0]
+					}
+					if err := sessionMgr.RecordAsk(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, decision.Message); err != nil {
+						logger.Warn("hook: failed to record ask in session state", "error", err)
+					}
+				}
+				// Emit native ask prompt (Claude Code shows the 4-button dialog).
+				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
 			case engine.ActionRequireApproval:
 				if serveURL != "" {
 					approvalClient := &hookApprovalClient{
@@ -509,6 +572,8 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 		Agent:         "claude-code",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: input.HookEventName,
+		SessionID:     input.SessionID,
+		ToolUseID:     input.ToolUseID,
 	}
 
 	// Extract response text from PostToolUse tool_response.
