@@ -48,6 +48,7 @@ const statusCallCountWindow = time.Hour
 type sseHub struct {
 	mu      sync.RWMutex
 	clients map[chan []byte]struct{}
+	closed  bool
 }
 
 func newSSEHub() *sseHub {
@@ -57,8 +58,16 @@ func newSSEHub() *sseHub {
 func (h *sseHub) subscribe() (chan []byte, func()) {
 	ch := make(chan []byte, 32)
 	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// If hub is closed (shutdown in progress), return immediately-closed channel.
+	// Handler will see ok=false on receive and exit gracefully.
+	if h.closed {
+		close(ch)
+		return ch, func() {} // no-op unsubscribe
+	}
+
 	h.clients[ch] = struct{}{}
-	h.mu.Unlock()
 	return ch, func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -73,6 +82,10 @@ func (h *sseHub) subscribe() (chan []byte, func()) {
 func (h *sseHub) broadcast(data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	// Skip broadcast if hub is closed
+	if h.closed {
+		return
+	}
 	for ch := range h.clients {
 		select {
 		case ch <- data:
@@ -85,6 +98,7 @@ func (h *sseHub) broadcast(data []byte) {
 func (h *sseHub) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.closed = true
 	for ch := range h.clients {
 		close(ch)
 		delete(h.clients, ch)
