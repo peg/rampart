@@ -65,10 +65,71 @@ try {
     exit 1
 }
 
-# Create install directory
-if (-not (Test-Path $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+# Verify checksum (goreleaser produces checksums.txt with each release)
+Write-Status "Verifying checksum..."
+$checksumAsset = $release.assets | Where-Object { $_.name -eq "checksums.txt" }
+if ($checksumAsset) {
+    try {
+        $checksums = Invoke-RestMethod -Uri $checksumAsset.browser_download_url
+        $expectedLine = $checksums -split "`n" | Where-Object { $_ -match [regex]::Escape($assetName) }
+        if ($expectedLine) {
+            $expected = ($expectedLine -split "\s+")[0].Trim().ToLower()
+            $actual = (Get-FileHash $tempZip -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) {
+                Write-Err "Checksum mismatch!"
+                Write-Err "  Expected: $expected"
+                Write-Err "  Got:      $actual"
+                Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+                exit 1
+            }
+            Write-Success "Checksum verified"
+        } else {
+            Write-Warn "Checksum for $assetName not found in checksums.txt (skipping verification)"
+        }
+    } catch {
+        Write-Warn "Could not verify checksum: $_"
+    }
+} else {
+    Write-Warn "No checksums.txt in release (skipping verification)"
 }
+
+# Create install directory (clear existing to avoid conflicts)
+if (Test-Path $InstallDir) {
+    Write-Status "Removing previous installation..."
+    $removed = $false
+    
+    # Try PowerShell first
+    try {
+        Remove-Item -Recurse -Force $InstallDir -ErrorAction Stop
+        $removed = $true
+    } catch {
+        # Try cmd.exe rd as fallback (sometimes works when PS doesn't)
+        Write-Status "Retrying with cmd.exe..."
+        cmd /c "rd /s /q `"$InstallDir`"" 2>$null
+        if (-not (Test-Path $InstallDir)) {
+            $removed = $true
+        }
+    }
+    
+    if (-not $removed) {
+        Write-Err "Cannot remove existing installation at $InstallDir"
+        Write-Err "This usually means files are locked or have permission issues."
+        Write-Host ""
+        Write-Host "  Try these steps:" -ForegroundColor Yellow
+        Write-Host "    1. Close all terminals and Claude Code"
+        Write-Host "    2. Run PowerShell as Administrator and execute:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "       takeown /f `"$InstallDir`" /r /d y" -ForegroundColor Cyan
+        Write-Host "       icacls `"$InstallDir`" /grant `"$($env:USERNAME):F`" /t" -ForegroundColor Cyan
+        Write-Host "       Remove-Item -Recurse -Force `"$InstallDir`"" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "    3. Re-run this installer" -ForegroundColor Yellow
+        Write-Host ""
+        Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+}
+New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
 # Extract
 Write-Status "Installing to $InstallDir..."
@@ -76,6 +137,9 @@ try {
     Expand-Archive -Path $tempZip -DestinationPath $InstallDir -Force
 } catch {
     Write-Err "Extraction failed: $_"
+    # Clean up partial install to avoid permission issues on retry
+    Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
     exit 1
 }
 
@@ -89,21 +153,18 @@ if (-not (Test-Path $rampartExe)) {
     exit 1
 }
 
-# Add to PATH if not already there (both persistent and current session)
+# Add to PATH if not already there
 $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 if ($userPath -notlike "*$InstallDir*") {
     Write-Status "Adding to PATH..."
     [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$userPath", "User")
     Write-Success "Added $InstallDir to PATH"
-} else {
-    Write-Status "Already in PATH"
 }
 
-# IMPORTANT: Update current session PATH to include both User and Machine paths
-# This ensures rampart works immediately without restarting the terminal
-$machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
-$newUserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-$env:PATH = "$newUserPath;$machinePath"
+# Always refresh current session PATH so rampart works immediately
+if ($env:PATH -notlike "*$InstallDir*") {
+    $env:PATH = "$InstallDir;$env:PATH"
+}
 
 # Verify installation
 Write-Host ""
@@ -114,27 +175,26 @@ try {
     Write-Warn "Installed but could not verify version"
 }
 
-# Auto-create policy directory and install standard policy
-Write-Status "Installing standard policy..."
-$policyDir = "$env:USERPROFILE\.rampart\policies"
-if (-not (Test-Path $policyDir)) {
-    New-Item -ItemType Directory -Path $policyDir -Force | Out-Null
-}
-try {
-    & $rampartExe init --profile standard --force 2>&1 | Out-Null
-    Write-Success "Policy installed to $policyDir"
-} catch {
-    Write-Warn "Could not install policy. Run 'rampart init --profile standard' manually."
-}
-
 # Offer to set up Claude Code
 Write-Host ""
 $claudeSettings = "$env:USERPROFILE\.claude\settings.json"
 if (Test-Path $claudeSettings) {
-    Write-Host "Claude Code detected!" -ForegroundColor White
-    $setup = Read-Host "  Set up Rampart hooks for Claude Code? [Y/n]"
-    if ($setup -eq "" -or $setup -match "^[Yy]") {
-        & $rampartExe setup claude-code
+    # Check if Rampart hooks already exist (upgrade scenario)
+    # Use specific pattern to avoid false positives from unrelated "rampart" text
+    # Match both Unix (rampart hook) and Windows (rampart.exe hook) paths
+    $existingHooks = (Get-Content $claudeSettings -Raw) -match '"command"\s*:\s*"[^"]*rampart(?:\.exe)?\s+hook'
+    if ($existingHooks) {
+        Write-Host "Claude Code detected with existing Rampart hooks." -ForegroundColor White
+        $setup = Read-Host "  Update hooks to latest version? [Y/n]"
+        if ($setup -eq "" -or $setup -match "^[Yy]") {
+            & $rampartExe setup claude-code --force
+        }
+    } else {
+        Write-Host "Claude Code detected!" -ForegroundColor White
+        $setup = Read-Host "  Set up Rampart hooks for Claude Code? [Y/n]"
+        if ($setup -eq "" -or $setup -match "^[Yy]") {
+            & $rampartExe setup claude-code
+        }
     }
 } else {
     Write-Status "Claude Code not detected. Run 'rampart setup claude-code' after installing Claude."
@@ -145,13 +205,15 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Success "Rampart installed successfully!"
 Write-Host ""
-Write-Host "  You're protected! Dangerous commands are now blocked." -ForegroundColor Green
+Write-Host "  Try it now:" -ForegroundColor White
+Write-Host "    rampart version" -ForegroundColor Cyan
+Write-Host "    rampart test `"rm -rf /`"" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Try it:" -ForegroundColor White
-Write-Host "    rampart test `"rm -rf /`"    # Should show DENY"
-Write-Host "    rampart doctor              # Check installation"
-Write-Host "    rampart watch               # Live dashboard"
-Write-Host ""
-Write-Host "  Docs: https://docs.rampart.sh"
-Write-Host "  Uninstall: rampart uninstall"
+if (-not (Test-Path $claudeSettings)) {
+    Write-Host "  After installing Claude Code:" -ForegroundColor White
+    Write-Host "    rampart setup claude-code" -ForegroundColor Cyan
+    Write-Host ""
+}
+Write-Host "  Docs: https://docs.rampart.sh" -ForegroundColor DarkGray
+Write-Host "  Uninstall: rampart uninstall" -ForegroundColor DarkGray
 Write-Host ""
