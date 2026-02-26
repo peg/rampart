@@ -96,6 +96,11 @@ func TestCleanPaths(t *testing.T) {
 		{"/a/b/../c/d", "/a/c/d"},
 		{"", ""},
 		{"/clean/path", "/clean/path"},
+		// Backslash injection: on Unix, backslash is a valid filename char.
+		// Without normalization, filepath.Clean would NOT resolve the "..".
+		// With our fix, backslash is converted to "/" first, then cleaned.
+		{`/home/user\../etc/shadow`, "/home/etc/shadow"},
+		{`/safe\../unsafe/secret.txt`, "/unsafe/secret.txt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

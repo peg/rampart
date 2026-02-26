@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -71,9 +70,11 @@ type mcpConfig struct {
 }
 
 type mcpServer struct {
-	Command string            `json:"command"`
+	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+	// URL is for SSE-based MCP servers (no command). These cannot be wrapped.
+	URL string `json:"url,omitempty"`
 }
 
 // wrapMCPServers modifies an MCP config to wrap all servers with rampart mcp.
@@ -83,7 +84,7 @@ func wrapMCPServers(cmd *cobra.Command, configPath, appName string, force bool) 
 	if os.IsNotExist(err) {
 		fmt.Fprintf(cmd.OutOrStdout(), "No MCP configuration found at %s\n", configPath)
 		fmt.Fprintf(cmd.OutOrStdout(), "\n%s MCP servers will be protected once you configure them.\n", appName)
-		fmt.Fprintln(cmd.OutOrStdout(), "See: https://docs.rampart.sh/guides/securing-cursor")
+		fmt.Fprintf(cmd.OutOrStdout(), "See: https://docs.rampart.sh/guides/securing-%s\n", strings.ToLower(appName))
 		return nil
 	}
 	if err != nil {
@@ -110,9 +111,15 @@ func wrapMCPServers(cmd *cobra.Command, configPath, appName string, force bool) 
 	}
 
 	// Track changes
-	var wrapped, skipped []string
+	var wrapped, skipped, sseSkipped []string
 
 	for name, server := range config.MCPServers {
+		// Skip URL-based (SSE) servers — they can't be wrapped
+		if server.URL != "" && server.Command == "" {
+			sseSkipped = append(sseSkipped, name)
+			continue
+		}
+
 		// Check if already wrapped
 		if isRampartWrapped(server) {
 			if !force {
@@ -128,6 +135,12 @@ func wrapMCPServers(cmd *cobra.Command, configPath, appName string, force bool) 
 		config.MCPServers[name] = wrapServer(server, rampartBin)
 	}
 
+	// Warn about SSE servers
+	if len(sseSkipped) > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "⚠️  Skipped %d SSE-based server(s) (URL-only, cannot be wrapped): %s\n",
+			len(sseSkipped), strings.Join(sseSkipped, ", "))
+	}
+
 	if len(wrapped) == 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "All %d MCP server(s) already protected by Rampart.\n", len(skipped))
 		return nil
@@ -140,10 +153,12 @@ func wrapMCPServers(cmd *cobra.Command, configPath, appName string, force bool) 
 	}
 	output = append(output, '\n')
 
-	// Backup original
+	// Backup original (only if no backup exists — preserve the true original)
 	backupPath := configPath + ".rampart-backup"
-	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
-		return fmt.Errorf("setup %s: backup config: %w", strings.ToLower(appName), err)
+	if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
+		if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+			return fmt.Errorf("setup %s: backup config: %w", strings.ToLower(appName), err)
+		}
 	}
 
 	if err := os.WriteFile(configPath, output, 0o644); err != nil {
@@ -257,9 +272,3 @@ func unwrapServer(server mcpServer) mcpServer {
 	}
 }
 
-// Helper for Windows path
-func init() {
-	if runtime.GOOS == "windows" {
-		// Windows uses %USERPROFILE% which os.UserHomeDir() handles
-	}
-}

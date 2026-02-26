@@ -67,6 +67,13 @@ func cleanPaths(p string) (cleaned string, resolved string) {
 	if p == "" {
 		return p, p
 	}
+	// Normalize backslashes to forward slashes BEFORE filepath.Clean.
+	// This is critical for security: on Unix, backslash is a valid filename char,
+	// so "/home/user\../etc/shadow" would NOT be cleaned by filepath.Clean.
+	// By normalizing first, the ".." traversal is properly resolved.
+	// This also enables cross-platform policy matching (Windows paths match
+	// forward-slash patterns like "**/.ssh/id_*").
+	p = strings.ReplaceAll(p, "\\", "/")
 	cleaned = filepath.Clean(p)
 	r, err := filepath.EvalSymlinks(cleaned)
 	if err != nil {

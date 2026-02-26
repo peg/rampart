@@ -17,6 +17,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,6 +143,10 @@ func tokenFilePath() (string, error) {
 // persistToken writes the token to ~/.rampart/token (0600).
 // If the file already exists, permissions are explicitly set to 0o600 regardless
 // of what they were before — os.WriteFile only applies the mode on creation.
+//
+// WARNING: On Windows, os.Chmod is a no-op for Unix permission bits.
+// The token file may be readable by other users on the system.
+// A future version will use Windows ACLs for proper protection.
 func persistToken(token string) error {
 	p, err := tokenFilePath()
 	if err != nil {
@@ -153,7 +158,16 @@ func persistToken(token string) error {
 	if err := os.WriteFile(p, []byte(token), 0o600); err != nil {
 		return err
 	}
-	return os.Chmod(p, 0o600)
+	if err := os.Chmod(p, 0o600); err != nil {
+		return err
+	}
+	// Log warning on Windows where chmod is ineffective
+	if runtime.GOOS == "windows" {
+		slog.Warn("token file permissions: os.Chmod is ineffective on Windows",
+			"path", p,
+			"note", "token may be readable by other users; a future version will use Windows ACLs")
+	}
+	return nil
 }
 
 // readPersistedToken reads the token from ~/.rampart/token if it exists.

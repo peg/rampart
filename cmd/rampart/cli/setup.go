@@ -32,7 +32,9 @@ Run without a subcommand to launch the interactive setup wizard.
 
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
-  • Cline (VS Code)           - Native hook integration  
+  • Cline (VS Code)           - Native hook integration
+  • Cursor                    - MCP server wrapping
+  • Windsurf                  - MCP server wrapping
   • OpenClaw                  - Shell wrapper integration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInteractiveSetup(cmd, opts)
