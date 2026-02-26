@@ -20,7 +20,6 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/peg/rampart/policies"
@@ -55,11 +54,6 @@ func detectAgents() []agentInfo {
 			Name:     "OpenClaw",
 			HasSetup: true,
 			SetupCmd: "openclaw",
-		},
-		{
-			Name:      "Cursor",
-			HasSetup:  false,
-			ManualCmd: "rampart mcp -- cursor",
 		},
 		{
 			Name:     "Codex",
@@ -100,21 +94,9 @@ func detectAgents() []agentInfo {
 		agents[2].Detected = true
 	}
 
-	// Cursor: check ~/.cursor/ or Applications
-	if home != "" {
-		if _, err := os.Stat(filepath.Join(home, ".cursor")); err == nil {
-			agents[3].Detected = true
-		}
-	}
-	if !agents[3].Detected && runtime.GOOS == "darwin" {
-		if _, err := os.Stat("/Applications/Cursor.app"); err == nil {
-			agents[3].Detected = true
-		}
-	}
-
 	// Codex: check PATH
 	if _, err := osexec.LookPath("codex"); err == nil {
-		agents[4].Detected = true
+		agents[3].Detected = true
 	}
 
 	return agents
