@@ -65,6 +65,34 @@ try {
     exit 1
 }
 
+# Verify checksum (goreleaser produces checksums.txt with each release)
+Write-Status "Verifying checksum..."
+$checksumAsset = $release.assets | Where-Object { $_.name -eq "checksums.txt" }
+if ($checksumAsset) {
+    try {
+        $checksums = Invoke-RestMethod -Uri $checksumAsset.browser_download_url
+        $expectedLine = $checksums -split "`n" | Where-Object { $_ -match [regex]::Escape($assetName) }
+        if ($expectedLine) {
+            $expected = ($expectedLine -split "\s+")[0].Trim().ToLower()
+            $actual = (Get-FileHash $tempZip -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) {
+                Write-Err "Checksum mismatch!"
+                Write-Err "  Expected: $expected"
+                Write-Err "  Got:      $actual"
+                Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+                exit 1
+            }
+            Write-Success "Checksum verified"
+        } else {
+            Write-Warn "Checksum for $assetName not found in checksums.txt (skipping verification)"
+        }
+    } catch {
+        Write-Warn "Could not verify checksum: $_"
+    }
+} else {
+    Write-Warn "No checksums.txt in release (skipping verification)"
+}
+
 # Create install directory (clear existing to avoid conflicts)
 if (Test-Path $InstallDir) {
     Write-Status "Removing previous installation..."
@@ -151,8 +179,9 @@ try {
 Write-Host ""
 $claudeSettings = "$env:USERPROFILE\.claude\settings.json"
 if (Test-Path $claudeSettings) {
-    # Check if hooks already exist (upgrade scenario)
-    $existingHooks = (Get-Content $claudeSettings -Raw) -match "rampart"
+    # Check if Rampart hooks already exist (upgrade scenario)
+    # Use specific pattern to avoid false positives from unrelated "rampart" text
+    $existingHooks = (Get-Content $claudeSettings -Raw) -match '"command"\s*:\s*"[^"]*rampart\s+hook'
     if ($existingHooks) {
         Write-Host "Claude Code detected with existing Rampart hooks." -ForegroundColor White
         $setup = Read-Host "  Update hooks to latest version? [Y/n]"

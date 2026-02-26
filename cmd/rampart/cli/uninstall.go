@@ -63,11 +63,17 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	var removed []string
 	var failed []string
 
+	// Get current executable path (don't resolve "rampart" from PATH — could be malicious)
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "rampart" // fallback, but prefer current binary
+	}
+
 	// 1. Remove hooks from Claude Code
 	claudeSettings := filepath.Join(home, ".claude", "settings.json")
 	if _, err := os.Stat(claudeSettings); err == nil {
 		fmt.Fprintln(w, "Removing Claude Code hooks...")
-		if err := runSilent("rampart", "setup", "claude-code", "--remove"); err == nil {
+		if err := runSilent(exe, "setup", "claude-code", "--remove"); err == nil {
 			removed = append(removed, "Claude Code hooks")
 		} else {
 			failed = append(failed, "Claude Code hooks")
@@ -78,7 +84,7 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	clineDir := filepath.Join(home, "Documents", "Cline", "Hooks")
 	if _, err := os.Stat(clineDir); err == nil {
 		fmt.Fprintln(w, "Removing Cline hooks...")
-		if err := runSilent("rampart", "setup", "cline", "--remove"); err == nil {
+		if err := runSilent(exe, "setup", "cline", "--remove"); err == nil {
 			removed = append(removed, "Cline hooks")
 		} else {
 			failed = append(failed, "Cline hooks")
@@ -240,10 +246,11 @@ func removeFromWindowsPath(home string) bool {
 		return false
 	}
 
-	// Set new PATH
+	// Set new PATH (escape single quotes to prevent PowerShell injection)
 	newPath := strings.Join(newPaths, ";")
+	escapedPath := strings.ReplaceAll(newPath, "'", "''")
 	cmd = exec.Command("powershell", "-Command",
-		fmt.Sprintf("[Environment]::SetEnvironmentVariable('PATH', '%s', 'User')", newPath))
+		fmt.Sprintf("[Environment]::SetEnvironmentVariable('PATH', '%s', 'User')", escapedPath))
 	return cmd.Run() == nil
 }
 
