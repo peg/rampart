@@ -95,6 +95,19 @@ if ($checksumAsset) {
 
 # Create install directory (clear existing to avoid conflicts)
 if (Test-Path $InstallDir) {
+    # Stop any running rampart processes first
+    $rampartExe = "$InstallDir\rampart.exe"
+    if (Test-Path $rampartExe) {
+        Write-Status "Stopping any running Rampart processes..."
+        # Try graceful shutdown first
+        try {
+            & $rampartExe serve stop 2>$null
+        } catch { }
+        # Kill any remaining processes
+        Get-Process -Name "rampart" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500  # Give Windows time to release file handles
+    }
+    
     Write-Status "Removing previous installation..."
     $removed = $false
     

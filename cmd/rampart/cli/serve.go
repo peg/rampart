@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -388,6 +389,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					}
 					if err := sink.Close(); err != nil {
 						logger.Error("serve: close audit sink failed", "error", err)
+					}
+					// Brief delay on Windows to let OS release file handles before process exits.
+					// Without this, Windows Defender or the indexer can lock files briefly.
+					if runtime.GOOS == "windows" {
+						time.Sleep(200 * time.Millisecond)
 					}
 					return nil
 				case err := <-proxyErrCh:
