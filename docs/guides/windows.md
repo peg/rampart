@@ -96,22 +96,60 @@ Rampart automatically normalizes Windows paths for policy matching:
 ## Uninstall
 
 ```powershell
-# Remove hooks from Claude Code
-rampart setup claude-code --remove
-
-# Delete Rampart files
-Remove-Item -Recurse ~\.rampart
+rampart uninstall
 ```
 
-To also remove from PATH, go to **Settings → System → About → Advanced system settings → Environment Variables** and remove `%USERPROFILE%\.rampart\bin` from your user PATH.
+This removes hooks from Claude Code and Cline, removes Rampart from your PATH, and prints instructions to delete the remaining files.
+
+**Manual cleanup** (if rampart command isn't working):
+```powershell
+# Delete Rampart files
+Remove-Item -Recurse -Force ~\.rampart
+```
+
+Then remove `%USERPROFILE%\.rampart\bin` from PATH: **Settings → System → About → Advanced system settings → Environment Variables**.
 
 ## Troubleshooting
 
+### Windows Defender / Antivirus Warnings
+
+Rampart is an unsigned binary that modifies other programs' configurations (Claude Code hooks). This may trigger security warnings:
+
+**SmartScreen "Windows protected your PC":**
+1. Click "More info"
+2. Click "Run anyway"
+
+**Windows Defender quarantine:**
+1. Open Windows Security → Virus & threat protection
+2. Click "Protection history"
+3. Find Rampart, select "Restore" and "Allow on device"
+
+**Corporate antivirus blocking:**
+Contact your IT team to whitelist `rampart.exe`, or install to a location your AV trusts.
+
+> **Why does this happen?** Rampart hooks into other programs and intercepts command execution — behaviors that look suspicious to antivirus heuristics. The binary is not code-signed (certificates cost ~$400/year). We're working on getting Rampart whitelisted with major AV vendors.
+
 ### "rampart is not recognized"
 
-Restart your terminal after installation, or manually refresh PATH:
+The installer refreshes PATH automatically, but if it doesn't work:
 ```powershell
-$env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + $env:PATH
+$env:PATH = "$env:USERPROFILE\.rampart\bin;$env:PATH"
+```
+
+Or restart your terminal.
+
+### Installation fails with "Access Denied"
+
+If a previous install left files with broken permissions:
+
+```powershell
+# Run as Administrator
+takeown /f "$env:USERPROFILE\.rampart" /r /d y
+icacls "$env:USERPROFILE\.rampart" /grant "$($env:USERNAME):F" /t
+Remove-Item -Recurse -Force "$env:USERPROFILE\.rampart"
+
+# Then re-run installer
+irm https://rampart.sh/install.ps1 | iex
 ```
 
 ### Claude Code not seeing hooks
