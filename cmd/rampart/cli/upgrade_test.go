@@ -232,6 +232,7 @@ func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
 }
 
 func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -275,6 +276,7 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 }
 
 func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -331,6 +333,7 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 }
 
 func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	// If both a PID file AND a systemd service exist, systemd wins.
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
