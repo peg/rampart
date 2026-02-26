@@ -151,10 +151,20 @@ try {
 Write-Host ""
 $claudeSettings = "$env:USERPROFILE\.claude\settings.json"
 if (Test-Path $claudeSettings) {
-    Write-Host "Claude Code detected!" -ForegroundColor White
-    $setup = Read-Host "  Set up Rampart hooks for Claude Code? [Y/n]"
-    if ($setup -eq "" -or $setup -match "^[Yy]") {
-        & $rampartExe setup claude-code
+    # Check if hooks already exist (upgrade scenario)
+    $existingHooks = (Get-Content $claudeSettings -Raw) -match "rampart"
+    if ($existingHooks) {
+        Write-Host "Claude Code detected with existing Rampart hooks." -ForegroundColor White
+        $setup = Read-Host "  Update hooks to latest version? [Y/n]"
+        if ($setup -eq "" -or $setup -match "^[Yy]") {
+            & $rampartExe setup claude-code --force
+        }
+    } else {
+        Write-Host "Claude Code detected!" -ForegroundColor White
+        $setup = Read-Host "  Set up Rampart hooks for Claude Code? [Y/n]"
+        if ($setup -eq "" -or $setup -match "^[Yy]") {
+            & $rampartExe setup claude-code
+        }
     }
 } else {
     Write-Status "Claude Code not detected. Run 'rampart setup claude-code' after installing Claude."
