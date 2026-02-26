@@ -61,9 +61,12 @@ func (h *sseHub) subscribe() (chan []byte, func()) {
 	h.mu.Unlock()
 	return ch, func() {
 		h.mu.Lock()
-		delete(h.clients, ch)
-		close(ch)
-		h.mu.Unlock()
+		defer h.mu.Unlock()
+		// Check if channel still exists (might have been closed by sseHub.Close())
+		if _, exists := h.clients[ch]; exists {
+			delete(h.clients, ch)
+			close(ch)
+		}
 	}
 }
 
@@ -75,6 +78,16 @@ func (h *sseHub) broadcast(data []byte) {
 		case ch <- data:
 		default:
 		}
+	}
+}
+
+// Close disconnects all SSE clients. Called during server shutdown.
+func (h *sseHub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.clients {
+		close(ch)
+		delete(h.clients, ch)
 	}
 }
 
@@ -294,6 +307,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if srv == nil {
 		return nil
 	}
+
+	// Close SSE connections first so they don't block server shutdown.
+	// Without this, long-lived SSE clients keep the server alive past the deadline.
+	s.sse.Close()
+
 	if err := srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("proxy: shutdown: %w", err)
 	}
