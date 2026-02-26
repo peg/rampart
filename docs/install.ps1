@@ -68,7 +68,23 @@ try {
 # Create install directory (clear existing to avoid conflicts)
 if (Test-Path $InstallDir) {
     Write-Status "Removing previous installation..."
-    Remove-Item -Recurse -Force $InstallDir
+    try {
+        Remove-Item -Recurse -Force $InstallDir -ErrorAction Stop
+    } catch {
+        Write-Err "Cannot remove existing installation at $InstallDir"
+        Write-Err "This usually means files are locked or have permission issues."
+        Write-Host ""
+        Write-Host "  Try these steps:" -ForegroundColor Yellow
+        Write-Host "    1. Close all terminals and Claude Code"
+        Write-Host "    2. Run PowerShell as Administrator and execute:"
+        Write-Host "       takeown /f `"$InstallDir`" /r /d y" -ForegroundColor Cyan
+        Write-Host "       icacls `"$InstallDir`" /grant `"$env:USERNAME`:F`" /t" -ForegroundColor Cyan
+        Write-Host "       Remove-Item -Recurse -Force `"$InstallDir`"" -ForegroundColor Cyan
+        Write-Host "    3. Re-run this installer"
+        Write-Host ""
+        Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
@@ -78,6 +94,9 @@ try {
     Expand-Archive -Path $tempZip -DestinationPath $InstallDir -Force
 } catch {
     Write-Err "Extraction failed: $_"
+    # Clean up partial install to avoid permission issues on retry
+    Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
     exit 1
 }
 
