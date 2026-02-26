@@ -48,6 +48,7 @@ const statusCallCountWindow = time.Hour
 type sseHub struct {
 	mu      sync.RWMutex
 	clients map[chan []byte]struct{}
+	closed  bool
 }
 
 func newSSEHub() *sseHub {
@@ -57,24 +58,50 @@ func newSSEHub() *sseHub {
 func (h *sseHub) subscribe() (chan []byte, func()) {
 	ch := make(chan []byte, 32)
 	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// If hub is closed (shutdown in progress), return immediately-closed channel.
+	// Handler will see ok=false on receive and exit gracefully.
+	if h.closed {
+		close(ch)
+		return ch, func() {} // no-op unsubscribe
+	}
+
 	h.clients[ch] = struct{}{}
-	h.mu.Unlock()
 	return ch, func() {
 		h.mu.Lock()
-		delete(h.clients, ch)
-		close(ch)
-		h.mu.Unlock()
+		defer h.mu.Unlock()
+		// Check if channel still exists (might have been closed by sseHub.Close())
+		if _, exists := h.clients[ch]; exists {
+			delete(h.clients, ch)
+			close(ch)
+		}
 	}
 }
 
 func (h *sseHub) broadcast(data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	// Skip broadcast if hub is closed
+	if h.closed {
+		return
+	}
 	for ch := range h.clients {
 		select {
 		case ch <- data:
 		default:
 		}
+	}
+}
+
+// Close disconnects all SSE clients. Called during server shutdown.
+func (h *sseHub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	for ch := range h.clients {
+		close(ch)
+		delete(h.clients, ch)
 	}
 }
 
@@ -294,6 +321,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if srv == nil {
 		return nil
 	}
+
+	// Close SSE connections first so they don't block server shutdown.
+	// Without this, long-lived SSE clients keep the server alive past the deadline.
+	s.sse.Close()
+
 	if err := srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("proxy: shutdown: %w", err)
 	}
