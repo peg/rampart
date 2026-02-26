@@ -2,6 +2,7 @@ package engine
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -75,6 +76,9 @@ func TestMatchGlob(t *testing.T) {
 }
 
 func TestCleanPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths")
+	}
 	tests := []struct {
 		input string
 		want  string
@@ -96,6 +100,9 @@ func TestCleanPaths(t *testing.T) {
 }
 
 func TestMatchCondition_PathTraversalBypass(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths")
+	}
 	// A deny rule for /etc/shadow should catch traversal attempts.
 	cond := Condition{
 		PathMatches: []string{"/etc/shadow"},

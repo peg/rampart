@@ -164,6 +164,7 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
 }
 
 func TestNewUpgradeCmdDryRun(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -197,6 +198,7 @@ func TestNewUpgradeCmdDryRun(t *testing.T) {
 }
 
 func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {

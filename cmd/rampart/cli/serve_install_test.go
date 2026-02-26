@@ -109,6 +109,7 @@ func TestResolveToken_Generated(t *testing.T) {
 }
 
 func TestPersistAndReadToken(t *testing.T) {
+	skipOnWindows(t, "Unix file permissions")
 	home := t.TempDir()
 	testSetHome(t, home)
 
@@ -144,6 +145,7 @@ func TestPersistAndReadToken(t *testing.T) {
 }
 
 func TestPersistToken_FixesPermissions(t *testing.T) {
+	skipOnWindows(t, "Unix file permissions")
 	home := t.TempDir()
 	testSetHome(t, home)
 
