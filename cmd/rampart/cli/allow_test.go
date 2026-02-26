@@ -286,11 +286,7 @@ func TestAddRule_InvalidYAMLPreserved(t *testing.T) {
 
 func TestAllowCmd_Basic(t *testing.T) {
 	dir := t.TempDir()
-
-	// Override HOME before building the path so it resolves correctly.
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	defer os.Setenv("HOME", oldHome)
+	testSetHome(t, dir)
 
 	// Make sure the policy dir exists.
 	_ = os.MkdirAll(filepath.Join(dir, ".rampart", "policies"), 0o755)
@@ -322,10 +318,7 @@ func TestAllowCmd_Basic(t *testing.T) {
 
 func TestBlockCmd_Basic(t *testing.T) {
 	dir := t.TempDir()
-
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	defer os.Setenv("HOME", oldHome)
+	testSetHome(t, dir)
 
 	_ = os.MkdirAll(filepath.Join(dir, ".rampart", "policies"), 0o755)
 	policyPath := filepath.Join(dir, ".rampart", "policies", "custom.yaml")
@@ -379,9 +372,7 @@ func TestAllowCmd_EmptyPattern(t *testing.T) {
 
 func TestAllowCmd_InvalidGlob(t *testing.T) {
 	dir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	defer os.Setenv("HOME", oldHome)
+	testSetHome(t, dir)
 
 	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
 	cmd.SetArgs([]string{"allow", "bad[pattern", "--global", "--yes"})
@@ -397,9 +388,7 @@ func TestAllowCmd_InvalidGlob(t *testing.T) {
 
 func TestAllowCmd_GlobalVsProjectMutuallyExclusive(t *testing.T) {
 	dir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	defer os.Setenv("HOME", oldHome)
+	testSetHome(t, dir)
 
 	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
 	cmd.SetArgs([]string{"allow", "npm install *", "--global", "--project", "--yes"})
@@ -430,15 +419,12 @@ func TestReloadPolicy_Success(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	defer os.Setenv("HOME", oldHome)
+	testSetHome(t, dir)
 
 	_ = os.MkdirAll(filepath.Join(dir, ".rampart", "policies"), 0o755)
 
 	// Set a fake token so reloadPolicy is actually called.
-	os.Setenv("RAMPART_TOKEN", "test-token")
-	defer os.Unsetenv("RAMPART_TOKEN")
+	t.Setenv("RAMPART_TOKEN", "test-token")
 
 	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
 	outBuf := &bytes.Buffer{}
@@ -468,14 +454,11 @@ func TestReloadPolicy_Success(t *testing.T) {
 
 func TestReloadPolicy_DaemonUnreachable(t *testing.T) {
 	dir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	defer os.Setenv("HOME", oldHome)
+	testSetHome(t, dir)
 
 	_ = os.MkdirAll(filepath.Join(dir, ".rampart", "policies"), 0o755)
 
-	os.Setenv("RAMPART_TOKEN", "test-token")
-	defer os.Unsetenv("RAMPART_TOKEN")
+	t.Setenv("RAMPART_TOKEN", "test-token")
 
 	outBuf := &bytes.Buffer{}
 	cmd := NewRootCmd(context.Background(), outBuf, &bytes.Buffer{})

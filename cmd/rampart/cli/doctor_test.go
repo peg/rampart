@@ -45,8 +45,9 @@ func TestRunDoctor(t *testing.T) {
 
 func TestRelHome(t *testing.T) {
 	got := relHome("/home/user/.rampart/audit", "/home/user")
-	if got != ".rampart/audit" {
-		t.Errorf("relHome = %q, want .rampart/audit", got)
+	want := filepath.FromSlash(".rampart/audit")
+	if got != want {
+		t.Errorf("relHome = %q, want %s", got, want)
 	}
 }
 
@@ -163,7 +164,7 @@ func TestDoctorToken_Missing(t *testing.T) {
 
 func TestDoctorHooks_PathHints(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	claudeDir := filepath.Join(home, ".claude")
 	requireNoErr(t, os.MkdirAll(claudeDir, 0o755))

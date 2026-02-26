@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/peg/rampart/internal/audit"
@@ -162,13 +163,15 @@ func TestCreateShellShim_Coverage(t *testing.T) {
 		t.Error("shim file is empty")
 	}
 
-	// Verify token file permissions
-	tokInfo, err := os.Stat(path + ".tok")
-	if err != nil {
-		t.Fatalf("stat token file: %v", err)
-	}
-	if tokInfo.Mode().Perm() != 0o600 {
-		t.Errorf("token file perms = %o, want 600", tokInfo.Mode().Perm())
+	// Verify token file permissions (Unix only — Windows doesn't have Unix-style perms)
+	if runtime.GOOS != "windows" {
+		tokInfo, err := os.Stat(path + ".tok")
+		if err != nil {
+			t.Fatalf("stat token file: %v", err)
+		}
+		if tokInfo.Mode().Perm() != 0o600 {
+			t.Errorf("token file perms = %o, want 600", tokInfo.Mode().Perm())
+		}
 	}
 }
 

@@ -33,9 +33,7 @@ func TestDetectEnv_ClaudeCode(t *testing.T) {
 
 	// Create a temp claude settings file
 	tmp := t.TempDir()
-	orig := os.Getenv("HOME")
-	t.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", orig)
+	testSetHome(t, tmp)
 
 	if err := os.MkdirAll(filepath.Join(tmp, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
@@ -54,9 +52,7 @@ func TestDetectEnv_None(t *testing.T) {
 	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
 
 	tmp := t.TempDir()
-	orig := os.Getenv("HOME")
-	t.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", orig)
+	testSetHome(t, tmp)
 
 	// Ensure 'claude' binary is not in PATH for this test.
 	origPath := os.Getenv("PATH")
@@ -71,9 +67,7 @@ func TestDetectEnv_None(t *testing.T) {
 func TestDetectEnv_Cursor(t *testing.T) {
 	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
 	tmp := t.TempDir()
-	orig := os.Getenv("HOME")
-	t.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", orig)
+	testSetHome(t, tmp)
 
 	// Ensure 'claude' binary is not found.
 	origPath := os.Getenv("PATH")
@@ -102,9 +96,7 @@ func TestDetectEnv_Cursor(t *testing.T) {
 func TestDetectEnv_Windsurf(t *testing.T) {
 	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
 	tmp := t.TempDir()
-	orig := os.Getenv("HOME")
-	t.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", orig)
+	testSetHome(t, tmp)
 
 	// Ensure 'claude' binary is not found and no Cursor settings exist.
 	origPath := os.Getenv("PATH")
@@ -134,9 +126,7 @@ func TestDetectEnv_CursorBeatsWindsurf(t *testing.T) {
 	// When both Cursor and Windsurf are installed, Cursor should win (checked first).
 	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
 	tmp := t.TempDir()
-	orig := os.Getenv("HOME")
-	t.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", orig)
+	testSetHome(t, tmp)
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", "")
