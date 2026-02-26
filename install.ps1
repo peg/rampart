@@ -181,7 +181,8 @@ $claudeSettings = "$env:USERPROFILE\.claude\settings.json"
 if (Test-Path $claudeSettings) {
     # Check if Rampart hooks already exist (upgrade scenario)
     # Use specific pattern to avoid false positives from unrelated "rampart" text
-    $existingHooks = (Get-Content $claudeSettings -Raw) -match '"command"\s*:\s*"[^"]*rampart\s+hook'
+    # Match both Unix (rampart hook) and Windows (rampart.exe hook) paths
+    $existingHooks = (Get-Content $claudeSettings -Raw) -match '"command"\s*:\s*"[^"]*rampart(?:\.exe)?\s+hook'
     if ($existingHooks) {
         Write-Host "Claude Code detected with existing Rampart hooks." -ForegroundColor White
         $setup = Read-Host "  Update hooks to latest version? [Y/n]"

@@ -977,9 +977,15 @@ func hasRampartInMatcher(matcher map[string]any) bool {
 	for _, h := range hooks {
 		if m, ok := h.(map[string]any); ok {
 			if cmd, ok := m["command"].(string); ok {
-				// Match bare "rampart hook" or absolute path variants like "/usr/local/bin/rampart hook"
-				if cmd == "rampart hook" || strings.HasPrefix(cmd, "rampart hook ") ||
-					strings.HasSuffix(cmd, "/rampart hook") || strings.Contains(cmd, "/rampart hook ") {
+				// Match bare "rampart hook" or absolute path variants:
+				// - Unix: /usr/local/bin/rampart hook
+				// - Windows: C:\Users\foo\.rampart\bin\rampart.exe hook
+				if cmd == "rampart hook" || cmd == "rampart.exe hook" ||
+					strings.HasPrefix(cmd, "rampart hook ") || strings.HasPrefix(cmd, "rampart.exe hook ") ||
+					strings.HasSuffix(cmd, "/rampart hook") || strings.HasSuffix(cmd, "\\rampart hook") ||
+					strings.HasSuffix(cmd, "/rampart.exe hook") || strings.HasSuffix(cmd, "\\rampart.exe hook") ||
+					strings.Contains(cmd, "/rampart hook ") || strings.Contains(cmd, "\\rampart hook ") ||
+					strings.Contains(cmd, "/rampart.exe hook ") || strings.Contains(cmd, "\\rampart.exe hook ") {
 					return true
 				}
 			}
