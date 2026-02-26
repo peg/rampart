@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 REAL_SHELL="/bin/bash"
 RAMPART_URL="http://127.0.0.1:19090"
-RAMPART_TOKEN="c86356c424aafc202ec88e7cbdc6ce3cb0484be26c89cac20254dce4b6774897"
+# Token is auto-read from ~/.rampart/token if not set
+RAMPART_TOKEN="${RAMPART_TOKEN:-$(cat ~/.rampart/token 2>/dev/null)}"
 RAMPART_MODE="enforce"
 APPROVAL_POLL_INTERVAL=3
 APPROVAL_TIMEOUT=300
