@@ -96,6 +96,11 @@ go install github.com/peg/rampart/cmd/rampart@latest
 # https://github.com/peg/rampart/releases
 ```
 
+**Windows (PowerShell):**
+```powershell
+irm https://rampart.sh/install.ps1 | iex
+```
+
 > **Tip:** The curl installer drops the binary in `~/.local/bin` and runs `rampart quickstart` automatically.
 > Pin a version with `RAMPART_VERSION=v0.4.7 curl -fsSL https://rampart.sh/install | bash`.
 >
