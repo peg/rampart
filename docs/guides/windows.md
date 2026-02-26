@@ -20,17 +20,22 @@ rampart setup claude-code
 
 This adds hooks to `~\.claude\settings.json`. Claude Code will now route all Bash commands through Rampart.
 
-## Running the Policy Server
+## That's It — You're Protected!
+
+After running `rampart setup claude-code`, dangerous commands are blocked immediately. **No need to run `rampart serve` for basic protection** — the hook evaluates policies locally.
+
+## Optional: Policy Server
+
+Run `rampart serve` if you want:
+- **Live dashboard** — `rampart watch` shows real-time decisions
+- **Approval flow** — `require_approval` policies need serve to handle human review
+- **Centralized audit** — stream events to the dashboard
 
 ```powershell
 rampart serve
 ```
 
-> **Note:** On Windows, `rampart serve` runs in the foreground. Keep the terminal window open while using Claude Code, or use Task Scheduler/NSSM to run it at startup.
-
-For a more permanent setup, you can:
-1. Create a scheduled task to run `rampart serve` at login
-2. Use [NSSM](https://nssm.cc/) to wrap it as a Windows service
+> **Note:** On Windows, `rampart serve` runs in the foreground. Keep the terminal window open, or use Task Scheduler/NSSM to run it at startup.
 
 ## Verify Installation
 
