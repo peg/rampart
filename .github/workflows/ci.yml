@@ -51,6 +51,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
 
       - name: Benchmark
+        if: runner.os != 'Windows'
         run: go test -bench=. -benchmem ./internal/engine/ ./internal/audit/
 
       - name: Upload coverage
