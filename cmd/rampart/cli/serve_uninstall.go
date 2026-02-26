@@ -31,7 +31,8 @@ func newServeUninstallCmd(runner commandRunner) *cobra.Command {
 		Short: "Remove the rampart serve system service",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS == "windows" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Windows is not yet supported.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Windows service uninstallation is not supported.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Remove any Task Scheduler entries or NSSM services manually.")
 				return nil
 			}
 

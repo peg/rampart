@@ -26,7 +26,7 @@ This adds hooks to `~\.claude\settings.json`. Claude Code will now route all Bas
 rampart serve
 ```
 
-> **Note:** On Windows, `rampart serve` runs in the foreground. Keep the terminal window open while using Claude Code. Background service support (`--background`) is planned for a future release.
+> **Note:** On Windows, `rampart serve` runs in the foreground. Keep the terminal window open while using Claude Code, or use Task Scheduler/NSSM to run it at startup.
 
 For a more permanent setup, you can:
 1. Create a scheduled task to run `rampart serve` at login

@@ -17,7 +17,7 @@ description: "Install Rampart on Windows, macOS, or Linux. Get the security laye
     **Manual:** Download the `.zip` from [GitHub Releases](https://github.com/peg/rampart/releases), extract `rampart.exe`, and add to your PATH.
     
     !!! note "Windows Limitations"
-        `rampart serve` runs in foreground only (no `--background`). Keep the terminal open while using Claude Code. See [Windows Notes](#windows-notes) below.
+        `rampart serve` runs in foreground only. Keep the terminal open while using Claude Code, or use Task Scheduler/NSSM to run it at startup. See [Windows Notes](#windows-notes) below.
 
 === "macOS & Linux"
 
