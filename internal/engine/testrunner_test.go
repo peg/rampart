@@ -16,6 +16,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -67,6 +68,9 @@ func setupTestEngine(t *testing.T) (*Engine, string) {
 }
 
 func TestRunTests_AllPass(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test cases use Unix paths (e.g. /etc/shadow)")
+	}
 	eng, _ := setupTestEngine(t)
 
 	suite := &TestSuite{

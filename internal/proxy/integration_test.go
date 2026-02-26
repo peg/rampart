@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/peg/rampart/internal/engine"
@@ -32,6 +33,9 @@ import (
 // TestEndToEnd_StandardProfile runs the full standard policy profile against
 // realistic tool calls, verifying every policy works as expected.
 func TestEndToEnd_StandardProfile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("standard policy uses Unix paths (e.g. ~/.ssh/id_rsa)")
+	}
 	srv := setupStandardProxy(t)
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
@@ -284,6 +288,9 @@ func setupStandardProxy(t *testing.T) *Server {
 // TestStandardPolicy_GlobEdgeCases tests specific glob patterns in the standard policy
 // that are easy to get wrong when ** vs * semantics differ.
 func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("standard policy uses Unix paths and commands")
+	}
 	srv := setupStandardProxy(t)
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
