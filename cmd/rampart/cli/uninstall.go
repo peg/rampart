@@ -86,9 +86,12 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	}
 
 	// 3. Stop and remove service
-	fmt.Fprintln(w, "Removing rampart serve service...")
+	fmt.Fprintln(w, "Stopping rampart serve...")
 	switch runtime.GOOS {
 	case "darwin":
+		// Kill any running rampart serve process
+		_ = runSilent("pkill", "-f", "rampart serve")
+		
 		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.rampart.serve.plist")
 		if _, err := os.Stat(plistPath); err == nil {
 			_ = runSilent("launchctl", "unload", plistPath)
@@ -105,6 +108,9 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 			}
 		}
 	case "linux":
+		// Kill any running rampart serve process
+		_ = runSilent("pkill", "-f", "rampart serve")
+		
 		// Try user service first
 		_ = runSilent("systemctl", "--user", "stop", "rampart-serve")
 		_ = runSilent("systemctl", "--user", "disable", "rampart-serve")
@@ -124,7 +130,12 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 		}
 		_ = runSilent("systemctl", "--user", "daemon-reload")
 	case "windows":
-		// No service to remove on Windows (runs in foreground)
+		// Kill any running rampart.exe serve process
+		// taskkill /F /IM rampart.exe only kills by image name, which would kill
+		// the uninstall process too. Use wmic to find serve processes.
+		_ = runSilent("powershell", "-Command",
+			"Get-Process rampart -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like '*serve*'} | Stop-Process -Force")
+		removed = append(removed, "running serve process (if any)")
 	}
 
 	// 4. Remove from PATH (Windows only)
