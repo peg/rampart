@@ -101,6 +101,14 @@ func MatchGlob(pattern, name string) bool {
 		name = name[:maxGlobInputLen]
 	}
 
+	// Normalize path separators to forward slashes for cross-platform matching.
+	// Windows paths use backslashes, but policy patterns use forward slashes.
+	// This ensures "**/.ssh/id_*" matches "C:\Users\Trevor\.ssh\id_rsa".
+	// Use strings.ReplaceAll instead of filepath.ToSlash because ToSlash only
+	// converts on Windows, but we need this to work in tests on any platform.
+	pattern = strings.ReplaceAll(pattern, "\\", "/")
+	name = strings.ReplaceAll(name, "\\", "/")
+
 	// Handle "**" as a recursive wildcard.
 	// matchDoubleGlob uses per-call memoization to keep complexity O(n·k)
 	// where n = len(name) and k = number of "**" segments in the pattern.
