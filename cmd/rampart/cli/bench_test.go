@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -261,5 +262,47 @@ entries:
 	}
 	if got, want := err.Error(), "invalid expected_action"; !strings.Contains(got, want) {
 		t.Fatalf("error %q does not contain %q", got, want)
+	}
+}
+
+func TestRunBenchUsesEmbeddedCorpusWhenDefaultMissing(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	policy := `
+default_action: allow
+policies: []
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+
+	summary, err := runBench(benchRunOptions{
+		PolicyPath: policyPath,
+		CorpusPath: defaultBenchCorpusPath,
+	})
+	if err != nil {
+		t.Fatalf("runBench error: %v", err)
+	}
+	if !summary.Embedded {
+		t.Fatalf("expected embedded corpus fallback")
+	}
+
+	var out bytes.Buffer
+	if err := printBenchSummary(&out, summary, false); err != nil {
+		t.Fatalf("print summary: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "Corpus: (embedded)") {
+		t.Fatalf("summary missing embedded corpus label:\n%s", got)
 	}
 }

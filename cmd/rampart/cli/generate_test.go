@@ -166,6 +166,52 @@ func TestPolicyGenerateCommand_OutputAndAppend(t *testing.T) {
 	}
 }
 
+func TestBuildPolicyFromIntent_FallbackUsesKeywords(t *testing.T) {
+	result, err := buildPolicyFromIntent(intentSpec{
+		Intent:     "block kubernetes operations",
+		Strictness: "balanced",
+	})
+	if err != nil {
+		t.Fatalf("buildPolicyFromIntent() error = %v", err)
+	}
+
+	if len(result.Policy.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(result.Policy.Rules))
+	}
+	containsValue(t, result.Policy.Rules[0].When.CommandContains, "kubernetes")
+	containsValue(t, result.Policy.Rules[0].When.CommandContains, "operations")
+}
+
+func TestBuildPolicyFromIntent_FallbackNoKeywordsReturnsError(t *testing.T) {
+	_, err := buildPolicyFromIntent(intentSpec{
+		Intent:     "block all and for from",
+		Strictness: "balanced",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got, want := err.Error(), "no matching templates or keywords found; try --interactive"; !strings.Contains(got, want) {
+		t.Fatalf("error %q does not contain %q", got, want)
+	}
+}
+
+func TestPolicyGenerateCommand_FallbackWarningOnStderr(t *testing.T) {
+	stdout, stderr, err := runCLI(t, "policy", "generate", "block kubernetes operations")
+	if err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+
+	if got, want := stderr, "Warning: no matching template found for intent; using keyword-only policy — review before use"; !strings.Contains(got, want) {
+		t.Fatalf("stderr %q does not contain %q", got, want)
+	}
+	if got, want := stdout, "command_contains"; !strings.Contains(got, want) {
+		t.Fatalf("stdout missing command_contains: %s", got)
+	}
+	if got, want := stdout, "- kubernetes"; !strings.Contains(got, want) {
+		t.Fatalf("stdout missing kubernetes keyword: %s", got)
+	}
+}
+
 func containsValue(t *testing.T, items []string, want string) {
 	t.Helper()
 	for _, item := range items {

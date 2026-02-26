@@ -142,7 +142,7 @@ Examples:
 				return err
 			}
 
-			generated, err := buildPolicyFromIntent(spec)
+			generated, err := buildPolicyFromIntentWithWriter(spec, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -272,6 +272,10 @@ func normalizeStrictness(raw string) string {
 }
 
 func buildPolicyFromIntent(spec intentSpec) (generatedIntent, error) {
+	return buildPolicyFromIntentWithWriter(spec, os.Stderr)
+}
+
+func buildPolicyFromIntentWithWriter(spec intentSpec, warnWriter io.Writer) (generatedIntent, error) {
 	text := strings.ToLower(strings.TrimSpace(spec.Intent))
 	if text == "" {
 		return generatedIntent{}, fmt.Errorf("policy: empty intent")
@@ -283,7 +287,7 @@ func buildPolicyFromIntent(spec intentSpec) (generatedIntent, error) {
 	selected = dedupeTemplates(selected)
 
 	if len(selected) == 0 {
-		return buildFallbackIntent(spec, action)
+		return buildFallbackIntent(spec, action, warnWriter)
 	}
 
 	tools := make([]string, 0, 2)
@@ -435,11 +439,19 @@ func dedupeTemplates(in []intentTemplate) []intentTemplate {
 	return out
 }
 
-func buildFallbackIntent(spec intentSpec, action string) (generatedIntent, error) {
+func buildFallbackIntent(spec intentSpec, action string, warnWriter io.Writer) (generatedIntent, error) {
+	keywords := extractIntentKeywords(spec.Intent)
+	if len(keywords) == 0 {
+		return generatedIntent{}, fmt.Errorf("policy: cannot generate policy from intent %q — no matching templates or keywords found; try --interactive", spec.Intent)
+	}
+	if warnWriter != nil {
+		_, _ = fmt.Fprintln(warnWriter, "Warning: no matching template found for intent; using keyword-only policy — review before use")
+	}
+
 	rule := engine.Rule{
 		Action: action,
 		When: engine.Condition{
-			CommandContains: []string{spec.Intent},
+			CommandContains: keywords,
 		},
 		Message: defaultRuleMessage(action, condCommandContains),
 	}
@@ -454,7 +466,41 @@ func buildFallbackIntent(spec intentSpec, action string) (generatedIntent, error
 		Rules: []engine.Rule{rule},
 	}
 
-	return generatedIntent{Policy: policy, Comment: "fallback command_contains policy"}, nil
+	return generatedIntent{Policy: policy, Comment: "fallback command_contains keyword policy"}, nil
+}
+
+func extractIntentKeywords(intent string) []string {
+	stopWords := map[string]struct{}{
+		"block": {},
+		"deny":  {},
+		"allow": {},
+		"the":   {},
+		"all":   {},
+		"and":   {},
+		"for":   {},
+		"from":  {},
+	}
+
+	parts := strings.Fields(strings.ToLower(intent))
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		part = strings.TrimFunc(part, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+		})
+		if len(part) < 4 {
+			continue
+		}
+		if _, ok := stopWords[part]; ok {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		out = append(out, part)
+	}
+	return out
 }
 
 func applyCondition(cond *engine.Condition, typ templateConditionType, patterns []string) {

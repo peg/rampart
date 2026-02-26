@@ -23,6 +23,11 @@ rampart setup claude-code
 
 `rampart quickstart` auto-detects Claude Code, Cursor, or Windsurf, installs `rampart serve` as a boot service, configures hooks, and runs a health check. Done.
 
+Why Rampart:
+- **Sub-millisecond, fully local** — Policy evaluation adds <1ms overhead. No cloud proxy, no network hop, no latency tax. Every decision happens on your machine.
+- **Policy-as-code guardrails** — YAML rules are explicit, versionable, and enforceable before tool execution.
+- **Drop-in integrations** — Native hooks, shell wrapping, MCP proxying, and LD_PRELOAD coverage.
+
 Or set up manually:
 
 ```bash

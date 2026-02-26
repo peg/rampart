@@ -23,10 +23,13 @@ import (
 	"strings"
 	"time"
 
+	benchdata "github.com/peg/rampart/bench"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
+
+const defaultBenchCorpusPath = "bench/corpus.yaml"
 
 type benchCorpusEntry struct {
 	Command        string `yaml:"command" json:"command"`
@@ -86,6 +89,7 @@ type benchSummary struct {
 	ByCategory []benchCategorySummary `json:"by_category"`
 	Gaps       []benchGap             `json:"gaps"`
 	Results    []benchCaseResult      `json:"results,omitempty"`
+	Embedded   bool                   `json:"-"`
 }
 
 type benchRunOptions struct {
@@ -139,7 +143,7 @@ func newBenchCmd(_ *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&policyPath, "policy", "~/.rampart/policies/standard.yaml", "Path to policy file")
-	cmd.Flags().StringVar(&corpusPath, "corpus", "bench/corpus.yaml", "Path to benchmark corpus YAML")
+	cmd.Flags().StringVar(&corpusPath, "corpus", defaultBenchCorpusPath, "Path to benchmark corpus YAML")
 	cmd.Flags().StringVar(&category, "category", "", "Filter to a single corpus category")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Include per-case results")
@@ -164,12 +168,21 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 		return benchSummary{}, fmt.Errorf("bench: load policy: %w", err)
 	}
 
+	category := strings.ToLower(strings.TrimSpace(opts.Category))
+	useEmbeddedCorpus := false
 	entries, err := loadBenchCorpus(corpusPath)
 	if err != nil {
-		return benchSummary{}, err
+		if os.IsNotExist(err) && isDefaultBenchCorpusPath(opts.CorpusPath, corpusPath) {
+			entries, err = loadBenchCorpusFromBytes(benchdata.DefaultCorpusData)
+			if err != nil {
+				return benchSummary{}, err
+			}
+			useEmbeddedCorpus = true
+		} else {
+			return benchSummary{}, err
+		}
 	}
 
-	category := strings.ToLower(strings.TrimSpace(opts.Category))
 	if category != "" {
 		filtered := make([]benchCorpusEntry, 0, len(entries))
 		for _, entry := range entries {
@@ -202,6 +215,7 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 		CorpusPath: corpusPath,
 		Category:   category,
 		Total:      len(entries),
+		Embedded:   useEmbeddedCorpus,
 	}
 	if opts.Verbose {
 		summary.Results = make([]benchCaseResult, 0, len(entries))
@@ -305,7 +319,11 @@ func printBenchSummary(w io.Writer, summary benchSummary, verbose bool) error {
 	if _, err := fmt.Fprintf(w, "Policy: %s\n", summary.PolicyPath); err != nil {
 		return fmt.Errorf("bench: write output: %w", err)
 	}
-	if _, err := fmt.Fprintf(w, "Corpus: %s\n", summary.CorpusPath); err != nil {
+	corpusLabel := summary.CorpusPath
+	if summary.Embedded {
+		corpusLabel = "(embedded)"
+	}
+	if _, err := fmt.Fprintf(w, "Corpus: %s\n", corpusLabel); err != nil {
 		return fmt.Errorf("bench: write output: %w", err)
 	}
 	if summary.Category != "" {
@@ -401,7 +419,17 @@ func loadBenchCorpus(path string) ([]benchCorpusEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bench: read corpus: %w", err)
 	}
+	return loadBenchCorpusFromBytes(data)
+}
 
+func loadBenchCorpusFromBytes(data []byte) ([]benchCorpusEntry, error) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, fmt.Errorf("bench: corpus contains no entries")
+	}
+	return parseBenchCorpusData(data)
+}
+
+func parseBenchCorpusData(data []byte) ([]benchCorpusEntry, error) {
 	var doc benchCorpusDocument
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("bench: parse corpus YAML: %w", err)
@@ -440,6 +468,12 @@ func loadBenchCorpus(path string) ([]benchCorpusEntry, error) {
 	}
 
 	return entries, nil
+}
+
+func isDefaultBenchCorpusPath(raw, resolved string) bool {
+	raw = filepath.Clean(strings.TrimSpace(raw))
+	resolved = filepath.Clean(strings.TrimSpace(resolved))
+	return raw == defaultBenchCorpusPath || resolved == defaultBenchCorpusPath
 }
 
 func percent(part, total int) float64 {
