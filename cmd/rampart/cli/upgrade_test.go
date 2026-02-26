@@ -125,7 +125,7 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
 	// Regression test: when already on latest, upgrade should still refresh
 	// installed policy files from the embedded binary.
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 
 	policyDir := filepath.Join(dir, ".rampart", "policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
@@ -408,7 +408,7 @@ func makeArchive(t *testing.T, name string, payload []byte) []byte {
 
 func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 
 	policyDir := filepath.Join(dir, ".rampart", "policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {

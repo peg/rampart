@@ -24,7 +24,7 @@ import (
 func TestRemoveClaudeCodeHooks_WithHooks(t *testing.T) {
 	// Set up a temp home with settings containing rampart hooks
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	claudeDir := filepath.Join(tmpHome, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
@@ -84,7 +84,7 @@ func TestRemoveClaudeCodeHooks_WithHooks(t *testing.T) {
 
 func TestRemoveClaudeCodeHooks_NoHooks(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	opts := &rootOptions{}
 	cmd := newSetupClaudeCodeCmd(opts)
@@ -103,7 +103,7 @@ func TestRemoveClaudeCodeHooks_NoHooks(t *testing.T) {
 
 func TestRemoveClaudeCodeHooks_PreservesNonRampart(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	claudeDir := filepath.Join(tmpHome, ".claude")
 	os.MkdirAll(claudeDir, 0o755)
@@ -149,7 +149,7 @@ func TestRemoveClaudeCodeHooks_PreservesNonRampart(t *testing.T) {
 
 func TestRemoveClineHooks_WithHooks(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	hookDir := filepath.Join(tmpHome, "Documents", "Cline", "Hooks")
 	preDir := filepath.Join(hookDir, "PreToolUse")
@@ -176,7 +176,7 @@ func TestRemoveClineHooks_WithHooks(t *testing.T) {
 
 func TestRemoveClineHooks_NoHooks(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	opts := &rootOptions{}
 	cmd := newSetupClineCmd(opts)

@@ -40,7 +40,7 @@ func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 func TestDetectAgents_ClaudeCodeDetectedByDir(t *testing.T) {
 	// Create a temp home with .claude dir
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestDetectAgents_ClaudeCodeDetectedByDir(t *testing.T) {
 
 func TestDetectAgents_ClineDetectedByDocumentsDir(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	if err := os.MkdirAll(filepath.Join(tmpHome, "Documents", "Cline"), 0o755); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestDetectAgents_ClineDetectedByDocumentsDir(t *testing.T) {
 
 func TestDetectAgents_CursorDetectedByDir(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	if err := os.MkdirAll(filepath.Join(tmpHome, ".cursor"), 0o755); err != nil {
 		t.Fatal(err)

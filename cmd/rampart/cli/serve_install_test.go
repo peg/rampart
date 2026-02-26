@@ -95,7 +95,7 @@ func TestResolveToken_FromEnv(t *testing.T) {
 
 func TestResolveToken_Generated(t *testing.T) {
 	t.Setenv("RAMPART_TOKEN", "")
-	t.Setenv("HOME", t.TempDir()) // prevent reading ~/.rampart/token from real home
+	testSetHome(t, t.TempDir()) // prevent reading ~/.rampart/token from real home
 	tok, gen, err := resolveServiceToken("")
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestResolveToken_Generated(t *testing.T) {
 
 func TestPersistAndReadToken(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	// File doesn't exist yet — readPersistedToken should return an error.
 	if _, err := readPersistedToken(); err == nil {
@@ -145,7 +145,7 @@ func TestPersistAndReadToken(t *testing.T) {
 
 func TestPersistToken_FixesPermissions(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	// Create the token file manually with wrong permissions.
 	p, _ := tokenFilePath()
@@ -167,7 +167,7 @@ func TestPersistToken_FixesPermissions(t *testing.T) {
 
 func TestResolveToken_FromFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 	t.Setenv("RAMPART_TOKEN", "")
 
 	// Write a token to the file.

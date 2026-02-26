@@ -89,7 +89,7 @@ func TestHasRampartInMatcher(t *testing.T) {
 
 func TestSetupClaudeCode_Install(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	// Mock execLookPath to avoid "not in PATH" warning
 	old := execLookPath
@@ -131,7 +131,7 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 
 func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	claudeDir := filepath.Join(tmpHome, ".claude")
 	os.MkdirAll(claudeDir, 0o755)
