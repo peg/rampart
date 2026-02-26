@@ -130,10 +130,12 @@ $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 if ($userPath -notlike "*$InstallDir*") {
     Write-Status "Adding to PATH..."
     [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$userPath", "User")
-    $env:PATH = "$InstallDir;$env:PATH"
     Write-Success "Added $InstallDir to PATH"
-} else {
-    Write-Status "Already in PATH"
+}
+
+# Always refresh current session PATH so rampart works immediately
+if ($env:PATH -notlike "*$InstallDir*") {
+    $env:PATH = "$InstallDir;$env:PATH"
 }
 
 # Verify installation
@@ -163,13 +165,15 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Success "Rampart installed successfully!"
 Write-Host ""
-Write-Host "  Next steps:" -ForegroundColor White
-Write-Host "    1. Restart your terminal (or run: `$env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'User'))"
-Write-Host "    2. Run: rampart setup claude-code"
-Write-Host "    3. Use Claude Code — dangerous commands are now blocked!"
+Write-Host "  Try it now:" -ForegroundColor White
+Write-Host "    rampart version" -ForegroundColor Cyan
+Write-Host "    rampart test `"rm -rf /`"" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Optional: Run 'rampart serve' for the live dashboard and approval flow."
-Write-Host ""
-Write-Host "  Docs: https://docs.rampart.sh"
-Write-Host "  Uninstall: Remove-Item -Recurse ~\.rampart"
+if (-not (Test-Path $claudeSettings)) {
+    Write-Host "  After installing Claude Code:" -ForegroundColor White
+    Write-Host "    rampart setup claude-code" -ForegroundColor Cyan
+    Write-Host ""
+}
+Write-Host "  Docs: https://docs.rampart.sh" -ForegroundColor DarkGray
+Write-Host "  Uninstall: rampart uninstall" -ForegroundColor DarkGray
 Write-Host ""
