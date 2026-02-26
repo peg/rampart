@@ -89,16 +89,21 @@ if (-not (Test-Path $rampartExe)) {
     exit 1
 }
 
-# Add to PATH if not already there
+# Add to PATH if not already there (both persistent and current session)
 $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 if ($userPath -notlike "*$InstallDir*") {
     Write-Status "Adding to PATH..."
     [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$userPath", "User")
-    $env:PATH = "$InstallDir;$env:PATH"
     Write-Success "Added $InstallDir to PATH"
 } else {
     Write-Status "Already in PATH"
 }
+
+# IMPORTANT: Update current session PATH to include both User and Machine paths
+# This ensures rampart works immediately without restarting the terminal
+$machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+$newUserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+$env:PATH = "$newUserPath;$machinePath"
 
 # Verify installation
 Write-Host ""
@@ -107,6 +112,19 @@ try {
     Write-Success "Installed: $($versionOutput | Select-Object -First 1)"
 } catch {
     Write-Warn "Installed but could not verify version"
+}
+
+# Auto-create policy directory and install standard policy
+Write-Status "Installing standard policy..."
+$policyDir = "$env:USERPROFILE\.rampart\policies"
+if (-not (Test-Path $policyDir)) {
+    New-Item -ItemType Directory -Path $policyDir -Force | Out-Null
+}
+try {
+    & $rampartExe init --profile standard --force 2>&1 | Out-Null
+    Write-Success "Policy installed to $policyDir"
+} catch {
+    Write-Warn "Could not install policy. Run 'rampart init --profile standard' manually."
 }
 
 # Offer to set up Claude Code
@@ -127,13 +145,13 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Success "Rampart installed successfully!"
 Write-Host ""
-Write-Host "  Next steps:" -ForegroundColor White
-Write-Host "    1. Restart your terminal (or run: `$env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'User'))"
-Write-Host "    2. Run: rampart setup claude-code"
-Write-Host "    3. Use Claude Code — dangerous commands are now blocked!"
+Write-Host "  You're protected! Dangerous commands are now blocked." -ForegroundColor Green
 Write-Host ""
-Write-Host "  Optional: Run 'rampart serve' for the live dashboard and approval flow."
+Write-Host "  Try it:" -ForegroundColor White
+Write-Host "    rampart test `"rm -rf /`"    # Should show DENY"
+Write-Host "    rampart doctor              # Check installation"
+Write-Host "    rampart watch               # Live dashboard"
 Write-Host ""
 Write-Host "  Docs: https://docs.rampart.sh"
-Write-Host "  Uninstall: Remove-Item -Recurse ~\.rampart"
+Write-Host "  Uninstall: rampart uninstall"
 Write-Host ""

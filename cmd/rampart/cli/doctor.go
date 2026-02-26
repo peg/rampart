@@ -251,6 +251,11 @@ func doctorToken(emit emitFn) (issues int, token string) {
 		emit("Token", "ok", "token found in ~/.rampart/token")
 		return 0, tok
 	}
+	// On Windows, token is optional since serve is optional for basic protection
+	if runtime.GOOS == "windows" {
+		emit("Token", "warn", "no token found (optional — only needed for dashboard/approvals)")
+		return 0, ""
+	}
 	emit("Token", "fail", "no token found"+hintSep+"rampart serve install")
 	return 1, ""
 }
@@ -376,6 +381,13 @@ func doctorServer(emit emitFn) (int, string) {
 	url := fmt.Sprintf("http://localhost:%d/healthz", defaultServePort)
 	resp, err := client.Get(url)
 	if err != nil {
+		// On Windows, serve is optional for basic protection (hook evaluates locally)
+		if runtime.GOOS == "windows" {
+			emit("Server", "warn",
+				fmt.Sprintf("not running on :%d (optional — basic protection works without it)", defaultServePort)+hintSep+
+					"rampart serve  # run in a terminal for dashboard/approvals")
+			return 0, ""
+		}
 		emit("Server", "fail",
 			fmt.Sprintf("not running on :%d", defaultServePort)+hintSep+
 				"rampart serve --background")
@@ -592,9 +604,12 @@ func doctorAudit(emit emitFn) (issues int, warnings int) {
 
 	entries, err := os.ReadDir(auditDir)
 	if err != nil {
+		hint := "rampart serve --background  # creates the audit directory"
+		if runtime.GOOS == "windows" {
+			hint = "rampart serve  # creates the audit directory"
+		}
 		emit("Audit", "fail",
-			fmt.Sprintf("%s (not found)", auditDir)+hintSep+
-				"rampart serve --background  # creates the audit directory")
+			fmt.Sprintf("%s (not found)", auditDir)+hintSep+hint)
 		return 1, 0
 	}
 
