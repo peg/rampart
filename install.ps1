@@ -65,10 +65,12 @@ try {
     exit 1
 }
 
-# Create install directory
-if (-not (Test-Path $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+# Create install directory (clear existing to avoid conflicts)
+if (Test-Path $InstallDir) {
+    Write-Status "Removing previous installation..."
+    Remove-Item -Recurse -Force $InstallDir
 }
+New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
 # Extract
 Write-Status "Installing to $InstallDir..."
