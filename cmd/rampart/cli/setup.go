@@ -60,8 +60,10 @@ func newSetupClaudeCodeCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "claude-code",
 		Short: "Install Rampart hook into Claude Code settings",
-		Long: `Adds a PreToolUse hook to ~/.claude/settings.json that routes all
-Bash commands through Rampart's policy engine before execution.
+		Long: `Adds a PreToolUse hook to ~/.claude/settings.json that routes ALL
+tool calls through Rampart's policy engine before execution.
+
+This includes Bash, Read, Write, Edit, Fetch, Task, and any future tools.
 
 Safe to run multiple times — will not duplicate hooks or overwrite
 other settings.
@@ -112,18 +114,13 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				"command": hookCommand,
 			}
 
-			bashMatcher := map[string]any{
-				"matcher": "Bash",
+			// Use wildcard matcher to intercept ALL tools (Bash, Read, Write, Edit, Fetch, Task, etc.)
+			// This ensures comprehensive coverage as Claude Code adds new tools.
+			allToolsMatcher := map[string]any{
+				"matcher": ".*",
 				"hooks":   []any{rampartHook},
 			}
-			readMatcher := map[string]any{
-				"matcher": "Read",
-				"hooks":   []any{rampartHook},
-			}
-			writeMatcher := map[string]any{
-				"matcher": "Write|Edit",
-				"hooks":   []any{rampartHook},
-			}
+
 			// PostToolUseFailure: fires when Claude Code denies a tool after PreToolUse.
 			// Matcher ".*" catches all tools so Rampart can inject additionalContext
 			// telling Claude to stop retrying instead of burning turns on workarounds.
@@ -151,7 +148,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 					preToolUse = append(preToolUse, h)
 				}
 			}
-			preToolUse = append(preToolUse, bashMatcher, readMatcher, writeMatcher)
+			preToolUse = append(preToolUse, allToolsMatcher)
 
 			// Get or create PostToolUseFailure array (dedup existing rampart entries)
 			var postToolUseFailure []any
@@ -189,7 +186,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
-			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route Bash commands through Rampart.")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route ALL tool calls through Rampart.")
+			fmt.Fprintln(cmd.OutOrStdout(), "  (Bash, Read, Write, Edit, Fetch, Task, and any new tools)")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
 			fmt.Fprintln(cmd.OutOrStdout(), "")
 
