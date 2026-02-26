@@ -12,11 +12,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/peg/rampart/policies"
 )
+
+// testArchiveName returns the archive filename for the current platform (e.g., rampart_1.1.0_darwin_arm64.tar.gz).
+func testArchiveName(version string) string {
+	os, arch, _ := upgradePlatform(runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("rampart_%s_%s_%s.tar.gz", version, os, arch)
+}
 
 func TestLookupSHA256(t *testing.T) {
 	sums := []byte("abc123 def\n" + strings.Repeat("a", 64) + "  rampart_1.2.3_linux_amd64.tar.gz\n")
@@ -231,7 +238,7 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
 
 	deps := &upgradeDeps{
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
@@ -274,7 +281,7 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
 
 	var restarted string
 	deps := &upgradeDeps{
@@ -331,7 +338,7 @@ func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
 
 	pidStopped := false
 	var restarted string
