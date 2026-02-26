@@ -79,14 +79,15 @@ func TestFormatCEF_AllActions(t *testing.T) {
 		if !strings.Contains(cef, expected) {
 			t.Errorf("action %s not in CEF: %s", tc.action, cef)
 		}
-		sevStr := strings.Repeat("", 0) + "|" + string(rune('0'+tc.severity))
-		if tc.severity == 8 {
+		var sevStr string
+		switch tc.severity {
+		case 8:
 			sevStr = "|8|"
-		} else if tc.severity == 5 {
+		case 5:
 			sevStr = "|5|"
-		} else if tc.severity == 3 {
+		case 3:
 			sevStr = "|3|"
-		} else {
+		default:
 			sevStr = "|1|"
 		}
 		if !strings.Contains(cef, sevStr) {

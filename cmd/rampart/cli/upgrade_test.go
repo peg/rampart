@@ -12,11 +12,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/peg/rampart/policies"
 )
+
+// testArchiveName returns the archive filename for the current platform (e.g., rampart_1.1.0_darwin_arm64.tar.gz).
+func testArchiveName(version string) string {
+	os, arch, _ := upgradePlatform(runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("rampart_%s_%s_%s.tar.gz", version, os, arch)
+}
 
 func TestLookupSHA256(t *testing.T) {
 	sums := []byte("abc123 def\n" + strings.Repeat("a", 64) + "  rampart_1.2.3_linux_amd64.tar.gz\n")
@@ -118,7 +125,7 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
 	// Regression test: when already on latest, upgrade should still refresh
 	// installed policy files from the embedded binary.
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 
 	policyDir := filepath.Join(dir, ".rampart", "policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
@@ -157,6 +164,7 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
 }
 
 func TestNewUpgradeCmdDryRun(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -190,6 +198,7 @@ func TestNewUpgradeCmdDryRun(t *testing.T) {
 }
 
 func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -223,6 +232,7 @@ func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
 }
 
 func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -231,7 +241,7 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
 
 	deps := &upgradeDeps{
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
@@ -266,6 +276,7 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 }
 
 func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
@@ -274,7 +285,7 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
 
 	var restarted string
 	deps := &upgradeDeps{
@@ -322,6 +333,7 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 }
 
 func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
+	skipOnWindows(t, "upgrade not supported on Windows")
 	// If both a PID file AND a systemd service exist, systemd wins.
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "rampart")
@@ -331,7 +343,7 @@ func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  rampart_1.1.0_linux_amd64.tar.gz\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
 
 	pidStopped := false
 	var restarted string
@@ -401,7 +413,7 @@ func makeArchive(t *testing.T, name string, payload []byte) []byte {
 
 func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 
 	policyDir := filepath.Join(dir, ".rampart", "policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {

@@ -59,7 +59,7 @@ func TestSamePath(t *testing.T) {
 
 func TestActivePolicyMDWrite(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	configPath := filepath.Join(home, "rampart.yaml")
 	content, err := policies.FS.ReadFile("standard.yaml")

@@ -81,7 +81,7 @@ func containsStr(s, sub string) bool {
 
 func TestResolveWatchServeConfig_DefaultURLAndTokenFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 	t.Setenv("RAMPART_SERVE_URL", "")
 	t.Setenv("RAMPART_TOKEN", "")
 

@@ -14,14 +14,14 @@
 
 ---
 
-Claude Code's `--dangerously-skip-permissions` mode — and similar autonomous modes in Cursor, Cline, and Codex — give agents unrestricted shell access. Rampart sits between the agent and your system: every command, file access, and network request is evaluated against your YAML policy before it executes. Dangerous commands are blocked in microseconds. Everything is logged.
+Claude Code's `--dangerously-skip-permissions` mode — and similar autonomous modes in Cline and Codex — give agents unrestricted shell access. Rampart sits between the agent and your system: every command, file access, and network request is evaluated against your YAML policy before it executes. Dangerous commands are blocked in microseconds. Everything is logged.
 
 One command to get protected:
 ```bash
 rampart setup claude-code
 ```
 
-`rampart quickstart` auto-detects Claude Code, Cursor, or Windsurf, installs `rampart serve` as a boot service, configures hooks, and runs a health check. Done.
+`rampart quickstart` auto-detects Claude Code or Cline, installs `rampart serve` as a boot service, configures hooks, and runs a health check. Done.
 
 Or set up manually:
 
@@ -51,9 +51,8 @@ Once running, every command Claude executes goes through Rampart's policy engine
 | Agent | Setup | Integration |
 |-------|-------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks — works in `--dangerously-skip-permissions` mode |
-| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Cursor** | `rampart mcp -- cursor` | MCP proxy configuration |
+| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -95,6 +94,11 @@ go install github.com/peg/rampart/cmd/rampart@latest
 
 # Or download a binary from GitHub Releases
 # https://github.com/peg/rampart/releases
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://rampart.sh/install.ps1 | iex
 ```
 
 > **Tip:** The curl installer drops the binary in `~/.local/bin` and runs `rampart quickstart` automatically.
@@ -183,7 +187,7 @@ Drop-in proxy between your agent and any MCP server. Evaluates every `tools/call
 rampart mcp -- npx @modelcontextprotocol/server-filesystem /path
 ```
 
-In your MCP config (Claude Code, Cursor, etc.):
+In your MCP config (Claude Desktop, etc.):
 
 ```json
 {
@@ -686,7 +690,7 @@ For a full discussion of what Rampart does and doesn't protect against, see [`do
 ```bash
 # One-shot setup
 rampart quickstart                           # Auto-detect agent, install service, configure hooks, run health check
-rampart quickstart --env claude-code         # Force a specific environment (claude-code|cursor|windsurf)
+rampart quickstart --env claude-code         # Force a specific environment (claude-code|cline|openclaw)
 rampart quickstart --skip-doctor             # Skip final health check
 
 # Setup (per-agent or interactive wizard)
@@ -805,8 +809,6 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned. Priorities shift ba
 | Aider | `rampart wrap` | Linux, macOS |
 | OpenCode | `rampart wrap` | Linux, macOS |
 | Continue | `rampart wrap` | Linux, macOS |
-| Cursor | `rampart mcp` | MCP server proxying, all platforms |
-| Windsurf | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |
 | Node.js agents | `rampart preload` or HTTP API | Linux, macOS |
 | Any MCP server | `rampart mcp` | All platforms |

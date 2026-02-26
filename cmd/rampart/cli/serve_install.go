@@ -17,6 +17,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,21 +140,27 @@ func tokenFilePath() (string, error) {
 	return filepath.Join(home, ".rampart", "token"), nil
 }
 
-// persistToken writes the token to ~/.rampart/token (0600).
-// If the file already exists, permissions are explicitly set to 0o600 regardless
-// of what they were before — os.WriteFile only applies the mode on creation.
+// persistToken writes the token to ~/.rampart/token with owner-only permissions.
+// On Unix: 0600. On Windows: ACL granting GENERIC_ALL to owner only.
 func persistToken(token string) error {
 	p, err := tokenFilePath()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	if err := secureDirPermissions(dir); err != nil {
+		slog.Debug("could not secure directory permissions", "path", dir, "error", err)
 	}
 	if err := os.WriteFile(p, []byte(token), 0o600); err != nil {
 		return err
 	}
-	return os.Chmod(p, 0o600)
+	if err := secureFilePermissions(p); err != nil {
+		slog.Debug("could not secure file permissions", "path", p, "error", err)
+	}
+	return nil
 }
 
 // readPersistedToken reads the token from ~/.rampart/token if it exists.
@@ -231,7 +238,8 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 		Short: "Install rampart serve as a system service",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS == "windows" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Windows is not yet supported. Run `rampart serve` manually.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Windows service installation is not supported.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Run 'rampart serve' in a terminal, or use Task Scheduler or NSSM to run it at startup.")
 				return nil
 			}
 

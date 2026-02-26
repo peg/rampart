@@ -101,7 +101,14 @@ func resolveToken(token string) string {
 	if token != "" {
 		return token
 	}
-	return os.Getenv("RAMPART_TOKEN")
+	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
+		return env
+	}
+	// Check persisted token file (~/.rampart/token)
+	if persisted, err := readPersistedToken(); err == nil && persisted != "" {
+		return persisted
+	}
+	return ""
 }
 
 func resolveAddr(addr string) string {

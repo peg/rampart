@@ -14,6 +14,7 @@
 package engine
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -243,6 +244,9 @@ func TestGenerateSuggestions_ExecCommand(t *testing.T) {
 }
 
 func TestGenerateSuggestions_FilePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths in test fixtures")
+	}
 	tests := []struct {
 		name         string
 		tool         string

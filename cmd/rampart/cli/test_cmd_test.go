@@ -111,6 +111,7 @@ policies:
 }
 
 func TestRunTestReadTool(t *testing.T) {
+	skipOnWindows(t, "Unix paths in test")
 	dir := t.TempDir()
 	policyFile := filepath.Join(dir, "rampart.yaml")
 	err := os.WriteFile(policyFile, []byte(`

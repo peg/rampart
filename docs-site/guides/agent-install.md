@@ -1,6 +1,6 @@
 ---
 title: Install Rampart via an AI Agent
-description: "Step-by-step instructions for an AI agent to install and configure Rampart. Works with OpenClaw, Claude Code, Cursor, and Cline. One command, fully non-interactive."
+description: "Step-by-step instructions for an AI agent to install and configure Rampart. Works with OpenClaw, Claude Code, and Cline. One command, fully non-interactive."
 ---
 
 # Install Rampart via an AI Agent
@@ -148,7 +148,6 @@ Re-run setup for your specific agent:
 rampart setup openclaw --patch-tools   # OpenClaw
 rampart setup claude-code              # Claude Code
 rampart setup cline                    # Cline
-rampart setup cursor                   # Cursor
 ```
 
 **Service not running**

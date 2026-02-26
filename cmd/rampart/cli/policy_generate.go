@@ -138,7 +138,7 @@ func runPresetForm(cmd *cobra.Command, presetFlag, destFlag string) (generate.Pr
 
 	// Determine home dir for global path label.
 	home, _ := os.UserHomeDir()
-	globalPath := filepath.Join(home, destGlobalTemplate) // placeholder; filled in after preset selection
+	var globalPath string
 
 	destOptions := []huh.Option[string]{
 		huh.NewOption(fmt.Sprintf("Project  (%s)", destProject), "project"),

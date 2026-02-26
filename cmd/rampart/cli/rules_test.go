@@ -37,7 +37,7 @@ func rulesTestEnv(t *testing.T) (homeDir, projectDir, globalPath, projectPath st
 	projectDir = t.TempDir()
 
 	// Override HOME so GlobalCustomPath() resolves into our temp dir.
-	t.Setenv("HOME", homeDir)
+	testSetHome(t, homeDir)
 
 	// Chdir into projectDir so ProjectCustomPath() resolves there.
 	oldWD, err := os.Getwd()

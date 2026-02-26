@@ -27,7 +27,7 @@ import (
 )
 
 func TestTokenShow_PrintsPersistedToken(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testSetHome(t, t.TempDir())
 	const want = "rampart_test_token_123"
 	require.NoError(t, persistToken(want))
 
@@ -42,7 +42,7 @@ func TestTokenShow_PrintsPersistedToken(t *testing.T) {
 
 func TestTokenRotateForce_GeneratesAndPersistsToken(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -61,7 +61,7 @@ func TestTokenRotateForce_GeneratesAndPersistsToken(t *testing.T) {
 
 func TestTokenRotateConfirmNo_DoesNotOverwrite(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 	require.NoError(t, persistToken("existing-token"))
 
 	stdout := &bytes.Buffer{}
@@ -80,7 +80,7 @@ func TestTokenRotateConfirmNo_DoesNotOverwrite(t *testing.T) {
 
 func TestTokenRotateConfirmYes_Overwrites(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 	require.NoError(t, persistToken("old-token"))
 
 	stdout := &bytes.Buffer{}

@@ -21,8 +21,8 @@ import (
 
 func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 	agents := detectAgents()
-	if len(agents) != 5 {
-		t.Fatalf("expected 5 agents, got %d", len(agents))
+	if len(agents) != 4 {
+		t.Fatalf("expected 4 agents, got %d", len(agents))
 	}
 
 	names := map[string]bool{}
@@ -30,7 +30,7 @@ func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 		names[a.Name] = true
 	}
 
-	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Cursor", "Codex"} {
+	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex"} {
 		if !names[want] {
 			t.Errorf("missing agent %q", want)
 		}
@@ -40,7 +40,7 @@ func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 func TestDetectAgents_ClaudeCodeDetectedByDir(t *testing.T) {
 	// Create a temp home with .claude dir
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestDetectAgents_ClaudeCodeDetectedByDir(t *testing.T) {
 
 func TestDetectAgents_ClineDetectedByDocumentsDir(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	if err := os.MkdirAll(filepath.Join(tmpHome, "Documents", "Cline"), 0o755); err != nil {
 		t.Fatal(err)
@@ -76,29 +76,6 @@ func TestDetectAgents_ClineDetectedByDocumentsDir(t *testing.T) {
 		}
 	}
 	t.Error("Cline agent not found in results")
-}
-
-func TestDetectAgents_CursorDetectedByDir(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-
-	if err := os.MkdirAll(filepath.Join(tmpHome, ".cursor"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	agents := detectAgents()
-	for _, a := range agents {
-		if a.Name == "Cursor" {
-			if !a.Detected {
-				t.Error("expected Cursor to be detected via ~/.cursor/ dir")
-			}
-			if a.HasSetup {
-				t.Error("Cursor should not have auto-setup")
-			}
-			return
-		}
-	}
-	t.Error("Cursor agent not found in results")
 }
 
 func TestIsTerminal_PipeIsNotTerminal(t *testing.T) {

@@ -284,9 +284,10 @@ For maximum protection with cloud MCP servers, the policy should be **more restr
 
 This same approach works with any MCP-compatible app:
 
-- **Cursor** — same config format, same `rampart mcp --` prefix
 - **Zed** — MCP support in settings
 - **Any MCP client** — if it launches MCP servers via command, Rampart can wrap them
+
+> **Note**: This technique only protects MCP server tools. Editors like Cursor and Windsurf have built-in native tools (file read/write, terminal) that don't go through MCP and cannot be intercepted by Rampart. For full protection, use Claude Code with native hooks (`rampart setup claude-code`).
 
 ## Limitations
 

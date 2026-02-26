@@ -89,7 +89,7 @@ func TestHasRampartInMatcher(t *testing.T) {
 
 func TestSetupClaudeCode_Install(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	// Mock execLookPath to avoid "not in PATH" warning
 	old := execLookPath
@@ -131,7 +131,7 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 
 func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testSetHome(t, tmpHome)
 
 	claudeDir := filepath.Join(tmpHome, ".claude")
 	os.MkdirAll(claudeDir, 0o755)
@@ -187,15 +187,15 @@ func TestReadLine_Empty(t *testing.T) {
 
 func TestDetectAgents(t *testing.T) {
 	agents := detectAgents()
-	if len(agents) != 5 {
-		t.Errorf("expected 5 agents, got %d", len(agents))
+	if len(agents) != 4 {
+		t.Errorf("expected 4 agents, got %d", len(agents))
 	}
 	// Verify names
 	names := make([]string, len(agents))
 	for i, a := range agents {
 		names[i] = a.Name
 	}
-	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Cursor", "Codex"} {
+	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex"} {
 		found := false
 		for _, n := range names {
 			if n == want {

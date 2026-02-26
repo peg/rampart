@@ -45,7 +45,7 @@ func TestVersionFlag(t *testing.T) {
 
 func TestInitCreatesFile(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 	configPath := filepath.Join(dir, "rampart.yaml")
 
 	_, _, err := runCLI(t, "--config", configPath, "init")
@@ -61,7 +61,7 @@ func TestInitCreatesFile(t *testing.T) {
 
 func TestInitRefusesOverwrite(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 	configPath := filepath.Join(dir, "rampart.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte("existing: true\n"), 0o644))
 
@@ -72,7 +72,7 @@ func TestInitRefusesOverwrite(t *testing.T) {
 
 func TestInitForceOverwrite(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 	configPath := filepath.Join(dir, "rampart.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte("existing: true\n"), 0o644))
 
@@ -86,7 +86,7 @@ func TestInitForceOverwrite(t *testing.T) {
 
 func TestInitProfileYolo(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 	configPath := filepath.Join(dir, "rampart.yaml")
 
 	_, _, err := runCLI(t, "--config", configPath, "init", "--profile", "yolo")
@@ -133,7 +133,7 @@ func TestPolicyExplain(t *testing.T) {
 
 func TestServeGracefulShutdown(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 	configPath := filepath.Join(dir, "rampart.yaml")
 	content, err := policies.FS.ReadFile("standard.yaml")
 	require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestServeReadsAndPersistsToken(t *testing.T) {
 	// start, ignoring ~/.rampart/token and never writing to it. The foreground
 	// serve path should read a persisted token and persist it after start.
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testSetHome(t, dir)
 
 	configPath := filepath.Join(dir, "rampart.yaml")
 	content, err := policies.FS.ReadFile("standard.yaml")

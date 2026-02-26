@@ -14,6 +14,7 @@
 package intercept
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/peg/rampart/internal/engine"
@@ -21,6 +22,9 @@ import (
 )
 
 func TestFilesystemInterceptor_EvaluateRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths in test fixtures")
+	}
 	tests := []struct {
 		name   string
 		policy string
@@ -136,6 +140,9 @@ policies:
 }
 
 func TestFilesystemInterceptor_EvaluateWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths in test fixtures")
+	}
 	tests := []struct {
 		name   string
 		policy string
@@ -216,6 +223,9 @@ func TestFilesystemInterceptor_ContentLength(t *testing.T) {
 }
 
 func TestFilesystemInterceptor_PathMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths in test fixtures")
+	}
 	interceptor := &FilesystemInterceptor{}
 	call := interceptor.toolCall("main", "s1", "read", "/home/user/project/src/main.go", nil)
 

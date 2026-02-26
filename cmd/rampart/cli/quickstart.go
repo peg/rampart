@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -36,7 +35,7 @@ func newQuickstartCmd() *cobra.Command {
 		Long: `quickstart detects your AI coding environment, installs the Rampart
 background service, wires up the tool-call hook, and runs a health check.
 
-Supported environments: claude-code, cline, cursor, windsurf, openclaw
+Supported environments: claude-code, cline, openclaw
 If --env is not set, quickstart will auto-detect.
 
 Use --yes to run non-interactively (AI agents, CI, automated setup).
@@ -46,7 +45,7 @@ For OpenClaw, --yes also enables --patch-tools for full file-operation coverage.
 		},
 	}
 
-	cmd.Flags().StringVar(&envFlag, "env", "", "AI coding environment (claude-code|cline|cursor|windsurf|openclaw|none)")
+	cmd.Flags().StringVar(&envFlag, "env", "", "AI coding environment (claude-code|cline|openclaw|none)")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "skip final health check")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive mode: for OpenClaw, also enables --patch-tools (full file coverage); safe to pass for any agent")
 	return cmd
@@ -64,7 +63,7 @@ func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool, yes bool
 		env = detectEnv()
 		if env == "" {
 			fmt.Fprintln(w, "  ⚠  Could not detect AI coding environment.")
-			fmt.Fprintln(w, "     Use --env claude-code|cline|cursor|windsurf|openclaw to specify manually.")
+			fmt.Fprintln(w, "     Use --env claude-code|cline|openclaw to specify manually.")
 			env = "none"
 		} else {
 			fmt.Fprintf(w, "  ✓  Detected environment: %s\n", env)
@@ -149,36 +148,12 @@ func detectEnv() string {
 	if _, err := exec.LookPath("claude"); err == nil {
 		return "claude-code"
 	}
-	// Cursor
-	if _, err := os.Stat(cursorSettingsPath()); err == nil {
-		return "cursor"
-	}
-	// Windsurf
-	if _, err := os.Stat(windsurfSettingsPath()); err == nil {
-		return "windsurf"
-	}
 	return ""
 }
 
 func claudeSettingsPath() string {
 	home, _ := os.UserHomeDir()
 	return home + "/.claude/settings.json"
-}
-
-func cursorSettingsPath() string {
-	home, _ := os.UserHomeDir()
-	if runtime.GOOS == "darwin" {
-		return home + "/Library/Application Support/Cursor/User/settings.json"
-	}
-	return home + "/.config/Cursor/User/settings.json"
-}
-
-func windsurfSettingsPath() string {
-	home, _ := os.UserHomeDir()
-	if runtime.GOOS == "darwin" {
-		return home + "/Library/Application Support/Windsurf/User/settings.json"
-	}
-	return home + "/.config/Windsurf/User/settings.json"
 }
 
 // quickstartServiceURL returns the base URL for the Rampart service.

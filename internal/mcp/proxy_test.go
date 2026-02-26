@@ -33,33 +33,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Mock engine
-// ---------------------------------------------------------------------------
-
-type mockEngine struct {
-	evaluateFn         func(engine.ToolCall) engine.Decision
-	evaluateResponseFn func(engine.ToolCall, string) engine.Decision
-}
-
-func (m *mockEngine) evaluate(call engine.ToolCall) engine.Decision {
-	if m.evaluateFn != nil {
-		return m.evaluateFn(call)
-	}
-	return engine.Decision{Action: engine.ActionAllow}
-}
-
-func (m *mockEngine) evaluateResponse(call engine.ToolCall, response string) engine.Decision {
-	if m.evaluateResponseFn != nil {
-		return m.evaluateResponseFn(call, response)
-	}
-	return engine.Decision{Action: engine.ActionAllow}
-}
-
-// We need a real *engine.Engine for the proxy. Since we can't easily mock it
-// via interface (proxy takes *engine.Engine directly), we'll build a minimal
-// engine from policy YAML and test through it.
-
-// ---------------------------------------------------------------------------
 // Mock audit sink
 // ---------------------------------------------------------------------------
 
@@ -115,16 +88,6 @@ func makeToolsCallJSON(id any, toolName string, args map[string]any) string {
 		"method":  "tools/call",
 		"id":      id,
 		"params":  json.RawMessage(paramsBytes),
-	}
-	b, _ := json.Marshal(msg)
-	return string(b)
-}
-
-func makeToolsListJSON(id any) string {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "tools/list",
-		"id":      id,
 	}
 	b, _ := json.Marshal(msg)
 	return string(b)

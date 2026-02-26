@@ -26,6 +26,8 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestResolveToken(t *testing.T) {
+	// Use temp dir as HOME to avoid picking up real ~/.rampart/token
+	testSetHome(t, t.TempDir())
 	t.Setenv("RAMPART_TOKEN", "env-tok")
 
 	if got := resolveToken("explicit"); got != "explicit" {

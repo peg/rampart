@@ -104,6 +104,7 @@ func TestResolveRealShell_NoShell(t *testing.T) {
 }
 
 func TestCreateShellShim(t *testing.T) {
+	skipOnWindows(t, "Unix shell shims")
 	path, err := createShellShim("http://localhost:9090", "tok123", "enforce", "/bin/bash")
 	if err != nil {
 		t.Fatal(err)

@@ -67,6 +67,13 @@ func cleanPaths(p string) (cleaned string, resolved string) {
 	if p == "" {
 		return p, p
 	}
+	// Normalize backslashes to forward slashes BEFORE filepath.Clean.
+	// This is critical for security: on Unix, backslash is a valid filename char,
+	// so "/home/user\../etc/shadow" would NOT be cleaned by filepath.Clean.
+	// By normalizing first, the ".." traversal is properly resolved.
+	// This also enables cross-platform policy matching (Windows paths match
+	// forward-slash patterns like "**/.ssh/id_*").
+	p = strings.ReplaceAll(p, "\\", "/")
 	cleaned = filepath.Clean(p)
 	r, err := filepath.EvalSymlinks(cleaned)
 	if err != nil {
@@ -100,6 +107,14 @@ func MatchGlob(pattern, name string) bool {
 	if len(name) > maxGlobInputLen {
 		name = name[:maxGlobInputLen]
 	}
+
+	// Normalize path separators to forward slashes for cross-platform matching.
+	// Windows paths use backslashes, but policy patterns use forward slashes.
+	// This ensures "**/.ssh/id_*" matches "C:\Users\Trevor\.ssh\id_rsa".
+	// Use strings.ReplaceAll instead of filepath.ToSlash because ToSlash only
+	// converts on Windows, but we need this to work in tests on any platform.
+	pattern = strings.ReplaceAll(pattern, "\\", "/")
+	name = strings.ReplaceAll(name, "\\", "/")
 
 	// Handle "**" as a recursive wildcard.
 	// matchDoubleGlob uses per-call memoization to keep complexity O(n·k)

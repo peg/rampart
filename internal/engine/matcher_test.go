@@ -2,6 +2,7 @@ package engine
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -62,6 +63,14 @@ func TestMatchGlob(t *testing.T) {
 		// causing a false negative. Rune-based iteration fixes this.
 		{"**/café/**", "/home/user/café/notes.txt", true},
 		{"**/café/**", "/home/user/other/notes.txt", false},
+
+		// Cross-platform: Windows backslash paths should match forward-slash patterns.
+		// This is critical for Windows Claude Code support.
+		{"**/.ssh/id_*", `C:\Users\Trevor\.ssh\id_rsa`, true},
+		{"**/.ssh/id_*", `C:\Users\Trevor\.ssh\id_ed25519`, true},
+		{"**/.ssh/id_*", `C:\Users\Trevor\Documents\file.txt`, false},
+		{"**/.*", `C:\Users\Trevor\.env`, true},
+		{"**/.env", `C:\Users\Trevor\project\.env`, true},
 	}
 
 	for _, tt := range tests {
@@ -75,6 +84,9 @@ func TestMatchGlob(t *testing.T) {
 }
 
 func TestCleanPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths")
+	}
 	tests := []struct {
 		input string
 		want  string
@@ -84,6 +96,11 @@ func TestCleanPaths(t *testing.T) {
 		{"/a/b/../c/d", "/a/c/d"},
 		{"", ""},
 		{"/clean/path", "/clean/path"},
+		// Backslash injection: on Unix, backslash is a valid filename char.
+		// Without normalization, filepath.Clean would NOT resolve the "..".
+		// With our fix, backslash is converted to "/" first, then cleaned.
+		{`/home/user\../etc/shadow`, "/home/etc/shadow"},
+		{`/safe\../unsafe/secret.txt`, "/unsafe/secret.txt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -96,6 +113,9 @@ func TestCleanPaths(t *testing.T) {
 }
 
 func TestMatchCondition_PathTraversalBypass(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix paths")
+	}
 	// A deny rule for /etc/shadow should catch traversal attempts.
 	cond := Condition{
 		PathMatches: []string{"/etc/shadow"},

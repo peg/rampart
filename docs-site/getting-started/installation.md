@@ -1,9 +1,35 @@
 ---
 title: Installation
-description: "Install Rampart on macOS or Linux with Homebrew, Go, or script methods. Get the security layer needed to control and audit AI agent tool actions."
+description: "Install Rampart on Windows, macOS, or Linux. Get the security layer needed to control and audit AI agent tool actions."
 ---
 
 # Installation
+
+=== "Windows"
+
+    **PowerShell (recommended):**
+    ```powershell
+    irm https://rampart.sh/install.ps1 | iex
+    ```
+    
+    This downloads the latest release, installs to `~\.rampart\bin`, adds it to your PATH, and offers to set up Claude Code hooks.
+    
+    **Manual:** Download the `.zip` from [GitHub Releases](https://github.com/peg/rampart/releases), extract `rampart.exe`, and add to your PATH.
+    
+    !!! success "No Server Required"
+        Basic protection works immediately after `rampart setup claude-code` — no need to run `rampart serve`. The hook evaluates policies locally. Run serve only if you want the live dashboard or approval flow.
+
+=== "macOS & Linux"
+
+    **Homebrew (recommended):**
+    ```bash
+    brew tap peg/rampart && brew install rampart
+    ```
+
+    **One-liner:**
+    ```bash
+    curl -fsSL https://rampart.sh/install | sh
+    ```
 
 ## Homebrew (macOS & Linux)
 
@@ -60,6 +86,29 @@ sudo mv rampart /usr/local/bin/
 
 ```bash
 rampart --version
+```
+
+## Windows Notes
+
+Rampart works on Windows with some limitations:
+
+| Feature | Windows | macOS/Linux |
+|---------|---------|-------------|
+| `rampart serve` | ✅ Foreground only | ✅ Background supported |
+| `rampart setup claude-code` | ✅ | ✅ |
+| `rampart hook` | ✅ | ✅ |
+| `rampart watch` | ✅ | ✅ |
+| `rampart mcp` | ✅ | ✅ |
+| `rampart upgrade` | ❌ Re-run installer | ✅ |
+| `rampart wrap` | ❌ | ✅ |
+| `rampart preload` | ❌ | ✅ Linux only |
+
+**Path matching works cross-platform:** Policies like `**/.ssh/id_*` will match Windows paths like `C:\Users\You\.ssh\id_rsa`.
+
+**Uninstall on Windows:**
+```powershell
+rampart setup claude-code --remove  # Remove hooks
+Remove-Item -Recurse ~\.rampart     # Delete files
 ```
 
 ## Next Steps

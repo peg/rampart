@@ -155,7 +155,7 @@ func TestResolveExplainPolicyPath_ExplicitConfig(t *testing.T) {
 
 func TestResolveExplainPolicyPath_AutoDiscoverStandard(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 	policiesDir := filepath.Join(home, ".rampart", "policies")
 	if err := os.MkdirAll(policiesDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -177,7 +177,7 @@ func TestResolveExplainPolicyPath_AutoDiscoverStandard(t *testing.T) {
 
 func TestResolveExplainPolicyPath_AutoDiscoverCWD(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	dir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -206,7 +206,7 @@ func TestResolveExplainPolicyPath_AutoDiscoverCWD(t *testing.T) {
 
 func TestResolveExplainPolicyPath_NotFound(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	dir := t.TempDir()
 	oldWD, err := os.Getwd()

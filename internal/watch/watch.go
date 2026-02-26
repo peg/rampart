@@ -503,16 +503,6 @@ func (m *Model) View() string {
 	return m.frameStyle.Render(strings.Join(lines, "\n"))
 }
 
-func policiesLoadedFromEvents(events []audit.Event) int {
-	set := map[string]struct{}{}
-	for _, evt := range events {
-		for _, name := range evt.Decision.MatchedPolicies {
-			set[name] = struct{}{}
-		}
-	}
-	return len(set)
-}
-
 func (m *Model) visibleEvents(rows int) []audit.Event {
 	if rows <= 0 || len(m.events) == 0 {
 		return nil
