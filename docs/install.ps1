@@ -68,19 +68,34 @@ try {
 # Create install directory (clear existing to avoid conflicts)
 if (Test-Path $InstallDir) {
     Write-Status "Removing previous installation..."
+    $removed = $false
+    
+    # Try PowerShell first
     try {
         Remove-Item -Recurse -Force $InstallDir -ErrorAction Stop
+        $removed = $true
     } catch {
+        # Try cmd.exe rd as fallback (sometimes works when PS doesn't)
+        Write-Status "Retrying with cmd.exe..."
+        cmd /c "rd /s /q `"$InstallDir`"" 2>$null
+        if (-not (Test-Path $InstallDir)) {
+            $removed = $true
+        }
+    }
+    
+    if (-not $removed) {
         Write-Err "Cannot remove existing installation at $InstallDir"
         Write-Err "This usually means files are locked or have permission issues."
         Write-Host ""
         Write-Host "  Try these steps:" -ForegroundColor Yellow
         Write-Host "    1. Close all terminals and Claude Code"
-        Write-Host "    2. Run PowerShell as Administrator and execute:"
+        Write-Host "    2. Run PowerShell as Administrator and execute:" -ForegroundColor Yellow
+        Write-Host ""
         Write-Host "       takeown /f `"$InstallDir`" /r /d y" -ForegroundColor Cyan
-        Write-Host "       icacls `"$InstallDir`" /grant `"$env:USERNAME`:F`" /t" -ForegroundColor Cyan
+        Write-Host "       icacls `"$InstallDir`" /grant `"$($env:USERNAME):F`" /t" -ForegroundColor Cyan
         Write-Host "       Remove-Item -Recurse -Force `"$InstallDir`"" -ForegroundColor Cyan
-        Write-Host "    3. Re-run this installer"
+        Write-Host ""
+        Write-Host "    3. Re-run this installer" -ForegroundColor Yellow
         Write-Host ""
         Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
         exit 1
