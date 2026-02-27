@@ -875,6 +875,11 @@ policies:
     rules:
       - action: deny
         when:
+          command_matches:
+            # Normalized-form matches catch escaped variants like I\EX (I\WR ...)
+            - "IEX (IWR *"
+            - "IEX (Invoke-WebRequest *"
+            - "Invoke-Expression (Invoke-WebRequest *"
           command_contains:
             # PowerShell download cradles
             - "IEX (IWR"
