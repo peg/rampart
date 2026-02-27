@@ -95,20 +95,23 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 				return runInitProject(cmd)
 			}
 
+			// Always ensure directories exist first
+			rampartHome, err := ensureRampartDirs()
+			if err != nil {
+				return err
+			}
+
 			path := opts.configPath
 			if path == "" {
 				path = "rampart.yaml"
 			}
 
-			if _, err := os.Stat(path); err == nil && !force {
-				return fmt.Errorf("cli: config file already exists at %s (use --force to overwrite)", path)
-			} else if err != nil && !os.IsNotExist(err) {
+			// Check if config exists - we'll skip writing it but continue with policies
+			configExists := false
+			if _, err := os.Stat(path); err == nil {
+				configExists = true
+			} else if !os.IsNotExist(err) {
 				return fmt.Errorf("cli: check config file %s: %w", path, err)
-			}
-
-			rampartHome, err := ensureRampartDirs()
-			if err != nil {
-				return err
 			}
 
 			var content []byte
@@ -209,28 +212,52 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 				}
 			}
 
-			if err := os.WriteFile(path, content, 0o644); err != nil {
-				return fmt.Errorf("cli: write config file %s: %w", path, err)
+			// Write config file (skip if exists and no --force)
+			configWritten := false
+			if !configExists || force {
+				if err := os.WriteFile(path, content, 0o644); err != nil {
+					return fmt.Errorf("cli: write config file %s: %w", path, err)
+				}
+				configWritten = true
 			}
 
+			// Always write policies (unless they exist and no --force)
+			policyWritten := false
 			if !detectEnv {
 				selectedProfile := strings.TrimSpace(strings.ToLower(profile))
 				profilePath := filepath.Join(rampartHome, "policies", selectedProfile+".yaml")
-				if _, err := os.Stat(profilePath); err == nil && !force {
-					if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "Created %s with %s profile\n", path, selectedProfile); writeErr != nil {
-						return fmt.Errorf("cli: write init output: %w", writeErr)
-					}
-					return nil
-				} else if err != nil && !os.IsNotExist(err) {
+				policyExists := false
+				if _, err := os.Stat(profilePath); err == nil {
+					policyExists = true
+				} else if !os.IsNotExist(err) {
 					return fmt.Errorf("cli: check profile file %s: %w", profilePath, err)
 				}
 
-				if err := os.WriteFile(profilePath, content, 0o644); err != nil {
-					return fmt.Errorf("cli: write profile file %s: %w", profilePath, err)
+				if !policyExists || force {
+					if err := os.WriteFile(profilePath, content, 0o644); err != nil {
+						return fmt.Errorf("cli: write profile file %s: %w", profilePath, err)
+					}
+					policyWritten = true
 				}
 
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created %s with %s profile\n", path, selectedProfile); err != nil {
-					return fmt.Errorf("cli: write init output: %w", err)
+				// Print summary of what was done
+				switch {
+				case configWritten && policyWritten:
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created %s and ~/.rampart/policies/%s.yaml\n", path, selectedProfile); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
+				case configWritten:
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created %s (policies already exist)\n", path); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
+				case policyWritten:
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created ~/.rampart/policies/%s.yaml (config already exists at %s)\n", selectedProfile, path); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
+				default:
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Config and policies already exist (use --force to overwrite)\n"); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
 				}
 			}
 
