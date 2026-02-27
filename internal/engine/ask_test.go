@@ -84,6 +84,27 @@ func TestRuleParseAction_Ask(t *testing.T) {
 	}
 }
 
+func TestRuleAskAuditEnabled_RequireApprovalAlias(t *testing.T) {
+	r := Rule{Action: "require_approval"}
+	if !r.AskAuditEnabled() {
+		t.Fatal("expected require_approval to be treated as ask+audit")
+	}
+}
+
+func TestRuleAskAuditEnabled_AskExplicitAudit(t *testing.T) {
+	r := Rule{Action: "ask", Ask: AskActionConfig{Audit: true}}
+	if !r.AskAuditEnabled() {
+		t.Fatal("expected ask.audit=true to enable ask audit")
+	}
+}
+
+func TestRuleAskAuditEnabled_AskDefaultFalse(t *testing.T) {
+	r := Rule{Action: "ask"}
+	if r.AskAuditEnabled() {
+		t.Fatal("expected ask.audit to default to false")
+	}
+}
+
 // ── Policy evaluation with action: ask ───────────────────────────────────────
 
 func TestEvaluate_ActionAsk_MatchedRule(t *testing.T) {

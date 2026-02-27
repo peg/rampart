@@ -107,6 +107,7 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 	var (
 		finalAction  = ActionAllow
 		finalMessage string
+		finalAudit   bool
 		matched      []string
 		anyRuleFired bool
 	)
@@ -146,6 +147,9 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 			if finalAction != ActionDeny && finalAction != ActionWebhook && finalAction != ActionRequireApproval {
 				finalAction = ActionRequireApproval
 				finalMessage = message
+				if rule != nil {
+					finalAudit = rule.AskAuditEnabled()
+				}
 			}
 		case ActionAsk:
 			// Ask wins over log and allow, but not deny, webhook, or require_approval.
@@ -154,15 +158,20 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				finalAction != ActionRequireApproval && finalAction != ActionAsk {
 				finalAction = ActionAsk
 				finalMessage = message
+				if rule != nil {
+					finalAudit = rule.AskAuditEnabled()
+				}
 			}
 		case ActionWatch:
 			if finalAction == ActionAllow {
 				finalAction = ActionWatch
 				finalMessage = message
+				finalAudit = false
 			}
 		case ActionAllow:
 			if finalAction == ActionAllow && finalMessage == "" {
 				finalMessage = message
+				finalAudit = false
 			}
 		}
 	}
@@ -179,6 +188,7 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 
 	return Decision{
 		Action:          finalAction,
+		Audit:           finalAudit,
 		MatchedPolicies: matched,
 		Message:         finalMessage,
 		EvalDuration:    time.Since(start),
