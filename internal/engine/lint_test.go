@@ -589,3 +589,32 @@ policies:
 		}
 	}
 }
+
+func TestLint_RequireApproval_DeprecationWarning(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: approve-sudo
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo requires approval"
+`)
+	result := LintPolicyFile(path)
+	found := false
+	for _, f := range result.Findings {
+		if f.Severity == LintWarning &&
+			strings.Contains(f.Message, `action "require_approval" is deprecated as of v0.6.6`) &&
+			strings.Contains(f.Message, `ask.headless_only: true`) &&
+			strings.Contains(f.Message, `https://rampart.sh/docs/migration/v0.6.6`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected require_approval deprecation warning, findings: %v", result.Findings)
+	}
+}

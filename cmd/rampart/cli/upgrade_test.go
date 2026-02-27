@@ -463,3 +463,88 @@ func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
 		t.Fatalf("missing updated summary line: %q", out.String())
 	}
 }
+
+func TestFindRequireApprovalUsages(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	customPath := filepath.Join(policyDir, "custom.yaml")
+	if err := os.WriteFile(customPath, []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: approve-deploys
+    match:
+      tool: exec
+    rules:
+      - action: require_approval
+        when:
+          command_matches: ["kubectl apply **"]
+        message: "approve deploys"
+`), 0o644); err != nil {
+		t.Fatalf("write custom policy: %v", err)
+	}
+
+	usages, err := findRequireApprovalUsages(os.UserHomeDir)
+	if err != nil {
+		t.Fatalf("findRequireApprovalUsages: %v", err)
+	}
+	if len(usages) != 1 {
+		t.Fatalf("expected 1 usage, got %d: %#v", len(usages), usages)
+	}
+	if usages[0].FilePath != "~/.rampart/policies/custom.yaml" {
+		t.Fatalf("unexpected file path: %q", usages[0].FilePath)
+	}
+	if usages[0].PolicyName != "approve-deploys" {
+		t.Fatalf("unexpected policy name: %q", usages[0].PolicyName)
+	}
+}
+
+func TestMaybeWarnRequireApprovalMigration(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "custom.yaml"), []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: approve-deploys
+    match:
+      tool: exec
+    rules:
+      - action: require_approval
+        when:
+          command_matches: ["kubectl apply **"]
+        message: "approve deploys"
+`), 0o644); err != nil {
+		t.Fatalf("write custom policy: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := maybeWarnRequireApprovalMigration(&out, &errOut, strings.NewReader(""), true, os.UserHomeDir); err != nil {
+		t.Fatalf("maybeWarnRequireApprovalMigration: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "⚠️  Migration notice for v0.6.6:") {
+		t.Fatalf("missing migration header: %q", got)
+	}
+	if !strings.Contains(got, "~/.rampart/policies/custom.yaml (policy: \"approve-deploys\")") {
+		t.Fatalf("missing policy usage line: %q", got)
+	}
+	if !strings.Contains(got, "action: ask + ask.headless_only: true") {
+		t.Fatalf("missing migration target guidance: %q", got)
+	}
+	if !strings.Contains(errOut.String(), "continuing automatically") {
+		t.Fatalf("missing non-interactive continuation note: %q", errOut.String())
+	}
+}
