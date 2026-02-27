@@ -91,16 +91,9 @@ When `rampart serve` is not running and a `require_approval` rule fires, Rampart
 
 ## Limitations
 
-### Not supported in `--dangerously-skip-permissions` mode
+### Works in `--dangerously-skip-permissions` mode
 
-When Claude Code runs with `--dangerously-skip-permissions`, it auto-approves all native prompts — making `action: ask` equivalent to `action: allow`. To prevent silent bypass, Rampart **denies the command** in this mode with the message:
-
-```
-action: ask is not supported in --dangerously-skip-permissions mode;
-use action: deny to enforce this rule
-```
-
-If you need to protect a command in all modes, use `action: deny`.
+`action: ask` shows the native approval prompt even when Claude Code is launched with `--dangerously-skip-permissions`. Claude Code honors hook-returned `permissionDecision: ask` regardless of the bypass flag — the user still sees the inline dialog and must approve or deny.
 
 ### Claude Code only
 

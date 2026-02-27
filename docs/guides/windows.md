@@ -168,7 +168,7 @@ irm https://rampart.sh/install.ps1 | iex
 
 ### `action: ask` in `--dangerously-skip-permissions` mode
 
-When Claude Code is launched with `--dangerously-skip-permissions`, `action: ask` rules will **deny the command** instead of showing a prompt. This is intentional — in bypass mode, Claude Code auto-approves all prompts silently, which would make `action: ask` equivalent to `action: allow`. Use `action: deny` if you need a hard block that works in all modes.
+`action: ask` shows the native approval prompt even when Claude Code is launched with `--dangerously-skip-permissions`. Claude Code honors hook-returned permission decisions regardless of the bypass flag.
 
 ## Next Steps
 

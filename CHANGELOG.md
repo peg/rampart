@@ -19,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **`action: ask` fails closed in `--dangerously-skip-permissions` mode** — In bypass mode, Claude Code auto-approves all native prompts, making `action: ask` equivalent to `action: allow`. Rampart now returns deny with a clear message instead: `"action: ask is not supported in --dangerously-skip-permissions mode; use action: deny to enforce this rule"`.
 - **Session state path traversal protection** — `validateSessionID` rejects session IDs containing path traversal characters.
 - **Removed hardcoded token** from `contrib/openclaw-shim.sh` (was committed as an example; now reads from `~/.rampart/token`).
 
