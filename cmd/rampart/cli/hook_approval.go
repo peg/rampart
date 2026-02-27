@@ -230,6 +230,91 @@ func (c *hookApprovalClient) stderrWriter() io.Writer {
 	return os.Stderr
 }
 
+// registerAskAuditCtx creates a pending approval in serve for ask+audit
+// visibility, but does not wait for human resolution.
+func (c *hookApprovalClient) registerAskAuditCtx(ctx context.Context, tool, command, agent, path, runID, message string) (string, error) {
+	body := createApprovalRequest{
+		Tool:    tool,
+		Command: command,
+		Agent:   agent,
+		Path:    path,
+		Message: enrichApprovalMessage(message, command),
+		RunID:   runID,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.serveURL+"/v1/approvals", bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	client := &http.Client{Timeout: 400 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		var autoResp struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&autoResp); err != nil {
+			return "", err
+		}
+		return autoResp.ID, nil
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("create approval returned status %d", resp.StatusCode)
+	}
+
+	var created createApprovalResponse
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", err
+	}
+	return created.ID, nil
+}
+
+// resolveAskAuditCtx marks a previously registered ask+audit approval as
+// approved or denied. Best-effort callers should ignore returned errors.
+func (c *hookApprovalClient) resolveAskAuditCtx(ctx context.Context, approvalID string, approved bool, resolvedBy string) error {
+	if strings.TrimSpace(approvalID) == "" {
+		return nil
+	}
+	if resolvedBy == "" {
+		resolvedBy = "hook"
+	}
+	body, err := json.Marshal(map[string]any{
+		"approved":    approved,
+		"resolved_by": resolvedBy,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.serveURL+"/v1/approvals/"+url.PathEscape(approvalID)+"/resolve", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	client := &http.Client{Timeout: 400 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("resolve approval returned status %d", resp.StatusCode)
+}
+
 func enrichApprovalMessage(message, toolInput string) string {
 	registryURL := detectPackageRegistryURL(toolInput)
 	if registryURL == "" {

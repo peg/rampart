@@ -255,6 +255,16 @@ func matchAny(patterns []string, name string) bool {
 	return false
 }
 
+func matchAnyFold(patterns []string, name string) bool {
+	lower := strings.ToLower(name)
+	for _, p := range patterns {
+		if MatchGlob(strings.ToLower(p), lower) {
+			return true
+		}
+	}
+	return false
+}
+
 // matchCondition evaluates whether a tool call satisfies a rule's condition.
 //
 // Matching logic:
@@ -310,8 +320,14 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 			return false, ""
 		}
 		matched := matchFirst(cond.PathMatches, cleaned)
+		if matched == "" {
+			matched = matchFirstFold(cond.PathMatches, cleaned)
+		}
 		if matched == "" && resolved != cleaned {
 			matched = matchFirst(cond.PathMatches, resolved)
+			if matched == "" {
+				matched = matchFirstFold(cond.PathMatches, resolved)
+			}
 		}
 		if matched == "" {
 			return false, ""
@@ -371,6 +387,16 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 func matchFirst(patterns []string, value string) string {
 	for _, p := range patterns {
 		if MatchGlob(p, value) {
+			return p
+		}
+	}
+	return ""
+}
+
+func matchFirstFold(patterns []string, value string) string {
+	lower := strings.ToLower(value)
+	for _, p := range patterns {
+		if MatchGlob(strings.ToLower(p), lower) {
 			return p
 		}
 	}
@@ -474,14 +500,23 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 			return false
 		}
 		pathMatch := matchAny(cond.PathMatches, cleaned)
+		if !pathMatch {
+			pathMatch = matchAnyFold(cond.PathMatches, cleaned)
+		}
 		if !pathMatch && resolved != cleaned {
 			pathMatch = matchAny(cond.PathMatches, resolved)
+			if !pathMatch {
+				pathMatch = matchAnyFold(cond.PathMatches, resolved)
+			}
 		}
 		if !pathMatch {
 			return false
 		}
 		// Check exclusions against both forms too.
-		if matchAny(cond.PathNotMatches, cleaned) || (resolved != cleaned && matchAny(cond.PathNotMatches, resolved)) {
+		if matchAny(cond.PathNotMatches, cleaned) ||
+			matchAnyFold(cond.PathNotMatches, cleaned) ||
+			(resolved != cleaned &&
+				(matchAny(cond.PathNotMatches, resolved) || matchAnyFold(cond.PathNotMatches, resolved))) {
 			return false
 		}
 		matched = true

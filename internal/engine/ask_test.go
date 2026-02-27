@@ -84,6 +84,41 @@ func TestRuleParseAction_Ask(t *testing.T) {
 	}
 }
 
+func TestRuleAskAuditEnabled_RequireApprovalAlias(t *testing.T) {
+	r := Rule{Action: "require_approval"}
+	if !r.AskAuditEnabled() {
+		t.Fatal("expected require_approval to be treated as ask+audit")
+	}
+}
+
+func TestRuleAskAuditEnabled_AskExplicitAudit(t *testing.T) {
+	r := Rule{Action: "ask", Ask: AskActionConfig{Audit: true}}
+	if !r.AskAuditEnabled() {
+		t.Fatal("expected ask.audit=true to enable ask audit")
+	}
+}
+
+func TestRuleAskAuditEnabled_AskDefaultFalse(t *testing.T) {
+	r := Rule{Action: "ask"}
+	if r.AskAuditEnabled() {
+		t.Fatal("expected ask.audit to default to false")
+	}
+}
+
+func TestRuleHeadlessOnlyEnabled_AskExplicit(t *testing.T) {
+	r := Rule{Action: "ask", Ask: AskActionConfig{HeadlessOnly: true}}
+	if !r.HeadlessOnlyEnabled() {
+		t.Fatal("expected ask.headless_only=true to enable headless-only mode")
+	}
+}
+
+func TestRuleHeadlessOnlyEnabled_RequireApprovalFalse(t *testing.T) {
+	r := Rule{Action: "require_approval", Ask: AskActionConfig{HeadlessOnly: true}}
+	if r.HeadlessOnlyEnabled() {
+		t.Fatal("expected require_approval not to enable headless-only mode")
+	}
+}
+
 // ── Policy evaluation with action: ask ───────────────────────────────────────
 
 func TestEvaluate_ActionAsk_MatchedRule(t *testing.T) {
@@ -115,6 +150,43 @@ policies:
 	}
 	if !strings.Contains(d.Message, "approve or deny") {
 		t.Errorf("expected message to contain 'approve or deny', got: %q", d.Message)
+	}
+	if d.HeadlessOnly {
+		t.Errorf("expected HeadlessOnly=false by default, got true")
+	}
+}
+
+func TestEvaluate_ActionAsk_HeadlessOnly(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: ask-sudo-headless
+    match:
+      agent: "claude-code"
+      tool: ["exec"]
+    rules:
+      - action: ask
+        ask:
+          headless_only: true
+        when:
+          command_matches: ["sudo *"]
+        message: "sudo command — approve or deny?"
+`)
+	call := ToolCall{
+		ID:    "test-ask-headless-001",
+		Agent: "claude-code",
+		Tool:  "exec",
+		Params: map[string]any{
+			"command": "sudo apt install git",
+		},
+	}
+	d := e.Evaluate(call)
+	if d.Action != ActionAsk {
+		t.Errorf("expected ActionAsk, got %s", d.Action)
+	}
+	if !d.HeadlessOnly {
+		t.Errorf("expected HeadlessOnly=true, got false")
 	}
 }
 

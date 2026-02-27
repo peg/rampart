@@ -125,6 +125,10 @@ type Rule struct {
 	// "require_approval", or "webhook".
 	Action string `yaml:"action"`
 
+	// Ask configures action: ask behavior.
+	// - audit: when true, mirror ask prompts to rampart serve (best-effort).
+	Ask AskActionConfig `yaml:"ask,omitempty" json:"ask,omitempty"`
+
 	// When defines the conditions under which this rule matches.
 	When Condition `yaml:"when"`
 
@@ -134,6 +138,12 @@ type Rule struct {
 
 	// Webhook configures the external webhook for action: webhook rules.
 	Webhook *WebhookActionConfig `yaml:"webhook,omitempty"`
+}
+
+// AskActionConfig defines optional behavior for action: ask rules.
+type AskActionConfig struct {
+	Audit        bool `yaml:"audit" json:"audit"`
+	HeadlessOnly bool `yaml:"headless_only" json:"headless_only"`
 }
 
 // WebhookActionConfig defines the webhook endpoint and behavior for
@@ -208,6 +218,31 @@ func (r Rule) ParseAction() (Action, error) {
 	default:
 		return ActionAllow, fmt.Errorf("engine: unknown action %q", r.Action)
 	}
+}
+
+// AskAuditEnabled reports whether this rule should be treated as ask+audit.
+//
+// action: require_approval is kept as a policy alias and is interpreted as
+// action: ask + ask.audit=true for hook-side behavior.
+func (r Rule) AskAuditEnabled() bool {
+	action := strings.ToLower(strings.TrimSpace(r.Action))
+	if action == "require_approval" {
+		return true
+	}
+	if action == "ask" {
+		return r.Ask.Audit
+	}
+	return false
+}
+
+// HeadlessOnlyEnabled reports whether action: ask should bypass native prompts
+// and require serve-backed blocking approval flow.
+func (r Rule) HeadlessOnlyEnabled() bool {
+	action := strings.ToLower(strings.TrimSpace(r.Action))
+	if action == "ask" {
+		return r.Ask.HeadlessOnly
+	}
+	return false
 }
 
 // Condition defines when a rule matches. All specified fields must match

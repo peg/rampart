@@ -105,10 +105,12 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 	// Deny wins. Then log. Then allow.
 	// If policies match scope but no rules fire, fall through to default action.
 	var (
-		finalAction  = ActionAllow
-		finalMessage string
-		matched      []string
-		anyRuleFired bool
+		finalAction       = ActionAllow
+		finalMessage      string
+		finalAudit        bool
+		finalHeadlessOnly bool
+		matched           []string
+		anyRuleFired      bool
 	)
 
 	var finalWebhookConfig *WebhookActionConfig
@@ -146,6 +148,10 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 			if finalAction != ActionDeny && finalAction != ActionWebhook && finalAction != ActionRequireApproval {
 				finalAction = ActionRequireApproval
 				finalMessage = message
+				if rule != nil {
+					finalAudit = rule.AskAuditEnabled()
+					finalHeadlessOnly = false
+				}
 			}
 		case ActionAsk:
 			// Ask wins over log and allow, but not deny, webhook, or require_approval.
@@ -154,15 +160,23 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				finalAction != ActionRequireApproval && finalAction != ActionAsk {
 				finalAction = ActionAsk
 				finalMessage = message
+				if rule != nil {
+					finalAudit = rule.AskAuditEnabled()
+					finalHeadlessOnly = rule.HeadlessOnlyEnabled()
+				}
 			}
 		case ActionWatch:
 			if finalAction == ActionAllow {
 				finalAction = ActionWatch
 				finalMessage = message
+				finalAudit = false
+				finalHeadlessOnly = false
 			}
 		case ActionAllow:
 			if finalAction == ActionAllow && finalMessage == "" {
 				finalMessage = message
+				finalAudit = false
+				finalHeadlessOnly = false
 			}
 		}
 	}
@@ -179,6 +193,8 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 
 	return Decision{
 		Action:          finalAction,
+		Audit:           finalAudit,
+		HeadlessOnly:    finalHeadlessOnly,
 		MatchedPolicies: matched,
 		Message:         finalMessage,
 		EvalDuration:    time.Since(start),
