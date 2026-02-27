@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ask.audit: true`** — `action: ask` rules can now set `ask.audit: true` to mirror pending approval state into `rampart serve` for dashboard and `rampart watch` visibility. Dashboard and watch show the item as pending while the native Claude Code prompt is active, then reflect the user's decision after PostToolUse.
+
+### Changed
+
+- **`require_approval` now uses native ask prompt** — Previously, `require_approval` blocked execution and waited for approval via the serve dashboard or `rampart approve` CLI. It now behaves as `action: ask` + `ask.audit: true`: the native Claude Code inline prompt fires immediately, and the decision is mirrored to serve (if running) for audit/observability. **If you rely on serve-gated headless approval in CI/non-interactive environments**, this changes your workflow — approval now requires a human at the Claude Code terminal. A dedicated `headless_only` flag for serve-gated approval without native prompt is planned for a future release.
+
 ## [0.6.5] - 2026-02-27
 
 ### Added
