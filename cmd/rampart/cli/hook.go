@@ -515,7 +515,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						policyName = decision.MatchedPolicies[0]
 					}
 					if err := sessionMgr.RecordAsk(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, decision.Message); err != nil {
-						logger.Warn("hook: failed to record ask in session state", "error", err)
+						// NOTE: Use Debug, not Warn. Claude Code treats ANY stderr as a hook error
+						// for ask decisions. RecordAsk is best-effort anyway.
+						logger.Debug("hook: failed to record ask in session state", "error", err)
 					}
 				}
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
