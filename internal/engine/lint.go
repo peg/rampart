@@ -248,6 +248,18 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 			Message:  fmt.Sprintf("policy %q rule %d: action \"log\" is deprecated — use \"watch\" instead (same behavior, clearer name)", p.Name, ruleIdx+1),
 		})
 	}
+	// Deprecation warning for action: require_approval (v0.6.6 migration path).
+	if actionLower == "require_approval" {
+		result.add(LintFinding{
+			File:     filename,
+			Severity: LintWarning,
+			Message: "action \"require_approval\" is deprecated as of v0.6.6 and will be removed in v1.0.\n" +
+				"  - For interactive use:  action: ask\n" +
+				"  - For interactive + audit logging: action: ask (with ask.audit: true)\n" +
+				"  - For CI/headless (blocking): action: ask (with ask.audit: true and ask.headless_only: true)\n" +
+				"  See: https://rampart.sh/docs/migration/v0.6.6",
+		})
+	}
 
 	// Agent-scoping warning for action: ask.
 	// The native Claude Code permission dialog only works for the claude-code agent.
