@@ -336,12 +336,10 @@ func TestOutputHookResult_ClaudeCode_Ask(t *testing.T) {
 		}
 	})
 
-	// Stderr should show approval message, not deny message
-	if !strings.Contains(stderr, "approval required") {
-		t.Fatalf("stderr missing approval message: %q", stderr)
-	}
-	if strings.Contains(stderr, "blocked") {
-		t.Fatalf("stderr should not say 'blocked' for ask: %q", stderr)
+	// Stderr should be EMPTY for ask — Claude Code interprets any stderr as a hook error.
+	// The reason is conveyed via PermissionDecisionReason in the JSON response.
+	if stderr != "" {
+		t.Fatalf("stderr should be empty for ask (Claude Code treats stderr as error), got: %q", stderr)
 	}
 
 	var ask hookOutput
@@ -475,8 +473,10 @@ func TestOutputHookResult_Cline_Ask(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(stderr, "approval required") {
-		t.Fatalf("stderr missing approval message: %q", stderr)
+	// Stderr should be empty for ask — consistent with Claude Code behavior.
+	// Cline has no native ask, so it just cancels; the reason is in ErrorMessage.
+	if stderr != "" {
+		t.Fatalf("stderr should be empty for ask, got: %q", stderr)
 	}
 
 	var ask clineHookOutput

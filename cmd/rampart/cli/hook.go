@@ -720,9 +720,9 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 	if decision == hookDeny || decision == hookBlock {
 		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason, suggestions))
 	}
-	if decision == hookAsk {
-		fmt.Fprint(os.Stderr, formatApprovalRequiredMessage(command, reason))
-	}
+	// NOTE: Do NOT print to stderr for hookAsk — Claude Code interprets any
+	// stderr output as a hook error. The native prompt shows the reason via
+	// PermissionDecisionReason in the JSON response.
 	switch format {
 	case "cline":
 		// Cline has no "ask" — cancel on deny, block, and require_approval.
