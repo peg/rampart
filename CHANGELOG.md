@@ -7,13 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-02-27
+
 ### Added
 
-- **`ask.audit: true`** — `action: ask` rules can now set `ask.audit: true` to mirror pending approval state into `rampart serve` for dashboard and `rampart watch` visibility. Dashboard and watch show the item as pending while the native Claude Code prompt is active, then reflect the user's decision after PostToolUse.
+- **`rampart bench` v2** — Policy coverage benchmarking against a curated attack corpus. New v2 corpus schema adds `id`, `severity` (critical/high/medium), `os` filtering (linux/darwin/windows/*), `tool` type (exec/read/write), and MITRE ATT&CK technique IDs. Built-in corpus includes 80+ cases covering credential theft, destructive commands, exfiltration, persistence, LOLBins, and Windows-specific attack patterns.
+  - `--os` — filter cases by OS (default: auto-detect)
+  - `--severity` — minimum severity to include (default: medium)
+  - `--min-coverage` — exit code 1 if coverage drops below threshold (CI integration)
+  - `--strict` — require `deny` only (don't count `require_approval` as covered)
+  - `--id` — run cases matching an ID prefix (e.g. `WIN-CRED`)
+  - Weighted coverage score: critical=3, high=2, medium=1
+  - v1 corpus auto-migrated at load time for backward compatibility
 
 ### Changed
 
-- **`require_approval` now uses native ask prompt** — Previously, `require_approval` blocked execution and waited for approval via the serve dashboard or `rampart approve` CLI. It now behaves as `action: ask` + `ask.audit: true`: the native Claude Code inline prompt fires immediately, and the decision is mirrored to serve (if running) for audit/observability. **If you rely on serve-gated headless approval in CI/non-interactive environments**, this changes your workflow — approval now requires a human at the Claude Code terminal. A dedicated `headless_only` flag for serve-gated approval without native prompt is planned for a future release.
+- **`require_approval` deprecation warning in `rampart policy lint`** — Policies using `action: require_approval` now produce a lint warning with migration instructions. `require_approval` is deprecated as of v0.6.6 and will be removed in v1.0.
+
+### Fixed
+
+- **Upgrade migration notice** — `rampart upgrade` now scans existing policies for `require_approval` rules before upgrading and shows explicit migration steps (with a confirmation prompt) when found. Auto-continues in non-interactive/CI environments.
 
 ## [0.6.5] - 2026-02-27
 
