@@ -26,11 +26,11 @@ import "time"
 // tracking state. It is serialised as JSON and written atomically to
 // ~/.rampart/session-state/{session_id}.json.
 type State struct {
-	SessionID        string                     `json:"session_id"`
-	CreatedAt        time.Time                  `json:"created_at"`
-	LastActive       time.Time                  `json:"last_active"`
-	PendingAsks      map[string]PendingAsk      `json:"pending_asks"`
-	SessionApprovals map[string]ApprovalRecord  `json:"session_approvals"`
+	SessionID        string                    `json:"session_id"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	LastActive       time.Time                 `json:"last_active"`
+	PendingAsks      map[string]PendingAsk     `json:"pending_asks"`
+	SessionApprovals map[string]ApprovalRecord `json:"session_approvals"`
 }
 
 // PendingAsk records the details of a PreToolUse event that emitted an ask
@@ -42,6 +42,8 @@ type PendingAsk struct {
 	AskedAt            time.Time `json:"asked_at"`
 	PolicyName         string    `json:"policy_name,omitempty"`
 	DecisionMessage    string    `json:"decision_message,omitempty"`
+	Audit              bool      `json:"audit,omitempty"`
+	AuditApprovalID    string    `json:"audit_approval_id,omitempty"`
 }
 
 // ApprovalRecord tracks cumulative approvals for a generalised command pattern

@@ -16,9 +16,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +36,18 @@ policies:
       tool: ["exec"]
     rules:
       - action: ask
+        message: "approve this command?"
+`
+
+const askHeadlessOnlyPolicy = `version: "1"
+policies:
+  - name: test-ask-headless-only
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        ask:
+          headless_only: true
         message: "approve this command?"
 `
 
@@ -191,6 +206,139 @@ func TestHookActionAsk_WritesSessionState(t *testing.T) {
 	askMap, _ := ask.(map[string]any)
 	if askMap["tool"] != "exec" {
 		t.Errorf("pending_asks[%q].tool = %v, want exec", toolUseID, askMap["tool"])
+	}
+}
+
+func TestHookActionAsk_HeadlessOnly_DoesNotEmitPermissionDecisionAsk(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(askHeadlessOnlyPolicy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	var createCount atomic.Int32
+	var pollCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
+			createCount.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-headless-1", "status": "pending"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/approvals/ap-headless-1":
+			pollCount.Add(1)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-headless-1", "status": "approved"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	payload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "sess-headless-001",
+		"tool_use_id":     "toolu_headless_001",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	stdinJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	opts := &rootOptions{configPath: configPath}
+	stdout, _, hookErr := runHookWithStdin(t, opts, string(stdinJSON), "--mode", "enforce", "--serve-url", srv.URL)
+	if hookErr != nil {
+		t.Fatalf("hook RunE error: %v", hookErr)
+	}
+	if createCount.Load() != 1 {
+		t.Fatalf("expected 1 approval create call, got %d", createCount.Load())
+	}
+	if pollCount.Load() == 0 {
+		t.Fatalf("expected poll calls, got %d", pollCount.Load())
+	}
+
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil {
+		t.Fatal("expected non-nil HookSpecificOutput")
+	}
+	if out.HookSpecificOutput.PermissionDecision == "ask" {
+		t.Fatalf("expected headless_only flow not to emit permissionDecision=ask, got %+v", out.HookSpecificOutput)
+	}
+	if out.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("expected permissionDecision=allow after external approval, got %q", out.HookSpecificOutput.PermissionDecision)
+	}
+}
+
+func TestHookActionAsk_DefaultHeadlessOnlyFalse_DoesEmitPermissionDecisionAsk(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(askPolicy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	payload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "sess-ask-default-001",
+		"tool_use_id":     "toolu_ask_default_001",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	stdinJSON, _ := json.Marshal(payload)
+
+	opts := &rootOptions{configPath: configPath}
+	stdout, _, hookErr := runHookWithStdin(t, opts, string(stdinJSON), "--mode", "enforce")
+	if hookErr != nil {
+		t.Fatalf("hook RunE error: %v", hookErr)
+	}
+
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil {
+		t.Fatal("expected non-nil HookSpecificOutput")
+	}
+	if out.HookSpecificOutput.PermissionDecision != "ask" {
+		t.Fatalf("expected permissionDecision=ask, got %q", out.HookSpecificOutput.PermissionDecision)
+	}
+}
+
+func TestHookActionAsk_HeadlessOnly_NoServe_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(askHeadlessOnlyPolicy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	payload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "sess-headless-noserve-001",
+		"tool_use_id":     "toolu_headless_noserve_001",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	stdinJSON, _ := json.Marshal(payload)
+
+	opts := &rootOptions{configPath: configPath}
+	_, _, hookErr := runHookWithStdin(t, opts, string(stdinJSON), "--mode", "enforce", "--serve-url", "http://127.0.0.1:1")
+	if hookErr == nil {
+		t.Fatal("expected error when ask.headless_only=true and serve is unreachable")
+	}
+	if !strings.Contains(hookErr.Error(), "ask.headless_only requires rampart serve") {
+		t.Fatalf("unexpected error: %v", hookErr)
 	}
 }
 
