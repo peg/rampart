@@ -205,6 +205,11 @@ func (m *Manager) trimOldest(s *State) {
 // RecordAsk records a pending ask for the given toolUseID.
 // The entry is written to pending_asks[toolUseID] in the session state file.
 func (m *Manager) RecordAsk(toolUseID, tool, command, pattern, policyName, message string) error {
+	return m.RecordAskWithAudit(toolUseID, tool, command, pattern, policyName, message, false, "")
+}
+
+// RecordAskWithAudit records a pending ask and optional audit linkage metadata.
+func (m *Manager) RecordAskWithAudit(toolUseID, tool, command, pattern, policyName, message string, audit bool, auditApprovalID string) error {
 	path, err := m.statePath()
 	if err != nil {
 		return err
@@ -221,6 +226,8 @@ func (m *Manager) RecordAsk(toolUseID, tool, command, pattern, policyName, messa
 		AskedAt:            time.Now().UTC(),
 		PolicyName:         policyName,
 		DecisionMessage:    message,
+		Audit:              audit,
+		AuditApprovalID:    auditApprovalID,
 	}
 
 	if err := m.save(path, s); err != nil {
@@ -231,6 +238,8 @@ func (m *Manager) RecordAsk(toolUseID, tool, command, pattern, policyName, messa
 		"tool_use_id", toolUseID,
 		"tool", tool,
 		"pattern", pattern,
+		"audit", audit,
+		"audit_approval_id", auditApprovalID,
 	)
 	return nil
 }
@@ -239,18 +248,25 @@ func (m *Manager) RecordAsk(toolUseID, tool, command, pattern, policyName, messa
 // incrementing the approval count. Returns the updated ApprovalRecord.
 // Returns an error if toolUseID is not found in pending_asks.
 func (m *Manager) ObserveApproval(toolUseID string) (*ApprovalRecord, error) {
+	_, record, err := m.ObserveApprovalWithAsk(toolUseID)
+	return record, err
+}
+
+// ObserveApprovalWithAsk is like ObserveApproval, but also returns the pending
+// ask metadata that was observed and removed.
+func (m *Manager) ObserveApprovalWithAsk(toolUseID string) (*PendingAsk, *ApprovalRecord, error) {
 	path, err := m.statePath()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s, err := m.load(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	ask, ok := s.PendingAsks[toolUseID]
 	if !ok {
-		return nil, fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
+		return nil, nil, fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
 	}
 
 	// Key for the approval record: "{tool}:{generalized_pattern}".
@@ -277,7 +293,7 @@ func (m *Manager) ObserveApproval(toolUseID string) (*ApprovalRecord, error) {
 	delete(s.PendingAsks, toolUseID)
 
 	if err := m.save(path, s); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	m.logger.Debug("session: observed approval",
 		"session_id", m.sessionID,
@@ -285,7 +301,33 @@ func (m *Manager) ObserveApproval(toolUseID string) (*ApprovalRecord, error) {
 		"pattern", ask.GeneralizedPattern,
 		"approval_count", record.ApprovalCount,
 	)
-	return &record, nil
+	askCopy := ask
+	return &askCopy, &record, nil
+}
+
+// DismissAsk removes a pending ask without recording an approval outcome.
+// This is used when a user denies the native ask prompt (PostToolUseFailure).
+func (m *Manager) DismissAsk(toolUseID string) (*PendingAsk, error) {
+	path, err := m.statePath()
+	if err != nil {
+		return nil, err
+	}
+	s, err := m.load(path)
+	if err != nil {
+		return nil, err
+	}
+
+	ask, ok := s.PendingAsks[toolUseID]
+	if !ok {
+		return nil, fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
+	}
+	delete(s.PendingAsks, toolUseID)
+
+	if err := m.save(path, s); err != nil {
+		return nil, err
+	}
+	askCopy := ask
+	return &askCopy, nil
 }
 
 // Cleanup removes session state files that have not been active within maxAge.

@@ -148,6 +148,12 @@ type Decision struct {
 	// Action is the final verdict: allow, deny, or log.
 	Action Action
 
+	// Audit is set for ask decisions when audit mirroring is enabled.
+	// This is true for:
+	// - action: ask with ask.audit: true
+	// - action: require_approval (alias for ask+audit)
+	Audit bool
+
 	// MatchedPolicies lists the names of all policies that matched
 	// the tool call. Useful for debugging and audit.
 	MatchedPolicies []string
