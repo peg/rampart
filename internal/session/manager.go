@@ -143,7 +143,7 @@ func (m *Manager) save(path string, s *State) error {
 		trimmed = true
 	}
 	if trimmed {
-		m.logger.Warn("session: state file exceeded size limit, trimmed old entries",
+		m.logger.Debug("session: state file exceeded size limit, trimmed old entries",
 			"session_id", s.SessionID,
 			"size_bytes", len(data),
 		)
@@ -321,7 +321,7 @@ func (m *Manager) Cleanup(maxAge time.Duration) error {
 		fp := filepath.Join(d, name)
 		data, err := os.ReadFile(fp)
 		if err != nil {
-			m.logger.Warn("session: cleanup cannot read file", "path", fp, "error", err)
+			m.logger.Debug("session: cleanup cannot read file", "path", fp, "error", err)
 			failed++
 			continue
 		}
@@ -329,9 +329,9 @@ func (m *Manager) Cleanup(maxAge time.Duration) error {
 		var s State
 		if err := json.Unmarshal(data, &s); err != nil {
 			// Unparseable file — remove it.
-			m.logger.Warn("session: cleanup removing unparseable file", "path", fp)
+			m.logger.Debug("session: cleanup removing unparseable file", "path", fp)
 			if removeErr := os.Remove(fp); removeErr != nil {
-				m.logger.Warn("session: cleanup remove failed", "path", fp, "error", removeErr)
+				m.logger.Debug("session: cleanup remove failed", "path", fp, "error", removeErr)
 				failed++
 			} else {
 				removed++
@@ -341,7 +341,7 @@ func (m *Manager) Cleanup(maxAge time.Duration) error {
 
 		if s.LastActive.Before(cutoff) {
 			if removeErr := os.Remove(fp); removeErr != nil {
-				m.logger.Warn("session: cleanup remove failed", "path", fp, "error", removeErr)
+				m.logger.Debug("session: cleanup remove failed", "path", fp, "error", removeErr)
 				failed++
 			} else {
 				m.logger.Debug("session: cleanup removed stale session file",
