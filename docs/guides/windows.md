@@ -164,7 +164,14 @@ irm https://rampart.sh/install.ps1 | iex
 2. Check the serve URL matches (default: `http://localhost:9090`)
 3. Test directly: `rampart test "your-command"`
 
+## Known Behavior
+
+### `action: ask` in `--dangerously-skip-permissions` mode
+
+When Claude Code is launched with `--dangerously-skip-permissions`, `action: ask` rules will **deny the command** instead of showing a prompt. This is intentional — in bypass mode, Claude Code auto-approves all prompts silently, which would make `action: ask` equivalent to `action: allow`. Use `action: deny` if you need a hard block that works in all modes.
+
 ## Next Steps
 
 - [Writing Policies](../README.md#writing-policies) — customize what's allowed
+- [Native Ask Prompt](./native-ask.md) — inline approval dialogs for sensitive commands
 - [Live Dashboard](../README.md#live-dashboard) — monitor in real-time with `rampart watch`
