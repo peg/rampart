@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode"
 )
 
 // Manager handles loading, updating, and cleanup of session state files.
@@ -63,10 +64,24 @@ func (m *Manager) resolveDir() (string, error) {
 	return d, nil
 }
 
+// validateSessionID checks that sessionID contains only safe characters.
+// This prevents path traversal attacks via crafted session IDs like "../../etc/cron.d/evil".
+func validateSessionID(id string) error {
+	if id == "" {
+		return errors.New("session: sessionID is required")
+	}
+	for _, r := range id {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '_' {
+			return fmt.Errorf("session: invalid character %q in session_id", r)
+		}
+	}
+	return nil
+}
+
 // statePath returns the path for the current session's JSON file.
 func (m *Manager) statePath() (string, error) {
-	if m.sessionID == "" {
-		return "", errors.New("session: sessionID is required")
+	if err := validateSessionID(m.sessionID); err != nil {
+		return "", err
 	}
 	d, err := m.resolveDir()
 	if err != nil {
@@ -117,13 +132,17 @@ func (m *Manager) save(path string, s *State) error {
 		return fmt.Errorf("session: marshal state: %w", err)
 	}
 
-	// Trim if too large.
-	if len(data) > maxStateSize {
+	// Trim loop until under size limit.
+	trimmed := false
+	for len(data) > maxStateSize && (len(s.PendingAsks) > 0 || len(s.SessionApprovals) > 0) {
 		m.trimOldest(s)
 		data, err = json.Marshal(s)
 		if err != nil {
 			return fmt.Errorf("session: marshal trimmed state: %w", err)
 		}
+		trimmed = true
+	}
+	if trimmed {
 		m.logger.Warn("session: state file exceeded size limit, trimmed old entries",
 			"session_id", s.SessionID,
 			"size_bytes", len(data),

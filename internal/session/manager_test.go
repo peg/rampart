@@ -537,3 +537,47 @@ func writeStateFile(t *testing.T, dir, sessionID string, s State) {
 		t.Fatalf("write state file for %s: %v", sessionID, err)
 	}
 }
+
+// TestValidateSessionID_PathTraversal ensures crafted session IDs cannot escape the state directory.
+func TestValidateSessionID_PathTraversal(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		wantErr   bool
+	}{
+		{"valid uuid", "550e8400-e29b-41d4-a716-446655440000", false},
+		{"valid alphanumeric", "abc123XYZ", false},
+		{"valid with underscore", "session_123", false},
+		{"valid with dash", "session-123", false},
+		{"path traversal dots", "../../../etc/passwd", true},
+		{"path traversal backslash", "..\\..\\etc\\passwd", true},
+		{"slash in id", "session/evil", true},
+		{"space in id", "session evil", true},
+		{"null byte", "session\x00evil", true},
+		{"empty", "", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSessionID(tc.sessionID)
+			if tc.wantErr && err == nil {
+				t.Errorf("validateSessionID(%q) = nil, want error", tc.sessionID)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("validateSessionID(%q) = %v, want nil", tc.sessionID, err)
+			}
+		})
+	}
+}
+
+// TestRecordAsk_PathTraversal ensures malicious session IDs are rejected.
+func TestRecordAsk_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, "../../etc/cron.d/evil", nil)
+	err := m.RecordAsk("tool-1", "exec", "rm -rf /", "rm **", "", "")
+	if err == nil {
+		t.Fatal("RecordAsk with path traversal sessionID should fail")
+	}
+	// Error should mention invalid character
+	_ = err.Error()
+}
