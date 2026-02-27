@@ -560,8 +560,28 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					return outputHookResult(cmd, format, hookBlock, true, decision.Message, cmdStr, decision.Suggestions...)
 				}
 				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr, decision.Suggestions...)
-			case engine.ActionAsk, engine.ActionRequireApproval:
-				askAudit := decision.Audit || decision.Action == engine.ActionRequireApproval
+			case engine.ActionAsk:
+				if decision.HeadlessOnly {
+					if serveURL == "" || !isServeRunning(serveURL) {
+						return fmt.Errorf("hook: ask.headless_only requires rampart serve, but no serve instance is reachable at %s", serveURL)
+					}
+					approvalClient := &hookApprovalClient{
+						serveURL:       strings.TrimRight(serveURL, "/"),
+						token:          serveToken,
+						logger:         logger,
+						autoDiscovered: serveAutoDiscovered,
+						errWriter:      cmd.ErrOrStderr(),
+					}
+					command, _ := call.Params["command"].(string)
+					path := call.Path() // handles both "file_path" (Claude Code) and "path"
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, decision.Message, 5*time.Minute)
+					if result == hookAsk {
+						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
+					}
+					return outputHookResult(cmd, format, result, false, decision.Message, cmdStr)
+				}
+
+				askAudit := decision.Audit
 				auditApprovalID := ""
 				// For ask+audit, best-effort mirror pending state into serve if reachable.
 				if askAudit && serveURL != "" && isServeRunning(serveURL) {
@@ -596,6 +616,43 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, decision.Message, askAudit, auditApprovalID); err != nil {
 						// NOTE: Use Debug, not Warn. Claude Code treats ANY stderr as a hook error
 						// for ask decisions. RecordAsk is best-effort anyway.
+						logger.Debug("hook: failed to record ask in session state", "error", err)
+					}
+				}
+				// Emit native ask prompt (Claude Code shows the 4-button dialog).
+				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
+			case engine.ActionRequireApproval:
+				askAudit := true
+				auditApprovalID := ""
+				// For ask+audit, best-effort mirror pending state into serve if reachable.
+				if askAudit && serveURL != "" && isServeRunning(serveURL) {
+					approvalClient := &hookApprovalClient{
+						serveURL:       strings.TrimRight(serveURL, "/"),
+						token:          serveToken,
+						logger:         logger,
+						autoDiscovered: serveAutoDiscovered,
+						errWriter:      cmd.ErrOrStderr(),
+					}
+					command, _ := call.Params["command"].(string)
+					path := call.Path()
+					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, decision.Message); regErr == nil {
+						auditApprovalID = approvalID
+					} else {
+						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
+					}
+					cancelRegister()
+				}
+
+				// Write pending ask to session state so PostToolUse can correlate the outcome.
+				if parsed.SessionID != "" && parsed.ToolUseID != "" {
+					sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
+					cmdStr2 := extractCommand(call)
+					policyName := ""
+					if len(decision.MatchedPolicies) > 0 {
+						policyName = decision.MatchedPolicies[0]
+					}
+					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, decision.Message, askAudit, auditApprovalID); err != nil {
 						logger.Debug("hook: failed to record ask in session state", "error", err)
 					}
 				}
