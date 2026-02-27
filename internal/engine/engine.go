@@ -147,6 +147,14 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				finalAction = ActionRequireApproval
 				finalMessage = message
 			}
+		case ActionAsk:
+			// Ask wins over log and allow, but not deny, webhook, or require_approval.
+			// ActionAsk emits the Claude Code native permission dialog inline.
+			if finalAction != ActionDeny && finalAction != ActionWebhook &&
+				finalAction != ActionRequireApproval && finalAction != ActionAsk {
+				finalAction = ActionAsk
+				finalMessage = message
+			}
 		case ActionWatch:
 			if finalAction == ActionAllow {
 				finalAction = ActionWatch
@@ -489,6 +497,12 @@ func (e *Engine) evaluateResponsePolicies(
 		case ActionRequireApproval:
 			if finalAction != ActionDeny && finalAction != ActionRequireApproval {
 				finalAction = ActionRequireApproval
+				finalMessage = message
+			}
+		case ActionAsk:
+			// ask is a PreToolUse-only concept; in response rules treat like require_approval.
+			if finalAction != ActionDeny && finalAction != ActionRequireApproval && finalAction != ActionAsk {
+				finalAction = ActionAsk
 				finalMessage = message
 			}
 		case ActionWatch:

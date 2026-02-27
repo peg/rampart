@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-02-27
+
+### Added
+
+- **`action: ask`** — Native Claude Code inline permission prompt (issue #122). Policy rules can now use `action: ask` to trigger Claude Code's built-in approval dialog instead of blocking execution. The user sees an inline prompt with the command details, explain mode (`ctrl+e`), and yes/no choice without leaving the session.
+- **Smart `require_approval` fallback** — When `rampart serve` is not running, `require_approval` rules automatically fall back to the native ask prompt instead of hanging indefinitely.
+- **Session state tracking** — `action: ask` decisions are persisted to `~/.rampart/session-state/` and correlated across PreToolUse/PostToolUse hook invocations for accurate approval tracking.
+- **`rampart uninstall`** — Cross-platform command to remove hooks, stop serve processes, and clean up PATH entries.
+- **`docs/guides/native-ask.md`** — User guide for `action: ask` with correct YAML syntax, use cases, and limitations.
+
+### Security
+
+- **Session state path traversal protection** — `validateSessionID` rejects session IDs containing path traversal characters.
+- **Removed hardcoded token** from `contrib/openclaw-shim.sh` (was committed as an example; now reads from `~/.rampart/token`).
+
+### Fixed
+
+- **Windows: Claude Code hooks use Git Bash path format** — Hooks were silently ignored because `C:\Users\trev\.rampart\bin\rampart.exe` backslash paths were mangled by Git Bash. `rampart setup claude-code` now writes `/c/Users/trev/.rampart/bin/rampart.exe` format.
+- **Hook stderr output caused silent allow** — Claude Code treats any hook stderr as a hook error and defaults to allow. Rampart no longer writes to stderr for ask decisions or session manager warnings.
+- **Session manager logs** — Downgraded from `Warn` to `Debug` to prevent unintended stderr output during hook execution.
+- **`rampart init` now creates policies when config already exists** — Previously skipped policy creation if `~/.rampart/config.yaml` was present.
+- **Graceful SSE shutdown** — `rampart serve` now closes SSE connections before exiting, fixing Ctrl+C hangs with "context deadline exceeded" errors.
+- **Windows shutdown file handle delay** — Added 200ms delay on Windows exit to give the OS time to release file handles before process termination.
+
+### Improved
+
+- **Wildcard hook matcher** — `rampart setup claude-code` now installs a `.*` matcher that intercepts ALL Claude Code tools (Bash, Read, Write, Edit, Fetch, Task, and future tools). Previously only specific tool names were hooked.
+- **Lint: misplaced `action` field detection** — `rampart policy lint` now detects when `action:` is written at the policy level (sibling of `name`, `match`, `rules`) instead of inside a `rules:` entry, and emits a helpful "did you mean to put this under `rules:`?" message.
+- **Windows installer upgrade detection** — Installer detects existing installations and offers to refresh Claude Code hooks with `--force`.
+
 ## [0.5.0] - 2026-02-24
 
 ### Added

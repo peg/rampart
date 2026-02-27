@@ -336,6 +336,21 @@ Use `command_contains` for substring matching (case-insensitive, v0.4.4+):
 
 > `command_contains` uses substring matching (case-insensitive). `command_matches` uses glob patterns.
 
+Use `action: ask` to trigger Claude Code's native approval prompt:
+
+```yaml
+  - name: ask-before-sudo
+    match:
+      agent: ["claude-code"]
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_contains:
+            - "sudo "
+        message: "This command needs your approval"
+```
+
 **Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `require_approval`, `watch`, `allow`. (`log` is a deprecated alias for `watch` — update your policies if you use it.)
 
 ### Project-local policies

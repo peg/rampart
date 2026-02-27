@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -216,5 +217,48 @@ func TestRemoveClineHooks_Workspace(t *testing.T) {
 
 	if !strings.Contains(out.String(), "Removed 1 Rampart hook(s)") {
 		t.Errorf("expected removal message, got: %s", out.String())
+	}
+}
+
+func TestToGitBashPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "windows path with backslashes",
+			input:    `C:\Users\trev\.rampart\bin\rampart.exe`,
+			expected: "/c/Users/trev/.rampart/bin/rampart.exe",
+		},
+		{
+			name:     "windows path uppercase drive",
+			input:    `D:\Program Files\rampart\rampart.exe`,
+			expected: "/d/Program Files/rampart/rampart.exe",
+		},
+		{
+			name:     "unix path unchanged",
+			input:    "/usr/local/bin/rampart",
+			expected: "/usr/local/bin/rampart",
+		},
+		{
+			name:     "relative path unchanged",
+			input:    "./rampart",
+			expected: "./rampart",
+		},
+	}
+
+	// Only run Windows-specific tests on Windows
+	if runtime.GOOS != "windows" {
+		t.Skip("toGitBashPath only transforms on Windows")
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := toGitBashPath(tc.input)
+			if result != tc.expected {
+				t.Errorf("toGitBashPath(%q) = %q, want %q", tc.input, result, tc.expected)
+			}
+		})
 	}
 }

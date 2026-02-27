@@ -52,6 +52,13 @@ const (
 	// The proxy POSTs tool call details to the configured URL and uses the
 	// response to determine whether to allow or deny the call.
 	ActionWebhook
+
+	// ActionAsk emits Claude Code's native permission dialog inline.
+	// The user sees: [Allow once] [Allow for session] [Always allow] [Deny]
+	// This has no dependency on rampart serve and works fully offline.
+	// On Cline and other non-Claude Code agents, falls back to deny.
+	// Use match.agent: ["claude-code"] to scope this action appropriately.
+	ActionAsk
 )
 
 // String returns a human-readable action name.
@@ -67,6 +74,8 @@ func (a Action) String() string {
 		return "require_approval"
 	case ActionWebhook:
 		return "webhook"
+	case ActionAsk:
+		return "ask"
 	default:
 		return fmt.Sprintf("action(%d)", int(a))
 	}
@@ -176,6 +185,8 @@ func ParseAction(s string) (Action, error) {
 		return ActionRequireApproval, nil
 	case "webhook":
 		return ActionWebhook, nil
+	case "ask":
+		return ActionAsk, nil
 	default:
 		return ActionAllow, fmt.Errorf("unknown action: %q", s)
 	}

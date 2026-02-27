@@ -164,7 +164,14 @@ irm https://rampart.sh/install.ps1 | iex
 2. Check the serve URL matches (default: `http://localhost:9090`)
 3. Test directly: `rampart test "your-command"`
 
+## Known Behavior
+
+### `action: ask` in `--dangerously-skip-permissions` mode
+
+`action: ask` shows the native approval prompt even when Claude Code is launched with `--dangerously-skip-permissions`. Claude Code honors hook-returned permission decisions regardless of the bypass flag.
+
 ## Next Steps
 
 - [Writing Policies](../README.md#writing-policies) — customize what's allowed
+- [Native Ask Prompt](./native-ask.md) — inline approval dialogs for sensitive commands
 - [Live Dashboard](../README.md#live-dashboard) — monitor in real-time with `rampart watch`

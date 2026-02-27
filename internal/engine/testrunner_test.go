@@ -50,6 +50,15 @@ policies:
           command_matches:
             - "kubectl apply *"
         message: "Deploy needs approval"
+  - name: ask-sudo
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_contains:
+            - "sudo "
+        message: "sudo needs approval"
 `
 
 func setupTestEngine(t *testing.T) (*Engine, string) {
@@ -79,6 +88,7 @@ func TestRunTests_AllPass(t *testing.T) {
 			{Name: "allow git", Tool: "exec", Params: map[string]any{"command": "git status"}, Expect: "allow"},
 			{Name: "deny shadow", Tool: "read", Params: map[string]any{"path": "/etc/shadow"}, Expect: "deny"},
 			{Name: "approve kubectl", Tool: "exec", Params: map[string]any{"command": "kubectl apply -f app.yaml"}, Expect: "require_approval"},
+			{Name: "ask sudo", Tool: "exec", Params: map[string]any{"command": "sudo whoami"}, Expect: "ask"},
 		},
 	}
 

@@ -59,15 +59,24 @@ func TestInitCreatesFile(t *testing.T) {
 	assert.Equal(t, "1", parsed["version"])
 }
 
-func TestInitRefusesOverwrite(t *testing.T) {
+func TestInitSkipsExistingConfig(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 	configPath := filepath.Join(dir, "rampart.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte("existing: true\n"), 0o644))
 
-	_, _, err := runCLI(t, "--config", configPath, "init")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
+	// Should succeed - creates policies even if config exists
+	stdout, _, err := runCLI(t, "--config", configPath, "init")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "config already exists")
+
+	// Config should be unchanged
+	data, _ := os.ReadFile(configPath)
+	assert.Contains(t, string(data), "existing: true")
+
+	// But policies should be created
+	policyPath := filepath.Join(dir, ".rampart", "policies", "standard.yaml")
+	assert.FileExists(t, policyPath)
 }
 
 func TestInitForceOverwrite(t *testing.T) {

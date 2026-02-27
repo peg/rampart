@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -89,6 +91,8 @@ type hookParseResult struct {
 	Response      string // non-empty for PostToolUse events
 	RunID         string // run ID derived from session_id (or env overrides)
 	HookEventName string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
+	SessionID     string // raw session_id from Claude Code input (for session state)
+	ToolUseID     string // tool_use_id from Claude Code input (for ask correlation)
 }
 
 // gitContext holds the git repository context for the current working directory.
@@ -152,6 +156,39 @@ func gitRevParseTopLevel() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// sessionStateDir returns the directory used for per-session state files.
+// The directory is ~/.rampart/session-state/ by default.
+func sessionStateDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".rampart", "session-state")
+}
+
+// isServeRunning checks if rampart serve is actually running by hitting the healthz endpoint.
+// Returns true if serve responds within the timeout, false otherwise.
+// This is used for require_approval fallback: if serve isn't running, we fall back to
+// native ask prompts instead of hanging on a dashboard approval that will never come.
+func isServeRunning(serveURL string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	healthURL := strings.TrimRight(serveURL, "/") + "/healthz"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return false
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
 }
 
 func newHookCmd(opts *rootOptions) *cobra.Command {
@@ -245,6 +282,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
+			// Cleanup stale session state files in the background (best-effort).
+			// This runs once per hook invocation; typically fires every few seconds
+			// during active sessions, which is sufficient to keep the directory clean.
+			go func() {
+				mgr := session.NewManager(sessionStateDir(), "", logger)
+				_ = mgr.Cleanup(24 * time.Hour)
+			}()
+
 			// Load policies
 			policyPath, cleanupPolicy, err := resolveWrapPolicyPath(opts.configPath)
 			if err != nil {
@@ -297,9 +342,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 			switch format {
 			case "claude-code":
-				parsed, err = parseClaudeCodeInput(os.Stdin, logger)
+				parsed, err = parseClaudeCodeInput(cmd.InOrStdin(), logger)
 			case "cline":
-				parsed, err = parseClineInput(os.Stdin, logger)
+				parsed, err = parseClineInput(cmd.InOrStdin(), logger)
 			default:
 				// Should be unreachable — format is validated above.
 				// Explicit default prevents a nil parsed pointer reaching
@@ -445,6 +490,31 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				go sendNotification(config.Notify, call, decision, logger)
 			}
 
+			// PostToolUse: observe approval for any pending ask entries in session state.
+			// This fires when tool_response is present, indicating the user approved the ask.
+			// The observation is best-effort — errors are logged but do not block the hook.
+			if parsed.HookEventName == "PostToolUse" && parsed.ToolUseID != "" && parsed.SessionID != "" {
+				sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
+				record, obsErr := sessionMgr.ObserveApproval(parsed.ToolUseID)
+				if obsErr != nil {
+					// Not found means this PostToolUse was not preceded by an ActionAsk —
+					// that is normal (most tool calls are allowed/denied, not asked).
+					logger.Debug("hook: PostToolUse observe approval (no pending ask or other issue)",
+						"session_id", parsed.SessionID,
+						"tool_use_id", parsed.ToolUseID,
+						"error", obsErr,
+					)
+				} else {
+					logger.Info("hook: observed approval for ask",
+						"session_id", parsed.SessionID,
+						"tool_use_id", parsed.ToolUseID,
+						"tool", record.Tool,
+						"pattern", record.Pattern,
+						"approval_count", record.ApprovalCount,
+					)
+				}
+			}
+
 			// Return decision
 			cmdStr := extractCommand(call)
 			if mode != "enforce" {
@@ -457,8 +527,30 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					return outputHookResult(cmd, format, hookBlock, true, decision.Message, cmdStr, decision.Suggestions...)
 				}
 				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr, decision.Suggestions...)
+			case engine.ActionAsk:
+				// Write pending ask to session state so PostToolUse can correlate the outcome.
+				if parsed.SessionID != "" && parsed.ToolUseID != "" {
+					sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
+					// Build a generalised pattern for the command (use command as-is for now;
+					// Phase 2 will add pattern generalisation via engine.GeneralizePattern).
+					cmdStr2 := extractCommand(call)
+					policyName := ""
+					if len(decision.MatchedPolicies) > 0 {
+						policyName = decision.MatchedPolicies[0]
+					}
+					if err := sessionMgr.RecordAsk(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, decision.Message); err != nil {
+						// NOTE: Use Debug, not Warn. Claude Code treats ANY stderr as a hook error
+						// for ask decisions. RecordAsk is best-effort anyway.
+						logger.Debug("hook: failed to record ask in session state", "error", err)
+					}
+				}
+				// Emit native ask prompt (Claude Code shows the 4-button dialog).
+				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
 			case engine.ActionRequireApproval:
-				if serveURL != "" {
+				// Check if serve is actually running. The token file persists after serve stops,
+				// so we can't rely on its presence. A quick health check confirms serve is up.
+				// If serve isn't running, fall back to native ask prompts.
+				if serveURL != "" && isServeRunning(serveURL) {
 					approvalClient := &hookApprovalClient{
 						serveURL:       strings.TrimRight(serveURL, "/"),
 						token:          serveToken,
@@ -471,6 +563,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, decision.Message, 5*time.Minute)
 					return outputHookResult(cmd, format, result, false, decision.Message, cmdStr)
 				}
+				// Serve not running — fall back to native ask prompt.
+				// This gives a better UX than blocking forever on a dashboard that isn't there.
+				logger.Debug("hook: serve not running, falling back to native ask for require_approval")
 				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
 			default:
 				return outputHookResult(cmd, format, hookAllow, isPostToolUse, decision.Message, cmdStr)
@@ -509,6 +604,8 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 		Agent:         "claude-code",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: input.HookEventName,
+		SessionID:     input.SessionID,
+		ToolUseID:     input.ToolUseID,
 	}
 
 	// Extract response text from PostToolUse tool_response.
@@ -608,7 +705,9 @@ func mapClaudeCodeTool(toolName string) string {
 		// displays it distinctly from exec/read/write.
 		return "agent"
 	default:
-		slog.Warn("hook: unmapped Claude Code tool name, defaulting to unknown", "tool_name", toolName)
+		// NOTE: Don't log here - this function is called before the logger is available,
+		// and any stderr output causes Claude Code to report "hook error".
+		// Unknown tools are handled gracefully by returning "unknown".
 		return "unknown"
 	}
 }
@@ -631,7 +730,7 @@ func mapClineTool(toolName string) string {
 	case "ask_followup_question", "attempt_completion", "new_task", "fetch_instructions", "plan_mode_respond":
 		return "interact"
 	default:
-		slog.Warn("hook: unmapped Cline tool name, defaulting to unknown", "tool_name", toolName)
+		// NOTE: Don't log here - any stderr output causes the agent to report "hook error".
 		return "unknown"
 	}
 }
@@ -655,9 +754,9 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 	if decision == hookDeny || decision == hookBlock {
 		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason, suggestions))
 	}
-	if decision == hookAsk {
-		fmt.Fprint(os.Stderr, formatApprovalRequiredMessage(command, reason))
-	}
+	// NOTE: Do NOT print to stderr for hookAsk — Claude Code interprets any
+	// stderr output as a hook error. The native prompt shows the reason via
+	// PermissionDecisionReason in the JSON response.
 	switch format {
 	case "cline":
 		// Cline has no "ask" — cancel on deny, block, and require_approval.

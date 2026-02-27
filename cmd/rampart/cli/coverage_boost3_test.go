@@ -16,14 +16,22 @@ import (
 
 func TestNewInitCmd_AlreadyExists(t *testing.T) {
 	dir := t.TempDir()
+	testSetHome(t, dir)
 	p := filepath.Join(dir, "rampart.yaml")
 	os.WriteFile(p, []byte("existing"), 0o644)
 
-	root := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	stdout := &bytes.Buffer{}
+	root := NewRootCmd(context.Background(), stdout, &bytes.Buffer{})
 	root.SetArgs([]string{"init", "--config", p})
 	err := root.Execute()
-	if err == nil {
-		t.Error("expected error for existing file without --force")
+	// Should succeed now - init creates policies even if config exists
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	// Config should be unchanged
+	data, _ := os.ReadFile(p)
+	if string(data) != "existing" {
+		t.Errorf("config was modified, expected 'existing' got %q", string(data))
 	}
 }
 
