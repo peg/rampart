@@ -45,7 +45,7 @@ func runStatus(w io.Writer) error {
 	protected := detectProtectedAgents()
 	mode, defaultAction := detectMode()
 	allow, deny, pending, lastDeny := todayEvents()
-	serverRunning := isServeRunning()
+	serverRunning := isServeRunningLocal()
 
 	useColor := !noColor() && isTerminal(os.Stdout)
 
@@ -75,15 +75,10 @@ func renderProgressBar(pct, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
 }
 
-// isServeRunning returns true if rampart serve is reachable on the default port.
-func isServeRunning() bool {
-	client := &http.Client{Timeout: time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/healthz", defaultServePort))
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode < 300
+// isServeRunningLocal returns true if rampart serve is reachable on the default port.
+// This is a convenience wrapper around isServeRunning for status display.
+func isServeRunningLocal() bool {
+	return isServeRunning(fmt.Sprintf("http://localhost:%d", defaultServePort))
 }
 
 // buildStatusBox renders the full status panel.

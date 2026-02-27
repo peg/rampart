@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,6 +166,29 @@ func sessionStateDir() string {
 		return ""
 	}
 	return filepath.Join(home, ".rampart", "session-state")
+}
+
+// isServeRunning checks if rampart serve is actually running by hitting the healthz endpoint.
+// Returns true if serve responds within the timeout, false otherwise.
+// This is used for require_approval fallback: if serve isn't running, we fall back to
+// native ask prompts instead of hanging on a dashboard approval that will never come.
+func isServeRunning(serveURL string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	healthURL := strings.TrimRight(serveURL, "/") + "/healthz"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return false
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
 }
 
 func newHookCmd(opts *rootOptions) *cobra.Command {
@@ -523,7 +547,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
 				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
 			case engine.ActionRequireApproval:
-				if serveURL != "" {
+				// Check if serve is actually running. The token file persists after serve stops,
+				// so we can't rely on its presence. A quick health check confirms serve is up.
+				// If serve isn't running, fall back to native ask prompts.
+				if serveURL != "" && isServeRunning(serveURL) {
 					approvalClient := &hookApprovalClient{
 						serveURL:       strings.TrimRight(serveURL, "/"),
 						token:          serveToken,
@@ -536,6 +563,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, decision.Message, 5*time.Minute)
 					return outputHookResult(cmd, format, result, false, decision.Message, cmdStr)
 				}
+				// Serve not running — fall back to native ask prompt.
+				// This gives a better UX than blocking forever on a dashboard that isn't there.
+				logger.Debug("hook: serve not running, falling back to native ask for require_approval")
 				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
 			default:
 				return outputHookResult(cmd, format, hookAllow, isPostToolUse, decision.Message, cmdStr)

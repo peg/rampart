@@ -107,6 +107,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			} else if p, err := execLookPath("rampart"); err == nil {
 				hookBin = p
 			}
+			// Convert Windows paths to Git Bash format. Claude Code on Windows runs
+			// hooks through Git Bash which doesn't understand backslash paths.
+			hookBin = toGitBashPath(hookBin)
 			hookCommand := hookBin + " hook"
 
 			rampartHook := map[string]any{
@@ -210,7 +213,13 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				fmt.Fprintln(cmd.ErrOrStderr(), "")
 				fmt.Fprintln(cmd.ErrOrStderr(), "⚠ Warning: 'rampart' is not in your system PATH.")
 				fmt.Fprintln(cmd.ErrOrStderr(), "  Claude Code hooks won't work until it is.")
-				fmt.Fprintln(cmd.ErrOrStderr(), "  Fix with: sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart")
+				if runtime.GOOS == "windows" {
+					w := cmd.ErrOrStderr()
+					_, _ = w.Write([]byte("  Fix with: $env:PATH += \";$env:USERPROFILE\\.rampart\\bin\"\n"))
+					_, _ = w.Write([]byte("  Or add %USERPROFILE%\\.rampart\\bin to your system PATH permanently.\n"))
+				} else {
+					fmt.Fprintln(cmd.ErrOrStderr(), "  Fix with: sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart")
+				}
 			}
 			return nil
 		},
@@ -762,6 +771,39 @@ func defaultPolicyContent() string {
 		panic("embedded standard policy missing: " + err.Error())
 	}
 	return string(b)
+}
+
+// toGitBashPath converts a Windows path to Git Bash compatible format.
+// Claude Code on Windows runs hooks through Git Bash (/usr/bin/bash), which
+// doesn't understand Windows backslash paths. Without this conversion, paths
+// like 'C:\Users\trev\.rampart\bin\rampart.exe' are mangled to
+// 'C:Userstrev.rampartbinrampart.exe' causing 'command not found' errors.
+//
+// Examples:
+//   - C:\Users\trev\.rampart\bin\rampart.exe -> /c/Users/trev/.rampart/bin/rampart.exe
+//   - D:\Program Files\rampart.exe -> /d/Program Files/rampart.exe
+//   - /usr/local/bin/rampart -> /usr/local/bin/rampart (unchanged)
+func toGitBashPath(windowsPath string) string {
+	if runtime.GOOS != "windows" {
+		return windowsPath
+	}
+
+	// Already a Unix-style path (starts with / or ./)
+	if strings.HasPrefix(windowsPath, "/") || strings.HasPrefix(windowsPath, "./") {
+		return windowsPath
+	}
+
+	// Check for Windows drive letter pattern (e.g., C:\, D:\)
+	if len(windowsPath) >= 3 && windowsPath[1] == ':' && (windowsPath[2] == '\\' || windowsPath[2] == '/') {
+		driveLetter := strings.ToLower(string(windowsPath[0]))
+		restOfPath := windowsPath[3:]
+		// Replace backslashes with forward slashes
+		restOfPath = strings.ReplaceAll(restOfPath, "\\", "/")
+		return "/" + driveLetter + "/" + restOfPath
+	}
+
+	// Just convert backslashes for relative paths
+	return strings.ReplaceAll(windowsPath, "\\", "/")
 }
 
 func hasRampartHook(settings claudeSettings) bool {
