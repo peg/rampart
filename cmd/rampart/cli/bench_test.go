@@ -24,95 +24,94 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestRunBenchJSONSuccess(t *testing.T) {
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "policy.yaml")
-	corpusPath := filepath.Join(dir, "corpus.yaml")
+func TestBenchV2CorpusLoadAndOSFilter(t *testing.T) {
+	corpus := []byte(`
+version: "2"
+name: test
+description: test
+cases:
+  - id: "LIN-001"
+    name: "Linux case"
+    category: execution
+    severity: medium
+    os: linux
+    tool: exec
+    input:
+      command: "echo linux"
+    expected: deny
+  - id: "WIN-001"
+    name: "Windows case"
+    category: execution
+    severity: medium
+    os: windows
+    tool: exec
+    input:
+      command: "echo windows"
+    expected: deny
+  - id: "ALL-001"
+    name: "Cross-platform case"
+    category: execution
+    severity: medium
+    os: "*"
+    tool: exec
+    input:
+      command: "echo all"
+    expected: deny
+`)
 
-	policy := `
-default_action: allow
-policies:
-  - name: block-creds
-    match:
-      tool: "exec"
-    rules:
-      - action: deny
-        message: credential access denied
-        when:
-          command_matches:
-            - "cat ~/.aws/credentials"
-  - name: watch-npm
-    match:
-      tool: "exec"
-    rules:
-      - action: watch
-        message: package install should be reviewed
-        when:
-          command_matches:
-            - "npm install *"
-`
-	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
-		t.Fatalf("write policy: %v", err)
+	cases, err := parseBenchCorpus(corpus)
+	if err != nil {
+		t.Fatalf("parse v2 corpus: %v", err)
 	}
+	linuxCases := filterBenchCases(cases, benchFilterOptions{OSFilter: "linux", Severity: "medium"})
+	if got := len(linuxCases); got != 2 {
+		t.Fatalf("linux filtered cases = %d, want 2", got)
+	}
+	windowsCases := filterBenchCases(cases, benchFilterOptions{OSFilter: "windows", Severity: "medium"})
+	if got := len(windowsCases); got != 2 {
+		t.Fatalf("windows filtered cases = %d, want 2", got)
+	}
+	allCases := filterBenchCases(cases, benchFilterOptions{OSFilter: "*", Severity: "medium"})
+	if got := len(allCases); got != 3 {
+		t.Fatalf("all filtered cases = %d, want 3", got)
+	}
+}
 
-	corpus := `
+func TestBenchV1Migration(t *testing.T) {
+	v1 := []byte(`
 entries:
   - command: "cat ~/.aws/credentials"
     expected_action: "deny"
     category: "credential-theft"
-    description: "should be blocked"
-  - command: "npm install left-pad"
-    expected_action: "watch"
-    category: "supply-chain"
-    description: "should be watched"
+    description: "Read AWS credentials"
   - command: "echo hello"
     expected_action: "allow"
-    category: "prompt-injection"
-    description: "benign command"
-`
-	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
-		t.Fatalf("write corpus: %v", err)
-	}
+    category: "execution"
+    description: "Benign command"
+`)
 
-	stdout, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--json")
+	cases, err := parseBenchCorpus(v1)
 	if err != nil {
-		t.Fatalf("run bench: %v", err)
+		t.Fatalf("parse v1 corpus: %v", err)
 	}
-
-	var got benchSummary
-	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
-		t.Fatalf("parse JSON: %v\n%s", err, stdout)
+	if len(cases) != 2 {
+		t.Fatalf("migrated cases = %d, want 2", len(cases))
 	}
-
-	if got.Total != 3 {
-		t.Fatalf("total = %d, want 3", got.Total)
+	if cases[0].ID != "V1-001" || cases[1].ID != "V1-002" {
+		t.Fatalf("unexpected IDs after migration: %q, %q", cases[0].ID, cases[1].ID)
 	}
-	if got.Matched != 3 || got.Mismatched != 0 {
-		t.Fatalf("matched/mismatched = %d/%d, want 3/0", got.Matched, got.Mismatched)
+	if cases[0].Tool != "exec" || cases[0].Input.Command == "" {
+		t.Fatalf("expected migrated exec case, got %+v", cases[0])
 	}
-	if got.Strict {
-		t.Fatal("strict should default to false")
+	if cases[0].Expected != "deny" {
+		t.Fatalf("first case expected = %q, want deny", cases[0].Expected)
 	}
-	if got.Blocked != 1 || got.Watched != 1 || got.Allowed != 1 {
-		t.Fatalf("decision counts = deny:%d watch:%d allow:%d, want 1/1/1", got.Blocked, got.Watched, got.Allowed)
-	}
-	if got.Approval != 0 {
-		t.Fatalf("approval = %d, want 0", got.Approval)
-	}
-	if got.DenyTotal != 1 || got.HardDenied != 1 || got.ApprovalGated != 0 || got.Unhandled != 0 {
-		t.Fatalf("deny coverage counts = total:%d denied:%d approval:%d missed:%d, want 1/1/0/0",
-			got.DenyTotal,
-			got.HardDenied,
-			got.ApprovalGated,
-			got.Unhandled,
-		)
-	}
-	if len(got.Gaps) != 0 {
-		t.Fatalf("gaps = %d, want 0", len(got.Gaps))
+	if cases[1].Expected != "require_approval" {
+		t.Fatalf("second case expected = %q, want require_approval", cases[1].Expected)
 	}
 }
 
-func TestBenchCommandReturnsExitCodeOnGaps(t *testing.T) {
+func TestBenchWeightedCoverageCalculation(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "policy.yaml")
 	corpusPath := filepath.Join(dir, "corpus.yaml")
@@ -120,36 +119,117 @@ func TestBenchCommandReturnsExitCodeOnGaps(t *testing.T) {
 	policy := `
 default_action: allow
 policies:
-  - name: deny-rm
+  - name: deny-critical
     match:
       tool: "exec"
     rules:
       - action: deny
-        message: destructive blocked
         when:
           command_matches:
-            - "rm -rf *"
+            - "critical-cmd"
 `
 	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
 		t.Fatalf("write policy: %v", err)
 	}
 
 	corpus := `
-entries:
-  - command: "echo ok"
-    expected_action: "deny"
-    category: "destructive"
-    description: "intentionally mismatched"
+version: "2"
+name: test
+description: test
+cases:
+  - id: "CASE-001"
+    name: "Critical"
+    category: execution
+    severity: critical
+    os: "*"
+    tool: exec
+    input:
+      command: "critical-cmd"
+    expected: deny
+  - id: "CASE-002"
+    name: "Medium"
+    category: execution
+    severity: medium
+    os: "*"
+    tool: exec
+    input:
+      command: "medium-cmd"
+    expected: deny
 `
 	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}
 
-	_, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath)
+	summary, err := runBench(benchRunOptions{
+		PolicyPath: policyPath,
+		CorpusPath: corpusPath,
+		OSFilter:   "*",
+		Severity:   "medium",
+	})
+	if err != nil {
+		t.Fatalf("run bench: %v", err)
+	}
+	if summary.Coverage != 50 {
+		t.Fatalf("raw coverage = %.1f, want 50", summary.Coverage)
+	}
+	if summary.WeightedCoverage != 75 {
+		t.Fatalf("weighted coverage = %.1f, want 75", summary.WeightedCoverage)
+	}
+}
+
+func TestBenchMinCoverageExitBehavior(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	corpusPath := filepath.Join(dir, "corpus.yaml")
+
+	policy := `
+default_action: allow
+policies:
+  - name: deny-one
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "covered"
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	corpus := `
+version: "2"
+name: test
+description: test
+cases:
+  - id: "CASE-001"
+    name: "Covered"
+    category: execution
+    severity: medium
+    os: "*"
+    tool: exec
+    input:
+      command: "covered"
+    expected: deny
+  - id: "CASE-002"
+    name: "Gap"
+    category: execution
+    severity: medium
+    os: "*"
+    tool: exec
+    input:
+      command: "gap"
+    expected: deny
+`
+	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+
+	_, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--os", "*", "--min-coverage", "60")
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
-
 	var exitErr interface{ ExitCode() int }
 	if !errors.As(err, &exitErr) {
 		t.Fatalf("expected exit-code error, got %T: %v", err, err)
@@ -157,9 +237,14 @@ entries:
 	if exitErr.ExitCode() != 1 {
 		t.Fatalf("exit code = %d, want 1", exitErr.ExitCode())
 	}
+
+	_, _, err = runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--os", "*", "--min-coverage", "40")
+	if err != nil {
+		t.Fatalf("expected success with lower threshold: %v", err)
+	}
 }
 
-func TestBenchCategoryFilter(t *testing.T) {
+func TestBenchStrictMode(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "policy.yaml")
 	corpusPath := filepath.Join(dir, "corpus.yaml")
@@ -167,223 +252,242 @@ func TestBenchCategoryFilter(t *testing.T) {
 	policy := `
 default_action: allow
 policies:
-  - name: deny-shadow
+  - name: approval-only
+    match:
+      tool: "exec"
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "rm -rf *"
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	corpus := `
+version: "2"
+name: test
+description: test
+cases:
+  - id: "CASE-001"
+    name: "Destructive"
+    category: destructive
+    severity: critical
+    os: "*"
+    tool: exec
+    input:
+      command: "rm -rf /tmp/foo"
+    expected: deny
+`
+	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+
+	nonStrict, err := runBench(benchRunOptions{PolicyPath: policyPath, CorpusPath: corpusPath, OSFilter: "*", Severity: "medium"})
+	if err != nil {
+		t.Fatalf("run non-strict bench: %v", err)
+	}
+	if nonStrict.Coverage != 100 {
+		t.Fatalf("non-strict coverage = %.1f, want 100", nonStrict.Coverage)
+	}
+
+	strict, err := runBench(benchRunOptions{PolicyPath: policyPath, CorpusPath: corpusPath, OSFilter: "*", Severity: "medium", Strict: true})
+	if err != nil {
+		t.Fatalf("run strict bench: %v", err)
+	}
+	if strict.Coverage != 0 {
+		t.Fatalf("strict coverage = %.1f, want 0", strict.Coverage)
+	}
+	if len(strict.Gaps) != 1 {
+		t.Fatalf("strict gaps = %d, want 1", len(strict.Gaps))
+	}
+}
+
+func TestBenchReadWriteToolEvaluation(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	corpusPath := filepath.Join(dir, "corpus.yaml")
+
+	policy := `
+default_action: allow
+policies:
+  - name: block-sensitive-read
+    match:
+      tool: "read"
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/id_rsa"
+  - name: block-cron-write
+    match:
+      tool: "write"
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "/etc/cron.d/*"
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	corpus := `
+version: "2"
+name: test
+description: test
+cases:
+  - id: "READ-001"
+    name: "Read SSH key"
+    category: credential-theft
+    severity: critical
+    os: "*"
+    tool: read
+    input:
+      path: "~/.ssh/id_rsa"
+    expected: deny
+  - id: "WRITE-001"
+    name: "Write cron"
+    category: persistence
+    severity: critical
+    os: "*"
+    tool: write
+    input:
+      path: "/etc/cron.d/evil"
+      content: "* * * * * root evil"
+    expected: deny
+`
+	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+
+	summary, err := runBench(benchRunOptions{PolicyPath: policyPath, CorpusPath: corpusPath, OSFilter: "*", Severity: "medium"})
+	if err != nil {
+		t.Fatalf("run bench: %v", err)
+	}
+	if summary.Coverage != 100 {
+		t.Fatalf("coverage = %.1f, want 100", summary.Coverage)
+	}
+}
+
+func TestBenchSeverityFilter(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	corpusPath := filepath.Join(dir, "corpus.yaml")
+
+	policy := `
+default_action: allow
+policies:
+  - name: deny-critical
     match:
       tool: "exec"
     rules:
       - action: deny
-        message: denied
         when:
           command_matches:
-            - "cat /etc/shadow"
+            - "critical-cmd"
 `
 	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
 		t.Fatalf("write policy: %v", err)
 	}
 
 	corpus := `
-entries:
-  - command: "cat /etc/shadow"
-    expected_action: "deny"
-    category: "credential-theft"
-    description: "blocked"
-  - command: "echo hi"
-    expected_action: "allow"
-    category: "prompt-injection"
-    description: "allowed"
+version: "2"
+name: test
+description: test
+cases:
+  - id: "CRIT-001"
+    name: "Critical"
+    category: execution
+    severity: critical
+    os: "*"
+    tool: exec
+    input:
+      command: "critical-cmd"
+    expected: deny
+  - id: "MED-001"
+    name: "Medium"
+    category: execution
+    severity: medium
+    os: "*"
+    tool: exec
+    input:
+      command: "medium-cmd"
+    expected: deny
 `
 	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}
 
-	stdout, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--category", "credential-theft", "--json")
+	highOnly, err := runBench(benchRunOptions{PolicyPath: policyPath, CorpusPath: corpusPath, OSFilter: "*", Severity: "high"})
 	if err != nil {
-		t.Fatalf("run bench with category: %v", err)
+		t.Fatalf("run high-severity bench: %v", err)
+	}
+	if highOnly.Total != 1 || highOnly.Coverage != 100 {
+		t.Fatalf("high-only total/coverage = %d/%.1f, want 1/100", highOnly.Total, highOnly.Coverage)
 	}
 
-	var got benchSummary
-	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
-		t.Fatalf("parse JSON: %v", err)
+	all, err := runBench(benchRunOptions{PolicyPath: policyPath, CorpusPath: corpusPath, OSFilter: "*", Severity: "medium"})
+	if err != nil {
+		t.Fatalf("run medium-severity bench: %v", err)
 	}
-	if got.Total != 1 {
-		t.Fatalf("total = %d, want 1", got.Total)
-	}
-	if got.Category != "credential-theft" {
-		t.Fatalf("category = %q, want credential-theft", got.Category)
+	if all.Total != 2 || all.Coverage != 50 {
+		t.Fatalf("all total/coverage = %d/%.1f, want 2/50", all.Total, all.Coverage)
 	}
 }
 
-func TestBenchRequireApprovalCountsAsCoverage(t *testing.T) {
+func TestBenchIDPrefixFilter(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "policy.yaml")
 	corpusPath := filepath.Join(dir, "corpus.yaml")
 
 	policy := `
-default_action: allow
-policies:
-  - name: approval-only
-    match:
-      tool: "exec"
-    rules:
-      - action: require_approval
-        message: needs approval
-        when:
-          command_matches:
-            - "rm -rf *"
+default_action: deny
+policies: []
 `
 	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
 		t.Fatalf("write policy: %v", err)
 	}
 
 	corpus := `
-entries:
-  - command: "rm -rf /tmp/foo"
-    expected_action: "deny"
-    category: "destructive"
-    description: "approval should count as covered"
+version: "2"
+name: test
+description: test
+cases:
+  - id: "WIN-CRED-001"
+    name: "A"
+    category: credential-theft
+    severity: critical
+    os: "*"
+    tool: exec
+    input:
+      command: "a"
+    expected: deny
+  - id: "LIN-CRED-001"
+    name: "B"
+    category: credential-theft
+    severity: critical
+    os: "*"
+    tool: exec
+    input:
+      command: "b"
+    expected: deny
 `
 	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}
 
-	stdout, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--json")
+	summary, err := runBench(benchRunOptions{PolicyPath: policyPath, CorpusPath: corpusPath, OSFilter: "*", Severity: "medium", IDPrefix: "WIN-"})
 	if err != nil {
 		t.Fatalf("run bench: %v", err)
 	}
-
-	var got benchSummary
-	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
-		t.Fatalf("parse JSON: %v\n%s", err, stdout)
-	}
-
-	if got.Mismatched != 0 {
-		t.Fatalf("mismatched = %d, want 0", got.Mismatched)
-	}
-	if got.HardDenied != 0 || got.ApprovalGated != 1 || got.Unhandled != 0 {
-		t.Fatalf("coverage counts = denied:%d approval:%d missed:%d, want 0/1/0",
-			got.HardDenied,
-			got.ApprovalGated,
-			got.Unhandled,
-		)
-	}
-	if got.Coverage != 100 {
-		t.Fatalf("coverage = %.1f, want 100", got.Coverage)
-	}
-	if len(got.Gaps) != 0 {
-		t.Fatalf("gaps = %d, want 0", len(got.Gaps))
-	}
-}
-
-func TestBenchRequireApprovalStrictCountsAsMiss(t *testing.T) {
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "policy.yaml")
-	corpusPath := filepath.Join(dir, "corpus.yaml")
-
-	policy := `
-default_action: allow
-policies:
-  - name: approval-only
-    match:
-      tool: "exec"
-    rules:
-      - action: require_approval
-        message: needs approval
-        when:
-          command_matches:
-            - "rm -rf *"
-`
-	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
-		t.Fatalf("write policy: %v", err)
-	}
-
-	corpus := `
-entries:
-  - command: "rm -rf /tmp/foo"
-    expected_action: "deny"
-    category: "destructive"
-    description: "approval counts as miss in strict mode"
-`
-	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
-		t.Fatalf("write corpus: %v", err)
-	}
-
-	stdout, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--json", "--strict")
-	if err == nil {
-		t.Fatal("expected non-nil error")
-	}
-
-	var got benchSummary
-	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
-		t.Fatalf("parse JSON: %v\n%s", err, stdout)
-	}
-
-	if !got.Strict {
-		t.Fatal("strict should be true")
-	}
-	if got.Mismatched != 1 {
-		t.Fatalf("mismatched = %d, want 1", got.Mismatched)
-	}
-	if got.HardDenied != 0 || got.ApprovalGated != 1 || got.Unhandled != 0 {
-		t.Fatalf("coverage counts = denied:%d approval:%d missed:%d, want 0/1/0",
-			got.HardDenied,
-			got.ApprovalGated,
-			got.Unhandled,
-		)
-	}
-	if got.Coverage != 0 {
-		t.Fatalf("coverage = %.1f, want 0", got.Coverage)
-	}
-	if len(got.Gaps) != 1 {
-		t.Fatalf("gaps = %d, want 1", len(got.Gaps))
-	}
-}
-
-func TestCorpusFileHasCoverageAndSchema(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "bench", "corpus.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read corpus file: %v", err)
-	}
-
-	var doc benchCorpusDocument
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("parse corpus: %v", err)
-	}
-
-	if len(doc.Entries) < 80 {
-		t.Fatalf("entries = %d, want at least 80", len(doc.Entries))
-	}
-
-	required := map[string]bool{
-		"exfil":                false,
-		"credential-theft":     false,
-		"supply-chain":         false,
-		"persistence":          false,
-		"prompt-injection":     false,
-		"destructive":          false,
-		"privilege-escalation": false,
-	}
-
-	for i, entry := range doc.Entries {
-		if entry.Command == "" || entry.ExpectedAction == "" || entry.Category == "" || entry.Description == "" {
-			t.Fatalf("entry %d missing required fields: %+v", i, entry)
-		}
-		if _, ok := required[entry.Category]; ok {
-			required[entry.Category] = true
-		}
-	}
-
-	for category, found := range required {
-		if !found {
-			t.Fatalf("missing category in corpus: %s", category)
-		}
+	if summary.Total != 1 {
+		t.Fatalf("total = %d, want 1", summary.Total)
 	}
 }
 
 func TestBenchUsesEmbeddedCorpusWhenNoFlagSet(t *testing.T) {
-	// Verifies that 'rampart bench' with no --corpus flag uses the embedded
-	// built-in corpus rather than attempting to open bench/corpus.yaml from
-	// the current directory (which does not exist in an installed binary).
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "policy.yaml")
 	policy := `
@@ -402,7 +506,6 @@ policies:
 		t.Fatalf("write policy: %v", err)
 	}
 
-	// Change to temp dir so there is no bench/corpus.yaml on disk.
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -413,7 +516,6 @@ policies:
 	}
 
 	stdout, _, err := runCLI(t, "bench", "--policy", policyPath)
-	// Gaps are expected (exit 1); we just want no "no such file" error.
 	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
 		t.Fatalf("bench used disk path instead of embedded corpus: %v", err)
 	}
@@ -422,25 +524,99 @@ policies:
 	}
 }
 
-func TestLoadBenchCorpusRejectsInvalidExpectedAction(t *testing.T) {
+func TestCorpusFileHasV2CoverageAndSchema(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "bench", "corpus.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read corpus file: %v", err)
+	}
+
+	var doc benchCorpusV2Document
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse corpus: %v", err)
+	}
+	if doc.Version != "2" {
+		t.Fatalf("version = %q, want 2", doc.Version)
+	}
+	if len(doc.Cases) < 80 {
+		t.Fatalf("cases = %d, want at least 80", len(doc.Cases))
+	}
+
+	hasLinux := false
+	hasDarwin := false
+	hasWindows := false
+	hasAll := false
+	for i, tc := range doc.Cases {
+		if tc.ID == "" || tc.Name == "" || tc.Category == "" || tc.Severity == "" || tc.Tool == "" || tc.Expected == "" {
+			t.Fatalf("case %d missing required fields: %+v", i, tc)
+		}
+		switch tc.OS {
+		case "linux":
+			hasLinux = true
+		case "darwin":
+			hasDarwin = true
+		case "windows":
+			hasWindows = true
+		case "*":
+			hasAll = true
+		}
+	}
+	if !hasLinux || !hasWindows || !hasAll {
+		t.Fatalf("expected linux/windows/* coverage: linux=%v windows=%v all=%v", hasLinux, hasWindows, hasAll)
+	}
+	if !hasDarwin {
+		t.Fatalf("expected at least one darwin case")
+	}
+}
+
+func TestBenchJSONOutput(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "invalid-corpus.yaml")
-	content := `
-entries:
-  - command: "echo hi"
-    expected_action: "block"
-    category: "destructive"
-    description: "invalid action"
+	policyPath := filepath.Join(dir, "policy.yaml")
+	corpusPath := filepath.Join(dir, "corpus.yaml")
+
+	policy := `
+default_action: allow
+policies:
+  - name: deny-one
+    match:
+      tool: "exec"
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "blocked"
 `
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	corpus := `
+version: "2"
+name: test
+description: test
+cases:
+  - id: "CASE-001"
+    name: "blocked"
+    category: execution
+    severity: critical
+    os: "*"
+    tool: exec
+    input:
+      command: "blocked"
+    expected: deny
+`
+	if err := os.WriteFile(corpusPath, []byte(corpus), 0o644); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}
 
-	_, err := loadBenchCorpus(path)
-	if err == nil {
-		t.Fatal("expected error for invalid action")
+	stdout, _, err := runCLI(t, "bench", "--policy", policyPath, "--corpus", corpusPath, "--os", "*", "--json")
+	if err != nil {
+		t.Fatalf("run bench: %v", err)
 	}
-	if got, want := err.Error(), "invalid expected_action"; !strings.Contains(got, want) {
-		t.Fatalf("error %q does not contain %q", got, want)
+	var got benchSummary
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("parse json output: %v", err)
+	}
+	if got.Total != 1 || got.Coverage != 100 {
+		t.Fatalf("total/coverage = %d/%.1f, want 1/100", got.Total, got.Coverage)
 	}
 }
