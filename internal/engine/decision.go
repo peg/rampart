@@ -154,6 +154,10 @@ type Decision struct {
 	// - action: require_approval (alias for ask+audit)
 	Audit bool
 
+	// HeadlessOnly is set for ask decisions when native prompts should be
+	// bypassed in favor of serve-backed blocking approval flow.
+	HeadlessOnly bool
+
 	// MatchedPolicies lists the names of all policies that matched
 	// the tool call. Useful for debugging and audit.
 	MatchedPolicies []string

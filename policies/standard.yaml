@@ -18,6 +18,15 @@
 
 version: "1"
 default_action: allow
+
+# CI/headless approval — blocks until approved via dashboard (no native prompt)
+# - action: ask
+#   ask:
+#     audit: true
+#     headless_only: true
+#   when:
+#     command_matches: "kubectl apply **"
+
 policies:
   # Self-modification protection: agents cannot change their own constraints
   - name: block-self-modification

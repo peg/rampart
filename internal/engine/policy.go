@@ -142,7 +142,8 @@ type Rule struct {
 
 // AskActionConfig defines optional behavior for action: ask rules.
 type AskActionConfig struct {
-	Audit bool `yaml:"audit" json:"audit"`
+	Audit        bool `yaml:"audit" json:"audit"`
+	HeadlessOnly bool `yaml:"headless_only" json:"headless_only"`
 }
 
 // WebhookActionConfig defines the webhook endpoint and behavior for
@@ -230,6 +231,16 @@ func (r Rule) AskAuditEnabled() bool {
 	}
 	if action == "ask" {
 		return r.Ask.Audit
+	}
+	return false
+}
+
+// HeadlessOnlyEnabled reports whether action: ask should bypass native prompts
+// and require serve-backed blocking approval flow.
+func (r Rule) HeadlessOnlyEnabled() bool {
+	action := strings.ToLower(strings.TrimSpace(r.Action))
+	if action == "ask" {
+		return r.Ask.HeadlessOnly
 	}
 	return false
 }
