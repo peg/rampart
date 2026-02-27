@@ -85,15 +85,14 @@ type clineHookOutput struct {
 
 // hookParseResult holds the parsed hook input including optional response data.
 type hookParseResult struct {
-	Tool           string
-	Params         map[string]any
-	Agent          string
-	PermissionMode string // e.g. "bypassPermissions" from Claude Code
-	Response       string // non-empty for PostToolUse events
-	RunID          string // run ID derived from session_id (or env overrides)
-	HookEventName  string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
-	SessionID      string // raw session_id from Claude Code input (for session state)
-	ToolUseID      string // tool_use_id from Claude Code input (for ask correlation)
+	Tool          string
+	Params        map[string]any
+	Agent         string
+	Response      string // non-empty for PostToolUse events
+	RunID         string // run ID derived from session_id (or env overrides)
+	HookEventName string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
+	SessionID     string // raw session_id from Claude Code input (for session state)
+	ToolUseID     string // tool_use_id from Claude Code input (for ask correlation)
 }
 
 // gitContext holds the git repository context for the current working directory.
@@ -454,10 +453,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				eng.IncrementCallCount(call.Tool, call.Timestamp)
 				decision = eng.Evaluate(call)
 			}
-			if parsed.PermissionMode == "bypassPermissions" && decision.Action == engine.ActionAsk {
-				decision.Action = engine.ActionDeny
-				decision.Message = "action: ask is not supported in --dangerously-skip-permissions mode; use action: deny instead"
-			}
 
 			// Write audit event
 			eventDecision := audit.EventDecision{
@@ -604,14 +599,13 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	}
 
 	result := &hookParseResult{
-		Tool:           toolType,
-		Params:         params,
-		Agent:          "claude-code",
-		PermissionMode: input.PermissionMode,
-		RunID:          deriveRunID(input.SessionID),
-		HookEventName:  input.HookEventName,
-		SessionID:      input.SessionID,
-		ToolUseID:      input.ToolUseID,
+		Tool:          toolType,
+		Params:        params,
+		Agent:         "claude-code",
+		RunID:         deriveRunID(input.SessionID),
+		HookEventName: input.HookEventName,
+		SessionID:     input.SessionID,
+		ToolUseID:     input.ToolUseID,
 	}
 
 	// Extract response text from PostToolUse tool_response.
