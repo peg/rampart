@@ -762,3 +762,142 @@ policies:
             # and can bypass exec-level policy by going through AppleScript
             - "do shell script"
         message: "osascript shell execution bypass blocked"
+
+  # Windows-specific policies
+
+  - name: block-windows-destructive
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "Remove-Item -Recurse -Force C:\\"
+            - "rmdir /s /q C:\\"
+            - "del /s /q C:\\"
+        message: "Destructive Windows filesystem root deletion blocked"
+      - action: deny
+        when:
+          command_matches:
+            - "Remove-Item -Recurse -Force C:\\*"
+            - "rmdir /s /q C:\\*"
+            - "del /s /q C:\\*"
+            - "Remove-Item *\\Windows\\*"
+            - "Remove-Item *\\System32\\*"
+            - "Remove-Item *\\Program Files\\*"
+            - "rmdir /s /q *\\Windows\\*"
+            - "rmdir /s /q *\\System32\\*"
+            - "rmdir /s /q *\\Program Files\\*"
+            - "%0|%0"
+        message: "Destructive Windows system directory or fork bomb command blocked"
+
+  - name: block-windows-disk
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "diskpart*"
+            - "Format-Volume*"
+            - "Clear-Disk*"
+            - "Initialize-Disk*"
+            - "Remove-Partition*"
+            - "Convert-Disk*"
+            - "dd *of=*PhysicalDrive*"
+            - "dd *of=*HarddiskVolume*"
+        message: "Windows disk formatting or partition modification blocked"
+
+  - name: block-windows-download-exec
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "IEX (IWR"
+            - "IEX (Invoke-WebRequest"
+            - "iex (iwr"
+            - "iex(iwr"
+            - "Invoke-Expression (Invoke-WebRequest"
+            - "| powershell"
+            - "| pwsh"
+            - "|powershell"
+            - "|pwsh"
+            - "certutil -urlcache -split -f"
+            - "bitsadmin /transfer"
+            - "| Invoke-Expression"
+        message: "Windows download-and-execute remote code pattern blocked"
+
+  - name: block-windows-reverse-shell
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "Net.Sockets.TCPClient"
+            - "IO.StreamWriter"
+            - "$stream = $client.GetStream()"
+            - "ncat -e"
+            - "ncat.exe -e"
+            - "nc.exe -e"
+            - "powershell -enc"
+            - "powershell -EncodedCommand"
+            - "powershell -ec "
+            - "pwsh -enc"
+            - "pwsh -EncodedCommand"
+        message: "Windows reverse shell pattern blocked"
+
+  - name: block-windows-registry-persistence
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "\\CurrentVersion\\Run"
+            - "\\CurrentVersion\\RunOnce"
+            - "\\Winlogon\\Shell"
+            - "\\Winlogon\\Userinit"
+            - "\\AppInit_DLLs"
+            - "\\Image File Execution Options\\"
+          command_matches:
+            - "reg add*HKLM*Run*"
+            - "reg add*HKCU*Run*"
+            - "Set-ItemProperty*HKLM:*Run*"
+        message: "Windows registry persistence mechanism blocked"
+
+  - name: block-windows-credential-access
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "reg save HKLM\\SAM"
+            - "reg save HKLM\\SYSTEM"
+            - "reg save HKLM\\SECURITY"
+            - "\\LSA\\Secrets"
+            - "ntds.dit"
+            - "vssadmin create shadow"
+            - "vaultcmd /list"
+            - "cmdkey /list"
+            - "sekurlsa"
+            - "lsadump"
+            - "privilege::debug"
+        message: "Windows credential dumping or credential store access blocked"
+
+  - name: block-windows-boot-config
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "bcdedit*"
+            - "bcdboot*"
+            - "bootrec*"
+            - "reagentc /disable*"
+            - "reagentc /enable*"
+        message: "Windows boot configuration modification blocked"
