@@ -313,21 +313,30 @@ policies:
       - action: deny
         when:
           path_matches:
+            # SSH keys (Unix and Windows paths)
+            - "**\\.ssh\\id_*"
             - "**/.ssh/id_*"
           path_not_matches:
+            - "**\\*.pub"
             - "**/*.pub"
+        message: "SSH private key access blocked"
       - action: deny
         when:
           path_matches:
-            # Cloud credentials
+            # Cloud credentials (Unix and Windows paths)
+            - "**\\.aws\\credentials"
+            - "**\\.aws\\config"
             - "**/.aws/credentials"
             - "**/.aws/config"
+            - "**\\.azure\\accessTokens.json"
             - "**/.azure/accessTokens.json"
             - "**/.azure/azureProfile.json"
             - "**/.config/gcloud/application_default_credentials.json"
             - "**/.config/gcloud/credentials.db"
             - "**/.config/gcloud/legacy_credentials/**"
-            # Container / orchestration
+            # Container / orchestration (Unix and Windows paths)
+            - "**\\.kube\\config"
+            - "**\\.docker\\config.json"
             - "**/.kube/config"
             - "**/.docker/config.json"
             # Token / secrets files
@@ -475,11 +484,16 @@ policies:
       - action: deny
         when:
           path_matches:
-            # System paths
+            # System paths (Unix)
             - "/etc/**"
             - "/usr/**"
             - "/bin/**"
             - "/sbin/**"
+            # Windows sensitive paths
+            - "**\\WindowsPowerShell\\*profile*"
+            - "**\\PowerShell\\*profile*"
+            - "**\\System32\\drivers\\etc\\hosts"
+            - "**\\Start Menu\\Programs\\Startup\\*"
             # Credentials and keys
             - "**/.ssh/**"
             - "**/.aws/**"
@@ -516,6 +530,23 @@ policies:
             - "**/.config/microsoft-edge/**"
             - "**/.config/BraveSoftware/**"
         message: "Browser profile access blocked (contains saved passwords and session tokens)"
+
+  - name: block-windows-browser-data
+    match:
+      tool: ["read", "write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            # Chrome
+            - "**\\Google\\Chrome\\User Data\\**"
+            # Edge
+            - "**\\Microsoft\\Edge\\User Data\\**"
+            # Firefox
+            - "**\\Mozilla\\Firefox\\Profiles\\**"
+            # Brave
+            - "**\\BraveSoftware\\Brave-Browser\\User Data\\**"
+        message: "Windows browser profile access blocked (contains saved passwords and session tokens)"
 
   - name: block-browser-data-exec
     match:
@@ -762,3 +793,348 @@ policies:
             # and can bypass exec-level policy by going through AppleScript
             - "do shell script"
         message: "osascript shell execution bypass blocked"
+
+  # ── Windows-specific deny policies ────────────────────────────────────────
+
+  - name: block-windows-destructive
+    description: "Block destructive Windows filesystem and disk operations"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # PowerShell recursive deletion of system paths
+            - "Remove-Item -Recurse -Force C:\\"
+            - "Remove-Item -Recurse -Force $env:SystemRoot"
+            - "Remove-Item -Recurse -Force $env:SystemDrive"
+            - "ri -Recurse -Force C:\\"
+            # cmd.exe recursive deletion
+            - "del /s /q C:\\"
+            - "rmdir /s /q C:\\"
+            - "rd /s /q C:\\"
+            # Targeting critical directories
+            - "\\Windows\\System32"
+            - "\\Program Files\\"
+            - "\\ProgramData\\"
+        message: "Destructive Windows filesystem operation blocked"
+      - action: deny
+        when:
+          command_matches:
+            - "Remove-Item -Recurse -Force C:\\*"
+            - "rmdir /s /q C:\\*"
+            - "del /s /q C:\\*"
+            - "Remove-Item *\\Windows\\*"
+            - "Remove-Item *\\System32\\*"
+            - "Remove-Item *\\Program Files\\*"
+            - "rmdir /s /q *\\Windows\\*"
+            - "rmdir /s /q *\\System32\\*"
+            - "rmdir /s /q *\\Program Files\\*"
+            # Windows fork bomb
+            - "%0|%0"
+        message: "Destructive Windows system directory or fork bomb blocked"
+
+  - name: block-windows-disk
+    description: "Block disk formatting and partition operations"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            # diskpart commands
+            - "diskpart*"
+            # PowerShell disk cmdlets
+            - "Format-Volume*"
+            - "Clear-Disk*"
+            - "Initialize-Disk*"
+            - "Remove-Partition*"
+            - "Convert-Disk*"
+            # dd.exe to physical drives
+            - "dd *of=*PhysicalDrive*"
+            - "dd *of=*HarddiskVolume*"
+        message: "Windows disk formatting or partition modification blocked"
+
+  - name: block-windows-download-exec
+    description: "Block download-and-execute patterns (supply chain risk)"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # PowerShell download cradles
+            - "IEX (IWR"
+            - "IEX (Invoke-WebRequest"
+            - "IEX (New-Object Net.WebClient)"
+            - "iex (iwr"
+            - "iex(iwr"
+            - "Invoke-Expression (Invoke-WebRequest"
+            - "Invoke-Expression (New-Object"
+            # Pipe to PowerShell
+            - "| powershell"
+            - "| pwsh"
+            - "|powershell"
+            - "|pwsh"
+            - "| Invoke-Expression"
+            - "|Invoke-Expression"
+            # Abuse of legitimate tools for downloads
+            - "certutil -urlcache -split -f"
+            - "certutil -urlcache -f"
+            - "bitsadmin /transfer"
+        message: "Windows remote code execution pattern blocked (supply chain risk)"
+
+  - name: block-windows-reverse-shell
+    description: "Block Windows reverse shell patterns"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # PowerShell socket-based reverse shells
+            - "Net.Sockets.TCPClient"
+            - "IO.StreamWriter"
+            - "IO.StreamReader"
+            - "$stream = $client.GetStream()"
+            # netcat variants
+            - "ncat -e"
+            - "ncat.exe -e"
+            - "nc.exe -e"
+            # Encoded PowerShell (common in payloads)
+            - "powershell -enc"
+            - "powershell -e "
+            - "powershell -EncodedCommand"
+            - "powershell -ec "
+            - "pwsh -enc"
+            - "pwsh -e "
+            - "pwsh -EncodedCommand"
+        message: "Windows reverse shell pattern blocked"
+
+  - name: block-windows-registry-persistence
+    description: "Block registry-based persistence mechanisms"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # Run key persistence (most common attack vector)
+            - "\\CurrentVersion\\Run"
+            - "\\CurrentVersion\\RunOnce"
+            - "\\CurrentVersion\\RunServices"
+            # Winlogon persistence
+            - "\\Winlogon\\Shell"
+            - "\\Winlogon\\Userinit"
+            # AppInit_DLLs injection
+            - "\\AppInit_DLLs"
+            # Image file execution options (debugger hijack)
+            - "\\Image File Execution Options\\"
+            # COM object hijacking
+            - "\\Classes\\CLSID\\"
+        message: "Windows registry persistence mechanism blocked"
+      - action: deny
+        when:
+          command_matches:
+            - "reg add*HKLM*Run*"
+            - "reg add*HKCU*Run*"
+            - "Set-ItemProperty*HKLM:*Run*"
+            - "New-ItemProperty*HKLM:*Run*"
+        message: "Windows registry Run key modification blocked"
+
+  - name: block-windows-credential-access
+    description: "Block credential dumping and sensitive registry access"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # SAM/SYSTEM/SECURITY registry hives (case-insensitive variants)
+            - "reg save HKLM\\SAM"
+            - "reg save HKLM\\SYSTEM"
+            - "reg save HKLM\\SECURITY"
+            - "reg save hklm\\sam"
+            - "reg save hklm\\system"
+            - "reg save hklm\\security"
+            # LSA secrets
+            - "\\LSA\\Secrets"
+            # NTDS.dit (Active Directory database)
+            - "ntds.dit"
+            # Volume shadow copy abuse (credential extraction)
+            - "vssadmin create shadow"
+            - "wmic shadowcopy"
+            # Windows Credential Manager
+            - "vaultcmd /list"
+            - "cmdkey /list"
+            # Common attack tool patterns
+            - "sekurlsa"
+            - "lsadump"
+            - "kerberos::list"
+            - "privilege::debug"
+        message: "Windows credential access blocked"
+
+  - name: block-windows-boot-config
+    description: "Block boot configuration modifications"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "bcdedit*"
+            - "bcdboot*"
+            - "bootrec*"
+            - "reagentc /disable*"
+            - "reagentc /enable*"
+        message: "Windows boot configuration modification blocked"
+
+  # ── Windows-specific require_approval policies ────────────────────────────
+
+  - name: require-windows-process-management
+    description: "Require approval for terminating critical Windows processes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "taskkill *lsass*"
+            - "taskkill *svchost*"
+            - "taskkill *winlogon*"
+            - "taskkill *wininit*"
+            - "taskkill *csrss*"
+            - "taskkill *smss*"
+            - "taskkill *services*"
+            - "Stop-Process *lsass*"
+            - "Stop-Process *svchost*"
+            - "Stop-Process *csrss*"
+        message: "Critical Windows process termination requires approval"
+
+  - name: require-windows-service-management
+    description: "Require approval for Windows service lifecycle changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            # sc.exe service manipulation
+            - "sc create*"
+            - "sc delete*"
+            - "sc config*"
+            - "sc stop*"
+            - "sc start*"
+            - "sc failure*"
+            # PowerShell service cmdlets
+            - "New-Service*"
+            - "Remove-Service*"
+            - "Set-Service*"
+            - "Stop-Service*"
+            - "Start-Service*"
+            - "Restart-Service*"
+            # net service commands
+            - "net start*"
+            - "net stop*"
+        message: "Windows service management requires approval"
+
+  - name: require-windows-scheduled-task
+    description: "Require approval for Windows scheduled task changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            # schtasks.exe
+            - "schtasks /create*"
+            - "schtasks /change*"
+            - "schtasks /delete*"
+            - "schtasks /run*"
+            # PowerShell scheduled task cmdlets
+            - "Register-ScheduledTask*"
+            - "Set-ScheduledTask*"
+            - "Unregister-ScheduledTask*"
+            - "New-ScheduledTask*"
+            - "New-ScheduledTaskAction*"
+            - "New-ScheduledTaskTrigger*"
+        message: "Windows scheduled task modification requires approval"
+
+  - name: require-windows-firewall
+    description: "Require approval for Windows firewall rule changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            # netsh firewall commands
+            - "netsh advfirewall*"
+            - "netsh firewall*"
+            # PowerShell firewall cmdlets
+            - "New-NetFirewallRule*"
+            - "Set-NetFirewallRule*"
+            - "Remove-NetFirewallRule*"
+            - "Disable-NetFirewallRule*"
+            - "Enable-NetFirewallRule*"
+        message: "Windows firewall modification requires approval"
+
+  - name: require-windows-user-management
+    description: "Require approval for Windows user and admin group changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            # net user commands
+            - "net user * /add*"
+            - "net user * /delete*"
+            - "net localgroup * /add*"
+            - "net localgroup administrators*"
+            # PowerShell user cmdlets
+            - "New-LocalUser*"
+            - "Remove-LocalUser*"
+            - "Set-LocalUser*"
+            - "Add-LocalGroupMember*"
+            - "Remove-LocalGroupMember*"
+        message: "Windows user management requires approval"
+
+  - name: require-windows-execution-policy
+    description: "Require approval for PowerShell execution policy changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_contains:
+            - "Set-ExecutionPolicy"
+            - "-ExecutionPolicy Bypass"
+            - "-ExecutionPolicy Unrestricted"
+            - "-ep bypass"
+            - "-exec bypass"
+        message: "PowerShell execution policy change requires approval"
+
+  - name: require-windows-package-install
+    description: "Require approval for Windows package installation"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            # winget
+            - "winget install*"
+            - "winget upgrade*"
+            # chocolatey
+            - "choco install*"
+            - "choco upgrade*"
+            - "cinst *"
+            - "cup *"
+            # scoop
+            - "scoop install*"
+            - "scoop update*"
+            # msiexec
+            - "msiexec /i*"
+            - "msiexec /x*"
+        message: "Windows package installation requires approval"
