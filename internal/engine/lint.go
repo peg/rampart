@@ -143,8 +143,8 @@ func LintPolicyFile(path string) LintResult {
 		return result
 	}
 
-	// Second pass: unmarshal into raw map for field checking.
-	var rawMap map[string]interface{}
+	// Second pass: unmarshal into a raw map so we can inspect unknown fields.
+	var rawMap map[string]any
 	if err := yaml.Unmarshal(data, &rawMap); err != nil {
 		result.add(LintFinding{File: filename, Severity: LintError, Message: fmt.Sprintf("invalid YAML structure: %v", err)})
 		return result
@@ -178,16 +178,47 @@ func LintPolicyFile(path string) LintResult {
 	}
 
 	// Lint each policy.
+	rawPolicyMaps := decodeRawPolicyMaps(rawMap)
 	for i, p := range cfg.Policies {
-		lintPolicy(filename, i, p, cfg.Policies, &result)
+		var rawPolicy map[string]any
+		if i < len(rawPolicyMaps) {
+			rawPolicy = rawPolicyMaps[i]
+		}
+		lintPolicy(filename, p, rawPolicy, cfg.Policies, &result)
 	}
 
 	return result
 }
 
-func lintPolicy(filename string, idx int, p Policy, allPolicies []Policy, result *LintResult) {
+func decodeRawPolicyMaps(rawRoot map[string]any) []map[string]any {
+	policiesRaw, ok := rawRoot["policies"]
+	if !ok {
+		return nil
+	}
+	policyList, ok := policiesRaw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(policyList))
+	for _, entry := range policyList {
+		pm, _ := entry.(map[string]any)
+		out = append(out, pm)
+	}
+	return out
+}
+
+func lintPolicy(filename string, p Policy, rawPolicy map[string]any, allPolicies []Policy, result *LintResult) {
 	if len(p.Rules) == 0 {
 		result.add(LintFinding{File: filename, Severity: LintWarning, Message: fmt.Sprintf("policy %q has no rules", p.Name)})
+		if rawPolicy != nil {
+			if _, hasTopLevelAction := rawPolicy["action"]; hasTopLevelAction {
+				result.add(LintFinding{
+					File:     filename,
+					Severity: LintError,
+					Message:  fmt.Sprintf("policy %q has an \"action\" field at the top level — did you mean to put it under \"rules:\"?", p.Name),
+				})
+			}
+		}
 	}
 
 	for j, r := range p.Rules {

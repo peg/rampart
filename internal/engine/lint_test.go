@@ -373,6 +373,31 @@ policies:
 	}
 }
 
+func TestLint_TopLevelActionWithoutRules(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: misplaced-action
+    match:
+      tool: exec
+    action: deny
+`)
+	result := LintPolicyFile(path)
+
+	found := false
+	for _, f := range result.Findings {
+		if f.Severity == LintError &&
+			strings.Contains(f.Message, `policy "misplaced-action" has an "action" field at the top level`) &&
+			strings.Contains(f.Message, `did you mean to put it under "rules:"?`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected misplaced top-level action lint error, findings: %v", result.Findings)
+	}
+}
+
 func TestLint_FileNotFound(t *testing.T) {
 	result := LintPolicyFile("/nonexistent/policy.yaml")
 	if !result.HasErrors() {
