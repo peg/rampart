@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/build"
+	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
@@ -222,6 +223,12 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 					}
 				}
 				return nil
+			}
+
+			if compareSemver(target, "v0.6.6") >= 0 {
+				if err := maybeWarnRequireApprovalMigration(cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin(), assumeYes, resolved.userHomeDir); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ migration policy scan failed: %v\n", err)
+				}
 			}
 
 			assetOS, assetArch, err := upgradePlatform(runtime.GOOS, runtime.GOARCH)
@@ -796,6 +803,99 @@ func confirmUpgrade(in io.Reader, out io.Writer, current, target string) (bool, 
 		return true, nil
 	}
 	return false, nil
+}
+
+type requireApprovalUsage struct {
+	FilePath   string
+	PolicyName string
+}
+
+func maybeWarnRequireApprovalMigration(out io.Writer, errOut io.Writer, in io.Reader, assumeYes bool, userHomeDir func() (string, error)) error {
+	usages, err := findRequireApprovalUsages(userHomeDir)
+	if err != nil {
+		return err
+	}
+	if len(usages) == 0 {
+		return nil
+	}
+
+	fmt.Fprintln(out, "⚠️  Migration notice for v0.6.6:")
+	fmt.Fprintln(out, "   Found policies using `action: require_approval`:")
+	for _, u := range usages {
+		fmt.Fprintf(out, "     - %s (policy: %q)\n", u.FilePath, u.PolicyName)
+	}
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "   In v0.6.6, require_approval now shows a native Claude Code prompt instead")
+	fmt.Fprintln(out, "   of blocking for dashboard approval. CI pipelines that rely on blocking")
+	fmt.Fprintln(out, "   approvals should migrate to: action: ask + ask.headless_only: true")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "   See https://rampart.sh/docs/migration/v0.6.6 for full migration steps.")
+	fmt.Fprintln(out, "")
+
+	inFile, inIsFile := in.(*os.File)
+	if !assumeYes && inIsFile && isTerminal(inFile) {
+		fmt.Fprintln(out, "   Press Enter to continue with upgrade, or Ctrl+C to cancel.")
+		reader := bufio.NewReader(in)
+		if _, readErr := reader.ReadString('\n'); readErr != nil && !errors.Is(readErr, io.EOF) {
+			return fmt.Errorf("upgrade: read migration confirmation: %w", readErr)
+		}
+		return nil
+	}
+
+	if errOut != nil {
+		fmt.Fprintln(errOut, "   Non-interactive mode detected (or --yes set); continuing automatically.")
+	}
+	return nil
+}
+
+func findRequireApprovalUsages(userHomeDir func() (string, error)) ([]requireApprovalUsage, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("upgrade: resolve home directory: %w", err)
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("upgrade: read policy dir: %w", err)
+	}
+
+	var findings []requireApprovalUsage
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		path := filepath.Join(policyDir, e.Name())
+		cfg, err := engine.NewFileStore(path).Load()
+		if err != nil {
+			// Keep upgrade resilient: unreadable/invalid files are skipped.
+			continue
+		}
+		for _, p := range cfg.Policies {
+			for _, r := range p.Rules {
+				if strings.EqualFold(strings.TrimSpace(r.Action), "require_approval") {
+					findings = append(findings, requireApprovalUsage{
+						FilePath:   "~" + strings.TrimPrefix(path, home),
+						PolicyName: p.Name,
+					})
+					break
+				}
+			}
+		}
+	}
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].FilePath != findings[j].FilePath {
+			return findings[i].FilePath < findings[j].FilePath
+		}
+		return findings[i].PolicyName < findings[j].PolicyName
+	})
+	return findings, nil
 }
 
 // upgradeStandardPolicies refreshes built-in profile files in ~/.rampart/policies/.

@@ -13,7 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`require_approval` now uses native ask prompt** — Previously, `require_approval` blocked execution and waited for approval via the serve dashboard or `rampart approve` CLI. It now behaves as `action: ask` + `ask.audit: true`: the native Claude Code inline prompt fires immediately, and the decision is mirrored to serve (if running) for audit/observability. **If you rely on serve-gated headless approval in CI/non-interactive environments**, this changes your workflow — approval now requires a human at the Claude Code terminal. A dedicated `headless_only` flag for serve-gated approval without native prompt is planned for a future release.
+- **`require_approval` now uses native Claude Code prompt** ⚠️ Breaking change for CI/headless users
+
+  `action: require_approval` no longer blocks execution waiting for dashboard approval. It now fires the native Claude Code inline permission prompt immediately (same as `action: ask` + `ask.audit: true`).
+
+  **If your CI pipeline relies on blocking approvals** (agent waits, human approves via dashboard), migrate your policy rules:
+
+  ```yaml
+  # Before (v0.6.5 and earlier)
+  - action: require_approval
+    when:
+      command_matches: "kubectl apply **"
+
+  # After (v0.6.6+) — preserves blocking behavior for CI
+  - action: ask
+    ask:
+      audit: true
+      headless_only: true
+    when:
+      command_matches: "kubectl apply **"
+  ```
+
+  Interactive users (Claude Code running in a terminal with a human present) are unaffected — the native prompt is faster and more convenient than opening a dashboard.
 
 ## [0.6.5] - 2026-02-27
 
