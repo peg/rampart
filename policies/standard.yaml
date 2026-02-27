@@ -313,21 +313,28 @@ policies:
       - action: deny
         when:
           path_matches:
+            - "**\\.ssh\\id_*"
             - "**/.ssh/id_*"
           path_not_matches:
             - "**/*.pub"
+        message: "SSH private key access blocked"
       - action: deny
         when:
           path_matches:
             # Cloud credentials
+            - "**\\.aws\\credentials"
+            - "**\\.aws\\config"
             - "**/.aws/credentials"
             - "**/.aws/config"
+            - "**\\.azure\\accessTokens.json"
             - "**/.azure/accessTokens.json"
             - "**/.azure/azureProfile.json"
             - "**/.config/gcloud/application_default_credentials.json"
             - "**/.config/gcloud/credentials.db"
             - "**/.config/gcloud/legacy_credentials/**"
             # Container / orchestration
+            - "**\\.kube\\config"
+            - "**\\.docker\\config.json"
             - "**/.kube/config"
             - "**/.docker/config.json"
             # Token / secrets files
@@ -480,6 +487,11 @@ policies:
             - "/usr/**"
             - "/bin/**"
             - "/sbin/**"
+            # Windows sensitive paths
+            - "**\\WindowsPowerShell\\*profile*"
+            - "**\\PowerShell\\*profile*"
+            - "**\\System32\\drivers\\etc\\hosts"
+            - "**\\Start Menu\\Programs\\Startup\\*"
             # Credentials and keys
             - "**/.ssh/**"
             - "**/.aws/**"
@@ -516,6 +528,19 @@ policies:
             - "**/.config/microsoft-edge/**"
             - "**/.config/BraveSoftware/**"
         message: "Browser profile access blocked (contains saved passwords and session tokens)"
+
+  - name: block-windows-browser-data
+    match:
+      tool: ["read", "write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**\\Google\\Chrome\\User Data\\**"
+            - "**\\Microsoft\\Edge\\User Data\\**"
+            - "**\\Mozilla\\Firefox\\Profiles\\**"
+            - "**\\BraveSoftware\\Brave-Browser\\User Data\\**"
+        message: "Windows browser profile access blocked (contains saved passwords and session tokens)"
 
   - name: block-browser-data-exec
     match:
@@ -762,3 +787,127 @@ policies:
             # and can bypass exec-level policy by going through AppleScript
             - "do shell script"
         message: "osascript shell execution bypass blocked"
+
+  # ── Windows require_approval policies ─────────────────────────────────────
+
+  - name: require-windows-process-management
+    description: "Require approval for terminating critical Windows processes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "taskkill *lsass*"
+            - "taskkill *svchost*"
+            - "taskkill *winlogon*"
+            - "taskkill *csrss*"
+            - "taskkill *smss*"
+            - "Stop-Process *lsass*"
+            - "Stop-Process *svchost*"
+        message: "Critical Windows process management requires approval"
+
+  - name: require-windows-service-management
+    description: "Require approval for Windows service lifecycle changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "sc create*"
+            - "sc delete*"
+            - "sc config*"
+            - "sc stop*"
+            - "sc start*"
+            - "New-Service*"
+            - "Remove-Service*"
+            - "Set-Service*"
+            - "Stop-Service*"
+            - "Start-Service*"
+            - "Restart-Service*"
+            - "net start*"
+            - "net stop*"
+        message: "Windows service management requires approval"
+
+  - name: require-windows-scheduled-task
+    description: "Require approval for Windows scheduled task changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "schtasks /create*"
+            - "schtasks /change*"
+            - "schtasks /delete*"
+            - "Register-ScheduledTask*"
+            - "Set-ScheduledTask*"
+            - "Unregister-ScheduledTask*"
+        message: "Windows scheduled task management requires approval"
+
+  - name: require-windows-firewall
+    description: "Require approval for Windows firewall rule changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "netsh advfirewall*"
+            - "netsh firewall*"
+            - "New-NetFirewallRule*"
+            - "Set-NetFirewallRule*"
+            - "Remove-NetFirewallRule*"
+            - "Disable-NetFirewallRule*"
+        message: "Windows firewall changes require approval"
+
+  - name: require-windows-user-management
+    description: "Require approval for Windows user and admin group changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "net user * /add*"
+            - "net user * /delete*"
+            - "net localgroup administrators*"
+            - "New-LocalUser*"
+            - "Remove-LocalUser*"
+            - "Add-LocalGroupMember*"
+        message: "Windows user management requires approval"
+
+  - name: require-windows-execution-policy
+    description: "Require approval for PowerShell execution policy bypass changes"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_contains:
+            - "Set-ExecutionPolicy"
+            - "-ExecutionPolicy Bypass"
+            - "-ExecutionPolicy Unrestricted"
+            - "-ep bypass"
+            - "-exec bypass"
+        message: "PowerShell execution policy changes require approval"
+
+  - name: require-windows-package-install
+    description: "Require approval for Windows package installation and removal"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "winget install*"
+            - "winget upgrade*"
+            - "choco install*"
+            - "choco upgrade*"
+            - "cinst *"
+            - "scoop install*"
+            - "scoop update*"
+            - "msiexec /i*"
+            - "msiexec /x*"
+        message: "Windows package install/upgrade requires approval"
