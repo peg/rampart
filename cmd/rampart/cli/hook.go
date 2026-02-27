@@ -673,7 +673,9 @@ func mapClaudeCodeTool(toolName string) string {
 		// displays it distinctly from exec/read/write.
 		return "agent"
 	default:
-		slog.Warn("hook: unmapped Claude Code tool name, defaulting to unknown", "tool_name", toolName)
+		// NOTE: Don't log here - this function is called before the logger is available,
+		// and any stderr output causes Claude Code to report "hook error".
+		// Unknown tools are handled gracefully by returning "unknown".
 		return "unknown"
 	}
 }
@@ -696,7 +698,7 @@ func mapClineTool(toolName string) string {
 	case "ask_followup_question", "attempt_completion", "new_task", "fetch_instructions", "plan_mode_respond":
 		return "interact"
 	default:
-		slog.Warn("hook: unmapped Cline tool name, defaulting to unknown", "tool_name", toolName)
+		// NOTE: Don't log here - any stderr output causes the agent to report "hook error".
 		return "unknown"
 	}
 }
