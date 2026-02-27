@@ -337,6 +337,50 @@ func TestHookActionAsk_NoSessionID(t *testing.T) {
 	}
 }
 
+func TestHookActionAsk_BypassPermissionsFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(askPolicy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	payload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "sess-bypass-ask-001",
+		"tool_use_id":     "toolu_bypass_ask_001",
+		"permission_mode": "bypassPermissions",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	stdinJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	opts := &rootOptions{configPath: configPath}
+	stdout, _, hookErr := runHookWithStdin(t, opts, string(stdinJSON), "--mode", "enforce")
+	if hookErr != nil {
+		t.Fatalf("hook RunE error: %v", hookErr)
+	}
+
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil {
+		t.Fatal("expected non-nil HookSpecificOutput")
+	}
+	if out.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("PermissionDecision = %q, want deny", out.HookSpecificOutput.PermissionDecision)
+	}
+	want := "Rampart: action: ask is not supported in --dangerously-skip-permissions mode; use action: deny instead"
+	if out.HookSpecificOutput.PermissionDecisionReason != want {
+		t.Fatalf("PermissionDecisionReason = %q, want %q", out.HookSpecificOutput.PermissionDecisionReason, want)
+	}
+}
+
 // keysOf returns the keys of a map[string]any for diagnostic messages.
 func keysOf(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
