@@ -357,6 +357,13 @@ policies:
             - "**/.secrets/**"
             - "**/.keys/**"
             - "**/.pki/**"
+          path_not_matches:
+            # Allow example/template env files (contain placeholder values, not real secrets)
+            - "**/.env.example"
+            - "**/.env.example.*"
+            - "**/*.env.example"
+            - "**/.env.sample"
+            - "**/.env.template"
         message: "Credential file access blocked"
       # System authentication / privilege files
       - action: deny
@@ -514,6 +521,12 @@ policies:
             - "**/.envrc"
             - "**/.env"
             - "**/.env.*"
+          path_not_matches:
+            - "**/.env.example"
+            - "**/.env.example.*"
+            - "**/*.env.example"
+            - "**/.env.sample"
+            - "**/.env.template"
         message: "Write to sensitive path blocked"
 
   - name: block-browser-data
