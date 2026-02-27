@@ -166,6 +166,75 @@ func TestPolicyGenerateCommand_OutputAndAppend(t *testing.T) {
 	}
 }
 
+func TestBuildFallbackIntent_KeywordExtraction(t *testing.T) {
+	tests := []struct {
+		name      string
+		intent    string
+		want      []string
+		wantErr   string
+		wantName  string
+		contains  []string
+		maxTokens int
+	}{
+		{
+			name:      "block all outbound curl requests",
+			intent:    "block all outbound curl requests",
+			contains:  []string{"curl", "outbound", "requests"},
+			wantName:  "generated-curl",
+			maxTokens: 3,
+		},
+		{
+			name:     "deny wget downloads",
+			intent:   "deny wget downloads",
+			want:     []string{"wget", "downloads"},
+			wantName: "generated-wget",
+		},
+		{
+			name:    "only stop words",
+			intent:  "the and for",
+			wantErr: "no meaningful keywords",
+		},
+		{
+			name:     "short meaningful single token",
+			intent:   "rm",
+			want:     []string{"rm"},
+			wantName: "generated-rm",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildFallbackIntent(intentSpec{Intent: tt.intent, Strictness: "balanced"}, "deny")
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildFallbackIntent() error = %v", err)
+			}
+
+			rule := got.Policy.Rules[0]
+			if len(tt.want) > 0 && !sameStringSet(rule.When.CommandContains, tt.want) {
+				t.Fatalf("command_contains = %v, want %v", rule.When.CommandContains, tt.want)
+			}
+			for _, kw := range tt.contains {
+				containsValue(t, rule.When.CommandContains, kw)
+			}
+			if tt.maxTokens > 0 && len(rule.When.CommandContains) > tt.maxTokens {
+				t.Fatalf("command_contains too long = %v", rule.When.CommandContains)
+			}
+			if tt.wantName != "" && got.Policy.Name != tt.wantName {
+				t.Fatalf("policy name = %q, want %q", got.Policy.Name, tt.wantName)
+			}
+		})
+	}
+}
+
 func containsValue(t *testing.T, items []string, want string) {
 	t.Helper()
 	for _, item := range items {

@@ -63,6 +63,27 @@ type generatedIntent struct {
 var (
 	pathCaptureRegexp = regexp.MustCompile(`(/[^\s,;]+)`)
 	slugRegexp        = regexp.MustCompile(`[^a-z0-9]+`)
+	tokenizeRegexp    = regexp.MustCompile(`[[:alnum:]]+`)
+
+	knownCommandKeywords = []string{
+		"curl", "wget", "git", "sudo", "npm", "pnpm", "yarn", "pip", "python", "node", "rm",
+		"dd", "mkfs", "wipefs", "shred", "kubectl", "docker", "terraform", "helm", "ansible",
+	}
+	knownCommandKeywordSet = toSet(knownCommandKeywords)
+	shortKeywordAllowSet   = map[string]bool{
+		"rm": true,
+		"dd": true,
+		"nc": true,
+	}
+	stopWords = map[string]bool{
+		"all": true, "any": true, "the": true, "and": true, "for": true, "from": true, "that": true, "this": true,
+		"with": true, "not": true, "but": true, "are": true, "you": true, "your": true, "can": true, "will": true,
+		"via": true, "into": true, "when": true, "then": true, "only": true, "also": true, "both": true, "each": true,
+		"more": true, "most": true, "over": true, "such": true, "than": true, "been": true, "have": true, "like": true,
+		"just": true, "new": true, "how": true, "its": true, "our": true, "out": true, "use": true, "way": true,
+		"too": true, "now": true, "let": true, "put": true, "say": true, "she": true, "may": true, "try": true,
+		"allow": true, "deny": true, "block": true, "require": true, "approval": true, "prevent": true, "forbid": true, "reject": true,
+	}
 
 	// Keep this list explicit and broad to satisfy pattern-only generation.
 	intentTemplates = []intentTemplate{
@@ -439,10 +460,16 @@ func dedupeTemplates(in []intentTemplate) []intentTemplate {
 }
 
 func buildFallbackIntent(spec intentSpec, action string) (generatedIntent, error) {
+	keywords := extractIntentKeywords(spec.Intent, 3)
+	if len(keywords) == 0 {
+		return generatedIntent{}, fmt.Errorf("no meaningful keywords in %q — try --interactive", spec.Intent)
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "note: using keyword fallback for %q — consider using --interactive for better results\n", spec.Intent)
+
 	rule := engine.Rule{
 		Action: action,
 		When: engine.Condition{
-			CommandContains: []string{spec.Intent},
+			CommandContains: keywords,
 		},
 		Message: defaultRuleMessage(action, condCommandContains),
 	}
@@ -450,7 +477,7 @@ func buildFallbackIntent(spec intentSpec, action string) (generatedIntent, error
 	applyStrictness(&rule, spec.Strictness)
 
 	policy := engine.Policy{
-		Name: fmt.Sprintf("generated-%s", slugify(spec.Intent)),
+		Name: fmt.Sprintf("generated-%s", slugify(keywords[0])),
 		Match: engine.Match{
 			Tool: engine.StringOrSlice{"exec"},
 		},
@@ -458,6 +485,62 @@ func buildFallbackIntent(spec intentSpec, action string) (generatedIntent, error
 	}
 
 	return generatedIntent{Policy: policy, Comment: "fallback command_contains policy"}, nil
+}
+
+func extractIntentKeywords(intent string, maxKeywords int) []string {
+	rawTokens := tokenizeRegexp.FindAllString(strings.ToLower(intent), -1)
+	if len(rawTokens) == 0 || maxKeywords <= 0 {
+		return nil
+	}
+
+	type keywordCandidate struct {
+		token string
+		index int
+		score int
+	}
+
+	candidates := make([]keywordCandidate, 0, len(rawTokens))
+	seen := map[string]bool{}
+	isSingleTokenIntent := len(rawTokens) == 1
+
+	for i, token := range rawTokens {
+		if seen[token] || stopWords[token] {
+			continue
+		}
+		if len(token) < 3 && !shortKeywordAllowSet[token] {
+			if !isSingleTokenIntent || len(token) < 2 {
+				continue
+			}
+		}
+
+		seen[token] = true
+		score := len(token)
+		if knownCommandKeywordSet[token] {
+			score += 100
+		}
+		candidates = append(candidates, keywordCandidate{token: token, index: i, score: score})
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return candidates[i].index < candidates[j].index
+		}
+		return candidates[i].score > candidates[j].score
+	})
+
+	if len(candidates) > maxKeywords {
+		candidates = candidates[:maxKeywords]
+	}
+
+	keywords := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		keywords = append(keywords, candidate.token)
+	}
+	return keywords
 }
 
 func applyCondition(cond *engine.Condition, typ templateConditionType, patterns []string) {
@@ -599,12 +682,8 @@ func normalizePathPattern(path string) string {
 }
 
 func detectCommandKeywords(text string) []string {
-	known := []string{
-		"curl", "wget", "git", "sudo", "npm", "pnpm", "yarn", "pip", "python", "node", "rm",
-		"dd", "mkfs", "wipefs", "shred", "kubectl", "docker", "terraform", "helm", "ansible",
-	}
 	out := make([]string, 0, 4)
-	for _, k := range known {
+	for _, k := range knownCommandKeywords {
 		if strings.Contains(text, k) {
 			out = append(out, k)
 		}
@@ -689,4 +768,12 @@ func slugify(s string) string {
 		return "intent"
 	}
 	return s
+}
+
+func toSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
 }
