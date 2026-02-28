@@ -261,6 +261,32 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 		return
 	}
 
+	const maxPolicyBytes = 10 << 20 // 10 MiB
+	fi, err := os.Stat(trimmed)
+	if err != nil {
+		r.Controls["AIUC-1.4"] = ComplianceControl{
+			Name:     "Data Exfiltration Prevention",
+			Status:   ControlStatusWarn,
+			Evidence: []string{fmt.Sprintf("Could not read policy file %q: %v", trimmed, err)},
+		}
+		return
+	}
+	if !fi.Mode().IsRegular() {
+		r.Controls["AIUC-1.4"] = ComplianceControl{
+			Name:     "Data Exfiltration Prevention",
+			Status:   ControlStatusWarn,
+			Evidence: []string{fmt.Sprintf("Policy path %q is not a regular file", trimmed)},
+		}
+		return
+	}
+	if fi.Size() > maxPolicyBytes {
+		r.Controls["AIUC-1.4"] = ComplianceControl{
+			Name:     "Data Exfiltration Prevention",
+			Status:   ControlStatusWarn,
+			Evidence: []string{fmt.Sprintf("Policy file %q exceeds 10 MiB size limit", trimmed)},
+		}
+		return
+	}
 	data, err := os.ReadFile(trimmed)
 	if err != nil {
 		r.Controls["AIUC-1.4"] = ComplianceControl{
