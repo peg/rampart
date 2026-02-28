@@ -7,17 +7,20 @@
 
 $ErrorActionPreference = "Stop"
 
+# Ensure UTF-8 output for Unicode characters
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
 $RepoOwner = "peg"
 $RepoName = "rampart"
 $InstallDir = "$env:USERPROFILE\.rampart\bin"
 
 function Write-Status($msg) { Write-Host "  $msg" -ForegroundColor Cyan }
-function Write-Success($msg) { Write-Host "✓ $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "⚠ $msg" -ForegroundColor Yellow }
-function Write-Err($msg) { Write-Host "✗ $msg" -ForegroundColor Red }
+function Write-Success($msg) { Write-Host "[OK] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
+function Write-Err($msg) { Write-Host "[X] $msg" -ForegroundColor Red }
 
 Write-Host ""
-Write-Host "🛡️  Rampart Installer" -ForegroundColor White
+Write-Host "Rampart Installer" -ForegroundColor White
 Write-Host ""
 
 # Detect architecture
@@ -215,7 +218,7 @@ if (Test-Path $claudeSettings) {
 
 # Done
 Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
+Write-Host "----------------------------------------------------" -ForegroundColor DarkGray
 Write-Success "Rampart installed successfully!"
 Write-Host ""
 Write-Host "  Try it now:" -ForegroundColor White
