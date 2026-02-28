@@ -341,7 +341,7 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 			wantAction: "allow",
 		},
 		{
-			// crontab -r requires approval (persistence modification).
+			// crontab -r requires approval (policy v2: persistence operations → ask, not deny).
 			name:       "exec: crontab -r → ask",
 			tool:       "exec",
 			params:     map[string]any{"command": "crontab -r"},
@@ -357,7 +357,8 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 			wantAction: "deny",
 		},
 		{
-			// write to /etc/hosts requires approval.
+			// write to /etc/hosts requires approval (policy v2: privileged system config → ask).
+			// Blanket deny was too aggressive for provisioning workflows.
 			name:       "write: /etc/hosts → ask",
 			tool:       "write",
 			params:     map[string]any{"path": "/etc/hosts"},

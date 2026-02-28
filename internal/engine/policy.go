@@ -67,6 +67,11 @@ type Policy struct {
 	// Rules are evaluated top-to-bottom. First matching rule wins
 	// within this policy.
 	Rules []Rule `yaml:"rules"`
+
+	// Source indicates where this policy was loaded from.
+	// "project" for .rampart/policy.yaml, empty for global policies.
+	// This is set at runtime during mergeProjectPolicy, not in YAML.
+	Source string `yaml:"-"`
 }
 
 // IsEnabled returns whether this policy is active.

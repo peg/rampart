@@ -162,6 +162,10 @@ type Decision struct {
 	// the tool call. Useful for debugging and audit.
 	MatchedPolicies []string
 
+	// FromProjectPolicy is true when the deciding rule came from a
+	// project-level policy (.rampart/policy.yaml) rather than global.
+	FromProjectPolicy bool
+
 	// Message is a human-readable explanation of the decision.
 	// For denials, this tells the agent why the call was blocked.
 	Message string
