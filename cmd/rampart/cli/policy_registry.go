@@ -38,7 +38,7 @@ import (
 const policyRegistryCacheFileName = "registry-cache.json"
 
 var (
-	defaultPolicyRegistryManifestURL = "https://raw.githubusercontent.com/peg/rampart-policies/main/registry.json"
+	defaultPolicyRegistryManifestURL = "https://raw.githubusercontent.com/peg/rampart/main/registry/registry.json"
 	defaultPolicyRegistryHTTPClient  = &http.Client{Timeout: 10 * time.Second}
 )
 
