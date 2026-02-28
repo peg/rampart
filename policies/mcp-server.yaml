@@ -1,7 +1,7 @@
 # Rampart built-in profile: mcp-server
 # Use with: rampart init --profile mcp-server
 #
-# For agents exposed via MCP protocol (e.g. Claude Desktop extensions,
+# For agents exposed via MCP (Model Context Protocol) (e.g. Claude Desktop extensions,
 # MCP-based automation). Applies stricter controls than the standard profile:
 # no shell execution, credential files blocked, network egress requires
 # approval, and file access is scoped to safe paths.

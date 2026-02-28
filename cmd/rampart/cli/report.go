@@ -86,11 +86,18 @@ func newReportComplianceCmd(rootOpts *rootOptions, defaultAuditDir string) *cobr
 		Short: "Generate AIUC-1 compliance report",
 		Long: `Generate an AIUC-1 compliance evidence report from audit logs.
 
+AIUC-1 (AI Unified Controls v1) is the first compliance standard for AI agent
+operations. This report provides evidence that Rampart is enforcing the required
+controls and can be shared with auditors or security teams.
+
 Controls evaluated:
-  AIUC-1.1 Tool Call Authorization
-  AIUC-1.2 Audit Logging
-  AIUC-1.3 Human-in-the-Loop
-  AIUC-1.4 Data Exfiltration Prevention
+  AIUC-1.1 Tool Call Authorization  — All tool calls evaluated against policy
+  AIUC-1.2 Audit Logging            — Tamper-evident audit chain maintained
+  AIUC-1.3 Human-in-the-Loop        — Sensitive ops require human approval
+  AIUC-1.4 Data Exfiltration Prev.  — Credential/sensitive path access blocked
+
+Note: a fresh installation with no audit history will show NON-COMPLIANT.
+Run Rampart with an agent to generate audit logs, then re-run this report.
 
 Examples:
   rampart report compliance

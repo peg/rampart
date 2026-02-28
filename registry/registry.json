@@ -16,7 +16,7 @@
       "description": "Policy profile for safely running MCP-integrated agents.",
       "tags": ["mcp", "integration", "agent"],
       "url": "https://raw.githubusercontent.com/peg/rampart/main/registry/policies/mcp-server.yaml",
-      "sha256": "f60671e0d438529405ade3c8487b8624145a27f8f10e50c22562a24cac7f651e",
+      "sha256": "91badc1dbad59b40ed5531590d348d8da1873eac4c3fb79295341eb82ae07511",
       "version": "1.0.0",
       "author": "rampart-team"
     }

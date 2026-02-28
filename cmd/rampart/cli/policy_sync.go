@@ -58,15 +58,20 @@ func newPolicySyncCmd(_ *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync <git-url>",
 		Short: "Sync policies from a git repository",
-		Long: `Sync a Rampart policy file from a public HTTPS git repository.
+		Long: `Sync a Rampart policy file from a git repository.
+
+Requirements:
+  - git must be installed and in PATH
+  - URL must use HTTPS (git://, ssh://, and file:// are not supported)
+  - Repository must be publicly accessible (no authentication)
 
 Rampart checks for policy files in this order:
   1. rampart.yaml
   2. policy.yaml
   3. .rampart/policy.yaml
 
-Synced policy is written to ~/.rampart/policies/org-sync.yaml and a state file
-is stored at ~/.rampart/sync-state.json.`,
+Synced policy is written to ~/.rampart/policies/org-sync.yaml and state is
+stored at ~/.rampart/sync-state.json.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			url, err := resolvePolicySyncURL(args)
@@ -110,7 +115,7 @@ is stored at ~/.rampart/sync-state.json.`,
 	}
 
 	cmd.Flags().BoolVar(&watch, "watch", false, "Poll for policy updates in the foreground")
-	cmd.Flags().DurationVar(&interval, "interval", 5*time.Minute, "Polling interval for --watch")
+	cmd.Flags().DurationVar(&interval, "interval", 5*time.Minute, "How often to poll for changes when using --watch (default: 5m)")
 
 	cmd.AddCommand(newPolicySyncStatusCmd())
 	cmd.AddCommand(newPolicySyncStopCmd())
