@@ -1,0 +1,109 @@
+# Rampart built-in profile: mcp-server
+# Use with: rampart init --profile mcp-server
+#
+# For agents exposed via MCP protocol (e.g. Claude Desktop extensions,
+# MCP-based automation). Applies stricter controls than the standard profile:
+# no shell execution, credential files blocked, network egress requires
+# approval, and file access is scoped to safe paths.
+#
+# Default action: allow (permissive baseline — rules block specific dangers)
+
+version: "1"
+default_action: allow
+
+policies:
+  # Block shell execution entirely — MCP server agents should not shell out.
+  - name: mcp-block-exec
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          default: true
+        message: "Shell execution blocked: MCP server agents must not execute shell commands"
+
+  # Block reads of credential and secret files.
+  - name: mcp-block-credential-reads
+    priority: 2
+    match:
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.aws/**"
+            - "**/.ssh/**"
+            - "**/.env"
+            - "**/.env.*"
+            - "**/.kube/**"
+            - "**/.docker/**"
+            - "**/.gnupg/**"
+            - "**/.git-credentials"
+            - "**/.netrc"
+            - "**/Library/Keychains/**"
+        message: "Credential file read blocked for MCP server agent"
+
+  # Block writes outside the workspace — system paths and dotfiles off-limits.
+  - name: mcp-restrict-writes
+    priority: 3
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.aws/**"
+            - "**/.ssh/**"
+            - "**/.kube/**"
+            - "**/etc/**"
+            - "**/usr/**"
+            - "**/bin/**"
+            - "**/sbin/**"
+            - "**/var/**"
+            - "**/.rampart/**"
+        message: "Write to sensitive path blocked for MCP server agent"
+
+  # Network fetch — require approval. MCP servers should not make arbitrary
+  # outbound requests without the user knowing.
+  - name: mcp-approve-fetch
+    priority: 4
+    match:
+      tool: ["fetch", "web_fetch"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "ngrok.io"
+            - "webhook.site"
+            - "pipedream.net"
+            - "requestbin.com"
+        message: "Request to known exfil endpoint blocked"
+      - action: ask
+        message: "MCP agent wants to make a network request — approve?"
+
+tests:
+  - name: "blocks shell execution"
+    tool: exec
+    params: {command: "whoami"}
+    expect: deny
+  - name: "blocks credential read"
+    tool: read
+    params: {path: "/home/user/.aws/credentials"}
+    expect: deny
+  - name: "allows safe file read"
+    tool: read
+    params: {path: "/home/user/project/README.md"}
+    expect: allow
+  - name: "blocks write to system path"
+    tool: write
+    params: {path: "/etc/hosts", content: "evil"}
+    expect: deny
+  - name: "allows safe write"
+    tool: write
+    params: {path: "/home/user/project/output.md", content: "result"}
+    expect: allow
+  - name: "blocks known exfil domain"
+    tool: fetch
+    params: {url: "https://webhook.site/abc123"}
+    expect: deny

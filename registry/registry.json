@@ -1,0 +1,25 @@
+{
+  "readme": "This manifest is published to github.com/peg/rampart-policies as registry.json.",
+  "version": "1",
+  "updated_at": "2026-02-28T00:00:00Z",
+  "policies": [
+    {
+      "name": "research-agent",
+      "description": "Read-only research policy for web/file analysis.",
+      "tags": ["research", "read-only", "web"],
+      "url": "https://raw.githubusercontent.com/peg/rampart-policies/main/policies/research-agent.yaml",
+      "sha256": "PLACEHOLDER_SHA256_RESEARCH_AGENT",
+      "version": "1.0.0",
+      "author": "Rampart Community"
+    },
+    {
+      "name": "mcp-server",
+      "description": "Policy profile for safely running MCP-integrated agents.",
+      "tags": ["mcp", "integration", "agent"],
+      "url": "https://raw.githubusercontent.com/peg/rampart-policies/main/policies/mcp-server.yaml",
+      "sha256": "PLACEHOLDER_SHA256_MCP_SERVER",
+      "version": "1.0.0",
+      "author": "Rampart Community"
+    }
+  ]
+}
