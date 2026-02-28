@@ -221,9 +221,9 @@ func TestGenerateSuggestions_ExecCommand(t *testing.T) {
 				Params:    map[string]any{"command": tc.command},
 				Timestamp: time.Now(),
 			}
-			suggestions := generateSuggestions(call)
+			suggestions := GenerateSuggestions(call)
 			if len(suggestions) == 0 {
-				t.Fatalf("generateSuggestions() returned no suggestions, want at least exact match")
+				t.Fatalf("GenerateSuggestions() returned no suggestions, want at least exact match")
 			}
 			if suggestions[0] != tc.wantExact {
 				t.Errorf("suggestions[0] = %q, want %q", suggestions[0], tc.wantExact)
@@ -293,9 +293,9 @@ func TestGenerateSuggestions_FilePath(t *testing.T) {
 				Params:    map[string]any{"path": tc.path},
 				Timestamp: time.Now(),
 			}
-			suggestions := generateSuggestions(call)
+			suggestions := GenerateSuggestions(call)
 			if len(suggestions) == 0 {
-				t.Fatalf("generateSuggestions() returned no suggestions")
+				t.Fatalf("GenerateSuggestions() returned no suggestions")
 			}
 			if suggestions[0] != tc.wantExact {
 				t.Errorf("suggestions[0] = %q, want %q", suggestions[0], tc.wantExact)
@@ -323,7 +323,7 @@ func TestGenerateSuggestions_NoCommand(t *testing.T) {
 		Params:    map[string]any{},
 		Timestamp: time.Now(),
 	}
-	suggestions := generateSuggestions(call)
+	suggestions := GenerateSuggestions(call)
 	if len(suggestions) != 0 {
 		t.Errorf("expected no suggestions for empty call, got %v", suggestions)
 	}
@@ -365,7 +365,7 @@ func TestGenerateSuggestions_NoDangerousWildcards(t *testing.T) {
 			Params:    params,
 			Timestamp: time.Now(),
 		}
-		suggestions := generateSuggestions(call)
+		suggestions := GenerateSuggestions(call)
 		for _, s := range suggestions {
 			// No suggestion should contain a bare "**" wildcard that matches everything.
 			if strings.Contains(s, `"**"`) {

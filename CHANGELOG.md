@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-02-28
+
+### Added
+
+- **Policy bypass gap fixes** — Closed 10 attack vectors found in security audit: `curl -d @~/.ssh/` file upload, `tar cz ~/.ssh | curl` pipe exfil, Python/Node/Ruby interpreter one-liners with dangerous calls, `eval $(echo ... | base64 -d)`, `xxd -r | bash`, `/proc/*/mem` memory scraping, shell redirect to `/etc/cron.d/`, interpreter pattern false-positive fix using `**` double-glob scoping.
+- **`policies/ci.yaml`** — New strict preset for CI/headless agents. All `ask` rules → `deny`. Blocks package installs and persistence mechanisms.
+- **`rampart init --defaults`** — Alias for `--force`. More intuitive for fresh setup.
+- **`[Project Policy]` prefix** — Deny messages from repo-local `.rampart/policy.yaml` files are now prefixed with `[Project Policy]` so users can distinguish trusted global policies from project-specific ones.
+- **PostToolUseFailure remediation hints** — When a tool call is blocked, Claude now receives the specific `rampart allow` command to surface to the user, with an explicit guard preventing the AI from running it itself.
+- **`~/.rampart/**` write protection** — `block-sensitive-writes` now covers write/edit tool access to Rampart policy files, closing a bypass where an AI agent could modify its own policy file directly.
+- **`validateToolUseID`** — Input validation for `tool_use_id` field in hook input.
+- **Windows path separator fix** — `findRequireApprovalUsages` now normalizes backslashes to forward slashes on Windows.
+
+### Security
+
+- Block interpreter one-liners (`python3 -c`, `node -e`, `ruby -e`, `perl -e`) when combined with dangerous system calls, scoped to avoid false positives on `grep`/`rg` searches for these patterns.
+- Block `curl @file` credential exfil (was only catching `-d @~/.ssh/`; now catches curl @file, tar pipe exfil, and more).
+- Block shell redirects to `/etc/cron.d/`.
+- Block `/proc/*/mem` process memory scraping.
+
 ## [0.6.8] - 2026-02-28
 
 ### Added
@@ -46,6 +66,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Upgrade migration notice** — `rampart upgrade` now scans existing policies for `require_approval` rules before upgrading and shows explicit migration steps (with a confirmation prompt) when found. Auto-continues in non-interactive/CI environments.
+
+## [0.6.6] - 2026-02-27
+
+### Added
+
+- **`ask.audit: true`** — `action: ask` rules can now set `ask.audit: true` to mirror pending approval state into `rampart serve` for dashboard and `rampart watch` visibility. Dashboard and watch show the item as pending while the native Claude Code prompt is active, then reflect the user's decision after PostToolUse.
+
+### Changed
+
+- **`require_approval` now uses native Claude Code prompt** ⚠️ Breaking change for CI/headless users
+
+  `action: require_approval` no longer blocks execution waiting for dashboard approval. It now fires the native Claude Code inline permission prompt immediately (same as `action: ask` + `ask.audit: true`).
+
+  **If your CI pipeline relies on blocking approvals** (agent waits, human approves via dashboard), migrate your policy rules:
+
+  ```yaml
+  # Before (v0.6.5 and earlier)
+  - action: require_approval
+    when:
+      command_matches: "kubectl apply **"
+
+  # After (v0.6.6+) — preserves blocking behavior for CI
+  - action: ask
+    ask:
+      audit: true
+      headless_only: true
+    when:
+      command_matches: "kubectl apply **"
+  ```
+
+  Interactive users (Claude Code running in a terminal with a human present) are unaffected — the native prompt is faster and more convenient than opening a dashboard.
+
+
 
 ## [0.6.5] - 2026-02-27
 

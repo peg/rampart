@@ -431,6 +431,21 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					"or `rampart watch` to view the live audit log. " +
 					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
 					"see https://rampart.sh/docs/exceptions for guidance."
+
+				// Generate specific rampart allow suggestions for this call
+				failedCall := engine.ToolCall{
+					Tool:   parsed.Tool,
+					Params: parsed.Params,
+				}
+				suggestions := engine.GenerateSuggestions(failedCall)
+				if len(suggestions) > 0 {
+					msg += "\n\nTo allow this specific operation, a human can run:\n"
+					for _, s := range suggestions {
+						msg += "  " + s + "\n"
+					}
+					msg += "\n⚠️ Surface these commands to the user — do NOT run them yourself."
+				}
+
 				out := hookOutput{
 					HookSpecificOutput: &hookDecision{
 						HookEventName:     "PostToolUseFailure",
@@ -550,16 +565,17 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 			// Return decision
 			cmdStr := extractCommand(call)
+			reasonMsg := projectPolicyPrefix(decision.Message, decision.FromProjectPolicy)
 			if mode != "enforce" {
-				return outputHookResult(cmd, format, hookAllow, isPostToolUse, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookAllow, isPostToolUse, reasonMsg, cmdStr)
 			}
 
 			switch decision.Action {
 			case engine.ActionDeny:
 				if isPostToolUse {
-					return outputHookResult(cmd, format, hookBlock, true, decision.Message, cmdStr, decision.Suggestions...)
+					return outputHookResult(cmd, format, hookBlock, true, reasonMsg, cmdStr, decision.Suggestions...)
 				}
-				return outputHookResult(cmd, format, hookDeny, false, decision.Message, cmdStr, decision.Suggestions...)
+				return outputHookResult(cmd, format, hookDeny, false, reasonMsg, cmdStr, decision.Suggestions...)
 			case engine.ActionAsk:
 				if decision.HeadlessOnly {
 					if serveURL == "" || !isServeRunning(serveURL) {
@@ -574,11 +590,11 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					command, _ := call.Params["command"].(string)
 					path := call.Path() // handles both "file_path" (Claude Code) and "path"
-					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, decision.Message, 5*time.Minute)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, reasonMsg, 5*time.Minute)
 					if result == hookAsk {
 						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
 					}
-					return outputHookResult(cmd, format, result, false, decision.Message, cmdStr)
+					return outputHookResult(cmd, format, result, false, reasonMsg, cmdStr)
 				}
 
 				askAudit := decision.Audit
@@ -595,7 +611,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					command, _ := call.Params["command"].(string)
 					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, decision.Message); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -613,14 +629,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					if len(decision.MatchedPolicies) > 0 {
 						policyName = decision.MatchedPolicies[0]
 					}
-					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, decision.Message, askAudit, auditApprovalID); err != nil {
+					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, reasonMsg, askAudit, auditApprovalID); err != nil {
 						// NOTE: Use Debug, not Warn. Claude Code treats ANY stderr as a hook error
 						// for ask decisions. RecordAsk is best-effort anyway.
 						logger.Debug("hook: failed to record ask in session state", "error", err)
 					}
 				}
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
-				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionRequireApproval:
 				askAudit := true
 				auditApprovalID := ""
@@ -636,7 +652,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					command, _ := call.Params["command"].(string)
 					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, decision.Message); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -652,14 +668,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					if len(decision.MatchedPolicies) > 0 {
 						policyName = decision.MatchedPolicies[0]
 					}
-					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, decision.Message, askAudit, auditApprovalID); err != nil {
+					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, reasonMsg, askAudit, auditApprovalID); err != nil {
 						logger.Debug("hook: failed to record ask in session state", "error", err)
 					}
 				}
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
-				return outputHookResult(cmd, format, hookAsk, false, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			default:
-				return outputHookResult(cmd, format, hookAllow, isPostToolUse, decision.Message, cmdStr)
+				return outputHookResult(cmd, format, hookAllow, isPostToolUse, reasonMsg, cmdStr)
 			}
 		},
 	}
@@ -680,6 +696,11 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input hookInput
 	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+		return nil, err
+	}
+
+	// Validate tool_use_id format to prevent injection attacks
+	if err := validateToolUseID(input.ToolUseID); err != nil {
 		return nil, err
 	}
 
@@ -835,6 +856,31 @@ const (
 	hookAsk   // ask (and require_approval alias) → Claude Code native prompt
 	hookBlock // PostToolUse: block response from being shown to agent
 )
+
+// projectPolicyPrefix returns the message with a "[Project Policy] " prefix
+// if fromProject is true. This indicates to users that the rule came from a
+// repository's .rampart/policy.yaml rather than global Rampart policies.
+func projectPolicyPrefix(msg string, fromProject bool) string {
+	if fromProject {
+		return "[Project Policy] " + msg
+	}
+	return msg
+}
+
+// validateToolUseID validates the tool_use_id format to prevent injection attacks.
+// Claude Code uses formats like "toolu_01ABC..." — alphanumeric with underscores/hyphens.
+// Returns an error if invalid characters are detected.
+func validateToolUseID(id string) error {
+	if id == "" {
+		return nil // allow empty (some contexts don't have it)
+	}
+	for _, r := range id {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return fmt.Errorf("hook: invalid character %q in tool_use_id", r)
+		}
+	}
+	return nil
+}
 
 // outputHookResult writes the allow/deny/ask/block response in the correct format.
 // When denied or blocked, it prints a branded message to stderr.

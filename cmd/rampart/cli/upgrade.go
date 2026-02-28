@@ -881,7 +881,7 @@ func findRequireApprovalUsages(userHomeDir func() (string, error)) ([]requireApp
 			for _, r := range p.Rules {
 				if strings.EqualFold(strings.TrimSpace(r.Action), "require_approval") {
 					findings = append(findings, requireApprovalUsage{
-						FilePath:   filepath.ToSlash("~" + strings.TrimPrefix(path, home)),
+						FilePath:   "~" + filepath.ToSlash(strings.TrimPrefix(path, home)),
 						PolicyName: p.Name,
 					})
 					break
