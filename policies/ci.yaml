@@ -1,26 +1,11 @@
-# Rampart Standard Policy — default rules for common AI agent threats.
-#
-# MATCHING CAPABILITIES:
-# - Quote stripping: 'rm' → rm, "rm" → rm
-# - Backslash removal: \rm → rm
-# - Env prefix stripping: FOO=bar cmd → cmd
-# - Compound commands: cmd1 && cmd2 → matches both
-# - Subcommand extraction: $(cmd), `cmd`, eval 'cmd' → matches inner cmd
-# - Substring matching: command_contains catches wrapped commands
-#
-# REMAINING GAPS (require OS-level sandboxing):
-# - Variable expansion: $CMD, ${CMD}
-# - Base64 payloads: echo dGVzdA== | base64 -d | bash
-# - Obfuscation: rev, xxd, printf escapes
-#
-# For adversarial threat models, combine Rampart with containers,
-# seccomp, or AppArmor. See docs/THREAT-MODEL.md.
-
 version: "1"
+# Rampart CI/Headless Policy — strict preset for unattended agents
+# All interactive approvals become hard denials.
+# Pair with: ask.headless_only: true
 default_action: allow
 
 # CI/headless approval — blocks until approved via dashboard (no native prompt)
-# - action: ask
+# - action: deny
 #   ask:
 #     audit: true
 #     headless_only: true
@@ -164,7 +149,7 @@ policies:
             - "rm -rf /var/cache"
             - "rm -rf /var/cache/**"
         message: "Destructive command blocked"
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             - "shred **"
@@ -232,14 +217,14 @@ policies:
             - "aws s3 cp **/.ssh/** s3://**"
             - "aws s3 cp ~/.ssh/** s3://**"
         message: "Credential exfiltration to S3 blocked"
-      - action: ask
+      - action: deny
         when:
           command_matches:
-            - "aws s3 cp ** s3://**"
-            - "gcloud storage cp ** gs://**"
-            - "gsutil cp ** gs://**"
+            - "aws s3 cp * s3://**"
+            - "gcloud storage cp * gs://**"
+            - "gsutil cp * gs://**"
           command_not_matches:
-            - "aws s3 cp ** s3://my-company-bucket/**"
+            - "aws s3 cp * s3://my-company-bucket/**"
         message: "Cloud upload requires approval"
 
   - name: watch-env-access
@@ -306,7 +291,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             - "sudo **"
@@ -323,7 +308,7 @@ policies:
             - "echo '* * * * * curl ** | bash' | crontab -"
             - "echo \"* * * * * curl ** | bash\" | crontab -"
         message: "Malicious cron persistence blocked"
-      - action: ask
+      - action: deny
         when:
           command_matches:
             - "crontab -e"
@@ -332,7 +317,7 @@ policies:
             - "systemctl enable *"
             - "systemctl --user enable *"
         message: "Persistence change requires approval"
-      - action: ask
+      - action: deny
         when:
           path_matches:
             - "**/.config/systemd/user/**"
@@ -520,7 +505,7 @@ policies:
     match:
       tool: ["write", "edit"]
     rules:
-      - action: ask
+      - action: deny
         when:
           path_matches:
             - "/etc/hosts"
@@ -655,7 +640,7 @@ policies:
     match:
       tool: ["fetch", "web_search", "web_fetch", "browser"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           call_count:
             gte: 100
@@ -697,7 +682,7 @@ policies:
       tool: ["fetch", "web_search", "read", "exec", "mcp"]
     rules:
         # High-confidence injection markers — require approval before continuing.
-      - action: ask
+      - action: deny
         when:
           response_matches:
             # Classic instruction override attempts
@@ -734,7 +719,7 @@ policies:
 #    match:
 #      tool: ["exec"]
 #    rules:
-#      - action: require_approval
+#      - action: deny
 #        when:
 #          command_matches:
 #            - "kubectl apply *"
@@ -749,7 +734,7 @@ policies:
 #    match:
 #      tool: ["exec"]
 #    rules:
-#      - action: require_approval
+#      - action: deny
 #        when:
 #          command_matches:
 #            - "pip install *"
@@ -769,7 +754,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: ask
+      - action: deny
         when:
           command_matches:
             - "security find-generic-password *"
@@ -1072,7 +1057,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             - "taskkill *lsass*"
@@ -1092,7 +1077,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             # sc.exe service manipulation
@@ -1119,7 +1104,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             # schtasks.exe
@@ -1141,7 +1126,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             # netsh firewall commands
@@ -1160,7 +1145,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             # net user commands
@@ -1181,7 +1166,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_contains:
             - "Set-ExecutionPolicy"
@@ -1196,7 +1181,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: deny
         when:
           command_matches:
             # winget
@@ -1214,3 +1199,104 @@ policies:
             - "msiexec /i*"
             - "msiexec /x*"
         message: "Windows package installation requires approval"
+
+  - name: ci-no-package-install
+    description: "Deny package installation in unattended CI/headless runs"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "pip install*"
+            - "pip3 install*"
+            - "python -m pip install*"
+            - "npm install*"
+            - "npm i *"
+            - "yarn add*"
+            - "pnpm add*"
+            - "go get *"
+            - "cargo install*"
+            - "apt install*"
+            - "apt-get install*"
+            - "brew install*"
+            - "winget install*"
+            - "choco install*"
+        message: "Package installation blocked in CI preset"
+
+  - name: ci-no-persistence
+    description: "Deny persistence changes for unattended agents"
+    match:
+      tool: ["exec", "write", "edit"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "crontab -e"
+            - "crontab -r"
+            - "* | crontab -"
+            - "systemctl enable *"
+            - "systemctl --user enable *"
+            - "launchctl load *"
+            - "launchctl bootstrap *"
+        message: "Persistence modification blocked in CI preset"
+      - action: deny
+        when:
+          path_matches:
+            - "**/.config/systemd/user/**"
+            - "**/Library/LaunchAgents/**"
+            - "**/Library/LaunchDaemons/**"
+        message: "Persistence file write blocked in CI preset"
+
+  - name: ci-sensitive-writes-deny
+    description: "Deny sensitive system writes that standard policy asks for"
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "/etc/hosts"
+            - "**/etc/hosts"
+            - "/etc/cron.d/**"
+            - "**/etc/cron.d/**"
+            - "/etc/crontab"
+            - "**/etc/crontab"
+            - "/etc/sudoers.d/**"
+            - "**/etc/sudoers.d/**"
+        message: "Sensitive system write blocked in CI preset"
+
+  - name: ci-network-strict
+    description: "Deny cloud uploads that standard policy routes to approval"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "aws s3 cp ** s3://**"
+            - "gcloud storage cp ** gs://**"
+            - "gsutil cp ** gs://**"
+        message: "Cloud upload blocked in CI preset"
+
+  - name: ci-no-prompt-injection
+    description: "Deny high-confidence prompt injection content in tool responses"
+    match:
+      tool: ["fetch", "web_search", "read", "exec", "mcp"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "(?i)ignore (all |your |previous |prior )instructions"
+            - "(?i)disregard (all |your |previous |prior )?(instructions|rules|guidelines)"
+            - "(?i)forget (all |your |previous |prior )?instructions"
+            - "(?i)your new instructions (is|are)"
+            - "(?i)your real instructions"
+            - "(?i)new persona:"
+            - "(?i)<\\|im_start\\|>system"
+            - "(?i)<\\|system\\|>"
+            - "(?i)###\\s*(INSTRUCTIONS|SYSTEM|NEW PROMPT)###"
+            - "(?i)---BEGIN (SYSTEM |NEW )?(PROMPT|INSTRUCTIONS)---"
+            - "(?i)(send|POST|exfiltrate|transmit) (this|the following|these|it) to (https?://|the server)"
+            - "(?i)leak the (following|contents|file)"
+        message: "Prompt injection markers blocked in CI preset"
