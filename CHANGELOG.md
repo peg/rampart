@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-02-28
+
+### Added
+
+- **`policies/ci.yaml`** — New strict policy preset for CI/headless agents. All interactive `ask` rules become hard `deny`. Also blocks package installs (`pip`, `npm`, `go get`, `cargo`, `apt`, `brew`, `winget`, `choco`) and all persistence mechanisms (cron, systemd, LaunchAgents). Drop-in replacement for users running unattended agents in pipelines.
+- **`rampart init --defaults`** — New flag alias for `--force`. More intuitive for new users setting up a fresh config.
+
+### Changed
+
+- **`standard.yaml` re-evaluated for developer UX** — The default policy is now tuned for the primary use case: a solo developer running Claude Code on their laptop.
+  - Generic S3/GCS uploads (`aws s3 cp ./dist s3://my-bucket/`) → `ask` instead of `deny`. Developers upload to their own buckets constantly; exfil of credential paths (e.g. `aws s3 cp ~/.aws/credentials`) remains `deny`.
+  - Writes to `/etc/hosts`, `/etc/cron.d/`, `/etc/sudoers.d/` → `ask` instead of `deny`. Legitimate in provisioning workflows.
+  - Prompt injection markers → `ask` instead of `watch`. Watching without acting is pointless.
+  - `LD_PRELOAD` and `LD_LIBRARY_PATH` overrides → `deny` instead of `watch`. Classic injection vectors with almost no legitimate agent use.
+  - Crontab edits and `systemctl enable` → new `require-persistence-approval` policy with `action: ask`. Developers set up cron jobs; blanket denial was too aggressive.
+  - macOS Keychain: `sqlite3 ~/Library/Keychains/` → `deny` (new). Direct binary DB access has no legitimate agent workflow.
+  - macOS Keychain: `security find-generic-password` → `ask` (new). Can be legitimate.
+  - macOS Keychain: `security find-internet-password -w` → `deny` (new). Extracts actual passwords.
+
 ## [0.6.7] - 2026-02-27
 
 ### Added

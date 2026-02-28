@@ -266,6 +266,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing config/profile files")
+	cmd.Flags().BoolVar(&force, "defaults", false, "Use default settings and overwrite existing files (alias for --force)")
 	cmd.Flags().StringVar(&profile, "profile", "standard", "Default policy profile: standard, paranoid, yolo, or block-prompt-injection")
 	cmd.Flags().BoolVar(&detectEnv, "detect", false, "Auto-detect installed tools and generate tailored policy")
 	cmd.Flags().BoolVar(&project, "project", false, "Create .rampart/policy.yaml in the current directory for team-shared project rules")
