@@ -14,12 +14,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/report"
 	"github.com/spf13/cobra"
 )
@@ -30,24 +32,32 @@ type reportOptions struct {
 	last     string
 }
 
+type complianceReportOptions struct {
+	auditDir string
+	since    string
+	until    string
+	format   string
+	output   string
+}
+
 // newReportCmd creates the `rampart report` command.
 func newReportCmd(opts *rootOptions) *cobra.Command {
 	reportOpts := &reportOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "report",
-		Short: "Generate HTML audit report",
-		Long: `Generate a self-contained HTML audit report from JSONL audit files.
+		Short: "Generate reports from audit logs",
+		Long: `Generate reports from Rampart audit logs.
 
-The report includes event summaries, timelines, top denied commands, policy 
-triggers, and a searchable event log. The HTML is completely self-contained
-with inline CSS and JavaScript.
+By default this command generates a self-contained HTML report.
+Use 'rampart report compliance' to generate an AIUC-1 compliance report.
 
 Examples:
-  rampart report                                    # Last 24 hours
-  rampart report --last 7d                         # Last 7 days  
-  rampart report --output weekly.html --last 7d    # Custom output
-  rampart report --audit-dir /var/log/rampart      # Custom audit dir`,
+  rampart report                                    # HTML report for last 24h
+  rampart report --last 7d                         # HTML report for last 7 days
+  rampart report --output weekly.html --last 7d    # Custom HTML output path
+  rampart report compliance                        # AIUC-1 text report
+  rampart report compliance --format json          # AIUC-1 JSON report`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runReport(reportOpts)
 		},
@@ -64,7 +74,116 @@ Examples:
 	cmd.Flags().StringVar(&reportOpts.output, "output", "report.html", "Output HTML file path")
 	cmd.Flags().StringVar(&reportOpts.last, "last", "24h", "Time window (e.g., 24h, 7d, 30d)")
 
+	cmd.AddCommand(newReportComplianceCmd(opts, defaultAuditDir))
 	return cmd
+}
+
+func newReportComplianceCmd(rootOpts *rootOptions, defaultAuditDir string) *cobra.Command {
+	complianceOpts := &complianceReportOptions{}
+
+	cmd := &cobra.Command{
+		Use:   "compliance",
+		Short: "Generate AIUC-1 compliance report",
+		Long: `Generate an AIUC-1 compliance evidence report from audit logs.
+
+Controls evaluated:
+  AIUC-1.1 Tool Call Authorization
+  AIUC-1.2 Audit Logging
+  AIUC-1.3 Human-in-the-Loop
+  AIUC-1.4 Data Exfiltration Prevention
+
+Examples:
+  rampart report compliance
+  rampart report compliance --since 2026-02-01 --until 2026-02-28
+  rampart report compliance --format json --output aiuc1-report.json`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runComplianceReport(cmd, rootOpts, complianceOpts)
+		},
+	}
+
+	cmd.Flags().StringVar(&complianceOpts.auditDir, "audit-dir", defaultAuditDir, "Directory containing audit JSONL files")
+	cmd.Flags().StringVar(&complianceOpts.since, "since", "", "Reporting period start date (YYYY-MM-DD, default: 30 days ago)")
+	cmd.Flags().StringVar(&complianceOpts.until, "until", "", "Reporting period end date (YYYY-MM-DD, default: now)")
+	cmd.Flags().StringVar(&complianceOpts.format, "format", "text", "Output format: text or json")
+	cmd.Flags().StringVar(&complianceOpts.output, "output", "", "Write report to file instead of stdout")
+
+	return cmd
+}
+
+func runComplianceReport(cmd *cobra.Command, rootOpts *rootOptions, opts *complianceReportOptions) error {
+	format := strings.ToLower(strings.TrimSpace(opts.format))
+	if format != "text" && format != "json" {
+		return fmt.Errorf("report: invalid --format %q (expected text or json)", opts.format)
+	}
+
+	now := time.Now().UTC()
+	since, err := parseReportDateStart(opts.since)
+	if err != nil {
+		return err
+	}
+	if since.IsZero() {
+		since = now.AddDate(0, 0, -30)
+	}
+
+	until, err := parseReportDateEnd(opts.until)
+	if err != nil {
+		return err
+	}
+	if until.IsZero() {
+		until = now
+	}
+	if since.After(until) {
+		return fmt.Errorf("report: --since must be before --until")
+	}
+
+	policyPath := resolveCompliancePolicyPath(cmd, rootOpts.configPath)
+
+	reportData, err := report.GenerateAIUC1Report(report.ComplianceOptions{
+		AuditDir:       opts.auditDir,
+		PolicyPath:     policyPath,
+		Since:          since,
+		Until:          until,
+		GeneratedAt:    now,
+		RampartVersion: build.Version,
+	})
+	if err != nil {
+		return err
+	}
+
+	var payload []byte
+	if format == "json" {
+		payload, err = json.MarshalIndent(reportData, "", "  ")
+		if err != nil {
+			return fmt.Errorf("report: marshal json: %w", err)
+		}
+		payload = append(payload, '\n')
+	} else {
+		payload = []byte(report.FormatAIUC1TextReport(reportData))
+	}
+
+	if strings.TrimSpace(opts.output) != "" {
+		if err := os.WriteFile(opts.output, payload, 0o644); err != nil {
+			return fmt.Errorf("report: write output file: %w", err)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wrote compliance report to %s\n", opts.output)
+		return nil
+	}
+
+	if _, err := cmd.OutOrStdout().Write(payload); err != nil {
+		return fmt.Errorf("report: write output: %w", err)
+	}
+	return nil
+}
+
+func resolveCompliancePolicyPath(cmd *cobra.Command, configPath string) string {
+	resolved, err := resolveExplainPolicyPath(cmd, configPath)
+	if err == nil {
+		return resolved
+	}
+	if strings.TrimSpace(configPath) != "" {
+		return configPath
+	}
+	return "rampart.yaml"
 }
 
 // runReport executes the report generation.
@@ -134,4 +253,29 @@ func parseDuration(s string) (time.Duration, error) {
 
 	// Use standard Go duration parsing for other formats
 	return time.ParseDuration(s)
+}
+
+func parseReportDateStart(raw string) (time.Time, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse("2006-01-02", trimmed)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("report: invalid --since date %q (expected YYYY-MM-DD)", raw)
+	}
+	return parsed.UTC(), nil
+}
+
+func parseReportDateEnd(raw string) (time.Time, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse("2006-01-02", trimmed)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("report: invalid --until date %q (expected YYYY-MM-DD)", raw)
+	}
+	parsed = parsed.UTC()
+	return parsed.Add(24*time.Hour - time.Nanosecond), nil
 }
