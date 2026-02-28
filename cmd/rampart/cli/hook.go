@@ -423,6 +423,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					_, _ = auditFile.Write(line)
 				}
 
+				// Re-evaluate the failed call to surface the specific deny reason and
+				// matched policy name. This is a fast local operation (< 10µs) and gives
+				// the agent the exact information it needs without storing state.
+				failedCall := engine.ToolCall{
+					Tool:   parsed.Tool,
+					Params: parsed.Params,
+				}
+				denyDecision := eng.Evaluate(failedCall)
+
 				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
@@ -432,10 +441,17 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
 					"see https://rampart.sh/docs/exceptions for guidance."
 
-				// Generate specific rampart allow suggestions for this call
-				failedCall := engine.ToolCall{
-					Tool:   parsed.Tool,
-					Params: parsed.Params,
+				// Prepend the specific deny reason if available — gives the agent
+				// (and user) immediate context on why the call was blocked.
+				if denyDecision.Action == engine.ActionDeny && denyDecision.Message != "" {
+					policyHint := ""
+					if len(denyDecision.MatchedPolicies) > 0 {
+						policyHint = " [" + denyDecision.MatchedPolicies[0] + "]"
+					}
+					if denyDecision.FromProjectPolicy {
+						policyHint += " [Project Policy]"
+					}
+					msg = "⛔ Blocked" + policyHint + ": " + denyDecision.Message + "\n\n" + msg
 				}
 				suggestions := engine.GenerateSuggestions(failedCall)
 				if len(suggestions) > 0 {

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-02-28
+
+### Added
+
+- **`rampart init --profile research-agent`** — New built-in profile for research/browsing agents. Default deny with explicit allows for web search, fetch, and browser tools; file reads (excluding credentials); read-only exec (`ls`, `grep`, `cat`, `find`, `curl` GET-only).
+- **`rampart init --profile mcp-server`** — New built-in profile for MCP server contexts. Default allow with blocks on exec, credential file reads, system path writes, and known exfil domains; `ask` on outbound fetch.
+- **Deny reason in PostToolUseFailure** — Claude Code now receives `⛔ Blocked [policy-name]: <message>` prepended to tool failure output, surfacing exactly which rule fired and why. Stops Claude retry loops on denied tool calls.
+
+### Fixed
+
+- **`source <(` false positive** — Narrowed the `eval-obfuscated-exec` pattern to only block `source <(` when the substitution body uses a known obfuscation source (`echo`, `base64`, `curl`, `wget`, `python`, `cat`, `openssl`, `perl`, `ruby`, `node`, `php`, `nc`, `socat`). Legitimate shell completion idioms like `source <(kubectl completion bash)` now pass correctly.
+
+### Security
+
+- **Absolute path bypass** — Deny rules now match `/usr/bin/curl`, `/bin/bash`, `/usr/local/bin/python` etc. in addition to bare command names.
+- **Versioned binary bypass** — Patterns now catch `python3.11`, `node20`, `ruby3.2` and similar versioned invocations.
+- **curl upload flags** — Added `--data-binary`, `--data-raw`, `-T`, `--upload-file` to curl exfil pattern coverage.
+- **`.rampart` exec redirect** — Block attempts to redirect tool calls through `.rampart/` directory executables.
+- **cron `cp`/`mv` patterns** — Tightened cron persistence detection to include file copy/move into cron directories.
+
 ## [0.6.9] - 2026-02-28
 
 ### Added
