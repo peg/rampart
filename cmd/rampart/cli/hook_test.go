@@ -386,10 +386,13 @@ func TestPostToolUseFailure_ShortCircuit(t *testing.T) {
 		out := &bytes.Buffer{}
 		cmd.SetOut(out)
 
-		msg := "This tool call was blocked by a Rampart policy rule. " +
-			"This is a deliberate security constraint — do not attempt " +
-			"alternative approaches or workarounds. " +
-			"Tell the user the operation was blocked by policy and stop."
+		msg := "This tool call failed or was blocked by a security policy. " +
+			"Do not attempt alternative approaches or workarounds — " +
+			"if an operation is restricted, report it to the user and stop.\n\n" +
+			"To diagnose: run `rampart policy explain 'unknown'` to see which policy applies, " +
+			"or `rampart watch` to view the live audit log. " +
+			"To allow this operation, update the policy at ~/.rampart/policies/ — " +
+			"see https://rampart.sh/docs/exceptions for guidance."
 		hookOut := hookOutput{
 			HookSpecificOutput: &hookDecision{
 				HookEventName:     "PostToolUseFailure",
@@ -413,11 +416,14 @@ func TestPostToolUseFailure_ShortCircuit(t *testing.T) {
 		if got.HookSpecificOutput.AdditionalContext == "" {
 			t.Fatal("additionalContext must not be empty")
 		}
-		if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "blocked by a Rampart policy rule") {
-			t.Fatalf("additionalContext = %q, want to contain 'blocked by a Rampart policy rule'", got.HookSpecificOutput.AdditionalContext)
+		if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "blocked by a security policy") {
+			t.Fatalf("additionalContext = %q, want to contain 'blocked by a security policy'", got.HookSpecificOutput.AdditionalContext)
 		}
-		if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "do not attempt") {
-			t.Fatalf("additionalContext = %q, should contain 'do not attempt'", got.HookSpecificOutput.AdditionalContext)
+		if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "do not attempt alternative approaches") {
+			t.Fatalf("additionalContext = %q, should contain 'do not attempt alternative approaches'", got.HookSpecificOutput.AdditionalContext)
+		}
+		if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "To diagnose: run `rampart policy explain") {
+			t.Fatalf("additionalContext = %q, should contain 'To diagnose: run `rampart policy explain'", got.HookSpecificOutput.AdditionalContext)
 		}
 		// Ensure no PermissionDecision field — this is not a PreToolUse response
 		if got.HookSpecificOutput.PermissionDecision != "" {

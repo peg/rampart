@@ -383,6 +383,26 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookOutcome, false, fmt.Sprintf("parse failure: %v", err), "")
 			}
 
+			// Build tool call for evaluation
+			depth, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("RAMPART_AGENT_DEPTH")))
+			if depth < 0 {
+				depth = 0
+			}
+			if parsed.Tool == "agent" {
+				depth++
+			}
+			call := engine.ToolCall{
+				ID:         audit.NewEventID(),
+				Agent:      parsed.Agent,
+				AgentDepth: depth,
+				Session:    hookSession,
+				RunID:      parsed.RunID,
+				Tool:       parsed.Tool,
+				Params:     parsed.Params,
+				Input:      parsed.Params,
+				Timestamp:  time.Now().UTC(),
+			}
+
 			// Short-circuit for PostToolUseFailure: the previous PreToolUse was denied by
 			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
 			// burning 3-5 turns on workarounds.
@@ -423,14 +443,31 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					_, _ = auditFile.Write(line)
 				}
 
+				// Evaluate the call purely to get the generated suggestions. Do NOT log or count it,
+				// since the PreToolUse event was already recorded.
+				decision := eng.Evaluate(call)
+
 				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
-					"if an operation is restricted, report it to the user and stop.\n\n" +
-					"To diagnose: run `" + explainCmd + "` to see which policy applies, " +
-					"or `rampart watch` to view the live audit log. " +
-					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
-					"see https://rampart.sh/docs/exceptions for guidance."
+					"if an operation is restricted, report it to the user and stop.\n\n"
+				
+				if decision.Message != "" {
+					msg += "Reason: " + decision.Message + "\n\n"
+				}
+
+				if len(decision.Suggestions) > 0 {
+					msg += "To allow this specific operation:\n  " + decision.Suggestions[0] + "\n"
+					if len(decision.Suggestions) > 1 {
+						msg += "\nTo allow broader access (not recommended):\n  " + decision.Suggestions[1] + "\n"
+					}
+				} else {
+					msg += "To diagnose: run `" + explainCmd + "` to see which policy applies, " +
+						"or `rampart watch` to view the live audit log. " +
+						"To allow this operation, update the policy at ~/.rampart/policies/ — " +
+						"see https://rampart.sh/docs/exceptions for guidance."
+				}
+				
 				out := hookOutput{
 					HookSpecificOutput: &hookDecision{
 						HookEventName:     "PostToolUseFailure",
@@ -438,26 +475,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					},
 				}
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
-			}
-
-			// Build tool call for evaluation
-			depth, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("RAMPART_AGENT_DEPTH")))
-			if depth < 0 {
-				depth = 0
-			}
-			if parsed.Tool == "agent" {
-				depth++
-			}
-			call := engine.ToolCall{
-				ID:         audit.NewEventID(),
-				Agent:      parsed.Agent,
-				AgentDepth: depth,
-				Session:    hookSession,
-				RunID:      parsed.RunID,
-				Tool:       parsed.Tool,
-				Params:     parsed.Params,
-				Input:      parsed.Params,
-				Timestamp:  time.Now().UTC(),
 			}
 
 			isPostToolUse := parsed.Response != ""
