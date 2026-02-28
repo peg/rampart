@@ -43,6 +43,68 @@ policies:
         message: "This will delete a database. Are you sure?"
 ```
 
+## Ask Options
+
+### `audit: true` — Log User Decisions
+
+By default, `action: ask` prompts don't log the user's response. Add `audit: true` to record approvals and denials:
+
+```yaml
+policies:
+  - name: audited-deploys
+    rules:
+      - action: ask
+        ask:
+          audit: true    # ← log the user's decision
+        when:
+          command_matches:
+            - "kubectl apply *"
+        message: "Deploy to cluster?"
+```
+
+With `audit: true`, the audit trail includes whether the user approved or denied the prompt. This is useful for compliance, debugging, and understanding agent behavior patterns.
+
+### `headless_only: true` — Block in CI
+
+Use `headless_only: true` when you want interactive approval locally but hard denies in CI/headless environments:
+
+```yaml
+policies:
+  - name: production-safety
+    rules:
+      - action: ask
+        ask:
+          audit: true
+          headless_only: true    # ← deny in CI, prompt interactively
+        when:
+          command_matches:
+            - "*--env=production*"
+        message: "Production operation requires approval"
+```
+
+**Behavior:**
+- **Interactive session** (TTY, user present): Shows native approval prompt
+- **Headless/CI** (no TTY, no `rampart serve`): Blocks with a deny
+
+This lets you write one policy that works both locally (with prompts) and in CI (with denies). See [CI/Headless Agents](./ci-headless.md) for more details.
+
+### `require_approval` Alias
+
+`action: require_approval` is now an alias for `action: ask` with `audit: true`:
+
+```yaml
+# These are equivalent:
+- action: require_approval
+  message: "Needs approval"
+
+- action: ask
+  ask:
+    audit: true
+  message: "Needs approval"
+```
+
+The alias exists for backwards compatibility. New policies should prefer the explicit `action: ask` syntax for clarity.
+
 > ⚠️ Common mistake: putting `action: ask` directly inside the policy (as a sibling of `name` or `rules`). `rampart policy lint` will catch this and explain the correct structure.
 
 ## What the User Sees

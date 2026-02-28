@@ -70,6 +70,8 @@ Once running, every command Claude executes goes through Rampart's policy engine
 
 **Advanced:** [LD_PRELOAD](#protect-any-process-ld_preload) · [MCP Proxy](#protect-mcp-servers) · [SIEM Integration](#siem-integration) · [Webhook Actions](#webhook-actions) · [Preflight API](#preflight-api)
 
+**Guides:** [Native Ask Prompt](docs/guides/native-ask.md) · [CI/Headless Agents](docs/guides/ci-headless.md) · [Project Policies](docs/guides/project-policies.md) · [Benchmarking](docs/guides/benchmarking.md) · [Windows](docs/guides/windows.md)
+
 **Reference:** [Performance](#performance) · [Security](#security-recommendations) · [CLI Reference](#cli-reference) · [Compatibility](#compatibility) · [Building from Source](#building-from-source) · [Contributing](#contributing) · [Roadmap](#roadmap)
 
 </details>
@@ -232,13 +234,16 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 rampart test "rm -rf /"
 ```
 
-Three built-in profiles:
+Four built-in profiles:
 
 | Profile | Default | Use case |
 |---------|---------|----------|
 | `standard` | allow | Block dangerous, watch suspicious, allow the rest |
+| `ci` | allow | Strict mode for headless/CI — all approvals become denies |
 | `paranoid` | deny | Explicit allowlist for everything |
 | `yolo` | allow | Log-only, no blocking |
+
+For CI/automated agents, use `rampart init --profile ci` to convert all interactive approvals to hard denies. See [CI/Headless Agents](docs/guides/ci-headless.md) for details.
 
 ---
 
@@ -351,7 +356,24 @@ Use `action: ask` to trigger Claude Code's native approval prompt:
         message: "This command needs your approval"
 ```
 
-**Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `require_approval`, `watch`, `allow`. (`log` is a deprecated alias for `watch` — update your policies if you use it.)
+Add `audit: true` to log user decisions, or `headless_only: true` to block in CI:
+
+```yaml
+  - name: audited-production-deploy
+    rules:
+      - action: ask
+        ask:
+          audit: true           # Log whether user approved or denied
+          headless_only: true   # Block in CI/headless mode
+        when:
+          command_matches:
+            - "kubectl apply *"
+        message: "Production deployment requires approval"
+```
+
+> **Note:** `action: require_approval` is now an alias for `action: ask` with `audit: true`. Both work, but new policies should prefer the explicit `action: ask` syntax. See [Native Ask Prompt](docs/guides/native-ask.md) for details.
+
+**Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `ask`, `watch`, `allow`. (`require_approval` is an alias for `ask` with `audit: true`; `log` is a deprecated alias for `watch`.)
 
 ### Project-local policies
 
@@ -380,9 +402,11 @@ EOF
 git add .rampart/policy.yaml && git commit -m "Add Rampart project policy"
 ```
 
-Global policy always takes precedence for `default_action`. Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading.
+Global policy always takes precedence for `default_action`. Project policy denies are prefixed with `[Project Policy]` in error messages.
 
-Run `rampart doctor` in any repo — it reports whether a project policy is found.
+**Security note:** Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading when working in untrusted repos — you shouldn't let a cloned repo change your security posture.
+
+Run `rampart doctor` in any repo — it reports whether a project policy is found. See [Project Policies](docs/guides/project-policies.md) for advanced usage.
 
 ### Session identity
 
@@ -746,8 +770,15 @@ rampart log --deny                           # Show only denies
 rampart log -n 50 --today                    # Last 50 events from today
 
 # Policy
-rampart init [--profile standard|paranoid|yolo]   # Initialize global policy
+rampart init [--profile standard|paranoid|ci|yolo] # Initialize global policy
+rampart init --defaults                            # Alias for --force — reset to defaults
 rampart init --project                             # Create .rampart/policy.yaml for team-shared rules
+
+# Benchmarking
+rampart bench                                      # Score policy coverage against attack corpus
+rampart bench --min-coverage 90 --strict           # CI mode: fail if coverage drops
+rampart bench --severity critical --os windows     # Filter by severity and OS
+rampart bench --json                               # JSON output for automation
 rampart serve [--port 9090]                        # Start approval + dashboard server
 rampart serve --background                         # Start in background (no systemd/launchd required)
 rampart serve stop                                 # Stop a background server started with --background
