@@ -846,30 +846,78 @@
     <div class="container">
         <h2 class="section-title">Start protecting your <span style="color:var(--accent)">agents</span></h2>
         <p class="sub">Install in seconds. No account, no API key, no cloud dependency.</p>
-        <div class="install-options" style="grid-template-columns: 1fr; max-width: 560px;">
-            <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent)20;">
-                <div class="label" style="color: var(--accent);">One-line install</div>
-                <pre>curl -fsSL https://rampart.sh/install | bash</pre>
-                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-                <p style="font-size:0.78rem; color:var(--text-dim); margin: 8px 0 0; line-height:1.5;">
-                    Installs to <code>~/.local/bin</code>. No sudo required. Works on macOS &amp; Linux.
-                </p>
-            </div>
+        <!-- OS tab switcher -->
+        <div style="display:flex; justify-content:center; gap:0; margin-bottom:20px; max-width:560px; margin-left:auto; margin-right:auto;">
+            <button id="tab-unix" onclick="switchTab('unix')" style="flex:1; padding:8px 0; font-size:0.85rem; font-weight:600; border:1px solid var(--accent); border-right:none; border-radius:6px 0 0 6px; background:var(--accent); color:#fff; cursor:pointer;">macOS / Linux</button>
+            <button id="tab-win" onclick="switchTab('win')" style="flex:1; padding:8px 0; font-size:0.85rem; font-weight:600; border:1px solid var(--accent); border-radius:0 6px 6px 0; background:transparent; color:var(--accent); cursor:pointer;">Windows</button>
         </div>
-        <details style="max-width:560px; margin: 0 auto 32px; text-align:left; border:1px solid var(--border); border-radius:8px; padding:14px 18px;">
-            <summary style="cursor:pointer; font-size:0.85rem; color:var(--text); font-weight:500;">Alternative install methods</summary>
-            <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
-                <div>
-                    <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Homebrew (macOS)</div>
-                    <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">brew tap peg/rampart
-brew install rampart</pre>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Go install</div>
-                    <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">go install github.com/peg/rampart/cmd/rampart@latest</pre>
+
+        <!-- macOS / Linux -->
+        <div id="panel-unix" style="max-width:560px; margin:0 auto;">
+            <div class="install-options" style="grid-template-columns: 1fr;">
+                <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent)20;">
+                    <div class="label" style="color: var(--accent);">One-line install</div>
+                    <pre>curl -fsSL https://rampart.sh/install | bash</pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                    <p style="font-size:0.78rem; color:var(--text-dim); margin: 8px 0 0; line-height:1.5;">
+                        Installs to <code>~/.local/bin</code>. No sudo required.
+                    </p>
                 </div>
             </div>
-        </details>
+            <details style="margin: 16px 0 32px; text-align:left; border:1px solid var(--border); border-radius:8px; padding:14px 18px;">
+                <summary style="cursor:pointer; font-size:0.85rem; color:var(--text); font-weight:500;">Alternative install methods</summary>
+                <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
+                    <div>
+                        <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Homebrew (macOS)</div>
+                        <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">brew tap peg/rampart
+brew install rampart</pre>
+                    </div>
+                    <div>
+                        <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Go install</div>
+                        <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">go install github.com/peg/rampart/cmd/rampart@latest</pre>
+                    </div>
+                </div>
+            </details>
+        </div>
+
+        <!-- Windows -->
+        <div id="panel-win" style="max-width:560px; margin:0 auto; display:none;">
+            <div class="install-options" style="grid-template-columns: 1fr;">
+                <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent)20;">
+                    <div class="label" style="color: var(--accent);">PowerShell (recommended)</div>
+                    <pre>irm https://rampart.sh/install.ps1 | iex</pre>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                    <p style="font-size:0.78rem; color:var(--text-dim); margin: 8px 0 0; line-height:1.5;">
+                        Run in PowerShell. Installs to <code>~\.rampart\bin</code>. No admin rights required.
+                    </p>
+                </div>
+            </div>
+            <details style="margin: 16px 0 32px; text-align:left; border:1px solid var(--border); border-radius:8px; padding:14px 18px;">
+                <summary style="cursor:pointer; font-size:0.85rem; color:var(--text); font-weight:500;">Alternative install methods</summary>
+                <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
+                    <div>
+                        <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Go install</div>
+                        <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">go install github.com/peg/rampart/cmd/rampart@latest</pre>
+                    </div>
+                    <div>
+                        <div style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text); margin-bottom:6px;">Direct download</div>
+                        <pre style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:0.82rem; color:var(--heading); margin:0;">https://github.com/peg/rampart/releases/latest</pre>
+                    </div>
+                </div>
+            </details>
+        </div>
+
+        <script>
+        function switchTab(os) {
+            document.getElementById('panel-unix').style.display = os === 'unix' ? 'block' : 'none';
+            document.getElementById('panel-win').style.display  = os === 'win'  ? 'block' : 'none';
+            document.getElementById('tab-unix').style.background = os === 'unix' ? 'var(--accent)' : 'transparent';
+            document.getElementById('tab-unix').style.color      = os === 'unix' ? '#fff' : 'var(--accent)';
+            document.getElementById('tab-win').style.background  = os === 'win'  ? 'var(--accent)' : 'transparent';
+            document.getElementById('tab-win').style.color       = os === 'win'  ? '#fff' : 'var(--accent)';
+        }
+        if (navigator.userAgent.indexOf('Windows') !== -1) switchTab('win');
+        </script>
         <div class="install-actions" style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:8px;">
             <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost">Download binary</a>
             <a href="https://docs.rampart.sh" class="btn btn-ghost">Full documentation →</a>
@@ -900,7 +948,7 @@ brew install rampart</pre>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Does it work on Windows?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">The policy engine and hook integrations (Claude Code, Cline) work on Windows. Shell wrapping and LD_PRELOAD are Linux/macOS only. See the <a href="https://docs.rampart.sh/integrations/" style="color: var(--accent);">integration guides</a> for details.</p>
+                <p style="margin-top: 12px; color: var(--text-dim);">Yes. Install with PowerShell: <code>irm https://rampart.sh/install.ps1 | iex</code>. The policy engine and hook integrations (Claude Code, Cline) work fully on Windows. Shell wrapping (<code>rampart wrap</code>) and LD_PRELOAD are Linux/macOS only. See the <a href="https://docs.rampart.sh/guides/windows/" style="color: var(--accent);">Windows guide</a> for details.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can I use project-specific policies?</summary>
