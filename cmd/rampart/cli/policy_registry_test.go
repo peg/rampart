@@ -1,0 +1,176 @@
+package cli
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestPolicyFetch_InstallsPolicyFromRegistry(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	policyContent := []byte("version: \"1\"\npolicies: []\n")
+	sum := sha256.Sum256(policyContent)
+	expectedSHA := hex.EncodeToString(sum[:])
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/registry.json":
+			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"research-agent","description":"Research profile","tags":["research"],"url":"%s/policies/research-agent.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
+				serverURL, expectedSHA)
+		case "/policies/research-agent.yaml":
+			_, _ = w.Write(policyContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	oldManifestURL := defaultPolicyRegistryManifestURL
+	oldClient := defaultPolicyRegistryHTTPClient
+	defaultPolicyRegistryManifestURL = server.URL + "/registry.json"
+	defaultPolicyRegistryHTTPClient = server.Client()
+	t.Cleanup(func() {
+		defaultPolicyRegistryManifestURL = oldManifestURL
+		defaultPolicyRegistryHTTPClient = oldClient
+	})
+
+	stdout, _, err := runCLI(t, "policy", "fetch", "research-agent")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Installed \"research-agent\"")
+
+	dest := filepath.Join(home, ".rampart", "policies", "research-agent.yaml")
+	data, readErr := os.ReadFile(dest)
+	require.NoError(t, readErr)
+	assert.Equal(t, string(policyContent), string(data))
+}
+
+func TestVerifyPolicySHA256(t *testing.T) {
+	content := []byte("policy-body")
+	sum := sha256.Sum256(content)
+	expected := hex.EncodeToString(sum[:])
+
+	require.NoError(t, verifyPolicySHA256(content, expected, "custom"))
+
+	err := verifyPolicySHA256(content, "deadbeef", "custom")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sha256 mismatch")
+}
+
+func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	policyContent := []byte("version: \"1\"\npolicies: []\n")
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/registry.json":
+			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"research-agent","description":"Research profile","tags":["research"],"url":"%s/policies/research-agent.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
+				serverURL, "deadbeef")
+		case "/policies/research-agent.yaml":
+			_, _ = w.Write(policyContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	oldManifestURL := defaultPolicyRegistryManifestURL
+	oldClient := defaultPolicyRegistryHTTPClient
+	defaultPolicyRegistryManifestURL = server.URL + "/registry.json"
+	defaultPolicyRegistryHTTPClient = server.Client()
+	t.Cleanup(func() {
+		defaultPolicyRegistryManifestURL = oldManifestURL
+		defaultPolicyRegistryHTTPClient = oldClient
+	})
+
+	_, _, err := runCLI(t, "policy", "fetch", "research-agent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sha256 mismatch")
+
+	dest := filepath.Join(home, ".rampart", "policies", "research-agent.yaml")
+	_, statErr := os.Stat(dest)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestPolicyList_UsesCacheAndRefresh(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	var manifestHits atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry.json" {
+			http.NotFound(w, r)
+			return
+		}
+		manifestHits.Add(1)
+		_, _ = fmt.Fprint(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"mcp-server","description":"MCP profile","tags":["mcp"],"url":"https://example.com/mcp-server.yaml","sha256":"abc123","version":"1.0.0","author":"Rampart"}]}`)
+	}))
+	defer server.Close()
+
+	oldManifestURL := defaultPolicyRegistryManifestURL
+	oldClient := defaultPolicyRegistryHTTPClient
+	defaultPolicyRegistryManifestURL = server.URL + "/registry.json"
+	defaultPolicyRegistryHTTPClient = server.Client()
+	t.Cleanup(func() {
+		defaultPolicyRegistryManifestURL = oldManifestURL
+		defaultPolicyRegistryHTTPClient = oldClient
+	})
+
+	stdout1, _, err := runCLI(t, "policy", "list")
+	require.NoError(t, err)
+	assert.Contains(t, stdout1, "mcp-server")
+
+	stdout2, _, err := runCLI(t, "policy", "list")
+	require.NoError(t, err)
+	assert.Contains(t, stdout2, "mcp-server")
+
+	_, _, err = runCLI(t, "policy", "list", "--refresh")
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(2), manifestHits.Load(), "expected first list + refresh to hit server")
+
+	cachePath := filepath.Join(home, ".rampart", policyRegistryCacheFileName)
+	_, statErr := os.Stat(cachePath)
+	require.NoError(t, statErr)
+}
+
+func TestPolicyRemove_RefusesBuiltIn(t *testing.T) {
+	_, _, err := runCLI(t, "policy", "remove", "standard")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "built-in profile")
+}
+
+func TestPolicyRemove_RemovesInstalledPolicy(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	path := filepath.Join(home, ".rampart", "policies", "custom.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("version: \"1\"\n"), 0o644))
+
+	stdout, _, err := runCLI(t, "policy", "remove", "custom")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Removed")
+	if strings.Contains(stdout, "standard") {
+		t.Fatalf("unexpected output: %s", stdout)
+	}
+
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr))
+}
