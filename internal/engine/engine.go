@@ -105,12 +105,13 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 	// Deny wins. Then log. Then allow.
 	// If policies match scope but no rules fire, fall through to default action.
 	var (
-		finalAction       = ActionAllow
-		finalMessage      string
-		finalAudit        bool
-		finalHeadlessOnly bool
-		matched           []string
-		anyRuleFired      bool
+		finalAction           = ActionAllow
+		finalMessage          string
+		finalAudit            bool
+		finalHeadlessOnly     bool
+		finalFromProject      bool
+		matched               []string
+		anyRuleFired          bool
 	)
 
 	var finalWebhookConfig *WebhookActionConfig
@@ -128,17 +129,19 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 		case ActionDeny:
 			// Deny wins immediately. No need to check further.
 			return Decision{
-				Action:          ActionDeny,
-				MatchedPolicies: append(matched, e.remainingNames(matching, p.Name)...),
-				Message:         message,
-				EvalDuration:    time.Since(start),
-				Suggestions:     generateSuggestions(call),
+				Action:            ActionDeny,
+				FromProjectPolicy: p.Source == "project",
+				MatchedPolicies:   append(matched, e.remainingNames(matching, p.Name)...),
+				Message:           message,
+				EvalDuration:      time.Since(start),
+				Suggestions:       GenerateSuggestions(call),
 			}
 		case ActionWebhook:
 			// Webhook wins over log and allow, but not deny.
 			if finalAction != ActionDeny && finalAction != ActionWebhook {
 				finalAction = ActionWebhook
 				finalMessage = message
+				finalFromProject = p.Source == "project"
 				if rule != nil {
 					finalWebhookConfig = rule.Webhook
 				}
@@ -148,6 +151,7 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 			if finalAction != ActionDeny && finalAction != ActionWebhook && finalAction != ActionRequireApproval {
 				finalAction = ActionRequireApproval
 				finalMessage = message
+				finalFromProject = p.Source == "project"
 				if rule != nil {
 					finalAudit = rule.AskAuditEnabled()
 					finalHeadlessOnly = false
@@ -160,6 +164,7 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				finalAction != ActionRequireApproval && finalAction != ActionAsk {
 				finalAction = ActionAsk
 				finalMessage = message
+				finalFromProject = p.Source == "project"
 				if rule != nil {
 					finalAudit = rule.AskAuditEnabled()
 					finalHeadlessOnly = rule.HeadlessOnlyEnabled()
@@ -169,12 +174,14 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 			if finalAction == ActionAllow {
 				finalAction = ActionWatch
 				finalMessage = message
+				finalFromProject = p.Source == "project"
 				finalAudit = false
 				finalHeadlessOnly = false
 			}
 		case ActionAllow:
 			if finalAction == ActionAllow && finalMessage == "" {
 				finalMessage = message
+				finalFromProject = p.Source == "project"
 				finalAudit = false
 				finalHeadlessOnly = false
 			}
@@ -192,12 +199,13 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 	}
 
 	return Decision{
-		Action:          finalAction,
-		Audit:           finalAudit,
-		HeadlessOnly:    finalHeadlessOnly,
-		MatchedPolicies: matched,
-		Message:         finalMessage,
-		EvalDuration:    time.Since(start),
+		Action:            finalAction,
+		Audit:             finalAudit,
+		HeadlessOnly:      finalHeadlessOnly,
+		FromProjectPolicy: finalFromProject,
+		MatchedPolicies:   matched,
+		Message:           finalMessage,
+		EvalDuration:      time.Since(start),
 		WebhookConfig:   finalWebhookConfig,
 	}
 }

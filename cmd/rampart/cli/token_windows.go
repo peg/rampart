@@ -4,6 +4,7 @@ package cli
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/user"
@@ -43,7 +44,9 @@ func setOwnerOnlyAccess(path string) error {
 	cmd.Stderr = nil
 
 	if err := cmd.Run(); err != nil {
-		// If icacls fails, fall back to os.Chmod (no-op on Windows, but doesn't error)
+		// If icacls fails, fall back to os.Chmod (no-op on Windows, but doesn't error).
+		// Warn because the file may have overly permissive inherited permissions.
+		slog.Warn("token: icacls failed, file permissions may be too permissive", "path", path, "err", err)
 		return os.Chmod(path, 0o600)
 	}
 

@@ -515,6 +515,101 @@ policies:
           command_not_matches:
             - "**/.ssh/*.pub"
         message: "Credential file access via shell blocked"
+      # Credential exfiltration via curl @file upload syntax
+      - action: deny
+        when:
+          command_contains:
+            - "-d @~/.ssh/"
+            - "-d @~/.aws/"
+            - "-d @~/.gnupg/"
+            - "-F @~/.ssh/"
+            - "-F @~/.aws/"
+            - "curl * @~/.ssh/"
+            - "curl * @~/.aws/"
+            - "curl * @~/.gnupg/"
+        message: "Credential file upload via curl blocked"
+      # Tar archive of credential directories
+      - action: deny
+        when:
+          command_matches:
+            - "tar * ~/.ssh*"
+            - "tar * ~/.aws*"
+            - "tar * ~/.gnupg*"
+            - "tar * ~/.kube*"
+        message: "Archiving credential directories blocked"
+      # Process memory scraping for secrets
+      - action: deny
+        when:
+          command_contains:
+            - "strings /proc/"
+            - "cat /proc/*/mem"
+            - "dd if=/proc/*/mem"
+        message: "Process memory inspection blocked"
+
+  - name: block-interpreter-exec
+    description: "Block interpreter one-liners with dangerous system execution calls"
+    match:
+      tool: ["exec"]
+    rules:
+      # Python dangerous patterns — these are specific enough to not hit legitimate use
+      - action: deny
+        when:
+          command_contains:
+            - "os.system("
+            - "subprocess.run("
+            - "subprocess.call("
+            - "subprocess.Popen("
+            - "exec(__import__"
+            - "__import__('os')"
+            - '__import__("os")'
+        message: "Interpreter command with system execution blocked"
+      # Node.js dangerous one-liners — child_process execution
+      - action: deny
+        when:
+          command_contains:
+            - ".execSync("
+            - ".spawnSync("
+        message: "Node.js shell execution blocked"
+
+  - name: block-eval-obfuscation
+    description: "Block obfuscated command execution via eval and encoding tricks"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            # eval with encoded/piped content
+            - "eval $(echo"
+            - "eval \"$(echo"
+            - "eval `echo"
+            - "| rev | bash"
+            - "| rev | sh"
+        message: "Obfuscated command execution blocked"
+      # xxd reverse pipe to shell
+      - action: deny
+        when:
+          command_contains:
+            - "| bash"
+            - "| sh"
+          command_matches:
+            - "xxd -r *"
+        message: "Obfuscated command execution blocked"
+
+  - name: block-cron-redirect
+    description: "Block shell redirects to system cron directories via exec"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "> /etc/cron"
+            - ">>/etc/cron"
+            - ">> /etc/cron"
+            - "| tee /etc/cron"
+            - "> /etc/cron.d/"
+        message: "Writing to system cron directories blocked"
 
   - name: block-sensitive-writes
     match:
@@ -549,6 +644,8 @@ policies:
             - "**/.ssh/**"
             - "**/.aws/**"
             - "**/.gnupg/**"
+            # Rampart self-modification via write/edit tool
+            - "**/.rampart/**"
             # Shell configs (often contain secrets or PATH manipulation)
             - "**/.bashrc"
             - "**/.bash_profile"
