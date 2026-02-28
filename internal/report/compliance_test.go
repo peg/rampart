@@ -278,6 +278,83 @@ func makeEvents(t *testing.T, now time.Time, actions ...string) []audit.Event {
 	return events
 }
 
+// makeEventsFrom continues a hash chain from a given starting prevHash.
+func makeEventsFrom(t *testing.T, now time.Time, startPrevHash string, startIdx int, actions ...string) []audit.Event {
+	t.Helper()
+	events := make([]audit.Event, 0, len(actions))
+	prevHash := startPrevHash
+
+	for i, action := range actions {
+		e := audit.Event{
+			ID:        fmt.Sprintf("evt-%04d", startIdx+i+1),
+			Timestamp: now.Add(time.Duration(i) * time.Minute),
+			Agent:     "codex",
+			Session:   "session-1",
+			Tool:      "exec",
+			Request:   map[string]any{"command": "echo test"},
+			Decision:  audit.EventDecision{Action: action},
+			PrevHash:  prevHash,
+		}
+		if err := e.ComputeHash(); err != nil {
+			t.Fatalf("compute hash: %v", err)
+		}
+		prevHash = e.Hash
+		events = append(events, e)
+	}
+	return events
+}
+
+func TestGenerateAIUC1Report_MultiFileChainVerification(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 2, 28, 10, 0, 0, 0, time.UTC)
+
+	// Write two separate audit files that form one continuous chain.
+	file1Events := makeEvents(t, now, "allow", "deny")
+	lastHash := file1Events[len(file1Events)-1].Hash
+	file2Events := makeEventsFrom(t, now.Add(10*time.Minute), lastHash, len(file1Events), "ask", "allow")
+
+	// Use names that sort correctly alphabetically so chain is processed in order.
+	writeAuditFile(t, dir, "audit-20260228-part1.jsonl", file1Events)
+	writeAuditFile(t, dir, "audit-20260228-part2.jsonl", file2Events)
+
+	policyPath := filepath.Join(dir, "policy.yaml")
+	policy := `version: "1"
+policies:
+  - name: sensitive-deny
+    rules:
+      - action: deny
+        when:
+          path_matches: ["**/etc/shadow", "**/.ssh/**", "**/.env", "**/credentials/**"]
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	rep, err := GenerateAIUC1Report(ComplianceOptions{
+		AuditDir:    dir,
+		PolicyPath:  policyPath,
+		Since:       now.Add(-time.Hour),
+		Until:       now.Add(time.Hour),
+		GeneratedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("GenerateAIUC1Report returned error: %v", err)
+	}
+
+	// Chain across two files should verify cleanly.
+	if rep.Controls["AIUC-1.2"].Status != ControlStatusPass {
+		t.Fatalf("AIUC-1.2 status = %s, want PASS — multi-file chain failed: %v",
+			rep.Controls["AIUC-1.2"].Status, rep.Controls["AIUC-1.2"].Evidence)
+	}
+	// ask event from file 2 should be counted.
+	if rep.Summary.DecisionCounts.Ask != 1 {
+		t.Fatalf("ask count = %d, want 1", rep.Summary.DecisionCounts.Ask)
+	}
+	if rep.Summary.DecisionCounts.Total != 4 {
+		t.Fatalf("total count = %d, want 4", rep.Summary.DecisionCounts.Total)
+	}
+}
+
 func writeAuditFile(t *testing.T, dir, name string, events []audit.Event) {
 	t.Helper()
 	path := filepath.Join(dir, name)

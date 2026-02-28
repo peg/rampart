@@ -271,23 +271,31 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 		return
 	}
 
+	// Note: evaluateSensitiveDenyCoverage uses keyword proximity heuristics,
+	// not semantic YAML parsing. Manual review of the policy file is recommended
+	// for full assurance that deny rules actually match the sensitive paths.
 	covered, found, missing := evaluateSensitiveDenyCoverage(string(data))
+	heuristicNote := "Note: coverage check is keyword proximity heuristic — manual policy review recommended for full assurance."
 	if covered {
 		r.Controls["AIUC-1.4"] = ComplianceControl{
-			Name:     "Data Exfiltration Prevention",
-			Status:   ControlStatusPass,
-			Evidence: []string{fmt.Sprintf("Sensitive deny coverage found for: %s", strings.Join(found, ", "))},
+			Name:   "Data Exfiltration Prevention",
+			Status: ControlStatusPass,
+			Evidence: []string{
+				fmt.Sprintf("Keyword proximity check passed for: %s", strings.Join(found, ", ")),
+				heuristicNote,
+			},
 		}
 		return
 	}
 
-	evidence := []string{"No deny coverage found for all required sensitive targets."}
+	evidence := []string{"Sensitive keyword proximity check did not find deny coverage for all required targets."}
 	if len(found) > 0 {
 		evidence = append(evidence, fmt.Sprintf("Found: %s", strings.Join(found, ", ")))
 	}
 	if len(missing) > 0 {
 		evidence = append(evidence, fmt.Sprintf("Missing: %s", strings.Join(missing, ", ")))
 	}
+	evidence = append(evidence, heuristicNote)
 	r.Controls["AIUC-1.4"] = ComplianceControl{
 		Name:     "Data Exfiltration Prevention",
 		Status:   ControlStatusWarn,
