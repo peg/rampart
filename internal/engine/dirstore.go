@@ -449,6 +449,8 @@ func mergeProjectPolicy(base, project *Config, projectPath string, logger *slog.
 			continue
 		}
 		seen[p.Name] = true
+		// Mark policy as coming from project policy file
+		p.Source = "project"
 		result.Policies = append(result.Policies, p)
 	}
 	// Deep-copy responseRegexCache to avoid aliasing base's map.

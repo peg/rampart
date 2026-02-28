@@ -295,7 +295,7 @@ func generalizeCommand(cmd string) string {
 // For file operations (read/write/edit), it suggests:
 //   - rampart allow "<exact path>" --tool <tool>
 //   - rampart allow "<wildcard path>" --tool <tool>  (when safe and not write)
-func generateSuggestions(call ToolCall) []string {
+func GenerateSuggestions(call ToolCall) []string {
 	var suggestions []string
 
 	cmd := call.Command()
