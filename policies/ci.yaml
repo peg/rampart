@@ -536,25 +536,38 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Python dangerous patterns — these are specific enough to not hit legitimate use
+      # Python one-liners with system execution — scoped to interpreter invocation
       - action: deny
         when:
-          command_contains:
-            - "os.system("
-            - "subprocess.run("
-            - "subprocess.call("
-            - "subprocess.Popen("
-            - "exec(__import__"
-            - "__import__('os')"
-            - '__import__("os")'
-        message: "Interpreter command with system execution blocked"
-      # Node.js dangerous one-liners — child_process execution
+          command_matches:
+            - "python -c **os.system**"
+            - "python3 -c **os.system**"
+            - "python -c **subprocess**"
+            - "python3 -c **subprocess**"
+            - "python -c **exec(__import__**"
+            - "python3 -c **exec(__import__**"
+            - "python -c **__import__**"
+            - "python3 -c **__import__**"
+        message: "Python one-liner with system execution blocked"
+      # Node.js one-liners with child_process — scoped to node invocation
       - action: deny
         when:
-          command_contains:
-            - ".execSync("
-            - ".spawnSync("
-        message: "Node.js shell execution blocked"
+          command_matches:
+            - "node -e **execSync**"
+            - "node -e **spawnSync**"
+            - "node -e **child_process**"
+            - "node --eval **execSync**"
+            - "node --eval **spawnSync**"
+        message: "Node.js one-liner with shell execution blocked"
+      # Ruby/Perl — system/exec via interpreter flag
+      - action: deny
+        when:
+          command_matches:
+            - "ruby -e **system**"
+            - "ruby -e **exec**"
+            - "perl -e **system**"
+            - "perl -e **exec**"
+        message: "Interpreter one-liner with system execution blocked"
 
   - name: block-eval-obfuscation
     description: "Block obfuscated command execution via eval and encoding tricks"
