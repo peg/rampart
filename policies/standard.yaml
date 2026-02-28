@@ -770,6 +770,7 @@ policies:
             - ". <(base64"
             - ". <(curl"
             - ". <(wget"
+            - ". <(python"
             # source from /dev/fd/ (named pipe variant)
             - "source /dev/fd/"
             - ". /dev/fd/"
