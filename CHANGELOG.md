@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-28
+
+### Added
+
+- **`rampart policy sync <git-url>`** — Git-based team policy distribution. Sync policies from any public HTTPS git repo without running a server. Supports `--watch` (foreground polling, default 5min interval), `status`, and `stop` subcommands. State persisted to `~/.rampart/sync-state.json`. Uses system `git`, no new dependencies.
+- **`rampart policy list`** — Browse community policies from the built-in registry (`registry/registry.json`). Results cached for 1 hour; use `--refresh` to force update.
+- **`rampart policy fetch <name>`** — Download and install a community policy with sha256 verification. Supports `--force` and `--dry-run`.
+- **`rampart policy remove <name>`** — Remove an installed community policy (built-in profiles protected).
+- **`rampart report compliance`** — AIUC-1 compliance report generated from local audit logs. Maps decisions to four controls (Tool Call Authorization, Audit Logging, Human-in-the-Loop, Data Exfiltration Prevention). Outputs `COMPLIANT`, `PARTIAL`, or `NON-COMPLIANT` with per-control evidence. Supports `--since`, `--until`, `--format json`, and `--output`.
+- **Community policy registry** — `registry/` directory in the main repo serves as the policy registry. Initial policies: `research-agent` (read-only web/file analysis) and `mcp-server` (MCP context with exec/credential guards).
+
+### Known Limitations
+
+- `rampart policy sync` auto-sync on `rampart serve` startup is not yet implemented. Run `rampart policy sync --watch` alongside serve for continuous sync. This will be addressed in v0.7.1.
+
 ## [0.6.10] - 2026-02-28
 
 ### Added

@@ -1,0 +1,24 @@
+{
+  "version": "1",
+  "updated_at": "2026-02-28T00:00:00Z",
+  "policies": [
+    {
+      "name": "research-agent",
+      "description": "Read-only research policy for web/file analysis.",
+      "tags": ["research", "read-only", "web"],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/registry/policies/research-agent.yaml",
+      "sha256": "8191718bc9296bf558d07d612a4ec5d64544305a814ed81de637ade2ff5a8629",
+      "version": "1.0.0",
+      "author": "rampart-team"
+    },
+    {
+      "name": "mcp-server",
+      "description": "Policy profile for safely running MCP-integrated agents.",
+      "tags": ["mcp", "integration", "agent"],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/registry/policies/mcp-server.yaml",
+      "sha256": "91badc1dbad59b40ed5531590d348d8da1873eac4c3fb79295341eb82ae07511",
+      "version": "1.0.0",
+      "author": "rampart-team"
+    }
+  ]
+}
