@@ -341,12 +341,12 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 			wantAction: "allow",
 		},
 		{
-			// crontab -r is blocked (crontab deletion).
-			name:       "exec: crontab -r → denied",
+			// crontab -r requires approval (policy v2: persistence operations → ask, not deny).
+			name:       "exec: crontab -r → ask",
 			tool:       "exec",
 			params:     map[string]any{"command": "crontab -r"},
-			wantStatus: http.StatusForbidden,
-			wantAction: "deny",
+			wantStatus: http.StatusOK,
+			wantAction: "ask",
 		},
 		{
 			// reverse shell via nc -e.
@@ -357,12 +357,13 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 			wantAction: "deny",
 		},
 		{
-			// write to /etc/ should be blocked.
-			name:       "write: /etc/hosts → denied",
+			// write to /etc/hosts requires approval (policy v2: privileged system config → ask).
+			// Blanket deny was too aggressive for provisioning workflows.
+			name:       "write: /etc/hosts → ask",
 			tool:       "write",
 			params:     map[string]any{"path": "/etc/hosts"},
-			wantStatus: http.StatusForbidden,
-			wantAction: "deny",
+			wantStatus: http.StatusOK,
+			wantAction: "ask",
 		},
 		{
 			// read of ~/.aws/credentials should be blocked.
