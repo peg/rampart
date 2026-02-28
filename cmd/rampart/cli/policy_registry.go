@@ -135,6 +135,12 @@ func newPolicyFetchCmd(_ *rootOptions) *cobra.Command {
 				return fmt.Errorf("policy: policy %q not found in registry. Run 'rampart policy list' to see available policies", name)
 			}
 
+			// Sanitize the name from the manifest (not just the user arg) to guard
+			// against a compromised registry serving path-traversal names.
+			if err := sanitizePolicyName(entry.Name); err != nil {
+				return err
+			}
+
 			content, err := client.downloadPolicy(cmd.Context(), entry)
 			if err != nil {
 				return err
@@ -185,6 +191,9 @@ func newPolicyRemoveCmd(_ *rootOptions) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.TrimSpace(args[0])
+			if err := sanitizePolicyName(name); err != nil {
+				return err
+			}
 			if isBuiltInPolicyProfile(name) {
 				return fmt.Errorf("policy: %q is a built-in profile and cannot be removed", name)
 			}
@@ -210,6 +219,22 @@ func newPolicyRemoveCmd(_ *rootOptions) *cobra.Command {
 	}
 
 	return cmd
+}
+
+// sanitizePolicyName rejects names containing path separators or traversal
+// sequences that could escape the ~/.rampart/policies/ directory.
+func sanitizePolicyName(name string) error {
+	if name == "" || name == "." || name == ".." {
+		return fmt.Errorf("policy: invalid policy name %q", name)
+	}
+	if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+		return fmt.Errorf("policy: invalid policy name %q: must not contain path separators or '..'", name)
+	}
+	// Ensure filepath.Base agrees — catches any edge cases filepath.Join might resolve
+	if filepath.Base(name) != name {
+		return fmt.Errorf("policy: invalid policy name %q", name)
+	}
+	return nil
 }
 
 func isBuiltInPolicyProfile(name string) bool {
@@ -318,6 +343,9 @@ func validatePolicyRegistryManifest(manifest *policyRegistryManifest) error {
 		if strings.TrimSpace(entry.Name) == "" {
 			return fmt.Errorf("policy: registry manifest contains policy with empty name")
 		}
+		if err := sanitizePolicyName(strings.TrimSpace(entry.Name)); err != nil {
+			return fmt.Errorf("policy: registry manifest contains unsafe policy name: %w", err)
+		}
 		if strings.TrimSpace(entry.URL) == "" {
 			return fmt.Errorf("policy: registry manifest policy %q has empty url", entry.Name)
 		}
@@ -329,6 +357,9 @@ func validatePolicyRegistryManifest(manifest *policyRegistryManifest) error {
 }
 
 func (c *policyRegistryClient) downloadPolicy(ctx context.Context, entry policyRegistryEntry) ([]byte, error) {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(entry.URL)), "https://") {
+		return nil, fmt.Errorf("policy: refusing to download %q from non-HTTPS URL: %s", entry.Name, entry.URL)
+	}
 	content, err := fetchURL(ctx, c.httpClient, entry.URL)
 	if err != nil {
 		return nil, wrapNetworkFetchError("policy", entry.URL, err)

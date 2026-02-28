@@ -25,7 +25,7 @@ func TestPolicyFetch_InstallsPolicyFromRegistry(t *testing.T) {
 	expectedSHA := hex.EncodeToString(sum[:])
 
 	var serverURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/registry.json":
 			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"research-agent","description":"Research profile","tags":["research"],"url":"%s/policies/research-agent.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
@@ -37,12 +37,12 @@ func TestPolicyFetch_InstallsPolicyFromRegistry(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	serverURL = server.URL
+	serverURL = server.URL // https://127.0.0.1:PORT
 
 	oldManifestURL := defaultPolicyRegistryManifestURL
 	oldClient := defaultPolicyRegistryHTTPClient
 	defaultPolicyRegistryManifestURL = server.URL + "/registry.json"
-	defaultPolicyRegistryHTTPClient = server.Client()
+	defaultPolicyRegistryHTTPClient = server.Client() // trusts the TLS test cert
 	t.Cleanup(func() {
 		defaultPolicyRegistryManifestURL = oldManifestURL
 		defaultPolicyRegistryHTTPClient = oldClient
@@ -77,7 +77,7 @@ func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 	policyContent := []byte("version: \"1\"\npolicies: []\n")
 
 	var serverURL string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/registry.json":
 			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"research-agent","description":"Research profile","tags":["research"],"url":"%s/policies/research-agent.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
@@ -173,4 +173,36 @@ func TestPolicyRemove_RemovesInstalledPolicy(t *testing.T) {
 
 	_, statErr := os.Stat(path)
 	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestPolicyFetch_RejectsPathTraversalName(t *testing.T) {
+	// A compromised registry manifest could contain a name like "../../etc/cron.d/backdoor".
+	// The sanitizePolicyName guard must reject this before any file is written.
+	//
+	// We test sanitizePolicyName directly since manifest validation would reject
+	// these names before they could ever reach the fetch path.
+	cases := []struct {
+		name    string
+		wantErr bool
+	}{
+		{"research-agent", false},
+		{"my-policy", false},
+		{"../../etc/shadow", true},
+		{"../evil", true},
+		{"foo/bar", true},
+		{"..", true},
+		{".", true},
+		{"", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := sanitizePolicyName(tc.name)
+			if tc.wantErr {
+				require.Error(t, err, "expected error for name %q", tc.name)
+			} else {
+				require.NoError(t, err, "unexpected error for name %q", tc.name)
+			}
+		})
+	}
 }
