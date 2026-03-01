@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -21,8 +22,12 @@ import (
 
 // testArchiveName returns the archive filename for the current platform (e.g., rampart_1.1.0_darwin_arm64.tar.gz).
 func testArchiveName(version string) string {
-	os, arch, _ := upgradePlatform(runtime.GOOS, runtime.GOARCH)
-	return fmt.Sprintf("rampart_%s_%s_%s.tar.gz", version, os, arch)
+	goos, arch, _ := upgradePlatform(runtime.GOOS, runtime.GOARCH)
+	ext := "tar.gz"
+	if goos == "windows" {
+		ext = "zip"
+	}
+	return fmt.Sprintf("rampart_%s_%s_%s.%s", version, goos, arch, ext)
 }
 
 func TestLookupSHA256(t *testing.T) {
@@ -546,5 +551,70 @@ policies:
 	}
 	if !strings.Contains(errOut.String(), "continuing automatically") {
 		t.Fatalf("missing non-interactive continuation note: %q", errOut.String())
+	}
+}
+
+// makeZipArchive builds an in-memory zip archive containing the given files.
+func makeZipArchive(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, payload := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := w.Write(payload); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestExtractRampartBinaryFromZip(t *testing.T) {
+	archive := makeZipArchive(t, map[string][]byte{
+		"rampart.exe": []byte("windows-binary"),
+	})
+	got, err := extractRampartBinaryFromZip(archive)
+	if err != nil {
+		t.Fatalf("extractRampartBinaryFromZip returned error: %v", err)
+	}
+	if string(got) != "windows-binary" {
+		t.Fatalf("unexpected payload: %q", string(got))
+	}
+}
+
+// TestExtractRampartBinaryFromZip_GoreleaserLayout tests the real goreleaser
+// zip layout where the binary lives in a versioned subdirectory.
+func TestExtractRampartBinaryFromZip_GoreleaserLayout(t *testing.T) {
+	// Goreleaser produces: rampart_0.7.1_windows_amd64/rampart.exe
+	archive := makeZipArchive(t, map[string][]byte{
+		"rampart_0.7.1_windows_amd64/rampart.exe": []byte("real-windows-binary"),
+		"rampart_0.7.1_windows_amd64/LICENSE":      []byte("Apache 2.0"),
+		"rampart_0.7.1_windows_amd64/README.md":    []byte("# Rampart"),
+	})
+	got, err := extractRampartBinaryFromZip(archive)
+	if err != nil {
+		t.Fatalf("extractRampartBinaryFromZip failed on goreleaser layout: %v", err)
+	}
+	if string(got) != "real-windows-binary" {
+		t.Fatalf("unexpected payload: %q", string(got))
+	}
+}
+
+func TestExtractRampartBinaryFromZip_NotFound(t *testing.T) {
+	archive := makeZipArchive(t, map[string][]byte{
+		"LICENSE":   []byte("Apache 2.0"),
+		"README.md": []byte("# Rampart"),
+	})
+	_, err := extractRampartBinaryFromZip(archive)
+	if err == nil {
+		t.Fatal("expected error when rampart.exe not in archive, got nil")
+	}
+	if !strings.Contains(err.Error(), "rampart.exe not found") {
+		t.Fatalf("unexpected error message: %v", err)
 	}
 }

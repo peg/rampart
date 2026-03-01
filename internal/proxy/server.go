@@ -608,9 +608,11 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 	// Fire webhook notification if configured
 	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
 		actionStr := decision.Action.String()
-		// require_approval notifications are sent after pending approval
-		// creation so they can include approval metadata.
-		if actionStr != engine.ActionRequireApproval.String() && s.shouldNotify(actionStr) {
+		// require_approval and ask notifications are sent after pending approval
+		// creation so they can include approval metadata (approval_id etc.).
+		if actionStr != engine.ActionRequireApproval.String() &&
+			actionStr != engine.ActionAsk.String() &&
+			s.shouldNotify(actionStr) {
 			call := engine.ToolCall{
 				Tool:      toolName,
 				Params:    req.Params,

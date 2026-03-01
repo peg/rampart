@@ -618,7 +618,8 @@ func extractRampartBinaryFromZip(archive []byte) ([]byte, error) {
 			return nil, fmt.Errorf("upgrade: open rampart.exe in archive: %w", err)
 		}
 		defer rc.Close()
-		bin, err := io.ReadAll(rc)
+		const maxBinaryBytes = 200 << 20 // 200 MiB decompression limit
+		bin, err := io.ReadAll(io.LimitReader(rc, maxBinaryBytes))
 		if err != nil {
 			return nil, fmt.Errorf("upgrade: read rampart.exe from archive: %w", err)
 		}
@@ -737,6 +738,19 @@ func replaceExecutableAtomically(path string, payload []byte, deps upgradeDeps) 
 	if err := deps.chmod(tmpPath, 0o755); err != nil {
 		return fmt.Errorf("upgrade: chmod temporary binary: %w", err)
 	}
+
+	// On Windows, the OS holds a lock on the running executable and won't allow
+	// a rename-over. The workaround: rename the current binary to .old first
+	// (Windows permits renaming a running exe), then rename the new binary into
+	// place. The .old file is cleaned up at the start of the next upgrade.
+	if runtime.GOOS == "windows" {
+		oldPath := path + ".old"
+		_ = deps.remove(oldPath) // best-effort cleanup from a previous upgrade
+		if err := deps.rename(path, oldPath); err != nil {
+			return fmt.Errorf("upgrade: rename current binary before replacement: %w", err)
+		}
+	}
+
 	if err := deps.rename(tmpPath, path); err != nil {
 		return fmt.Errorf("upgrade: replace binary at %s: %w", path, err)
 	}

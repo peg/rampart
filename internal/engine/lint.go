@@ -271,7 +271,7 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 			result.add(LintFinding{
 				File:     filename,
 				Severity: LintInfo,
-				Message:  fmt.Sprintf("policy %q rule %d: action \"ask\" falls back to deny for non-claude-code agents (this is usually intentional). Add match.agent: [\"claude-code\"] to make it explicit.", p.Name, ruleIdx+1),
+				Message:  fmt.Sprintf("policy %q rule %d: action \"ask\" uses the native Claude Code permission prompt when available; other agents queue for approval via the dashboard. Add match.agent: [\"claude-code\"] to restrict to Claude Code only.", p.Name, ruleIdx+1),
 			})
 		}
 	}
