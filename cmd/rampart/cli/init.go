@@ -264,7 +264,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "It preserves ~/.rampart/token and does not touch custom policy files (including ~/.rampart/policies/custom.yaml)."); err != nil {
 						return fmt.Errorf("cli: write init output: %w", err)
 					}
-					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "To update just your standard policy: rampart policy fetch standard --force"); err != nil {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "To update just your %s policy: rampart policy fetch %s --force\n", selectedProfile, selectedProfile); err != nil {
 						return fmt.Errorf("cli: write init output: %w", err)
 					}
 					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "To reset everything: rampart init --force"); err != nil {
