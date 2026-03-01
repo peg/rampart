@@ -64,11 +64,11 @@ func TestEndToEnd_StandardProfile(t *testing.T) {
 			wantAction: "allow",
 		},
 		{
-			name:       "exec: sudo reboot → require_approval",
+			name:       "exec: sudo reboot → ask",
 			tool:       "exec",
 			params:     map[string]any{"command": "sudo reboot"},
 			wantStatus: http.StatusAccepted,
-			wantAction: "require_approval",
+			wantAction: "ask",
 		},
 		{
 			name:       "exec: fork bomb → denied",
@@ -308,11 +308,11 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 		{
 			// sudo rm -rf / should hit require-privileged-approval (sudo **), NOT
 			// block-destructive (rm -rf /), because the command starts with "sudo".
-			name:       "exec: sudo rm -rf / → require_approval (sudo wins, not deny)",
+			name:       "exec: sudo rm -rf / → ask (sudo wins, not deny)",
 			tool:       "exec",
 			params:     map[string]any{"command": "sudo rm -rf /"},
 			wantStatus: http.StatusAccepted,
-			wantAction: "require_approval",
+			wantAction: "ask",
 			note:       "sudo ** pattern in require-privileged-approval triggers before deny patterns",
 		},
 		{
@@ -345,7 +345,7 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 			name:       "exec: crontab -r → ask",
 			tool:       "exec",
 			params:     map[string]any{"command": "crontab -r"},
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusAccepted,
 			wantAction: "ask",
 		},
 		{
@@ -362,7 +362,7 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 			name:       "write: /etc/hosts → ask",
 			tool:       "write",
 			params:     map[string]any{"path": "/etc/hosts"},
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusAccepted,
 			wantAction: "ask",
 		},
 		{
