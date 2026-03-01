@@ -15,6 +15,7 @@ package cli
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"compress/gzip"
@@ -236,7 +237,11 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return err
 			}
 			versionNoV := strings.TrimPrefix(target, "v")
-			archiveName := fmt.Sprintf("rampart_%s_%s_%s.tar.gz", versionNoV, assetOS, assetArch)
+			archiveExt := "tar.gz"
+			if assetOS == "windows" {
+				archiveExt = "zip"
+			}
+			archiveName := fmt.Sprintf("rampart_%s_%s_%s.%s", versionNoV, assetOS, assetArch, archiveExt)
 			archiveURL := fmt.Sprintf("%s/%s/%s", upgradeReleaseBaseURL, target, archiveName)
 			checksumsURL := fmt.Sprintf("%s/%s/checksums.txt", upgradeReleaseBaseURL, target)
 
@@ -312,7 +317,12 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return fmt.Errorf("upgrade: checksum mismatch for %s (expected %s, got %s)", archiveName, expectedHash, actualHashHex)
 			}
 
-			newBinary, err := extractRampartBinary(archiveBytes)
+			var newBinary []byte
+			if assetOS == "windows" {
+				newBinary, err = extractRampartBinaryFromZip(archiveBytes)
+			} else {
+				newBinary, err = extractRampartBinary(archiveBytes)
+			}
 			if err != nil {
 				return err
 			}
@@ -594,6 +604,29 @@ func extractRampartBinary(archive []byte) ([]byte, error) {
 	return payload, nil
 }
 
+func extractRampartBinaryFromZip(archive []byte) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return nil, fmt.Errorf("upgrade: open zip archive: %w", err)
+	}
+	for _, f := range zr.File {
+		if filepath.Base(f.Name) != "rampart.exe" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, fmt.Errorf("upgrade: open rampart.exe in archive: %w", err)
+		}
+		defer rc.Close()
+		bin, err := io.ReadAll(rc)
+		if err != nil {
+			return nil, fmt.Errorf("upgrade: read rampart.exe from archive: %w", err)
+		}
+		return bin, nil
+	}
+	return nil, fmt.Errorf("upgrade: rampart.exe not found in zip archive (%d files)", len(zr.File))
+}
+
 func inspectServePID(userHomeDir func() (string, error), readFile func(string) ([]byte, error)) (int, bool, error) {
 	home, err := userHomeDir()
 	if err != nil {
@@ -775,7 +808,7 @@ func fixStalePathCopies(out io.Writer, installedBinary string, deps upgradeDeps)
 func upgradePlatform(goos, goarch string) (string, string, error) {
 	var assetOS string
 	switch goos {
-	case "darwin", "linux":
+	case "darwin", "linux", "windows":
 		assetOS = goos
 	default:
 		return "", "", fmt.Errorf("upgrade: unsupported OS %q", goos)
