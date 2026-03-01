@@ -600,6 +600,9 @@ func FormatAIUC1TextReport(report *AIUC1Report) string {
 
 	_, _ = fmt.Fprintf(&b, "AIUC-1 Compliance Report\n")
 	_, _ = fmt.Fprintf(&b, "========================\n")
+	_, _ = fmt.Fprintf(&b, "AIUC-1 (AI Unified Controls v1) is a compliance standard for AI agent\n")
+	_, _ = fmt.Fprintf(&b, "operations. This report provides evidence of Rampart's enforcement.\n")
+	_, _ = fmt.Fprintf(&b, "Learn more: https://rampart.sh/docs/guides/compliance\n\n")
 	_, _ = fmt.Fprintf(&b, "Report ID: %s\n", report.ReportID)
 	_, _ = fmt.Fprintf(&b, "Generated: %s\n", report.GeneratedAt.Format(time.RFC3339))
 	_, _ = fmt.Fprintf(&b, "Period: %s to %s\n", report.Period.Since.Format(time.RFC3339), report.Period.Until.Format(time.RFC3339))
@@ -625,6 +628,28 @@ func FormatAIUC1TextReport(report *AIUC1Report) string {
 		_, _ = fmt.Fprintf(&b, "%s %-4s %s\n", key, string(control.Status), control.Name)
 		for _, evidence := range control.Evidence {
 			_, _ = fmt.Fprintf(&b, "  - %s\n", evidence)
+		}
+	}
+
+	// Remediation hints for non-compliant controls.
+	var remediations []string
+	if c, ok := report.Controls["AIUC-1.1"]; ok && c.Status != ControlStatusPass {
+		remediations = append(remediations, "AIUC-1.1: Run 'rampart doctor' to verify hooks are installed, then use an AI agent to generate audit events.")
+	}
+	if c, ok := report.Controls["AIUC-1.2"]; ok && c.Status == ControlStatusFail {
+		remediations = append(remediations, "AIUC-1.2: Run 'rampart audit verify' to inspect chain integrity. Old or manually-edited audit files can cause hash mismatches.")
+	}
+	if c, ok := report.Controls["AIUC-1.3"]; ok && c.Status != ControlStatusPass {
+		remediations = append(remediations, "AIUC-1.3: Use 'action: ask' (not 'action: deny') for sensitive operations so human approval events appear in the audit log.")
+	}
+	if c, ok := report.Controls["AIUC-1.4"]; ok && c.Status != ControlStatusPass {
+		remediations = append(remediations, "AIUC-1.4: Run 'rampart init --profile standard --force' to ensure credential-blocking rules are active.")
+	}
+	if len(remediations) > 0 {
+		_, _ = fmt.Fprintf(&b, "\nRemediation\n")
+		_, _ = fmt.Fprintf(&b, "-----------\n")
+		for _, r := range remediations {
+			_, _ = fmt.Fprintf(&b, "  %s\n", r)
 		}
 	}
 

@@ -123,9 +123,9 @@ info "Installed to ${BOLD}${INSTALL_DIR}/${BINARY}${RESET}"
 if command -v rampart >/dev/null 2>&1; then
     printf "\n"
     rampart version 2>/dev/null || true
-    printf "\n${GREEN}${BOLD}Ready!${RESET} Run ${BOLD}rampart init${RESET} to get started.\n"
+    printf "\n${GREEN}${BOLD}Ready!${RESET} Run ${BOLD}rampart quickstart${RESET} to get started.\n"
 else
     printf "\n${YELLOW}Note:${RESET} ${INSTALL_DIR} may not be in your PATH.\n"
     printf "Add it: ${BOLD}export PATH=\"${INSTALL_DIR}:\$PATH\"${RESET}\n"
-    printf "Then run: ${BOLD}rampart init${RESET}\n"
+    printf "Then run: ${BOLD}rampart quickstart${RESET}\n"
 fi
