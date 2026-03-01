@@ -123,7 +123,7 @@ asyncio.run(main())
 
 ### Environment Variables
 
-- `RAMPART_URL`: Rampart server URL (default: `http://localhost:19090`)
+- `RAMPART_URL`: Rampart server URL (default: `http://localhost:9090`)
 - `RAMPART_TOKEN`: Bearer token for authentication (optional)
 
 ### Client Configuration

@@ -194,6 +194,33 @@ func TestDoctorHooks_PathHints(t *testing.T) {
 	}
 }
 
+func TestDoctorPolicies_EmptyCustomPlaceholderIsNotWarn(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	requireNoErr(t, os.MkdirAll(policyDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "custom.yaml"), []byte("version: \"1\"\n"), 0o644))
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+
+	issues := doctorPolicies(emit)
+	if issues != 0 {
+		t.Fatalf("expected no policy issues, got %d", issues)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	if results[0].Status != "ok" {
+		t.Fatalf("expected ok status for empty custom placeholder, got %q (%s)", results[0].Status, results[0].Message)
+	}
+	if strings.Contains(results[0].Message, "lint warning") {
+		t.Fatalf("expected lint warning to be suppressed, got %q", results[0].Message)
+	}
+}
+
 func requireNoErr(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

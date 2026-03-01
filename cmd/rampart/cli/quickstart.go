@@ -14,10 +14,12 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -86,6 +88,7 @@ func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool, yes bool
 
 	// Step 3: setup hooks for detected env
 	if env != "none" {
+		hooksAlreadyConfigured := quickstartHooksConfigured(env)
 		fmt.Fprintf(w, "  Configuring hooks for %s...\n", env)
 		setupArgs := []string{"setup", env}
 		// --yes enables full protection for OpenClaw (--patch-tools covers file reads/writes/edits)
@@ -96,12 +99,25 @@ func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool, yes bool
 			fmt.Fprintf(w, "  ⚠  Hook setup failed: %v\n", err)
 			fmt.Fprintln(w, "     Run `rampart setup "+env+"` manually to retry.")
 		} else {
-			fmt.Fprintln(w, "  ✓  Hooks configured")
+			if hooksAlreadyConfigured {
+				fmt.Fprintln(w, "  ✓  Hooks already configured (pass --force to reconfigure)")
+			} else {
+				fmt.Fprintln(w, "  ✓  Hooks configured")
+			}
 		}
 		fmt.Fprintln(w)
 	}
 
-	// Step 4: doctor
+	// Step 4: ensure a policy is installed
+	if !hasInstalledPolicy() {
+		if err := runSubcmd("init", "--profile", "standard"); err != nil {
+			return fmt.Errorf("policy init failed: %w", err)
+		}
+		fmt.Fprintln(w, "  ✓  Policy initialized with standard profile")
+		fmt.Fprintln(w)
+	}
+
+	// Step 5: doctor
 	if !skipDoctor {
 		fmt.Fprintln(w, "  Running health check...")
 		fmt.Fprintln(w)
@@ -109,7 +125,7 @@ func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool, yes bool
 		fmt.Fprintln(w)
 	}
 
-	// Step 5: summary
+	// Step 6: summary
 	fmt.Fprintln(w, "◆ You're protected.")
 	fmt.Fprintln(w)
 
@@ -140,6 +156,25 @@ func detectEnv() string {
 	// which OpenClaw gateway sets when it spawns an agent process.
 	if os.Getenv("OPENCLAW_SERVICE_MARKER") == "openclaw" {
 		return "openclaw"
+	}
+	// Cline: explicit runtime env is a strong signal.
+	if os.Getenv("CLINE_ACTIVE") != "" || os.Getenv("CLINE_SESSION") != "" {
+		return "cline"
+	}
+	// Cline: detect VS Code extension installs in local/remote environments.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		clineGlobs := []string{
+			filepath.Join(home, ".vscode", "extensions", "saoud-m.vscode-claude-dev-*"),
+			filepath.Join(home, ".vscode", "extensions", "cline-*"),
+			filepath.Join(home, ".vscode-server", "extensions", "saoud-m.vscode-claude-dev-*"),
+			filepath.Join(home, ".vscode-server", "extensions", "cline-*"),
+		}
+		for _, pattern := range clineGlobs {
+			matches, globErr := filepath.Glob(pattern)
+			if globErr == nil && len(matches) > 0 {
+				return "cline"
+			}
+		}
 	}
 	// Claude Code: settings.json or binary
 	if _, err := os.Stat(claudeSettingsPath()); err == nil {
@@ -186,4 +221,56 @@ func runSubcmd(args ...string) error {
 	c.Stderr = os.Stderr
 	c.Stdin = os.Stdin
 	return c.Run()
+}
+
+func hasInstalledPolicy() bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		// custom.yaml is an auto-managed placeholder — it is always present and
+		// contains no policies by default. Exclude it so a fresh install with only
+		// custom.yaml still triggers standard policy auto-init.
+		if name == "custom.yaml" {
+			continue
+		}
+		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+			return true
+		}
+	}
+	return false
+}
+
+func quickstartHooksConfigured(env string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	switch env {
+	case "openclaw":
+		_, err := os.Stat(filepath.Join(home, ".local", "bin", "rampart-shim"))
+		return err == nil
+	case "claude-code":
+		data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+		if err != nil {
+			return false
+		}
+		settings := make(claudeSettings)
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return false
+		}
+		return hasRampartHook(settings)
+	default:
+		return false
+	}
 }

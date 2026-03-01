@@ -207,6 +207,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
+			if !hasInstalledPolicy() {
+				fmt.Fprintln(cmd.OutOrStdout(), "💡 Next: run rampart init to install a security policy")
+			}
 
 			// Check if rampart is in system PATH.
 			if _, err := execLookPath("rampart"); err != nil {
@@ -362,9 +365,12 @@ Use --remove to uninstall the shim and service (preserves policies and audit log
 			}
 
 			shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")
-			if _, err := os.Stat(shimPath); err == nil && !force {
-				fmt.Fprintf(cmd.OutOrStdout(), "Rampart shim already exists at %s\n", shimPath)
-				fmt.Fprintln(cmd.OutOrStdout(), "Use --force to overwrite.")
+			shimExists := false
+			if _, err := os.Stat(shimPath); err == nil {
+				shimExists = true
+			}
+			if shimExists && !force {
+				fmt.Fprintln(cmd.OutOrStdout(), "✓ Hooks already configured (pass --force to reconfigure)")
 				return nil
 			}
 
@@ -508,7 +514,11 @@ exec "$REAL_SHELL" "$@"
 			if err := os.WriteFile(shimPath, []byte(shimContent), 0o700); err != nil {
 				return fmt.Errorf("setup: write shim: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Shell shim installed at %s\n", shimPath)
+			if shimExists && force {
+				fmt.Fprintln(cmd.OutOrStdout(), "✓ Hooks reconfigured")
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ Shell shim installed at %s\n", shimPath)
+			}
 
 			// Start service (OS-specific)
 			if err := startService(cmd); err != nil {

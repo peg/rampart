@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -111,6 +112,9 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 	if !strings.Contains(out.String(), "Rampart hook installed") {
 		t.Errorf("output = %q", out.String())
 	}
+	if !strings.Contains(out.String(), "Next: run rampart init to install a security policy") {
+		t.Errorf("expected next-step tip, got: %s", out.String())
+	}
 
 	// Verify settings file
 	settingsPath := filepath.Join(tmpHome, ".claude", "settings.json")
@@ -126,6 +130,38 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 	// Instead, verify a hook command ending in " hook" exists in the raw JSON.
 	if !strings.Contains(string(data), " hook\"") {
 		t.Errorf("rampart hook not found in settings; got: %s", data)
+	}
+}
+
+func TestSetupOpenClaw_AlreadyConfiguredMessage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("openclaw setup is not supported on windows")
+	}
+	tmpHome := t.TempDir()
+	testSetHome(t, tmpHome)
+
+	shimPath := filepath.Join(tmpHome, ".local", "bin", "rampart-shim")
+	if err := os.MkdirAll(filepath.Dir(shimPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shimPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newSetupOpenClawCmd(&rootOptions{})
+	var out strings.Builder
+	cmd.SetOut(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "✓ Hooks already configured (pass --force to reconfigure)") {
+		t.Fatalf("expected already-configured message, got: %s", got)
+	}
+	if strings.Contains(got, "Use --force to overwrite") {
+		t.Fatalf("did not expect legacy overwrite prompt, got: %s", got)
 	}
 }
 

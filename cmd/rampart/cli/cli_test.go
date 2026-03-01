@@ -93,6 +93,24 @@ func TestInitForceOverwrite(t *testing.T) {
 	assert.Contains(t, string(data), "version: \"1\"")
 }
 
+func TestInitExistingFilesHelpfulGuidance(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+	configPath := filepath.Join(dir, "rampart.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte("version: \"1\"\n"), 0o644))
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	require.NoError(t, os.MkdirAll(policyDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(policyDir, "standard.yaml"), []byte("version: \"1\"\npolicies: []\n"), 0o644))
+
+	stdout, _, err := runCLI(t, "--config", configPath, "init")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Config and policies already exist.")
+	assert.Contains(t, stdout, "--force overwrites")
+	assert.Contains(t, stdout, "custom.yaml")
+	assert.Contains(t, stdout, "rampart policy fetch standard --force")
+	assert.Contains(t, stdout, "rampart init --force")
+}
+
 func TestInitProfileYolo(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)

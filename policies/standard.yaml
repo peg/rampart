@@ -17,7 +17,7 @@
 # seccomp, or AppArmor. See docs/THREAT-MODEL.md.
 
 version: "1"
-default_action: allow
+default_action: deny
 
 # CI/headless approval — blocks until approved via dashboard (no native prompt)
 # - action: ask
@@ -628,20 +628,27 @@ policies:
             - "python3 -c **exec(__import__**"
             - "python -c **__import__**"
             - "python3 -c **__import__**"
-            # Versioned binaries (python3.10, python3.11, python3.12, etc.)
-            # Note: prefix before ** must be literal (not glob), so enumerate versions
+            # Versioned binaries — enumerate explicitly because the ** matcher
+            # treats the prefix before ** as a literal string, so python3.* -c
+            # does not match python3.11. Extend this list when new versions ship.
             - "python3.10 -c **os.system**"
             - "python3.11 -c **os.system**"
             - "python3.12 -c **os.system**"
             - "python3.13 -c **os.system**"
+            - "python3.14 -c **os.system**"
+            - "python3.15 -c **os.system**"
             - "python3.10 -c **subprocess**"
             - "python3.11 -c **subprocess**"
             - "python3.12 -c **subprocess**"
             - "python3.13 -c **subprocess**"
+            - "python3.14 -c **subprocess**"
+            - "python3.15 -c **subprocess**"
             - "python3.10 -c **__import__**"
             - "python3.11 -c **__import__**"
             - "python3.12 -c **__import__**"
             - "python3.13 -c **__import__**"
+            - "python3.14 -c **__import__**"
+            - "python3.15 -c **__import__**"
             # env wrappers (env python3 -c ...)
             - "env python -c **os.system**"
             - "env python3 -c **os.system**"
@@ -674,16 +681,25 @@ policies:
             - "/usr/local/bin/python3 -c **subprocess**"
             - "/usr/local/bin/python -c **__import__**"
             - "/usr/local/bin/python3 -c **__import__**"
-            # Versioned binaries in /usr/bin/
+            # Versioned binaries in /usr/bin/ — same literal-prefix limitation applies.
             - "/usr/bin/python3.10 -c **os.system**"
             - "/usr/bin/python3.11 -c **os.system**"
             - "/usr/bin/python3.12 -c **os.system**"
+            - "/usr/bin/python3.13 -c **os.system**"
+            - "/usr/bin/python3.14 -c **os.system**"
+            - "/usr/bin/python3.15 -c **os.system**"
             - "/usr/bin/python3.10 -c **subprocess**"
             - "/usr/bin/python3.11 -c **subprocess**"
             - "/usr/bin/python3.12 -c **subprocess**"
+            - "/usr/bin/python3.13 -c **subprocess**"
+            - "/usr/bin/python3.14 -c **subprocess**"
+            - "/usr/bin/python3.15 -c **subprocess**"
             - "/usr/bin/python3.10 -c **__import__**"
             - "/usr/bin/python3.11 -c **__import__**"
             - "/usr/bin/python3.12 -c **__import__**"
+            - "/usr/bin/python3.13 -c **__import__**"
+            - "/usr/bin/python3.14 -c **__import__**"
+            - "/usr/bin/python3.15 -c **__import__**"
             # urllib download-and-exec via absolute paths
             - "/usr/bin/python3 -c **urlopen**"
             - "/usr/bin/python -c **urlopen**"
@@ -1034,7 +1050,7 @@ policies:
 # ---------------------------------------------------------------------------
 # APPROVAL EXAMPLES (uncomment and customize)
 # ---------------------------------------------------------------------------
-# Use require_approval for commands that aren't dangerous enough to block
+# Use ask for commands that aren't dangerous enough to block
 # outright, but risky enough that a human should decide.
 #
 # How it works:
@@ -1378,7 +1394,7 @@ policies:
             - "reagentc /enable*"
         message: "Windows boot configuration modification blocked"
 
-  # ── Windows-specific require_approval policies ────────────────────────────
+  # ── Windows-specific ask policies ─────────────────────────────────────────
 
   - name: require-windows-process-management
     description: "Require approval for terminating critical Windows processes"
@@ -1527,3 +1543,15 @@ policies:
             - "msiexec /i*"
             - "msiexec /x*"
         message: "Windows package installation requires approval"
+
+  # Explicit catch-all at lowest priority (10000) to preserve permissive behavior
+  # for the standard profile without using default_action: allow (which triggers
+  # a lint warning). deny-wins evaluation means all deny/ask rules above still
+  # fire first — this only applies when nothing else matched. Do not remove.
+  - name: allow-unmatched
+    priority: 10000
+    rules:
+      - action: allow
+        when:
+          default: true
+        message: "No matching standard policy rule"
