@@ -351,12 +351,15 @@ func doctorPolicies(emit emitFn) int {
 		lintResult := engine.LintPolicyFile(path)
 		count := len(cfg.Policies)
 		rel := relHome(path, home)
+		isManagedEmptyCustom := strings.EqualFold(filepath.Base(path), "custom.yaml") && count == 0
 		switch {
 		case lintResult.HasErrors():
 			emit("Policy", "fail",
 				fmt.Sprintf("~/%s (%d policies, %d lint error(s))", rel, count, lintResult.Errors)+
 					hintSep+fmt.Sprintf("rampart policy lint %s", path))
 			issues++
+		case isManagedEmptyCustom:
+			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid placeholder)", rel, count))
 		case lintResult.Warnings > 0:
 			emit("Policy", "warn",
 				fmt.Sprintf("~/%s (%d policies, %d lint warning(s))", rel, count, lintResult.Warnings)+

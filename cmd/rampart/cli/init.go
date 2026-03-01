@@ -255,7 +255,19 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 						return fmt.Errorf("cli: write init output: %w", err)
 					}
 				default:
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Config and policies already exist (use --force to overwrite)\n"); err != nil {
+					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Config and policies already exist."); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "--force overwrites %s and ~/.rampart/policies/%s.yaml.\n", path, selectedProfile); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
+					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "It preserves ~/.rampart/token and does not touch custom policy files (including ~/.rampart/policies/custom.yaml)."); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
+					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "To update just your standard policy: rampart policy fetch standard --force"); err != nil {
+						return fmt.Errorf("cli: write init output: %w", err)
+					}
+					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "To reset everything: rampart init --force"); err != nil {
 						return fmt.Errorf("cli: write init output: %w", err)
 					}
 				}

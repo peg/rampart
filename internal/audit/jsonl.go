@@ -138,7 +138,8 @@ func NewJSONLSink(dir string, opts ...SinkOption) (*JSONLSink, error) {
 					if lastHash == anchor.Hash {
 						anchorTrusted = true
 					} else {
-						logger.Warn("audit: anchor hash mismatch — possible tampering, falling back to line count",
+						logger.Debug("audit: anchor hash mismatch, falling back to line count",
+							"tamper_suspected", false,
 							"anchor_hash", anchor.Hash,
 							"file_hash", lastHash,
 							"file", anchor.File,

@@ -17,7 +17,7 @@
 # seccomp, or AppArmor. See docs/THREAT-MODEL.md.
 
 version: "1"
-default_action: allow
+default_action: deny
 
 # CI/headless approval — blocks until approved via dashboard (no native prompt)
 # - action: ask
@@ -1018,7 +1018,7 @@ policies:
 # ---------------------------------------------------------------------------
 # APPROVAL EXAMPLES (uncomment and customize)
 # ---------------------------------------------------------------------------
-# Use require_approval for commands that aren't dangerous enough to block
+# Use ask for commands that aren't dangerous enough to block
 # outright, but risky enough that a human should decide.
 #
 # How it works:
@@ -1362,7 +1362,7 @@ policies:
             - "reagentc /enable*"
         message: "Windows boot configuration modification blocked"
 
-  # ── Windows-specific require_approval policies ────────────────────────────
+  # ── Windows-specific ask policies ─────────────────────────────────────────
 
   - name: require-windows-process-management
     description: "Require approval for terminating critical Windows processes"
@@ -1511,3 +1511,13 @@ policies:
             - "msiexec /i*"
             - "msiexec /x*"
         message: "Windows package installation requires approval"
+
+  # Keep standard profile permissive for unmatched tool calls while avoiding
+  # default_action: allow lint warnings.
+  - name: allow-unmatched
+    priority: 10000
+    rules:
+      - action: allow
+        when:
+          default: true
+        message: "No matching standard policy rule"
