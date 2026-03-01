@@ -489,7 +489,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.mode == "enforce" && decision.Action == engine.ActionRequireApproval {
+	if s.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk) {
 		// Check if this run has been bulk-approved (auto-approve cache).
 		if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
 			s.logger.Debug("proxy: run auto-approved, bypassing approval queue", "tool", toolName, "run_id", call.RunID)
@@ -608,9 +608,11 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 	// Fire webhook notification if configured
 	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
 		actionStr := decision.Action.String()
-		// require_approval notifications are sent after pending approval
-		// creation so they can include approval metadata.
-		if actionStr != engine.ActionRequireApproval.String() && s.shouldNotify(actionStr) {
+		// require_approval and ask notifications are sent after pending approval
+		// creation so they can include approval metadata (approval_id etc.).
+		if actionStr != engine.ActionRequireApproval.String() &&
+			actionStr != engine.ActionAsk.String() &&
+			s.shouldNotify(actionStr) {
 			call := engine.ToolCall{
 				Tool:      toolName,
 				Params:    req.Params,
@@ -639,9 +641,9 @@ func (s *Server) shouldNotify(actionStr string) bool {
 		return false
 	}
 	if len(s.notifyConfig.On) == 0 {
-		// Default to deny + require_approval so operators get alerted for
+		// Default to deny + require_approval/ask so operators get alerted for
 		// blocked calls and pending human-approval decisions out of the box.
-		return actionStr == "deny" || actionStr == "require_approval"
+		return actionStr == "deny" || actionStr == "require_approval" || actionStr == "ask"
 	}
 	for _, on := range s.notifyConfig.On {
 		if on == actionStr {

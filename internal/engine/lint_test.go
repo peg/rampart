@@ -477,7 +477,7 @@ policies:
 `)
 	result := LintPolicyFile(path)
 	for _, f := range result.Findings {
-		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+		if f.Severity == LintInfo && strings.Contains(f.Message, `action "ask" uses the native Claude Code permission prompt`) {
 			t.Errorf("unexpected ask warning for claude-code-scoped policy: %s", f.Message)
 		}
 	}
@@ -501,7 +501,7 @@ policies:
 	result := LintPolicyFile(path)
 	found := false
 	for _, f := range result.Findings {
-		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+		if f.Severity == LintInfo && strings.Contains(f.Message, `action "ask" uses the native Claude Code permission prompt`) {
 			found = true
 		}
 	}
@@ -529,7 +529,7 @@ policies:
 	result := LintPolicyFile(path)
 	found := false
 	for _, f := range result.Findings {
-		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+		if f.Severity == LintInfo && strings.Contains(f.Message, `action "ask" uses the native Claude Code permission prompt`) {
 			found = true
 		}
 	}
@@ -557,7 +557,7 @@ policies:
 	result := LintPolicyFile(path)
 	found := false
 	for _, f := range result.Findings {
-		if f.Severity == LintWarning && strings.Contains(f.Message, `action "ask" is only supported`) {
+		if f.Severity == LintInfo && strings.Contains(f.Message, `action "ask" uses the native Claude Code permission prompt`) {
 			found = true
 		}
 	}

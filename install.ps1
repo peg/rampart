@@ -218,7 +218,10 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Success "Rampart installed successfully!"
 Write-Host ""
-Write-Host "  Try it now:" -ForegroundColor White
+Write-Host "  Get started:" -ForegroundColor White
+Write-Host "    rampart quickstart" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Or try it now:" -ForegroundColor White
 Write-Host "    rampart version" -ForegroundColor Cyan
 Write-Host "    rampart test `"rm -rf /`"" -ForegroundColor Cyan
 Write-Host ""

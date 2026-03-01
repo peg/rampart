@@ -180,7 +180,7 @@ policies:
             - "rm -rf /var/cache"
             - "rm -rf /var/cache/**"
         message: "Destructive command blocked"
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "shred **"
@@ -322,7 +322,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "sudo **"
@@ -968,7 +968,7 @@ policies:
     match:
       tool: ["fetch", "web_search", "web_fetch", "browser"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           call_count:
             gte: 100
@@ -1047,7 +1047,7 @@ policies:
 #    match:
 #      tool: ["exec"]
 #    rules:
-#      - action: require_approval
+#      - action: ask
 #        when:
 #          command_matches:
 #            - "kubectl apply *"
@@ -1062,7 +1062,7 @@ policies:
 #    match:
 #      tool: ["exec"]
 #    rules:
-#      - action: require_approval
+#      - action: ask
 #        when:
 #          command_matches:
 #            - "pip install *"
@@ -1385,7 +1385,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "taskkill *lsass*"
@@ -1405,7 +1405,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             # sc.exe service manipulation
@@ -1432,7 +1432,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             # schtasks.exe
@@ -1454,7 +1454,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             # netsh firewall commands
@@ -1473,7 +1473,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             # net user commands
@@ -1494,7 +1494,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_contains:
             - "Set-ExecutionPolicy"
@@ -1509,7 +1509,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             # winget

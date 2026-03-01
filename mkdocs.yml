@@ -127,7 +127,6 @@ nav:
     - Overview: integrations/index.md
     - Claude Code: integrations/claude-code.md
     - Cline: integrations/cline.md
-    - Cursor: integrations/cursor.md
     - Claude Desktop: integrations/claude-desktop.md
     - Codex CLI: integrations/codex-cli.md
     - OpenClaw: integrations/openclaw.md
@@ -147,6 +146,12 @@ nav:
     - Prompt Injection Protection: guides/prompt-injection.md
     - Customizing Policy: guides/customizing-policy.md
     - Install via an AI Agent: guides/agent-install.md
+  - Team & Compliance:
+    - Policy Registry: guides/policy-registry.md
+    - Policy Sync: guides/policy-sync.md
+    - Compliance Reporting: guides/compliance.md
+  - Migration:
+    - Migrating to v0.6.6: migration/v0.6.6.md
   - Deployment:
     - User Separation: deployment/user-separation.md
     - Production Checklist: deployment/production-checklist.md

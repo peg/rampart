@@ -28,7 +28,7 @@ After running `rampart setup claude-code`, dangerous commands are blocked immedi
 
 Run `rampart serve` if you want:
 - **Live dashboard** — `rampart watch` shows real-time decisions
-- **Approval flow** — `require_approval` policies need serve to handle human review
+- **Approval flow** — `action: ask` policies need serve to handle human review
 - **Centralized audit** — stream events to the dashboard
 
 ```powershell
@@ -70,7 +70,7 @@ rampart test "rm -rf /"
 |---------|--------|-------|
 | `rampart serve --background` | ❌ Unix only | Uses fork/exec |
 | `rampart serve stop` | ❌ Unix only | Uses SIGTERM |
-| `rampart upgrade` | ❌ Unix only | Re-run installer instead |
+| `rampart upgrade` | ✅ Works | Downloads `.zip` asset, replaces `rampart.exe` |
 | `rampart wrap` | ❌ Unix only | Uses `$SHELL` |
 | `rampart preload` | ❌ Linux only | Uses LD_PRELOAD |
 

@@ -104,7 +104,7 @@ irm https://rampart.sh/install.ps1 | iex
 ```
 
 > **Tip:** The curl installer drops the binary in `~/.local/bin` and runs `rampart quickstart` automatically.
-> Pin a version with `RAMPART_VERSION=v0.4.7 curl -fsSL https://rampart.sh/install | bash`.
+> Pin a version with `RAMPART_VERSION=v0.7.0 curl -fsSL https://rampart.sh/install | bash`.
 >
 > Run `rampart version` to confirm.
 
@@ -414,7 +414,7 @@ Audit events are tagged with the current session, auto-detected from git as `rep
 
 ```yaml
 rules:
-  - action: require_approval
+  - action: ask
     when:
       session_matches: ["myapp/main", "myapp/production"]
     message: "Exec on production branch requires approval"
@@ -444,7 +444,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches: ["kubectl apply *", "terraform apply *"]
         message: "Production deployment requires approval"
@@ -456,7 +456,7 @@ How approval reaches you depends on your environment:
 
 ```mermaid
 graph LR
-    PE[Policy Engine] -->|require_approval| D{Environment}
+    PE[Policy Engine] -->|ask| D{Environment}
     D -->|Claude Code| CC["Native prompt<br/>(ask hook)"]
     D -->|MCP Client| MCP["Block & wait<br/>(proxy holds request)"]
     D -->|OpenClaw| OC["Chat message<br/>(approve in-chat)"]
@@ -770,9 +770,28 @@ rampart log --deny                           # Show only denies
 rampart log -n 50 --today                    # Last 50 events from today
 
 # Policy
-rampart init [--profile standard|paranoid|ci|yolo] # Initialize global policy
+rampart init [--profile standard|paranoid|ci|yolo|research-agent|mcp-server] # Initialize global policy
 rampart init --defaults                            # Alias for --force — reset to defaults
 rampart init --project                             # Create .rampart/policy.yaml for team-shared rules
+rampart policy lint [file]                         # Lint policy file for warnings
+rampart policy explain "git status"                # Trace evaluation against loaded policy
+
+# Community policies
+rampart policy list                                # Browse community policy registry
+rampart policy fetch <name>                        # Download and install a community policy
+rampart policy remove <name>                       # Remove an installed community policy
+
+# Team policy sync (git-based)
+rampart policy sync <https-git-url>               # One-shot sync from a git repo
+rampart policy sync <url> --watch                  # Foreground polling (default: 5m interval)
+rampart policy sync status                         # Show current sync state
+rampart policy sync stop                           # Stop a running --watch process
+
+# Compliance reporting
+rampart report compliance                          # AIUC-1 compliance report (text)
+rampart report compliance --format json            # JSON output for CI/tooling
+rampart report compliance --since 2026-01-01       # Scoped to date range
+rampart report compliance --output report.json     # Write to file
 
 # Benchmarking
 rampart bench                                      # Score policy coverage against attack corpus
@@ -785,8 +804,6 @@ rampart serve stop                                 # Stop a background server st
 rampart serve install                              # Install as a boot service (systemd/launchd), default port 9090
 rampart serve --syslog localhost:514               # With syslog output
 rampart serve --approval-timeout 2h               # Custom approval expiry (default: 1h)
-rampart policy check                               # Validate YAML
-rampart policy explain "git status"                # Trace evaluation
 
 # Upgrade
 rampart upgrade                                    # Download latest binary + refresh built-in policies

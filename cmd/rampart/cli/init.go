@@ -247,11 +247,11 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 						return fmt.Errorf("cli: write init output: %w", err)
 					}
 				case configWritten:
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created %s (policies already exist)\n", path); err != nil {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created %s (policy already exists — use --force to overwrite)\n", path); err != nil {
 						return fmt.Errorf("cli: write init output: %w", err)
 					}
 				case policyWritten:
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created ~/.rampart/policies/%s.yaml (config already exists at %s)\n", selectedProfile, path); err != nil {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Created ~/.rampart/policies/%s.yaml (config already exists at %s — use --force to overwrite)\n", selectedProfile, path); err != nil {
 						return fmt.Errorf("cli: write init output: %w", err)
 					}
 				default:
