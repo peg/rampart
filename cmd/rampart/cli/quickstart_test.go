@@ -29,6 +29,8 @@ func TestDetectEnv_OpenClaw(t *testing.T) {
 func TestDetectEnv_ClaudeCode(t *testing.T) {
 	// Ensure OpenClaw marker is absent so Claude Code takes priority.
 	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
+	t.Setenv("CLINE_ACTIVE", "")
+	t.Setenv("CLINE_SESSION", "")
 
 	// Create a temp claude settings file
 	tmp := t.TempDir()
@@ -49,6 +51,8 @@ func TestDetectEnv_ClaudeCode(t *testing.T) {
 func TestDetectEnv_None(t *testing.T) {
 	// Ensure OpenClaw marker is absent.
 	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
+	t.Setenv("CLINE_ACTIVE", "")
+	t.Setenv("CLINE_SESSION", "")
 
 	tmp := t.TempDir()
 	testSetHome(t, tmp)
@@ -60,6 +64,53 @@ func TestDetectEnv_None(t *testing.T) {
 
 	if got := detectEnv(); got != "" {
 		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestDetectEnv_ClineFromEnv(t *testing.T) {
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
+	t.Setenv("CLINE_ACTIVE", "1")
+	t.Setenv("CLINE_SESSION", "")
+
+	if got := detectEnv(); got != "cline" {
+		t.Errorf("expected cline, got %q", got)
+	}
+}
+
+func TestDetectEnv_ClineFromExtensionDir(t *testing.T) {
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
+	t.Setenv("CLINE_ACTIVE", "")
+	t.Setenv("CLINE_SESSION", "")
+
+	tmp := t.TempDir()
+	testSetHome(t, tmp)
+
+	if err := os.MkdirAll(filepath.Join(tmp, ".vscode", "extensions", "cline-1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := detectEnv(); got != "cline" {
+		t.Errorf("expected cline, got %q", got)
+	}
+}
+
+func TestDetectEnv_ClinePreferredOverClaudeCode(t *testing.T) {
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
+	t.Setenv("CLINE_ACTIVE", "1")
+	t.Setenv("CLINE_SESSION", "")
+
+	tmp := t.TempDir()
+	testSetHome(t, tmp)
+
+	if err := os.MkdirAll(filepath.Join(tmp, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".claude", "settings.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := detectEnv(); got != "cline" {
+		t.Errorf("expected cline, got %q", got)
 	}
 }
 

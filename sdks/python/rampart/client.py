@@ -35,7 +35,7 @@ class RampartClient:
     policy server is down.
     
     Args:
-        url: Base URL of the Rampart server (default: http://localhost:19090)
+        url: Base URL of the Rampart server (default: http://localhost:9090)
         token: Bearer token for authentication (default: reads from RAMPART_TOKEN env var)
         fail_open: Whether to allow calls when server is unreachable (default: True)
         timeout: Request timeout in seconds (default: 30)
@@ -54,7 +54,7 @@ class RampartClient:
         fail_open: bool = True,
         timeout: float = 30.0,
     ):
-        self.url = url or os.environ.get("RAMPART_URL", "http://localhost:19090")
+        self.url = url or os.environ.get("RAMPART_URL", "http://localhost:9090")
         self.token = token or os.environ.get("RAMPART_TOKEN")
         self.fail_open = fail_open
         

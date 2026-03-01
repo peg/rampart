@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -140,6 +141,25 @@ func detectEnv() string {
 	// which OpenClaw gateway sets when it spawns an agent process.
 	if os.Getenv("OPENCLAW_SERVICE_MARKER") == "openclaw" {
 		return "openclaw"
+	}
+	// Cline: explicit runtime env is a strong signal.
+	if os.Getenv("CLINE_ACTIVE") != "" || os.Getenv("CLINE_SESSION") != "" {
+		return "cline"
+	}
+	// Cline: detect VS Code extension installs in local/remote environments.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		clineGlobs := []string{
+			filepath.Join(home, ".vscode", "extensions", "saoud-m.vscode-claude-dev-*"),
+			filepath.Join(home, ".vscode", "extensions", "cline-*"),
+			filepath.Join(home, ".vscode-server", "extensions", "saoud-m.vscode-claude-dev-*"),
+			filepath.Join(home, ".vscode-server", "extensions", "cline-*"),
+		}
+		for _, pattern := range clineGlobs {
+			matches, globErr := filepath.Glob(pattern)
+			if globErr == nil && len(matches) > 0 {
+				return "cline"
+			}
+		}
 	}
 	// Claude Code: settings.json or binary
 	if _, err := os.Stat(claudeSettingsPath()); err == nil {

@@ -38,7 +38,7 @@ class TestRampartClient:
     def test_init_defaults(self):
         """Test client initialization with defaults."""
         client = RampartClient()
-        assert client.url == "http://localhost:19090"
+        assert client.url == "http://localhost:9090"
         assert client.token is None
         assert client.fail_open is True
     
@@ -85,7 +85,7 @@ class TestRampartClient:
         result = client.health()
         assert result is True
         mock_client_instance.get.assert_called_once_with(
-            "http://localhost:19090/healthz"
+            "http://localhost:9090/healthz"
         )
     
     @patch("rampart.client.httpx.Client")
@@ -136,7 +136,7 @@ class TestRampartClient:
         assert decision.eval_duration_ms == 1.5
         
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/exec",
+            "http://localhost:9090/v1/preflight/exec",
             json={
                 "agent": "test-agent",
                 "session": "test-session",
@@ -193,7 +193,7 @@ class TestRampartClient:
         client.preflight("read", {"path": "/tmp/file"})
         
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/read",
+            "http://localhost:9090/v1/preflight/read",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
@@ -294,7 +294,7 @@ class TestRampartClient:
         
         assert decision.allowed is True
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/exec",
+            "http://localhost:9090/v1/preflight/exec",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
@@ -326,7 +326,7 @@ class TestRampartClient:
         
         assert decision.allowed is True
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/exec",
+            "http://localhost:9090/v1/preflight/exec",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
@@ -361,7 +361,7 @@ class TestRampartClient:
         
         assert decision.allowed is True
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/exec",
+            "http://localhost:9090/v1/preflight/exec",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
@@ -394,7 +394,7 @@ class TestRampartClient:
         assert decision.allowed is True
         assert decision.message == "File read allowed"
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/read",
+            "http://localhost:9090/v1/preflight/read",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
@@ -427,7 +427,7 @@ class TestRampartClient:
         assert decision.allowed is False
         assert decision.action == "deny"
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/write",
+            "http://localhost:9090/v1/preflight/write",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
@@ -461,7 +461,7 @@ class TestRampartClient:
         decision = client.check_write("/tmp/output.txt")
         
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/write",
+            "http://localhost:9090/v1/preflight/write",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
@@ -494,7 +494,7 @@ class TestRampartClient:
         assert decision.allowed is True
         assert decision.action == "log"
         mock_client_instance.post.assert_called_once_with(
-            "http://localhost:19090/v1/preflight/fetch",
+            "http://localhost:9090/v1/preflight/fetch",
             json={
                 "agent": "unknown-agent",
                 "session": "unknown-session",
