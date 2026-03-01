@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-01
+
+### Fixed
+
+- **Windows upgrade** (`rampart upgrade`): binary now upgrades correctly on Windows. The previous approach called `rename` over the running executable, which Windows forbids. The new approach renames the current binary to `.rampart.exe.old` first (Windows permits renaming a running process), then renames the new binary into place. The `.old` file is cleaned up on the next upgrade.
+- **`action: ask` proxy routing**: requests handled by `rampart serve` now correctly return HTTP 202 and queue a pending approval, matching `require_approval` behaviour. Previously, `ask` fell through to HTTP 200/allow.
+- **Double webhook for `ask` decisions**: the immediate webhook notification now skips `ask` decisions (same as `require_approval`), so the webhook fires once — after the approval is created — with full approval metadata.
+- **`rampart init` partial output**: when a config or policy file already exists, the output now includes a `--force` hint so users know how to overwrite.
+- **Standard policy lint**: `rampart doctor` now shows 1 lint warning instead of 17. All `require_approval` entries in `policies/standard.yaml` migrated to `action: ask`; the ask-agent-scope check downgraded from warning to info (deny fallback for non-Claude Code agents is intentional).
+- **`rampart report compliance` output**: AIUC-1 explanation header and per-control remediation hints added to text format. JSON output unchanged.
+- **Install script**: post-install CTA updated to `rampart quickstart` (both `install.sh` and `install.ps1`).
+
+### Added
+
+- **Tests for zip extraction** (`extractRampartBinaryFromZip`): covers basic extraction, goreleaser subdirectory layout, and not-found error.
+- **200 MiB decompression cap** on zip extraction (defense in depth).
+
+### Docs
+
+- New guides: [Policy Registry](guides/policy-registry.md), [Policy Sync](guides/policy-sync.md), [Compliance Reporting](guides/compliance.md)
+- New migration guide: [Migrating to v0.6.6](migration/v0.6.6.md) (previously 404'd from lint deprecation warnings)
+- Cursor and Windsurf removed from supported agents list (support removed in v0.6.0)
+- `require_approval` → `action: ask` updated across windows.md, ci-headless.md, securing-claude-desktop.md, openclaw-approval.md, wazuh-integration.md, README
+- `rampart upgrade` Windows limitation removed from windows.md (now works)
+- README: v0.7.0 CLI reference added; version pin example updated
+
 ## [0.7.0] - 2026-02-28
 
 ### Added

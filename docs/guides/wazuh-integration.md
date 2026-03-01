@@ -90,7 +90,7 @@ Create `/var/ossec/etc/rules/rampart_rules.xml` on the Wazuh manager:
   <!-- Approval required -->
   <rule id="100304" level="8">
     <if_sid>100300</if_sid>
-    <field name="action">require_approval</field>
+    <field name="action">ask</field>
     <description>Rampart: AI agent tool call requires approval - $(tool) - $(command)</description>
     <group>rampart_approval</group>
   </rule>
@@ -165,7 +165,7 @@ CEF:0|Rampart|PolicyEngine|0.1.7|deny|Destructive command blocked|8|src=claude-c
 |---------------|-------------|-------------|
 | allow | 3 | Informational — normal operation |
 | watch | 5 | Notable — flagged for review |
-| require_approval | 8 | Security event — needs human approval |
+| ask | 8 | Security event — tool call queued for human approval |
 | deny | 10 | Alert — blocked by policy |
 | deny (credentials) | 12 | High alert — credential access attempt |
 | deny (exfiltration) | 13 | Critical — data exfiltration attempt |
