@@ -5,7 +5,7 @@
 Rampart and OpenClaw can work together to enforce human-in-the-loop control for risky agent actions.
 
 - Rampart evaluates tool calls against policy.
-- When a rule returns `require_approval`, Rampart returns `202 Accepted` plus an `approval_id`.
+- When a rule returns `action: ask` (with `audit: true`), Rampart returns `202 Accepted` plus an `approval_id`.
 - Rampart sends a notification webhook to chat (Discord/Slack/OpenClaw webhook).
 - A human approves or denies in chat through OpenClaw.
 - OpenClaw resolves the pending Rampart approval via the resolve API, then the shim can continue.
@@ -13,7 +13,7 @@ Rampart and OpenClaw can work together to enforce human-in-the-loop control for 
 ## Architecture
 
 ```text
-Agent → Rampart Shim → Rampart HTTP API → require_approval
+Agent → Rampart Shim → Rampart HTTP API → action: ask
                                         → 202 + approval_id
                                         → webhook fires to Discord/Slack
                                         → OpenClaw receives notification
@@ -29,14 +29,14 @@ Agent → Rampart Shim → Rampart HTTP API → require_approval
 notify:
   url: "https://discord.com/api/webhooks/..."
   platform: discord
-  on: [deny, require_approval]
+  on: [deny, ask]
 
 policies:
   - name: dangerous-commands
     match:
       tool: [exec]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches: ["^(rm|terraform|kubectl delete)"]
         message: "Requires human approval"

@@ -24,7 +24,7 @@ The `ci.yaml` preset is a strict variant of the standard policy:
 | Standard Policy | CI Policy |
 |-----------------|-----------|
 | `action: ask` → native prompt | `action: deny` |
-| `action: require_approval` → dashboard | `action: deny` |
+| `action: ask` (with `audit: true`) → dashboard | `action: deny` |
 | Package installs → approval | Package installs → **blocked** |
 | Cloud uploads → approval | Cloud uploads → **blocked** |
 | Persistence changes → approval | Persistence changes → **blocked** |
@@ -33,7 +33,7 @@ The `ci.yaml` preset is a strict variant of the standard policy:
 
 **Problem:** In CI, there's no human to click "Allow" on Claude Code's permission prompt. Without the CI preset:
 - `action: ask` rules hang forever waiting for input
-- `action: require_approval` rules poll the dashboard indefinitely
+- `action: ask` (with `audit: true`) rules poll the dashboard indefinitely
 - Your pipeline times out or runs forever
 
 **Solution:** The CI preset converts all interactive rules to denies. The agent completes (or fails fast) with no human intervention needed.
