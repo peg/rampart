@@ -238,6 +238,12 @@ func hasInstalledPolicy() bool {
 			continue
 		}
 		name := strings.ToLower(e.Name())
+		// custom.yaml is an auto-managed placeholder — it is always present and
+		// contains no policies by default. Exclude it so a fresh install with only
+		// custom.yaml still triggers standard policy auto-init.
+		if name == "custom.yaml" {
+			continue
+		}
 		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
 			return true
 		}

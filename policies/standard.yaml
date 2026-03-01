@@ -1512,8 +1512,10 @@ policies:
             - "msiexec /x*"
         message: "Windows package installation requires approval"
 
-  # Keep standard profile permissive for unmatched tool calls while avoiding
-  # default_action: allow lint warnings.
+  # Explicit catch-all at lowest priority (10000) to preserve permissive behavior
+  # for the standard profile without using default_action: allow (which triggers
+  # a lint warning). deny-wins evaluation means all deny/ask rules above still
+  # fire first — this only applies when nothing else matched. Do not remove.
   - name: allow-unmatched
     priority: 10000
     rules:
