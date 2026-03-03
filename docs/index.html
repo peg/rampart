@@ -70,6 +70,14 @@
             -webkit-font-smoothing: antialiased;
         }
 
+        code {
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+            font-size: 0.85em;
+            background: var(--surface-2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
         .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
         .container-narrow { max-width: 780px; margin: 0 auto; padding: 0 24px; }
 
@@ -266,15 +274,15 @@
             opacity: 0;
             animation: fadeInRow 0.4s ease forwards;
         }
-        .watch-row:nth-child(1) { animation-delay: 0.5s; }
-        .watch-row:nth-child(2) { animation-delay: 1.5s; }
-        .watch-row:nth-child(3) { animation-delay: 2.3s; }
-        .watch-row:nth-child(4) { animation-delay: 3.0s; }
-        .watch-row:nth-child(5) { animation-delay: 3.6s; }
-        .watch-row:nth-child(6) { animation-delay: 5.0s; }
-        .watch-row:nth-child(7) { animation-delay: 5.8s; }
-        .watch-row:nth-child(8) { animation-delay: 7.0s; }
-        .watch-row:nth-child(9) { animation-delay: 8.5s; }
+        .watch-row:nth-of-type(1) { animation-delay: 0.5s; }
+        .watch-row:nth-of-type(2) { animation-delay: 1.5s; }
+        .watch-row:nth-of-type(3) { animation-delay: 2.3s; }
+        .watch-row:nth-of-type(4) { animation-delay: 3.0s; }
+        .watch-row:nth-of-type(5) { animation-delay: 3.6s; }
+        .watch-row:nth-of-type(6) { animation-delay: 5.0s; }
+        .watch-row:nth-of-type(7) { animation-delay: 5.8s; }
+        .watch-row:nth-of-type(8) { animation-delay: 7.0s; }
+        .watch-row:nth-of-type(9) { animation-delay: 8.5s; }
         .watch-allow .watch-icon { color: var(--green); }
         .watch-deny .watch-icon { color: var(--red); }
         .watch-deny .watch-cmd { color: var(--red); }
@@ -827,35 +835,6 @@
     </div>
 </section>
 
-<!-- From Audit -->
-<section style="padding:80px 0; border-top:1px solid var(--border);">
-    <div class="container">
-        <div class="section-label">Zero-config onboarding</div>
-        <h2 class="section-title">Watch first, enforce later</h2>
-        <p class="section-desc">Don't write policies from scratch. Let your agent work normally, observe what it does, then generate rules that match.</p>
-        <div class="steps">
-            <div class="step">
-                <div class="step-num">1</div>
-                <h3>Observe</h3>
-                <pre class="step-code">rampart quickstart --profile monitor</pre>
-                <p>Run in monitor mode. Rampart logs every tool call without blocking anything. Your agent works exactly as before.</p>
-            </div>
-            <div class="step">
-                <div class="step-num">2</div>
-                <h3>Generate</h3>
-                <pre class="step-code">rampart init --from-audit ~/.rampart/audit/</pre>
-                <p>Analyze your audit logs and auto-generate a policy YAML tailored to your agent's actual workflow. Only allows what it actually needs.</p>
-            </div>
-            <div class="step">
-                <div class="step-num">3</div>
-                <h3>Enforce</h3>
-                <pre class="step-code">rampart serve</pre>
-                <p>Switch to enforce mode. Your agent keeps doing exactly what it was doing — everything else gets blocked.</p>
-            </div>
-        </div>
-    </div>
-</section>
-
 <!-- Features -->
 <section class="features">
     <div class="container">
@@ -865,9 +844,9 @@
         <div class="feature-grid">
             <div class="feature-card">
                 <div class="feature-icon">⚡</div>
-                <h3>Microsecond overhead</h3>
-                <p>Policy evaluation in single-digit microseconds. Your agent won't notice it's there. Single Go binary, zero runtime dependencies.</p>
-                <span class="feature-stat">~5µs avg evaluation</span>
+                <h3>Zero noticeable overhead</h3>
+                <p>Policy checks happen instantly — faster than a network round-trip by orders of magnitude. Single Go binary, zero runtime dependencies.</p>
+                <span class="feature-stat">sub-millisecond</span>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🔗</div>
@@ -935,6 +914,11 @@
                 <pre class="step-code">rampart watch</pre>
                 <p>Live dashboard. Green for allowed, red for denied. Audit trail writes automatically.</p>
             </div>
+        </div>
+        <div style="margin-top:48px; padding:28px; background:var(--surface); border:1px solid var(--border); border-radius:12px; max-width:780px;">
+            <p style="font-size:0.85rem; color:var(--text); line-height:1.7;">
+                <strong style="color:var(--heading);">Don't want to write policies from scratch?</strong> Start in monitor mode with <code style="color:var(--accent);">rampart quickstart --profile monitor</code>, let your agent work normally, then run <code style="color:var(--accent);">rampart init --from-audit</code> to auto-generate a policy from your audit logs. Only allows what your agent actually needs.
+            </p>
         </div>
     </div>
 </section>
@@ -1034,45 +1018,45 @@ brew install rampart</pre>
 </section>
 
 <!-- FAQ -->
-<section id="faq" style="padding: 80px 0;">
+<section id="faq" style="padding: 80px 0; border-top: 1px solid var(--border);">
     <div class="container">
-        <h2 style="text-align: center; margin-bottom: 48px;">Frequently Asked Questions</h2>
+        <h2 class="section-title" style="text-align: center; margin-bottom: 48px;">Frequently Asked Questions</h2>
         <div style="max-width: 720px; margin: 0 auto;">
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">What happens if Rampart crashes?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Your tools keep working. Rampart fails open by default — if the policy engine is unreachable, commands pass through normally. You'll never get locked out of your own machine.</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">What happens if Rampart crashes?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Your tools keep working. Rampart fails open by default — if the policy engine is unreachable, commands pass through normally. You'll never get locked out of your own machine.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">How do I update Rampart?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Same way you installed it. <code>brew upgrade rampart</code> for Homebrew, <code>go install github.com/peg/rampart/cmd/rampart@latest</code> for Go, or download the latest binary from <a href="https://github.com/peg/rampart/releases" style="color: var(--accent);">GitHub Releases</a>. Your policies and audit logs are untouched.</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">How do I update Rampart?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Same way you installed it. <code>brew upgrade rampart</code> for Homebrew, <code>go install github.com/peg/rampart/cmd/rampart@latest</code> for Go, or download the latest binary from <a href="https://github.com/peg/rampart/releases" style="color: var(--accent);">GitHub Releases</a>. Your policies and audit logs are untouched.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">How do I uninstall?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Run <code>rampart setup claude-code --remove</code> (or <code>cline --remove</code> / <code>openclaw --remove</code>) to cleanly remove hooks. Then uninstall the binary with <code>brew uninstall rampart</code> or delete it. Policies and logs live in <code>~/.rampart/</code> — delete that folder to fully clean up.</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">How do I uninstall?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Run <code>rampart setup claude-code --remove</code> (or <code>cline --remove</code> / <code>openclaw --remove</code>) to cleanly remove hooks. Then uninstall the binary with <code>brew uninstall rampart</code> or delete it. Policies and logs live in <code>~/.rampart/</code> — delete that folder to fully clean up.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">What's the performance impact?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Policy evaluation takes less than 10 microseconds — you won't notice it. Rampart adds no measurable latency to your agent's workflow. The policy engine is a pure pattern matcher with no network calls (unless you opt into webhook-based semantic verification).</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">What's the performance impact?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Effectively zero. Policy checks are pure in-memory pattern matching — no network calls, no disk I/O, no measurable impact on your agent's workflow. The optional semantic verification sidecar does use an LLM call, but only when you opt in and only for ambiguous cases.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Does it work on Windows?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Yes. Install with PowerShell: <code>irm https://rampart.sh/install.ps1 | iex</code>. The policy engine and hook integrations (Claude Code, Cline) work fully on Windows. Shell wrapping (<code>rampart wrap</code>) and LD_PRELOAD are Linux/macOS only. See the <a href="https://docs.rampart.sh/guides/windows/" style="color: var(--accent);">Windows guide</a> for details.</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">Does it work on Windows?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Yes. Install with PowerShell: <code>irm https://rampart.sh/install.ps1 | iex</code>. The policy engine and hook integrations (Claude Code, Cline) work fully on Windows. Shell wrapping (<code>rampart wrap</code>) and LD_PRELOAD are Linux/macOS only. See the <a href="https://docs.rampart.sh/guides/windows/" style="color: var(--accent);">Windows guide</a> for details.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can I use project-specific policies?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Yes. Put a <code>rampart.yaml</code> in your project root and Rampart will use it. You can also layer global policies (<code>~/.rampart/policies/</code>) with project-specific overrides.</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">Can I use project-specific policies?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Yes. Put a <code>rampart.yaml</code> in your project root and Rampart will use it. You can also layer global policies (<code>~/.rampart/policies/</code>) with project-specific overrides.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can my agent bypass Rampart?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Pattern-based deny rules can be evaded by obfuscated commands (quoting, variable expansion). For high-security environments, use allowlist mode: set <code>default_action: deny</code> — only explicitly permitted commands run, and evasion techniques fail by default. Rampart also blocks agents from modifying their own policies (<code>rampart allow</code>, <code>rampart block</code> are blocked when run by an agent).</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">Can my agent bypass Rampart?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Pattern-based deny rules can be evaded by obfuscated commands (quoting, variable expansion). For high-security environments, use allowlist mode: set <code>default_action: deny</code> — only explicitly permitted commands run, and evasion techniques fail by default. Rampart also blocks agents from modifying their own policies (<code>rampart allow</code>, <code>rampart block</code> are blocked when run by an agent).</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can I require human approval for certain commands?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">Yes. Set <code>action: require_approval</code> on any policy rule. Your agent pauses, Rampart sends a notification (Discord, Slack, or any webhook), and the command stays blocked until you approve or deny it from the dashboard or CLI.</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">Can I require human approval for certain commands?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">Yes. Set <code>action: require_approval</code> on any policy rule. Your agent pauses, Rampart sends a notification (Discord, Slack, or any webhook), and the command stays blocked until you approve or deny it from the dashboard or CLI.</p>
             </details>
             <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Is this a sandbox?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">No. Sandboxes isolate the entire process — great for untrusted code, but they break workflows that need real file and network access. Rampart is a policy engine: it lets your agent work normally and only blocks the dangerous stuff.</p>
+                <summary style="cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-bright);">Is this a sandbox?</summary>
+                <p style="margin-top: 12px; font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">No. Sandboxes isolate the entire process — great for untrusted code, but they break workflows that need real file and network access. Rampart is a policy engine: it lets your agent work normally and only blocks the dangerous stuff.</p>
             </details>
         </div>
     </div>
