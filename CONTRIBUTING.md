@@ -1,12 +1,12 @@
 # Contributing to Rampart
 
-Thank you for your interest in Rampart. This document covers the code style, patterns, and conventions that all contributions must follow.
+Rampart is a security product. Code quality isn't optional — it's the product. Every PR is reviewed with the assumption that adversaries will read the source looking for weaknesses.
 
 ## Contributor License Agreement
 
 By submitting a contribution, you agree that your work is licensed under Apache 2.0 and you grant the project maintainers the right to relicense your contributions.
 
-## Code Style
+## Philosophy
 
 Rampart code is tight, purposeful, and readable. Every line earns its place.
 
@@ -16,205 +16,248 @@ Rampart code is tight, purposeful, and readable. Every line earns its place.
 2. **No magic.** A reader should understand any function without scrolling.
 3. **Errors are values.** Handle them explicitly. Never swallow them.
 4. **Comments explain WHY, not WHAT.** The code says what. Comments say why.
-5. **50-line functions.** If a function is longer, it does too much. Extract.
+5. **Extract business logic.** CLI commands wire things together. Logic belongs in `internal/` packages where it can be tested independently.
 
-### Good Code Looks Like This
+## Code Style
+
+### Functions
+
+Keep functions focused. A function that does one thing is easy to test, easy to review, and easy to trust.
+
+**Business logic functions** (engine evaluation, audit writing, policy parsing): aim for **50 lines or fewer**. If you're over 50, you're probably mixing concerns. Extract.
+
+**CLI command handlers** (cobra RunE functions): these are inherently longer because they wire flags, validation, setup, and execution. That's fine — but the *logic they call* should be extracted into testable functions. A 200-line RunE that calls 10 well-tested functions is better than a 50-line RunE that does too little.
+
+**Test functions**: no length limit. Readability matters more than brevity in tests.
+
+### Files
+
+Organize by responsibility, not by arbitrary line counts. A 600-line file that owns one coherent responsibility is better than three 200-line files that force readers to jump around.
+
+Signs a file should be split:
+- It has multiple unrelated type definitions
+- You need to scroll past code you don't care about to find what you need
+- Different contributors would work on different sections simultaneously
+- The file mixes concerns (HTTP handlers + business logic + data access)
+
+### Examples
+
+**Good:**
 
 ```go
 // matchGlob reports whether name matches the glob pattern.
-// Extends filepath.Match with support for command-style patterns
-// where "git *" matches "git push origin main".
+// Extends filepath.Match with "git *" matching "git push origin main",
+// which filepath.Match can't express with its segment-based wildcards.
 func matchGlob(pattern, name string) bool {
-	if pattern == "" {
-		return false
-	}
-	if pattern == "*" {
-		return true
-	}
+    if pattern == "" {
+        return false
+    }
+    if pattern == "*" {
+        return true
+    }
 
-	// Command patterns: "git *" should match "git push origin main".
-	// filepath.Match requires exact segment matching, so we handle
-	// trailing wildcards as prefix checks.
-	if strings.HasSuffix(pattern, " *") {
-		prefix := strings.TrimSuffix(pattern, " *")
-		return name == prefix || strings.HasPrefix(name, prefix+" ")
-	}
+    // Trailing wildcard: "git *" should match any git subcommand.
+    if strings.HasSuffix(pattern, " *") {
+        prefix := strings.TrimSuffix(pattern, " *")
+        return name == prefix || strings.HasPrefix(name, prefix+" ")
+    }
 
-	matched, err := filepath.Match(pattern, name)
-	if err != nil {
-		return false // invalid pattern = no match, not a panic
-	}
-	return matched
+    matched, err := filepath.Match(pattern, name)
+    if err != nil {
+        return false
+    }
+    return matched
 }
 ```
 
-Why this is good:
-- Godoc comment on the function.
-- Comment in the body explains the *why* (filepath.Match doesn't handle this case).
+- Godoc says what and why.
 - Early returns for simple cases.
+- One comment in the body explains the non-obvious behavior.
 - Handles errors without panicking.
-- 20 lines. Does one thing.
 
-### Bad Code Looks Like This
+**Bad:**
 
 ```go
-// DON'T DO THIS
-func processToolCall(call ToolCall, config *Config, logger *slog.Logger, auditSink AuditSink) (interface{}, error) {
-	// check if the tool call is valid
-	if call.Tool == "" {
-		logger.Error("tool is empty")
-		return nil, errors.New("tool is empty")
-	}
-	result := Decision{}
-	for _, p := range config.Policies {
-		if p.Enabled != nil && !*p.Enabled {
-			continue
-		}
-		// ... 150 more lines
-	}
-	// ... audit logging mixed in here
-	// ... approval flow mixed in here
-	return result, nil
+func processToolCall(call ToolCall, config *Config, logger *slog.Logger, sink AuditSink) (any, error) {
+    // validate
+    if call.Tool == "" {
+        return nil, errors.New("tool is empty")
+    }
+    // ... 150 lines mixing evaluation, audit logging, and approval flow
 }
 ```
 
-Why this is bad:
-- `interface{}` instead of `any`.
-- Does too many things (evaluate + audit + approve).
-- 150-line function.
-- Generic name (`processToolCall`).
-- Comment restates the code (`check if the tool call is valid`).
+- Does three things (evaluate + audit + approve).
+- Comment restates the code.
+- Too many parameters — if you need config, logger, and sink, it's a method on a struct.
 
-### Naming Conventions
+### Naming
 
 ```go
-// Package names: lowercase, single word.
-package engine  // ✓
-package policyEngine  // ✗
+package engine              // ✓ lowercase, single word
+package policyEngine        // ✗
 
-// Types: exported, descriptive, noun.
-type PolicyEngine struct{}  // ✓
-type PE struct{}  // ✗
+type Engine struct{}         // ✓ exported, descriptive, noun
+type PE struct{}             // ✗
 
-// Functions: verb-noun for actions, noun for getters.
-func (e *Engine) Evaluate(call ToolCall) Decision  // ✓
-func (e *Engine) DoEvaluation(call ToolCall) Decision  // ✗
-func (p Policy) IsEnabled() bool  // ✓
-func (p Policy) GetEnabled() bool  // ✗ (Java-style getters don't belong in Go)
-
-// Errors: Err prefix for sentinels, wrap with component prefix.
-var ErrDenied = errors.New("rampart: denied")  // ✓
-return fmt.Errorf("engine: load policy: %w", err)  // ✓
-return fmt.Errorf("failed to load: %w", err)  // ✗ (no component prefix)
+func (e *Engine) Evaluate(call ToolCall) Decision  // ✓ verb-noun
+func (p Policy) IsEnabled() bool                   // ✓ predicate
+func (p Policy) GetEnabled() bool                  // ✗ Java-style getter
 ```
 
 ### Error Handling
 
 ```go
-// Always wrap errors with context and component prefix.
+// Wrap with component prefix so errors are traceable through the call stack.
 cfg, err := store.Load()
 if err != nil {
-	return nil, fmt.Errorf("engine: reload failed: %w", err)
+    return fmt.Errorf("engine: reload: %w", err)
 }
 
-// Use errors.Is/As for checking, not string matching.
-if errors.Is(err, os.ErrNotExist) {
-	// handle missing file
-}
+// Use errors.Is/As, not string matching.
+if errors.Is(err, os.ErrNotExist) { ... }
 
 // Never panic in library code. Return errors.
-// Panics are only acceptable in main() for unrecoverable startup failures.
+// Panics are only for unrecoverable startup failures in main().
 ```
 
-### Testing
+## Testing
+
+### Requirements
+
+- **All new code must have tests.** No exceptions.
+- **Critical paths must have benchmarks.** The engine's <10µs eval time is a product guarantee, not a nice-to-have. If your change touches the eval hot path, add or update a benchmark.
+- **Table-driven tests** for anything with multiple input/output cases.
+- **`testify/assert`** for assertions, **`testify/require`** for fatal preconditions.
+
+### Test naming
 
 ```go
-func TestEvaluate_DenyWinsOverAllow(t *testing.T) {
-	tests := []struct {
-		name     string
-		policies []Policy
-		call     ToolCall
-		want     Action
-	}{
-		{
-			name: "deny beats allow at same priority",
-			policies: []Policy{
-				{Name: "allow-all", Rules: []Rule{{Action: "allow", When: Condition{Default: true}}}},
-				{Name: "deny-rm", Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}}},
-			},
-			call: ToolCall{Tool: "exec", Params: map[string]any{"command": "rm -rf /"}},
-			want: ActionDeny,
-		},
-		// ... more cases
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// setup and assertion
-		})
-	}
-}
+func TestEvaluate_DenyWinsOverAllow(t *testing.T)     // ✓ Unit_Behavior
+func TestInitFromAudit_EmptyFile(t *testing.T)         // ✓ Feature_EdgeCase
+func BenchmarkEvaluate(b *testing.B)                   // ✓ always benchmark hot paths
 ```
 
-- Table-driven tests with descriptive names.
-- Test file lives next to source: `engine.go` → `engine_test.go`.
-- Use `testify/assert` for assertions, `testify/require` for fatal checks.
-- Benchmark critical paths:
+### What to test
 
-```go
-func BenchmarkEvaluate(b *testing.B) {
-	engine := setupBenchEngine(b)
-	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "git push"}}
+- **Always test:** edge cases, error paths, security-relevant logic, anything in `internal/engine/`
+- **Always benchmark:** anything in the eval hot path, anything that runs per-tool-call
+- **Skip:** trivial getters, cobra flag wiring, string formatting
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		engine.Evaluate(call)
-	}
-}
+## Performance
+
+Rampart sits in the critical path of every agent tool call. Performance isn't a feature — it's a constraint.
+
+- **Policy evaluation: <10µs per call.** This is tested by `BenchmarkEvaluate`. Any PR that regresses this will be rejected.
+- **No allocations in the hot path** unless unavoidable. Check with `go test -benchmem`.
+- **No network calls during evaluation.** Webhooks and notifications happen asynchronously, after the allow/deny decision.
+
+## Security
+
+This is a security product. Every PR should be reviewed through an adversarial lens.
+
+### Checklist for security-relevant changes
+
+- [ ] Input validation: can a malicious agent craft a tool call that bypasses policy?
+- [ ] Path traversal: does the change handle `../` and symlinks correctly?
+- [ ] Glob safety: can a pattern be crafted to match unintended commands/paths?
+- [ ] Timing: does the change introduce timing side-channels in auth or matching?
+- [ ] Audit integrity: does the change preserve the hash chain?
+- [ ] Fail closed: on error, does the system deny (not allow)?
+
+### Secrets
+
+- Never log secrets, tokens, or credentials — even at debug level.
+- API tokens are compared with `crypto/subtle.ConstantTimeCompare`.
+- Key material uses 0600 file permissions (skip on Windows).
+
+## Dependencies
+
+### Allowed (direct)
+
+| Dependency | Purpose |
+|-----------|---------|
+| `gopkg.in/yaml.v3` | YAML parsing |
+| `github.com/spf13/cobra` | CLI framework |
+| `github.com/fsnotify/fsnotify` | File watching |
+| `github.com/stretchr/testify` | Test assertions |
+| `github.com/oklog/ulid/v2` | Time-ordered event IDs |
+| `github.com/charmbracelet/bubbletea` | TUI (watch command) |
+| `github.com/charmbracelet/huh` | Interactive prompts |
+| `github.com/charmbracelet/lipgloss` | Terminal styling |
+| `github.com/gorilla/websocket` | WebSocket client (daemon mode) |
+| `github.com/prometheus/client_golang` | Metrics endpoint |
+
+### Not allowed
+
+- **HTTP frameworks** (gin, echo, chi) — use `net/http`
+- **ORMs** (gorm, ent) — no database
+- **Config libraries** (viper) — use `gopkg.in/yaml.v3`
+- **Logging frameworks** (logrus, zap) — use `log/slog`
+
+Adding a new dependency requires maintainer approval and a justification in the PR description.
+
+## Git Conventions
+
+### Commits
+
 ```
-
-### File Organization
-
-- Max ~300 lines per file. Split by responsibility.
-- One type per file when the type has significant methods.
-- Test files next to source: `engine.go` → `engine_test.go`.
-
-```
-internal/engine/
-├── engine.go      # Engine struct + Evaluate + Reload
-├── decision.go    # ToolCall, Decision, Action types
-├── policy.go      # Policy, Rule, Config, FileStore types + loading
-├── matcher.go     # Glob matching functions
-└── engine_test.go # All engine tests
-```
-
-### Dependencies
-
-**Allowed:**
-- `gopkg.in/yaml.v3` — YAML parsing
-- `github.com/spf13/cobra` — CLI framework
-- `github.com/fsnotify/fsnotify` — file watching
-- `github.com/stretchr/testify` — test assertions
-- `github.com/oklog/ulid/v2` — event IDs
-- `github.com/charmbracelet/bubbletea` — TUI (watch command only)
-
-**Not allowed (overkill for this project):**
-- gin, echo, chi — use `net/http`
-- gorm — no database in MVP
-- viper — use `gopkg.in/yaml.v3` directly
-- logrus, zap — use `log/slog`
-
-### Git Commits
-
-```
-feat: add deny-wins evaluation to policy engine
+feat: add temporal allows (--for, --once)
 fix: handle empty command in exec interceptor
 test: add benchmark for policy evaluation hot path
 docs: update architecture with behavioral vision
-refactor: extract glob matching into matcher.go
+refactor: extract approval handlers from server.go
+ci: add Docker image build on version tags
+chore: update Go to 1.24
 ```
 
-- Conventional commit prefixes: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `ci:`, `chore:`
+- **Conventional commit prefixes:** `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `ci:`, `chore:`
 - One logical change per commit.
-- All tests pass before committing.
-- No WIP commits in the final history.
+- All tests must pass before committing (`go test ./... && go vet ./...`).
+- No WIP commits in the final history. Squash or rebase before merging.
+
+### Branches
+
+- Feature branches off `staging`: `feat/short-name`, `fix/short-name`
+- PRs target `staging`
+- `staging` → `main` merges are maintainer-only
+
+### PR checklist
+
+- [ ] `go test ./...` passes
+- [ ] `go vet ./...` is clean
+- [ ] New code has tests
+- [ ] Hot path changes include benchmarks
+- [ ] Security-relevant changes include the security checklist above
+- [ ] Commit messages follow conventional format
+- [ ] No new dependencies without justification
+
+## Architecture
+
+```
+cmd/rampart/cli/     CLI command handlers (cobra wiring + flags)
+internal/engine/     Policy evaluation core (HOT PATH — <10µs)
+internal/intercept/  Tool-type normalizers (exec/fs/http)
+internal/proxy/      HTTP server, SSE hub, approval flow
+internal/audit/      Hash-chained JSONL audit trail
+internal/approval/   Human approval queue
+internal/mcp/        MCP JSON-RPC proxy
+internal/daemon/     OpenClaw WebSocket integration
+internal/tlsutil/    TLS certificate management
+internal/policy/     Custom policy file management
+pkg/sdk/             Public Go SDK
+policies/            Built-in policy presets
+```
+
+**The deny-wins rule:** Any deny from any policy = denied. No exceptions. This is the core invariant of the engine and must never be violated.
+
+## Known Tech Debt
+
+We track these so contributors know where improvement is welcome:
+
+- `internal/proxy/server.go` is 1,600+ lines — approval handlers and webhook logic should be extracted into separate files
+- `cmd/rampart/cli/hook.go` mixes CLI wiring with business logic
+- `internal/engine/matcher.go` is approaching 700 lines
+- Some cobra RunE functions exceed 200 lines of wiring
+
+If you want to tackle any of these, open an issue first to discuss the approach.
