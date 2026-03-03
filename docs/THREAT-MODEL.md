@@ -138,14 +138,15 @@ Rampart imposes limits on regex patterns used for response matching to prevent R
 
 These limits protect against both accidental performance degradation and malicious patterns. They prevent policy authors from creating DoS conditions, and prevent attackers from injecting malicious regex patterns via webhook-driven policy updates. Patterns exceeding these limits are rejected at policy load time with clear error messages.
 
-### 8. No TLS on HTTP API
+### 8. TLS on HTTP API
 
-`rampart serve` communicates over plaintext HTTP. On localhost this is acceptable; for remote or team deployments, this means policy decisions transit unencrypted.
+As of v0.7.4, `rampart serve` supports TLS via `--tls-auto` (self-signed ECDSA P-256) or `--tls-cert`/`--tls-key` (bring your own). On localhost, plaintext is still acceptable; for remote or team deployments, enable TLS.
 
-**Mitigations:**
-- Default bind is `127.0.0.1` (localhost only)
-- For remote access, use a reverse proxy with TLS or SSH tunnel
-- TLS support for `rampart serve` is planned for a future release
+**Notes:**
+- Default bind is `127.0.0.1` (localhost only) — TLS is optional for local use
+- `--tls-auto` generates a self-signed cert stored in `~/.rampart/tls/` (1-year validity)
+- The SHA-256 fingerprint is printed on startup for manual verification
+- For production, use proper certs via `--tls-cert`/`--tls-key` or a reverse proxy
 
 ### 9. In-Memory Approval Store
 
@@ -155,6 +156,15 @@ Pending approvals are stored in memory and lost on service restart. If `rampart 
 - Approvals typically resolve within seconds (human clicks approve/deny)
 - Service restarts are rare during active sessions
 - Persistent approval storage is planned for a future release
+
+### 13. Temporal Allow Expiry
+
+v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipped during evaluation** and cleaned up lazily — they are not removed from the policy file immediately on expiry.
+
+**Security implications:**
+- Between expiry and cleanup, the rule exists in the YAML but is inert (evaluation checks `expires_at` before matching)
+- `--once` rules are removed immediately after their first match
+- Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
 
 ### 10. Project Policy Trust
 
@@ -183,6 +193,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
+| `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |
 | MCP proxy | ✅ | ✅ | ✅ | ❌ |
 

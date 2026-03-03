@@ -23,12 +23,15 @@ rampart quickstart -y               # Short form of --yes
 
 ### `rampart setup claude-code`
 
-Install native hooks into Claude Code.
+Install native hooks into Claude Code. Uses Claude Code's native hook system (`hooks.toml`) — no LD_PRELOAD or shim needed.
 
 ```bash
 rampart setup claude-code           # Install hooks
+rampart setup claude-code --force   # Overwrite existing hooks
 rampart setup claude-code --remove  # Remove hooks
 ```
+
+Hooks are installed into Claude Code's config directory and intercept tool calls at the `PreToolUse` and `PostToolUse` lifecycle points. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
 
 ### `rampart setup cline`
 

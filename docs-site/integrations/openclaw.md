@@ -62,8 +62,8 @@ rampart preload -- <agent-command>
 | Codex CLI commands | ✅ `rampart setup codex` | LD_PRELOAD — all child processes |
 | Claude Code commands | ✅ `rampart setup claude-code` | Native hooks |
 | Other sub-agent commands | ✅ `rampart preload --` | LD_PRELOAD — universal |
-| HTTP fetch (`web_fetch` tool) | ⚠️ Not intercepted | Use network policies if needed |
-| Browser automation | ⚠️ Not intercepted | — |
+| HTTP fetch (`web_fetch` tool) | ⚠️ Not intercepted | Uses Node.js HTTP internals, not exec. Use `fetch` tool policies or OS-level firewall rules |
+| Browser automation | ⚠️ Not intercepted | Runs in a separate browser process |
 
 ## How It Works
 
@@ -121,3 +121,7 @@ rampart setup codex --remove      # Remove Codex wrapper
 ```
 
 Policies and audit logs in `~/.rampart/` are preserved.
+
+## Compatibility
+
+Requires OpenClaw 2026.2.x or later. The `--patch-tools` option targets specific internal file paths and is tested against each OpenClaw release — if an upgrade changes the target code, the patch script will exit with an error and file tools will revert to unprotected (fail-open).
