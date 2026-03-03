@@ -86,11 +86,15 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 	var profile string
 	var detectEnv bool
 	var project bool
+	auditOpts := fromAuditOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Rampart configuration and default policies",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if auditOpts.auditPath != "" {
+				return runInitFromAudit(cmd.OutOrStdout(), auditOpts)
+			}
 			if project {
 				return runInitProject(cmd)
 			}
@@ -282,6 +286,11 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&profile, "profile", "standard", "Default policy profile: standard, paranoid, yolo, block-prompt-injection, research-agent, or mcp-server")
 	cmd.Flags().BoolVar(&detectEnv, "detect", false, "Auto-detect installed tools and generate tailored policy")
 	cmd.Flags().BoolVar(&project, "project", false, "Create .rampart/policy.yaml in the current directory for team-shared project rules")
+	cmd.Flags().StringVar(&auditOpts.auditPath, "from-audit", "", "Generate policy from audit log (JSONL file or directory)")
+	cmd.Flags().StringVar(&auditOpts.since, "since", "", "Only process events from the last duration (e.g. 24h, 7d)")
+	cmd.Flags().BoolVar(&auditOpts.dryRun, "dry-run", false, "Preview generated policy without writing")
+	cmd.Flags().StringVar(&auditOpts.output, "output", "", "Output path for generated policy (default: ~/.rampart/policies/generated.yaml)")
+	cmd.Flags().BoolVar(&auditOpts.merge, "merge", false, "Merge into existing policy file instead of overwriting")
 
 	return cmd
 }
