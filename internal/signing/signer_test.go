@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"runtime"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -132,8 +133,10 @@ func TestLoadOrCreateKeyCreateAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key file: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("expected key file permission 0600, got %04o", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("expected key file permission 0600, got %04o", got)
+		}
 	}
 
 	loaded, err := LoadOrCreateKey(path)
@@ -183,6 +186,9 @@ func TestLoadOrCreateKeyCreateDirError(t *testing.T) {
 }
 
 func TestLoadOrCreateKeyWriteError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping write-permission test on Windows (chmod 0500 not enforced)")
+	}
 	t.Parallel()
 
 	tempDir := t.TempDir()
