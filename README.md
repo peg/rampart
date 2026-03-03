@@ -690,6 +690,44 @@ The proxy adds negligible latency. Agents wait seconds for LLM responses — a f
 
 ---
 
+## OWASP Top 10 for Agentic AI Coverage
+
+Rampart maps to the [OWASP Top 10 Risks for Agentic AI](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/):
+
+| # | Risk | Rampart Coverage |
+|---|------|-----------------|
+| 1 | **Excessive Agency** | ✅ Policy engine enforces least-privilege per tool call. Deny-wins evaluation, YAML allowlists. |
+| 2 | **Unauthorized Tool Use** | ✅ Every tool call evaluated before execution. `action: deny` blocks, `action: ask` requires human approval. |
+| 3 | **Insecure Tool Implementation** | ✅ Response-side scanning detects credential leaks in tool output (AWS keys, private keys, API tokens). |
+| 4 | **Prompt Injection → Tool Abuse** | ✅ Pattern matching + optional LLM verification ([rampart-verify](https://github.com/peg/rampart-verify)) catches injected commands regardless of prompt origin. |
+| 5 | **Insufficient Audit Trail** | ✅ Hash-chained JSONL audit with SIEM export (syslog/CEF). Tamper-evident, survives partial modification. |
+| 6 | **Inadequate Sandboxing** | 🟡 Rampart is a policy engine, not a sandbox. Complementary to container/VM isolation — use both for defense in depth. |
+| 7 | **Insecure Agent Communication** | ✅ Inter-agent tool calls evaluated by the same policy engine. `agent_depth` conditions limit sub-agent privilege escalation. |
+| 8 | **Data Exfiltration** | ✅ Domain-based blocking (`domain_matches`), credential pattern detection in responses, file path restrictions. |
+| 9 | **Uncontrolled Autonomy** | ✅ `require_approval` and `ask` actions enforce human-in-the-loop for sensitive operations. Approval dashboard with HMAC-signed URLs. |
+| 10 | **Overreliance on AI Decisions** | ✅ All decisions logged with full context. `rampart watch` dashboard and webhook notifications keep humans informed. |
+
+### OWASP Top 10 for Agentic Applications (ASI01–ASI10)
+
+Rampart also maps to the newer [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), released at Black Hat Europe 2025:
+
+| # | Risk | Rampart Coverage |
+|---|------|-----------------|
+| ASI01 | **Agent Goal Hijack** | 🟡 Policy engine limits what a hijacked agent can *do* — deny-wins evaluation contains the blast radius even if the agent's goals are altered. |
+| ASI02 | **Tool Misuse & Exploitation** | ✅ Core purpose. Every tool call evaluated against YAML policies. Parameter validation, command pattern matching, approval workflows for sensitive operations. |
+| ASI03 | **Identity & Privilege Abuse** | 🟡 `agent_depth` conditions limit sub-agent privilege escalation. User separation prevents agents from accessing policies/audit. |
+| ASI04 | **Supply Chain Vulnerabilities** | 🟡 Community policy SHA-256 verification. `rampart mcp scan` auto-generates policy from MCP server tool definitions. Project policies can only add restrictions, not weaken global policy. |
+| ASI05 | **Unexpected Code Execution** | ✅ Shell command normalization, interpreter one-liner blocking, LD_PRELOAD cascade for subprocess interception, pattern matching + optional LLM verification for ambiguous commands. |
+| ASI06 | **Memory & Context Poisoning** | ❌ Out of scope — Rampart operates at the tool call layer, not the memory/RAG layer. Use dedicated guardrails for memory integrity. |
+| ASI07 | **Insecure Inter-Agent Communication** | 🟡 Inter-agent tool calls are evaluated by the same policy engine. `agent_depth` conditions control sub-agent nesting depth. |
+| ASI08 | **Cascading Failures** | 🟡 Fail-open design prevents Rampart from cascading. `call_count` rate limiting throttles runaway agents. Webhook notifications alert on anomalies. |
+| ASI09 | **Human-Agent Trust Exploitation** | ✅ `require_approval` and `ask` actions enforce human-in-the-loop for sensitive operations. HMAC-signed approval URLs. Full audit trail for accountability. |
+| ASI10 | **Rogue Agents** | ✅ Hash-chained audit trail makes rogue behavior detectable and verifiable. Response scanning catches credential exfiltration. Policy engine constrains all agents regardless of intent. |
+
+For details, see the [Threat Model](docs/THREAT-MODEL.md).
+
+---
+
 ## Security recommendations
 
 **Self-modification protection.** AI agents cannot bypass their own policy by running `rampart allow`, `rampart block`, or `rampart rules`. These commands are blocked by the standard policy when executed by an agent — policy modifications must be made by a human. This protection covers shell wrappers too (`bash -c 'rampart allow ...'`).
