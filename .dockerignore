@@ -1,0 +1,11 @@
+.git
+.github
+*.md
+!README.md
+LICENSE
+docs-site/
+.rampart/
+.vscode/
+.idea/
+*.test
+coverage.out
