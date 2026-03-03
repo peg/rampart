@@ -1,0 +1,27 @@
+# Example: Rampart as a sidecar proxy for an AI agent
+#
+# Usage:
+#   1. Put your policies in ./policies/
+#   2. docker compose up
+#   3. Configure your agent: RAMPART_API=http://localhost:9090
+
+services:
+  rampart:
+    image: ghcr.io/peg/rampart:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./policies:/home/nonroot/.rampart/policies:ro
+      - rampart-audit:/home/nonroot/.rampart/audit
+    restart: unless-stopped
+
+  # Example agent — replace with your own
+  # agent:
+  #   image: your-agent:latest
+  #   environment:
+  #     RAMPART_API: http://rampart:9090
+  #   depends_on:
+  #     - rampart
+
+volumes:
+  rampart-audit:
