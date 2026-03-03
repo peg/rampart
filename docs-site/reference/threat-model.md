@@ -241,8 +241,8 @@ v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipp
 
 **Security implications:**
 - Expired rules exist in the YAML but are inert — the engine checks `expires_at` before matching
-- `--once` rules are flagged as consumed in decision metadata after their first match, but remain in the YAML
-- Automatic cleanup is not yet implemented — use `rampart rules remove` to clean up expired/consumed rules
+- `--once` rules record consumption in decision metadata after their first match, but the proxy does not call `RemoveRule` — the rule continues to match on subsequent evaluations. This is a known gap; true single-use enforcement requires wiring `Decision.ConsumedOnce` to `persist.RemoveRule` in the proxy layer
+- Automatic cleanup is not yet implemented — use `rampart rules remove` to manually clean up expired or consumed rules
 - Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
 
 ## Self-Modification Protection

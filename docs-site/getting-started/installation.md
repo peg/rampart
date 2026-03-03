@@ -80,7 +80,7 @@ Multi-arch container image (amd64 + arm64), built on distroless for minimal atta
 docker run ghcr.io/peg/rampart:latest serve --addr 0.0.0.0 --port 9090
 ```
 
-Or use with docker-compose:
+Or use with docker-compose. First, create a policy file (e.g. `mkdir policies && rampart init > policies/rampart.yaml`):
 
 ```yaml
 services:
@@ -97,7 +97,7 @@ volumes:
   rampart-audit:
 ```
 
-Available tags: `latest`, `0.7.4`, `0.7`. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+Available tags: `latest`, `0.7.4`, `0.7`. At release time, `latest` points to `0.7.4`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
 
 ## Build from Source
 
