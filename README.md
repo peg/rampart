@@ -707,6 +707,23 @@ Rampart maps to the [OWASP Top 10 Risks for Agentic AI](https://genai.owasp.org/
 | 9 | **Uncontrolled Autonomy** | ✅ `require_approval` and `ask` actions enforce human-in-the-loop for sensitive operations. Approval dashboard with HMAC-signed URLs. |
 | 10 | **Overreliance on AI Decisions** | ✅ All decisions logged with full context. `rampart watch` dashboard and webhook notifications keep humans informed. |
 
+### OWASP Top 10 for Agentic Applications (ASI01–ASI10)
+
+Rampart also maps to the newer [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), released at Black Hat Europe 2025:
+
+| # | Risk | Rampart Coverage |
+|---|------|-----------------|
+| ASI01 | **Agent Goal Hijack** | 🟡 Policy engine limits what a hijacked agent can *do* — deny-wins evaluation contains the blast radius even if the agent's goals are altered. |
+| ASI02 | **Tool Misuse & Exploitation** | ✅ Core purpose. Every tool call evaluated against YAML policies. Parameter validation, command pattern matching, approval workflows for sensitive operations. |
+| ASI03 | **Identity & Privilege Abuse** | 🟡 `agent_depth` conditions limit sub-agent privilege escalation. User separation prevents agents from accessing policies/audit. |
+| ASI04 | **Supply Chain Vulnerabilities** | 🟡 Community policy SHA-256 verification. `rampart mcp scan` auto-generates policy from MCP server tool definitions. Project policies can only add restrictions, not weaken global policy. |
+| ASI05 | **Unexpected Code Execution** | ✅ Shell command normalization, interpreter one-liner blocking, LD_PRELOAD cascade for subprocess interception, pattern matching + optional LLM verification for ambiguous commands. |
+| ASI06 | **Memory & Context Poisoning** | ❌ Out of scope — Rampart operates at the tool call layer, not the memory/RAG layer. Use dedicated guardrails for memory integrity. |
+| ASI07 | **Insecure Inter-Agent Communication** | 🟡 Inter-agent tool calls are evaluated by the same policy engine. `agent_depth` conditions control sub-agent nesting depth. |
+| ASI08 | **Cascading Failures** | 🟡 Fail-open design prevents Rampart from cascading. `call_count` rate limiting throttles runaway agents. Webhook notifications alert on anomalies. |
+| ASI09 | **Human-Agent Trust Exploitation** | ✅ `require_approval` and `ask` actions enforce human-in-the-loop for sensitive operations. HMAC-signed approval URLs. Full audit trail for accountability. |
+| ASI10 | **Rogue Agents** | ✅ Hash-chained audit trail makes rogue behavior detectable and verifiable. Response scanning catches credential exfiltration. Policy engine constrains all agents regardless of intent. |
+
 For details, see the [Threat Model](docs/THREAT-MODEL.md).
 
 ---
