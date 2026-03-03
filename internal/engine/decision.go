@@ -182,6 +182,16 @@ type Decision struct {
 	// this call. Only populated for ActionDeny decisions. Each entry is a
 	// ready-to-run "rampart allow ..." command the user can copy and execute.
 	Suggestions []string
+
+	// ConsumedOnce is set when a once:true rule was matched and should be
+	// removed from the policy file by the caller.
+	ConsumedOnce bool
+
+	// ConsumedRulePolicy is the policy name containing the consumed once rule.
+	ConsumedRulePolicy string
+
+	// ConsumedRuleIndex is the index of the consumed rule within its policy.
+	ConsumedRuleIndex int
 }
 
 // ParseAction converts a string to an Action.

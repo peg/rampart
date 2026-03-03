@@ -112,16 +112,20 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 		finalFromProject      bool
 		matched               []string
 		anyRuleFired          bool
+		consumedOnce          bool
+		consumedPolicy        string
+		consumedRuleIdx       int
 	)
 
 	var finalWebhookConfig *WebhookActionConfig
 
 	for _, p := range matching {
-		action, message, rule, ok := e.evaluatePolicy(p, call)
-		if !ok {
+		res := e.evaluatePolicy(p, call)
+		if !res.matched {
 			continue // no rule matched within this policy
 		}
 
+		action, message, rule := res.action, res.message, res.rule
 		anyRuleFired = true
 		matched = append(matched, p.Name)
 
@@ -184,6 +188,11 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 				finalFromProject = p.Source == "project"
 				finalAudit = false
 				finalHeadlessOnly = false
+				if rule != nil && rule.Once {
+					consumedOnce = true
+					consumedPolicy = p.Name
+					consumedRuleIdx = res.ruleIndex
+				}
 			}
 		}
 	}
@@ -199,14 +208,17 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 	}
 
 	return Decision{
-		Action:            finalAction,
-		Audit:             finalAudit,
-		HeadlessOnly:      finalHeadlessOnly,
-		FromProjectPolicy: finalFromProject,
-		MatchedPolicies:   matched,
-		Message:           finalMessage,
-		EvalDuration:      time.Since(start),
-		WebhookConfig:   finalWebhookConfig,
+		Action:             finalAction,
+		Audit:              finalAudit,
+		HeadlessOnly:       finalHeadlessOnly,
+		FromProjectPolicy:  finalFromProject,
+		MatchedPolicies:    matched,
+		Message:            finalMessage,
+		EvalDuration:       time.Since(start),
+		WebhookConfig:      finalWebhookConfig,
+		ConsumedOnce:       consumedOnce,
+		ConsumedRulePolicy: consumedPolicy,
+		ConsumedRuleIndex:  consumedRuleIdx,
 	}
 }
 
@@ -467,8 +479,22 @@ func (e *Engine) matchesScope(m Match, call ToolCall) bool {
 // evaluatePolicy runs through a policy's rules top-to-bottom and returns
 // the first matching rule's action. Returns ok=false if no rule matches.
 // The returned *Rule pointer is non-nil when a rule matched (for webhook config access).
-func (e *Engine) evaluatePolicy(p Policy, call ToolCall) (Action, string, *Rule, bool) {
+// evaluatePolicyResult holds the result of evaluating a single policy.
+type evaluatePolicyResult struct {
+	action    Action
+	message   string
+	rule      *Rule
+	ruleIndex int
+	matched   bool
+}
+
+func (e *Engine) evaluatePolicy(p Policy, call ToolCall) evaluatePolicyResult {
 	for i, rule := range p.Rules {
+		// Skip expired temporal rules.
+		if rule.IsExpired() {
+			continue
+		}
+
 		if !matchCondition(rule.When, call, e.callCounter) {
 			continue
 		}
@@ -481,13 +507,13 @@ func (e *Engine) evaluatePolicy(p Policy, call ToolCall) (Action, string, *Rule,
 				"error", err,
 			)
 			// Fail closed: invalid rule = deny.
-			return ActionDeny, "invalid rule action; failing closed", nil, true
+			return evaluatePolicyResult{ActionDeny, "invalid rule action; failing closed", nil, i, true}
 		}
 
-		return action, rule.Message, &p.Rules[i], true
+		return evaluatePolicyResult{action, rule.Message, &p.Rules[i], i, true}
 	}
 
-	return ActionAllow, "", nil, false
+	return evaluatePolicyResult{matched: false}
 }
 
 func (e *Engine) evaluateResponsePolicies(

@@ -143,6 +143,19 @@ type Rule struct {
 
 	// Webhook configures the external webhook for action: webhook rules.
 	Webhook *WebhookActionConfig `yaml:"webhook,omitempty"`
+
+	// ExpiresAt is an optional UTC timestamp after which this rule is ignored.
+	// Used by `rampart allow --for <duration>` to create time-scoped exceptions.
+	ExpiresAt *time.Time `yaml:"expires_at,omitempty"`
+
+	// Once marks this rule as single-use. After it matches and allows a call,
+	// it should be removed from the policy file.
+	Once bool `yaml:"once,omitempty"`
+}
+
+// IsExpired returns true if the rule has an expiry time that has passed.
+func (r Rule) IsExpired() bool {
+	return r.ExpiresAt != nil && time.Now().UTC().After(*r.ExpiresAt)
 }
 
 // AskActionConfig defines optional behavior for action: ask rules.

@@ -52,6 +52,10 @@ type CustomRule struct {
 	Message string          `yaml:"message,omitempty"`
 	// Added records when the rule was created; not used by the policy engine.
 	Added time.Time `yaml:"added,omitempty"`
+	// ExpiresAt is an optional UTC timestamp after which this rule is ignored.
+	ExpiresAt *time.Time `yaml:"expires_at,omitempty"`
+	// Once marks this rule as single-use; removed after first match.
+	Once bool `yaml:"once,omitempty"`
 }
 
 // CustomCondition holds the match conditions for a rule.
@@ -130,6 +134,45 @@ func SaveCustomPolicy(path string, p *CustomPolicy) error {
 //   - pattern: a glob pattern for the command or file path
 //   - message: a human-readable description (may be empty)
 //   - tool:    "exec", "read", "write", "edit", or "" for auto-detection
+// TemporalOpts holds optional temporal parameters for rule creation.
+type TemporalOpts struct {
+	ExpiresAt *time.Time
+	Once      bool
+}
+
+// AddRuleTemporal adds a rule with optional temporal constraints.
+// Delegates to AddRule for the core logic, then applies ExpiresAt/Once
+// to the newly appended rule. The entry name is derived the same way
+// AddRule derives it, so we know which entry was modified.
+func (p *CustomPolicy) AddRuleTemporal(action, pattern, message, tool string, opts TemporalOpts) error {
+	prevCounts := p.ruleCounts()
+
+	if err := p.AddRule(action, pattern, message, tool); err != nil {
+		return err
+	}
+
+	// Find the entry that grew by one rule — that's where AddRule appended.
+	for i := range p.Policies {
+		prev := prevCounts[p.Policies[i].Name]
+		if len(p.Policies[i].Rules) > prev {
+			r := &p.Policies[i].Rules[len(p.Policies[i].Rules)-1]
+			r.ExpiresAt = opts.ExpiresAt
+			r.Once = opts.Once
+			return nil
+		}
+	}
+	return nil
+}
+
+// ruleCounts snapshots the number of rules per entry name.
+func (p *CustomPolicy) ruleCounts() map[string]int {
+	counts := make(map[string]int, len(p.Policies))
+	for _, e := range p.Policies {
+		counts[e.Name] = len(e.Rules)
+	}
+	return counts
+}
+
 func (p *CustomPolicy) AddRule(action, pattern, message, tool string) error {
 	if strings.TrimSpace(pattern) == "" {
 		return fmt.Errorf("pattern cannot be empty")
