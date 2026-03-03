@@ -155,7 +155,7 @@ rampart init --detect                 # Auto-detect environment
 
 ### `rampart init --from-audit`
 
-Generate policy YAML from audit logs. The "learn mode → enforce mode" pattern: observe what your agent does, then generate rules that match.
+Generate policy YAML from audit logs — the "learn mode → enforce mode" workflow. Observe what your agent does, then generate rules that match.
 
 ```bash
 rampart init --from-audit ~/.rampart/audit/audit.jsonl          # Generate from audit log
