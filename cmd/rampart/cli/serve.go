@@ -29,11 +29,14 @@ import (
 	"syscall"
 	"time"
 
+	crypto_tls "crypto/tls"
+
 	"github.com/fsnotify/fsnotify"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/proxy"
 	"github.com/peg/rampart/internal/signing"
+	"github.com/peg/rampart/internal/tlsutil"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +67,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var reloadInterval time.Duration
 	var approvalTimeout time.Duration
 	var background bool
+	var tlsCert string
+	var tlsKey string
+	var tlsAuto bool
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -136,6 +142,31 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 			if listenAddr != "" && net.ParseIP(listenAddr) == nil {
 				return fmt.Errorf("serve: invalid --addr %q (must be a valid IP address, e.g. 127.0.0.1 or ::1)", listenAddr)
+			}
+
+			// Validate TLS flags.
+			if (tlsCert == "") != (tlsKey == "") {
+				return fmt.Errorf("serve: --tls-cert and --tls-key must be used together")
+			}
+			if tlsCert != "" && tlsAuto {
+				return fmt.Errorf("serve: --tls-cert/--tls-key and --tls-auto are mutually exclusive")
+			}
+
+			// Resolve TLS config.
+			var tlsCfg *crypto_tls.Config
+			var tlsFingerprint string
+			if tlsAuto {
+				var err error
+				tlsCfg, tlsFingerprint, err = tlsutil.LoadOrGenerate(tlsutil.DefaultCertDir())
+				if err != nil {
+					return fmt.Errorf("serve: tls auto: %w", err)
+				}
+			} else if tlsCert != "" {
+				var err error
+				tlsCfg, tlsFingerprint, err = tlsutil.LoadFromFiles(tlsCert, tlsKey)
+				if err != nil {
+					return fmt.Errorf("serve: tls: %w", err)
+				}
 			}
 
 			level := slog.LevelInfo
@@ -351,7 +382,14 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 
 				fmt.Fprintf(cmd.ErrOrStderr(), "  🔑 Full token : %s\n", token)
-				fmt.Fprintf(cmd.ErrOrStderr(), "  🌐 Dashboard  : http://localhost:%d/dashboard/\n", listenPort)
+				scheme := "http"
+				if tlsCfg != nil {
+					scheme = "https"
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "  🌐 Dashboard  : %s://localhost:%d/dashboard/\n", scheme, listenPort)
+				if tlsCfg != nil && tlsFingerprint != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  🔒 TLS        : sha256:%s\n", tlsFingerprint[:23]+"...")
+				}
 
 				// Persist the token so it survives restarts.
 				if err := persistToken(token); err != nil {
@@ -365,7 +403,13 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				proxyErrCh = make(chan error, 1)
 				go func() {
-					proxyErrCh <- proxyServer.Serve(listener)
+					if tlsCfg != nil {
+						// Wrap the listener with TLS.
+						tlsListener := crypto_tls.NewListener(listener, tlsCfg)
+						proxyErrCh <- proxyServer.Serve(tlsListener)
+					} else {
+						proxyErrCh <- proxyServer.Serve(listener)
+					}
 				}()
 			}
 
@@ -452,6 +496,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 0, "How often to re-read policy files (0 = disabled; fsnotify handles hot-reload automatically)")
 	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 1h)")
+	cmd.Flags().StringVar(&tlsCert, "tls-cert", "", "Path to TLS certificate PEM file")
+	cmd.Flags().StringVar(&tlsKey, "tls-key", "", "Path to TLS private key PEM file")
+	cmd.Flags().BoolVar(&tlsAuto, "tls-auto", false, "Auto-generate self-signed TLS certificate")
 
 	cmd.AddCommand(newServeInstallCmd(opts, nil))
 	cmd.AddCommand(newServeUninstallCmd(nil))
