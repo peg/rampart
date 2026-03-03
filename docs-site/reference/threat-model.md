@@ -222,6 +222,17 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
 **Best practice:** Restrict sudo to the specific commands your agent needs (e.g., `apt`, `systemctl`, `k3s`) rather than granting blanket access. This limits the blast radius regardless of Rampart.
 
+### 12. API Self-Approval
+
+The HTTP API uses a single bearer token for both tool call evaluation and administrative actions (approving requests, deleting rules, reloading policy). In same-user deployments, the agent can read `~/.rampart/token` and approve its own denied requests by hitting `POST /v1/approvals/{id}/resolve` directly.
+
+**Mitigations:**
+- User separation prevents the agent from reading the token file
+- The standard policy blocks reads of `**/.rampart/**` via write/edit tools
+- Splitting eval and admin tokens is tracked in [#180](https://github.com/peg/rampart/issues/180)
+
+**Current status:** This is a known gap in same-user deployments. The fix (separate eval and admin tokens) is designed and will ship in a future release with zero user friction — both tokens auto-generate and the shim only receives the eval token.
+
 ## Self-Modification Protection
 
 Rampart protects its own configuration from agent tampering through two layers:
