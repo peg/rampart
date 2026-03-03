@@ -202,6 +202,17 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
 **Sudo caveat:** An agent with unrestricted `sudo` (`NOPASSWD: ALL`) can bypass user separation. Restrict sudo to specific commands your agent needs rather than granting blanket access.
 
+## Self-Modification Protection
+
+Rampart protects its own configuration from agent tampering through two layers:
+
+1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and shell redirects to `.rampart/` directories. This prevents agents from running CLI commands that modify policy.
+2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This prevents agents from directly overwriting policy files, config, or audit logs via file tools.
+
+Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections — it's named that way for a reason.
+
+**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), or kill the `rampart serve` process (triggering fail-open). User separation mitigates both: run `rampart serve` as a different user than the agent.
+
 ## Philosophy
 
 Rampart is a **seatbelt, not a roll cage**. It catches the vast majority of dangerous situations an AI agent will encounter — accidental or manipulated. It doesn't claim to stop every possible attack vector, and we're honest about what falls outside its scope.
