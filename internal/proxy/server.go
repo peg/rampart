@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -282,6 +283,26 @@ func (s *Server) ListenAndServe(addr string) error {
 
 	if err := srv.Serve(listener); err != nil {
 		return fmt.Errorf("proxy: listen and serve: %w", err)
+	}
+	return nil
+}
+
+// ListenAndServeTLS starts serving HTTPS requests at addr with the given TLS config.
+func (s *Server) ListenAndServeTLS(addr string, tlsCfg *tls.Config) error {
+	listener, err := tls.Listen("tcp", addr, tlsCfg)
+	if err != nil {
+		return fmt.Errorf("proxy: tls listen: %w", err)
+	}
+	s.listenAddr = listener.Addr().String()
+
+	srv := s.newHTTPServer(s.listenAddr, s.handler())
+
+	s.mu.Lock()
+	s.server = srv
+	s.mu.Unlock()
+
+	if err := srv.Serve(listener); err != nil {
+		return fmt.Errorf("proxy: tls serve: %w", err)
 	}
 	return nil
 }
