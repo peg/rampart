@@ -274,6 +274,7 @@
         .watch-row:nth-child(6) { animation-delay: 5.0s; }
         .watch-row:nth-child(7) { animation-delay: 5.8s; }
         .watch-row:nth-child(8) { animation-delay: 7.0s; }
+        .watch-row:nth-child(9) { animation-delay: 8.5s; }
         .watch-allow .watch-icon { color: var(--green); }
         .watch-deny .watch-icon { color: var(--red); }
         .watch-deny .watch-cmd { color: var(--red); }
@@ -582,6 +583,7 @@
             .hero { padding: 60px 0 48px; }
             .steps { grid-template-columns: 1fr; gap: 24px; }
             .pos-grid { grid-template-columns: 1fr; }
+            #policy-example .container > div { grid-template-columns: 1fr !important; }
             nav .links a.hide-mobile { display: none; }
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
@@ -674,7 +676,7 @@
                 <div class="terminal-title">rampart watch</div>
             </div>
             <div class="terminal-body">
-                <div class="terminal-header">RAMPART WATCH — enforce mode — 5 policies matched</div>
+                <div class="terminal-header">RAMPART WATCH — enforce mode — 6 policies matched</div>
                 <div style="margin-bottom: 4px; color: #58a6ff; font-size: 0.78rem;">LIVE FEED</div>
 
                 <div class="watch-row watch-deny">
@@ -733,9 +735,16 @@
                     <div class="watch-cmd">rm -rf /</div>
                     <div class="watch-policy">[block-destructive]</div>
                 </div>
+                <div class="watch-row watch-deny">
+                    <div class="watch-icon">●</div>
+                    <div class="watch-time">21:03:52</div>
+                    <div class="watch-tool" style="color:var(--cyan);">resp</div>
+                    <div class="watch-cmd">read .env → <span style="color:var(--red);font-style:italic;">blocked: response contained AWS_SECRET_ACCESS_KEY</span></div>
+                    <div class="watch-policy">[block-credential-leak]</div>
+                </div>
 
                 <div class="terminal-footer">
-                    STATS: 8 total | 4 allow | 3 deny | 1 log<br>
+                    STATS: 9 total | 4 allow | 4 deny | 1 log<br>
                     UPTIME: 2m | POLICIES: standard.yaml | AGENT: all
                 </div>
             </div>
@@ -767,6 +776,81 @@
 <span style="color:#22c55e;">✔</span> npm install        <span style="color:#484f58;"># allowed</span>
 <span style="color:#22c55e;">✔</span> pytest --db-url ... <span style="color:#484f58;"># allowed</span>
 <span style="color:#FF6392;">✗</span> cat ~/.ssh/id_rsa   <span style="color:#484f58;"># denied</span></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Policy Example -->
+<section class="features" id="policy-example">
+    <div class="container">
+        <div class="section-label">Simple YAML policies</div>
+        <h2 class="section-title">Security rules you can actually read</h2>
+        <p class="section-desc">Your policies are plain YAML — version-control them alongside your code. Here's what the default policy looks like:</p>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; max-width:780px;">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden;">
+                <div style="padding:12px 16px; border-bottom:1px solid var(--border); font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--text);">rampart.yaml</div>
+                <pre style="padding:16px; margin:0; font-family:'SF Mono','Fira Code',monospace; font-size:0.78rem; line-height:1.7; color:var(--text); overflow-x:auto;"><span style="color:#484f58;"># Block credential access</span>
+<span style="color:var(--accent);">- name:</span> block-credentials
+  <span style="color:var(--accent);">match:</span>
+    <span style="color:var(--accent);">tool:</span> [read, exec]
+  <span style="color:var(--accent);">rules:</span>
+    - <span style="color:var(--accent);">action:</span> deny
+      <span style="color:var(--accent);">when:</span>
+        <span style="color:var(--accent);">path_matches:</span> <span style="color:var(--green);">"~/.ssh/**"</span>
+    - <span style="color:var(--accent);">action:</span> deny
+      <span style="color:var(--accent);">when:</span>
+        <span style="color:var(--accent);">path_matches:</span> <span style="color:var(--green);">"**/.env"</span>
+
+<span style="color:#484f58;"># Log all network calls</span>
+<span style="color:var(--accent);">- name:</span> log-network
+  <span style="color:var(--accent);">rules:</span>
+    - <span style="color:var(--accent);">action:</span> log
+      <span style="color:var(--accent);">when:</span>
+        <span style="color:var(--accent);">command_matches:</span> <span style="color:var(--green);">"curl *"</span></pre>
+            </div>
+            <div style="display:flex; flex-direction:column; justify-content:center; gap:20px;">
+                <div>
+                    <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Allow, deny, or log</h3>
+                    <p style="font-size:0.9rem; color:var(--text); line-height:1.6;">Three actions. Match on command patterns, file paths, tool types, or domains. Composable rules that layer global + project policies.</p>
+                </div>
+                <div>
+                    <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Response scanning</h3>
+                    <p style="font-size:0.9rem; color:var(--text); line-height:1.6;">Block credentials in tool <em>responses</em> before they reach your agent's context window. Your agent reads a file containing an AWS key — Rampart blocks the response, not the read.</p>
+                </div>
+                <div>
+                    <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Human approval gates</h3>
+                    <p style="font-size:0.9rem; color:var(--text); line-height:1.6;">Set <code style="color:var(--accent);">action: require_approval</code> on any rule. Agent pauses, you get notified, approve or deny from the dashboard.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- From Audit -->
+<section style="padding:80px 0; border-top:1px solid var(--border);">
+    <div class="container">
+        <div class="section-label">Zero-config onboarding</div>
+        <h2 class="section-title">Watch first, enforce later</h2>
+        <p class="section-desc">Don't write policies from scratch. Let your agent work normally, observe what it does, then generate rules that match.</p>
+        <div class="steps">
+            <div class="step">
+                <div class="step-num">1</div>
+                <h3>Observe</h3>
+                <pre class="step-code">rampart quickstart --profile monitor</pre>
+                <p>Run in monitor mode. Rampart logs every tool call without blocking anything. Your agent works exactly as before.</p>
+            </div>
+            <div class="step">
+                <div class="step-num">2</div>
+                <h3>Generate</h3>
+                <pre class="step-code">rampart init --from-audit ~/.rampart/audit/</pre>
+                <p>Analyze your audit logs and auto-generate a policy YAML tailored to your agent's actual workflow. Only allows what it actually needs.</p>
+            </div>
+            <div class="step">
+                <div class="step-num">3</div>
+                <h3>Enforce</h3>
+                <pre class="step-code">rampart serve</pre>
+                <p>Switch to enforce mode. Your agent keeps doing exactly what it was doing — everything else gets blocked.</p>
             </div>
         </div>
     </div>
@@ -811,6 +895,18 @@
                 <h3>SIEM-compatible audit</h3>
                 <p>Syslog (RFC 5424) and CEF export. Wazuh integration guide. TLS on the policy server. Webhook notifications to Slack and Discord.</p>
             </div>
+        </div>
+    </div>
+</section>
+
+<!-- Architecture -->
+<section style="padding:80px 0; border-top:1px solid var(--border);">
+    <div class="container">
+        <div class="section-label">Architecture</div>
+        <h2 class="section-title">How it fits into your stack</h2>
+        <p class="section-desc">Rampart sits between your agent and the OS. Every tool call passes through the policy engine before it executes.</p>
+        <div style="max-width:780px; margin:0 auto; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:32px; text-align:center;">
+            <img src="architecture.svg" alt="Rampart architecture diagram showing agent tool calls flowing through the policy engine" style="max-width:100%; height:auto; border-radius:8px;" loading="lazy">
         </div>
     </div>
 </section>
