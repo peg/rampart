@@ -182,7 +182,13 @@ v0.4.4 added 17 macOS-specific built-in policies covering Keychain access, Gatek
 
 ### Platform Notes: Windows
 
-v0.6.6 added Windows policy parity. LD_PRELOAD is not available on Windows. Use native hooks or wrap mode instead.
+v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
+
+- **No LD_PRELOAD** — `rampart preload` is not available. Use native hooks or wrap mode instead.
+- **No POSIX file permissions** — `chmod 0600` is not enforced by the OS. Token files and signing keys are created with default permissions; use Windows ACLs for hardening.
+- **Binary upgrade** — Windows forbids overwriting a running executable. `rampart upgrade` renames the current binary to `.rampart.exe.old` first, then installs the new one.
+- **Path separators** — Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
+- **Service management** — `rampart serve install` creates a Windows service (not systemd/launchd). Auto-restart is configured by default.
 
 ## Deployment Recommendations
 
