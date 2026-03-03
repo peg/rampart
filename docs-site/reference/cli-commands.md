@@ -23,7 +23,7 @@ rampart quickstart -y               # Short form of --yes
 
 ### `rampart setup claude-code`
 
-Install native hooks into Claude Code. Uses Claude Code's native hook system (`hooks.toml`) — no LD_PRELOAD or shim needed.
+Install native hooks into Claude Code. Adds a `PreToolUse` hook to `~/.claude/settings.json` — no LD_PRELOAD or shim needed.
 
 ```bash
 rampart setup claude-code           # Install hooks
@@ -31,7 +31,7 @@ rampart setup claude-code --force   # Overwrite existing hooks
 rampart setup claude-code --remove  # Remove hooks
 ```
 
-Hooks are installed into Claude Code's config directory and intercept tool calls at the `PreToolUse` and `PostToolUse` lifecycle points. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
+Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `PreToolUse` lifecycle point. A `PostToolUseFailure` hook is also registered for audit logging. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
 
 ### `rampart setup cline`
 
@@ -167,7 +167,6 @@ rampart init --from-audit ~/.rampart/audit/audit.jsonl          # Generate from 
 rampart init --from-audit ~/.rampart/audit/ --since 24h         # Last 24 hours only
 rampart init --from-audit ~/.rampart/audit/ --dry-run           # Preview without writing
 rampart init --from-audit ~/.rampart/audit/ --output policy.yaml  # Custom output path
-rampart init --from-audit ~/.rampart/audit/ --merge             # Merge with existing policy
 ```
 
 Only allowed events are used for rule generation — denied events represent behavior you don't want to codify.
@@ -297,7 +296,7 @@ rampart allow "docker *" --for 1h             # Expires after 1 hour
 rampart allow "npm publish" --once             # Single-use — removed after first match
 ```
 
-`--for` accepts Go duration strings (`1h`, `30m`, `24h`, `2h30m`). The rule is skipped during evaluation once expired and cleaned up lazily. `--once` rules are removed immediately after their first match.
+`--for` accepts Go duration strings (`1h`, `30m`, `24h`, `2h30m`). Expired rules are skipped during evaluation (the `expires_at` timestamp is checked before matching). `--once` rules are flagged as consumed after their first match. In both cases the rules remain in the YAML file until manually removed via `rampart rules remove`.
 
 ### `rampart block`
 

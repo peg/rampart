@@ -77,7 +77,7 @@ sudo mv rampart /usr/local/bin/
 Multi-arch container image (amd64 + arm64), built on distroless for minimal attack surface:
 
 ```bash
-docker run ghcr.io/peg/rampart:latest serve --bind 0.0.0.0:9090
+docker run ghcr.io/peg/rampart:latest serve --addr 0.0.0.0 --port 9090
 ```
 
 Or use with docker-compose:
@@ -91,7 +91,7 @@ services:
     volumes:
       - ./policies:/policies:ro
       - rampart-audit:/audit
-    command: ["serve", "--bind", "0.0.0.0:9090", "--config", "/policies/rampart.yaml", "--audit-dir", "/audit"]
+    command: ["serve", "--addr", "0.0.0.0", "--port", "9090", "--config", "/policies/rampart.yaml", "--audit-dir", "/audit"]
 
 volumes:
   rampart-audit:

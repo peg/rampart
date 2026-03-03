@@ -45,7 +45,7 @@ rampart setup codex
 
 This creates a wrapper at `~/.local/bin/codex` that transparently routes every command through Rampart's policy engine. The wrapper inherits to all child processes — no configuration needed per sub-agent.
 
-For Claude Code, use `rampart setup claude-code` which installs native hooks.
+For Claude Code, use `rampart setup claude-code` which adds hooks to `~/.claude/settings.json`.
 
 For any other CLI agent, use `rampart preload`:
 
@@ -126,4 +126,4 @@ Policies and audit logs in `~/.rampart/` are preserved.
 
 ## Compatibility
 
-Requires OpenClaw 2026.2.x or later. The `--patch-tools` option targets specific internal file paths and is tested against each OpenClaw release — if an upgrade changes the target code, the patch script will exit with an error and file tools will revert to unprotected (fail-open).
+Requires OpenClaw 2026.2.x or later. The `--patch-tools` option targets specific internal file paths and is tested against each OpenClaw release — if an upgrade changes the target code, the patch script logs warnings for each failed injection point and continues. File tools that couldn't be patched will be unprotected (fail-open) without a hard error, so check the output of `rampart setup openclaw --patch-tools` after upgrades.
