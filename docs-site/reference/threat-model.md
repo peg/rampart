@@ -6,7 +6,7 @@ Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, no
 
 ## What Rampart Is
 
-A firewall for AI agent tool calls. It evaluates commands, file operations, and network requests against YAML policies and makes allow/deny/log decisions in microseconds. It's designed to catch the 95%+ case: an AI agent that hallucinated a dangerous command or got manipulated by a prompt injection.
+A firewall for AI agent tool calls. It evaluates agent tool calls — shell commands, file operations, and fetch requests — against YAML policies and makes allow/deny/log decisions in microseconds. Rampart sees what the agent framework sends it (tool call metadata), not raw syscalls or network traffic. It's designed to catch the 95%+ case: an AI agent that hallucinated a dangerous command or got manipulated by a prompt injection.
 
 ## Primary Threat: Misbehaving AI Agents
 
