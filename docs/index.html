@@ -13,6 +13,9 @@
     <meta property="og:url" content="https://rampart.sh">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:site" content="@rampartsec">
+    <meta name="twitter:title" content="Rampart — Guardrails for AI agents">
+    <meta name="twitter:description" content="Open-source guardrails for AI agents. Set boundaries without slowing them down.">
+    <meta name="twitter:image" content="https://rampart.sh/og.png">
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -48,6 +51,7 @@
             --accent-dim: #cc4f75;
             --accent-bg: rgba(255, 99, 146, 0.1);
             --accent-border: rgba(255, 99, 146, 0.2);
+            --text-dim: #71717a;
             --green: #22c55e;
             --red: #ef4444;
             --orange: #f59e0b;
@@ -58,7 +62,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: 'Archivo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: var(--bg);
             color: var(--text);
             line-height: 1.7;
@@ -76,6 +80,7 @@
             position: sticky;
             top: 0;
             background: rgba(9, 9, 11, 0.85);
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
             z-index: 100;
         }
@@ -253,6 +258,22 @@
         .watch-tool { color: #8b949e; }
         .watch-cmd { color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .watch-policy { color: #484f58; font-size: 0.75rem; }
+        @keyframes fadeInRow {
+            0% { opacity: 0; transform: translateY(4px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        .watch-row {
+            opacity: 0;
+            animation: fadeInRow 0.4s ease forwards;
+        }
+        .watch-row:nth-child(1) { animation-delay: 0.5s; }
+        .watch-row:nth-child(2) { animation-delay: 1.5s; }
+        .watch-row:nth-child(3) { animation-delay: 2.3s; }
+        .watch-row:nth-child(4) { animation-delay: 3.0s; }
+        .watch-row:nth-child(5) { animation-delay: 3.6s; }
+        .watch-row:nth-child(6) { animation-delay: 5.0s; }
+        .watch-row:nth-child(7) { animation-delay: 5.8s; }
+        .watch-row:nth-child(8) { animation-delay: 7.0s; }
         .watch-allow .watch-icon { color: var(--green); }
         .watch-deny .watch-icon { color: var(--red); }
         .watch-deny .watch-cmd { color: var(--red); }
@@ -565,6 +586,9 @@
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
         }
+        @media (prefers-reduced-motion: reduce) {
+            .watch-row { opacity: 1; animation: none; }
+        }
         @media (max-width: 480px) {
             .hero h1 { font-size: 1.8rem; }
             .hero-buttons { flex-direction: column; align-items: stretch; gap: 10px; }
@@ -584,7 +608,7 @@
 
 <nav>
     <div class="inner">
-        <span class="logo">
+        <a href="/" class="logo">
             <svg width="28" height="28" viewBox="0 0 104 104" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <mask id="mask0" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="105" height="105">
                     <rect width="49.264" height="21.895" rx="3" transform="matrix(1 0 0 -1 0 49.264)" fill="white"/>
@@ -605,7 +629,7 @@
                 </defs>
             </svg>
             rampart
-        </span>
+        </a>
         <div class="links">
             <a href="https://docs.rampart.sh">Docs</a>
             <a href="https://docs.rampart.sh/reference/threat-model/" class="hide-mobile">Threat Model</a>
@@ -630,11 +654,11 @@
             Set boundaries for what your AI agent can do — without breaking its workflow. One YAML file controls shell commands, file access, and MCP tools. Your agent keeps working. The dangerous stuff gets blocked.
         </p>
         <div class="hero-buttons">
-            <a href="https://github.com/peg/rampart" class="btn btn-primary">
+            <a href="#install" class="btn btn-primary">Install →</a>
+            <a href="https://github.com/peg/rampart" class="btn btn-ghost">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
                 View on GitHub
             </a>
-            <a href="#install" class="btn btn-ghost">Install →</a>
         </div>
     </div>
 </section>
@@ -753,7 +777,7 @@
     <div class="container">
         <div class="section-label">Under the hood</div>
         <h2 class="section-title">Guardrails that stay out of your way</h2>
-        <p class="section-desc">One Go binary. No daemon. No cloud dependency. Evaluates every tool call in microseconds against your YAML rules.</p>
+        <p class="section-desc">Single Go binary. No cloud dependency. Evaluates every tool call in microseconds against your YAML rules. Think of it as a seatbelt, not a cage.</p>
         <div class="feature-grid">
             <div class="feature-card">
                 <div class="feature-icon">⚡</div>
@@ -784,8 +808,8 @@
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🏢</div>
-                <h3>Enterprise-ready</h3>
-                <p>Syslog and CEF export. Wazuh integration guide. User separation for production. Webhook notifications to Slack and Discord.</p>
+                <h3>SIEM-compatible audit</h3>
+                <p>Syslog (RFC 5424) and CEF export. Wazuh integration guide. TLS on the policy server. Webhook notifications to Slack and Discord.</p>
             </div>
         </div>
     </div>
@@ -853,10 +877,10 @@
         <!-- macOS / Linux -->
         <div id="panel-unix" style="max-width:560px; margin:0 auto;">
             <div class="install-options" style="grid-template-columns: 1fr;">
-                <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent)20;">
+                <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-border);">
                     <div class="label" style="color: var(--accent);">One-line install</div>
                     <pre>curl -fsSL https://rampart.sh/install | bash</pre>
-                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                    <button class="copy-btn" onclick="copyCode(this)" aria-label="Copy install command">Copy</button>
                     <p style="font-size:0.78rem; color:var(--text-dim); margin: 8px 0 0; line-height:1.5;">
                         Installs to <code>~/.local/bin</code>. No sudo required.
                     </p>
@@ -881,10 +905,10 @@ brew install rampart</pre>
         <!-- Windows -->
         <div id="panel-win" style="max-width:560px; margin:0 auto; display:none;">
             <div class="install-options" style="grid-template-columns: 1fr;">
-                <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent)20;">
+                <div class="install-card" style="border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-border);">
                     <div class="label" style="color: var(--accent);">PowerShell (recommended)</div>
                     <pre>irm https://rampart.sh/install.ps1 | iex</pre>
-                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                    <button class="copy-btn" onclick="copyCode(this)" aria-label="Copy install command">Copy</button>
                     <p style="font-size:0.78rem; color:var(--text-dim); margin: 8px 0 0; line-height:1.5;">
                         Run in PowerShell. Installs to <code>~\.rampart\bin</code>. No admin rights required.
                     </p>
@@ -905,17 +929,7 @@ brew install rampart</pre>
             </details>
         </div>
 
-        <script>
-        function switchTab(os) {
-            document.getElementById('panel-unix').style.display = os === 'unix' ? 'block' : 'none';
-            document.getElementById('panel-win').style.display  = os === 'win'  ? 'block' : 'none';
-            document.getElementById('tab-unix').style.background = os === 'unix' ? 'var(--accent)' : 'transparent';
-            document.getElementById('tab-unix').style.color      = os === 'unix' ? '#fff' : 'var(--accent)';
-            document.getElementById('tab-win').style.background  = os === 'win'  ? 'var(--accent)' : 'transparent';
-            document.getElementById('tab-win').style.color       = os === 'win'  ? '#fff' : 'var(--accent)';
-        }
-        if (navigator.userAgent.indexOf('Windows') !== -1) switchTab('win');
-        </script>
+        <!-- switchTab moved to bottom script block -->
         <div class="install-actions" style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:8px;">
             <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost">Download binary</a>
             <a href="https://docs.rampart.sh" class="btn btn-ghost">Full documentation →</a>
@@ -928,33 +942,41 @@ brew install rampart</pre>
     <div class="container">
         <h2 style="text-align: center; margin-bottom: 48px;">Frequently Asked Questions</h2>
         <div style="max-width: 720px; margin: 0 auto;">
-            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">What happens if Rampart crashes?</summary>
                 <p style="margin-top: 12px; color: var(--text-dim);">Your tools keep working. Rampart fails open by default — if the policy engine is unreachable, commands pass through normally. You'll never get locked out of your own machine.</p>
             </details>
-            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">How do I update Rampart?</summary>
                 <p style="margin-top: 12px; color: var(--text-dim);">Same way you installed it. <code>brew upgrade rampart</code> for Homebrew, <code>go install github.com/peg/rampart/cmd/rampart@latest</code> for Go, or download the latest binary from <a href="https://github.com/peg/rampart/releases" style="color: var(--accent);">GitHub Releases</a>. Your policies and audit logs are untouched.</p>
             </details>
-            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">How do I uninstall?</summary>
                 <p style="margin-top: 12px; color: var(--text-dim);">Run <code>rampart setup claude-code --remove</code> (or <code>cline --remove</code> / <code>openclaw --remove</code>) to cleanly remove hooks. Then uninstall the binary with <code>brew uninstall rampart</code> or delete it. Policies and logs live in <code>~/.rampart/</code> — delete that folder to fully clean up.</p>
             </details>
-            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">What's the performance impact?</summary>
                 <p style="margin-top: 12px; color: var(--text-dim);">Policy evaluation takes less than 10 microseconds — you won't notice it. Rampart adds no measurable latency to your agent's workflow. The policy engine is a pure pattern matcher with no network calls (unless you opt into webhook-based semantic verification).</p>
             </details>
-            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Does it work on Windows?</summary>
                 <p style="margin-top: 12px; color: var(--text-dim);">Yes. Install with PowerShell: <code>irm https://rampart.sh/install.ps1 | iex</code>. The policy engine and hook integrations (Claude Code, Cline) work fully on Windows. Shell wrapping (<code>rampart wrap</code>) and LD_PRELOAD are Linux/macOS only. See the <a href="https://docs.rampart.sh/guides/windows/" style="color: var(--accent);">Windows guide</a> for details.</p>
             </details>
-            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can I use project-specific policies?</summary>
                 <p style="margin-top: 12px; color: var(--text-dim);">Yes. Put a <code>rampart.yaml</code> in your project root and Rampart will use it. You can also layer global policies (<code>~/.rampart/policies/</code>) with project-specific overrides.</p>
             </details>
-            <details style="margin-bottom: 16px; border: 1px solid #30363d; border-radius: 8px; padding: 16px;">
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can my agent bypass Rampart?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">Pattern-based deny rules can be evaded by obfuscated commands (quoting, variable expansion). For high-security environments, use allowlist mode: set <code>default_action: deny</code> — only explicitly permitted commands run, and evasion techniques fail by default. Rampart also blocks agents from modifying their own policies (<code>rampart allow</code>, <code>rampart block</code> are blocked when run by an agent).</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+                <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Can I require human approval for certain commands?</summary>
+                <p style="margin-top: 12px; color: var(--text-dim);">Yes. Set <code>action: require_approval</code> on any policy rule. Your agent pauses, Rampart sends a notification (Discord, Slack, or any webhook), and the command stays blocked until you approve or deny it from the dashboard or CLI.</p>
+            </details>
+            <details style="margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
                 <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Is this a sandbox?</summary>
-                <p style="margin-top: 12px; color: var(--text-dim);">No. Sandboxes isolate the entire process — great for untrusted code, but they break workflows that need real file and network access. Rampart is a policy engine: it lets your agent work normally and only blocks the dangerous stuff. Think of it as a seatbelt, not a cage.</p>
+                <p style="margin-top: 12px; color: var(--text-dim);">No. Sandboxes isolate the entire process — great for untrusted code, but they break workflows that need real file and network access. Rampart is a policy engine: it lets your agent work normally and only blocks the dangerous stuff.</p>
             </details>
         </div>
     </div>
@@ -976,20 +998,57 @@ brew install rampart</pre>
 </footer>
 
 <script>
-fetch('https://api.github.com/repos/peg/rampart')
-    .then(r => r.json())
-    .then(d => {
-        const el = document.getElementById('star-count');
-        if (el && d.stargazers_count != null) el.textContent = d.stargazers_count;
-    })
-    .catch(() => {});
+// Tab switcher
+function switchTab(os) {
+    document.getElementById('panel-unix').style.display = os === 'unix' ? 'block' : 'none';
+    document.getElementById('panel-win').style.display  = os === 'win'  ? 'block' : 'none';
+    document.getElementById('tab-unix').style.background = os === 'unix' ? 'var(--accent)' : 'transparent';
+    document.getElementById('tab-unix').style.color      = os === 'unix' ? '#fff' : 'var(--accent)';
+    document.getElementById('tab-win').style.background  = os === 'win'  ? 'var(--accent)' : 'transparent';
+    document.getElementById('tab-win').style.color       = os === 'win'  ? '#fff' : 'var(--accent)';
+}
+if (navigator.userAgent.indexOf('Windows') !== -1) switchTab('win');
 
+// GitHub stars with localStorage cache
+(function() {
+    var el = document.getElementById('star-count');
+    if (!el) return;
+    var cached = localStorage.getItem('rampart-stars');
+    var cachedAt = localStorage.getItem('rampart-stars-at');
+    if (cached && cachedAt && Date.now() - Number(cachedAt) < 3600000) {
+        el.textContent = cached;
+        return;
+    }
+    fetch('https://api.github.com/repos/peg/rampart')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.stargazers_count != null) {
+                el.textContent = d.stargazers_count;
+                localStorage.setItem('rampart-stars', d.stargazers_count);
+                localStorage.setItem('rampart-stars-at', Date.now());
+            }
+        })
+        .catch(function() {});
+})();
+
+// Copy button
 function copyCode(btn) {
-    const pre = btn.parentElement.querySelector('pre');
-    navigator.clipboard.writeText(pre.textContent).then(() => {
+    var pre = btn.parentElement.querySelector('pre');
+    navigator.clipboard.writeText(pre.textContent).then(function() {
         btn.textContent = 'Copied!';
         btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+        setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+    }).catch(function() {
+        // Fallback for non-HTTPS or old browsers
+        var ta = document.createElement('textarea');
+        ta.value = pre.textContent;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
     });
 }
 </script>
