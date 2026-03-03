@@ -16,7 +16,7 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Codex CLI, any process |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
-| **Shim + Service** | Shell shim + background daemon | OpenClaw |
+| **Shim + Service** | Shell shim + file tool patching + LD_PRELOAD for sub-agents | OpenClaw |
 | **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (alternative) |
 
 ## require_approval Behavior
@@ -41,7 +41,7 @@ When a policy action is `require_approval`, behavior varies by integration:
 | [Cline](cline.md) | Native hooks | `rampart setup cline` | All |
 | [Cursor](cursor.md) | MCP proxy | `rampart mcp --` | All |
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
-| [Codex CLI](codex-cli.md) | LD_PRELOAD | `rampart preload --` | Linux, macOS |
+| [Codex CLI](codex-cli.md) | LD_PRELOAD | `rampart setup codex` | Linux, macOS |
 | [OpenClaw](openclaw.md) | Shim + service | `rampart setup openclaw` | Linux, macOS |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
@@ -88,7 +88,7 @@ or any MCP-compatible client"
 q -> wrap: "Any CLI agent
 with \$SHELL support"
 q -> preload: "Any CLI agent
-without \$SHELL (e.g. Codex)"
+without \$SHELL or native hooks"
 q -> api: "Custom / Python agent
 or CI pipeline"
 ```

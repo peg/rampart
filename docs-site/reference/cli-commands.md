@@ -23,12 +23,15 @@ rampart quickstart -y               # Short form of --yes
 
 ### `rampart setup claude-code`
 
-Install native hooks into Claude Code.
+Install native hooks into Claude Code. Adds a `PreToolUse` hook to `~/.claude/settings.json` — no LD_PRELOAD or shim needed.
 
 ```bash
 rampart setup claude-code           # Install hooks
+rampart setup claude-code --force   # Overwrite existing hooks
 rampart setup claude-code --remove  # Remove hooks
 ```
+
+Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `PreToolUse` lifecycle point. A `PostToolUseFailure` hook is also registered to prevent Claude Code from repeatedly retrying denied operations. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
 
 ### `rampart setup cline`
 
@@ -36,6 +39,7 @@ Install native hooks into Cline.
 
 ```bash
 rampart setup cline           # Install hooks
+rampart setup cline --force   # Overwrite existing hooks
 rampart setup cline --remove  # Remove hooks
 ```
 
@@ -44,9 +48,26 @@ rampart setup cline --remove  # Remove hooks
 Install shell shim and background service for OpenClaw.
 
 ```bash
-rampart setup openclaw                # Install shim + service
-rampart setup openclaw --remove       # Remove shim + service
+rampart setup openclaw                    # Install shim + service
+rampart setup openclaw --patch-tools      # Full coverage (shell + file tools)
+rampart setup openclaw --force            # Overwrite existing config
+rampart setup openclaw --remove           # Remove shim + service
 ```
+
+!!! warning "Re-run after OpenClaw upgrades"
+    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw (`npm install -g openclaw`), run `rampart setup openclaw --patch-tools --force` to re-apply.
+
+### `rampart setup codex`
+
+Install a wrapper script that intercepts all Codex CLI tool calls via LD_PRELOAD.
+
+```bash
+rampart setup codex                   # Install wrapper
+rampart setup codex --force           # Overwrite existing wrapper
+rampart setup codex --remove          # Remove wrapper
+```
+
+The wrapper is installed at `~/.local/bin/codex` and transparently wraps the real Codex binary. Every command Codex executes — and every child process it spawns — goes through Rampart's policy engine via LD_PRELOAD inheritance.
 
 ### `rampart setup` (interactive)
 
@@ -72,13 +93,21 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 Start the HTTP policy proxy.
 
 ```bash
-rampart serve                          # Default (port 9090)
-rampart serve --port 8080              # Custom port
-rampart serve --config policy.yaml     # Custom policy
-rampart serve --syslog localhost:514   # With syslog output
-rampart serve --cef                    # With CEF file output
-rampart serve --syslog localhost:514 --cef  # CEF to syslog
+rampart serve                              # Default (port 9090, all interfaces)
+rampart serve --addr 127.0.0.1             # Bind to localhost only
+rampart serve --port 8080                  # Custom port
+rampart serve --config policy.yaml         # Custom policy
+rampart serve --audit-dir /var/log/rampart # Custom audit log directory
+rampart serve --syslog localhost:514       # With syslog output
+rampart serve --cef                        # With CEF file output
+rampart serve --syslog localhost:514 --cef # CEF to syslog
+rampart serve --tls-auto                   # HTTPS with auto-generated self-signed cert
+rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 ```
+
+`--addr` takes a bare IP address (e.g. `127.0.0.1`, `0.0.0.0`, `::1`). Defaults to all interfaces if omitted — use `--addr 127.0.0.1` for localhost-only access. `--audit-dir` sets the directory for audit log output (defaults to `~/.rampart/audit/`).
+
+`--tls-auto` generates a self-signed ECDSA P-256 certificate (1-year validity) and stores it in `~/.rampart/tls/`. A truncated SHA-256 fingerprint is printed on startup. `--tls-cert` and `--tls-key` must be used together and are mutually exclusive with `--tls-auto`.
 
 ### `rampart wrap`
 
@@ -132,6 +161,19 @@ rampart init --profile paranoid       # Paranoid profile
 rampart init --profile yolo           # Yolo profile
 rampart init --detect                 # Auto-detect environment
 ```
+
+### `rampart init --from-audit`
+
+Generate policy YAML from audit logs. Observe what your agent does in monitor mode, then generate allow rules to match the observed behavior.
+
+```bash
+rampart init --from-audit ~/.rampart/audit/audit.jsonl          # Generate from audit log
+rampart init --from-audit ~/.rampart/audit/ --since 24h         # Last 24 hours only
+rampart init --from-audit ~/.rampart/audit/ --dry-run           # Preview without writing
+rampart init --from-audit ~/.rampart/audit/ --output policy.yaml  # Custom output path
+```
+
+Only allowed events are used for rule generation — denied events represent behavior you don't want to codify.
 
 ## Diagnostics
 
@@ -254,7 +296,11 @@ rampart allow "/tmp/**" --tool read            # Explicit tool type
 rampart allow "docker build *" --global        # Write to global policy
 rampart allow "pytest *" --project             # Write to project policy
 rampart allow "git push *" --yes               # Skip confirmation
+rampart allow "docker *" --for 1h              # Expires after 1 hour
+rampart allow "npm publish" --once             # Single-use — consumed after first match
 ```
+
+`--for` accepts Go duration strings (`1h`, `30m`, `24h`, `2h30m`). Expired rules are skipped during evaluation (the `expires_at` timestamp is checked before matching). `--once` marks the rule as consumed in audit metadata after its first match, but the rule continues to be evaluated and the YAML is not automatically modified. In both cases, use `rampart rules remove` to clean up expired or consumed rules.
 
 ### `rampart block`
 

@@ -1,11 +1,14 @@
 ---
 title: Securing OpenClaw
-description: "Protect OpenClaw agents with Rampart guardrails for shell commands and file access. Use --patch-tools for full coverage and audit every risky action."
+description: "Protect OpenClaw agents and their sub-agents (Codex, Claude Code) with Rampart. Shell shim, LD_PRELOAD, and file tool patching for full coverage."
 ---
 
 # OpenClaw
 
-For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart provides a shell shim, background service, and optional file tool patching.
+For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart provides multiple layers of protection: a shell shim for OpenClaw's exec tool, LD_PRELOAD interception for sub-agents, and optional file tool patching.
+
+!!! info "Version requirement"
+    Requires OpenClaw 2026.2.x or later.
 
 !!! tip "Fastest path"
     If you want your OpenClaw agent to install and configure Rampart for you, just say:
@@ -23,48 +26,89 @@ rampart quickstart --yes
 # Manual: shell command protection only
 rampart setup openclaw
 
-# Manual: full protection (shell commands + file reads/writes/edits)
+# Manual: full protection (shell commands + file tools)
 rampart setup openclaw --patch-tools
 ```
 
-Or use the interactive wizard, which will ask about file tool patching:
+Or use the interactive wizard:
 
 ```bash
 rampart setup
 ```
 
-## What Gets Protected
+## Protecting Sub-Agents
 
-| Tool | Without `--patch-tools` | With `--patch-tools` |
-|------|------------------------|---------------------|
-| Shell commands (`exec`) | ✅ Protected | ✅ Protected |
-| File reads | ❌ Not checked | ✅ Protected |
-| File writes | ❌ Not checked | ✅ Protected |
-| File edits | ❌ Not checked | ✅ Protected |
-| Grep | ❌ Not checked | ✅ Protected |
+OpenClaw can spawn sub-agents like Codex CLI and Claude Code. These agents execute commands through their own shell processes, **not** through OpenClaw's exec tool — so the shell shim alone doesn't catch them.
 
-We recommend `--patch-tools` for full coverage, especially if your policies include file access rules (e.g., blocking reads of `.env`, SSH keys, credentials).
+Use `rampart setup codex` to install a wrapper that intercepts all Codex commands via LD_PRELOAD:
+
+```bash
+rampart setup codex
+```
+
+This creates a wrapper at `~/.local/bin/codex` that transparently routes every command through Rampart's policy engine. The wrapper inherits to all child processes — no configuration needed per sub-agent.
+
+For Claude Code, use `rampart setup claude-code` which adds hooks to `~/.claude/settings.json`.
+
+For any other CLI agent, use `rampart preload`:
+
+```bash
+rampart preload -- <agent-command>
+```
+
+## Coverage Matrix
+
+| What | Protected by | Notes |
+|------|-------------|-------|
+| OpenClaw shell commands (`exec` tool) | ✅ Shell shim | Via `$SHELL` env var |
+| File reads/writes/edits/grep | ✅ `--patch-tools` | Re-run after OpenClaw upgrades |
+| Codex CLI commands | ✅ `rampart setup codex` | LD_PRELOAD — all child processes |
+| Claude Code commands | ✅ `rampart setup claude-code` | Native hooks |
+| Other sub-agent commands | ✅ `rampart preload --` | LD_PRELOAD — universal |
+| HTTP fetch (`web_fetch` tool) | ⚠️ Not intercepted | Uses Node.js HTTP internals, not exec. Block via `rampart block --tool fetch '*'` or OS-level firewall rules |
+| Browser automation | ⚠️ Not intercepted | Runs in a separate browser process |
 
 ## How It Works
 
 ```
-OpenClaw
-  └─ exec tool  → Shell Shim → rampart serve → Policy Engine → Audit
-  └─ file tools → Patched JS → rampart serve → Policy Engine → Audit
+OpenClaw Gateway
+  ├─ exec tool → Shell Shim → rampart serve → Policy Engine → allow/deny
+  ├─ file tools → Patched JS → rampart serve → Policy Engine → allow/deny
+  ├─ Codex CLI → librampart.so (LD_PRELOAD) → Policy Engine → allow/deny
+  └─ Claude Code → Native hooks → Policy Engine → allow/deny
 ```
 
-**Shell shim**: A small bash script that intercepts every command OpenClaw runs, sends it to the Rampart policy server, and blocks if denied. Fail-open — if Rampart is unreachable, commands pass through.
+**Shell shim**: A bash script at `~/.local/bin/rampart-shim` that intercepts every `bash -c "command"` call, sends it to Rampart's policy server, and blocks if denied. Configured via `env.vars.SHELL` in OpenClaw's config.
+
+**LD_PRELOAD**: `librampart.so` hooks `execve`, `execvp`, `execvpe`, `system()`, `popen()`, and `posix_spawn()` at the C library level. Inherited by all child processes automatically. Cannot be bypassed by choosing a different shell.
 
 **File tool patches**: Injects a policy check into OpenClaw's internal read/write/edit/grep tool implementations. Same fail-open behavior.
 
-**require_approval behavior**: When a policy action is `require_approval`, the daemon creates a pending approval and sends webhook notifications (if configured) to alert humans. The shim blocks execution until the approval is resolved via `rampart approve <id>` or the API.
+**Fail-open**: All interception layers fail open — if Rampart is unreachable, commands pass through. This is deliberate ([design philosophy](../reference/threat-model.md)).
+
+**require_approval**: When a policy uses `action: require_approval`, the shim blocks execution and creates a pending approval. If webhooks are configured, Rampart sends notifications (Discord, Slack, etc.) to alert humans. The command stays blocked until resolved via `rampart approve <id>`, `rampart deny <id>`, or the HTTP API.
 
 !!! warning "File patches require re-running after OpenClaw upgrades"
-    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw, run `rampart setup openclaw --patch-tools --force` to re-apply.
+    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw (`npm install -g openclaw`), run:
+    ```bash
+    rampart setup openclaw --patch-tools --force
+    ```
 
-## Compatibility
+## Configuration
 
-Supports recent OpenClaw versions with pi-coding-agent.
+After running `rampart setup openclaw`, add the shim to your OpenClaw config (replace the path with your actual home directory — run `echo ~/.local/bin/rampart-shim` to get it):
+
+```json
+{
+  "env": {
+    "vars": {
+      "SHELL": "/home/youruser/.local/bin/rampart-shim"
+    }
+  }
+}
+```
+
+Then restart the gateway: `openclaw gateway restart`.
 
 ## Monitor
 
@@ -77,7 +121,11 @@ rampart log --deny  # Recent denies
 ## Uninstall
 
 ```bash
-rampart setup openclaw --remove
+rampart setup openclaw --remove   # Remove shim, service, restore patched tools
+rampart setup codex --remove      # Remove Codex wrapper
 ```
 
-This stops the background service, removes the shim, and restores any patched file tools from backups. Your policies and audit logs in `~/.rampart/` are preserved.
+Policies and audit logs in `~/.rampart/` are preserved.
+
+!!! note "Patch verification"
+    `--patch-tools` targets specific internal file paths. If an upgrade changes the code, the patch script logs warnings for each failed injection point and continues — file tools that couldn't be patched will be unprotected (fail-open). Always check the output of `rampart setup openclaw --patch-tools` after upgrades.
