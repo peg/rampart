@@ -71,6 +71,8 @@ type allowBlockOptions struct {
 	yes     bool
 	apiAddr string
 	token   string
+	forDur  string // --for duration (e.g. "1h", "30m")
+	once    bool   // --once single-use rule
 }
 
 func newAllowCmd(_ *rootOptions) *cobra.Command {
@@ -109,6 +111,8 @@ func addAllowBlockFlags(cmd *cobra.Command, opts *allowBlockOptions) {
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().StringVar(&opts.apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
 	cmd.Flags().StringVar(&opts.token, "token", "", "API auth token (or set RAMPART_TOKEN)")
+	cmd.Flags().StringVar(&opts.forDur, "for", "", "Rule expires after duration (e.g. 1h, 30m, 24h)")
+	cmd.Flags().BoolVar(&opts.once, "once", false, "Single-use rule — removed after first match")
 }
 
 // runAllowBlock is the shared implementation for `rampart allow` and `rampart block`.
@@ -151,6 +155,16 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 	useColor := !noColor() && isTerminal(os.Stdout)
 	printRuleSummary(out, action, pattern, detectedTool, opts.message, scope, policyPath, useColor)
 
+	// Print temporal info.
+	if opts.forDur != "" {
+		dur, _ := time.ParseDuration(opts.forDur)
+		exp := time.Now().UTC().Add(dur)
+		fmt.Fprintf(out, "    Expires: %s (in %s)\n", exp.Format(time.RFC3339), opts.forDur)
+	}
+	if opts.once {
+		fmt.Fprintf(out, "    Single-use: will be removed after first match\n")
+	}
+
 	// Warn if pattern is overly permissive.
 	warnIfOverlyPermissive(out, pattern, useColor)
 
@@ -181,9 +195,28 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		msg = defaultMessage(action, pattern, detectedTool)
 	}
 
-	// Add the rule.
-	if err := p.AddRule(action, pattern, msg, opts.tool); err != nil {
-		return fmt.Errorf("add rule: %w", err)
+	// Add the rule with optional temporal constraints.
+	temporal := policy.TemporalOpts{Once: opts.once}
+	if opts.forDur != "" {
+		dur, err := time.ParseDuration(opts.forDur)
+		if err != nil {
+			return fmt.Errorf("invalid --for duration %q: %w", opts.forDur, err)
+		}
+		if dur <= 0 {
+			return fmt.Errorf("--for duration must be positive")
+		}
+		exp := time.Now().UTC().Add(dur)
+		temporal.ExpiresAt = &exp
+	}
+
+	if temporal.ExpiresAt != nil || temporal.Once {
+		if err := p.AddRuleTemporal(action, pattern, msg, opts.tool, temporal); err != nil {
+			return fmt.Errorf("add rule: %w", err)
+		}
+	} else {
+		if err := p.AddRule(action, pattern, msg, opts.tool); err != nil {
+			return fmt.Errorf("add rule: %w", err)
+		}
 	}
 
 	// Save.
@@ -193,10 +226,16 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 
 	// Print success (brief - details already shown in printRuleSummary).
 	ruleCount := p.TotalRules()
+	suffix := ""
+	if opts.forDur != "" {
+		suffix = fmt.Sprintf(" (expires in %s)", opts.forDur)
+	} else if opts.once {
+		suffix = " (single-use)"
+	}
 	if useColor {
-		fmt.Fprintf(out, "\n  %s✓%s Rule added to %s\n", colorGreen, colorReset, filepath.Base(policyPath))
+		fmt.Fprintf(out, "\n  %s✓%s Rule added to %s%s\n", colorGreen, colorReset, filepath.Base(policyPath), suffix)
 	} else {
-		fmt.Fprintf(out, "\n  ✓ Rule added to %s\n", filepath.Base(policyPath))
+		fmt.Fprintf(out, "\n  ✓ Rule added to %s%s\n", filepath.Base(policyPath), suffix)
 	}
 
 	// Try to reload the daemon.
