@@ -1,12 +1,12 @@
 # Threat Model
 
-> Last reviewed: 2026-02-14 | Applies to: v0.4.5
+> Last reviewed: 2026-03-03 | Applies to: v0.7.2
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
 ## What Rampart Is
 
-A firewall for AI agent tool calls. It evaluates commands against YAML policies and makes allow/deny/log decisions in microseconds. It's designed to catch the 95%+ case: an AI agent that hallucinated a dangerous command or got manipulated by a prompt injection.
+A firewall for AI agent tool calls. It evaluates commands, file operations, and network requests against YAML policies and makes allow/deny/log decisions in microseconds. It's designed to catch the 95%+ case: an AI agent that hallucinated a dangerous command or got manipulated by a prompt injection.
 
 ## Primary Threat: Misbehaving AI Agents
 
@@ -15,6 +15,7 @@ Rampart's target threat is an AI agent that:
 - **Hallucinated a destructive command** (`rm -rf /`, `DROP TABLE`)
 - **Was manipulated by prompt injection** (malicious content in a file or webpage told it to exfiltrate data)
 - **Made a well-intentioned mistake** (wrong environment, wrong file, wrong server)
+- **Escalated beyond its intended scope** (sub-agent spawning unrestricted tool calls)
 
 These agents aren't adversarial — they're confused, manipulated, or wrong. Rampart catches them reliably.
 
@@ -31,12 +32,16 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 │  • Rampart binary                            │
 │  • rampart serve process                     │
 │  • Audit log directory (when user-separated) │
+│  • Policy registry sources (when verified)   │
+│  • HMAC signing key (~/.rampart/signing.key) │
 ├─────────────────────────────────────────────┤
 │ Untrusted                                    │
 │  • AI agent tool calls (all input)           │
 │  • Agent-generated commands                  │
 │  • MCP tool call parameters                  │
 │  • Webhook response payloads (validated)     │
+│  • Project-local .rampart/policy.yaml files  │
+│  • Community policies (verified by SHA-256)  │
 └─────────────────────────────────────────────┘
 ```
 
@@ -46,16 +51,14 @@ Policy files are the security boundary. If an attacker can modify policy files, 
 
 ### 1. Interpreter Bypass
 
-Rampart evaluates the command string passed to the shell. This applies to **all integration methods** — native hooks (Claude Code, Cline), wrap mode, LD_PRELOAD, and the HTTP API all see the same command string. If an agent runs `python3 script.py`, Rampart sees and evaluates `python3 script.py` — but cannot inspect what `script.py` does internally.
+Rampart evaluates the command string passed to the shell. If an agent runs `python3 script.py`, Rampart sees and evaluates `python3 script.py` — but cannot inspect what `script.py` does internally.
 
 **Mitigations:**
-- **LD_PRELOAD cascade** (v0.1.9+): When using `rampart preload` or `rampart wrap`, child processes spawned by allowed commands automatically inherit the interceptor. This means `python3 script.py` calling `os.system("rm -rf /")` is caught — the subprocess goes through Rampart's policy engine. Covers `execve`, `execvpe`, and `posix_spawn` call paths.
-- The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar uses LLM classification to assess intent of commands like `python3 -c "..."` based on the inline code
-- Patterns like `python3 -c *` can be routed to semantic verification via `action: webhook`
+- **LD_PRELOAD cascade** (v0.1.9+): `rampart preload` and `rampart wrap` intercept child processes spawned by allowed commands. `python3 script.py` calling `os.system("rm -rf /")` is caught — the subprocess goes through Rampart's policy engine.
+- **Interpreter one-liner blocking** (v0.6.9+): Patterns like `python3 -c`, `node -e`, `ruby -e`, `perl -e` with dangerous system calls are blocked by default in standard/paranoid policies.
+- The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar uses LLM classification to assess intent of ambiguous commands via `action: webhook`.
 
-**Remaining surface:** The cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
-
-**Multi-step sequences:** With file tool coverage enabled (native hooks or `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
+**Remaining surface:** LD_PRELOAD cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs using native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered. Multi-step write-then-execute sequences are evaluated at both steps independently when file tool coverage is enabled.
 
 ### 2. Audit Log Rewrite
 
@@ -63,77 +66,129 @@ The hash-chained audit trail detects **partial tampering** — editing, insertin
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](../README.md#security-recommendations) so the agent can't access audit files
-- Enable SIEM export (`--syslog` or `--cef`) to send events to an external system the agent can't modify
+- Enable SIEM export (`--syslog` or `--cef`) to send events to an external immutable system
 - Webhook notifications send real-time alerts to Discord/Slack — a separate record
+- External chain anchors every 100 events provide additional integrity checkpoints
 
-**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor.
+**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](../README.md#siem-integration).
 
 ### 3. Token Exposure in Wrap Mode
 
-The `rampart wrap` shim needs a bearer token to authenticate with `rampart serve`. The token is stored in a `0600` file (not embedded in the shim script). However, the agent user can still read this file.
+The `rampart wrap` shim needs a bearer token to authenticate with `rampart serve`. The token is stored in a `0600` file (not embedded in the shim script). The agent user can still read this file.
 
 **Mitigations:**
-- Run `rampart serve` as a separate user and store the token in that user's home directory with restricted permissions
-- Use native hooks (`rampart setup claude-code`) instead of wrap mode — hooks don't require a token file
-
-**Resolution:** Use [user separation](../README.md#security-recommendations) for production deployments, or prefer native hooks which don't require a token file.
+- Run `rampart serve` as a separate user and store the token in that user's home directory
+- Use native hooks (`rampart setup claude-code`) instead — hooks don't require a token file
 
 ### 4. Encoding and Obfuscation
 
-An agent could potentially encode commands to bypass pattern matching:
+An agent could encode commands to bypass pattern matching.
 
-- Base64-encoded payloads
-- Variable expansion, command splitting
-
-**Mitigations:**
+**Mitigations (v0.6.9+):**
 - Rampart decodes base64 commands before pattern matching
-- Leading shell comments are stripped before evaluation
+- Leading shell comments and ANSI escape sequences are stripped
+- Null bytes and control characters are removed
+- Subcommand extraction: `$(cmd)`, backticks, `eval 'cmd'` — inner commands are matched independently
+- Common obfuscation patterns (`base64 *`, `eval *`, `xxd -r | bash`) trigger deny rules in standard policy
 - The semantic verification sidecar classifies intent regardless of encoding
-- Common obfuscation patterns (`base64 *`, `eval *`) can trigger webhook verification
 
-**Coverage:** The two-layer approach (pattern matching + LLM classification) significantly reduces the obfuscation surface. Pattern matching catches known encodings; the LLM layer catches intent regardless of how the command is formatted.
+**Coverage:** The two-layer approach (pattern matching + LLM classification) significantly reduces the obfuscation surface. v0.6.9 closed 10 specific bypass vectors identified in a security audit.
 
 ### 5. Framework-Specific Patching
 
-Some agent frameworks (e.g., OpenClaw) don't expose hook points for file operations. Rampart provides a `--patch-tools` option that modifies framework source files to add policy checks before read/write/edit operations. These patches don't survive framework upgrades — they modify files in `node_modules` that get replaced on update.
-
-**Mitigations:**
-- `rampart setup openclaw --patch-tools` must be re-run immediately after OpenClaw upgrades to restore protection
-- Native hook integrations (Claude Code, Cline) don't have this limitation — they use the framework's own hook system
-- A feature request for generic tool authorization hooks benefits the entire ecosystem and would eliminate the need for patching
+Some agent frameworks (e.g., OpenClaw) don't expose hook points for file operations. Rampart's `--patch-tools` option modifies framework source files to add policy checks. These patches don't survive framework upgrades.
 
 **Security implications:**
-- **Timing window:** Between OpenClaw upgrade and re-patch, file tools bypass all policies (exec shim remains active)
-- **Silent degradation:** If the target code changes in a new version, patches fail to apply and file tools fail-open without warning. The patch script exits with an error, but if run unattended this could go unnoticed.
+- **Timing window:** Between framework upgrade and re-patch, file tools bypass all policies (exec shim remains active)
+- **Silent degradation:** If patched code changes in a new version, patches fail-open without warning
+- **Re-run required:** `rampart setup openclaw --patch-tools --force` must be re-run after every OpenClaw upgrade
 
-**Trade-off:** Monkey-patching is fragile but functional. It closes a real security gap today while proper upstream support is developed. The patches fail-open — if the patched code changes in an upgrade, the worst case is that file tools bypass Rampart (reverting to the pre-patch state), not that they break.
+**Trade-off:** Monkey-patching is fragile but functional. It closes a real security gap today while proper upstream hook support is developed.
 
 ### 6. Fail-Open Behavior
 
-When `rampart serve` is unreachable (crashed, network issue), the shim defaults to **fail-open** — commands execute without policy checks. This is a deliberate design choice: fail-closed would lock you out of your own machine.
+When `rampart serve` is unreachable, the shim defaults to **fail-open** — commands execute without policy checks. This is a deliberate design choice: fail-closed would lock you out of your own machine.
 
 **Mitigations:**
 - Monitor the Rampart service and alert on downtime
-- Use systemd/launchd to auto-restart on failure
-- Webhook notifications confirm the service is actively evaluating commands
+- Use systemd/launchd to auto-restart on failure (`rampart serve install` does this)
+- Webhook notifications confirm the service is actively evaluating
 
-**Trade-off:** Fail-open means a brief security gap during outages. Fail-closed means a crashed Rampart bricks your agent (and potentially your system). We chose availability over strict enforcement. This is configurable for environments where fail-closed is preferred.
+**Trade-off:** Fail-open means a brief security gap during outages. Fail-closed means a crashed Rampart bricks your agent (and potentially your system). We chose availability over strict enforcement. For environments where fail-closed is preferred, this is documented as a known design decision.
 
 ### 7. Regex Complexity Limits
 
-Rampart imposes security limits on regex patterns used for response matching to prevent ReDoS (Regular Expression Denial of Service) attacks. These limits protect the policy evaluation engine from malicious or malformed patterns.
+Rampart imposes limits on regex patterns used for response matching to prevent ReDoS.
 
-**Current limits (v0.2.0+):**
+**Current limits:**
 - **Maximum pattern length**: 500 characters
-- **Nested quantifiers**: Rejected (patterns like `(a+)*` or `(a*)+`)
-- **Execution timeout**: 100ms per regex match operation
+- **Nested quantifiers**: Rejected at load time (patterns like `(a+)*`)
+- **Execution timeout**: 100ms per regex match
+- **Response cap**: 1MB maximum for response-side evaluation
+
+These limits protect against both accidental performance degradation and malicious patterns.
+
+### 8. No TLS on HTTP API
+
+`rampart serve` communicates over plaintext HTTP. On localhost this is acceptable; for remote or team deployments, this means policy decisions transit unencrypted.
 
 **Mitigations:**
-- Patterns exceeding these limits are rejected at policy load time with clear error messages
-- Long-running regex matches are terminated after 100ms and treated as non-matches
-- These limits apply only to response-side evaluation; command pattern matching uses simpler glob patterns
+- Default bind is `127.0.0.1` (localhost only)
+- For remote access, use a reverse proxy with TLS or SSH tunnel
+- TLS support for `rampart serve` is planned for a future release
 
-**Security implications:** These limits prevent policy authors from accidentally creating performance DoS conditions, and prevent attackers from injecting malicious regex patterns into webhook-driven policy updates.
+### 9. In-Memory Approval Store
+
+Pending approvals are stored in memory and lost on service restart. If `rampart serve` restarts while an approval is pending, the requesting agent receives a timeout/denial.
+
+**Mitigations:**
+- Approvals typically resolve within seconds (human clicks approve/deny)
+- Service restarts are rare during active sessions
+- Persistent approval storage is planned for a future release
+
+### 10. Project Policy Trust
+
+Project-local `.rampart/policy.yaml` files are loaded automatically when present. A malicious repository could include a permissive project policy.
+
+**Mitigations (v0.6.9+):**
+- Project policies can only **add restrictions**, not weaken global policies (deny-wins)
+- Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading in untrusted repos
+- Project policy denials are prefixed with `[Project Policy]` for visibility
+
+### 11. Community Policy Supply Chain
+
+`rampart policy fetch` downloads policies from the registry with SHA-256 verification. However, the registry itself is hosted in the main repo — a compromise of the repository could introduce malicious policies.
+
+**Mitigations:**
+- SHA-256 verification prevents modification after registry publication
+- `--dry-run` flag allows inspection before installation
+- Policy linting (`rampart policy lint`) validates syntax and flags suspicious patterns
+
+## Integration-Specific Notes
+
+| Integration | Exec Coverage | File Coverage | Response Scanning | Cascade |
+|-------------|--------------|---------------|-------------------|---------|
+| Native hooks (Claude Code) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
+| Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
+| `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
+| `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
+| `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
+| HTTP proxy | ✅ | ✅ | ✅ | ❌ |
+| MCP proxy | ✅ | ✅ | ✅ | ❌ |
+
+### Platform Notes: macOS
+
+v0.4.4 added 17 macOS-specific built-in policies covering Keychain access, Gatekeeper bypass, persistence mechanisms, user management, and AppleScript shell execution. These are active automatically in the standard and paranoid profiles.
+
+### Platform Notes: Windows
+
+v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
+
+- **No LD_PRELOAD** — `rampart preload` is not available. Use native hooks or wrap mode instead.
+- **No POSIX file permissions** — `chmod 0600` is not enforced by the OS. Token files and signing keys are created with default permissions; use Windows ACLs for hardening.
+- **Binary upgrade** — Windows forbids overwriting a running executable. `rampart upgrade` renames the current binary to `.rampart.exe.old` first, then installs the new one.
+- **Path separators** — Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
+- **Service management** — `rampart serve install` creates a Windows service (not systemd/launchd). Auto-restart is configured by default.
 
 ## Deployment Recommendations
 
@@ -143,29 +198,15 @@ Rampart imposes security limits on regex patterns used for response matching to 
 | Separate user | ❌ No | ❌ No | Production, unsupervised agents |
 | Separate user + SIEM | ❌ No | ❌ No | Enterprise, compliance |
 
-**Prerequisite:** The agent must run as a non-root user. If the agent runs as root, user separation provides no protection — root can read and modify all files regardless of ownership.
+**Prerequisite:** The agent must run as a non-root user. If the agent runs as root, user separation provides no protection.
 
-**Sudo caveat:** Many real-world deployments grant the agent user `sudo` access for system administration tasks. An agent with unrestricted `sudo` (e.g., `NOPASSWD: ALL`) can bypass user separation by running `sudo cat /etc/rampart/policy.yaml` or `sudo rm -rf /var/lib/rampart/audit/`. Rampart still catches the common case — a hallucinating or prompt-injected agent won't think to `sudo` around a deny rule — but it's not a hard boundary.
-
-**Best practice:** Restrict sudo to the specific commands your agent needs (e.g., `apt`, `systemctl`, `k3s`) rather than granting blanket access. This limits the blast radius regardless of Rampart.
-
-### Platform Notes: macOS
-
-v0.4.4 added 17 macOS-specific built-in policies to the standard and paranoid profiles. These cover:
-
-- **Keychain access** — blocks unauthorized reads from the macOS Keychain (`security` tool abuse)
-- **Gatekeeper bypass** — blocks attempts to disable or circumvent Gatekeeper (`spctl`, `xattr -d com.apple.quarantine`)
-- **Persistence mechanisms** — blocks writes to `~/Library/LaunchAgents/`, `~/Library/LaunchDaemons/`, and login items
-- **User management** — blocks `dscl` and `sysadminctl` commands that create or elevate user accounts
-- **AppleScript shell execution** — blocks `osascript -e "do shell script …"` patterns used to run commands via AppleScript
-
-These policies are active automatically when using the standard or paranoid profile on macOS.
+**Sudo caveat:** An agent with unrestricted `sudo` (`NOPASSWD: ALL`) can bypass user separation. Restrict sudo to specific commands your agent needs rather than granting blanket access.
 
 ## Philosophy
 
 Rampart is a **seatbelt, not a roll cage**. It catches the vast majority of dangerous situations an AI agent will encounter — accidental or manipulated. It doesn't claim to stop every possible attack vector, and we're honest about what falls outside its scope.
 
-If you need full isolation, use a sandbox (container, VM, or a tool like [fluid.sh](https://fluid.sh)). Rampart and sandboxes are complementary — use both for defense in depth.
+If you need full isolation, use a sandbox (container, VM, or a tool like [nono](https://github.com/nicholasgasior/nono)). Rampart and sandboxes are complementary — use both for defense in depth.
 
 ---
 

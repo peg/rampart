@@ -139,6 +139,19 @@ policies: []
 	}
 }
 
+func TestPolicyCmd_HasSingleTestSubcommand(t *testing.T) {
+	cmd := newPolicyCmd(&rootOptions{})
+	count := 0
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "test" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 test subcommand, got %d", count)
+	}
+}
+
 func TestResolveExplainPolicyPath_ExplicitConfig(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "custom.yaml")
