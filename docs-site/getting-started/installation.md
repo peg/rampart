@@ -72,6 +72,33 @@ unzip rampart_*_darwin_arm64.zip
 sudo mv rampart /usr/local/bin/
 ```
 
+## Docker
+
+Multi-arch container image (amd64 + arm64), built on distroless for minimal attack surface:
+
+```bash
+docker run ghcr.io/peg/rampart:latest serve --addr 0.0.0.0 --port 9090
+```
+
+Or use with docker-compose. First, create a policy file (e.g. `mkdir policies && rampart init > policies/rampart.yaml`):
+
+```yaml
+services:
+  rampart:
+    image: ghcr.io/peg/rampart:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./policies:/policies:ro
+      - rampart-audit:/audit
+    command: ["serve", "--addr", "0.0.0.0", "--port", "9090", "--config", "/policies/rampart.yaml", "--audit-dir", "/audit"]
+
+volumes:
+  rampart-audit:
+```
+
+Available tags: `latest`, `0.7.4`, `0.7`. At release time, `latest` points to `0.7.4`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+
 ## Build from Source
 
 ```bash

@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-03-03 | Applies to: v0.7.2
+> Last reviewed: 2026-03-03 | Applies to: v0.7.4
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -138,14 +138,15 @@ Rampart imposes limits on regex patterns used for response matching to prevent R
 
 These limits protect against both accidental performance degradation and malicious patterns. They prevent policy authors from creating DoS conditions, and prevent attackers from injecting malicious regex patterns via webhook-driven policy updates. Patterns exceeding these limits are rejected at policy load time with clear error messages.
 
-### 8. No TLS on HTTP API
+### 8. TLS on HTTP API
 
-`rampart serve` communicates over plaintext HTTP. On localhost this is acceptable; for remote or team deployments, this means policy decisions transit unencrypted.
+As of v0.7.4, `rampart serve` supports TLS via `--tls-auto` (self-signed ECDSA P-256) or `--tls-cert`/`--tls-key` (bring your own). On localhost, plaintext is still acceptable; for remote or team deployments, enable TLS.
 
-**Mitigations:**
-- Default bind is `127.0.0.1` (localhost only)
-- For remote access, use a reverse proxy with TLS or SSH tunnel
-- TLS support for `rampart serve` is planned for a future release
+**Notes:**
+- Default bind is all interfaces (`--addr` defaults to `""`). Use `--addr 127.0.0.1` to restrict to localhost
+- `--tls-auto` generates a self-signed cert stored in `~/.rampart/tls/` (1-year validity)
+- The SHA-256 fingerprint is printed on startup for manual verification
+- For production, use proper certs via `--tls-cert`/`--tls-key` or a reverse proxy
 
 ### 9. In-Memory Approval Store
 
@@ -183,6 +184,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
+| `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |
 | MCP proxy | ✅ | ✅ | ✅ | ❌ |
 
@@ -232,6 +234,16 @@ The HTTP API uses a single bearer token for both tool call evaluation and admini
 - Splitting eval and admin tokens is tracked in [#180](https://github.com/peg/rampart/issues/180)
 
 **Current status:** This is a known gap in same-user deployments. The fix (separate eval and admin tokens) is designed and will ship in a future release with zero user friction — both tokens auto-generate and the shim only receives the eval token.
+
+### 13. Temporal Allow Expiry
+
+v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipped during evaluation** but remain in the policy YAML until manually removed.
+
+**Security implications:**
+- Expired rules exist in the YAML but are inert — the engine checks `expires_at` before matching
+- `--once` rules record consumption in decision metadata after their first match, but the proxy does not call `RemoveRule` — the rule continues to match on subsequent evaluations. This is a known gap; true single-use enforcement requires wiring `Decision.ConsumedOnce` to `persist.RemoveRule` in the proxy layer
+- Automatic cleanup is not yet implemented — use `rampart rules remove` to manually clean up expired or consumed rules
+- Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
 
 ## Self-Modification Protection
 
