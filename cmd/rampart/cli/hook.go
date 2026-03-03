@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/peg/rampart/internal/audit"
@@ -285,10 +286,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Cleanup stale session state files in the background (best-effort).
 			// This runs once per hook invocation; typically fires every few seconds
 			// during active sessions, which is sufficient to keep the directory clean.
+			var cleanupWg sync.WaitGroup
+			cleanupWg.Add(1)
 			go func() {
+				defer cleanupWg.Done()
 				mgr := session.NewManager(sessionStateDir(), "", logger)
 				_ = mgr.Cleanup(24 * time.Hour)
 			}()
+			defer cleanupWg.Wait()
 
 			// Load policies
 			policyPath, cleanupPolicy, err := resolveWrapPolicyPath(opts.configPath)
