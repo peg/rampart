@@ -5,15 +5,21 @@ description: "Secure Codex CLI with Rampart using LD_PRELOAD syscall interceptio
 
 # Codex CLI
 
-Codex CLI doesn't have a hook system or `$SHELL` support. Rampart uses **LD_PRELOAD** to intercept exec syscalls at the OS level — the universal fallback.
+Codex CLI doesn't have a native hook system. Rampart uses **LD_PRELOAD** to intercept exec syscalls at the OS level — covering Codex and every process it spawns.
 
 ## Setup
 
 ```bash
+# Recommended: install persistent wrapper
+rampart setup codex
+
+# Alternative: wrap a single session
 rampart preload -- codex
 ```
 
-That's it. Every command Codex tries to execute goes through Rampart first.
+`rampart setup codex` installs a wrapper script at `~/.local/bin/codex` that transparently runs the real Codex binary through `rampart preload`. Once installed, every `codex` invocation is automatically protected — no need to remember to add `rampart preload --` each time.
+
+To remove the wrapper: `rampart setup codex --remove`.
 
 ## How It Works
 

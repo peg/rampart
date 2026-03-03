@@ -44,9 +44,26 @@ rampart setup cline --remove  # Remove hooks
 Install shell shim and background service for OpenClaw.
 
 ```bash
-rampart setup openclaw                # Install shim + service
-rampart setup openclaw --remove       # Remove shim + service
+rampart setup openclaw                    # Install shim + service
+rampart setup openclaw --patch-tools      # Full coverage (shell + file tools)
+rampart setup openclaw --force            # Overwrite existing config
+rampart setup openclaw --remove           # Remove shim + service
 ```
+
+!!! warning "Re-run after OpenClaw upgrades"
+    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw, run `rampart setup openclaw --patch-tools --force` to re-apply.
+
+### `rampart setup codex`
+
+Install a wrapper script that intercepts all Codex CLI tool calls via LD_PRELOAD.
+
+```bash
+rampart setup codex                   # Install wrapper
+rampart setup codex --force           # Overwrite existing wrapper
+rampart setup codex --remove          # Remove wrapper
+```
+
+The wrapper is installed at `~/.local/bin/codex` and transparently wraps the real Codex binary. Every command Codex executes — including from sub-agents — goes through Rampart's policy engine.
 
 ### `rampart setup` (interactive)
 
@@ -77,8 +94,11 @@ rampart serve --port 8080              # Custom port
 rampart serve --config policy.yaml     # Custom policy
 rampart serve --syslog localhost:514   # With syslog output
 rampart serve --cef                    # With CEF file output
-rampart serve --syslog localhost:514 --cef  # CEF to syslog
+rampart serve --tls-auto               # HTTPS with auto-generated self-signed cert
+rampart serve --tls-cert c.pem --tls-key k.pem  # HTTPS with your own cert
 ```
+
+`--tls-auto` generates a self-signed ECDSA P-256 certificate (1-year validity) and stores it in `~/.rampart/tls/`. The SHA-256 fingerprint is printed on startup for verification. `--tls-cert` and `--tls-key` must be used together and are mutually exclusive with `--tls-auto`.
 
 ### `rampart wrap`
 
@@ -132,6 +152,20 @@ rampart init --profile paranoid       # Paranoid profile
 rampart init --profile yolo           # Yolo profile
 rampart init --detect                 # Auto-detect environment
 ```
+
+### `rampart init --from-audit`
+
+Generate policy YAML from audit logs. The "learn mode → enforce mode" pattern: observe what your agent does, then generate rules that match.
+
+```bash
+rampart init --from-audit ~/.rampart/audit/audit.jsonl          # Generate from audit log
+rampart init --from-audit ~/.rampart/audit/ --since 24h         # Last 24 hours only
+rampart init --from-audit ~/.rampart/audit/ --dry-run           # Preview without writing
+rampart init --from-audit ~/.rampart/audit/ --output policy.yaml  # Custom output path
+rampart init --from-audit ~/.rampart/audit/ --merge             # Merge with existing policy
+```
+
+Only allowed events are used for rule generation — denied events represent behavior you don't want to codify.
 
 ## Diagnostics
 
@@ -254,7 +288,11 @@ rampart allow "/tmp/**" --tool read            # Explicit tool type
 rampart allow "docker build *" --global        # Write to global policy
 rampart allow "pytest *" --project             # Write to project policy
 rampart allow "git push *" --yes               # Skip confirmation
+rampart allow "docker *" --for 1h             # Expires after 1 hour
+rampart allow "npm publish" --once             # Single-use — removed after first match
 ```
+
+`--for` accepts Go duration strings (`1h`, `30m`, `24h`, `2h30m`). The rule is skipped during evaluation once expired and cleaned up lazily. `--once` rules are removed immediately after their first match.
 
 ### `rampart block`
 

@@ -16,7 +16,7 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Codex CLI, any process |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
-| **Shim + Service** | Shell shim + background daemon | OpenClaw |
+| **Shim + Service** | Shell shim + file tool patching + LD_PRELOAD for sub-agents | OpenClaw |
 | **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (alternative) |
 
 ## require_approval Behavior

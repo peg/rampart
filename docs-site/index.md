@@ -180,9 +180,17 @@ verify -> outcomes.approval
 | **Cline** | Native hooks | `rampart setup cline` |
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
-| **Codex CLI** | LD_PRELOAD | `rampart preload --` |
-| **OpenClaw** | Shim + service | `rampart setup openclaw` |
+| **Codex CLI** | LD_PRELOAD | `rampart setup codex` |
+| **OpenClaw** | Shim + preload | `rampart setup openclaw` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
 | **Python agents** | HTTP API / SDK | `localhost:9090` |
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
+
+## What's New in v0.7.4
+
+- **`rampart init --from-audit`** — Generate policy YAML from your audit logs. Observe what your agent does, then generate rules to match. [Learn more →](reference/cli-commands.md#rampart-init---from-audit)
+- **Temporal allows** — `rampart allow "docker *" --for 1h` creates rules that expire automatically. `--once` for single-use exceptions. [Learn more →](reference/cli-commands.md#rampart-allow)
+- **TLS on `rampart serve`** — `--tls-auto` generates a self-signed cert, or bring your own with `--tls-cert`/`--tls-key`. [Learn more →](reference/cli-commands.md#rampart-serve)
+- **Docker image** — `docker run ghcr.io/peg/rampart:latest` — multi-arch distroless container. [Installation →](getting-started/installation.md#docker)
+- **`rampart setup codex`** — One-command persistent wrapper for Codex CLI via LD_PRELOAD. [Learn more →](integrations/codex-cli.md)
