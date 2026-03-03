@@ -83,6 +83,8 @@ OpenClaw Gateway
 
 **Fail-open**: All interception layers fail open — if Rampart is unreachable, commands pass through. This is deliberate ([design philosophy](../reference/threat-model.md)).
 
+**require_approval**: When a policy uses `action: require_approval`, the shim blocks execution and creates a pending approval. If webhooks are configured, Rampart sends notifications (Discord, Slack, etc.) to alert humans. The command stays blocked until resolved via `rampart approve <id>`, `rampart deny <id>`, or the HTTP API.
+
 !!! warning "File patches require re-running after OpenClaw upgrades"
     `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw (`npm install -g openclaw`), run:
     ```bash

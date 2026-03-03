@@ -157,15 +157,6 @@ Pending approvals are stored in memory and lost on service restart. If `rampart 
 - Service restarts are rare during active sessions
 - Persistent approval storage is planned for a future release
 
-### 13. Temporal Allow Expiry
-
-v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipped during evaluation** and cleaned up lazily — they are not removed from the policy file immediately on expiry.
-
-**Security implications:**
-- Between expiry and cleanup, the rule exists in the YAML but is inert (evaluation checks `expires_at` before matching)
-- `--once` rules are removed immediately after their first match
-- Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
-
 ### 10. Project Policy Trust
 
 Project-local `.rampart/policy.yaml` files are loaded automatically when present. A malicious repository could include a permissive project policy.
@@ -243,6 +234,15 @@ The HTTP API uses a single bearer token for both tool call evaluation and admini
 - Splitting eval and admin tokens is tracked in [#180](https://github.com/peg/rampart/issues/180)
 
 **Current status:** This is a known gap in same-user deployments. The fix (separate eval and admin tokens) is designed and will ship in a future release with zero user friction — both tokens auto-generate and the shim only receives the eval token.
+
+### 13. Temporal Allow Expiry
+
+v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipped during evaluation** and cleaned up lazily — they are not removed from the policy file immediately on expiry.
+
+**Security implications:**
+- Between expiry and cleanup, the rule exists in the YAML but is inert (evaluation checks `expires_at` before matching)
+- `--once` rules are removed immediately after their first match
+- Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
 
 ## Self-Modification Protection
 

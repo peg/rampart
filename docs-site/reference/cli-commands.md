@@ -39,6 +39,7 @@ Install native hooks into Cline.
 
 ```bash
 rampart setup cline           # Install hooks
+rampart setup cline --force   # Overwrite existing hooks
 rampart setup cline --remove  # Remove hooks
 ```
 
@@ -97,6 +98,7 @@ rampart serve --port 8080              # Custom port
 rampart serve --config policy.yaml     # Custom policy
 rampart serve --syslog localhost:514   # With syslog output
 rampart serve --cef                    # With CEF file output
+rampart serve --syslog localhost:514 --cef  # CEF to syslog
 rampart serve --tls-auto               # HTTPS with auto-generated self-signed cert
 rampart serve --tls-cert c.pem --tls-key k.pem  # HTTPS with your own cert
 ```
