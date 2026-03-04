@@ -202,13 +202,14 @@ func WithConfigPath(path string) Option {
 // New creates a new proxy server.
 func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 	s := &Server{
-		engine:    eng,
-		sink:      sink,
-		approvals: nil, // initialized after options
-		mode:      defaultMode,
-		logger:    slog.Default(),
-		startedAt: time.Now().UTC(),
-		sse:       newSSEHub(),
+		engine:      eng,
+		sink:        sink,
+		approvals:   nil, // initialized after options
+		mode:        defaultMode,
+		logger:      slog.Default(),
+		startedAt:   time.Now().UTC(),
+		sse:         newSSEHub(),
+		stopCleanup: make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -272,7 +273,6 @@ func (s *Server) Token() string {
 // startExpiredRuleCleanup runs a background goroutine that periodically removes
 // expired temporal rules (--for) from policy files. Runs every 60 seconds.
 func (s *Server) startExpiredRuleCleanup() {
-	s.stopCleanup = make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
@@ -370,7 +370,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	// Stop the expired rule cleanup goroutine.
-	if s.stopCleanup != nil {
+	select {
+	case <-s.stopCleanup:
+		// Already closed.
+	default:
 		close(s.stopCleanup)
 	}
 
