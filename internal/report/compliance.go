@@ -36,9 +36,9 @@ const (
 	ControlStatusWarn ControlStatus = "WARN"
 	ControlStatusFail ControlStatus = "FAIL"
 
-	ComplianceStatusCompliant    ComplianceStatus = "COMPLIANT"
+	ComplianceStatusCompliant    ComplianceStatus = "PASS"
 	ComplianceStatusPartial      ComplianceStatus = "PARTIAL"
-	ComplianceStatusNonCompliant ComplianceStatus = "NON-COMPLIANT"
+	ComplianceStatusNonCompliant ComplianceStatus = "FAIL"
 )
 
 type CompliancePeriod struct {
@@ -66,7 +66,7 @@ type ComplianceControl struct {
 	Evidence []string      `json:"evidence"`
 }
 
-type AIUC1Report struct {
+type PostureReport struct {
 	ReportID       string                       `json:"report_id"`
 	GeneratedAt    time.Time                    `json:"generated_at"`
 	Period         CompliancePeriod             `json:"period"`
@@ -85,7 +85,7 @@ type ComplianceOptions struct {
 	RampartVersion string
 }
 
-func GenerateAIUC1Report(opts ComplianceOptions) (*AIUC1Report, error) {
+func GeneratePostureReport(opts ComplianceOptions) (*PostureReport, error) {
 	generatedAt := opts.GeneratedAt.UTC()
 	if generatedAt.IsZero() {
 		generatedAt = time.Now().UTC()
@@ -111,7 +111,7 @@ func GenerateAIUC1Report(opts ComplianceOptions) (*AIUC1Report, error) {
 		auditDir = "."
 	}
 
-	report := &AIUC1Report{
+	report := &PostureReport{
 		ReportID:    generateUUID4(),
 		GeneratedAt: generatedAt,
 		Period: CompliancePeriod{
@@ -119,32 +119,32 @@ func GenerateAIUC1Report(opts ComplianceOptions) (*AIUC1Report, error) {
 			Until: until,
 		},
 		RampartVersion: opts.RampartVersion,
-		Standard:       "AIUC-1",
+		Standard:       "Rampart Security Posture",
 		Controls: map[string]ComplianceControl{
-			"AIUC-1.1": {Name: "Tool Call Authorization"},
-			"AIUC-1.2": {Name: "Audit Logging"},
-			"AIUC-1.3": {Name: "Human-in-the-Loop"},
-			"AIUC-1.4": {Name: "Data Exfiltration Prevention"},
+			"RC-1": {Name: "Tool Call Authorization"},
+			"RC-2": {Name: "Audit Logging"},
+			"RC-3": {Name: "Human-in-the-Loop"},
+			"RC-4": {Name: "Data Exfiltration Prevention"},
 		},
 	}
 
 	auditFiles, listErr := listAuditJSONLFiles(auditDir)
 	if listErr != nil {
-		report.Controls["AIUC-1.1"] = ComplianceControl{
+		report.Controls["RC-1"] = ComplianceControl{
 			Name:   "Tool Call Authorization",
 			Status: ControlStatusFail,
 			Evidence: []string{
 				fmt.Sprintf("Could not read audit directory %q: %v", auditDir, listErr),
 			},
 		}
-		report.Controls["AIUC-1.2"] = ComplianceControl{
+		report.Controls["RC-2"] = ComplianceControl{
 			Name:   "Audit Logging",
 			Status: ControlStatusFail,
 			Evidence: []string{
 				"Audit chain could not be verified because audit logs are unavailable.",
 			},
 		}
-		report.Controls["AIUC-1.3"] = ComplianceControl{
+		report.Controls["RC-3"] = ComplianceControl{
 			Name:   "Human-in-the-Loop",
 			Status: ControlStatusWarn,
 			Evidence: []string{
@@ -161,23 +161,23 @@ func GenerateAIUC1Report(opts ComplianceOptions) (*AIUC1Report, error) {
 	return report, nil
 }
 
-func (r *AIUC1Report) applyAuditControlResults(auditDir string, auditFiles []string, since, until time.Time) {
+func (r *PostureReport) applyAuditControlResults(auditDir string, auditFiles []string, since, until time.Time) {
 	if len(auditFiles) == 0 {
-		r.Controls["AIUC-1.1"] = ComplianceControl{
+		r.Controls["RC-1"] = ComplianceControl{
 			Name:   "Tool Call Authorization",
 			Status: ControlStatusFail,
 			Evidence: []string{
 				fmt.Sprintf("No audit log files found in %q.", auditDir),
 			},
 		}
-		r.Controls["AIUC-1.2"] = ComplianceControl{
+		r.Controls["RC-2"] = ComplianceControl{
 			Name:   "Audit Logging",
 			Status: ControlStatusFail,
 			Evidence: []string{
 				"Audit chain verification cannot run because no audit log files were found.",
 			},
 		}
-		r.Controls["AIUC-1.3"] = ComplianceControl{
+		r.Controls["RC-3"] = ComplianceControl{
 			Name:   "Human-in-the-Loop",
 			Status: ControlStatusWarn,
 			Evidence: []string{
@@ -189,7 +189,7 @@ func (r *AIUC1Report) applyAuditControlResults(auditDir string, auditFiles []str
 
 	allEvents, hashesByID, chainErr := readAndVerifyAuditChain(auditFiles)
 	if chainErr != nil {
-		r.Controls["AIUC-1.2"] = ComplianceControl{
+		r.Controls["RC-2"] = ComplianceControl{
 			Name:     "Audit Logging",
 			Status:   ControlStatusFail,
 			Evidence: []string{fmt.Sprintf("Audit chain verification failed: %v", chainErr)},
@@ -197,13 +197,13 @@ func (r *AIUC1Report) applyAuditControlResults(auditDir string, auditFiles []str
 	} else {
 		anchorErr := verifyAnchorsInDir(auditDir, hashesByID)
 		if anchorErr != nil {
-			r.Controls["AIUC-1.2"] = ComplianceControl{
+			r.Controls["RC-2"] = ComplianceControl{
 				Name:     "Audit Logging",
 				Status:   ControlStatusFail,
 				Evidence: []string{fmt.Sprintf("Audit anchor verification failed: %v", anchorErr)},
 			}
 		} else {
-			r.Controls["AIUC-1.2"] = ComplianceControl{
+			r.Controls["RC-2"] = ComplianceControl{
 				Name:     "Audit Logging",
 				Status:   ControlStatusPass,
 				Evidence: []string{fmt.Sprintf("Verified %d events across %d audit files.", len(allEvents), len(auditFiles))},
@@ -216,13 +216,13 @@ func (r *AIUC1Report) applyAuditControlResults(auditDir string, auditFiles []str
 	r.Summary.DecisionCounts = counts
 
 	if len(periodEvents) > 0 {
-		r.Controls["AIUC-1.1"] = ComplianceControl{
+		r.Controls["RC-1"] = ComplianceControl{
 			Name:     "Tool Call Authorization",
 			Status:   ControlStatusPass,
 			Evidence: []string{fmt.Sprintf("Found %d audited tool-call events in reporting period.", len(periodEvents))},
 		}
 	} else {
-		r.Controls["AIUC-1.1"] = ComplianceControl{
+		r.Controls["RC-1"] = ComplianceControl{
 			Name:   "Tool Call Authorization",
 			Status: ControlStatusWarn,
 			Evidence: []string{
@@ -232,13 +232,13 @@ func (r *AIUC1Report) applyAuditControlResults(auditDir string, auditFiles []str
 	}
 
 	if counts.Ask > 0 {
-		r.Controls["AIUC-1.3"] = ComplianceControl{
+		r.Controls["RC-3"] = ComplianceControl{
 			Name:     "Human-in-the-Loop",
 			Status:   ControlStatusPass,
 			Evidence: []string{fmt.Sprintf("Found %d ask decisions in reporting period.", counts.Ask)},
 		}
 	} else {
-		r.Controls["AIUC-1.3"] = ComplianceControl{
+		r.Controls["RC-3"] = ComplianceControl{
 			Name:     "Human-in-the-Loop",
 			Status:   ControlStatusWarn,
 			Evidence: []string{"No ask decisions found in reporting period."},
@@ -246,14 +246,14 @@ func (r *AIUC1Report) applyAuditControlResults(auditDir string, auditFiles []str
 	}
 }
 
-func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
+func (r *PostureReport) applyPolicyControlResult(policyPath string) {
 	resolved, err := expandHomePath(policyPath)
 	if err != nil {
 		resolved = policyPath
 	}
 	trimmed := strings.TrimSpace(resolved)
 	if trimmed == "" {
-		r.Controls["AIUC-1.4"] = ComplianceControl{
+		r.Controls["RC-4"] = ComplianceControl{
 			Name:     "Data Exfiltration Prevention",
 			Status:   ControlStatusWarn,
 			Evidence: []string{"No policy file path provided; cannot verify sensitive deny rules."},
@@ -264,7 +264,7 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 	const maxPolicyBytes = 10 << 20 // 10 MiB
 	fi, err := os.Stat(trimmed)
 	if err != nil {
-		r.Controls["AIUC-1.4"] = ComplianceControl{
+		r.Controls["RC-4"] = ComplianceControl{
 			Name:     "Data Exfiltration Prevention",
 			Status:   ControlStatusWarn,
 			Evidence: []string{fmt.Sprintf("Could not read policy file %q: %v", trimmed, err)},
@@ -272,7 +272,7 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 		return
 	}
 	if !fi.Mode().IsRegular() {
-		r.Controls["AIUC-1.4"] = ComplianceControl{
+		r.Controls["RC-4"] = ComplianceControl{
 			Name:     "Data Exfiltration Prevention",
 			Status:   ControlStatusWarn,
 			Evidence: []string{fmt.Sprintf("Policy path %q is not a regular file", trimmed)},
@@ -280,7 +280,7 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 		return
 	}
 	if fi.Size() > maxPolicyBytes {
-		r.Controls["AIUC-1.4"] = ComplianceControl{
+		r.Controls["RC-4"] = ComplianceControl{
 			Name:     "Data Exfiltration Prevention",
 			Status:   ControlStatusWarn,
 			Evidence: []string{fmt.Sprintf("Policy file %q exceeds 10 MiB size limit", trimmed)},
@@ -289,7 +289,7 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 	}
 	data, err := os.ReadFile(trimmed)
 	if err != nil {
-		r.Controls["AIUC-1.4"] = ComplianceControl{
+		r.Controls["RC-4"] = ComplianceControl{
 			Name:     "Data Exfiltration Prevention",
 			Status:   ControlStatusWarn,
 			Evidence: []string{fmt.Sprintf("Could not read policy file %q: %v", trimmed, err)},
@@ -303,7 +303,7 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 	covered, found, missing := evaluateSensitiveDenyCoverage(string(data))
 	heuristicNote := "Note: coverage check is keyword proximity heuristic — manual policy review recommended for full assurance."
 	if covered {
-		r.Controls["AIUC-1.4"] = ComplianceControl{
+		r.Controls["RC-4"] = ComplianceControl{
 			Name:   "Data Exfiltration Prevention",
 			Status: ControlStatusPass,
 			Evidence: []string{
@@ -322,7 +322,7 @@ func (r *AIUC1Report) applyPolicyControlResult(policyPath string) {
 		evidence = append(evidence, fmt.Sprintf("Missing: %s", strings.Join(missing, ", ")))
 	}
 	evidence = append(evidence, heuristicNote)
-	r.Controls["AIUC-1.4"] = ComplianceControl{
+	r.Controls["RC-4"] = ComplianceControl{
 		Name:     "Data Exfiltration Prevention",
 		Status:   ControlStatusWarn,
 		Evidence: evidence,
@@ -595,14 +595,14 @@ func generateUUID4() string {
 	return fmt.Sprintf("%s-%s-%s-%s-%s", hexStr[0:8], hexStr[8:12], hexStr[12:16], hexStr[16:20], hexStr[20:32])
 }
 
-func FormatAIUC1TextReport(report *AIUC1Report) string {
+func FormatPostureTextReport(report *PostureReport) string {
 	var b strings.Builder
 
-	_, _ = fmt.Fprintf(&b, "AIUC-1 Compliance Report\n")
-	_, _ = fmt.Fprintf(&b, "========================\n")
-	_, _ = fmt.Fprintf(&b, "AIUC-1 (AI Unified Controls v1) is a compliance standard for AI agent\n")
-	_, _ = fmt.Fprintf(&b, "operations. This report provides evidence of Rampart's enforcement.\n")
-	_, _ = fmt.Fprintf(&b, "Learn more: https://rampart.sh/docs/guides/compliance\n\n")
+	_, _ = fmt.Fprintf(&b, "Rampart Security Posture Report\n")
+	_, _ = fmt.Fprintf(&b, "================================\n")
+	_, _ = fmt.Fprintf(&b, "This report evaluates how well your Rampart deployment enforces key\n")
+	_, _ = fmt.Fprintf(&b, "agent security controls.\n")
+	_, _ = fmt.Fprintf(&b, "Learn more: https://docs.rampart.sh/guides/compliance/\n\n")
 	_, _ = fmt.Fprintf(&b, "Report ID: %s\n", report.ReportID)
 	_, _ = fmt.Fprintf(&b, "Generated: %s\n", report.GeneratedAt.Format(time.RFC3339))
 	_, _ = fmt.Fprintf(&b, "Period: %s to %s\n", report.Period.Since.Format(time.RFC3339), report.Period.Until.Format(time.RFC3339))
@@ -620,7 +620,7 @@ func FormatAIUC1TextReport(report *AIUC1Report) string {
 	_, _ = fmt.Fprintf(&b, "Ask: %d\n", counts.Ask)
 	_, _ = fmt.Fprintf(&b, "Other: %d\n\n", counts.Other)
 
-	keys := []string{"AIUC-1.1", "AIUC-1.2", "AIUC-1.3", "AIUC-1.4"}
+	keys := []string{"RC-1", "RC-2", "RC-3", "RC-4"}
 	_, _ = fmt.Fprintf(&b, "Controls\n")
 	_, _ = fmt.Fprintf(&b, "--------\n")
 	for _, key := range keys {
@@ -633,17 +633,17 @@ func FormatAIUC1TextReport(report *AIUC1Report) string {
 
 	// Remediation hints for non-compliant controls.
 	var remediations []string
-	if c, ok := report.Controls["AIUC-1.1"]; ok && c.Status != ControlStatusPass {
-		remediations = append(remediations, "AIUC-1.1: Run 'rampart doctor' to verify hooks are installed, then use an AI agent to generate audit events.")
+	if c, ok := report.Controls["RC-1"]; ok && c.Status != ControlStatusPass {
+		remediations = append(remediations, "RC-1: Run 'rampart doctor' to verify hooks are installed, then use an AI agent to generate audit events.")
 	}
-	if c, ok := report.Controls["AIUC-1.2"]; ok && c.Status == ControlStatusFail {
-		remediations = append(remediations, "AIUC-1.2: Run 'rampart audit verify' to inspect chain integrity. Old or manually-edited audit files can cause hash mismatches.")
+	if c, ok := report.Controls["RC-2"]; ok && c.Status == ControlStatusFail {
+		remediations = append(remediations, "RC-2: Run 'rampart audit verify' to inspect chain integrity. Old or manually-edited audit files can cause hash mismatches.")
 	}
-	if c, ok := report.Controls["AIUC-1.3"]; ok && c.Status != ControlStatusPass {
-		remediations = append(remediations, "AIUC-1.3: Use 'action: ask' (not 'action: deny') for sensitive operations so human approval events appear in the audit log.")
+	if c, ok := report.Controls["RC-3"]; ok && c.Status != ControlStatusPass {
+		remediations = append(remediations, "RC-3: Use 'action: ask' (not 'action: deny') for sensitive operations so human approval events appear in the audit log.")
 	}
-	if c, ok := report.Controls["AIUC-1.4"]; ok && c.Status != ControlStatusPass {
-		remediations = append(remediations, "AIUC-1.4: Run 'rampart init --profile standard --force' to ensure credential-blocking rules are active.")
+	if c, ok := report.Controls["RC-4"]; ok && c.Status != ControlStatusPass {
+		remediations = append(remediations, "RC-4: Run 'rampart init --profile standard --force' to ensure credential-blocking rules are active.")
 	}
 	if len(remediations) > 0 {
 		_, _ = fmt.Fprintf(&b, "\nRemediation\n")

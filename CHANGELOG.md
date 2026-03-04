@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Double webhook for `ask` decisions**: the immediate webhook notification now skips `ask` decisions (same as `require_approval`), so the webhook fires once — after the approval is created — with full approval metadata.
 - **`rampart init` partial output**: when a config or policy file already exists, the output now includes a `--force` hint so users know how to overwrite.
 - **Standard policy lint**: `rampart doctor` now shows 1 lint warning instead of 17. All `require_approval` entries in `policies/standard.yaml` migrated to `action: ask`; the ask-agent-scope check downgraded from warning to info (deny fallback for non-Claude Code agents is intentional).
-- **`rampart report compliance` output**: AIUC-1 explanation header and per-control remediation hints added to text format. JSON output unchanged.
+- **`rampart report compliance` output**: Report explanation header and per-control remediation hints added to text format. JSON output unchanged.
 - **Install script**: post-install CTA updated to `rampart quickstart` (both `install.sh` and `install.ps1`).
 
 ### Added
@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`rampart policy list`** — Browse community policies from the built-in registry (`registry/registry.json`). Results cached for 1 hour; use `--refresh` to force update.
 - **`rampart policy fetch <name>`** — Download and install a community policy with sha256 verification. Supports `--force` and `--dry-run`.
 - **`rampart policy remove <name>`** — Remove an installed community policy (built-in profiles protected).
-- **`rampart report compliance`** — AIUC-1 compliance report generated from local audit logs. Maps decisions to four controls (Tool Call Authorization, Audit Logging, Human-in-the-Loop, Data Exfiltration Prevention). Outputs `COMPLIANT`, `PARTIAL`, or `NON-COMPLIANT` with per-control evidence. Supports `--since`, `--until`, `--format json`, and `--output`.
+- **`rampart report compliance`** — security posture report generated from local audit logs. Maps decisions to four controls (Tool Call Authorization, Audit Logging, Human-in-the-Loop, Data Exfiltration Prevention). Outputs `PASS`, `PARTIAL`, or `FAIL` with per-control evidence. Supports `--since`, `--until`, `--format json`, and `--output`.
 - **Community policy registry** — `registry/` directory in the main repo serves as the policy registry. Initial policies: `research-agent` (read-only web/file analysis) and `mcp-server` (MCP context with exec/credential guards).
 
 ### Known Limitations
