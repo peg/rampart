@@ -14,7 +14,7 @@
 
 ---
 
-Claude Code's `--dangerously-skip-permissions` mode — and similar autonomous modes in Cline and Codex — give agents unrestricted shell access. Rampart sits between the agent and your system: every command, file access, and network request is evaluated against your YAML policy before it executes. Dangerous commands are blocked in microseconds. Everything is logged.
+Claude Code's `--dangerously-skip-permissions` mode — and similar autonomous modes in Cline and Codex — give agents unrestricted shell access. Your agent can read your SSH keys, exfiltrate your `.env`, or `rm -rf /` with no guardrails. Rampart sits between the agent and your system: every command, file access, and network request is evaluated against your YAML policy before it executes.
 
 One command to get protected:
 ```bash
@@ -30,7 +30,7 @@ rampart serve install                 # Install background service (saves token 
 rampart setup claude-code             # Wire up Claude Code hooks
 ```
 
-Once running, every command Claude executes goes through Rampart's policy engine first:
+Once running, every tool call goes through Rampart's policy engine first:
 
 ```
 ✅ 14:23:01  exec  "npm test"                          [allow-dev]
@@ -38,7 +38,11 @@ Once running, every command Claude executes goes through Rampart's policy engine
 🔴 14:23:05  exec  "rm -rf /tmp/*"                      [block-destructive]
 🟡 14:23:08  exec  "curl https://api.example.com"       [log-network]
 👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [require-approval]
+🔴 14:23:12  resp  read .env                            [block-credential-leak]
+                    → blocked: response contained AWS_SECRET_ACCESS_KEY
 ```
+
+Rampart also scans tool **responses** — if your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window.
 
 ---
 
@@ -46,13 +50,14 @@ Once running, every command Claude executes goes through Rampart's policy engine
 
 <img src="docs/architecture.svg" alt="Rampart architecture — agents flow through interception layer into policy engine, with audit trail and outcomes" width="100%">
 
-*Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions go to a hash-chained audit trail.*
+*Pattern matching handles 95%+ of decisions instantly. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions go to a hash-chained audit trail.*
 
 | Agent | Setup | Integration |
 |-------|-------|-------------|
-| **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks — works in `--dangerously-skip-permissions` mode |
+| **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
+| **Codex CLI** | `rampart setup codex` | Persistent wrapper with LD_PRELOAD for child processes |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **OpenClaw** | `rampart setup openclaw` | Shell shim with human-in-the-loop approval flow. Add `--patch-tools` for file read/write coverage |
+| **OpenClaw** | `rampart setup openclaw` | Shell shim + `--patch-tools` for file read/write coverage |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -60,6 +65,20 @@ Once running, every command Claude executes goes through Rampart's policy engine
 <div align="center">
 <img src="docs/watch.png" alt="rampart watch — live audit dashboard" width="700">
 </div>
+
+### OWASP Top 10 for Agentic AI
+
+Rampart maps directly to the [OWASP Top 10 Risks for Agentic AI](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/):
+
+| OWASP Risk | Rampart Coverage |
+|------------|-----------------|
+| **Excessive Agency** | Policy engine enforces least-privilege per tool call |
+| **Unauthorized Tool Use** | Every tool call evaluated before execution |
+| **Insecure Tool Implementation** | Response scanning blocks credential leaks before they reach agent context |
+| **Prompt Injection → Tool Abuse** | Pattern matching catches injected commands; `watch-prompt-injection` policy monitors responses |
+| **Insufficient Audit Trail** | Hash-chained JSONL with syslog/CEF export to any SIEM |
+| **Data Exfiltration** | Domain blocking, credential pattern detection, response scanning |
+| **Uncontrolled Autonomy** | `require_approval` for human-in-the-loop on sensitive operations |
 
 <details>
 <summary><strong>📖 Table of Contents</strong></summary>
@@ -75,6 +94,14 @@ Once running, every command Claude executes goes through Rampart's policy engine
 **Reference:** [Performance](#performance) · [Security](#security-recommendations) · [CLI Reference](#cli-reference) · [Compatibility](#compatibility) · [Building from Source](#building-from-source) · [Contributing](#contributing) · [Roadmap](#roadmap)
 
 </details>
+
+### What's New in v0.7.4
+
+- **`rampart init --from-audit`** — Generate policy YAML from your audit logs. Observe what your agent does, then generate rules to match.
+- **Temporal allows** — `rampart allow "docker *" --for 1h` creates rules that expire automatically. `--once` for single-use exceptions.
+- **TLS on `rampart serve`** — `--tls-auto` generates a self-signed cert, or bring your own with `--tls-cert`/`--tls-key`.
+- **`rampart setup codex`** — One-command persistent wrapper for Codex CLI.
+- **Response scanning** — Block credentials in tool responses before they reach the agent's context window.
 
 ---
 
