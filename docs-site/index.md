@@ -18,7 +18,9 @@ hide:
 
 ## What is Rampart?
 
-Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked in microseconds. Everything gets logged to a tamper-evident audit trail where each entry is cryptographically linked to the previous one — if anyone tampers with a record, the chain breaks.
+Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked instantly. Everything gets logged to a tamper-evident audit trail where each entry is cryptographically linked to the previous one — if anyone tampers with a record, the chain breaks.
+
+Rampart also scans tool **responses** — if your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. [Learn more →](reference/owasp-mapping.md#response-scanning-owasp-risk-3)
 
 <div class="grid cards" markdown>
 
@@ -26,7 +28,7 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
 
     ---
 
-    YAML-based policies with glob matching. Deny, allow, log, or require human approval. Evaluates in **<10μs**.
+    YAML-based policies with glob matching. Deny, allow, log, or require human approval. Zero noticeable overhead.
 
     [:octicons-arrow-right-24: Learn more](features/policy-engine.md)
 
@@ -53,6 +55,22 @@ Rampart is a **policy engine** that sits between AI agents and the tools they us
     Native hooks, shell wrapping, MCP proxy, system-level interception, HTTP API. Works with every major AI agent.
 
     [:octicons-arrow-right-24: Integration guides](integrations/index.md)
+
+-   :material-shield-alert:{ .lg .middle } **Response Scanning**
+
+    ---
+
+    Block credentials in tool responses before they reach the agent's context window. Prevents secrets from being exfiltrated in later turns.
+
+    [:octicons-arrow-right-24: How it works](reference/owasp-mapping.md#response-scanning-owasp-risk-3)
+
+-   :material-certificate:{ .lg .middle } **OWASP Aligned**
+
+    ---
+
+    Maps to 8 of the 10 OWASP Top 10 Risks for Agentic AI. Built for teams that need framework-aligned security tooling.
+
+    [:octicons-arrow-right-24: OWASP mapping](reference/owasp-mapping.md)
 
 </div>
 
@@ -86,7 +104,7 @@ Yes — a webpage or MCP tool response can contain instructions that try to over
 No. Rampart runs entirely on your machine. Policy evaluation, audit logging, and the dashboard are all local processes. No command data, file paths, or decisions are sent anywhere.
 
 **Will Rampart slow down my agent?**  
-Policy evaluation takes under 10 microseconds per tool call. In practice, you won't notice it.
+Policy checks are pure in-memory pattern matching — no network calls, no disk I/O, no measurable impact on your agent's workflow.
 
 **What if I need to allow a command that's blocked?**  
 Run `rampart allow "your command pattern"` and it's done — no YAML editing required. The rule takes effect immediately. For one-time exceptions, use `require_approval` in your policy so you can approve each instance. [Full guide →](guides/customizing-policy.md)

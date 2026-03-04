@@ -158,6 +158,7 @@ nav:
   - Reference:
     - CLI Commands: reference/cli-commands.md
     - Policy Schema: reference/policy-schema.md
+    - OWASP Mapping: reference/owasp-mapping.md
     - Threat Model: reference/threat-model.md
     - Architecture: reference/architecture.md
   - Contributing: contributing.md

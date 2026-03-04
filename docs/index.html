@@ -599,6 +599,7 @@
             .steps { grid-template-columns: 1fr; gap: 24px; }
             .pos-grid { grid-template-columns: 1fr; }
             #policy-example .container > div { grid-template-columns: 1fr !important; }
+            .container > div[style*="grid-template-columns:1fr 1fr"] { grid-template-columns: 1fr !important; }
             nav .links a.hide-mobile { display: none; }
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
@@ -898,6 +899,62 @@
         <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; text-align:center; overflow-x:auto;">
             <img src="architecture.svg" alt="Rampart architecture diagram showing agent tool calls flowing through the policy engine" style="max-width:100%; min-width:900px; height:auto; border-radius:8px;" loading="lazy">
         </div>
+    </div>
+</section>
+
+<!-- OWASP -->
+<section style="padding:80px 0; border-top:1px solid var(--border);">
+    <div class="container">
+        <div class="section-label">Framework alignment</div>
+        <h2 class="section-title">OWASP Top 10 for Agentic AI</h2>
+        <p class="section-desc">Rampart maps directly to the <a href="https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/" style="color:var(--accent);">OWASP Top 10 Risks for LLM-Powered Autonomous Agents</a>.</p>
+        <div style="max-width:780px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="color:var(--green);">✅</span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">Excessive Agency</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Least-privilege per tool call</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="color:var(--green);">✅</span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">Unauthorized Tool Use</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Every call evaluated before execution</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="color:var(--green);">✅</span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">Credential Leakage</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Response scanning blocks secrets from context</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="color:var(--green);">✅</span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">Data Exfiltration</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Domain blocking + credential detection</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="color:var(--green);">✅</span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">Uncontrolled Autonomy</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Human-in-the-loop approval gates</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="color:var(--green);">✅</span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">Insufficient Audit</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Hash-chained logs + SIEM export</div>
+                </div>
+            </div>
+        </div>
+        <p style="margin-top:16px; font-size:0.82rem; color:var(--text);">
+            <a href="https://docs.rampart.sh/reference/owasp-mapping/" style="color:var(--accent);">Full OWASP mapping with 8/10 coverage →</a>
+        </p>
     </div>
 </section>
 
