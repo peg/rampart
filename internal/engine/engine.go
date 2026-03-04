@@ -639,6 +639,68 @@ func (e *Engine) StartPeriodicReload(interval time.Duration) {
 	e.logger.Info("engine: periodic reload started", "interval", interval)
 }
 
+// ConsumeOnceRule removes a once:true rule after it has been matched.
+// This is called by the proxy after a decision with ConsumedOnce=true.
+// The rule is removed from the on-disk policy file and the engine is reloaded.
+func (e *Engine) ConsumeOnceRule(policyName string, ruleIndex int) error {
+	// Look up the policy to find its source file path.
+	e.mu.RLock()
+	var filePath string
+	for _, p := range e.config.Policies {
+		if p.Name == policyName {
+			filePath = p.FilePath
+			break
+		}
+	}
+	e.mu.RUnlock()
+
+	if filePath == "" {
+		return fmt.Errorf("engine: cannot consume once rule — policy %q has no file path", policyName)
+	}
+	if err := RemoveRule(filePath, policyName, ruleIndex); err != nil {
+		return fmt.Errorf("engine: consume once rule: %w", err)
+	}
+	e.logger.Info("engine: consumed once rule",
+		"policy", policyName,
+		"rule_index", ruleIndex,
+		"file", filePath,
+	)
+	// Reload to pick up the change.
+	return e.Reload()
+}
+
+// CleanExpired removes expired temporal rules from all loaded policy files
+// and reloads the engine. Returns the total number of rules removed.
+func (e *Engine) CleanExpired() (int, error) {
+	// Collect unique file paths from loaded policies.
+	e.mu.RLock()
+	fileSet := make(map[string]bool)
+	for _, p := range e.config.Policies {
+		if p.FilePath != "" {
+			fileSet[p.FilePath] = true
+		}
+	}
+	e.mu.RUnlock()
+
+	totalRemoved := 0
+	for path := range fileSet {
+		removed, err := CleanExpiredRules(path)
+		if err != nil {
+			e.logger.Error("engine: clean expired failed", "path", path, "error", err)
+			continue
+		}
+		totalRemoved += removed
+	}
+
+	if totalRemoved > 0 {
+		e.logger.Info("engine: cleaned expired rules", "removed", totalRemoved)
+		if reloadErr := e.Reload(); reloadErr != nil {
+			return totalRemoved, fmt.Errorf("engine: reload after cleanup: %w", reloadErr)
+		}
+	}
+	return totalRemoved, nil
+}
+
 // Stop terminates the periodic reload goroutine, if running.
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() {

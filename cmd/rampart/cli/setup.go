@@ -441,7 +441,14 @@ if [ "$1" = "-c" ]; then
     fi
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
-    PAYLOAD=$(printf '{"agent":"openclaw","session":"main","params":{"command_b64":"%%s"}}' "$ENCODED")
+    # Detect session context from environment.
+    # RAMPART_SESSION overrides all; otherwise use OPENCLAW_SESSION_KIND if available.
+    SESSION="${RAMPART_SESSION:-main}"
+    if [ -z "$RAMPART_SESSION" ] && [ -n "$OPENCLAW_SESSION_KIND" ]; then
+        SESSION="$OPENCLAW_SESSION_KIND"
+    fi
+
+    PAYLOAD=$(printf '{"agent":"openclaw","session":"%%s","params":{"command_b64":"%%s"}}' "$SESSION" "$ENCODED")
     RESP_FILE=$(mktemp /tmp/.rampart-resp.XXXXXX)
     HTTP_CODE=$(curl -sS -o "$RESP_FILE" -w "%%{http_code}" -X POST "${RAMPART_URL}/v1/tool/exec" \
         -H "Authorization: Bearer ${RAMPART_TOKEN}" \

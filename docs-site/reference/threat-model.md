@@ -244,7 +244,6 @@ v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipp
 - `--once` rules record consumption in decision metadata after their first match, but the proxy does not call `RemoveRule` — the rule continues to match on subsequent evaluations. This is a known gap; true single-use enforcement requires wiring `Decision.ConsumedOnce` to `persist.RemoveRule` in the proxy layer
 - Automatic cleanup is not yet implemented — use `rampart rules remove` to manually clean up expired or consumed rules
 - Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
-
 ## Self-Modification Protection
 
 Rampart protects its own configuration from agent tampering through two layers:

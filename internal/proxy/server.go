@@ -127,6 +127,7 @@ type Server struct {
 	auditDir        string
 	sse             *sseHub
 	lastReloadAPI   time.Time // Rate limiting for /v1/policy/reload
+	stopCleanup     chan struct{}
 }
 
 // Option configures a proxy server.
@@ -268,6 +269,29 @@ func (s *Server) Token() string {
 }
 
 // ListenAndServe starts serving HTTP requests at addr.
+// startExpiredRuleCleanup runs a background goroutine that periodically removes
+// expired temporal rules (--for) from policy files. Runs every 60 seconds.
+func (s *Server) startExpiredRuleCleanup() {
+	s.stopCleanup = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				removed, err := s.engine.CleanExpired()
+				if err != nil {
+					s.logger.Error("proxy: expired rule cleanup failed", "error", err)
+				} else if removed > 0 {
+					s.logger.Info("proxy: expired rules cleaned", "removed", removed)
+				}
+			case <-s.stopCleanup:
+				return
+			}
+		}
+	}()
+}
+
 func (s *Server) ListenAndServe(addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -316,6 +340,8 @@ func (s *Server) Serve(listener net.Listener) error {
 	s.server = srv
 	s.mu.Unlock()
 
+	s.startExpiredRuleCleanup()
+
 	if err := srv.Serve(listener); err != nil {
 		return fmt.Errorf("proxy: serve: %w", err)
 	}
@@ -341,6 +367,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	if srv == nil {
 		return nil
+	}
+
+	// Stop the expired rule cleanup goroutine.
+	if s.stopCleanup != nil {
+		close(s.stopCleanup)
 	}
 
 	// Close SSE connections first so they don't block server shutdown.
@@ -456,6 +487,21 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		decision = s.engine.Evaluate(call)
+	}
+
+	// Consume once:true rules after they fire. This removes the rule from
+	// the policy file so it won't match again. Done asynchronously to avoid
+	// blocking the response.
+	if decision.ConsumedOnce && decision.ConsumedRulePolicy != "" {
+		go func(policyName string, ruleIdx int) {
+			if err := s.engine.ConsumeOnceRule(policyName, ruleIdx); err != nil {
+				s.logger.Error("proxy: failed to consume once rule",
+					"policy", policyName,
+					"rule_index", ruleIdx,
+					"error", err,
+				)
+			}
+		}(decision.ConsumedRulePolicy, decision.ConsumedRuleIndex)
 	}
 
 	if s.metricsEnabled {
