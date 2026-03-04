@@ -854,7 +854,7 @@ rampart policy sync status                         # Show current sync state
 rampart policy sync stop                           # Stop a running --watch process
 
 # Compliance reporting
-rampart report compliance                          # AIUC-1 compliance report (text)
+rampart report compliance                          # Security posture report (text)
 rampart report compliance --format json            # JSON output for CI/tooling
 rampart report compliance --since 2026-01-01       # Scoped to date range
 rampart report compliance --output report.json     # Write to file

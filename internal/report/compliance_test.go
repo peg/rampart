@@ -25,7 +25,7 @@ import (
 	"github.com/peg/rampart/internal/audit"
 )
 
-func TestGenerateAIUC1Report_Compliant(t *testing.T) {
+func TestGeneratePostureReport_Compliant(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
@@ -49,7 +49,7 @@ policies:
 		t.Fatalf("write policy: %v", err)
 	}
 
-	rep, err := GenerateAIUC1Report(ComplianceOptions{
+	rep, err := GeneratePostureReport(ComplianceOptions{
 		AuditDir:       dir,
 		PolicyPath:     policyPath,
 		Since:          now.Add(-24 * time.Hour),
@@ -58,11 +58,11 @@ policies:
 		RampartVersion: "v1.2.3",
 	})
 	if err != nil {
-		t.Fatalf("GenerateAIUC1Report returned error: %v", err)
+		t.Fatalf("GeneratePostureReport returned error: %v", err)
 	}
 
-	if rep.Standard != "AIUC-1" {
-		t.Fatalf("standard = %q, want AIUC-1", rep.Standard)
+	if rep.Standard != "Rampart Security Posture" {
+		t.Fatalf("standard = %q, want Rampart Security Posture", rep.Standard)
 	}
 	if rep.Summary.ComplianceStatus != ComplianceStatusCompliant {
 		t.Fatalf("status = %s, want %s", rep.Summary.ComplianceStatus, ComplianceStatusCompliant)
@@ -70,21 +70,21 @@ policies:
 	if rep.Summary.DecisionCounts.Total != 3 || rep.Summary.DecisionCounts.Ask != 1 {
 		t.Fatalf("unexpected decision counts: %+v", rep.Summary.DecisionCounts)
 	}
-	if rep.Controls["AIUC-1.1"].Status != ControlStatusPass {
-		t.Fatalf("AIUC-1.1 status = %s, want PASS", rep.Controls["AIUC-1.1"].Status)
+	if rep.Controls["RC-1"].Status != ControlStatusPass {
+		t.Fatalf("RC-1 status = %s, want PASS", rep.Controls["RC-1"].Status)
 	}
-	if rep.Controls["AIUC-1.2"].Status != ControlStatusPass {
-		t.Fatalf("AIUC-1.2 status = %s, want PASS", rep.Controls["AIUC-1.2"].Status)
+	if rep.Controls["RC-2"].Status != ControlStatusPass {
+		t.Fatalf("RC-2 status = %s, want PASS", rep.Controls["RC-2"].Status)
 	}
-	if rep.Controls["AIUC-1.3"].Status != ControlStatusPass {
-		t.Fatalf("AIUC-1.3 status = %s, want PASS", rep.Controls["AIUC-1.3"].Status)
+	if rep.Controls["RC-3"].Status != ControlStatusPass {
+		t.Fatalf("RC-3 status = %s, want PASS", rep.Controls["RC-3"].Status)
 	}
-	if rep.Controls["AIUC-1.4"].Status != ControlStatusPass {
-		t.Fatalf("AIUC-1.4 status = %s, want PASS", rep.Controls["AIUC-1.4"].Status)
+	if rep.Controls["RC-4"].Status != ControlStatusPass {
+		t.Fatalf("RC-4 status = %s, want PASS", rep.Controls["RC-4"].Status)
 	}
 }
 
-func TestGenerateAIUC1Report_NoAuditLogsNonCompliant(t *testing.T) {
+func TestGeneratePostureReport_NoAuditLogsNonCompliant(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
@@ -93,7 +93,7 @@ func TestGenerateAIUC1Report_NoAuditLogsNonCompliant(t *testing.T) {
 		t.Fatalf("write policy: %v", err)
 	}
 
-	rep, err := GenerateAIUC1Report(ComplianceOptions{
+	rep, err := GeneratePostureReport(ComplianceOptions{
 		AuditDir:    filepath.Join(dir, "missing"),
 		PolicyPath:  policyPath,
 		Since:       now.Add(-24 * time.Hour),
@@ -101,21 +101,21 @@ func TestGenerateAIUC1Report_NoAuditLogsNonCompliant(t *testing.T) {
 		GeneratedAt: now,
 	})
 	if err != nil {
-		t.Fatalf("GenerateAIUC1Report returned error: %v", err)
+		t.Fatalf("GeneratePostureReport returned error: %v", err)
 	}
 
-	if rep.Controls["AIUC-1.1"].Status != ControlStatusFail {
-		t.Fatalf("AIUC-1.1 status = %s, want FAIL", rep.Controls["AIUC-1.1"].Status)
+	if rep.Controls["RC-1"].Status != ControlStatusFail {
+		t.Fatalf("RC-1 status = %s, want FAIL", rep.Controls["RC-1"].Status)
 	}
-	if rep.Controls["AIUC-1.2"].Status != ControlStatusFail {
-		t.Fatalf("AIUC-1.2 status = %s, want FAIL", rep.Controls["AIUC-1.2"].Status)
+	if rep.Controls["RC-2"].Status != ControlStatusFail {
+		t.Fatalf("RC-2 status = %s, want FAIL", rep.Controls["RC-2"].Status)
 	}
 	if rep.Summary.ComplianceStatus != ComplianceStatusNonCompliant {
 		t.Fatalf("status = %s, want %s", rep.Summary.ComplianceStatus, ComplianceStatusNonCompliant)
 	}
 }
 
-func TestGenerateAIUC1Report_ZeroEventsWarnsClearly(t *testing.T) {
+func TestGeneratePostureReport_ZeroEventsWarnsClearly(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
@@ -137,7 +137,7 @@ policies:
 		t.Fatalf("write policy: %v", err)
 	}
 
-	rep, err := GenerateAIUC1Report(ComplianceOptions{
+	rep, err := GeneratePostureReport(ComplianceOptions{
 		AuditDir:    dir,
 		PolicyPath:  policyPath,
 		Since:       now.Add(-24 * time.Hour),
@@ -145,30 +145,30 @@ policies:
 		GeneratedAt: now,
 	})
 	if err != nil {
-		t.Fatalf("GenerateAIUC1Report returned error: %v", err)
+		t.Fatalf("GeneratePostureReport returned error: %v", err)
 	}
 
 	if rep.Summary.DecisionCounts.Total != 0 {
 		t.Fatalf("total decisions = %d, want 0", rep.Summary.DecisionCounts.Total)
 	}
-	if rep.Controls["AIUC-1.1"].Status != ControlStatusWarn {
-		t.Fatalf("AIUC-1.1 status = %s, want WARN", rep.Controls["AIUC-1.1"].Status)
+	if rep.Controls["RC-1"].Status != ControlStatusWarn {
+		t.Fatalf("RC-1 status = %s, want WARN", rep.Controls["RC-1"].Status)
 	}
-	if rep.Controls["AIUC-1.2"].Status != ControlStatusPass {
-		t.Fatalf("AIUC-1.2 status = %s, want PASS", rep.Controls["AIUC-1.2"].Status)
+	if rep.Controls["RC-2"].Status != ControlStatusPass {
+		t.Fatalf("RC-2 status = %s, want PASS", rep.Controls["RC-2"].Status)
 	}
-	if rep.Controls["AIUC-1.3"].Status != ControlStatusWarn {
-		t.Fatalf("AIUC-1.3 status = %s, want WARN", rep.Controls["AIUC-1.3"].Status)
+	if rep.Controls["RC-3"].Status != ControlStatusWarn {
+		t.Fatalf("RC-3 status = %s, want WARN", rep.Controls["RC-3"].Status)
 	}
 	if rep.Summary.ComplianceStatus != ComplianceStatusPartial {
 		t.Fatalf("status = %s, want %s", rep.Summary.ComplianceStatus, ComplianceStatusPartial)
 	}
-	if !strings.Contains(strings.Join(rep.Controls["AIUC-1.1"].Evidence, " | "), "no events") {
-		t.Fatalf("expected AIUC-1.1 evidence to explain no events: %v", rep.Controls["AIUC-1.1"].Evidence)
+	if !strings.Contains(strings.Join(rep.Controls["RC-1"].Evidence, " | "), "no events") {
+		t.Fatalf("expected RC-1 evidence to explain no events: %v", rep.Controls["RC-1"].Evidence)
 	}
 }
 
-func TestGenerateAIUC1Report_PartialForMissingAskAndPolicyCoverage(t *testing.T) {
+func TestGeneratePostureReport_PartialForMissingAskAndPolicyCoverage(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
@@ -188,7 +188,7 @@ policies:
 		t.Fatalf("write policy: %v", err)
 	}
 
-	rep, err := GenerateAIUC1Report(ComplianceOptions{
+	rep, err := GeneratePostureReport(ComplianceOptions{
 		AuditDir:    dir,
 		PolicyPath:  policyPath,
 		Since:       now.Add(-24 * time.Hour),
@@ -196,21 +196,21 @@ policies:
 		GeneratedAt: now,
 	})
 	if err != nil {
-		t.Fatalf("GenerateAIUC1Report returned error: %v", err)
+		t.Fatalf("GeneratePostureReport returned error: %v", err)
 	}
 
 	if rep.Summary.ComplianceStatus != ComplianceStatusPartial {
 		t.Fatalf("status = %s, want %s", rep.Summary.ComplianceStatus, ComplianceStatusPartial)
 	}
-	if rep.Controls["AIUC-1.3"].Status != ControlStatusWarn {
-		t.Fatalf("AIUC-1.3 status = %s, want WARN", rep.Controls["AIUC-1.3"].Status)
+	if rep.Controls["RC-3"].Status != ControlStatusWarn {
+		t.Fatalf("RC-3 status = %s, want WARN", rep.Controls["RC-3"].Status)
 	}
-	if rep.Controls["AIUC-1.4"].Status != ControlStatusWarn {
-		t.Fatalf("AIUC-1.4 status = %s, want WARN", rep.Controls["AIUC-1.4"].Status)
+	if rep.Controls["RC-4"].Status != ControlStatusWarn {
+		t.Fatalf("RC-4 status = %s, want WARN", rep.Controls["RC-4"].Status)
 	}
 }
 
-func TestGenerateAIUC1Report_FailsOnTamperedChain(t *testing.T) {
+func TestGeneratePostureReport_FailsOnTamperedChain(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
@@ -231,7 +231,7 @@ policies:
 		t.Fatalf("write policy: %v", err)
 	}
 
-	rep, err := GenerateAIUC1Report(ComplianceOptions{
+	rep, err := GeneratePostureReport(ComplianceOptions{
 		AuditDir:    dir,
 		PolicyPath:  policyPath,
 		Since:       now.Add(-24 * time.Hour),
@@ -239,11 +239,11 @@ policies:
 		GeneratedAt: now,
 	})
 	if err != nil {
-		t.Fatalf("GenerateAIUC1Report returned error: %v", err)
+		t.Fatalf("GeneratePostureReport returned error: %v", err)
 	}
 
-	if rep.Controls["AIUC-1.2"].Status != ControlStatusFail {
-		t.Fatalf("AIUC-1.2 status = %s, want FAIL", rep.Controls["AIUC-1.2"].Status)
+	if rep.Controls["RC-2"].Status != ControlStatusFail {
+		t.Fatalf("RC-2 status = %s, want FAIL", rep.Controls["RC-2"].Status)
 	}
 	if rep.Summary.ComplianceStatus != ComplianceStatusNonCompliant {
 		t.Fatalf("status = %s, want %s", rep.Summary.ComplianceStatus, ComplianceStatusNonCompliant)
@@ -304,7 +304,7 @@ func makeEventsFrom(t *testing.T, now time.Time, startPrevHash string, startIdx 
 	return events
 }
 
-func TestGenerateAIUC1Report_MultiFileChainVerification(t *testing.T) {
+func TestGeneratePostureReport_MultiFileChainVerification(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 10, 0, 0, 0, time.UTC)
 
@@ -330,7 +330,7 @@ policies:
 		t.Fatalf("write policy: %v", err)
 	}
 
-	rep, err := GenerateAIUC1Report(ComplianceOptions{
+	rep, err := GeneratePostureReport(ComplianceOptions{
 		AuditDir:    dir,
 		PolicyPath:  policyPath,
 		Since:       now.Add(-time.Hour),
@@ -338,13 +338,13 @@ policies:
 		GeneratedAt: now,
 	})
 	if err != nil {
-		t.Fatalf("GenerateAIUC1Report returned error: %v", err)
+		t.Fatalf("GeneratePostureReport returned error: %v", err)
 	}
 
 	// Chain across two files should verify cleanly.
-	if rep.Controls["AIUC-1.2"].Status != ControlStatusPass {
-		t.Fatalf("AIUC-1.2 status = %s, want PASS — multi-file chain failed: %v",
-			rep.Controls["AIUC-1.2"].Status, rep.Controls["AIUC-1.2"].Evidence)
+	if rep.Controls["RC-2"].Status != ControlStatusPass {
+		t.Fatalf("RC-2 status = %s, want PASS — multi-file chain failed: %v",
+			rep.Controls["RC-2"].Status, rep.Controls["RC-2"].Evidence)
 	}
 	// ask event from file 2 should be counted.
 	if rep.Summary.DecisionCounts.Ask != 1 {
