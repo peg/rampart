@@ -349,6 +349,7 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 				continue
 			}
 			seen[p.Name] = true
+			p.FilePath = f
 
 			// Validate rules.
 			valid := true
