@@ -50,14 +50,14 @@ func newReportCmd(opts *rootOptions) *cobra.Command {
 		Long: `Generate reports from Rampart audit logs.
 
 By default this command generates a self-contained HTML report.
-Use 'rampart report compliance' to generate an AIUC-1 compliance report.
+Use 'rampart report compliance' to generate a security posture report.
 
 Examples:
   rampart report                                    # HTML report for last 24h
   rampart report --last 7d                         # HTML report for last 7 days
   rampart report --output weekly.html --last 7d    # Custom HTML output path
-  rampart report compliance                        # AIUC-1 text report
-  rampart report compliance --format json          # AIUC-1 JSON report`,
+  rampart report compliance                        # Security posture text report
+  rampart report compliance --format json          # Security posture JSON report`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runReport(reportOpts)
 		},
@@ -83,26 +83,26 @@ func newReportComplianceCmd(rootOpts *rootOptions, defaultAuditDir string) *cobr
 
 	cmd := &cobra.Command{
 		Use:   "compliance",
-		Short: "Generate AIUC-1 compliance report",
-		Long: `Generate an AIUC-1 compliance evidence report from audit logs.
+		Short: "Generate security posture report",
+		Long: `Generate a security posture report from audit logs.
 
-AIUC-1 (AI Unified Controls v1) is the first compliance standard for AI agent
-operations. This report provides evidence that Rampart is enforcing the required
-controls and can be shared with auditors or security teams.
+This report evaluates how well your Rampart deployment enforces key
+agent security controls. It can be shared with security teams as
+supporting evidence for compliance efforts.
 
 Controls evaluated:
-  AIUC-1.1 Tool Call Authorization  — All tool calls evaluated against policy
-  AIUC-1.2 Audit Logging            — Tamper-evident audit chain maintained
-  AIUC-1.3 Human-in-the-Loop        — Sensitive ops require human approval
-  AIUC-1.4 Data Exfiltration Prev.  — Credential/sensitive path access blocked
+  RC-1 Tool Call Authorization  — All tool calls evaluated against policy
+  RC-2 Audit Logging            — Tamper-evident audit chain maintained
+  RC-3 Human-in-the-Loop        — Sensitive ops require human approval
+  RC-4 Data Exfiltration Prev.  — Credential/sensitive path access blocked
 
-Note: a fresh installation with no audit history will show NON-COMPLIANT.
+Note: a fresh installation with no audit history will show FAIL.
 Run Rampart with an agent to generate audit logs, then re-run this report.
 
 Examples:
   rampart report compliance
   rampart report compliance --since 2026-02-01 --until 2026-02-28
-  rampart report compliance --format json --output aiuc1-report.json`,
+  rampart report compliance --format json --output posture-report.json`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runComplianceReport(cmd, rootOpts, complianceOpts)
 		},
@@ -145,7 +145,7 @@ func runComplianceReport(cmd *cobra.Command, rootOpts *rootOptions, opts *compli
 
 	policyPath := resolveCompliancePolicyPath(cmd, rootOpts.configPath)
 
-	reportData, err := report.GenerateAIUC1Report(report.ComplianceOptions{
+	reportData, err := report.GeneratePostureReport(report.ComplianceOptions{
 		AuditDir:       opts.auditDir,
 		PolicyPath:     policyPath,
 		Since:          since,
@@ -165,7 +165,7 @@ func runComplianceReport(cmd *cobra.Command, rootOpts *rootOptions, opts *compli
 		}
 		payload = append(payload, '\n')
 	} else {
-		payload = []byte(report.FormatAIUC1TextReport(reportData))
+		payload = []byte(report.FormatPostureTextReport(reportData))
 	}
 
 	if strings.TrimSpace(opts.output) != "" {

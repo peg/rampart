@@ -93,7 +93,7 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 Start the HTTP policy proxy.
 
 ```bash
-rampart serve                              # Default (port 9090, all interfaces)
+rampart serve                              # Default (port 9090, localhost only)
 rampart serve --addr 127.0.0.1             # Bind to localhost only
 rampart serve --port 8080                  # Custom port
 rampart serve --config policy.yaml         # Custom policy
@@ -105,7 +105,7 @@ rampart serve --tls-auto                   # HTTPS with auto-generated self-sign
 rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 ```
 
-`--addr` takes a bare IP address (e.g. `127.0.0.1`, `0.0.0.0`, `::1`). Defaults to all interfaces if omitted — use `--addr 127.0.0.1` for localhost-only access. `--audit-dir` sets the directory for audit log output (defaults to `~/.rampart/audit/`).
+`--addr` takes a bare IP address (e.g. `127.0.0.1`, `0.0.0.0`, `::1`). Defaults to `127.0.0.1` (localhost only) — use `--addr 0.0.0.0` to listen on all interfaces. `--audit-dir` sets the directory for audit log output (defaults to `~/.rampart/audit/`).
 
 `--tls-auto` generates a self-signed ECDSA P-256 certificate (1-year validity) and stores it in `~/.rampart/tls/`. A truncated SHA-256 fingerprint is printed on startup. `--tls-cert` and `--tls-key` must be used together and are mutually exclusive with `--tls-auto`.
 

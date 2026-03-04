@@ -149,7 +149,7 @@ nav:
   - Team & Compliance:
     - Policy Registry: guides/policy-registry.md
     - Policy Sync: guides/policy-sync.md
-    - Compliance Reporting: guides/compliance.md
+    - Security Posture Report: guides/compliance.md
   - Migration:
     - Migrating to v0.6.6: migration/v0.6.6.md
   - Deployment:
