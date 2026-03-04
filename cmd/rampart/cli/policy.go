@@ -53,7 +53,10 @@ func newPolicyCmd(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newPolicyLintCmd())
 	cmd.AddCommand(newPolicyGenerateCmd(opts))
 	cmd.AddCommand(newPolicyListCmd(opts))
+	cmd.AddCommand(newPolicySearchCmd(opts))
+	cmd.AddCommand(newPolicyShowCmd(opts))
 	cmd.AddCommand(newPolicyFetchCmd(opts))
+	cmd.AddCommand(newPolicyInstallCmd(opts))
 	cmd.AddCommand(newPolicyRemoveCmd(opts))
 	cmd.AddCommand(newPolicySyncCmd(opts))
 

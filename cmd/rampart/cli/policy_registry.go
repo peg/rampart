@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/peg/rampart/policies"
+	"github.com/peg/rampart/policies/community"
+	"github.com/peg/rampart/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -56,6 +58,8 @@ type policyRegistryEntry struct {
 	SHA256      string   `json:"sha256"`
 	Version     string   `json:"version"`
 	Author      string   `json:"author"`
+	MinRampart  string   `json:"min_rampart,omitempty"`
+	BenchScore  int      `json:"bench_score,omitempty"`
 }
 
 type policyRegistryClient struct {
@@ -66,52 +70,276 @@ type policyRegistryClient struct {
 }
 
 func newPolicyRegistryClient() *policyRegistryClient {
+	registryURL := os.Getenv("RAMPART_REGISTRY_URL")
+	if registryURL == "" {
+		registryURL = defaultPolicyRegistryManifestURL
+	}
 	return &policyRegistryClient{
 		httpClient:  defaultPolicyRegistryHTTPClient,
-		manifestURL: defaultPolicyRegistryManifestURL,
+		manifestURL: registryURL,
 		cacheTTL:    time.Hour,
 		now:         time.Now,
 	}
 }
 
+// policyListEntry is an internal type for the unified list command output.
+type policyListEntry struct {
+	Name        string
+	Description string
+	Tags        string
+	Source      string // "built-in" or "community"
+	Installed   bool
+}
+
 func newPolicyListCmd(_ *rootOptions) *cobra.Command {
 	var refresh bool
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List community policy profiles",
+		Short: "List built-in profiles and community policies with installed state",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			client := newPolicyRegistryClient()
-			manifest, err := client.loadManifest(cmd.Context(), refresh)
+			home, err := os.UserHomeDir()
 			if err != nil {
-				return err
+				return fmt.Errorf("policy: resolve home directory: %w", err)
+			}
+			policyDir := filepath.Join(home, ".rampart", "policies")
+
+			// Collect built-in profiles.
+			seen := make(map[string]bool)
+			var entries []policyListEntry
+			for _, name := range policies.ProfileNames {
+				installed := false
+				if _, err := os.Stat(filepath.Join(policyDir, name+".yaml")); err == nil {
+					installed = true
+				}
+				entries = append(entries, policyListEntry{
+					Name:        name,
+					Description: "Built-in profile",
+					Source:      "built-in",
+					Installed:   installed,
+				})
+				seen[name] = true
 			}
 
-			entries := make([]policyRegistryEntry, len(manifest.Policies))
-			copy(entries, manifest.Policies)
+			// Collect community policies from registry.
+			client := newPolicyRegistryClient()
+			manifest, fetchErr := client.loadManifest(cmd.Context(), refresh)
+			if fetchErr == nil {
+				for _, entry := range manifest.Policies {
+					if seen[entry.Name] {
+						continue
+					}
+					installed := false
+					if _, err := os.Stat(filepath.Join(policyDir, entry.Name+".yaml")); err == nil {
+						installed = true
+					}
+					entries = append(entries, policyListEntry{
+						Name:        entry.Name,
+						Description: entry.Description,
+						Tags:        strings.Join(entry.Tags, ","),
+						Source:      "community",
+						Installed:   installed,
+					})
+					seen[entry.Name] = true
+				}
+			}
+
 			sort.Slice(entries, func(i, j int) bool {
 				return entries[i].Name < entries[j].Name
 			})
 
+			if jsonOut {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(entries)
+			}
+
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			if _, err := fmt.Fprintln(tw, "NAME\tDESCRIPTION\tTAGS"); err != nil {
+			if _, err := fmt.Fprintln(tw, "NAME\tDESCRIPTION\tSOURCE\tINSTALLED"); err != nil {
 				return fmt.Errorf("policy: write list header: %w", err)
 			}
-			for _, entry := range entries {
-				tags := strings.Join(entry.Tags, ",")
-				if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\n", entry.Name, entry.Description, tags); err != nil {
+			for _, e := range entries {
+				inst := ""
+				if e.Installed {
+					inst = "✓"
+				}
+				if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Name, e.Description, e.Source, inst); err != nil {
 					return fmt.Errorf("policy: write list row: %w", err)
 				}
 			}
 			if err := tw.Flush(); err != nil {
 				return fmt.Errorf("policy: flush list output: %w", err)
 			}
+			if fetchErr != nil {
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "\nNote: could not fetch community registry: %v\n", fetchErr); err != nil {
+					return fmt.Errorf("policy: write list note: %w", err)
+				}
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "Force refresh of registry cache")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	return cmd
+}
+
+func newPolicySearchCmd(_ *rootOptions) *cobra.Command {
+	var tagFilter string
+	var minScore int
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search community policies by name, description, or tags",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := strings.ToLower(strings.TrimSpace(args[0]))
+			client := newPolicyRegistryClient()
+			manifest, err := client.loadManifest(cmd.Context(), false)
+			if err != nil {
+				return err
+			}
+
+			var matches []policyRegistryEntry
+			for _, entry := range manifest.Policies {
+				if minScore > 0 && entry.BenchScore < minScore {
+					continue
+				}
+				if tagFilter != "" {
+					if !entryHasTag(entry, tagFilter) {
+						continue
+					}
+				}
+				if entryMatchesQuery(entry, query) {
+					matches = append(matches, entry)
+				}
+			}
+
+			sort.Slice(matches, func(i, j int) bool {
+				return matches[i].BenchScore > matches[j].BenchScore
+			})
+
+			if jsonOut {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(matches)
+			}
+
+			if len(matches) == 0 {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No policies found."); err != nil {
+					return fmt.Errorf("policy: write search output: %w", err)
+				}
+				return nil
+			}
+
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			if _, err := fmt.Fprintln(tw, "NAME\tDESCRIPTION\tTAGS\tSCORE"); err != nil {
+				return fmt.Errorf("policy: write search header: %w", err)
+			}
+			for _, entry := range matches {
+				tags := strings.Join(entry.Tags, ",")
+				score := ""
+				if entry.BenchScore > 0 {
+					score = fmt.Sprintf("%d%%", entry.BenchScore)
+				}
+				if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", entry.Name, entry.Description, tags, score); err != nil {
+					return fmt.Errorf("policy: write search row: %w", err)
+				}
+			}
+			if err := tw.Flush(); err != nil {
+				return fmt.Errorf("policy: flush search output: %w", err)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&tagFilter, "tag", "", "Filter by exact tag")
+	cmd.Flags().IntVar(&minScore, "min-score", 0, "Minimum bench score (0-100)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newPolicyShowCmd(_ *rootOptions) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Print full YAML of a community policy (no side effects)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+
+			// Check built-in profiles first.
+			if isBuiltInPolicyProfile(name) {
+				content, err := policies.Profile(name)
+				if err != nil {
+					return fmt.Errorf("policy: read built-in profile %q: %w", name, err)
+				}
+				_, err = cmd.OutOrStdout().Write(content)
+				return err
+			}
+
+			client := newPolicyRegistryClient()
+			manifest, err := client.loadManifest(cmd.Context(), false)
+			if err != nil {
+				return err
+			}
+
+			entry, found := findPolicyByName(manifest, name)
+			if !found {
+				return fmt.Errorf("policy: %q not found in registry or built-in profiles. Run 'rampart policy search %s' to check", name, name)
+			}
+
+			content, err := client.downloadPolicy(cmd.Context(), entry)
+			if err != nil {
+				return err
+			}
+
+			_, err = cmd.OutOrStdout().Write(content)
+			return err
+		},
+	}
+
+	return cmd
+}
+
+// newPolicyInstallCmd is an alias for newPolicyFetchCmd. The issue spec uses
+// "install" but the codebase predates that with "fetch". Both are supported.
+func newPolicyInstallCmd(opts *rootOptions) *cobra.Command {
+	cmd := newPolicyFetchCmd(opts)
+	cmd.Use = "install <name>"
+	cmd.Aliases = []string{}
+	return cmd
+}
+
+// entryMatchesQuery returns true if query is a case-insensitive substring
+// of the entry's name, description, or any tag.
+func entryMatchesQuery(entry policyRegistryEntry, query string) bool {
+	query = strings.ToLower(query)
+	if strings.Contains(strings.ToLower(entry.Name), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(entry.Description), query) {
+		return true
+	}
+	for _, tag := range entry.Tags {
+		if strings.Contains(strings.ToLower(tag), query) {
+			return true
+		}
+	}
+	return false
+}
+
+// entryHasTag returns true if the entry has a tag matching the filter
+// (case-insensitive exact match).
+func entryHasTag(entry policyRegistryEntry, tag string) bool {
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	for _, t := range entry.Tags {
+		if strings.ToLower(strings.TrimSpace(t)) == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func newPolicyFetchCmd(_ *rootOptions) *cobra.Command {
@@ -256,37 +484,86 @@ func findPolicyByName(manifest *policyRegistryManifest, name string) (policyRegi
 }
 
 func (c *policyRegistryClient) loadManifest(ctx context.Context, refresh bool) (*policyRegistryManifest, error) {
-	cachePath, err := policyRegistryCachePath()
+	// Always start from the embedded registry compiled into the binary.
+	// This guarantees community policies shipped with this build are never
+	// lost due to stale caches or unreachable servers.
+	embedded, err := loadEmbeddedManifest()
 	if err != nil {
 		return nil, err
 	}
 
-	if !refresh {
+	cachePath, cacheErr := policyRegistryCachePath()
+
+	// Try cache first (unless refresh is requested).
+	if cacheErr == nil && !refresh {
 		cached, ok, err := c.readFreshCachedManifest(cachePath)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			return cached, nil
+		if err == nil && ok {
+			return mergeManifests(embedded, cached), nil
 		}
 	}
 
-	manifest, err := c.fetchManifest(ctx)
-	if err != nil {
+	// Try network fetch.
+	manifest, fetchErr := c.fetchManifest(ctx)
+	if fetchErr == nil {
+		merged := mergeManifests(embedded, manifest)
+		// Cache the merged result.
+		if cacheErr == nil {
+			if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err == nil {
+				if data, err := json.MarshalIndent(merged, "", "  "); err == nil {
+					_ = os.WriteFile(cachePath, data, 0o644)
+				}
+			}
+		}
+		return merged, nil
+	}
+
+	// Both cache and network unavailable — return the embedded baseline.
+	return embedded, nil
+}
+
+// loadEmbeddedManifest parses the registry manifest that was compiled into
+// the binary via go:embed. This is the compile-time baseline that ships with
+// every build.
+func loadEmbeddedManifest() (*policyRegistryManifest, error) {
+	manifest := &policyRegistryManifest{}
+	if err := json.Unmarshal(registry.RegistryJSON, manifest); err != nil {
+		return nil, fmt.Errorf("policy: parse embedded registry manifest: %w", err)
+	}
+	if err := validatePolicyRegistryManifest(manifest); err != nil {
 		return nil, err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-		return nil, fmt.Errorf("policy: create cache directory: %w", err)
-	}
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("policy: encode registry manifest: %w", err)
-	}
-	if err := os.WriteFile(cachePath, data, 0o644); err != nil {
-		return nil, fmt.Errorf("policy: write cache file: %w", err)
 	}
 	return manifest, nil
+}
+
+// mergeManifests returns a manifest containing all policies from both base
+// and overlay. Overlay entries win when names collide. This ensures embedded
+// policies are always present while network/cache data can override them.
+func mergeManifests(base, overlay *policyRegistryManifest) *policyRegistryManifest {
+	byName := make(map[string]policyRegistryEntry, len(base.Policies)+len(overlay.Policies))
+	order := make([]string, 0, len(base.Policies)+len(overlay.Policies))
+
+	for _, e := range base.Policies {
+		byName[e.Name] = e
+		order = append(order, e.Name)
+	}
+	for _, e := range overlay.Policies {
+		if _, exists := byName[e.Name]; !exists {
+			order = append(order, e.Name)
+		}
+		byName[e.Name] = e // overlay wins
+	}
+
+	merged := make([]policyRegistryEntry, 0, len(byName))
+	for _, name := range order {
+		merged = append(merged, byName[name])
+	}
+
+	result := &policyRegistryManifest{
+		Version:   overlay.Version,
+		UpdatedAt: overlay.UpdatedAt,
+		Policies:  merged,
+	}
+	return result
 }
 
 func (c *policyRegistryClient) readFreshCachedManifest(cachePath string) (*policyRegistryManifest, bool, error) {
@@ -357,6 +634,24 @@ func validatePolicyRegistryManifest(manifest *policyRegistryManifest) error {
 }
 
 func (c *policyRegistryClient) downloadPolicy(ctx context.Context, entry policyRegistryEntry) ([]byte, error) {
+	// Add validation to prevent edge cases and path traversal
+	if entry.Name == "" || strings.Contains(entry.Name, "/") || strings.Contains(entry.Name, "\\") || strings.Contains(entry.Name, "..") {
+		return nil, fmt.Errorf("policy: invalid policy name %q", entry.Name)
+	}
+
+	// Try embedded community policies first. These are compiled into the
+	// binary and avoid network round-trips and SHA256 mismatches caused
+	// by CRLF/LF line-ending differences across platforms.
+	if content, err := community.FS.ReadFile(entry.Name + ".yaml"); err == nil {
+		return content, nil
+	}
+
+	// Try embedded registry policies (mcp-server, research-agent, etc.).
+	if content, err := registry.PolicyFS.ReadFile("policies/" + entry.Name + ".yaml"); err == nil {
+		return content, nil
+	}
+
+	// Fall back to network download for policies not shipped in the binary.
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(entry.URL)), "https://") {
 		return nil, fmt.Errorf("policy: refusing to download %q from non-HTTPS URL: %s", entry.Name, entry.URL)
 	}

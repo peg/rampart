@@ -28,9 +28,9 @@ func TestPolicyFetch_InstallsPolicyFromRegistry(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/registry.json":
-			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"research-agent","description":"Research profile","tags":["research"],"url":"%s/policies/research-agent.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
+			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"test-custom-policy","description":"Test policy","tags":["test"],"url":"%s/policies/test-custom-policy.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
 				serverURL, expectedSHA)
-		case "/policies/research-agent.yaml":
+		case "/policies/test-custom-policy.yaml":
 			_, _ = w.Write(policyContent)
 		default:
 			http.NotFound(w, r)
@@ -48,11 +48,11 @@ func TestPolicyFetch_InstallsPolicyFromRegistry(t *testing.T) {
 		defaultPolicyRegistryHTTPClient = oldClient
 	})
 
-	stdout, _, err := runCLI(t, "policy", "fetch", "research-agent")
+	stdout, _, err := runCLI(t, "policy", "fetch", "test-custom-policy")
 	require.NoError(t, err)
-	assert.Contains(t, stdout, "Installed \"research-agent\"")
+	assert.Contains(t, stdout, "Installed \"test-custom-policy\"")
 
-	dest := filepath.Join(home, ".rampart", "policies", "research-agent.yaml")
+	dest := filepath.Join(home, ".rampart", "policies", "test-custom-policy.yaml")
 	data, readErr := os.ReadFile(dest)
 	require.NoError(t, readErr)
 	assert.Equal(t, string(policyContent), string(data))
@@ -80,9 +80,9 @@ func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/registry.json":
-			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"research-agent","description":"Research profile","tags":["research"],"url":"%s/policies/research-agent.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
+			_, _ = fmt.Fprintf(w, `{"version":"1","updated_at":"2026-01-01T00:00:00Z","policies":[{"name":"test-bad-hash","description":"Test policy","tags":["test"],"url":"%s/policies/test-bad-hash.yaml","sha256":"%s","version":"1.0.0","author":"Rampart"}]}`,
 				serverURL, "deadbeef")
-		case "/policies/research-agent.yaml":
+		case "/policies/test-bad-hash.yaml":
 			_, _ = w.Write(policyContent)
 		default:
 			http.NotFound(w, r)
@@ -100,11 +100,11 @@ func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 		defaultPolicyRegistryHTTPClient = oldClient
 	})
 
-	_, _, err := runCLI(t, "policy", "fetch", "research-agent")
+	_, _, err := runCLI(t, "policy", "fetch", "test-bad-hash")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sha256 mismatch")
 
-	dest := filepath.Join(home, ".rampart", "policies", "research-agent.yaml")
+	dest := filepath.Join(home, ".rampart", "policies", "test-bad-hash.yaml")
 	_, statErr := os.Stat(dest)
 	assert.True(t, os.IsNotExist(statErr))
 }
