@@ -17,125 +17,152 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+
+	"github.com/peg/rampart/internal/detect"
 )
 
-func TestDetectEnv_OpenClaw(t *testing.T) {
+func TestDetectEnv_MultiAgentDetection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH shim binaries in this test are Unix-only")
+	}
+
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("CLINE_ACTIVE", "1")
 	t.Setenv("OPENCLAW_SERVICE_MARKER", "openclaw")
-	if got := detectEnv(); got != "openclaw" {
-		t.Errorf("expected openclaw, got %q", got)
-	}
-}
 
-func TestDetectEnv_ClaudeCode(t *testing.T) {
-	// Ensure OpenClaw marker is absent so Claude Code takes priority.
-	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
-	t.Setenv("CLINE_ACTIVE", "")
-	t.Setenv("CLINE_SESSION", "")
-
-	// Create a temp claude settings file
-	tmp := t.TempDir()
-	testSetHome(t, tmp)
-
-	if err := os.MkdirAll(filepath.Join(tmp, ".claude"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, ".claude", "settings.json"), []byte("{}"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := detectEnv(); got != "claude-code" {
-		t.Errorf("expected claude-code, got %q", got)
+	binDir := t.TempDir()
+	writeTestExecutable(t, filepath.Join(binDir, "codex"))
+	t.Setenv("PATH", binDir)
+
+	got, err := detect.Environment()
+	if err != nil {
+		t.Fatalf("detect.Environment() error = %v", err)
+	}
+	if !got.ClaudeCode || !got.HasCodex || !got.HasCline || !got.HasOpenClaw || !got.HasCursor {
+		t.Fatalf("expected multi-agent detection, got %+v", got)
 	}
 }
 
-func TestDetectEnv_None(t *testing.T) {
-	// Ensure OpenClaw marker is absent.
-	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
-	t.Setenv("CLINE_ACTIVE", "")
-	t.Setenv("CLINE_SESSION", "")
+func TestQuickstartSelectAgents_DefaultAllDetected(t *testing.T) {
+	result := &detect.DetectResult{ClaudeCode: true, HasCodex: true, HasCursor: true}
 
-	tmp := t.TempDir()
-	testSetHome(t, tmp)
-
-	// Ensure 'claude' binary is not in PATH for this test.
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", "")
-	defer os.Setenv("PATH", origPath)
-
-	if got := detectEnv(); got != "" {
-		t.Errorf("expected empty, got %q", got)
+	selected, err := selectQuickstartAgents(result, "", "")
+	if err != nil {
+		t.Fatalf("selectQuickstartAgents error = %v", err)
+	}
+	if len(selected) != 3 {
+		t.Fatalf("expected 3 selected agents, got %d", len(selected))
+	}
+	if selected[0].Key != "claude-code" || selected[1].Key != "codex" || selected[2].Key != "cursor" {
+		t.Fatalf("unexpected selected order: %+v", selected)
 	}
 }
 
-func TestDetectEnv_ClineFromEnv(t *testing.T) {
-	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
-	t.Setenv("CLINE_ACTIVE", "1")
-	t.Setenv("CLINE_SESSION", "")
+func TestQuickstartSelectAgents_AgentsFlagOverride(t *testing.T) {
+	result := &detect.DetectResult{ClaudeCode: true}
 
-	if got := detectEnv(); got != "cline" {
-		t.Errorf("expected cline, got %q", got)
+	selected, err := selectQuickstartAgents(result, "codex,cursor", "")
+	if err != nil {
+		t.Fatalf("selectQuickstartAgents error = %v", err)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 selected agents, got %d", len(selected))
+	}
+	if selected[0].Key != "codex" || selected[1].Key != "cursor" {
+		t.Fatalf("unexpected selected agents: %+v", selected)
 	}
 }
 
-func TestDetectEnv_ClineFromExtensionDir(t *testing.T) {
-	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
-	t.Setenv("CLINE_ACTIVE", "")
-	t.Setenv("CLINE_SESSION", "")
+func TestQuickstartSelectAgents_EnvAliasOverride(t *testing.T) {
+	result := &detect.DetectResult{}
 
-	tmp := t.TempDir()
-	testSetHome(t, tmp)
-
-	if err := os.MkdirAll(filepath.Join(tmp, ".vscode", "extensions", "cline-1.0.0"), 0o755); err != nil {
-		t.Fatal(err)
+	selected, err := selectQuickstartAgents(result, "", "openclaw")
+	if err != nil {
+		t.Fatalf("selectQuickstartAgents error = %v", err)
 	}
-
-	if got := detectEnv(); got != "cline" {
-		t.Errorf("expected cline, got %q", got)
+	if len(selected) != 1 || selected[0].Key != "openclaw" {
+		t.Fatalf("unexpected selected agents: %+v", selected)
 	}
 }
 
-func TestDetectEnv_ClinePreferredOverClaudeCode(t *testing.T) {
-	t.Setenv("OPENCLAW_SERVICE_MARKER", "")
-	t.Setenv("CLINE_ACTIVE", "1")
-	t.Setenv("CLINE_SESSION", "")
-
-	tmp := t.TempDir()
-	testSetHome(t, tmp)
-
-	if err := os.MkdirAll(filepath.Join(tmp, ".claude"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, ".claude", "settings.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
+func TestQuickstartSuggestedPolicies(t *testing.T) {
+	result := &detect.DetectResult{
+		HasKubectl:     true,
+		HasDocker:      true,
+		HasNode:        true,
+		HasTerraform:   true,
+		HasAWSCLI:      true,
+		AWSCredentials: true,
 	}
 
-	if got := detectEnv(); got != "cline" {
-		t.Errorf("expected cline, got %q", got)
+	got := suggestedPolicies(result, map[string]bool{})
+	want := []string{"kubernetes", "docker", "terraform", "node-python", "aws-cli"}
+	if len(got) != len(want) {
+		t.Fatalf("suggestedPolicies length = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("suggestedPolicies[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 
-func TestQuickstartCmd_Help(t *testing.T) {
-	cmd := newQuickstartCmd()
-	if cmd.Use != "quickstart" {
-		t.Errorf("unexpected Use: %q", cmd.Use)
+func TestQuickstartSuggestedPolicies_SkipsInstalled(t *testing.T) {
+	result := &detect.DetectResult{HasKubectl: true, HasDocker: true, HasNode: true}
+	installed := map[string]bool{"docker": true, "node-python": true}
+
+	got := suggestedPolicies(result, installed)
+	if len(got) != 1 || got[0] != "kubernetes" {
+		t.Fatalf("suggestedPolicies() = %v, want [kubernetes]", got)
 	}
-	if cmd.Short == "" {
-		t.Error("Short description should not be empty")
+}
+
+func TestQuickstartUnsupportedAgentWrapSuggestion(t *testing.T) {
+	selected, err := selectQuickstartAgents(&detect.DetectResult{HasCursor: true}, "", "")
+	if err != nil {
+		t.Fatalf("selectQuickstartAgents error = %v", err)
+	}
+	if len(selected) != 1 {
+		t.Fatalf("expected one selected agent, got %d", len(selected))
+	}
+	if selected[0].HasSetup {
+		t.Fatal("cursor should be unsupported (HasSetup=false)")
+	}
+	if selected[0].WrapCmd != "rampart wrap -- cursor" {
+		t.Fatalf("wrap cmd = %q, want cursor wrap command", selected[0].WrapCmd)
 	}
 }
 
 func TestQuickstartCmd_Flags(t *testing.T) {
 	cmd := newQuickstartCmd()
 
+	agentsFlag := cmd.Flags().Lookup("agents")
+	if agentsFlag == nil {
+		t.Fatal("--agents flag not registered")
+	}
 	envFlag := cmd.Flags().Lookup("env")
 	if envFlag == nil {
-		t.Fatal("--env flag not registered")
+		t.Fatal("--env alias flag not registered")
 	}
-
-	skipFlag := cmd.Flags().Lookup("skip-doctor")
-	if skipFlag == nil {
-		t.Fatal("--skip-doctor flag not registered")
+	if !envFlag.Hidden {
+		t.Fatal("--env flag should be hidden")
+	}
+	profileFlag := cmd.Flags().Lookup("profile")
+	if profileFlag == nil {
+		t.Fatal("--profile flag not registered")
 	}
 }
 
@@ -212,5 +239,53 @@ func TestQuickstartHooksConfigured_ClaudeCode(t *testing.T) {
 
 	if !quickstartHooksConfigured("claude-code") {
 		t.Fatal("expected claude-code hooks to be detected")
+	}
+}
+
+func TestQuickstartHooksConfigured_Codex(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	wrapperPath := filepath.Join(home, ".local", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapperPath, []byte("#!/bin/sh\nexec rampart preload -- /usr/bin/codex \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !quickstartHooksConfigured("codex") {
+		t.Fatal("expected codex wrapper to be detected")
+	}
+}
+
+func TestQuickstartHooksConfigured_Cline(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	pre := filepath.Join(home, "Documents", "Cline", "Hooks", "PreToolUse", "rampart-policy")
+	post := filepath.Join(home, "Documents", "Cline", "Hooks", "PostToolUse", "rampart-audit")
+	if err := os.MkdirAll(filepath.Dir(pre), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(post), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pre, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(post, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !quickstartHooksConfigured("cline") {
+		t.Fatal("expected cline hooks to be detected")
+	}
+}
+
+func writeTestExecutable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write test executable %s: %v", path, err)
 	}
 }

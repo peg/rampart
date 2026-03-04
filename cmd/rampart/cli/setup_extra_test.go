@@ -223,15 +223,15 @@ func TestReadLine_Empty(t *testing.T) {
 
 func TestDetectAgents(t *testing.T) {
 	agents := detectAgents()
-	if len(agents) != 4 {
-		t.Errorf("expected 4 agents, got %d", len(agents))
+	if len(agents) != 7 {
+		t.Errorf("expected 7 agents, got %d", len(agents))
 	}
 	// Verify names
 	names := make([]string, len(agents))
 	for i, a := range agents {
 		names[i] = a.Name
 	}
-	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex"} {
+	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex", "Aider", "Cursor", "Windsurf"} {
 		found := false
 		for _, n := range names {
 			if n == want {

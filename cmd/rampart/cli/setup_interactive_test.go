@@ -21,8 +21,8 @@ import (
 
 func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 	agents := detectAgents()
-	if len(agents) != 4 {
-		t.Fatalf("expected 4 agents, got %d", len(agents))
+	if len(agents) != 7 {
+		t.Fatalf("expected 7 agents, got %d", len(agents))
 	}
 
 	names := map[string]bool{}
@@ -30,7 +30,7 @@ func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 		names[a.Name] = true
 	}
 
-	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex"} {
+	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex", "Aider", "Cursor", "Windsurf"} {
 		if !names[want] {
 			t.Errorf("missing agent %q", want)
 		}
@@ -42,7 +42,12 @@ func TestDetectAgents_ClaudeCodeDetectedByDir(t *testing.T) {
 	tmpHome := t.TempDir()
 	testSetHome(t, tmpHome)
 
-	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0o755); err != nil {
+	claudeDir := filepath.Join(tmpHome, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// detect.Environment() checks for settings.json, not just the directory.
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -58,11 +63,11 @@ func TestDetectAgents_ClaudeCodeDetectedByDir(t *testing.T) {
 	t.Error("Claude Code agent not found in results")
 }
 
-func TestDetectAgents_ClineDetectedByDocumentsDir(t *testing.T) {
+func TestDetectAgents_ClineDetectedByVSCodeExtension(t *testing.T) {
 	tmpHome := t.TempDir()
 	testSetHome(t, tmpHome)
 
-	if err := os.MkdirAll(filepath.Join(tmpHome, "Documents", "Cline"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".vscode", "extensions", "cline-1.0.0"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

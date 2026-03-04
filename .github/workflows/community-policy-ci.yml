@@ -57,9 +57,16 @@ jobs:
           done
 
       - name: Bench policies
+        if: contains(github.event.pull_request.changed_files_url, 'policies/community') || github.event_name == 'workflow_dispatch'
         run: |
-          for file in policies/community/*.yaml; do
-            [ "$(basename "$file")" = "README.md" ] && continue
+          # Only bench when community policy YAML files are actually changed.
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'policies/community/*.yaml' || true)
+          if [ -z "$changed" ]; then
+            echo "No community policy YAML changes — skipping bench"
+            exit 0
+          fi
+          for file in $changed; do
+            [ ! -f "$file" ] && continue
             echo "Benchmarking $file..."
             ./rampart bench --policy "$file" --min-coverage 60
           done
@@ -69,10 +76,14 @@ jobs:
 
       - name: Check registry.json is up to date
         run: |
-          if ! git diff --quiet registry/registry.json; then
+          # Compare everything except updated_at (which uses time.Now()).
+          jq 'del(.updated_at)' registry/registry.json > /tmp/before.json
+          go run scripts/generate-registry.go
+          jq 'del(.updated_at)' registry/registry.json > /tmp/after.json
+          if ! diff -q /tmp/before.json /tmp/after.json > /dev/null 2>&1; then
             echo "ERROR: registry/registry.json is out of date."
             echo "Run 'go run scripts/generate-registry.go' and commit the result."
-            git diff registry/registry.json
+            diff /tmp/before.json /tmp/after.json || true
             exit 1
           fi
           echo "✓ registry.json is up to date"
