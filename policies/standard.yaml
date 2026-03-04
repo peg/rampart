@@ -44,6 +44,8 @@ policies:
             - "rampart rules"
             - "rampart policy generate"
             - "rampart init"
+            - "rampart setup"
+            - "rampart serve"
         message: "Policy modification commands must be run by a human, not an agent"
       # Block shell redirects writing to .rampart directory (config/policy tampering)
       - action: deny
@@ -71,24 +73,32 @@ policies:
             - "rampart rules *"
             - "rampart policy generate*"
             - "rampart init *"
+            - "rampart setup *"
+            - "rampart serve *"
             # Absolute path invocation (e.g., /usr/local/bin/rampart)
             - "*/rampart allow *"
             - "*/rampart block *"
             - "*/rampart rules *"
             - "*/rampart policy generate*"
             - "*/rampart init *"
+            - "*/rampart setup *"
+            - "*/rampart serve *"
             # Relative path invocation (e.g., ./rampart)
             - "./rampart allow *"
             - "./rampart block *"
             - "./rampart rules *"
             - "./rampart policy generate*"
             - "./rampart init *"
+            - "./rampart setup *"
+            - "./rampart serve *"
             # Global flags before subcommand (e.g., rampart --config ... allow)
             - "rampart --* allow *"
             - "rampart --* block *"
             - "rampart --* rules *"
             - "rampart --* policy generate*"
             - "rampart --* init *"
+            - "rampart --* setup *"
+            - "rampart --* serve *"
         message: "Policy modification commands must be run by a human, not an agent"
 
   - name: block-destructive
@@ -283,6 +293,7 @@ policies:
             # Shared library / preloader injection — hijacks every syscall in the process
             # No legitimate reason for an AI agent to set these in a command string
             - "LD_PRELOAD="
+            - "LD_LIBRARY_PATH="
             - "DYLD_INSERT_LIBRARIES="
             - "LD_AUDIT="
             # Python startup file — executes arbitrary code before any script or REPL
@@ -301,16 +312,10 @@ policies:
         message: "Dangerous environment variable injection blocked. These vars have no legitimate use in agent-issued commands."
 
   - name: watch-env-var-override
-    description: "Block high-risk runtime override vars; watch common dev overrides"
+    description: "Watch common dev environment overrides (high-risk vars handled by block-env-var-injection)"
     match:
       tool: ["exec"]
     rules:
-      - action: deny
-        when:
-          command_contains:
-            - "LD_PRELOAD="
-            - "LD_LIBRARY_PATH="
-        message: "Dangerous environment variable override blocked"
       - action: watch
         when:
           command_contains:
@@ -980,6 +985,42 @@ policies:
             - "beeceptor.com"
         message: "Potential data exfiltration domain blocked"
 
+  - name: block-exfil-domains-exec
+    description: "Block curl/wget to known exfiltration domains via exec (closes fetch-only gap)"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "ngrok.io"
+            - "ngrok-free.app"
+            - "requestbin.com"
+            - "hookbin.com"
+            - "webhook.site"
+            - "pipedream.net"
+            - "beeceptor.com"
+        message: "Potential data exfiltration domain blocked (exec)"
+
+  - name: watch-http-post
+    description: "Log HTTP POST requests to external hosts for audit visibility"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: watch
+        when:
+          command_contains:
+            - "curl -X POST"
+            - "curl --data "
+            - "curl -d @"
+            - "wget --post-data"
+            - "wget --post-file"
+          command_not_matches:
+            - "*localhost*"
+            - "*127.0.0.1*"
+            - "*0.0.0.0*"
+        message: "HTTP POST to external host logged"
+
   - name: rate-limit-fetch
     match:
       tool: ["fetch", "web_search", "web_fetch", "browser"]
@@ -1015,7 +1056,7 @@ policies:
             - "AKIA[0-9A-Z]{16}"
             - "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
             - "ghp_[a-zA-Z0-9]{36}"
-            - "sk-[a-zA-Z0-9]{48}"
+            - "sk-[a-zA-Z0-9]{20,}"
             - "xox[bsapr]-[a-zA-Z0-9-]+"
             - "eyJ[a-zA-Z0-9_-]+\\.eyJ[a-zA-Z0-9_-]+"
         message: "Sensitive credential detected in response"

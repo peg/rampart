@@ -124,31 +124,15 @@ policies:
       - action: deny
         when:
           command_contains:
-            - "-X POST"
-          command_matches:
-            - "curl *"
+            - "curl -X POST"
+            - "curl --data "
+            - "curl -d @"
+            - "wget --post-data"
+            - "wget --post-file"
           command_not_matches:
             - "*localhost*"
             - "*127.0.0.1*"
         message: "HTTP POST to external host blocked — potential data exfiltration"
-      - action: deny
-        when:
-          command_contains:
-            - "--post-data"
-          command_matches:
-            - "wget *"
-          command_not_matches:
-            - "*localhost*"
-            - "*127.0.0.1*"
-        message: "HTTP POST to external host blocked — potential data exfiltration"
-      - action: deny
-        when:
-          command_matches:
-            - "curl *-d @*"
-          command_not_matches:
-            - "*localhost*"
-            - "*127.0.0.1*"
-        message: "Data upload to external host blocked — potential exfiltration"
 
   # ── Destructive commands ──────────────────────────────────────────────
   # Block obviously destructive operations.
