@@ -72,6 +72,11 @@ type Policy struct {
 	// "project" for .rampart/policy.yaml, empty for global policies.
 	// This is set at runtime during mergeProjectPolicy, not in YAML.
 	Source string `yaml:"-"`
+
+	// FilePath is the absolute path of the YAML file this policy was loaded from.
+	// Set at runtime during store loading. Used for --once rule consumption
+	// and expired rule cleanup.
+	FilePath string `yaml:"-"`
 }
 
 // IsEnabled returns whether this policy is active.
