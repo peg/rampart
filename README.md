@@ -66,19 +66,20 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 <img src="docs/watch.png" alt="rampart watch — live audit dashboard" width="700">
 </div>
 
-### OWASP Top 10 for Agentic AI
+### OWASP Top 10 for Agentic Applications (2026)
 
-Rampart maps directly to the [OWASP Top 10 Risks for Agentic AI](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/):
+Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) — the industry framework for autonomous AI agent security:
 
-| OWASP Risk | Rampart Coverage |
-|------------|-----------------|
-| **Excessive Agency** | Policy engine enforces least-privilege per tool call |
-| **Unauthorized Tool Use** | Every tool call evaluated before execution |
-| **Insecure Tool Implementation** | Response scanning blocks credential leaks before they reach agent context |
-| **Prompt Injection → Tool Abuse** | Pattern matching catches injected commands; `watch-prompt-injection` policy monitors responses |
-| **Insufficient Audit Trail** | Hash-chained JSONL with syslog/CEF export to any SIEM |
-| **Data Exfiltration** | Domain blocking, credential pattern detection, response scanning |
-| **Uncontrolled Autonomy** | `require_approval` for human-in-the-loop on sensitive operations |
+| OWASP Risk | Rampart | Coverage |
+|------------|---------|----------|
+| **ASI02: Tool Misuse & Exploitation** | Every tool call evaluated against policy before execution | ✅ Covered |
+| **ASI05: Unexpected Code Execution** | Pattern matching catches injected code before it runs | ✅ Covered |
+| **ASI01: Agent Goal Hijack** | Prompt injection monitoring in tool responses | ⚠️ Partial |
+| **ASI06: Memory & Context Poisoning** | Response scanning blocks credentials from entering context | ⚠️ Partial |
+| **ASI09: Human-Agent Trust** | `require_approval` for human-in-the-loop gates | ⚠️ Partial |
+| **ASI10: Rogue Agents** | Self-modification protection | ⚠️ Partial |
+
+2 fully covered, 6 partially mitigated, 2 not addressed (identity management, inter-agent communication). [Full mapping →](https://docs.rampart.sh/reference/owasp-mapping/)
 
 <details>
 <summary><strong>📖 Table of Contents</strong></summary>

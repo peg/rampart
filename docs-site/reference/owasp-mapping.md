@@ -1,29 +1,72 @@
-# OWASP Top 10 for Agentic AI
+# OWASP Agentic Top 10 Mapping
 
-Rampart maps directly to the [OWASP Top 10 Risks for LLM-Powered Autonomous Agents](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/), published by the OWASP GenAI Security Project.
+This page maps Rampart's capabilities to the [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), the industry framework for autonomous AI agent security risks.
+
+!!! note "Two different OWASP frameworks"
+    OWASP maintains separate Top 10 lists for **LLM Applications** (2023-24) and **Agentic Applications** (2026). Rampart is a tool-call policy engine — the Agentic Applications list is the relevant framework. The LLM list covers model-level risks (training data poisoning, model theft, etc.) that are outside Rampart's scope.
 
 ## Coverage Matrix
 
-| # | OWASP Risk | Rampart Coverage | Status |
-|---|-----------|-----------------|--------|
-| 1 | **Excessive Agency** | Policy engine enforces least-privilege per tool call. `default_action: deny` restricts agents to only explicitly permitted operations. | ✅ Covered |
-| 2 | **Unauthorized Tool Use** | Every tool call (exec, read, write, MCP) is evaluated against YAML policies before execution. Unknown tools are blocked by default in deny mode. | ✅ Covered |
-| 3 | **Insecure Tool Implementation** | Response scanning (`response_matches`) blocks credential leaks in tool output before they reach the agent's context window. | ✅ Covered |
-| 4 | **Prompt Injection → Tool Abuse** | Pattern matching catches injected commands. The `watch-prompt-injection` policy monitors tool responses for injection patterns and logs them for review. | ✅ Covered |
-| 5 | **Insufficient Audit Trail** | Hash-chained JSONL audit logs — each entry cryptographically linked to the previous one. Tamper with any record and `rampart audit verify` detects it. Export to any SIEM via syslog (RFC 5424) or CEF. | ✅ Covered |
-| 6 | **Data Exfiltration** | Domain blocking (`command_matches: "curl *evil*"`), credential pattern detection in commands and responses, and network logging policies. | ✅ Covered |
-| 7 | **Uncontrolled Autonomy** | `require_approval` pauses agent execution and notifies humans via webhook (Discord, Slack). Commands stay blocked until explicitly approved or denied. | ✅ Covered |
-| 8 | **Privilege Escalation** | Self-modification protection blocks agents from running `rampart allow`, `rampart block`, or modifying policy files. Agents cannot whitelist themselves. | ✅ Covered |
-| 9 | **Supply Chain Compromise** | MCP proxy (`rampart mcp`) evaluates MCP tool calls against the same policy engine. Project-local policies (`.rampart/policy.yaml`) enforce deny-wins over global config. | ⚠️ Partial |
-| 10 | **Cascading Failures** | Fail-open design prevents Rampart from becoming a single point of failure. If the policy engine is unreachable, agent operations continue normally. Configurable per deployment. | ⚠️ Partial |
+| # | OWASP Agentic Risk | Rampart | Coverage |
+|---|-------------------|---------|----------|
+| ASI01 | **Agent Goal Hijack** | `watch-prompt-injection` policy monitors tool responses for injection patterns. Blocks injected commands via pattern matching. Does not prevent prompt-level goal manipulation. | ⚠️ Partial |
+| ASI02 | **Tool Misuse & Exploitation** | Every tool call (exec, read, write, MCP) is evaluated against YAML policies before execution. `default_action: deny` enforces least-privilege. This is Rampart's core function. | ✅ Covered |
+| ASI03 | **Identity & Privilege Abuse** | Self-modification protection blocks agents from running `rampart allow`/`rampart block`. Does not manage agent credentials, OAuth tokens, or delegated permissions. | ⚠️ Partial |
+| ASI04 | **Agentic Supply Chain** | MCP proxy (`rampart mcp`) evaluates MCP tool calls against policies. Project-local policies enforce deny-wins. Does not verify tool provenance or integrity. | ⚠️ Partial |
+| ASI05 | **Unexpected Code Execution** | Exec policy evaluation catches injected code before it runs. Pattern matching blocks destructive commands, obfuscated payloads (with [known limitations](threat-model.md)). | ✅ Covered |
+| ASI06 | **Memory & Context Poisoning** | Response scanning (`response_matches`) blocks credentials and known-bad patterns in tool responses before they enter the agent's context window. Does not protect persistent memory stores, RAG databases, or conversation history. | ⚠️ Partial |
+| ASI07 | **Insecure Inter-Agent Communication** | Not addressed. Rampart sits between an agent and the OS/tools, not between agents. | ❌ Not covered |
+| ASI08 | **Cascading Failures** | Fail-open design prevents Rampart from becoming a single point of failure. Does not prevent agent-to-agent cascade in multi-agent systems. | ⚠️ Partial |
+| ASI09 | **Human-Agent Trust Exploitation** | `require_approval` adds human-in-the-loop gates for sensitive operations. Does not detect persuasion attempts or over-reliance on agent output. | ⚠️ Partial |
+| ASI10 | **Rogue Agents** | Self-modification protection prevents agents from weakening their own policy constraints. Does not detect agent misalignment or goal divergence. | ⚠️ Partial |
 
-## Response Scanning — OWASP Risk #3
+**Summary: 2 fully covered, 6 partially mitigated, 2 not addressed.**
 
-Most security tools focus on blocking dangerous *commands*. Rampart also scans tool *responses* — this matters because:
+Rampart directly addresses the two risks most relevant to tool-call security (ASI02, ASI05) and partially mitigates six others. The two gaps — identity/credential management (ASI03) and inter-agent communication (ASI07) — are architecturally outside Rampart's scope as a tool-call policy engine.
 
-1. Your agent runs `cat config.yaml` — a legitimate read
-2. The file happens to contain `AWS_SECRET_ACCESS_KEY=AKIA...`
-3. Without response scanning: the secret enters the agent's context window, available for exfiltration in a later turn
+## What Rampart Does Well
+
+### ASI02: Tool Misuse & Exploitation
+
+This is Rampart's core purpose. Every tool invocation passes through the policy engine:
+
+```yaml
+# Allowlist mode — only explicitly permitted commands run
+version: "1"
+default_action: deny
+
+policies:
+  - name: allow-dev-tools
+    match:
+      tool: [exec]
+    rules:
+      - action: allow
+        when:
+          command_matches: "npm *"
+      - action: allow
+        when:
+          command_matches: "go test *"
+      # Everything else: denied by default
+```
+
+### ASI05: Unexpected Code Execution
+
+Pattern matching catches common injection vectors before execution:
+
+- Direct destructive commands (`rm -rf`, `mkfs`, `dd if=`)
+- Exfiltration attempts (`curl -X POST`, `wget --post-data`)
+- Credential access (`cat ~/.ssh/*`, `cat .env`)
+- Shell wrapper bypasses (quoted strings, compound commands, `eval`)
+
+See [Threat Model — Known Gaps](threat-model.md) for evasion techniques that pattern matching cannot catch (variable expansion, base64 payloads).
+
+## Response Scanning — ASI06
+
+Most security tools focus on blocking dangerous *commands*. Rampart also scans tool *responses*:
+
+1. Agent runs `cat config.yaml` — a legitimate read
+2. The file contains `AWS_SECRET_ACCESS_KEY=AKIA...`
+3. Without response scanning: the secret enters the agent's context window
 4. With Rampart: the response is blocked before the agent ever sees it
 
 ```yaml
@@ -36,22 +79,16 @@ Most security tools focus on blocking dangerous *commands*. Rampart also scans t
         response_matches: "AWS_SECRET_ACCESS_KEY|PRIVATE KEY|ghp_"
 ```
 
-This is particularly important for [Prompt Injection](../guides/prompt-injection.md) scenarios where an attacker embeds instructions in a file that cause the agent to exfiltrate credentials it reads from other files.
+This is a partial mitigation for ASI06 (Memory & Context Poisoning) — it prevents known-bad patterns from entering context, but cannot protect against novel poisoning vectors or persistent memory corruption.
 
-## Self-Modification Protection — OWASP Risk #8
+## What Rampart Does Not Do
 
-Rampart blocks agents from modifying their own constraints:
+**ASI03 — Identity & Privilege Abuse:** Rampart does not manage agent credentials. If an agent holds an over-scoped API key, Rampart cannot restrict which endpoints that key can access. Tools like [Astrix](https://astrix.security/) or cloud IAM policies are better suited for this.
 
-- `rampart allow` / `rampart block` — blocked when run by an agent
-- `rampart serve stop` — blocked
-- Direct policy file writes — blocked via file path policies
-- `kill` / `pkill rampart` — blocked via command patterns
-
-See the [Threat Model](threat-model.md#self-modification-protection) for details on how this is enforced and its limitations.
+**ASI07 — Insecure Inter-Agent Communication:** Rampart operates at the agent-to-OS boundary. It has no visibility into messages passed between agents in a multi-agent system. Frameworks that provide agent-to-agent authentication and message signing are needed here.
 
 ## Further Reading
 
-- [Threat Model](threat-model.md) — complete security analysis including known gaps
-- [Securing Claude Code](../guides/securing-claude-code.md) — hardening guide for `--dangerously-skip-permissions` mode
-- [Prompt Injection Protection](../guides/prompt-injection.md) — detection and mitigation
-- [Policy Engine](../features/policy-engine.md) — writing effective security policies
+- [Threat Model](threat-model.md) — complete security analysis including known gaps and evasion techniques
+- [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) — the official framework
+- [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/) — the separate LLM-focused framework (covers model-level risks outside Rampart's scope)

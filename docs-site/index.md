@@ -64,13 +64,13 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     [:octicons-arrow-right-24: How it works](reference/owasp-mapping.md#response-scanning-owasp-risk-3)
 
--   :material-certificate:{ .lg .middle } **OWASP Aligned**
+-   :material-certificate:{ .lg .middle } **OWASP Agentic Top 10**
 
     ---
 
-    Maps to 8 of the 10 OWASP Top 10 Risks for Agentic AI. Built for teams that need framework-aligned security tooling.
+    Mapped against the 2026 OWASP framework for autonomous AI agents. 2 fully covered, 6 partially mitigated, with honest assessment of gaps.
 
-    [:octicons-arrow-right-24: OWASP mapping](reference/owasp-mapping.md)
+    [:octicons-arrow-right-24: Full mapping](reference/owasp-mapping.md)
 
 </div>
 
