@@ -1,0 +1,195 @@
+# Rampart built-in profile: openclaw
+# Use with: rampart init --profile openclaw
+#
+# Session-aware policy for OpenClaw AI agent orchestrators. Applies the
+# "seatbelt not a cage" philosophy: the main session (direct human chat)
+# has full workspace access, while subagents and cron jobs face tighter
+# restrictions on sensitive files and external actions.
+#
+# Prerequisites:
+#   rampart setup openclaw --patch-tools
+#
+# Session context:
+#   The OpenClaw shell shim sends session identity via the RAMPART_SESSION
+#   or OPENCLAW_SESSION_KIND environment variable. Set these in your
+#   OpenClaw configuration to distinguish session types:
+#     main        — direct chat with the human operator
+#     subagent:*  — spawned sub-agent sessions
+#     cron:*      — scheduled/periodic tasks
+#
+# Default action: allow (permissive baseline — rules restrict specific risks)
+
+version: "1"
+default_action: allow
+
+policies:
+  # ── Self-modification protection ──────────────────────────────────────
+  # No session can modify its own Rampart policy. Human-only.
+  - name: openclaw-block-self-modification
+    description: "Prevent any agent session from modifying Rampart policy"
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_contains:
+            - "rampart allow"
+            - "rampart block"
+            - "rampart rules"
+            - "rampart policy"
+            - "rampart init"
+        message: "Policy modification must be run by a human, not an agent"
+      - action: deny
+        when:
+          command_contains:
+            - "> .rampart/"
+            - "> ~/.rampart/"
+            - ">> .rampart/"
+            - ">> ~/.rampart/"
+        message: "Direct writes to .rampart/ directory blocked"
+
+  # ── Credential protection ─────────────────────────────────────────────
+  # Block reads of SSH keys, cloud credentials, and secrets — all sessions.
+  - name: openclaw-block-credentials
+    description: "Block access to SSH keys, cloud credentials, and secret files"
+    priority: 2
+    match:
+      tool: ["read", "exec"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/id_*"
+            - "**/.ssh/known_hosts"
+            - "**/.aws/credentials"
+            - "**/.kube/config"
+            - "**/.docker/config.json"
+            - "**/.git-credentials"
+            - "**/.netrc"
+        message: "Credential file access blocked"
+      - action: deny
+        when:
+          command_matches:
+            - "cat */.ssh/id_*"
+            - "cat */.aws/credentials"
+            - "cat */.env"
+        message: "Credential read via exec blocked"
+
+  # ── Response scanning ─────────────────────────────────────────────────
+  # Block credentials from leaking into the agent's context window.
+  - name: openclaw-response-scanning
+    description: "Block secrets in tool responses before they enter agent context"
+    priority: 3
+    match:
+      tool: ["read", "exec"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "(?i)(AWS_SECRET_ACCESS_KEY|AKIA[0-9A-Z]{16})"
+            - "(?i)(PRIVATE KEY-----)"
+            - "(?i)(ghp_[a-zA-Z0-9]{36})"
+            - "(?i)(sk-[a-zA-Z0-9]{20,})"
+        message: "Response blocked: contains credentials"
+
+  # ── Subagent restrictions ─────────────────────────────────────────────
+  # Subagents and cron jobs cannot modify identity/config files.
+  - name: openclaw-subagent-write-guard
+    description: "Restrict subagent and cron write access to sensitive files"
+    priority: 10
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          session_matches: ["subagent:*", "cron:*"]
+          path_matches:
+            - "**/SOUL.md"
+            - "**/IDENTITY.md"
+            - "**/USER.md"
+            - "**/AGENTS.md"
+            - "**/.openclaw/config*"
+            - "**/.openclaw/openclaw.json*"
+        message: "Subagents and cron jobs cannot modify identity or config files"
+
+  # ── Exfiltration protection ───────────────────────────────────────────
+  # Block data exfiltration via curl/wget POST to unknown endpoints.
+  - name: openclaw-block-exfil
+    description: "Block data exfiltration via HTTP POST to unknown hosts"
+    priority: 5
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "curl * -X POST *"
+            - "curl * --data *"
+            - "curl * -d @*"
+            - "wget * --post-data *"
+            - "wget * --post-file *"
+          command_not_matches:
+            - "curl * localhost*"
+            - "curl * 127.0.0.1*"
+            - "curl * http://localhost*"
+            - "curl * http://127.0.0.1*"
+        message: "HTTP POST to external host blocked — potential data exfiltration"
+
+  # ── Destructive commands ──────────────────────────────────────────────
+  # Block obviously destructive operations.
+  - name: openclaw-block-destructive
+    description: "Block commands that could destroy the system"
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "rm -rf /*"
+            - "rm -rf ~/*"
+            - "rm -rf /"
+            - "rm -rf ~"
+            - "mkfs*"
+            - "> /dev/sda"
+            - "dd if=/dev/zero of=/dev/*"
+            - ":(){ :|:& };:"
+        message: "Destructive command blocked"
+
+  # ── Network-aware logging ─────────────────────────────────────────────
+  # Log network access for audit trail (allow but record).
+  - name: openclaw-log-network
+    description: "Log outbound network commands for audit visibility"
+    priority: 50
+    match:
+      tool: ["exec"]
+    rules:
+      - action: watch
+        when:
+          command_matches:
+            - "curl *"
+            - "wget *"
+            - "ssh *"
+            - "scp *"
+        message: "Network access logged"
+
+  # ── Production safety gates ───────────────────────────────────────────
+  # Require human approval for production-impacting commands.
+  - name: openclaw-prod-approval
+    description: "Require human approval for production deployments"
+    priority: 20
+    match:
+      tool: ["exec"]
+    rules:
+      - action: require_approval
+        when:
+          command_matches:
+            - "kubectl apply *"
+            - "kubectl delete *"
+            - "terraform apply *"
+            - "terraform destroy *"
+            - "docker push *"
+            - "helm install *"
+            - "helm upgrade *"
+        message: "Production command requires human approval"
