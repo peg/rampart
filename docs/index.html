@@ -599,6 +599,7 @@
             .steps { grid-template-columns: 1fr; gap: 24px; }
             .pos-grid { grid-template-columns: 1fr; }
             #policy-example .container > div { grid-template-columns: 1fr !important; }
+            .container > div[style*="grid-template-columns:1fr 1fr"] { grid-template-columns: 1fr !important; }
             nav .links a.hide-mobile { display: none; }
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
@@ -898,6 +899,63 @@
         <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; text-align:center; overflow-x:auto;">
             <img src="architecture.svg" alt="Rampart architecture diagram showing agent tool calls flowing through the policy engine" style="max-width:100%; min-width:900px; height:auto; border-radius:8px;" loading="lazy">
         </div>
+    </div>
+</section>
+
+<!-- OWASP -->
+<section style="padding:80px 0; border-top:1px solid var(--border);">
+    <div class="container">
+        <div class="section-label">Framework alignment</div>
+        <h2 class="section-title">OWASP Top 10 for Agentic Applications</h2>
+        <p class="section-desc">Mapped against the <a href="https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/" style="color:var(--accent);">OWASP Agentic Top 10 (2026)</a> — the industry standard for autonomous AI agent security.</p>
+        <div style="max-width:780px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:var(--green); flex-shrink:0;"></span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI02: Tool Misuse</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Every tool call evaluated before execution</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:var(--green); flex-shrink:0;"></span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI05: Code Execution</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Pattern matching catches injected code</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI06: Context Poisoning</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Response scanning blocks credentials from context</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI09: Human-Agent Trust</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Human-in-the-loop approval gates</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI01: Goal Hijack</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Injection monitoring in tool responses</div>
+                </div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
+                <div>
+                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI10: Rogue Agents</div>
+                    <div style="font-size:0.78rem; color:var(--text);">Self-modification protection</div>
+                </div>
+            </div>
+        </div>
+        <p style="margin-top:16px; font-size:0.82rem; color:var(--text);">
+            2 fully covered · 6 partially mitigated · 2 outside scope (identity management, inter-agent comms).
+            <a href="https://docs.rampart.sh/reference/owasp-mapping/" style="color:var(--accent);">Full mapping with honest assessment →</a>
+        </p>
     </div>
 </section>
 
