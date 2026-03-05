@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"regexp"
 	"sort"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -82,7 +83,23 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 // the final decision.
 //
 // This is the hot path. It must complete in <0.1ms p99.
+// EvalOptions controls optional behavior for policy evaluation.
+type EvalOptions struct {
+	// PolicyFilter restricts evaluation to policies loaded from files whose
+	// base name (without extension) matches this value. For example, "paranoid"
+	// matches policies from paranoid.yaml. Empty means no filtering (all policies).
+	PolicyFilter string
+
+	// DefaultDeny overrides the engine's default action with deny when set.
+	// Useful for agent tokens that should fail-closed on unmatched calls.
+	DefaultDeny bool
+}
+
 func (e *Engine) Evaluate(call ToolCall) Decision {
+	return e.EvaluateWith(call, EvalOptions{})
+}
+
+func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	start := time.Now()
 
 	e.mu.RLock()
@@ -90,8 +107,17 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 	defaultAction := e.defaultAction
 	e.mu.RUnlock()
 
+	if opts.DefaultDeny {
+		defaultAction = ActionDeny
+	}
+
 	// Collect matching policies, sorted by priority.
 	matching := e.collectMatching(cfg, call)
+
+	// Apply policy filter if set (per-agent token scoping).
+	if opts.PolicyFilter != "" {
+		matching = filterByProfile(matching, opts.PolicyFilter)
+	}
 
 	if len(matching) == 0 {
 		return Decision{
@@ -454,6 +480,23 @@ func (e *Engine) collectMatching(cfg *Config, call ToolCall) []Policy {
 	})
 
 	return result
+}
+
+// filterByProfile keeps only policies whose source file matches the given profile name.
+// A profile name "paranoid" matches policies loaded from any file named "paranoid.yaml" or "paranoid.yml".
+func filterByProfile(policies []Policy, profile string) []Policy {
+	var filtered []Policy
+	for _, p := range policies {
+		if p.FilePath == "" {
+			continue // skip embedded/unknown-origin policies
+		}
+		base := filepath.Base(p.FilePath)
+		name := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+		if strings.EqualFold(name, profile) {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered
 }
 
 // matchesScope checks whether a tool call falls within a policy's scope
