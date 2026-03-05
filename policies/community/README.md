@@ -1,12 +1,14 @@
 # Community Policies
 
-Ready-to-use policy files for common toolchains. Copy one, customize it, and point Rampart at it:
+Ready-to-use policy files for common toolchains. Install them with the CLI:
 
 ```bash
-cp policies/community/kubernetes.yaml ~/.rampart/policies/my-policy.yaml
-# Edit as needed
-rampart serve --config ~/.rampart/policies/my-policy.yaml
+rampart policy search kubernetes       # find policies
+rampart policy show kubernetes         # preview before installing
+rampart policy fetch kubernetes        # install to ~/.rampart/policies/
 ```
+
+Rampart auto-loads all `*.yaml` files in `~/.rampart/policies/` — no merge step needed.
 
 ## Available Policies
 
@@ -18,22 +20,23 @@ rampart serve --config ~/.rampart/policies/my-policy.yaml
 | [docker.yaml](docker.yaml) | Privileged containers, host mounts, unreviewed pushes |
 | [node-python.yaml](node-python.yaml) | Global installs, eval injection, .env leaks, npm/pypi publish |
 
-## Combining Policies
-
-Merge multiple community policies into one file or use includes:
-
-```yaml
-# my-policy.yaml — combine what you need
-version: "1"
-default_action: allow
-
-policies:
-  # Paste rules from kubernetes.yaml, docker.yaml, etc.
-```
-
 ## Contributing
 
-PRs welcome. Good community policies should:
+PRs welcome. See [docs/community-policies.md](../../docs/community-policies.md) for full contributor workflow.
+
+Every community policy must include metadata headers:
+
+```yaml
+# @name: my-policy
+# @description: What this policy protects against
+# @author: @your-github-username
+# @tags: tag1, tag2
+# @min-rampart: 0.6.0
+```
+
+CI automatically runs `rampart policy lint` and `rampart bench --min-coverage 60` on every PR.
+
+Good community policies should:
 
 1. **Have clear comments** explaining what each rule does and why
 2. **Start permissive** — block the dangerous stuff, allow everything else

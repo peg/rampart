@@ -1,0 +1,78 @@
+name: Community Policy CI
+
+on:
+  pull_request:
+    paths:
+      - 'policies/community/**'
+      - 'registry/registry.json'
+      - 'registry/embed.go'
+      - 'cmd/rampart/cli/policy_registry.go'
+      - 'cmd/rampart/cli/policy_suggest.go'
+      - 'scripts/generate-registry.go'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build rampart
+        run: go build -o rampart ./cmd/rampart
+
+      - name: Validate metadata headers
+        run: |
+          errors=0
+          for file in policies/community/*.yaml; do
+            [ "$(basename "$file")" = "README.md" ] && continue
+            for field in name description author tags min-rampart; do
+              if ! grep -q "^# @${field}:" "$file"; then
+                echo "ERROR: $file missing @${field} metadata"
+                errors=$((errors + 1))
+              fi
+            done
+            # Validate min-rampart semver format
+            mr=$(grep "^# @min-rampart:" "$file" | sed 's/^# @min-rampart: *//')
+            if [ -n "$mr" ] && ! echo "$mr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+              echo "ERROR: $file @min-rampart '$mr' is not valid semver"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ $errors -gt 0 ]; then
+            echo "$errors metadata error(s) found"
+            exit 1
+          fi
+          echo "✓ All metadata headers valid"
+
+      - name: Lint policies
+        run: |
+          for file in policies/community/*.yaml; do
+            [ "$(basename "$file")" = "README.md" ] && continue
+            echo "Linting $file..."
+            ./rampart policy lint "$file"
+          done
+
+      - name: Bench policies
+        run: |
+          for file in policies/community/*.yaml; do
+            [ "$(basename "$file")" = "README.md" ] && continue
+            echo "Benchmarking $file..."
+            ./rampart bench --policy "$file" --min-coverage 60
+          done
+
+      - name: Regenerate registry.json
+        run: go run scripts/generate-registry.go
+
+      - name: Check registry.json is up to date
+        run: |
+          if ! git diff --quiet registry/registry.json; then
+            echo "ERROR: registry/registry.json is out of date."
+            echo "Run 'go run scripts/generate-registry.go' and commit the result."
+            git diff registry/registry.json
+            exit 1
+          fi
+          echo "✓ registry.json is up to date"

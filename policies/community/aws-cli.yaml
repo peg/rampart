@@ -1,3 +1,9 @@
+# @name: aws-cli
+# @description: Blocks destructive AWS ops, requires approval for resource creation
+# @author: @rampart-team
+# @tags: aws, cloud, iam
+# @min-rampart: 0.6.0
+#
 # Rampart Community Policy: AWS CLI
 #
 # For AI agents managing AWS infrastructure.

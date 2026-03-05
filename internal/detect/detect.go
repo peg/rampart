@@ -24,12 +24,16 @@ import (
 
 // DetectResult contains the results of environment detection.
 type DetectResult struct {
-	ClaudeCode    bool
-	MCPServers    []string
-	SSHKeys       bool
+	ClaudeCode     bool
+	MCPServers     []string
+	SSHKeys        bool
 	AWSCredentials bool
-	HasKubectl    bool
-	HasDocker     bool
+	HasKubectl     bool
+	HasDocker      bool
+	HasTerraform   bool
+	HasNode        bool
+	HasPython      bool
+	HasAWSCLI      bool
 }
 
 // Environment performs environment detection and returns results.
@@ -86,14 +90,30 @@ func Environment() (*DetectResult, error) {
 		// Note: we skip AWS detection on permission errors rather than failing
 	}
 
-	// Detect kubectl (works regardless of home directory)
+	// Detect CLI tools in PATH (works regardless of home directory)
 	if _, err := exec.LookPath("kubectl"); err == nil {
 		result.HasKubectl = true
 	}
-
-	// Detect docker (works regardless of home directory)
 	if _, err := exec.LookPath("docker"); err == nil {
 		result.HasDocker = true
+	}
+	if _, err := exec.LookPath("terraform"); err == nil {
+		result.HasTerraform = true
+	}
+	if _, err := exec.LookPath("node"); err == nil {
+		result.HasNode = true
+	} else if _, err := exec.LookPath("npm"); err == nil {
+		result.HasNode = true
+	}
+	if _, err := exec.LookPath("python3"); err == nil {
+		result.HasPython = true
+	} else if _, err := exec.LookPath("python"); err == nil {
+		result.HasPython = true
+	} else if _, err := exec.LookPath("pip"); err == nil {
+		result.HasPython = true
+	}
+	if _, err := exec.LookPath("aws"); err == nil {
+		result.HasAWSCLI = true
 	}
 
 	// Always return results, even if we couldn't access home directory

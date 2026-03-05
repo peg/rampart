@@ -1,3 +1,9 @@
+# @name: node-python
+# @description: Dev guardrails for Node.js and Python — blocks global installs and eval
+# @author: @rampart-team
+# @tags: node, python, npm, pip
+# @min-rampart: 0.6.0
+#
 # Rampart Community Policy: Node.js / Python Development
 #
 # For AI agents writing and testing code in Node.js or Python projects.

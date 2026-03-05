@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/build"
+	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
 )
@@ -187,6 +188,18 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 
 	// 13. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
+
+	// 14. Proactive policy suggestions (informational only)
+	if detectResult, detectErr := detect.Environment(); detectErr == nil {
+		client := newPolicyRegistryClient()
+		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
+			suggestions := suggestPolicies(detectResult, manifest)
+			if len(suggestions) > 0 {
+				desc := describeSuggestions(suggestions)
+				emit("Policy suggestions", "info", desc)
+			}
+		}
+	}
 
 	if collect {
 		// JSON output

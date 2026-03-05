@@ -203,16 +203,29 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 					return fmt.Errorf("cli: generate tailored policy: %w", err)
 				}
 			} else {
-				// Use selected profile
+				// Use selected profile — try built-in first, fall through to community registry.
 				selectedProfile := strings.TrimSpace(strings.ToLower(profile))
-				if !isSupportedProfile(selectedProfile) {
-					return fmt.Errorf("cli: invalid profile %q (valid: standard, paranoid, yolo, block-prompt-injection, research-agent, mcp-server, openclaw)", profile)
-				}
-
-				var err error
-				content, err = policies.FS.ReadFile(selectedProfile + ".yaml")
-				if err != nil {
-					return fmt.Errorf("cli: read embedded profile %s: %w", selectedProfile, err)
+				if isSupportedProfile(selectedProfile) {
+					var err error
+					content, err = policies.FS.ReadFile(selectedProfile + ".yaml")
+					if err != nil {
+						return fmt.Errorf("cli: read embedded profile %s: %w", selectedProfile, err)
+					}
+				} else {
+					// Not a built-in — try community registry.
+					client := newPolicyRegistryClient()
+					manifest, err := client.loadManifest(cmd.Context(), false)
+					if err != nil {
+						return fmt.Errorf("cli: fetch community registry for profile %q: %w", selectedProfile, err)
+					}
+					entry, found := findPolicyByName(manifest, selectedProfile)
+					if !found {
+						return fmt.Errorf("cli: unknown profile %q — not a built-in or community policy. Run 'rampart policy list' to see available profiles", selectedProfile)
+					}
+					content, err = client.downloadPolicy(cmd.Context(), entry)
+					if err != nil {
+						return fmt.Errorf("cli: download community profile %q: %w", selectedProfile, err)
+					}
 				}
 			}
 
@@ -277,13 +290,23 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 				}
 			}
 
+			// Proactive discovery: suggest community policies for detected tools.
+			client := newPolicyRegistryClient()
+			if manifest, fetchErr := client.loadManifest(cmd.Context(), false); fetchErr == nil {
+				result, detectErr := detect.Environment()
+				if detectErr == nil {
+					suggestions := suggestPolicies(result, manifest)
+					printPolicySuggestions(cmd.OutOrStdout(), suggestions)
+				}
+			}
+
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing config/profile files")
 	cmd.Flags().BoolVar(&force, "defaults", false, "Use default settings and overwrite existing files (alias for --force)")
-	cmd.Flags().StringVar(&profile, "profile", "standard", "Default policy profile: standard, paranoid, yolo, block-prompt-injection, research-agent, mcp-server, or openclaw")
+	cmd.Flags().StringVar(&profile, "profile", "standard", "Policy profile (built-in: standard, paranoid, yolo, block-prompt-injection, research-agent, mcp-server, openclaw; or any community policy name)")
 	cmd.Flags().BoolVar(&detectEnv, "detect", false, "Auto-detect installed tools and generate tailored policy")
 	cmd.Flags().BoolVar(&project, "project", false, "Create .rampart/policy.yaml in the current directory for team-shared project rules")
 	cmd.Flags().StringVar(&auditOpts.auditPath, "from-audit", "", "Generate policy from audit log (JSONL file or directory)")
