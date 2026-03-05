@@ -433,6 +433,13 @@ func (s *MemoryStore) Load() (*Config, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	// Set FilePath on all policies so per-agent token policy scoping
+	// can filter by profile name (e.g., "standard" from "embedded:standard").
+	for i := range cfg.Policies {
+		if cfg.Policies[i].FilePath == "" {
+			cfg.Policies[i].FilePath = s.path
+		}
+	}
 	return &cfg, nil
 }
 

@@ -483,20 +483,32 @@ func (e *Engine) collectMatching(cfg *Config, call ToolCall) []Policy {
 }
 
 // filterByProfile keeps only policies whose source file matches the given profile name.
-// A profile name "paranoid" matches policies loaded from any file named "paranoid.yaml" or "paranoid.yml".
+// A profile name "paranoid" matches policies loaded from files named "paranoid.yaml",
+// or embedded stores with path "embedded:paranoid".
 func filterByProfile(policies []Policy, profile string) []Policy {
 	var filtered []Policy
 	for _, p := range policies {
 		if p.FilePath == "" {
-			continue // skip embedded/unknown-origin policies
+			continue // skip unknown-origin policies
 		}
-		base := filepath.Base(p.FilePath)
-		name := strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+		name := profileNameFromPath(p.FilePath)
 		if strings.EqualFold(name, profile) {
 			filtered = append(filtered, p)
 		}
 	}
 	return filtered
+}
+
+// profileNameFromPath extracts a profile name from a policy file path.
+// Handles both regular paths ("/home/user/.rampart/policies/standard.yaml" → "standard")
+// and embedded store paths ("embedded:standard" → "standard").
+func profileNameFromPath(path string) string {
+	// Handle "embedded:<name>" or "<prefix>:<name>" format.
+	if idx := strings.LastIndex(path, ":"); idx >= 0 {
+		return strings.TrimSuffix(strings.TrimSuffix(path[idx+1:], ".yaml"), ".yml")
+	}
+	base := filepath.Base(path)
+	return strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
 }
 
 // matchesScope checks whether a tool call falls within a policy's scope
