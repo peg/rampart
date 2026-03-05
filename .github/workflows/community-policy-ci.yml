@@ -5,6 +5,10 @@ on:
     paths:
       - 'policies/community/**'
       - 'registry/registry.json'
+      - 'registry/embed.go'
+      - 'cmd/rampart/cli/policy_registry.go'
+      - 'cmd/rampart/cli/policy_suggest.go'
+      - 'scripts/generate-registry.go'
 
 jobs:
   validate:
@@ -33,7 +37,7 @@ jobs:
             done
             # Validate min-rampart semver format
             mr=$(grep "^# @min-rampart:" "$file" | sed 's/^# @min-rampart: *//')
-            if [ -n "$mr" ] && ! echo "$mr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            if [ -n "$mr" ] && ! echo "$mr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
               echo "ERROR: $file @min-rampart '$mr' is not valid semver"
               errors=$((errors + 1))
             fi

@@ -170,12 +170,20 @@ func TestPolicyList_ShowsInstalledState(t *testing.T) {
 	defer srv.Close()
 	patchRegistryURL(t, srv)
 
+	// Default format: backward-compatible NAME | DESCRIPTION | TAGS
 	stdout, _, err := runCLI(t, "policy", "list")
 	require.NoError(t, err)
-	assert.Contains(t, stdout, "built-in")
-	assert.Contains(t, stdout, "community")
-	assert.Contains(t, stdout, "INSTALLED")
-	assert.Contains(t, stdout, "✓")
+	assert.Contains(t, stdout, "NAME")
+	assert.Contains(t, stdout, "DESCRIPTION")
+	assert.Contains(t, stdout, "TAGS")
+
+	// Extended format: NAME | DESCRIPTION | SOURCE | INSTALLED
+	stdout2, _, err := runCLI(t, "policy", "list", "--extended")
+	require.NoError(t, err)
+	assert.Contains(t, stdout2, "built-in")
+	assert.Contains(t, stdout2, "community")
+	assert.Contains(t, stdout2, "INSTALLED")
+	assert.Contains(t, stdout2, "✓")
 }
 
 // ---------------------------------------------------------------------------
@@ -394,4 +402,116 @@ func TestPrintPolicySuggestions(t *testing.T) {
 	var buf2 strings.Builder
 	printPolicySuggestions(&buf2, nil)
 	assert.Equal(t, "", buf2.String())
+}
+
+// ---------------------------------------------------------------------------
+// --min-score bounds validation
+// ---------------------------------------------------------------------------
+
+func TestPolicySearch_MinScoreOutOfBounds(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	srv := registryTestServer(t, testManifest())
+	defer srv.Close()
+	patchRegistryURL(t, srv)
+
+	_, _, err := runCLI(t, "policy", "search", "k", "--min-score", "101")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--min-score must be between 0 and 100")
+
+	_, _, err = runCLI(t, "policy", "search", "k", "--min-score", "-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--min-score must be between 0 and 100")
+}
+
+// ---------------------------------------------------------------------------
+// RAMPART_REGISTRY_URL / RAMPART_DEV env override
+// ---------------------------------------------------------------------------
+
+func TestRegistryClient_EnvOverrideIgnoredWithoutDev(t *testing.T) {
+	// Without RAMPART_DEV=1, the override is silently ignored.
+	t.Setenv("RAMPART_REGISTRY_URL", "https://custom.example.com/registry.json")
+	// Do NOT set RAMPART_DEV — override should be ignored.
+
+	client := newPolicyRegistryClient()
+	assert.Equal(t, defaultPolicyRegistryManifestURL, client.manifestURL,
+		"RAMPART_REGISTRY_URL should be ignored without RAMPART_DEV=1")
+}
+
+func TestRegistryClient_EnvOverrideHTTPS(t *testing.T) {
+	// With RAMPART_DEV=1 and HTTPS URL, override should be accepted.
+	t.Setenv("RAMPART_DEV", "1")
+	t.Setenv("RAMPART_REGISTRY_URL", "https://custom.example.com/registry.json")
+
+	client := newPolicyRegistryClient()
+	assert.Equal(t, "https://custom.example.com/registry.json", client.manifestURL,
+		"HTTPS override should be accepted with RAMPART_DEV=1")
+}
+
+func TestRegistryClient_EnvOverrideNonHTTPS(t *testing.T) {
+	// With RAMPART_DEV=1 but non-HTTPS URL, override should be rejected.
+	t.Setenv("RAMPART_DEV", "1")
+	t.Setenv("RAMPART_REGISTRY_URL", "http://evil.example.com/registry.json")
+
+	client := newPolicyRegistryClient()
+	assert.Equal(t, defaultPolicyRegistryManifestURL, client.manifestURL,
+		"non-HTTPS override should be rejected even with RAMPART_DEV=1")
+}
+
+// ---------------------------------------------------------------------------
+// loadManifest fallback warning
+// ---------------------------------------------------------------------------
+
+func TestLoadManifest_FallbackWarning(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	// Point to a server that will refuse connections by using a closed server.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "gone", http.StatusInternalServerError)
+	}))
+	srv.Close() // close immediately to force network failure
+
+	var warnBuf strings.Builder
+
+	oldManifestURL := defaultPolicyRegistryManifestURL
+	oldClient := defaultPolicyRegistryHTTPClient
+	defaultPolicyRegistryManifestURL = srv.URL + "/registry.json"
+	defaultPolicyRegistryHTTPClient = srv.Client()
+	t.Cleanup(func() {
+		defaultPolicyRegistryManifestURL = oldManifestURL
+		defaultPolicyRegistryHTTPClient = oldClient
+	})
+
+	client := newPolicyRegistryClient()
+	client.warnWriter = &warnBuf
+
+	manifest, err := client.loadManifest(t.Context(), true) // force refresh
+	require.NoError(t, err)
+	require.NotNil(t, manifest)
+
+	// Should have emitted a fallback warning.
+	assert.Contains(t, warnBuf.String(), "using embedded registry data")
+}
+
+// ---------------------------------------------------------------------------
+// Built-in profile descriptions
+// ---------------------------------------------------------------------------
+
+func TestPolicyList_BuiltInDescriptions(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	srv := registryTestServer(t, testManifest())
+	defer srv.Close()
+	patchRegistryURL(t, srv)
+
+	stdout, _, err := runCLI(t, "policy", "list")
+	require.NoError(t, err)
+
+	// Each built-in should have its differentiated description, not generic "Built-in profile".
+	assert.Contains(t, stdout, "Balanced default policy")
+	assert.Contains(t, stdout, "Maximum restriction")
+	assert.Contains(t, stdout, "Permissive")
 }

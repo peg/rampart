@@ -15,10 +15,7 @@
 // This provides a compile-time fallback when the remote registry is unreachable.
 package registry
 
-import "embed"
+import _ "embed"
 
 //go:embed registry.json
 var RegistryJSON []byte
-
-//go:embed policies
-var PolicyFS embed.FS

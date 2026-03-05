@@ -102,7 +102,9 @@ func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 
 	_, _, err := runCLI(t, "policy", "fetch", "test-bad-hash")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sha256 mismatch")
+	// With remote-first download, a SHA256 mismatch falls through to embedded
+	// (which doesn't exist), producing "unable to download or find embedded copy".
+	assert.Contains(t, err.Error(), "unable to download or find embedded copy")
 
 	dest := filepath.Join(home, ".rampart", "policies", "test-bad-hash.yaml")
 	_, statErr := os.Stat(dest)

@@ -37,6 +37,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// builtInProfileDescriptions provides human-readable descriptions for each
+// built-in policy profile, replacing the generic "Built-in profile" label
+// in the policy list output.
+var builtInProfileDescriptions = map[string]string{
+	"standard":               "Balanced default policy for everyday use",
+	"paranoid":               "Maximum restriction — blocks all unrecognized commands",
+	"yolo":                   "Permissive — allows everything, logs only",
+	"block-prompt-injection": "Blocks prompt injection attempts",
+	"research-agent":         "Tuned for research and browsing workflows",
+	"mcp-server":             "Policy for MCP server tool access",
+}
+
 const policyRegistryCacheFileName = "registry-cache.json"
 
 var (
@@ -67,37 +79,52 @@ type policyRegistryClient struct {
 	manifestURL string
 	cacheTTL    time.Duration
 	now         func() time.Time
+	warnWriter  io.Writer // destination for warnings (defaults to os.Stderr)
 }
 
 func newPolicyRegistryClient() *policyRegistryClient {
-	registryURL := os.Getenv("RAMPART_REGISTRY_URL")
-	if registryURL == "" {
-		registryURL = defaultPolicyRegistryManifestURL
+	warnWriter := io.Writer(os.Stderr)
+	registryURL := defaultPolicyRegistryManifestURL
+
+	if os.Getenv("RAMPART_DEV") == "1" {
+		if override := os.Getenv("RAMPART_REGISTRY_URL"); override != "" {
+			if !strings.HasPrefix(strings.ToLower(override), "https://") {
+				fmt.Fprintf(warnWriter, "WARNING: RAMPART_REGISTRY_URL=%q uses non-HTTPS scheme; ignoring override\n", override)
+			} else {
+				fmt.Fprintf(warnWriter, "WARNING: using custom registry URL from RAMPART_REGISTRY_URL=%q (development mode)\n", override)
+				registryURL = override
+			}
+		}
+	} else if override := os.Getenv("RAMPART_REGISTRY_URL"); override != "" {
+		fmt.Fprintf(warnWriter, "WARNING: RAMPART_REGISTRY_URL is set but ignored (set RAMPART_DEV=1 to enable custom registries)\n")
 	}
+
 	return &policyRegistryClient{
 		httpClient:  defaultPolicyRegistryHTTPClient,
 		manifestURL: registryURL,
 		cacheTTL:    time.Hour,
 		now:         time.Now,
+		warnWriter:  warnWriter,
 	}
 }
 
 // policyListEntry is an internal type for the unified list command output.
 type policyListEntry struct {
-	Name        string
-	Description string
-	Tags        string
-	Source      string // "built-in" or "community"
-	Installed   bool
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Tags        string `json:"tags"`
+	Source      string `json:"source,omitempty"` // "built-in" or "community" (shown in --extended mode)
+	Installed   bool   `json:"installed,omitempty"` // shown in --extended mode
 }
 
 func newPolicyListCmd(_ *rootOptions) *cobra.Command {
 	var refresh bool
 	var jsonOut bool
+	var extended bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List built-in profiles and community policies with installed state",
+		Short: "List built-in profiles and community policies",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			home, err := os.UserHomeDir()
 			if err != nil {
@@ -113,9 +140,13 @@ func newPolicyListCmd(_ *rootOptions) *cobra.Command {
 				if _, err := os.Stat(filepath.Join(policyDir, name+".yaml")); err == nil {
 					installed = true
 				}
+				desc := builtInProfileDescriptions[name]
+				if desc == "" {
+					desc = "Built-in profile"
+				}
 				entries = append(entries, policyListEntry{
 					Name:        name,
-					Description: "Built-in profile",
+					Description: desc,
 					Source:      "built-in",
 					Installed:   installed,
 				})
@@ -156,16 +187,29 @@ func newPolicyListCmd(_ *rootOptions) *cobra.Command {
 			}
 
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			if _, err := fmt.Fprintln(tw, "NAME\tDESCRIPTION\tSOURCE\tINSTALLED"); err != nil {
-				return fmt.Errorf("policy: write list header: %w", err)
-			}
-			for _, e := range entries {
-				inst := ""
-				if e.Installed {
-					inst = "✓"
+			if extended {
+				// Extended format: NAME | DESCRIPTION | SOURCE | INSTALLED
+				if _, err := fmt.Fprintln(tw, "NAME\tDESCRIPTION\tSOURCE\tINSTALLED"); err != nil {
+					return fmt.Errorf("policy: write list header: %w", err)
 				}
-				if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Name, e.Description, e.Source, inst); err != nil {
-					return fmt.Errorf("policy: write list row: %w", err)
+				for _, e := range entries {
+					inst := ""
+					if e.Installed {
+						inst = "✓"
+					}
+					if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Name, e.Description, e.Source, inst); err != nil {
+						return fmt.Errorf("policy: write list row: %w", err)
+					}
+				}
+			} else {
+				// Default format: NAME | DESCRIPTION | TAGS (backward-compatible)
+				if _, err := fmt.Fprintln(tw, "NAME\tDESCRIPTION\tTAGS"); err != nil {
+					return fmt.Errorf("policy: write list header: %w", err)
+				}
+				for _, e := range entries {
+					if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\n", e.Name, e.Description, e.Tags); err != nil {
+						return fmt.Errorf("policy: write list row: %w", err)
+					}
 				}
 			}
 			if err := tw.Flush(); err != nil {
@@ -182,6 +226,7 @@ func newPolicyListCmd(_ *rootOptions) *cobra.Command {
 
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "Force refresh of registry cache")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	cmd.Flags().BoolVar(&extended, "extended", false, "Show extended columns (SOURCE, INSTALLED)")
 	return cmd
 }
 
@@ -195,6 +240,10 @@ func newPolicySearchCmd(_ *rootOptions) *cobra.Command {
 		Short: "Search community policies by name, description, or tags",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if minScore < 0 || minScore > 100 {
+				return fmt.Errorf("policy: --min-score must be between 0 and 100, got %d", minScore)
+			}
+
 			query := strings.ToLower(strings.TrimSpace(args[0]))
 			client := newPolicyRegistryClient()
 			manifest, err := client.loadManifest(cmd.Context(), false)
@@ -270,7 +319,7 @@ func newPolicyShowCmd(_ *rootOptions) *cobra.Command {
 			name := strings.TrimSpace(args[0])
 
 			// Check built-in profiles first.
-			if isBuiltInPolicyProfile(name) {
+			if isSupportedProfile(name) {
 				content, err := policies.Profile(name)
 				if err != nil {
 					return fmt.Errorf("policy: read built-in profile %q: %w", name, err)
@@ -422,7 +471,7 @@ func newPolicyRemoveCmd(_ *rootOptions) *cobra.Command {
 			if err := sanitizePolicyName(name); err != nil {
 				return err
 			}
-			if isBuiltInPolicyProfile(name) {
+			if isSupportedProfile(name) {
 				return fmt.Errorf("policy: %q is a built-in profile and cannot be removed", name)
 			}
 
@@ -465,14 +514,7 @@ func sanitizePolicyName(name string) error {
 	return nil
 }
 
-func isBuiltInPolicyProfile(name string) bool {
-	for _, profile := range policies.ProfileNames {
-		if profile == name {
-			return true
-		}
-	}
-	return false
-}
+// isBuiltInPolicyProfile is removed — use isSupportedProfile from init.go instead.
 
 func findPolicyByName(manifest *policyRegistryManifest, name string) (policyRegistryEntry, bool) {
 	for _, entry := range manifest.Policies {
@@ -518,6 +560,7 @@ func (c *policyRegistryClient) loadManifest(ctx context.Context, refresh bool) (
 	}
 
 	// Both cache and network unavailable — return the embedded baseline.
+	fmt.Fprintf(c.warnWriter, "Warning: using embedded registry data (network unavailable: %v)\n", fetchErr)
 	return embedded, nil
 }
 
@@ -634,36 +677,36 @@ func validatePolicyRegistryManifest(manifest *policyRegistryManifest) error {
 }
 
 func (c *policyRegistryClient) downloadPolicy(ctx context.Context, entry policyRegistryEntry) ([]byte, error) {
-	// Add validation to prevent edge cases and path traversal
+	// Validate policy name to prevent path traversal.
 	if entry.Name == "" || strings.Contains(entry.Name, "/") || strings.Contains(entry.Name, "\\") || strings.Contains(entry.Name, "..") {
 		return nil, fmt.Errorf("policy: invalid policy name %q", entry.Name)
 	}
 
-	// Try embedded community policies first. These are compiled into the
-	// binary and avoid network round-trips and SHA256 mismatches caused
-	// by CRLF/LF line-ending differences across platforms.
+	// Prefer remote download to receive upstream security fixes immediately.
+	// Fall back to embedded content on network failure.
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(entry.URL)), "https://") {
+		content, fetchErr := fetchURL(ctx, c.httpClient, entry.URL)
+		if fetchErr == nil {
+			if err := verifyPolicySHA256(content, entry.SHA256, entry.Name); err == nil {
+				return content, nil
+			}
+			// SHA256 mismatch from remote — fall through to embedded.
+			fmt.Fprintf(c.warnWriter, "Warning: remote policy %q failed SHA256 check, using embedded version\n", entry.Name)
+		}
+		// Network error — fall through to embedded.
+	}
+
+	// Fall back to embedded community policies.
 	if content, err := community.FS.ReadFile(entry.Name + ".yaml"); err == nil {
 		return content, nil
 	}
 
-	// Try embedded registry policies (mcp-server, research-agent, etc.).
-	if content, err := registry.PolicyFS.ReadFile("policies/" + entry.Name + ".yaml"); err == nil {
-		return content, nil
-	}
-
-	// Fall back to network download for policies not shipped in the binary.
+	// No embedded copy and no HTTPS URL — cannot proceed.
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(entry.URL)), "https://") {
 		return nil, fmt.Errorf("policy: refusing to download %q from non-HTTPS URL: %s", entry.Name, entry.URL)
 	}
-	content, err := fetchURL(ctx, c.httpClient, entry.URL)
-	if err != nil {
-		return nil, wrapNetworkFetchError("policy", entry.URL, err)
-	}
 
-	if err := verifyPolicySHA256(content, entry.SHA256, entry.Name); err != nil {
-		return nil, err
-	}
-	return content, nil
+	return nil, fmt.Errorf("policy: unable to download or find embedded copy of %q", entry.Name)
 }
 
 func verifyPolicySHA256(content []byte, expectedSHA, name string) error {
