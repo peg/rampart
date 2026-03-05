@@ -17,11 +17,14 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
+	"github.com/peg/rampart/internal/token"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +32,14 @@ func newTokenShowCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "token",
-		Short: "Print the current bearer token for rampart serve",
+		Short: "Manage authentication tokens",
+		Long: `Manage authentication tokens for the Rampart proxy.
+
+Without a subcommand, prints the current admin bearer token.
+
+Per-agent tokens allow different AI agents to have different policy
+enforcement levels. Agent tokens are eval-only by default (cannot
+self-approve or mutate policies).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return printPersistedToken(cmd)
 		},
@@ -37,7 +47,7 @@ func newTokenShowCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "show",
-		Short: "Print the current bearer token for rampart serve",
+		Short: "Print the current admin bearer token",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return printPersistedToken(cmd)
 		},
@@ -45,7 +55,7 @@ func newTokenShowCmd() *cobra.Command {
 
 	rotateCmd := &cobra.Command{
 		Use:   "rotate",
-		Short: "Generate and persist a new bearer token",
+		Short: "Generate and persist a new admin bearer token",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !force {
 				ok, err := confirmTokenRotate(cmd.InOrStdin(), cmd.OutOrStdout())
@@ -57,19 +67,25 @@ func newTokenShowCmd() *cobra.Command {
 				}
 			}
 
-			token, err := generateServeToken()
+			tok, err := generateServeToken()
 			if err != nil {
 				return err
 			}
-			if err := persistToken(token); err != nil {
+			if err := persistToken(tok); err != nil {
 				return fmt.Errorf("rotate token: persist token: %w", err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), token)
+			fmt.Fprintln(cmd.OutOrStdout(), tok)
 			return nil
 		},
 	}
 	rotateCmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 	cmd.AddCommand(rotateCmd)
+
+	// Per-agent token management subcommands.
+	cmd.AddCommand(newTokenCreateCmd())
+	cmd.AddCommand(newTokenListCmd())
+	cmd.AddCommand(newTokenRevokeCmd())
+	cmd.AddCommand(newTokenInfoCmd())
 
 	return cmd
 }
@@ -101,3 +117,257 @@ func confirmTokenRotate(in io.Reader, out io.Writer) (bool, error) {
 	ans := strings.ToLower(strings.TrimSpace(line))
 	return ans == "y" || ans == "yes", nil
 }
+
+// ---------------------------------------------------------------------------
+// Per-agent token commands
+// ---------------------------------------------------------------------------
+
+func newTokenCreateCmd() *cobra.Command {
+	var (
+		agent   string
+		policy  string
+		note    string
+		scopes  []string
+		expires string
+		jsonOut bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new per-agent token",
+		Long: `Creates a new authentication token bound to a specific agent.
+
+The full token is printed once at creation time — save it, as it cannot
+be retrieved later. By default, tokens have eval-only scope (can submit
+tool calls but cannot approve requests or reload policies).
+
+Examples:
+  rampart token create --agent codex
+  rampart token create --agent codex --policy paranoid --note "CI restricted"
+  rampart token create --agent claude-code --expires 30d
+  rampart token create --agent admin-bot --scope eval --scope admin`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			storePath, err := token.DefaultStorePath()
+			if err != nil {
+				return err
+			}
+			store, err := token.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+
+			var expiresAt time.Time
+			if expires != "" {
+				dur, err := parseDuration(expires)
+				if err != nil {
+					return fmt.Errorf("invalid --expires: %w", err)
+				}
+				expiresAt = time.Now().Add(dur)
+			}
+
+			tok, err := store.Create(agent, policy, note, scopes, expiresAt)
+			if err != nil {
+				return err
+			}
+
+			if jsonOut {
+				data, _ := json.MarshalIndent(tok, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+				return nil
+			}
+
+			w := cmd.OutOrStdout()
+			fmt.Fprintln(w, "✓ Token created")
+			fmt.Fprintln(w)
+			fmt.Fprintf(w, "  Token:   %s\n", tok.ID)
+			fmt.Fprintf(w, "  Agent:   %s\n", tok.Agent)
+			if tok.Policy != "" {
+				fmt.Fprintf(w, "  Policy:  %s\n", tok.Policy)
+			}
+			fmt.Fprintf(w, "  Scopes:  %s\n", strings.Join(tok.Scopes, ", "))
+			if !tok.ExpiresAt.IsZero() {
+				fmt.Fprintf(w, "  Expires: %s\n", tok.ExpiresAt.Format(time.RFC3339))
+			}
+			if tok.Note != "" {
+				fmt.Fprintf(w, "  Note:    %s\n", tok.Note)
+			}
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  ⚠ Save this token — it cannot be retrieved later.")
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  Usage:")
+			fmt.Fprintf(w, "    export RAMPART_TOKEN=%s\n", tok.ID)
+			fmt.Fprintf(w, "    curl -H 'Authorization: Bearer %s' http://127.0.0.1:9090/v1/evaluate\n", tok.ID)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&agent, "agent", "", "Agent name (required, e.g., codex, claude-code, openclaw)")
+	cmd.Flags().StringVar(&policy, "policy", "", "Policy profile to apply (e.g., paranoid, standard); empty = global policies")
+	cmd.Flags().StringVar(&note, "note", "", "Human-readable note")
+	cmd.Flags().StringSliceVar(&scopes, "scope", nil, "Token scopes (eval, admin); default: eval only")
+	cmd.Flags().StringVar(&expires, "expires", "", "Token expiry (e.g., 24h, 7d, 30d)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	_ = cmd.MarkFlagRequired("agent")
+
+	return cmd
+}
+
+func newTokenListCmd() *cobra.Command {
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List per-agent tokens",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			storePath, err := token.DefaultStorePath()
+			if err != nil {
+				return err
+			}
+			store, err := token.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+
+			tokens := store.List()
+			if len(tokens) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No per-agent tokens found. Create one with: rampart token create --agent <name>")
+				return nil
+			}
+
+			if jsonOut {
+				type maskedToken struct {
+					ID        string    `json:"id"`
+					Agent     string    `json:"agent"`
+					Policy    string    `json:"policy,omitempty"`
+					Scopes    []string  `json:"scopes"`
+					CreatedAt time.Time `json:"created_at"`
+					ExpiresAt time.Time `json:"expires_at,omitempty"`
+					Note      string    `json:"note,omitempty"`
+					Revoked   bool      `json:"revoked,omitempty"`
+					Status    string    `json:"status"`
+				}
+				masked := make([]maskedToken, len(tokens))
+				for i, t := range tokens {
+					masked[i] = maskedToken{
+						ID:        t.MaskedID(),
+						Agent:     t.Agent,
+						Policy:    t.Policy,
+						Scopes:    t.Scopes,
+						CreatedAt: t.CreatedAt,
+						ExpiresAt: t.ExpiresAt,
+						Note:      t.Note,
+						Revoked:   t.Revoked,
+						Status:    tokenStatus(t),
+					}
+				}
+				data, _ := json.MarshalIndent(masked, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+				return nil
+			}
+
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "%-28s %-16s %-12s %-10s %s\n", "TOKEN", "AGENT", "POLICY", "SCOPES", "STATUS")
+			for _, t := range tokens {
+				policy := t.Policy
+				if policy == "" {
+					policy = "(global)"
+				}
+				fmt.Fprintf(w, "%-28s %-16s %-12s %-10s %s\n",
+					t.MaskedID(),
+					t.Agent,
+					policy,
+					strings.Join(t.Scopes, ","),
+					tokenStatus(t),
+				)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newTokenRevokeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "revoke <token-id-or-prefix>",
+		Short: "Revoke a per-agent token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			storePath, err := token.DefaultStorePath()
+			if err != nil {
+				return err
+			}
+			store, err := token.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+
+			n, err := store.Revoke(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Revoked %d token(s)\n", n)
+			return nil
+		},
+	}
+}
+
+func newTokenInfoCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "info <token-id-or-prefix>",
+		Short: "Show per-agent token details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			storePath, err := token.DefaultStorePath()
+			if err != nil {
+				return err
+			}
+			store, err := token.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+
+			matches := store.FindByPrefix(args[0])
+			if len(matches) == 0 {
+				return fmt.Errorf("no token matching prefix %q", args[0])
+			}
+			if len(matches) > 1 {
+				return fmt.Errorf("prefix %q matches %d tokens — be more specific", args[0], len(matches))
+			}
+
+			t := matches[0]
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "  Token:   %s\n", t.MaskedID())
+			fmt.Fprintf(w, "  Agent:   %s\n", t.Agent)
+			policy := t.Policy
+			if policy == "" {
+				policy = "(global)"
+			}
+			fmt.Fprintf(w, "  Policy:  %s\n", policy)
+			fmt.Fprintf(w, "  Scopes:  %s\n", strings.Join(t.Scopes, ", "))
+			fmt.Fprintf(w, "  Created: %s\n", t.CreatedAt.Format(time.RFC3339))
+			if !t.ExpiresAt.IsZero() {
+				fmt.Fprintf(w, "  Expires: %s\n", t.ExpiresAt.Format(time.RFC3339))
+			}
+			if t.Note != "" {
+				fmt.Fprintf(w, "  Note:    %s\n", t.Note)
+			}
+			fmt.Fprintf(w, "  Status:  %s\n", tokenStatus(t))
+			return nil
+		},
+	}
+}
+
+func tokenStatus(t token.Token) string {
+	if t.Revoked {
+		return "revoked"
+	}
+	if t.IsExpired() {
+		return "expired"
+	}
+	return "active"
+}
+
+// parseDuration is defined in report.go — reused here for --expires flag.
