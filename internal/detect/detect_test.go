@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -191,5 +192,101 @@ func TestDetectMCPServersFromFileInvalidJSON(t *testing.T) {
 	_, err = detectMCPServersFromFile(configPath)
 	if err == nil {
 		t.Fatal("Expected error for invalid JSON")
+	}
+}
+
+func TestEnvironmentDetectsAgentsAndToolsFromSignals(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH binary shims in this test are Unix-only")
+	}
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", tmpHome)
+	}
+
+	t.Setenv("CLINE_ACTIVE", "1")
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "openclaw")
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "codex"))
+	writeExecutable(t, filepath.Join(binDir, "aider"))
+	writeExecutable(t, filepath.Join(binDir, "kubectl"))
+	writeExecutable(t, filepath.Join(binDir, "docker"))
+	writeExecutable(t, filepath.Join(binDir, "node"))
+	writeExecutable(t, filepath.Join(binDir, "npm"))
+	writeExecutable(t, filepath.Join(binDir, "python3"))
+	writeExecutable(t, filepath.Join(binDir, "pip3"))
+	writeExecutable(t, filepath.Join(binDir, "terraform"))
+	writeExecutable(t, filepath.Join(binDir, "git"))
+	writeExecutable(t, filepath.Join(binDir, "go"))
+	writeExecutable(t, filepath.Join(binDir, "cargo"))
+	writeExecutable(t, filepath.Join(binDir, "aws"))
+	t.Setenv("PATH", binDir)
+
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".windsurf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Environment()
+	if err != nil {
+		t.Fatalf("Environment() error = %v", err)
+	}
+
+	if !got.HasCodex || !got.HasAider || !got.HasOpenClaw || !got.HasCline {
+		t.Fatalf("missing expected agent signals: %+v", got)
+	}
+	if !got.HasCursor || !got.HasWindsurf {
+		t.Fatalf("missing expected directory signals: %+v", got)
+	}
+	if !got.HasKubectl || !got.HasDocker || !got.HasNode || !got.HasNpm || !got.HasPython || !got.HasPip || !got.HasTerraform || !got.HasGit || !got.HasGo || !got.HasRust || !got.HasAWSCLI {
+		t.Fatalf("missing expected tool signals: %+v", got)
+	}
+}
+
+func TestDetectedAgentsAndToolsOrder(t *testing.T) {
+	r := &DetectResult{
+		ClaudeCode:   true,
+		HasCodex:     true,
+		HasCline:     true,
+		HasOpenClaw:  true,
+		HasCursor:    true,
+		HasAider:     true,
+		HasWindsurf:  true,
+		HasCopilot:   true,
+		HasKubectl:   true,
+		HasDocker:    true,
+		HasNode:      true,
+		HasNpm:       true,
+		HasPython:    true,
+		HasPip:       true,
+		HasTerraform: true,
+		HasGit:       true,
+		HasGo:        true,
+		HasRust:      true,
+		HasAWSCLI:    true,
+	}
+
+	agents := r.DetectedAgents()
+	wantAgents := []string{"claude-code", "codex", "cline", "openclaw", "cursor", "aider", "windsurf", "copilot"}
+	if !reflect.DeepEqual(agents, wantAgents) {
+		t.Fatalf("DetectedAgents() = %v, want %v", agents, wantAgents)
+	}
+
+	tools := r.DetectedTools()
+	wantTools := []string{"kubectl", "docker", "node", "npm", "python", "pip", "terraform", "git", "go", "rust", "aws-cli"}
+	if !reflect.DeepEqual(tools, wantTools) {
+		t.Fatalf("DetectedTools() = %v, want %v", tools, wantTools)
+	}
+}
+
+func writeExecutable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write executable %s: %v", path, err)
 	}
 }

@@ -1,3 +1,9 @@
+# @name: docker
+# @description: Container guardrails — blocks privileged containers and mass prune
+# @author: @rampart-team
+# @tags: docker, containers, compose
+# @min-rampart: 0.6.0
+#
 # Rampart Community Policy: Docker / Container Operations
 #
 # For AI agents building and deploying containers.

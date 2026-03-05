@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
@@ -37,8 +37,6 @@ type agentInfo struct {
 
 // detectAgents checks PATH and common locations for known AI agents.
 func detectAgents() []agentInfo {
-	home, _ := os.UserHomeDir()
-
 	agents := []agentInfo{
 		{
 			Name:     "Claude Code",
@@ -60,43 +58,31 @@ func detectAgents() []agentInfo {
 			HasSetup: true,
 			SetupCmd: "codex",
 		},
+		{
+			Name:      "Aider",
+			HasSetup:  false,
+			ManualCmd: "rampart wrap -- aider",
+		},
+		{
+			Name:      "Cursor",
+			HasSetup:  false,
+			ManualCmd: "rampart wrap -- cursor",
+		},
+		{
+			Name:      "Windsurf",
+			HasSetup:  false,
+			ManualCmd: "rampart wrap -- windsurf",
+		},
 	}
 
-	// Claude Code: check PATH or ~/.claude/
-	if _, err := osexec.LookPath("claude"); err == nil {
-		agents[0].Detected = true
-	} else if home != "" {
-		if _, err := os.Stat(filepath.Join(home, ".claude")); err == nil {
-			agents[0].Detected = true
-		}
-	}
-
-	// Cline: check ~/.vscode/extensions/ for cline or ~/Documents/Cline/
-	if home != "" {
-		clineExtDir := filepath.Join(home, ".vscode", "extensions")
-		if entries, err := os.ReadDir(clineExtDir); err == nil {
-			for _, e := range entries {
-				if strings.Contains(strings.ToLower(e.Name()), "cline") {
-					agents[1].Detected = true
-					break
-				}
-			}
-		}
-		if !agents[1].Detected {
-			if _, err := os.Stat(filepath.Join(home, "Documents", "Cline")); err == nil {
-				agents[1].Detected = true
-			}
-		}
-	}
-
-	// OpenClaw: check PATH or running process
-	if _, err := osexec.LookPath("openclaw"); err == nil {
-		agents[2].Detected = true
-	}
-
-	// Codex: check PATH
-	if _, err := osexec.LookPath("codex"); err == nil {
-		agents[3].Detected = true
+	if env, err := detect.Environment(); err == nil && env != nil {
+		agents[0].Detected = env.ClaudeCode
+		agents[1].Detected = env.HasCline
+		agents[2].Detected = env.HasOpenClaw
+		agents[3].Detected = env.HasCodex
+		agents[4].Detected = env.HasAider
+		agents[5].Detected = env.HasCursor
+		agents[6].Detected = env.HasWindsurf
 	}
 
 	return agents

@@ -1,3 +1,9 @@
+# @name: terraform
+# @description: IaC guardrails for Terraform and OpenTofu
+# @author: @rampart-team
+# @tags: terraform, iac, opentofu
+# @min-rampart: 0.6.0
+#
 # Rampart Community Policy: Terraform
 #
 # For AI agents running Terraform / OpenTofu.

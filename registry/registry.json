@@ -1,24 +1,95 @@
 {
   "version": "1",
-  "updated_at": "2026-02-28T00:00:00Z",
+  "updated_at": "2026-03-05T17:58:21Z",
   "policies": [
     {
-      "name": "research-agent",
-      "description": "Read-only research policy for web/file analysis.",
-      "tags": ["research", "read-only", "web"],
-      "url": "https://raw.githubusercontent.com/peg/rampart/main/registry/policies/research-agent.yaml",
-      "sha256": "8191718bc9296bf558d07d612a4ec5d64544305a814ed81de637ade2ff5a8629",
-      "version": "1.0.0",
-      "author": "rampart-team"
-    },
-    {
       "name": "mcp-server",
-      "description": "Policy profile for safely running MCP-integrated agents.",
-      "tags": ["mcp", "integration", "agent"],
+      "description": "First-party policy profile",
+      "tags": null,
       "url": "https://raw.githubusercontent.com/peg/rampart/main/registry/policies/mcp-server.yaml",
       "sha256": "91badc1dbad59b40ed5531590d348d8da1873eac4c3fb79295341eb82ae07511",
       "version": "1.0.0",
-      "author": "rampart-team"
+      "author": ""
+    },
+    {
+      "name": "research-agent",
+      "description": "First-party policy profile",
+      "tags": null,
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/registry/policies/research-agent.yaml",
+      "sha256": "8191718bc9296bf558d07d612a4ec5d64544305a814ed81de637ade2ff5a8629",
+      "version": "1.0.0",
+      "author": ""
+    },
+    {
+      "name": "aws-cli",
+      "description": "Blocks destructive AWS ops, requires approval for resource creation",
+      "tags": [
+        "aws",
+        "cloud",
+        "iam"
+      ],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/aws-cli.yaml",
+      "sha256": "43aec7f3acfe5de9519685ff098b8614e6d24e31dd770bb76f163b8c0ad6a5a0",
+      "version": "1.0.0",
+      "author": "@rampart-team",
+      "min_rampart": "0.6.0"
+    },
+    {
+      "name": "docker",
+      "description": "Container guardrails — blocks privileged containers and mass prune",
+      "tags": [
+        "docker",
+        "containers",
+        "compose"
+      ],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/docker.yaml",
+      "sha256": "9ddd51b50ea5f13a5c3e720d09d033336e754e87596124a720d897bb3940ef78",
+      "version": "1.0.0",
+      "author": "@rampart-team",
+      "min_rampart": "0.6.0"
+    },
+    {
+      "name": "kubernetes",
+      "description": "Blocks destructive cluster ops, requires approval for deploys",
+      "tags": [
+        "kubernetes",
+        "helm",
+        "cluster"
+      ],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/kubernetes.yaml",
+      "sha256": "faade383426f918fd6f19434196e2cbd7a1b30a3808484aa93902ba08f5bf3b9",
+      "version": "1.0.0",
+      "author": "@rampart-team",
+      "min_rampart": "0.6.0"
+    },
+    {
+      "name": "node-python",
+      "description": "Dev guardrails for Node.js and Python — blocks global installs and eval",
+      "tags": [
+        "node",
+        "python",
+        "npm",
+        "pip"
+      ],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/node-python.yaml",
+      "sha256": "7500840f461436397496a57c1e7f642e617eae21d1989d6ab4f8f1ebd8165816",
+      "version": "1.0.0",
+      "author": "@rampart-team",
+      "min_rampart": "0.6.0"
+    },
+    {
+      "name": "terraform",
+      "description": "IaC guardrails for Terraform and OpenTofu",
+      "tags": [
+        "terraform",
+        "iac",
+        "opentofu"
+      ],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/terraform.yaml",
+      "sha256": "369178e10a245f75dd4312941d02dfa5befa4b62a5e20e656841b35254df06ef",
+      "version": "1.0.0",
+      "author": "@rampart-team",
+      "min_rampart": "0.6.0"
     }
   ]
 }

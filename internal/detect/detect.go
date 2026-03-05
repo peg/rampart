@@ -19,17 +19,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 // DetectResult contains the results of environment detection.
 type DetectResult struct {
-	ClaudeCode    bool
-	MCPServers    []string
-	SSHKeys       bool
+	ClaudeCode     bool
+	HasCodex       bool
+	HasCline       bool
+	HasOpenClaw    bool
+	HasAider       bool
+	HasCursor      bool
+	HasWindsurf    bool
+	HasCopilot     bool
+	MCPServers     []string
+	SSHKeys        bool
 	AWSCredentials bool
-	HasKubectl    bool
-	HasDocker     bool
+	HasKubectl     bool
+	HasDocker      bool
+	HasNode        bool
+	HasPython      bool
+	HasTerraform   bool
+	HasGit         bool
+	HasNpm         bool
+	HasPip         bool
+	HasGo          bool
+	HasRust        bool
+	HasAWSCLI      bool
 }
 
 // Environment performs environment detection and returns results.
@@ -38,14 +55,14 @@ func Environment() (*DetectResult, error) {
 
 	// Try to get home directory, but continue with partial results if it fails
 	homeDir, homeDirErr := os.UserHomeDir()
-	
+
 	// If we have a home directory, check home-based detection
 	if homeDirErr == nil {
 		// Detect Claude Code
 		claudeSettingsPath := filepath.Join(homeDir, ".claude", "settings.json")
 		if err := checkFileExists(claudeSettingsPath); err == nil {
 			result.ClaudeCode = true
-			
+
 			// Also check for MCP servers in Claude settings
 			servers, _ := detectMCPServersFromClaudeSettings(claudeSettingsPath)
 			result.MCPServers = append(result.MCPServers, servers...)
@@ -56,7 +73,7 @@ func Environment() (*DetectResult, error) {
 			filepath.Join(homeDir, ".cursor", "mcp.json"),
 			filepath.Join(homeDir, ".config", "codex", "mcp.json"),
 		}
-		
+
 		for _, path := range mcpPaths {
 			if servers, err := detectMCPServersFromFile(path); err == nil {
 				result.MCPServers = append(result.MCPServers, servers...)
@@ -84,20 +101,139 @@ func Environment() (*DetectResult, error) {
 			result.AWSCredentials = true
 		}
 		// Note: we skip AWS detection on permission errors rather than failing
+
+		// Detect Cursor
+		if st, err := os.Stat(filepath.Join(homeDir, ".cursor")); err == nil && st.IsDir() {
+			result.HasCursor = true
+		}
+
+		// Detect Windsurf
+		if st, err := os.Stat(filepath.Join(homeDir, ".windsurf")); err == nil && st.IsDir() {
+			result.HasWindsurf = true
+		}
+
+		// Detect Cline extension installs.
+		clinePatterns := []string{
+			filepath.Join(homeDir, ".vscode", "extensions", "saoud-m.vscode-claude-dev-*"),
+			filepath.Join(homeDir, ".vscode", "extensions", "cline-*"),
+		}
+		if runtime.GOOS != "windows" {
+			clinePatterns = append(clinePatterns,
+				filepath.Join(homeDir, ".vscode-server", "extensions", "saoud-m.vscode-claude-dev-*"),
+				filepath.Join(homeDir, ".vscode-server", "extensions", "cline-*"),
+			)
+		}
+		for _, pattern := range clinePatterns {
+			if matches, err := filepath.Glob(pattern); err == nil && len(matches) > 0 {
+				result.HasCline = true
+				break
+			}
+		}
 	}
 
-	// Detect kubectl (works regardless of home directory)
-	if _, err := exec.LookPath("kubectl"); err == nil {
-		result.HasKubectl = true
+	// Env-based agent signals.
+	if os.Getenv("CLINE_ACTIVE") != "" || os.Getenv("CLINE_SESSION") != "" {
+		result.HasCline = true
+	}
+	if os.Getenv("OPENCLAW_SERVICE_MARKER") != "" {
+		result.HasOpenClaw = true
 	}
 
-	// Detect docker (works regardless of home directory)
-	if _, err := exec.LookPath("docker"); err == nil {
-		result.HasDocker = true
-	}
+	// Binary-based detection (works regardless of home directory).
+	result.ClaudeCode = result.ClaudeCode || hasBinary("claude")
+	result.HasCodex = hasBinary("codex")
+	result.HasOpenClaw = result.HasOpenClaw || hasBinary("openclaw")
+	result.HasAider = hasBinary("aider")
+	result.HasWindsurf = result.HasWindsurf || hasBinary("windsurf")
+	result.HasCopilot = hasBinary("github-copilot-cli") || hasBinary("gh-copilot")
+	result.HasKubectl = hasBinary("kubectl")
+	result.HasDocker = hasBinary("docker")
+	result.HasNode = hasBinary("node")
+	result.HasNpm = hasBinary("npm")
+	result.HasPython = hasBinary("python3") || hasBinary("python")
+	result.HasPip = hasBinary("pip3") || hasBinary("pip")
+	result.HasTerraform = hasBinary("terraform") || hasBinary("tofu")
+	result.HasGit = hasBinary("git")
+	result.HasGo = hasBinary("go")
+	result.HasRust = hasBinary("cargo")
+	result.HasAWSCLI = hasBinary("aws")
 
 	// Always return results, even if we couldn't access home directory
 	return result, nil
+}
+
+func hasBinary(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// DetectedAgents returns detected AI coding agents in stable display order.
+func (r *DetectResult) DetectedAgents() []string {
+	agents := make([]string, 0, 8)
+	if r.ClaudeCode {
+		agents = append(agents, "claude-code")
+	}
+	if r.HasCodex {
+		agents = append(agents, "codex")
+	}
+	if r.HasCline {
+		agents = append(agents, "cline")
+	}
+	if r.HasOpenClaw {
+		agents = append(agents, "openclaw")
+	}
+	if r.HasCursor {
+		agents = append(agents, "cursor")
+	}
+	if r.HasAider {
+		agents = append(agents, "aider")
+	}
+	if r.HasWindsurf {
+		agents = append(agents, "windsurf")
+	}
+	if r.HasCopilot {
+		agents = append(agents, "copilot")
+	}
+	return agents
+}
+
+// DetectedTools returns detected dev tools in stable display order.
+func (r *DetectResult) DetectedTools() []string {
+	tools := make([]string, 0, 11)
+	if r.HasKubectl {
+		tools = append(tools, "kubectl")
+	}
+	if r.HasDocker {
+		tools = append(tools, "docker")
+	}
+	if r.HasNode {
+		tools = append(tools, "node")
+	}
+	if r.HasNpm {
+		tools = append(tools, "npm")
+	}
+	if r.HasPython {
+		tools = append(tools, "python")
+	}
+	if r.HasPip {
+		tools = append(tools, "pip")
+	}
+	if r.HasTerraform {
+		tools = append(tools, "terraform")
+	}
+	if r.HasGit {
+		tools = append(tools, "git")
+	}
+	if r.HasGo {
+		tools = append(tools, "go")
+	}
+	if r.HasRust {
+		tools = append(tools, "rust")
+	}
+	if r.HasAWSCLI {
+		tools = append(tools, "aws-cli")
+	}
+	return tools
 }
 
 // checkFileExists checks if a file exists, properly handling permission errors.
@@ -166,16 +302,16 @@ func removeDuplicates(slice []string) []string {
 	if len(slice) == 0 {
 		return []string{}
 	}
-	
+
 	keys := make(map[string]bool)
 	result := make([]string, 0, len(slice))
-	
+
 	for _, item := range slice {
 		if !keys[item] {
 			keys[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }

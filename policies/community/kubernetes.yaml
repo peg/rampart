@@ -1,3 +1,9 @@
+# @name: kubernetes
+# @description: Blocks destructive cluster ops, requires approval for deploys
+# @author: @rampart-team
+# @tags: kubernetes, helm, cluster
+# @min-rampart: 0.6.0
+#
 # Rampart Community Policy: Kubernetes
 #
 # For teams using AI agents to manage Kubernetes clusters.
