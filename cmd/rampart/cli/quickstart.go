@@ -16,6 +16,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,177 +24,433 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/detect"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
+type quickstartAgent struct {
+	Key      string
+	Name     string
+	HasSetup bool
+	SetupCmd string
+	WrapCmd  string
+}
+
+func quickstartAgents() []quickstartAgent {
+	return []quickstartAgent{
+		{Key: "claude-code", Name: "Claude Code", HasSetup: true, SetupCmd: "claude-code"},
+		{Key: "codex", Name: "Codex CLI", HasSetup: true, SetupCmd: "codex"},
+		{Key: "cline", Name: "Cline", HasSetup: true, SetupCmd: "cline"},
+		{Key: "openclaw", Name: "OpenClaw", HasSetup: true, SetupCmd: "openclaw"},
+		{Key: "cursor", Name: "Cursor", HasSetup: false, WrapCmd: "rampart wrap -- cursor"},
+		{Key: "aider", Name: "Aider", HasSetup: false, WrapCmd: "rampart wrap -- aider"},
+		{Key: "windsurf", Name: "Windsurf", HasSetup: false, WrapCmd: "rampart wrap -- windsurf"},
+		{Key: "copilot", Name: "GitHub Copilot CLI", HasSetup: false, WrapCmd: "rampart wrap -- gh-copilot"},
+	}
+}
+
 func newQuickstartCmd() *cobra.Command {
-	var envFlag string
+	var agentsFlag string
+	var envAlias string
+	var profile string
 	var skipDoctor bool
 	var yes bool
 
 	cmd := &cobra.Command{
 		Use:   "quickstart",
-		Short: "One-shot setup: install serve, configure hooks, verify",
-		Long: `quickstart detects your AI coding environment, installs the Rampart
-background service, wires up the tool-call hook, and runs a health check.
+		Short: "One-shot setup: install service, configure agent hooks, verify",
+		Long: `quickstart scans your environment, installs Rampart service, wires up detected
+AI agents, installs a policy profile, and runs a health summary.
 
-Supported environments: claude-code, cline, openclaw
-If --env is not set, quickstart will auto-detect.
+Supported setup agents: claude-code, codex, cline, openclaw
+Detected unsupported agents receive wrap guidance.
 
 Use --yes to run non-interactively (AI agents, CI, automated setup).
 For OpenClaw, --yes also enables --patch-tools for full file-operation coverage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuickstart(cmd, envFlag, skipDoctor, yes)
+			return runQuickstart(cmd, agentsFlag, envAlias, profile, skipDoctor, yes)
 		},
 	}
 
-	cmd.Flags().StringVar(&envFlag, "env", "", "AI coding environment (claude-code|cline|openclaw|none)")
-	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "skip final health check")
+	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agents to configure (claude-code,codex,cline,openclaw,cursor,aider,windsurf,copilot,none)")
+	cmd.Flags().StringVar(&envAlias, "env", "", "(deprecated) single agent alias for --agents")
+	_ = cmd.Flags().MarkHidden("env")
+	cmd.Flags().StringVar(&profile, "profile", "", "Policy profile for initialization (default: standard)")
+	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "skip final health check summary")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive mode: for OpenClaw, also enables --patch-tools (full file coverage); safe to pass for any agent")
 	return cmd
 }
 
-func runQuickstart(cmd *cobra.Command, envFlag string, skipDoctor bool, yes bool) error {
+func runQuickstart(cmd *cobra.Command, agentsFlag, envAlias, profile string, skipDoctor, yes bool) error {
 	w := cmd.OutOrStdout()
 
 	fmt.Fprintln(w, "◆ Rampart quickstart")
 	fmt.Fprintln(w)
-
-	// Step 1: detect environment
-	env := envFlag
-	if env == "" {
-		env = detectEnv()
-		if env == "" {
-			fmt.Fprintln(w, "  ⚠  Could not detect AI coding environment.")
-			fmt.Fprintln(w, "     Use --env claude-code|cline|openclaw to specify manually.")
-			env = "none"
-		} else {
-			fmt.Fprintf(w, "  ✓  Detected environment: %s\n", env)
-		}
-	}
+	fmt.Fprintln(w, "  Scanning environment...")
 	fmt.Fprintln(w)
 
-	// Step 2: install/start serve
+	result, err := detect.Environment()
+	if err != nil {
+		return fmt.Errorf("environment detection failed: %w", err)
+	}
+
+	printDetectedAgents(w, result)
+	fmt.Fprintln(w)
+	printDetectedTools(w, result)
+	fmt.Fprintln(w)
+
+	selectedAgents, err := selectQuickstartAgents(result, agentsFlag, envAlias)
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintln(w, "  Installing Rampart service...")
 	if err := runSubcmd("serve", "install"); err != nil {
-		// If already installed, that's fine — check if it's reachable.
 		if !quickstartServeRunning() {
-			return fmt.Errorf("serve install failed: %w", err)
+			return formatServeInstallError(err)
 		}
-		fmt.Fprintln(w, "  ✓  Service already installed and running")
+		fmt.Fprintln(w, "  ✓ Service already running on 127.0.0.1:9090")
 	} else {
-		fmt.Fprintln(w, "  ✓  Service installed and started")
+		fmt.Fprintln(w, "  ✓ Service running on 127.0.0.1:9090")
 	}
 	fmt.Fprintln(w)
 
-	// Step 3: setup hooks for detected env
-	if env != "none" {
-		hooksAlreadyConfigured := quickstartHooksConfigured(env)
-		fmt.Fprintf(w, "  Configuring hooks for %s...\n", env)
-		setupArgs := []string{"setup", env}
-		// --yes enables full protection for OpenClaw (--patch-tools covers file reads/writes/edits)
-		if yes && env == "openclaw" {
-			setupArgs = append(setupArgs, "--patch-tools")
-		}
-		if err := runSubcmd(setupArgs...); err != nil {
-			fmt.Fprintf(w, "  ⚠  Hook setup failed: %v\n", err)
-			fmt.Fprintln(w, "     Run `rampart setup "+env+"` manually to retry.")
-		} else {
-			if hooksAlreadyConfigured {
-				fmt.Fprintln(w, "  ✓  Hooks already configured (pass --force to reconfigure)")
-			} else {
-				fmt.Fprintln(w, "  ✓  Hooks configured")
+	fmt.Fprintln(w, "  Configuring hooks...")
+	hooksConfigured := 0
+	for _, agent := range selectedAgents {
+		if agent.HasSetup {
+			hooksAlreadyConfigured := quickstartHooksConfigured(agent.SetupCmd)
+			setupArgs := []string{"setup", agent.SetupCmd}
+			if yes && agent.SetupCmd == "openclaw" {
+				setupArgs = append(setupArgs, "--patch-tools")
 			}
+			if err := runSubcmd(setupArgs...); err != nil {
+				fmt.Fprintf(w, "  ⚠ %s: setup failed (%v)\n", agent.Name, err)
+				fmt.Fprintf(w, "    → Retry with: rampart setup %s\n", agent.SetupCmd)
+				continue
+			}
+			hooksConfigured++
+			if hooksAlreadyConfigured {
+				fmt.Fprintf(w, "  ✓ %s: hooks already configured\n", agent.Name)
+			} else {
+				fmt.Fprintf(w, "  ✓ %s: hooks installed\n", agent.Name)
+			}
+			continue
 		}
-		fmt.Fprintln(w)
+
+		fmt.Fprintf(w, "  ⚠ %s detected but setup not yet supported\n", agent.Name)
+		fmt.Fprintf(w, "    → Use: %s\n", agent.WrapCmd)
+	}
+	if len(selectedAgents) == 0 {
+		fmt.Fprintln(w, "  ⚠ No agents selected for setup")
+	}
+	fmt.Fprintln(w)
+
+	selectedProfile := strings.TrimSpace(profile)
+	if selectedProfile == "" {
+		selectedProfile = "standard"
 	}
 
-	// Step 4: ensure a policy is installed
-	if !hasInstalledPolicy() {
-		if err := runSubcmd("init", "--profile", "standard"); err != nil {
-			return fmt.Errorf("policy init failed: %w", err)
+	fmt.Fprintln(w, "  Installing policies...")
+	if !hasInstalledPolicy() || strings.TrimSpace(profile) != "" {
+		if err := runSubcmd("init", "--profile", selectedProfile); err != nil {
+			return fmt.Errorf("policy init failed for profile %q: %w", selectedProfile, err)
 		}
-		fmt.Fprintln(w, "  ✓  Policy initialized with standard profile")
-		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  ✓ %s profile installed\n", selectedProfile)
+	} else {
+		fmt.Fprintln(w, "  ✓ Existing policy profile detected")
 	}
 
-	// Step 5: doctor
+	suggested := suggestedPolicies(result, installedPolicyNames())
+	if len(suggested) > 0 {
+		fmt.Fprintf(w, "  💡 Suggested: %s (based on detected tools)\n", strings.Join(suggested, ", "))
+		fmt.Fprintf(w, "    → Install with: rampart policy install %s\n", strings.Join(suggested, " "))
+	}
+	fmt.Fprintln(w)
+
 	if !skipDoctor {
 		fmt.Fprintln(w, "  Running health check...")
-		fmt.Fprintln(w)
-		_ = runSubcmd("doctor")
+		if quickstartServeRunning() {
+			fmt.Fprintln(w, "  ✓ Service reachable")
+		} else {
+			fmt.Fprintln(w, "  ⚠ Service unreachable (try: rampart serve)")
+		}
+
+		if hooksConfigured == 0 {
+			fmt.Fprintln(w, "  ⚠ Hooks configured for 0 agents")
+		} else {
+			fmt.Fprintf(w, "  ✓ Hooks configured for %d agents\n", hooksConfigured)
+		}
+
+		profiles, rules := installedPolicyStats()
+		if profiles == 0 {
+			fmt.Fprintln(w, "  ⚠ No active policy profiles found")
+		} else {
+			noun := "profiles"
+			if profiles == 1 {
+				noun = "profile"
+			}
+			fmt.Fprintf(w, "  ✓ %d policy %s active (%d rules)\n", profiles, noun, rules)
+		}
 		fmt.Fprintln(w)
 	}
 
-	// Step 6: summary
 	fmt.Fprintln(w, "◆ You're protected.")
 	fmt.Fprintln(w)
 
-	// Try to show dashboard URL
 	svcURL := quickstartServiceURL()
-	if svcURL != "" {
-		dashURL := strings.TrimSuffix(svcURL, "/") + "/dashboard/"
-		fmt.Fprintf(w, "  Dashboard: %s\n", dashURL)
-	}
+	dashURL := strings.TrimSuffix(svcURL, "/") + "/dashboard/"
+	fmt.Fprintf(w, "  Dashboard:  %s\n", dashURL)
 
 	if tok, err := readPersistedToken(); err == nil && tok != "" {
 		masked := tok
 		if len(tok) > 8 {
 			masked = tok[:8] + "..."
 		}
-		fmt.Fprintf(w, "  Token:     %s  (full token in ~/.rampart/token)\n", masked)
+		fmt.Fprintf(w, "  Token:      %s  (full token in ~/.rampart/token)\n", masked)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  Tip: export RAMPART_SESSION=my-project to tag audit events with a project name.")
-	fmt.Fprintln(w, "  Docs: https://docs.rampart.sh")
+	fmt.Fprintln(w, "  Next steps:")
+	fmt.Fprintln(w, "    • Run your agent normally — Rampart intercepts tool calls automatically")
+	fmt.Fprintln(w, "    • rampart watch        — see decisions in real time")
+	fmt.Fprintln(w, "    • rampart policy list  — browse available policies")
+	fmt.Fprintln(w, "    • Docs: https://docs.rampart.sh")
 
 	return nil
 }
 
-// detectEnv returns the first detected AI coding environment, or "".
-func detectEnv() string {
-	// OpenClaw: most reliable signal is OPENCLAW_SERVICE_MARKER env var,
-	// which OpenClaw gateway sets when it spawns an agent process.
-	if os.Getenv("OPENCLAW_SERVICE_MARKER") == "openclaw" {
-		return "openclaw"
+func selectQuickstartAgents(result *detect.DetectResult, agentsFlag, envAlias string) ([]quickstartAgent, error) {
+	override := strings.TrimSpace(agentsFlag)
+	if override == "" {
+		override = strings.TrimSpace(envAlias)
 	}
-	// Cline: explicit runtime env is a strong signal.
-	if os.Getenv("CLINE_ACTIVE") != "" || os.Getenv("CLINE_SESSION") != "" {
-		return "cline"
+
+	selectedKeys, err := parseAgentOverride(override)
+	if err != nil {
+		return nil, err
 	}
-	// Cline: detect VS Code extension installs in local/remote environments.
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		clineGlobs := []string{
-			filepath.Join(home, ".vscode", "extensions", "saoud-m.vscode-claude-dev-*"),
-			filepath.Join(home, ".vscode", "extensions", "cline-*"),
-			filepath.Join(home, ".vscode-server", "extensions", "saoud-m.vscode-claude-dev-*"),
-			filepath.Join(home, ".vscode-server", "extensions", "cline-*"),
+
+	agents := quickstartAgents()
+	if len(selectedKeys) > 0 {
+		keySet := make(map[string]struct{}, len(selectedKeys))
+		for _, key := range selectedKeys {
+			keySet[key] = struct{}{}
 		}
-		for _, pattern := range clineGlobs {
-			matches, globErr := filepath.Glob(pattern)
-			if globErr == nil && len(matches) > 0 {
-				return "cline"
+		selected := make([]quickstartAgent, 0, len(selectedKeys))
+		for _, a := range agents {
+			if _, ok := keySet[a.Key]; ok {
+				selected = append(selected, a)
 			}
 		}
+		return selected, nil
 	}
-	// Claude Code: settings.json or binary
-	if _, err := os.Stat(claudeSettingsPath()); err == nil {
-		return "claude-code"
+
+	selected := make([]quickstartAgent, 0, len(agents))
+	for _, a := range agents {
+		if isAgentDetected(result, a.Key) {
+			selected = append(selected, a)
+		}
 	}
-	if _, err := exec.LookPath("claude"); err == nil {
-		return "claude-code"
-	}
-	return ""
+	return selected, nil
 }
 
-func claudeSettingsPath() string {
-	home, _ := os.UserHomeDir()
-	return home + "/.claude/settings.json"
+func parseAgentOverride(raw string) ([]string, error) {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(raw, ",")
+	aliases := map[string]string{
+		"codex-cli":          "codex",
+		"github-copilot-cli": "copilot",
+		"gh-copilot":         "copilot",
+	}
+	valid := map[string]struct{}{}
+	for _, a := range quickstartAgents() {
+		valid[a.Key] = struct{}{}
+	}
+
+	seen := map[string]struct{}{}
+	selected := make([]string, 0, len(parts))
+	for _, part := range parts {
+		key := strings.TrimSpace(part)
+		if key == "" {
+			continue
+		}
+		if key == "none" {
+			if len(parts) > 1 {
+				return nil, fmt.Errorf("--agents none cannot be combined with other values")
+			}
+			return []string{}, nil
+		}
+		if canonical, ok := aliases[key]; ok {
+			key = canonical
+		}
+		if _, ok := valid[key]; !ok {
+			return nil, fmt.Errorf("invalid agent %q in --agents", key)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		selected = append(selected, key)
+	}
+	return selected, nil
+}
+
+func printDetectedAgents(w io.Writer, result *detect.DetectResult) {
+	fmt.Fprintln(w, "  AI Agents:")
+	for _, agent := range quickstartAgents() {
+		status := "✗"
+		if isAgentDetected(result, agent.Key) {
+			status = "✓"
+		}
+		fmt.Fprintf(w, "    %s %s\n", status, agent.Name)
+	}
+}
+
+func printDetectedTools(w io.Writer, result *detect.DetectResult) {
+	fmt.Fprintln(w, "  Dev Tools:")
+	fmt.Fprintf(w, "    %s kubectl    %s docker    %s node/npm\n", mark(result.HasKubectl), mark(result.HasDocker), mark(result.HasNode || result.HasNpm))
+	fmt.Fprintf(w, "    %s python     %s git       %s terraform\n", mark(result.HasPython || result.HasPip), mark(result.HasGit), mark(result.HasTerraform))
+	fmt.Fprintf(w, "    %s go         %s rust      %s aws-cli\n", mark(result.HasGo), mark(result.HasRust), mark(result.HasAWSCLI || result.AWSCredentials))
+}
+
+func mark(ok bool) string {
+	if ok {
+		return "✓"
+	}
+	return "✗"
+}
+
+func isAgentDetected(result *detect.DetectResult, key string) bool {
+	switch key {
+	case "claude-code":
+		return result.ClaudeCode
+	case "codex":
+		return result.HasCodex
+	case "cline":
+		return result.HasCline
+	case "openclaw":
+		return result.HasOpenClaw
+	case "cursor":
+		return result.HasCursor
+	case "aider":
+		return result.HasAider
+	case "windsurf":
+		return result.HasWindsurf
+	case "copilot":
+		return result.HasCopilot
+	default:
+		return false
+	}
+}
+
+func formatServeInstallError(err error) error {
+	return fmt.Errorf("serve install failed: %w\n  check permissions for service installation\n  try: sudo rampart serve install\n  or run manually in foreground: rampart serve", err)
+}
+
+func suggestedPolicies(result *detect.DetectResult, installed map[string]bool) []string {
+	suggestions := make([]string, 0, 5)
+	add := func(name string, cond bool) {
+		if !cond || installed[name] {
+			return
+		}
+		for _, existing := range suggestions {
+			if existing == name {
+				return
+			}
+		}
+		suggestions = append(suggestions, name)
+	}
+
+	add("kubernetes", result.HasKubectl)
+	add("docker", result.HasDocker)
+	add("terraform", result.HasTerraform)
+	add("node-python", result.HasNode || result.HasNpm || result.HasPython || result.HasPip)
+	add("aws-cli", result.HasAWSCLI || result.AWSCredentials)
+	return suggestions
+}
+
+func installedPolicyNames() map[string]bool {
+	names := map[string]bool{}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return names
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		return names
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if name == "custom.yaml" {
+			continue
+		}
+		if strings.HasSuffix(name, ".yaml") {
+			names[strings.TrimSuffix(name, ".yaml")] = true
+			continue
+		}
+		if strings.HasSuffix(name, ".yml") {
+			names[strings.TrimSuffix(name, ".yml")] = true
+		}
+	}
+	return names
+}
+
+func installedPolicyStats() (int, int) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return 0, 0
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		return 0, 0
+	}
+
+	profiles := 0
+	totalRules := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if name == "custom.yaml" || (!strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml")) {
+			continue
+		}
+		profiles++
+
+		data, err := os.ReadFile(filepath.Join(policyDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var parsed struct {
+			Policies []struct {
+				Rules []any `yaml:"rules"`
+			} `yaml:"policies"`
+			Rules []any `yaml:"rules"`
+		}
+		if err := yaml.Unmarshal(data, &parsed); err != nil {
+			continue
+		}
+		totalRules += len(parsed.Rules)
+		for _, p := range parsed.Policies {
+			totalRules += len(p.Rules)
+		}
+	}
+	return profiles, totalRules
 }
 
 // quickstartServiceURL returns the base URL for the Rampart service.
 func quickstartServiceURL() string {
-	return fmt.Sprintf("http://localhost:%d", defaultServePort)
+	return fmt.Sprintf("http://127.0.0.1:%d", defaultServePort)
 }
 
 // quickstartServeRunning checks whether the Rampart service is reachable.
@@ -270,6 +527,19 @@ func quickstartHooksConfigured(env string) bool {
 			return false
 		}
 		return hasRampartHook(settings)
+	case "cline":
+		pre := filepath.Join(home, "Documents", "Cline", "Hooks", "PreToolUse", "rampart-policy")
+		post := filepath.Join(home, "Documents", "Cline", "Hooks", "PostToolUse", "rampart-audit")
+		_, preErr := os.Stat(pre)
+		_, postErr := os.Stat(post)
+		return preErr == nil && postErr == nil
+	case "codex":
+		wrapper := filepath.Join(home, ".local", "bin", "codex")
+		data, err := os.ReadFile(wrapper)
+		if err != nil {
+			return false
+		}
+		return containsRampartPreload(string(data))
 	default:
 		return false
 	}
