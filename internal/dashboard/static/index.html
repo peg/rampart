@@ -180,6 +180,15 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 /* Stats bar */
 .stats-bar{display:flex;gap:16px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
 .stat{display:flex;align-items:center;gap:4px}.stat b{color:var(--heading);font-variant-numeric:tabular-nums}
+/* Decision breakdown bar */
+.decision-bar-wrap{padding:6px 0 10px;border-bottom:1px solid var(--border)}
+.decision-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--surface-2)}
+.decision-bar .seg{height:100%;transition:width .3s ease}
+.decision-bar .seg-allow{background:#34d399}
+.decision-bar .seg-deny{background:#f87171}
+.decision-bar .seg-approval{background:#fbbf24}
+.decision-bar-legend{display:flex;gap:12px;margin-top:4px;font-size:11px;color:var(--text-secondary)}
+.decision-bar-legend .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:middle}
 
 /* Filter pills */
 .filter-pills{display:flex;gap:4px;padding:6px 0 10px;flex-wrap:wrap}
@@ -345,6 +354,9 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       <div class="stat"><span class="dot approved"></span> <b id="hs-approved">—</b> approved</div>
       <div class="stat"><span class="dot denied"></span> <b id="hs-denied">—</b> denied</div>
       <div class="stat"><span class="dot pending"></span> <b id="hs-blocked">—</b> blocked</div>
+    </div>
+    <div class="decision-bar-wrap" id="decision-bar-wrap" style="display:none">
+      <div class="decision-bar" id="decision-bar"></div>
     </div>
 
     <div class="hist-controls">
@@ -1097,7 +1109,30 @@ async function loadHistStats(date){
     document.getElementById('hs-approved').textContent=approved;
     document.getElementById('hs-denied').textContent=denied;
     document.getElementById('hs-blocked').textContent=blocked;
+    renderDecisionBar(approved,denied,blocked);
   }catch(e){/* silently ignore if stats endpoint unavailable */}
+}
+
+function renderDecisionBar(approved,denied,blocked){
+  const wrap=document.getElementById('decision-bar-wrap');
+  const bar=document.getElementById('decision-bar');
+  const total=approved+denied+blocked;
+  if(!total){wrap.style.display='none';return}
+  wrap.style.display='block';
+  const pA=((approved/total)*100).toFixed(1);
+  const pD=((denied/total)*100).toFixed(1);
+  const pB=((blocked/total)*100).toFixed(1);
+  bar.innerHTML=
+    (approved?`<div class="seg seg-allow" style="width:${pA}%" title="Allowed: ${approved} (${pA}%)"></div>`:'')+
+    (blocked?`<div class="seg seg-deny" style="width:${pB}%" title="Blocked: ${blocked} (${pB}%)"></div>`:'')+
+    (denied?`<div class="seg seg-approval" style="width:${pD}%" title="Denied: ${denied} (${pD}%)"></div>`:'');
+  // Add or update legend below bar
+  let legend=wrap.querySelector('.decision-bar-legend');
+  if(!legend){legend=document.createElement('div');legend.className='decision-bar-legend';wrap.appendChild(legend)}
+  legend.innerHTML=
+    `<span><span class="swatch" style="background:#34d399"></span>Allowed ${pA}%</span>`+
+    `<span><span class="swatch" style="background:#f87171"></span>Blocked ${pB}%</span>`+
+    `<span><span class="swatch" style="background:#fbbf24"></span>Denied ${pD}%</span>`;
 }
 
 function applyHistFilters(){

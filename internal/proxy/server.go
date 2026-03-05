@@ -478,14 +478,14 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	// Per-agent tokens override the agent identity from the request.
 	// This prevents an agent from impersonating another agent.
-	agent := req.Agent
+	// Also update req.Agent so audit events reflect the true identity.
 	if !identity.IsAdmin && identity.Agent != "" {
-		agent = identity.Agent
+		req.Agent = identity.Agent
 	}
 
 	call := engine.ToolCall{
 		ID:        audit.NewEventID(),
-		Agent:     agent,
+		Agent:     req.Agent,
 		Session:   req.Session,
 		RunID:     req.RunID,
 		Tool:      toolName,
