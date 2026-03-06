@@ -112,7 +112,7 @@ func TestSetupOpenClaw_DropinContent(t *testing.T) {
 	cmd.SetErr(&buf)
 
 	// Call installOpenClawPreload directly
-	installed, err := installOpenClawPreload(cmd, home, "/usr/local/bin/rampart", "rampart_testtoken", 19090, false)
+	installed, err := installOpenClawPreload(cmd, home, "/usr/local/bin/rampart", "rampart_testtoken", 19090, false, false)
 	if err != nil {
 		t.Fatalf("installOpenClawPreload failed: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestSetupOpenClaw_DropinNoPreload(t *testing.T) {
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
-	installed, err := installOpenClawPreload(cmd, home, "/usr/local/bin/rampart", "rampart_tok", 19090, true)
+	installed, err := installOpenClawPreload(cmd, home, "/usr/local/bin/rampart", "rampart_tok", 19090, true, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

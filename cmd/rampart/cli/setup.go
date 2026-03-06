@@ -397,6 +397,16 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			if _, err := os.Stat(shimPath); err == nil {
 				alreadyConfigured = true
 			}
+			// macOS: check if OpenClaw plist is already patched
+			if runtime.GOOS == "darwin" {
+				for _, plistName := range []string{"com.openclaw.gateway.plist", "openclaw-gateway.plist"} {
+					plistPath := filepath.Join(home, "Library", "LaunchAgents", plistName)
+					if data, err := os.ReadFile(plistPath); err == nil && strings.Contains(string(data), "RAMPART_URL") {
+						alreadyConfigured = true
+						break
+					}
+				}
+			}
 			if alreadyConfigured && !force {
 				fmt.Fprintln(out, "✓ Already configured (pass --force to reconfigure)")
 				return nil
@@ -470,7 +480,7 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			// Detect OpenClaw service and install LD_PRELOAD drop-in
 			preloadInstalled := false
 			if !shimOnly {
-				preloadInstalled, err = installOpenClawPreload(cmd, home, rampartBin, token, port, noPreload)
+				preloadInstalled, err = installOpenClawPreload(cmd, home, rampartBin, token, port, noPreload, force)
 				if err != nil {
 					fmt.Fprintf(errOut, "⚠ LD_PRELOAD not available — falling back to shell shim.\n")
 					fmt.Fprintf(errOut, "  Sub-agents (Codex, Claude Code) will NOT be intercepted.\n")
@@ -546,7 +556,7 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 // installOpenClawPreload creates a systemd drop-in (Linux) or patches the
 // launchd plist (macOS) to wrap the OpenClaw gateway with LD_PRELOAD/DYLD
 // syscall interception. Returns true if preload was successfully installed.
-func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, port int, noPreload bool) (bool, error) {
+func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, port int, noPreload, force bool) (bool, error) {
 	out := cmd.OutOrStdout()
 
 	// Resolve the preload library path
@@ -558,7 +568,7 @@ func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, 
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	if runtime.GOOS == "darwin" {
-		return installOpenClawPreloadDarwin(cmd, home, rampartBin, libPath, token, url, noPreload)
+		return installOpenClawPreloadDarwin(cmd, home, rampartBin, libPath, token, url, noPreload, force)
 	}
 
 	// ── Linux: systemd drop-in ──
@@ -618,7 +628,7 @@ func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, 
 
 // installOpenClawPreloadDarwin patches the OpenClaw launchd plist to add
 // DYLD_INSERT_LIBRARIES for preload enforcement on macOS.
-func installOpenClawPreloadDarwin(cmd *cobra.Command, home, rampartBin, libPath, token, url string, noPreload bool) (bool, error) {
+func installOpenClawPreloadDarwin(cmd *cobra.Command, home, rampartBin, libPath, token, url string, noPreload, force bool) (bool, error) {
 	out := cmd.OutOrStdout()
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.openclaw.gateway.plist")
 
@@ -640,7 +650,7 @@ func installOpenClawPreloadDarwin(cmd *cobra.Command, home, rampartBin, libPath,
 	plistStr := string(content)
 
 	// Check if already patched
-	if strings.Contains(plistStr, "RAMPART_URL") {
+	if strings.Contains(plistStr, "RAMPART_URL") && !force {
 		fmt.Fprintln(out, "✓ LaunchAgent already patched with Rampart environment")
 		return true, nil
 	}
