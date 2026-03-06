@@ -333,6 +333,7 @@ func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 	var remove bool
 	var port int
 	var patchTools bool
+	var patchToolsOnly bool
 	var noPreload bool
 	var shimOnly bool
 
@@ -357,6 +358,21 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if remove {
 				return removeOpenClaw(cmd)
+			}
+			// --patch-tools-only: used by ExecStartPre to re-patch file tools
+			// without writing drop-ins or starting services (avoids systemd deadlock).
+			if patchToolsOnly {
+				url := fmt.Sprintf("http://127.0.0.1:%d", port)
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				tokenPath := filepath.Join(home, ".rampart", "token")
+				token := ""
+				if data, err := os.ReadFile(tokenPath); err == nil {
+					token = strings.TrimSpace(string(data))
+				}
+				return patchOpenClawTools(cmd, url, token)
 			}
 			if runtime.GOOS == "windows" {
 				return fmt.Errorf("setup openclaw: not supported on Windows")
@@ -519,8 +535,10 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
 	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart integration (preserves policies and audit logs)")
 	cmd.Flags().BoolVar(&patchTools, "patch-tools", false, "Patch file tools even in shim-only mode")
-	cmd.Flags().BoolVar(&noPreload, "no-preload", false, "Skip LD_PRELOAD drop-in (still patches file tools)")
-	cmd.Flags().BoolVar(&shimOnly, "shim-only", false, "Use legacy shell shim instead of LD_PRELOAD")
+	cmd.Flags().BoolVar(&patchToolsOnly, "patch-tools-only", false, "Only re-patch file tools (used internally by ExecStartPre)")
+	_ = cmd.Flags().MarkHidden("patch-tools-only")
+	cmd.Flags().BoolVar(&noPreload, "no-preload", false, "Skip LD_PRELOAD but still auto-patch file tools via systemd drop-in")
+	cmd.Flags().BoolVar(&shimOnly, "shim-only", false, "Use legacy shell shim only (no systemd drop-in, no sub-agent coverage)")
 	cmd.Flags().IntVar(&port, "port", 19090, "Port for Rampart policy server")
 	return cmd
 }
@@ -561,12 +579,10 @@ func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, 
 	lines = append(lines, "[Service]")
 
 	// ExecStartPre: re-patch file tools on every restart (survives upgrades).
+	// Uses --patch-tools-only to avoid writing drop-ins or starting services
+	// during an active systemd unit transition (which could deadlock).
 	// The - prefix means failure is non-fatal (OpenClaw still starts).
-	execStartPreFlags := fmt.Sprintf("--patch-tools --force --port %d", port)
-	if noPreload {
-		execStartPreFlags += " --no-preload"
-	}
-	lines = append(lines, fmt.Sprintf("ExecStartPre=-\"%s\" setup openclaw %s", systemdEnvEscape(rampartBin), execStartPreFlags))
+	lines = append(lines, fmt.Sprintf("ExecStartPre=-\"%s\" setup openclaw --patch-tools-only --port %d", systemdEnvEscape(rampartBin), port))
 
 	if !noPreload {
 		// LD_PRELOAD enforcement — hooks execve/execvp/system/popen for all child processes
@@ -596,12 +612,7 @@ func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, 
 		fmt.Fprintf(out, "  Library: %s\n", libPath)
 	}
 
-	// Reload systemd to pick up drop-in
-	reload := osexec.Command("systemctl", "--user", "daemon-reload")
-	if err := reload.Run(); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not reload systemd: %v\n", err)
-	}
-
+	// Note: daemon-reload is called by startService() which runs after us.
 	return true, nil
 }
 
