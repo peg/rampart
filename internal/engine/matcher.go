@@ -336,7 +336,7 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 	}
 
 	if len(cond.URLMatches) > 0 {
-		url, _ := call.Params["url"].(string)
+		url := call.Param("url")
 		matched := matchFirst(cond.URLMatches, url)
 		if matched == "" {
 			return false, ""
@@ -345,7 +345,7 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 	}
 
 	if len(cond.DomainMatches) > 0 {
-		domain, _ := call.Params["domain"].(string)
+		domain := call.Param("domain")
 		matched := matchFirst(cond.DomainMatches, domain)
 		if matched == "" {
 			return false, ""
@@ -524,7 +524,7 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 
 	// URL matching (for fetch/web tool calls).
 	if len(cond.URLMatches) > 0 {
-		url, _ := call.Params["url"].(string)
+		url := call.Param("url")
 		if url == "" || !matchAny(cond.URLMatches, url) {
 			return false
 		}
@@ -533,7 +533,7 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 
 	// Domain matching.
 	if len(cond.DomainMatches) > 0 {
-		domain, _ := call.Params["domain"].(string)
+		domain := call.Param("domain")
 		if domain == "" || !matchAny(cond.DomainMatches, domain) {
 			return false
 		}

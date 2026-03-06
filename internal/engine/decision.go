@@ -119,28 +119,37 @@ type ToolCall struct {
 	Timestamp time.Time
 }
 
+// Param returns a string value from Params, falling back to Input.
+// This ensures policy matching works regardless of whether the API client
+// sends tool arguments in "params" (legacy) or "input" (MCP-style).
+func (tc ToolCall) Param(key string) string {
+	if v, ok := tc.Params[key].(string); ok && v != "" {
+		return v
+	}
+	v, _ := tc.Input[key].(string)
+	return v
+}
+
 // Command extracts the command string from an exec tool call's params.
 // Returns empty string if not present or not a string.
 func (tc ToolCall) Command() string {
 	// Prefer the effective (sanitized) command for policy matching.
 	// This has heredoc bodies and safe-binary quoted args stripped
 	// to reduce false positives.
-	if eff, ok := tc.Params["command_effective"].(string); ok && eff != "" {
+	if eff := tc.Param("command_effective"); eff != "" {
 		return eff
 	}
-	cmd, _ := tc.Params["command"].(string)
-	return cmd
+	return tc.Param("command")
 }
 
 // Path extracts the file path from a read/write tool call's params.
 // Claude Code uses "file_path" for Read/Write/Edit; other agents may use "path".
 // Returns empty string if not present or not a string.
 func (tc ToolCall) Path() string {
-	if p, _ := tc.Params["file_path"].(string); p != "" {
+	if p := tc.Param("file_path"); p != "" {
 		return p
 	}
-	p, _ := tc.Params["path"].(string)
-	return p
+	return tc.Param("path")
 }
 
 // Decision is the result of evaluating a tool call against all policies.
