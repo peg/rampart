@@ -745,11 +745,11 @@ Rampart also maps to the newer [OWASP Top 10 for Agentic Applications](https://g
 | ASI02 | **Tool Misuse & Exploitation** | ✅ Core purpose. Every tool call evaluated against YAML policies. Parameter validation, command pattern matching, approval workflows for sensitive operations. |
 | ASI03 | **Identity & Privilege Abuse** | 🟡 `agent_depth` conditions limit sub-agent privilege escalation. User separation prevents agents from accessing policies/audit. |
 | ASI04 | **Supply Chain Vulnerabilities** | 🟡 Community policy SHA-256 verification. `rampart mcp scan` auto-generates policy from MCP server tool definitions. Project policies can only add restrictions, not weaken global policy. |
-| ASI05 | **Unexpected Code Execution** | ✅ Shell command normalization, interpreter one-liner blocking, LD_PRELOAD cascade for subprocess interception, pattern matching + optional LLM verification for ambiguous commands. |
-| ASI06 | **Memory & Context Poisoning** | ❌ Out of scope — Rampart operates at the tool call layer, not the memory/RAG layer. Use dedicated guardrails for memory integrity. |
-| ASI07 | **Insecure Inter-Agent Communication** | 🟡 Inter-agent tool calls are evaluated by the same policy engine. `agent_depth` conditions control sub-agent nesting depth. |
+| ASI05 | **Unexpected Code Execution (RCE)** | ✅ Shell command normalization, interpreter one-liner blocking, LD_PRELOAD cascade for subprocess interception, pattern matching + optional LLM verification for ambiguous commands. |
+| ASI06 | **Memory & Context Poisoning** | ⚠️ Response scanning (`response_matches`) blocks credentials and known-bad patterns before they enter the agent's context window. Does not protect persistent memory stores or RAG databases. |
+| ASI07 | **Insecure Inter-Agent Communication** | ❌ Rampart sits between an agent and the OS, not between agents. Sub-agent tool calls are evaluated, but inter-agent message auth/encryption is not addressed. |
 | ASI08 | **Cascading Failures** | 🟡 Fail-open design prevents Rampart from cascading. `call_count` rate limiting throttles runaway agents. Webhook notifications alert on anomalies. |
-| ASI09 | **Human-Agent Trust Exploitation** | ✅ `require_approval` and `ask` actions enforce human-in-the-loop for sensitive operations. HMAC-signed approval URLs. Full audit trail for accountability. |
+| ASI09 | **Human-Agent Trust Exploitation** | ⚠️ `require_approval` and `ask` actions enforce human-in-the-loop for sensitive operations. HMAC-signed approval URLs. Does not detect persuasion attempts or over-reliance on agent output. |
 | ASI10 | **Rogue Agents** | ✅ Hash-chained audit trail makes rogue behavior detectable and verifiable. Response scanning catches credential exfiltration. Policy engine constrains all agents regardless of intent. |
 
 For details, see the [Threat Model](docs/THREAT-MODEL.md).

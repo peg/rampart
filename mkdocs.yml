@@ -116,6 +116,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - "Tutorial: 5 Minutes to Protected": getting-started/tutorial.md
     - Configuration: getting-started/configuration.md
+    - FAQ: getting-started/faq.md
     - Troubleshooting: getting-started/troubleshooting.md
     - Upgrade: getting-started/upgrade.md
     - Uninstall: getting-started/uninstall.md
