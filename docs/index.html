@@ -732,30 +732,29 @@
 <!-- Features -->
 <section class="features">
     <div class="container">
-        <div class="section-label">Under the hood</div>
+        <div class="section-label">What you get</div>
         <h2 class="section-title">A seatbelt, not a cage</h2>
-        <p class="section-desc">Single Go binary. No cloud dependency. Sub-millisecond policy checks on every tool call.</p>
+        <p class="section-desc">One Go binary, no cloud, no config server. Checks happen in-process — your agent won't even notice.</p>
         <div class="feature-grid">
             <div class="feature-card">
                 <div class="feature-icon">📋</div>
-                <h3>YAML policy engine</h3>
-                <p>Allow, deny, log, or require approval — by command pattern, file path, domain, or tool type. Version-control policies alongside your code.</p>
+                <h3>Plain YAML rules</h3>
+                <p>Match on command globs, file paths, domains, or tool names. Allow it, deny it, log it, or ask a human. Commit the YAML to your repo and move on.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🧠</div>
                 <h3>Response scanning</h3>
-                <p>Block credentials in tool <em>responses</em> before they reach your agent's context. Agent reads a config file with an AWS key — Rampart blocks the response, not the read.</p>
+                <p>Most tools only check what goes <em>in</em>. Rampart also checks what comes <em>out</em>. If a file read returns an AWS key, the response gets blocked before your agent ever sees it.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">⏳</div>
-                <h3>Human approval gates</h3>
-                <p>Set <code style="color:var(--accent);">require_approval</code> on any rule. Agent pauses, you get notified via Discord/Slack/webhook, approve from the dashboard.</p>
+                <h3>Approval gates</h3>
+                <p>Mark any rule <code style="color:var(--accent);">require_approval</code>. The agent stops, you get a ping on Discord or Slack, and nothing runs until you say so.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🔗</div>
-                <h3>Tamper-evident audit trail</h3>
-                <p>Every tool call logged with SHA-256 hash chain. Export to your SIEM via syslog or CEF. If one record is modified, the chain breaks.</p>
-                <span class="feature-stat">RFC 5424 + CEF</span>
+                <h3>Hash-chained audit log</h3>
+                <p>Every decision gets logged with a SHA-256 chain. Tamper with one record and the whole chain breaks. Ships syslog and CEF if your team runs a SIEM.</p>
             </div>
         </div>
     </div>
