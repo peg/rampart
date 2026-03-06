@@ -217,7 +217,7 @@ Examples:
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  Usage:")
 			fmt.Fprintf(w, "    export RAMPART_TOKEN=%s\n", plaintext)
-			fmt.Fprintf(w, "    curl -H 'Authorization: Bearer %s' http://127.0.0.1:9090/v1/evaluate\n", plaintext)
+			fmt.Fprintf(w, "    curl -X POST -H 'Authorization: Bearer %s' http://127.0.0.1:9090/v1/tool/exec -d '{\"command\":\"echo hello\"}'\n", plaintext)
 
 			return nil
 		},

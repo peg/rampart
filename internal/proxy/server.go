@@ -757,7 +757,8 @@ func (s *Server) shouldNotify(actionStr string) bool {
 // Returns the decision that would be made — agents use this to plan around
 // policy restrictions before attempting blocked actions.
 func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	identity := s.checkAuthIdentity(w, r)
+	if identity == nil {
 		return
 	}
 
@@ -768,6 +769,11 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Params == nil {
 		req.Params = map[string]any{}
+	}
+
+	// Override agent from token identity (prevent impersonation via preflight).
+	if !identity.IsAdmin && identity.Agent != "" {
+		req.Agent = identity.Agent
 	}
 
 	toolName := r.PathValue("toolName")
@@ -783,7 +789,15 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now().UTC(),
 	}
 
-	decision := s.engine.Evaluate(call)
+	// Apply same policy scoping as handleToolCall.
+	evalOpts := engine.EvalOptions{}
+	if !identity.IsAdmin {
+		evalOpts.DefaultDeny = true
+		if identity.Policy != "" {
+			evalOpts.PolicyFilter = identity.Policy
+		}
+	}
+	decision := s.engine.EvaluateWith(call, evalOpts)
 	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
 	s.writeAudit(req, toolName, decision)
 
@@ -1366,7 +1380,8 @@ func (s *Server) handlePolicySummary(w http.ResponseWriter, r *http.Request) {
 // handleTest evaluates a command against the loaded policy engine and returns
 // the decision. This powers the "Try a command" REPL in the dashboard Policy tab.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	identity := s.checkAuthIdentity(w, r)
+	if identity == nil {
 		return
 	}
 
@@ -1393,6 +1408,11 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		req.Tool = "exec"
 	}
 
+	// Override agent from token identity (prevent impersonation via test endpoint).
+	if !identity.IsAdmin && identity.Agent != "" {
+		req.Agent = identity.Agent
+	}
+
 	params := map[string]any{"command": req.Command}
 	if req.Tool == "write" || req.Tool == "read" {
 		params = map[string]any{"path": req.Command}
@@ -1406,7 +1426,17 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now(),
 	}
 
-	decision := s.engine.Evaluate(call)
+	// Apply same policy scoping as handleToolCall.
+	evalOpts := engine.EvalOptions{}
+	policyScope := "global"
+	if !identity.IsAdmin {
+		evalOpts.DefaultDeny = true
+		if identity.Policy != "" {
+			evalOpts.PolicyFilter = identity.Policy
+			policyScope = identity.Policy
+		}
+	}
+	decision := s.engine.EvaluateWith(call, evalOpts)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"command":          req.Command,
@@ -1414,7 +1444,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		"action":           decision.Action.String(),
 		"message":          decision.Message,
 		"matched_policies": decision.MatchedPolicies,
-		"policy_scope":     "global", // project policies are hook-side only
+		"policy_scope":     policyScope,
 	})
 }
 

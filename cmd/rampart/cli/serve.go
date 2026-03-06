@@ -36,8 +36,8 @@ import (
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/proxy"
 	"github.com/peg/rampart/internal/signing"
-	"github.com/peg/rampart/internal/token"
 	"github.com/peg/rampart/internal/tlsutil"
+	"github.com/peg/rampart/internal/token"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )

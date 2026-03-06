@@ -253,7 +253,7 @@ func (s *Store) Revoke(prefix string) (int, error) {
 	// Match against masked ID (rampart_XXXXXXXX...), masked prefix, or hash prefix.
 	// Strip trailing "..." from display format if present.
 	cleanPrefix := strings.TrimSuffix(prefix, "...")
-	count := 0
+	var revokedIndices []int
 	for i := range s.data.Tokens {
 		t := &s.data.Tokens[i]
 		fullMasked := Prefix + t.MaskedPrefix
@@ -261,18 +261,22 @@ func (s *Store) Revoke(prefix string) (int, error) {
 			strings.HasPrefix(t.Hash, cleanPrefix)
 		if matched && !t.Revoked {
 			t.Revoked = true
-			count++
+			revokedIndices = append(revokedIndices, i)
 		}
 	}
 
-	if count == 0 {
+	if len(revokedIndices) == 0 {
 		return 0, fmt.Errorf("token: no active token matching prefix %q", prefix)
 	}
 
 	if err := s.save(); err != nil {
+		// Rollback: restore revoked tokens to active.
+		for _, idx := range revokedIndices {
+			s.data.Tokens[idx].Revoked = false
+		}
 		return 0, fmt.Errorf("token: persist revocation: %w", err)
 	}
-	return count, nil
+	return len(revokedIndices), nil
 }
 
 // FindByPrefix returns all tokens matching the given masked ID prefix or hash prefix.
