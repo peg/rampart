@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
@@ -812,7 +811,7 @@ type createApprovalRequest struct {
 }
 
 func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 
@@ -1278,26 +1277,17 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) checkAuthOrTokenParam(r *http.Request) bool {
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if auth != "" {
-		token := strings.TrimPrefix(auth, "Bearer ")
-		return token != auth && subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
-	}
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	return token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
+	id, _ := s.identify(r)
+	return id != nil
 }
 
-// checkAuth validates the bearer token. Returns false if auth fails (error already written).
+// checkAuth validates the bearer token (admin or agent). Returns false if auth fails.
+// Used for read-only endpoints accessible to both admin and agent tokens.
+// For mutation endpoints, use checkAdminAuth instead.
 func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if auth == "" {
-		writeError(w, http.StatusUnauthorized, "missing authorization header")
-		return false
-	}
-
-	token := strings.TrimPrefix(auth, "Bearer ")
-	if token == auth || subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
-		writeError(w, http.StatusUnauthorized, "invalid authorization token")
+	id, errMsg := s.identify(r)
+	if id == nil {
+		writeError(w, http.StatusUnauthorized, errMsg)
 		return false
 	}
 	return true
