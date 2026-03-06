@@ -31,11 +31,9 @@ func TestTokenShow_PrintsPersistedToken(t *testing.T) {
 	const want = "rampart_test_token_123"
 	require.NoError(t, persistToken(want))
 
-	stdout, _, err := runCLI(t, "token")
-	require.NoError(t, err)
-	assert.Equal(t, want, stdout)
-
-	stdout, _, err = runCLI(t, "token", "show")
+	// Bare "rampart token" now shows help, not the admin token.
+	// Use "rampart token show" to get the admin token.
+	stdout, _, err := runCLI(t, "token", "show")
 	require.NoError(t, err)
 	assert.Equal(t, want, stdout)
 }

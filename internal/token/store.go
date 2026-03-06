@@ -14,16 +14,21 @@
 // Package token manages per-agent authentication tokens for the Rampart proxy.
 // Each token is bound to an agent identity and a set of scopes that control
 // what API operations the bearer can perform.
+//
+// Tokens are stored as SHA-256 hashes on disk. The plaintext token is shown
+// once at creation time and never persisted.
 package token
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -43,10 +48,13 @@ const (
 	tokenBytes = 24
 )
 
+// validName matches agent and policy names: alphanumeric, dash, underscore, 1-64 chars.
+var validName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
 // Token represents a per-agent authentication token.
 type Token struct {
-	// ID is the full token string (rampart_<hex>). Stored hashed after creation.
-	ID string `json:"id"`
+	// Hash is the SHA-256 hex digest of the token ID. The plaintext is never stored.
+	Hash string `json:"hash"`
 
 	// Agent identifies which AI agent this token is for (e.g., "codex", "claude-code").
 	Agent string `json:"agent"`
@@ -63,14 +71,17 @@ type Token struct {
 	// CreatedAt is when the token was created.
 	CreatedAt time.Time `json:"created_at"`
 
-	// ExpiresAt is when the token expires. Zero means no expiry.
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	// ExpiresAt is when the token expires. Nil means no expiry.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 
 	// Note is an optional human-readable description.
 	Note string `json:"note,omitempty"`
 
 	// Revoked is true if the token has been explicitly revoked.
 	Revoked bool `json:"revoked,omitempty"`
+
+	// MaskedPrefix is the first 8 hex chars of the token for display/logging.
+	MaskedPrefix string `json:"masked_prefix"`
 }
 
 // HasScope returns true if the token has the given scope.
@@ -85,10 +96,10 @@ func (t Token) HasScope(scope string) bool {
 
 // IsExpired returns true if the token has an expiry and it has passed.
 func (t Token) IsExpired() bool {
-	if t.ExpiresAt.IsZero() {
+	if t.ExpiresAt == nil {
 		return false
 	}
-	return time.Now().After(t.ExpiresAt)
+	return time.Now().After(*t.ExpiresAt)
 }
 
 // IsValid returns true if the token is not revoked and not expired.
@@ -96,20 +107,26 @@ func (t Token) IsValid() bool {
 	return !t.Revoked && !t.IsExpired()
 }
 
-// MaskedID returns the token ID with the secret portion masked.
+// MaskedID returns the token with the secret portion masked.
 // Shows prefix + first 8 hex chars + "...".
 func (t Token) MaskedID() string {
-	if len(t.ID) > len(Prefix)+8 {
-		return t.ID[:len(Prefix)+8] + "..."
-	}
-	return t.ID
+	return Prefix + t.MaskedPrefix + "..."
+}
+
+// LookupResult contains the outcome of a token lookup.
+type LookupResult struct {
+	Token   Token
+	Found   bool
+	Revoked bool
+	Expired bool
 }
 
 // Store manages per-agent tokens with file-backed persistence.
 type Store struct {
-	path string
-	mu   sync.RWMutex
-	data storeData
+	path    string
+	mu      sync.RWMutex
+	data    storeData
+	modTime time.Time // last known file mtime for auto-reload
 }
 
 type storeData struct {
@@ -136,61 +153,85 @@ func DefaultStorePath() (string, error) {
 }
 
 // Create generates a new agent token and persists it.
-// Returns the full token string (only available at creation time).
-func (s *Store) Create(agent, policy, note string, scopes []string, expiresAt time.Time) (Token, error) {
+// Returns the full plaintext token string (only available at creation time)
+// along with the Token record (which contains only the hash).
+func (s *Store) Create(agent, policy, note string, scopes []string, expiresAt *time.Time) (plaintext string, tok Token, err error) {
 	if agent == "" {
-		return Token{}, fmt.Errorf("token: agent name is required")
+		return "", Token{}, fmt.Errorf("token: agent name is required")
+	}
+	if !validName.MatchString(agent) {
+		return "", Token{}, fmt.Errorf("token: invalid agent name %q (must match [a-zA-Z0-9_-]{1,64})", agent)
+	}
+	if policy != "" && !validName.MatchString(policy) {
+		return "", Token{}, fmt.Errorf("token: invalid policy name %q (must match [a-zA-Z0-9_-]{1,64})", policy)
 	}
 	if len(scopes) == 0 {
 		scopes = []string{ScopeEval}
 	}
 	for _, scope := range scopes {
 		if scope != ScopeEval && scope != ScopeAdmin {
-			return Token{}, fmt.Errorf("token: invalid scope %q (valid: eval, admin)", scope)
+			return "", Token{}, fmt.Errorf("token: invalid scope %q (valid: eval, admin)", scope)
 		}
 	}
 
 	id, err := generateID()
 	if err != nil {
-		return Token{}, fmt.Errorf("token: generate ID: %w", err)
+		return "", Token{}, fmt.Errorf("token: generate ID: %w", err)
 	}
 
-	tok := Token{
-		ID:        id,
-		Agent:     agent,
-		Policy:    policy,
-		Scopes:    scopes,
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: expiresAt,
-		Note:      note,
+	hash := hashToken(id)
+	masked := id[len(Prefix):]
+	if len(masked) > 8 {
+		masked = masked[:8]
+	}
+
+	tok = Token{
+		Hash:         hash,
+		Agent:        agent,
+		Policy:       policy,
+		Scopes:       scopes,
+		CreatedAt:    time.Now().UTC(),
+		ExpiresAt:    expiresAt,
+		Note:         note,
+		MaskedPrefix: masked,
 	}
 
 	s.mu.Lock()
 	s.data.Tokens = append(s.data.Tokens, tok)
-	err = s.save()
+	if saveErr := s.save(); saveErr != nil {
+		// Rollback: remove the token we just appended.
+		s.data.Tokens = s.data.Tokens[:len(s.data.Tokens)-1]
+		s.mu.Unlock()
+		return "", Token{}, fmt.Errorf("token: persist: %w", saveErr)
+	}
 	s.mu.Unlock()
 
-	if err != nil {
-		return Token{}, fmt.Errorf("token: persist: %w", err)
-	}
-	return tok, nil
+	return id, tok, nil
 }
 
-// Lookup finds a token by its full ID. Returns the token and true if found
-// and valid (not revoked, not expired).
-func (s *Store) Lookup(id string) (Token, bool) {
+// Lookup finds a token by its plaintext ID. Hashes the input and compares.
+// Returns a LookupResult with details on why lookup may have failed.
+func (s *Store) Lookup(id string) LookupResult {
+	// Auto-reload if file changed on disk (covers CLI create/revoke while server runs).
+	s.maybeReload()
+
+	hash := hashToken(id)
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, t := range s.data.Tokens {
-		if subtle.ConstantTimeCompare([]byte(t.ID), []byte(id)) == 1 {
-			if !t.IsValid() {
-				return Token{}, false
+		if subtle.ConstantTimeCompare([]byte(t.Hash), []byte(hash)) == 1 {
+			if t.Revoked {
+				return LookupResult{Token: t, Found: true, Revoked: true}
 			}
-			return t, true
+			if t.IsExpired() {
+				return LookupResult{Token: t, Found: true, Expired: true}
+			}
+			return LookupResult{Token: t, Found: true}
 		}
 	}
-	return Token{}, false
+	return LookupResult{}
 }
 
 // List returns all tokens (including revoked/expired for display purposes).
@@ -203,22 +244,29 @@ func (s *Store) List() []Token {
 	return result
 }
 
-// Revoke marks a token as revoked by ID prefix match.
+// Revoke marks a token as revoked by hash prefix match.
 // Returns the number of tokens revoked.
-func (s *Store) Revoke(idPrefix string) (int, error) {
+func (s *Store) Revoke(prefix string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Match against masked ID (rampart_XXXXXXXX...), masked prefix, or hash prefix.
+	// Strip trailing "..." from display format if present.
+	cleanPrefix := strings.TrimSuffix(prefix, "...")
 	count := 0
 	for i := range s.data.Tokens {
-		if strings.HasPrefix(s.data.Tokens[i].ID, idPrefix) && !s.data.Tokens[i].Revoked {
-			s.data.Tokens[i].Revoked = true
+		t := &s.data.Tokens[i]
+		fullMasked := Prefix + t.MaskedPrefix
+		matched := strings.HasPrefix(fullMasked, cleanPrefix) ||
+			strings.HasPrefix(t.Hash, cleanPrefix)
+		if matched && !t.Revoked {
+			t.Revoked = true
 			count++
 		}
 	}
 
 	if count == 0 {
-		return 0, fmt.Errorf("token: no active token matching prefix %q", idPrefix)
+		return 0, fmt.Errorf("token: no active token matching prefix %q", prefix)
 	}
 
 	if err := s.save(); err != nil {
@@ -227,14 +275,17 @@ func (s *Store) Revoke(idPrefix string) (int, error) {
 	return count, nil
 }
 
-// FindByPrefix returns all tokens matching the given ID prefix.
+// FindByPrefix returns all tokens matching the given masked ID prefix or hash prefix.
 func (s *Store) FindByPrefix(prefix string) []Token {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	clean := strings.TrimSuffix(prefix, "...")
 	var matches []Token
 	for _, t := range s.data.Tokens {
-		if strings.HasPrefix(t.ID, prefix) {
+		fullMasked := Prefix + t.MaskedPrefix
+		if strings.HasPrefix(fullMasked, clean) ||
+			strings.HasPrefix(t.Hash, clean) {
 			matches = append(matches, t)
 		}
 	}
@@ -256,11 +307,56 @@ func (s *Store) Count() int {
 }
 
 func (s *Store) load() error {
+	info, err := os.Stat(s.path)
+	if err != nil {
+		return err
+	}
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, &s.data)
+	if err := json.Unmarshal(data, &s.data); err != nil {
+		return err
+	}
+	s.modTime = info.ModTime()
+	return nil
+}
+
+// maybeReload checks if the file on disk has changed and reloads if so.
+// This allows CLI operations (create, revoke) to take effect without server restart.
+func (s *Store) maybeReload() {
+	info, err := os.Stat(s.path)
+	if err != nil {
+		return
+	}
+	s.mu.RLock()
+	stale := info.ModTime().After(s.modTime)
+	s.mu.RUnlock()
+
+	if !stale {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Double-check after acquiring write lock.
+	info2, err := os.Stat(s.path)
+	if err != nil {
+		return
+	}
+	if !info2.ModTime().After(s.modTime) {
+		return
+	}
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		return
+	}
+	var newData storeData
+	if err := json.Unmarshal(data, &newData); err != nil {
+		return
+	}
+	s.data = newData
+	s.modTime = info2.ModTime()
 }
 
 func (s *Store) save() error {
@@ -303,4 +399,9 @@ func generateID() (string, error) {
 		return "", err
 	}
 	return Prefix + hex.EncodeToString(b), nil
+}
+
+func hashToken(id string) string {
+	h := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(h[:])
 }

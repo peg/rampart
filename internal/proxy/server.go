@@ -506,14 +506,21 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			EvalDuration: 0,
 		}
 	} else {
-		// Per-agent tokens can restrict evaluation to a specific policy profile.
-		// Agent-scoped tokens also default to deny for unmatched calls.
+		// Per-agent tokens always default to deny for unmatched calls.
+		// If a policy filter is set, only that profile's policies are evaluated.
 		evalOpts := engine.EvalOptions{}
-		if !identity.IsAdmin && identity.Policy != "" {
-			evalOpts.PolicyFilter = identity.Policy
+		if !identity.IsAdmin {
 			evalOpts.DefaultDeny = true
+			if identity.Policy != "" {
+				evalOpts.PolicyFilter = identity.Policy
+			}
 		}
 		decision = s.engine.EvaluateWith(call, evalOpts)
+		// Warn when policy filter matched no policies — helps debug silent denies.
+		if evalOpts.PolicyFilter != "" && decision.Message == "no matching policy; using default action" {
+			s.logger.Warn("proxy: per-agent token policy filter matched no policies — all calls denied",
+				"agent", call.Agent, "policy_filter", evalOpts.PolicyFilter, "tool", call.Tool)
+		}
 	}
 
 	// Consume once:true rules after they fire. This removes the rule from

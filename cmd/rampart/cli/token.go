@@ -40,8 +40,9 @@ Without a subcommand, prints the current admin bearer token.
 Per-agent tokens allow different AI agents to have different policy
 enforcement levels. Agent tokens are eval-only by default (cannot
 self-approve or mutate policies).`,
+		// Bare "rampart token" shows help instead of dumping admin token.
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return printPersistedToken(cmd)
+			return cmd.Help()
 		},
 	}
 
@@ -156,22 +157,42 @@ Examples:
 				return err
 			}
 
-			var expiresAt time.Time
+			var expiresAt *time.Time
 			if expires != "" {
 				dur, err := parseDuration(expires)
 				if err != nil {
 					return fmt.Errorf("invalid --expires: %w", err)
 				}
-				expiresAt = time.Now().Add(dur)
+				t := time.Now().Add(dur)
+				expiresAt = &t
 			}
 
-			tok, err := store.Create(agent, policy, note, scopes, expiresAt)
+			plaintext, tok, err := store.Create(agent, policy, note, scopes, expiresAt)
 			if err != nil {
 				return err
 			}
 
 			if jsonOut {
-				data, _ := json.MarshalIndent(tok, "", "  ")
+				// Include plaintext token in JSON output (only time it's shown).
+				out := struct {
+					Token  string       `json:"token"`
+					Agent  string       `json:"agent"`
+					Policy string       `json:"policy,omitempty"`
+					Scopes []string     `json:"scopes"`
+					Expires *time.Time  `json:"expires_at,omitempty"`
+					Note   string       `json:"note,omitempty"`
+				}{
+					Token:  plaintext,
+					Agent:  tok.Agent,
+					Policy: tok.Policy,
+					Scopes: tok.Scopes,
+					Expires: tok.ExpiresAt,
+					Note:   tok.Note,
+				}
+				data, err := json.MarshalIndent(out, "", "  ")
+				if err != nil {
+					return err
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), string(data))
 				return nil
 			}
@@ -179,13 +200,13 @@ Examples:
 			w := cmd.OutOrStdout()
 			fmt.Fprintln(w, "✓ Token created")
 			fmt.Fprintln(w)
-			fmt.Fprintf(w, "  Token:   %s\n", tok.ID)
+			fmt.Fprintf(w, "  Token:   %s\n", plaintext)
 			fmt.Fprintf(w, "  Agent:   %s\n", tok.Agent)
 			if tok.Policy != "" {
 				fmt.Fprintf(w, "  Policy:  %s\n", tok.Policy)
 			}
 			fmt.Fprintf(w, "  Scopes:  %s\n", strings.Join(tok.Scopes, ", "))
-			if !tok.ExpiresAt.IsZero() {
+			if tok.ExpiresAt != nil {
 				fmt.Fprintf(w, "  Expires: %s\n", tok.ExpiresAt.Format(time.RFC3339))
 			}
 			if tok.Note != "" {
@@ -195,8 +216,8 @@ Examples:
 			fmt.Fprintln(w, "  ⚠ Save this token — it cannot be retrieved later.")
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  Usage:")
-			fmt.Fprintf(w, "    export RAMPART_TOKEN=%s\n", tok.ID)
-			fmt.Fprintf(w, "    curl -H 'Authorization: Bearer %s' http://127.0.0.1:9090/v1/evaluate\n", tok.ID)
+			fmt.Fprintf(w, "    export RAMPART_TOKEN=%s\n", plaintext)
+			fmt.Fprintf(w, "    curl -H 'Authorization: Bearer %s' http://127.0.0.1:9090/v1/evaluate\n", plaintext)
 
 			return nil
 		},
@@ -237,15 +258,15 @@ func newTokenListCmd() *cobra.Command {
 
 			if jsonOut {
 				type maskedToken struct {
-					ID        string    `json:"id"`
-					Agent     string    `json:"agent"`
-					Policy    string    `json:"policy,omitempty"`
-					Scopes    []string  `json:"scopes"`
-					CreatedAt time.Time `json:"created_at"`
-					ExpiresAt time.Time `json:"expires_at,omitempty"`
-					Note      string    `json:"note,omitempty"`
-					Revoked   bool      `json:"revoked,omitempty"`
-					Status    string    `json:"status"`
+					ID        string     `json:"id"`
+					Agent     string     `json:"agent"`
+					Policy    string     `json:"policy,omitempty"`
+					Scopes    []string   `json:"scopes"`
+					CreatedAt time.Time  `json:"created_at"`
+					ExpiresAt *time.Time `json:"expires_at,omitempty"`
+					Note      string     `json:"note,omitempty"`
+					Revoked   bool       `json:"revoked,omitempty"`
+					Status    string     `json:"status"`
 				}
 				masked := make([]maskedToken, len(tokens))
 				for i, t := range tokens {
@@ -261,7 +282,10 @@ func newTokenListCmd() *cobra.Command {
 						Status:    tokenStatus(t),
 					}
 				}
-				data, _ := json.MarshalIndent(masked, "", "  ")
+				data, err := json.MarshalIndent(masked, "", "  ")
+				if err != nil {
+					return err
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), string(data))
 				return nil
 			}
@@ -348,7 +372,7 @@ func newTokenInfoCmd() *cobra.Command {
 			fmt.Fprintf(w, "  Policy:  %s\n", policy)
 			fmt.Fprintf(w, "  Scopes:  %s\n", strings.Join(t.Scopes, ", "))
 			fmt.Fprintf(w, "  Created: %s\n", t.CreatedAt.Format(time.RFC3339))
-			if !t.ExpiresAt.IsZero() {
+			if t.ExpiresAt != nil {
 				fmt.Fprintf(w, "  Expires: %s\n", t.ExpiresAt.Format(time.RFC3339))
 			}
 			if t.Note != "" {

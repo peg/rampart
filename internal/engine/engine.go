@@ -503,9 +503,10 @@ func filterByProfile(policies []Policy, profile string) []Policy {
 // Handles both regular paths ("/home/user/.rampart/policies/standard.yaml" → "standard")
 // and embedded store paths ("embedded:standard" → "standard").
 func profileNameFromPath(path string) string {
-	// Handle "embedded:<name>" or "<prefix>:<name>" format.
-	if idx := strings.LastIndex(path, ":"); idx >= 0 {
-		return strings.TrimSuffix(strings.TrimSuffix(path[idx+1:], ".yaml"), ".yml")
+	// Handle "embedded:<name>" format only — not Windows drive letters like "C:\...".
+	if strings.HasPrefix(path, "embedded:") {
+		name := path[len("embedded:"):]
+		return strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
 	}
 	base := filepath.Base(path)
 	return strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")

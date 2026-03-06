@@ -186,7 +186,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .decision-bar .seg{height:100%;transition:width .3s ease}
 .decision-bar .seg-allow{background:#34d399}
 .decision-bar .seg-deny{background:#f87171}
-.decision-bar .seg-approval{background:#fbbf24}
+.decision-bar .seg-pending{background:#fbbf24}
 .decision-bar-legend{display:flex;gap:12px;margin-top:4px;font-size:11px;color:var(--text-secondary)}
 .decision-bar-legend .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:middle}
 
@@ -1124,15 +1124,15 @@ function renderDecisionBar(approved,denied,blocked){
   const pB=((blocked/total)*100).toFixed(1);
   bar.innerHTML=
     (approved?`<div class="seg seg-allow" style="width:${pA}%" title="Allowed: ${approved} (${pA}%)"></div>`:'')+
-    (blocked?`<div class="seg seg-deny" style="width:${pB}%" title="Blocked: ${blocked} (${pB}%)"></div>`:'')+
-    (denied?`<div class="seg seg-approval" style="width:${pD}%" title="Denied: ${denied} (${pD}%)"></div>`:'');
+    (blocked?`<div class="seg seg-pending" style="width:${pB}%" title="Blocked (awaiting approval): ${blocked} (${pB}%)"></div>`:'')+
+    (denied?`<div class="seg seg-deny" style="width:${pD}%" title="Denied by policy: ${denied} (${pD}%)"></div>`:'');
   // Add or update legend below bar
   let legend=wrap.querySelector('.decision-bar-legend');
   if(!legend){legend=document.createElement('div');legend.className='decision-bar-legend';wrap.appendChild(legend)}
   legend.innerHTML=
     `<span><span class="swatch" style="background:#34d399"></span>Allowed ${pA}%</span>`+
-    `<span><span class="swatch" style="background:#f87171"></span>Blocked ${pB}%</span>`+
-    `<span><span class="swatch" style="background:#fbbf24"></span>Denied ${pD}%</span>`;
+    `<span><span class="swatch" style="background:#fbbf24"></span>Blocked ${pB}%</span>`+
+    `<span><span class="swatch" style="background:#f87171"></span>Denied ${pD}%</span>`;
 }
 
 function applyHistFilters(){

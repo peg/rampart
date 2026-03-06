@@ -63,37 +63,52 @@ func extractBearerToken(r *http.Request) string {
 
 // identify resolves a request to an authIdentity.
 // It checks the admin token first, then per-agent tokens.
-// Returns nil if no valid auth is found.
-func (s *Server) identify(r *http.Request) *authIdentity {
+// Returns nil and a user-facing error message if auth fails.
+func (s *Server) identify(r *http.Request) (*authIdentity, string) {
 	bearer := extractBearerToken(r)
 	if bearer == "" {
-		return nil
+		return nil, "missing authorization token"
+	}
+
+	// Warn if token was passed via query parameter (leaks to logs).
+	if r.URL.Query().Get("token") != "" && r.Header.Get("Authorization") == "" {
+		if s.logger != nil {
+			s.logger.Warn("proxy: token passed via query parameter — use Authorization header to avoid log exposure")
+		}
 	}
 
 	// Check admin token first (constant time).
 	if s.token != "" && subtle.ConstantTimeCompare([]byte(bearer), []byte(s.token)) == 1 {
-		return &authIdentity{IsAdmin: true}
+		return &authIdentity{IsAdmin: true}, ""
 	}
 
 	// Check per-agent tokens.
 	if s.tokenStore != nil {
-		if tok, ok := s.tokenStore.Lookup(bearer); ok {
+		result := s.tokenStore.Lookup(bearer)
+		if result.Found {
+			if result.Revoked {
+				return nil, "token has been revoked"
+			}
+			if result.Expired {
+				return nil, "token expired — create a new one with: rampart token create --agent " + result.Token.Agent
+			}
+			tok := result.Token
 			return &authIdentity{
 				Agent:  tok.Agent,
 				Policy: tok.Policy,
 				Token:  &tok,
-			}
+			}, ""
 		}
 	}
 
-	return nil
+	return nil, "invalid authorization token"
 }
 
 // checkAuthIdentity validates auth and returns the identity. Writes 401 on failure.
 func (s *Server) checkAuthIdentity(w http.ResponseWriter, r *http.Request) *authIdentity {
-	id := s.identify(r)
+	id, errMsg := s.identify(r)
 	if id == nil {
-		writeError(w, http.StatusUnauthorized, "invalid or missing authorization token")
+		writeError(w, http.StatusUnauthorized, errMsg)
 		return nil
 	}
 	return id
@@ -101,9 +116,9 @@ func (s *Server) checkAuthIdentity(w http.ResponseWriter, r *http.Request) *auth
 
 // checkAdminAuth validates auth and requires admin scope. Writes 401/403 on failure.
 func (s *Server) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
-	id := s.identify(r)
+	id, errMsg := s.identify(r)
 	if id == nil {
-		writeError(w, http.StatusUnauthorized, "invalid or missing authorization token")
+		writeError(w, http.StatusUnauthorized, errMsg)
 		return false
 	}
 	if !id.HasScope(token.ScopeAdmin) {
