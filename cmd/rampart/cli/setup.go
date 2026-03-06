@@ -395,8 +395,13 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			// Read or generate token
 			tokenPath := filepath.Join(home, ".rampart", "token")
 			var token string
-			if data, err := os.ReadFile(tokenPath); err == nil && len(data) > 0 {
-				token = strings.TrimSpace(string(data))
+			if info, err := os.Stat(tokenPath); err == nil {
+				if perm := info.Mode().Perm(); perm&0o077 != 0 {
+					fmt.Fprintf(errOut, "⚠ %s has insecure permissions (%04o) — should be 0600\n", tokenPath, perm)
+				}
+				if data, err := os.ReadFile(tokenPath); err == nil && len(data) > 0 {
+					token = strings.TrimSpace(string(data))
+				}
 			}
 			if token == "" {
 				tokenBytes := make([]byte, 24)
@@ -451,7 +456,9 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			if !shimOnly {
 				preloadInstalled, err = installOpenClawPreload(cmd, home, rampartBin, token, port, noPreload)
 				if err != nil {
-					fmt.Fprintf(errOut, "⚠ Preload setup: %v\n", err)
+					fmt.Fprintf(errOut, "⚠ LD_PRELOAD not available — falling back to shell shim.\n")
+					fmt.Fprintf(errOut, "  Sub-agents (Codex, Claude Code) will NOT be intercepted.\n")
+					fmt.Fprintf(errOut, "  Reason: %v\n", err)
 				}
 			}
 
@@ -553,17 +560,22 @@ func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, 
 	lines = append(lines, "# Survives OpenClaw upgrades (npm install -g openclaw does not touch this file)")
 	lines = append(lines, "[Service]")
 
-	// ExecStartPre: re-patch file tools on every restart (survives upgrades)
-	lines = append(lines, fmt.Sprintf("ExecStartPre=-%s setup openclaw --patch-tools --force --port %d", rampartBin, port))
+	// ExecStartPre: re-patch file tools on every restart (survives upgrades).
+	// The - prefix means failure is non-fatal (OpenClaw still starts).
+	execStartPreFlags := fmt.Sprintf("--patch-tools --force --port %d", port)
+	if noPreload {
+		execStartPreFlags += " --no-preload"
+	}
+	lines = append(lines, fmt.Sprintf("ExecStartPre=-\"%s\" setup openclaw %s", systemdEnvEscape(rampartBin), execStartPreFlags))
 
 	if !noPreload {
 		// LD_PRELOAD enforcement — hooks execve/execvp/system/popen for all child processes
-		lines = append(lines, fmt.Sprintf("Environment=LD_PRELOAD=%s", systemdEnvEscape(libPath)))
+		lines = append(lines, fmt.Sprintf("Environment=LD_PRELOAD=\"%s\"", systemdEnvEscape(libPath)))
 	}
 
 	// Rampart connection env vars (inherited by all child processes via LD_PRELOAD)
-	lines = append(lines, fmt.Sprintf("Environment=RAMPART_URL=%s", systemdEnvEscape(url)))
-	lines = append(lines, fmt.Sprintf("Environment=RAMPART_TOKEN=%s", systemdEnvEscape(token)))
+	lines = append(lines, fmt.Sprintf("Environment=RAMPART_URL=\"%s\"", systemdEnvEscape(url)))
+	lines = append(lines, fmt.Sprintf("Environment=RAMPART_TOKEN=\"%s\"", systemdEnvEscape(token)))
 	lines = append(lines, "Environment=RAMPART_MODE=enforce")
 	lines = append(lines, "Environment=RAMPART_FAIL_OPEN=1")
 	lines = append(lines, "Environment=RAMPART_AGENT=openclaw")
@@ -787,6 +799,18 @@ func removeOpenClaw(cmd *cobra.Command) error {
 				removed = append(removed, plistPath)
 			}
 		}
+
+		// Restore patched OpenClaw plist from backup
+		for _, plistName := range []string{"com.openclaw.gateway.plist", "openclaw-gateway.plist"} {
+			orig := filepath.Join(home, "Library", "LaunchAgents", plistName)
+			bak := orig + ".rampart-backup"
+			if data, err := os.ReadFile(bak); err == nil {
+				if err := os.WriteFile(orig, data, 0o600); err == nil {
+					_ = os.Remove(bak)
+					removed = append(removed, orig+" (restored)")
+				}
+			}
+		}
 	} else {
 		stop := osexec.Command("systemctl", "--user", "stop", "rampart-proxy")
 		_ = stop.Run()
@@ -893,8 +917,8 @@ Before=openclaw-gateway.service
 ExecStart=%s serve --port %d --config %s
 Restart=always
 RestartSec=3
-Environment=HOME=%s
-Environment=RAMPART_TOKEN=%s
+Environment=HOME="%s"
+Environment=RAMPART_TOKEN="%s"
 
 [Install]
 WantedBy=default.target
