@@ -888,74 +888,19 @@
     </div>
 </section>
 
-<!-- Architecture -->
-<section style="padding:80px 0; border-top:1px solid var(--border);">
+<!-- Mid-page CTA -->
+<section style="padding:80px 0; border-top:1px solid var(--border); text-align:center;">
     <div class="container">
-        <div class="section-label">Architecture</div>
-        <h2 class="section-title">How it fits into your stack</h2>
-        <p class="section-desc">Rampart sits between your agent and the OS. Every tool call passes through the policy engine before it executes.</p>
-    </div>
-    <div style="max-width:1200px; margin:0 auto; padding:0 24px;">
-        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; text-align:center; overflow-x:auto;">
-            <img src="architecture.svg" alt="Rampart architecture diagram showing agent tool calls flowing through the policy engine" style="max-width:100%; min-width:900px; height:auto; border-radius:8px;" loading="lazy">
+        <h2 class="section-title">Ready to try it?</h2>
+        <p class="section-desc" style="margin-bottom:32px;">One command. No signup. Works with your existing agent setup.</p>
+        <div style="display:inline-block; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px 28px; font-family:var(--mono); font-size:0.95rem; color:var(--text-bright); letter-spacing:-0.02em; margin-bottom:24px;">
+            <span style="color:var(--accent);">$</span> go install github.com/peg/rampart/cmd/rampart@latest
         </div>
-    </div>
-</section>
-
-<!-- OWASP -->
-<section style="padding:80px 0; border-top:1px solid var(--border);">
-    <div class="container">
-        <div class="section-label">Framework alignment</div>
-        <h2 class="section-title">OWASP Top 10 for Agentic Applications</h2>
-        <p class="section-desc">Mapped against the <a href="https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/" style="color:var(--accent);">OWASP Agentic Top 10 (2026)</a> — the industry standard for autonomous AI agent security.</p>
-        <div style="max-width:780px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
-                <span style="width:10px; height:10px; border-radius:50%; background:var(--green); flex-shrink:0;"></span>
-                <div>
-                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI02: Tool Misuse</div>
-                    <div style="font-size:0.78rem; color:var(--text);">Every tool call evaluated before execution</div>
-                </div>
-            </div>
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
-                <span style="width:10px; height:10px; border-radius:50%; background:var(--green); flex-shrink:0;"></span>
-                <div>
-                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI05: Code Execution</div>
-                    <div style="font-size:0.78rem; color:var(--text);">Pattern matching catches injected code</div>
-                </div>
-            </div>
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
-                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
-                <div>
-                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI06: Context Poisoning</div>
-                    <div style="font-size:0.78rem; color:var(--text);">Response scanning blocks credentials from context</div>
-                </div>
-            </div>
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
-                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
-                <div>
-                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI09: Human-Agent Trust</div>
-                    <div style="font-size:0.78rem; color:var(--text);">Human-in-the-loop approval gates</div>
-                </div>
-            </div>
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
-                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
-                <div>
-                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI01: Goal Hijack</div>
-                    <div style="font-size:0.78rem; color:var(--text);">Injection monitoring in tool responses</div>
-                </div>
-            </div>
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px;">
-                <span style="width:10px; height:10px; border-radius:50%; background:var(--orange); flex-shrink:0;"></span>
-                <div>
-                    <div style="font-size:0.85rem; font-weight:600; color:var(--heading);">ASI10: Rogue Agents</div>
-                    <div style="font-size:0.78rem; color:var(--text);">Self-modification protection</div>
-                </div>
-            </div>
-        </div>
-        <p style="margin-top:16px; font-size:0.82rem; color:var(--text);">
-            2 fully covered · 6 partially mitigated · 2 outside scope (identity management, inter-agent comms).
-            <a href="https://docs.rampart.sh/reference/owasp-mapping/" style="color:var(--accent);">Full mapping with honest assessment →</a>
-        </p>
+        <br>
+        <a href="#install" class="btn btn-primary" style="margin-right:12px;">Full install options →</a>
+        <a href="https://docs.rampart.sh/reference/architecture/" style="color:var(--accent); font-size:0.9rem;">Architecture</a>
+        <span style="color:var(--text); margin:0 8px;">·</span>
+        <a href="https://docs.rampart.sh/reference/owasp-mapping/" style="color:var(--accent); font-size:0.9rem;">OWASP mapping</a>
     </div>
 </section>
 
