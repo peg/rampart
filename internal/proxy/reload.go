@@ -36,7 +36,7 @@ import (
 const reloadCooldown = 1 * time.Second
 
 func (s *Server) handlePolicyReload(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 

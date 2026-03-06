@@ -37,6 +37,7 @@ import (
 	"github.com/peg/rampart/internal/proxy"
 	"github.com/peg/rampart/internal/signing"
 	"github.com/peg/rampart/internal/tlsutil"
+	"github.com/peg/rampart/internal/token"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
@@ -357,6 +358,17 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
 					proxyOpts = append(proxyOpts, proxy.WithNotify(cfg.Notify))
 					logger.Info("serve: webhook notifications enabled", "url", cfg.Notify.URL)
+				}
+				// Load per-agent token store.
+				if tokenStorePath, tsErr := token.DefaultStorePath(); tsErr == nil {
+					if ts, tsErr := token.NewStore(tokenStorePath); tsErr == nil {
+						proxyOpts = append(proxyOpts, proxy.WithTokenStore(ts))
+						if n := ts.Count(); n > 0 {
+							logger.Info("serve: per-agent tokens loaded", "count", n)
+						}
+					} else {
+						logger.Warn("serve: failed to load token store", "error", tsErr)
+					}
 				}
 				proxyServer = proxy.New(eng, sink, proxyOpts...)
 				listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", listenAddr, port))

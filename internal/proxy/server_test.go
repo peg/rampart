@@ -210,7 +210,7 @@ func TestToolCall_MissingAuth(t *testing.T) {
 	resp := postToolCall(t, ts, "", `{"agent":"main","session":"s1","params":{"command":"git push"}}`)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	body := decodeBody(t, resp)
-	assert.Contains(t, body["error"], "missing authorization header")
+	assert.Contains(t, body["error"], "missing authorization token")
 }
 
 func TestToolCall_InvalidAuth(t *testing.T) {

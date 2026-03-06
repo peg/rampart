@@ -180,6 +180,25 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 /* Stats bar */
 .stats-bar{display:flex;gap:16px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
 .stat{display:flex;align-items:center;gap:4px}.stat b{color:var(--heading);font-variant-numeric:tabular-nums}
+/* Decision breakdown bar */
+.decision-bar-wrap{padding:6px 0 10px;border-bottom:1px solid var(--border)}
+.decision-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--surface-2)}
+.decision-bar .seg{height:100%;transition:width .3s ease}
+.decision-bar .seg-allow{background:#34d399}
+.decision-bar .seg-deny{background:#f87171}
+.decision-bar .seg-pending{background:#fbbf24}
+
+/* Policy heatmap */
+.policy-heatmap{margin:6px 0 10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
+.heatmap-title{font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:6px;letter-spacing:.3px;text-transform:uppercase}
+.heatmap-row{display:flex;align-items:center;gap:8px;margin:3px 0;font-size:11px}
+.heatmap-label{width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:11px}
+.heatmap-bar-track{flex:1;height:14px;background:var(--surface-3);border-radius:3px;overflow:hidden;position:relative}
+.heatmap-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.heatmap-bar-fill.allow{background:#34d399}.heatmap-bar-fill.deny{background:#f87171}.heatmap-bar-fill.mixed{background:linear-gradient(90deg,#34d399,#fbbf24,#f87171)}
+.heatmap-count{width:36px;text-align:right;color:var(--text-dim);font-size:11px;font-family:'JetBrains Mono',monospace}
+.decision-bar-legend{display:flex;gap:12px;margin-top:4px;font-size:11px;color:var(--text-secondary)}
+.decision-bar-legend .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:middle}
 
 /* Filter pills */
 .filter-pills{display:flex;gap:4px;padding:6px 0 10px;flex-wrap:wrap}
@@ -345,6 +364,14 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       <div class="stat"><span class="dot approved"></span> <b id="hs-approved">—</b> approved</div>
       <div class="stat"><span class="dot denied"></span> <b id="hs-denied">—</b> denied</div>
       <div class="stat"><span class="dot pending"></span> <b id="hs-blocked">—</b> blocked</div>
+    </div>
+    <div class="decision-bar-wrap" id="decision-bar-wrap" style="display:none">
+      <div class="decision-bar" id="decision-bar"></div>
+    </div>
+
+    <div class="policy-heatmap" id="policy-heatmap" style="display:none">
+      <div class="heatmap-title">Top Policies</div>
+      <div class="heatmap-bars" id="heatmap-bars"></div>
     </div>
 
     <div class="hist-controls">
@@ -1077,6 +1104,7 @@ async function loadHistoryTab(reset){
     histHasMore=evs.length>=HIST_PAGE;
     histTabLoaded=true;
     applyHistFilters();
+    renderPolicyHeatmap();
     await loadHistStats(date);
   }catch(e){toast('History error: '+e.message)}
   finally{
@@ -1097,7 +1125,59 @@ async function loadHistStats(date){
     document.getElementById('hs-approved').textContent=approved;
     document.getElementById('hs-denied').textContent=denied;
     document.getElementById('hs-blocked').textContent=blocked;
+    renderDecisionBar(approved,denied,blocked);
   }catch(e){/* silently ignore if stats endpoint unavailable */}
+}
+
+function renderDecisionBar(approved,denied,blocked){
+  const wrap=document.getElementById('decision-bar-wrap');
+  const bar=document.getElementById('decision-bar');
+  const total=approved+denied+blocked;
+  if(!total){wrap.style.display='none';return}
+  wrap.style.display='block';
+  const pA=((approved/total)*100).toFixed(1);
+  const pD=((denied/total)*100).toFixed(1);
+  const pB=((blocked/total)*100).toFixed(1);
+  bar.innerHTML=
+    (approved?`<div class="seg seg-allow" style="width:${pA}%" title="Allowed: ${approved} (${pA}%)"></div>`:'')+
+    (blocked?`<div class="seg seg-pending" style="width:${pB}%" title="Blocked (awaiting approval): ${blocked} (${pB}%)"></div>`:'')+
+    (denied?`<div class="seg seg-deny" style="width:${pD}%" title="Denied by policy: ${denied} (${pD}%)"></div>`:'');
+  // Add or update legend below bar
+  let legend=wrap.querySelector('.decision-bar-legend');
+  if(!legend){legend=document.createElement('div');legend.className='decision-bar-legend';wrap.appendChild(legend)}
+  legend.innerHTML=
+    `<span><span class="swatch" style="background:#34d399"></span>Allowed ${pA}%</span>`+
+    `<span><span class="swatch" style="background:#fbbf24"></span>Blocked ${pB}%</span>`+
+    `<span><span class="swatch" style="background:#f87171"></span>Denied ${pD}%</span>`;
+}
+
+function renderPolicyHeatmap(){
+  const wrap=document.getElementById('policy-heatmap');
+  const container=document.getElementById('heatmap-bars');
+  const counts={};
+  histEvents.forEach(ev=>{
+    const policies=(ev.decision&&ev.decision.matched_policies)||[];
+    const action=extractAction(ev);
+    policies.forEach(p=>{
+      if(!counts[p])counts[p]={total:0,allow:0,deny:0};
+      counts[p].total++;
+      if(action==='allow'||action==='approved')counts[p].allow++;
+      else if(action==='deny'||action==='denied')counts[p].deny++;
+    });
+  });
+  const entries=Object.entries(counts).sort((a,b)=>b[1].total-a[1].total).slice(0,8);
+  if(!entries.length){wrap.style.display='none';return}
+  wrap.style.display='block';
+  const maxCount=entries[0][1].total;
+  container.innerHTML=entries.map(([name,c])=>{
+    const pct=((c.total/maxCount)*100).toFixed(1);
+    const cls=c.deny===0?'allow':c.allow===0?'deny':'mixed';
+    return `<div class="heatmap-row">
+      <span class="heatmap-label" title="${esc(name)}">${esc(name)}</span>
+      <div class="heatmap-bar-track"><div class="heatmap-bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <span class="heatmap-count">${c.total}</span>
+    </div>`;
+  }).join('');
 }
 
 function applyHistFilters(){
@@ -1170,6 +1250,8 @@ function appendHistRow(ev,tbody){
     <dt>Session</dt><dd>${esc(ev.session||'—')}</dd>
     <dt>Action</dt><dd>${esc(action||'—')}</dd>
     <dt>Reason</dt><dd>${esc((ev.decision&&ev.decision.message)||ev.reason||ev.message||'—')}</dd>
+    ${ev.decision&&ev.decision.matched_policies&&ev.decision.matched_policies.length?`<dt>Policy</dt><dd class="mono">${ev.decision.matched_policies.map(p=>esc(p)).join(', ')}</dd>`:''}
+    ${ev.decision&&ev.decision.evaluation_time_us?`<dt>Eval</dt><dd>${ev.decision.evaluation_time_us}µs</dd>`:''}
     <dt>Time</dt><dd>${ev.timestamp?new Date(ev.timestamp).toLocaleString():'—'}</dd>
   </dl></div></td>`;
   tbody.append(tr);tbody.append(det);

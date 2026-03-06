@@ -14,6 +14,8 @@
 package engine
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -860,5 +862,75 @@ policies:
 	d2 := e.Evaluate(callMain)
 	if d2.Action == ActionDeny {
 		t.Errorf("Match.Session scope: expected allow for %q, got %s", callMain.Session, d2.Action)
+	}
+}
+
+func TestEvaluateWith_PolicyFilter(t *testing.T) {
+	// Create two policy files with different profiles.
+	dir := t.TempDir()
+	standardFile := filepath.Join(dir, "standard.yaml")
+	paranoidFile := filepath.Join(dir, "paranoid.yaml")
+
+	standardYAML := `version: "1"
+policies:
+  - name: standard-allow-echo
+    match:
+      tool: ["exec"]
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo *"]
+        message: "standard allows echo"
+`
+	paranoidYAML := `version: "1"
+policies:
+  - name: paranoid-deny-all
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        message: "paranoid denies everything"
+`
+	if err := os.WriteFile(standardFile, []byte(standardYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paranoidFile, []byte(paranoidYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewDirStore(dir, logger)
+	eng, err := New(store, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	call := ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo hello"},
+	}
+
+	// No filter: both profiles considered. paranoid deny-all fires (first-match-wins).
+	d := eng.EvaluateWith(call, EvalOptions{})
+	if d.Action != ActionDeny {
+		t.Errorf("unfiltered: expected deny (paranoid fires first), got %s (%s)", d.Action, d.Message)
+	}
+
+	// Filter to paranoid: only paranoid-deny-all considered.
+	d = eng.EvaluateWith(call, EvalOptions{PolicyFilter: "paranoid"})
+	if d.Action != ActionDeny {
+		t.Errorf("paranoid filter: expected deny, got %s (%s)", d.Action, d.Message)
+	}
+
+	// Filter to standard: only standard-allow-echo considered.
+	d = eng.EvaluateWith(call, EvalOptions{PolicyFilter: "standard"})
+	if d.Action != ActionAllow {
+		t.Errorf("standard filter: expected allow, got %s (%s)", d.Action, d.Message)
+	}
+
+	// Filter to nonexistent profile: no policies match, default deny kicks in.
+	d = eng.EvaluateWith(call, EvalOptions{PolicyFilter: "nonexistent", DefaultDeny: true})
+	if d.Action != ActionDeny {
+		t.Errorf("nonexistent filter: expected deny, got %s (%s)", d.Action, d.Message)
 	}
 }
