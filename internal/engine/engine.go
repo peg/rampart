@@ -16,8 +16,8 @@ package engine
 import (
 	"fmt"
 	"log/slog"
-	"regexp"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
