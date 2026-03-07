@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-03-03 | Applies to: v0.7.4
+> Last reviewed: 2026-03-07 | Applies to: v0.8.x
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -45,7 +45,7 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 └─────────────────────────────────────────────┘
 ```
 
-Policy files are the security boundary. If an attacker can modify policy files, Rampart's guarantees do not hold. This is why [user separation](../README.md#security-recommendations) is recommended for production.
+Policy files are the security boundary. If an attacker can modify policy files, Rampart's guarantees do not hold. This is why [user separation](../deployment/production-checklist.md) is recommended for production.
 
 ## Known Limitations
 
@@ -67,12 +67,12 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
 
 **Mitigations:**
-- Run `rampart serve` as a [separate user](../README.md#security-recommendations) so the agent can't access audit files
+- Run `rampart serve` as a [separate user](../deployment/production-checklist.md) so the agent can't access audit files
 - Enable SIEM export (`--syslog` or `--cef`) to send events to an external immutable system
 - Webhook notifications send real-time alerts to Discord/Slack — a separate record
 - External chain anchors every 100 events provide additional integrity checkpoints
 
-**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](../README.md#siem-integration).
+**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](../features/siem-integration.md).
 
 ### 3. Token Exposure in Wrap Mode
 
@@ -82,7 +82,7 @@ The `rampart wrap` shim needs a bearer token to authenticate with `rampart serve
 - Run `rampart serve` as a separate user and store the token in that user's home directory with restricted permissions
 - Use native hooks (`rampart setup claude-code`) instead of wrap mode — hooks don't require a token file
 
-**Resolution:** Use [user separation](../README.md#security-recommendations) for production deployments, or prefer native hooks which don't require a token file.
+**Resolution:** Use [user separation](../deployment/production-checklist.md) for production deployments, or prefer native hooks which don't require a token file.
 
 ### 4. Encoding and Obfuscation
 

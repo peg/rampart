@@ -37,7 +37,7 @@ Learn more: https://docs.rampart.sh/guides/compliance/
 Report ID: 3a1e1cc1-09b5-4641-b502-3ef8b1f9fc29
 Generated: 2026-02-28T22:08:48Z
 Period: 2026-01-29 to 2026-02-28
-Rampart Version: v0.7.5
+Rampart Version: v0.8.1
 Standard: Rampart Security Posture
 Overall Status: PASS
 
