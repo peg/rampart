@@ -116,6 +116,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - "Tutorial: 5 Minutes to Protected": getting-started/tutorial.md
     - Configuration: getting-started/configuration.md
+    - FAQ: getting-started/faq.md
     - Troubleshooting: getting-started/troubleshooting.md
     - Upgrade: getting-started/upgrade.md
     - Uninstall: getting-started/uninstall.md
@@ -123,6 +124,8 @@ nav:
     - Securing Claude Code: guides/securing-claude-code.md
     - Prompt Injection Protection: guides/prompt-injection.md
     - Customizing Policy: guides/customizing-policy.md
+    - Install via an AI Agent: guides/agent-install.md
+    - Generate Policy from Behavior: guides/from-audit.md
   - Integration Guides:
     - Overview: integrations/index.md
     - Claude Code: integrations/claude-code.md
@@ -141,11 +144,6 @@ nav:
     - MCP Proxy: features/mcp-proxy.md
     - Semantic Verification: features/semantic-verification.md
     - SIEM Integration: features/siem-integration.md
-  - Security Guides:
-    - Securing Claude Code: guides/securing-claude-code.md
-    - Prompt Injection Protection: guides/prompt-injection.md
-    - Customizing Policy: guides/customizing-policy.md
-    - Install via an AI Agent: guides/agent-install.md
   - Team & Compliance:
     - Policy Registry: guides/policy-registry.md
     - Policy Sync: guides/policy-sync.md

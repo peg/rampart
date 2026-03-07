@@ -333,27 +333,46 @@ func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 	var remove bool
 	var port int
 	var patchTools bool
+	var patchToolsOnly bool
+	var noPreload bool
+	var shimOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "openclaw",
 		Short: "Set up Rampart to protect an OpenClaw agent",
-		Long: `Installs a shell shim and starts the Rampart policy server so that
-every command OpenClaw executes goes through Rampart's policy engine.
+		Long: `Wraps the OpenClaw gateway with LD_PRELOAD syscall interception so that
+every command — including sub-agents (Codex, Claude Code, etc.) — goes
+through Rampart's policy engine.
 
 Creates:
   - A systemd user service running "rampart serve"
-  - A shell shim at ~/.local/bin/rampart-shim
+  - A systemd drop-in that wraps OpenClaw with LD_PRELOAD enforcement
   - Default policy at ~/.rampart/policies/standard.yaml (if missing)
 
-After setup, configure OpenClaw to use the shim as its shell.
+File tools (read/write/edit/grep) are automatically re-patched on every
+OpenClaw restart via ExecStartPre, so patches survive upgrades.
 
-Use --patch-tools to also patch OpenClaw's file tools (read/write/edit/grep)
-so file operations go through Rampart too. Re-run after OpenClaw upgrades.
-
-Use --remove to uninstall the shim and service (preserves policies and audit logs).`,
+Use --shim-only to skip LD_PRELOAD and use the legacy shell shim approach.
+Use --no-preload to skip the LD_PRELOAD drop-in (still patches file tools).
+Use --remove to uninstall (preserves policies and audit logs).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if remove {
 				return removeOpenClaw(cmd)
+			}
+			// --patch-tools-only: used by ExecStartPre to re-patch file tools
+			// without writing drop-ins or starting services (avoids systemd deadlock).
+			if patchToolsOnly {
+				url := fmt.Sprintf("http://127.0.0.1:%d", port)
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				tokenPath := filepath.Join(home, ".rampart", "token")
+				token := ""
+				if data, err := os.ReadFile(tokenPath); err == nil {
+					token = strings.TrimSpace(string(data))
+				}
+				return patchOpenClawTools(cmd, url, token)
 			}
 			if runtime.GOOS == "windows" {
 				return fmt.Errorf("setup openclaw: not supported on Windows")
@@ -364,13 +383,32 @@ Use --remove to uninstall the shim and service (preserves policies and audit log
 				return fmt.Errorf("setup: resolve home: %w", err)
 			}
 
+			out := cmd.OutOrStdout()
+			errOut := cmd.ErrOrStderr()
+
+			// Check for existing configuration
+			dropinDir := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d")
+			dropinPath := filepath.Join(dropinDir, "rampart.conf")
 			shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")
-			shimExists := false
-			if _, err := os.Stat(shimPath); err == nil {
-				shimExists = true
+			alreadyConfigured := false
+			if _, err := os.Stat(dropinPath); err == nil {
+				alreadyConfigured = true
 			}
-			if shimExists && !force {
-				fmt.Fprintln(cmd.OutOrStdout(), "✓ Hooks already configured (pass --force to reconfigure)")
+			if _, err := os.Stat(shimPath); err == nil {
+				alreadyConfigured = true
+			}
+			// macOS: check if OpenClaw plist is already patched
+			if runtime.GOOS == "darwin" {
+				for _, plistName := range []string{"com.openclaw.gateway.plist", "openclaw-gateway.plist"} {
+					plistPath := filepath.Join(home, "Library", "LaunchAgents", plistName)
+					if data, err := os.ReadFile(plistPath); err == nil && strings.Contains(string(data), "RAMPART_URL") {
+						alreadyConfigured = true
+						break
+					}
+				}
+			}
+			if alreadyConfigured && !force {
+				fmt.Fprintln(out, "✓ Already configured (pass --force to reconfigure)")
 				return nil
 			}
 
@@ -380,12 +418,24 @@ Use --remove to uninstall the shim and service (preserves policies and audit log
 				realShell = "/bin/bash"
 			}
 
-			// Generate stable token
-			tokenBytes := make([]byte, 24)
-			if _, err := rand.Read(tokenBytes); err != nil {
-				return fmt.Errorf("setup: generate token: %w", err)
+			// Read or generate token
+			tokenPath := filepath.Join(home, ".rampart", "token")
+			var token string
+			if info, err := os.Stat(tokenPath); err == nil {
+				if perm := info.Mode().Perm(); perm&0o077 != 0 {
+					fmt.Fprintf(errOut, "⚠ %s has insecure permissions (%04o) — should be 0600\n", tokenPath, perm)
+				}
+				if data, err := os.ReadFile(tokenPath); err == nil && len(data) > 0 {
+					token = strings.TrimSpace(string(data))
+				}
 			}
-			token := "rampart_" + hex.EncodeToString(tokenBytes)
+			if token == "" {
+				tokenBytes := make([]byte, 24)
+				if _, err := rand.Read(tokenBytes); err != nil {
+					return fmt.Errorf("setup: generate token: %w", err)
+				}
+				token = "rampart_" + hex.EncodeToString(tokenBytes)
+			}
 
 			// Ensure directories
 			dirs := []string{
@@ -405,7 +455,7 @@ Use --remove to uninstall the shim and service (preserves policies and audit log
 				if err := os.WriteFile(policyPath, []byte(defaultPolicyContent()), 0o600); err != nil {
 					return fmt.Errorf("setup: write default policy: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "✓ Default policy written to %s\n", policyPath)
+				fmt.Fprintf(out, "✓ Default policy written to %s\n", policyPath)
 			}
 
 			// Find rampart binary path
@@ -416,14 +466,247 @@ Use --remove to uninstall the shim and service (preserves policies and audit log
 					rampartBin = p
 				}
 			}
+			// Resolve symlinks so path survives PATH changes
+			if resolved, err := filepath.EvalSymlinks(rampartBin); err == nil {
+				rampartBin = resolved
+			}
 
-			// Create service (OS-specific)
+			// Create Rampart proxy service (rampart serve)
 			if err := installService(cmd, home, rampartBin, policyPath, token, port); err != nil {
 				return err
 			}
 
-			// Create shell shim
-			shimContent := fmt.Sprintf(`#!/usr/bin/env bash
+			// ── Preload enforcement (default) ──
+			// Detect OpenClaw service and install LD_PRELOAD drop-in
+			preloadInstalled := false
+			if !shimOnly {
+				preloadInstalled, err = installOpenClawPreload(cmd, home, rampartBin, token, port, noPreload, force)
+				if err != nil {
+					fmt.Fprintf(errOut, "⚠ LD_PRELOAD not available — falling back to shell shim.\n")
+					fmt.Fprintf(errOut, "  Sub-agents (Codex, Claude Code) will NOT be intercepted.\n")
+					fmt.Fprintf(errOut, "  Reason: %v\n", err)
+				}
+			}
+
+			// ── Shell shim (fallback or --shim-only) ──
+			if !preloadInstalled || shimOnly {
+				shimContent := generateShimContent(realShell, port, token)
+				if err := os.WriteFile(shimPath, []byte(shimContent), 0o700); err != nil {
+					return fmt.Errorf("setup: write shim: %w", err)
+				}
+				fmt.Fprintf(out, "✓ Shell shim installed at %s\n", shimPath)
+			}
+
+			// Start service (OS-specific)
+			if err := startService(cmd); err != nil {
+				fmt.Fprintf(errOut, "⚠ Could not start service: %v\n", err)
+			} else {
+				fmt.Fprintln(out, "✓ Rampart proxy service started")
+			}
+
+			// Patch file tools immediately (also runs on every restart via ExecStartPre)
+			if patchTools || preloadInstalled {
+				if err := patchOpenClawTools(cmd, fmt.Sprintf("http://127.0.0.1:%d", port), token); err != nil {
+					fmt.Fprintf(errOut, "⚠ Could not patch file tools: %v\n", err)
+					fmt.Fprintln(errOut, "  File tools will be patched on next OpenClaw restart.")
+				}
+			}
+
+			// Print coverage summary
+			fmt.Fprintln(out, "")
+			if preloadInstalled {
+				fmt.Fprintln(out, "Coverage:")
+				fmt.Fprintln(out, "  [P] Shell commands (OpenClaw + all sub-agents)  — LD_PRELOAD")
+				fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — patched (auto-repatched on restart)")
+				fmt.Fprintln(out, "  [ ] Network fetch (web_fetch tool)               — use network policies")
+				fmt.Fprintln(out, "  [ ] Browser automation                           — not intercepted")
+				fmt.Fprintln(out, "")
+				fmt.Fprintln(out, "Restart the OpenClaw gateway to activate:")
+				fmt.Fprintln(out, "  systemctl --user restart openclaw-gateway")
+			} else {
+				fmt.Fprintln(out, "Next steps:")
+				fmt.Fprintf(out, "  1. Set SHELL=%s in your OpenClaw gateway config\n", shimPath)
+				fmt.Fprintln(out, "  2. Restart the OpenClaw gateway")
+				fmt.Fprintln(out, "  3. Every command will now go through Rampart's policy engine")
+				if !patchTools {
+					fmt.Fprintln(out, "")
+					fmt.Fprintln(out, "  Optional: Run with --patch-tools to also protect file reads/writes/edits.")
+				}
+			}
+			fmt.Fprintln(out, "")
+			fmt.Fprintf(out, "Policy: %s\n", policyPath)
+			fmt.Fprintf(out, "Audit:  %s\n", filepath.Join(home, ".rampart", "audit"))
+			fmt.Fprintf(out, "Watch:  rampart watch\n")
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart integration (preserves policies and audit logs)")
+	cmd.Flags().BoolVar(&patchTools, "patch-tools", false, "Patch file tools even in shim-only mode")
+	cmd.Flags().BoolVar(&patchToolsOnly, "patch-tools-only", false, "Only re-patch file tools (used internally by ExecStartPre)")
+	_ = cmd.Flags().MarkHidden("patch-tools-only")
+	cmd.Flags().BoolVar(&noPreload, "no-preload", false, "Skip LD_PRELOAD but still auto-patch file tools via systemd drop-in")
+	cmd.Flags().BoolVar(&shimOnly, "shim-only", false, "Use legacy shell shim only (no systemd drop-in, no sub-agent coverage)")
+	cmd.Flags().IntVar(&port, "port", 19090, "Port for Rampart policy server")
+	return cmd
+}
+
+// installOpenClawPreload creates a systemd drop-in (Linux) or patches the
+// launchd plist (macOS) to wrap the OpenClaw gateway with LD_PRELOAD/DYLD
+// syscall interception. Returns true if preload was successfully installed.
+func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, port int, noPreload, force bool) (bool, error) {
+	out := cmd.OutOrStdout()
+
+	// Resolve the preload library path
+	_, libPath, err := resolvePreloadLibrary()
+	if err != nil {
+		return false, fmt.Errorf("librampart not found: %w\n  Install it to ~/.rampart/lib/ or /usr/local/lib/", err)
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	if runtime.GOOS == "darwin" {
+		return installOpenClawPreloadDarwin(cmd, home, rampartBin, libPath, token, url, noPreload, force)
+	}
+
+	// ── Linux: systemd drop-in ──
+	serviceFile := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service")
+	if _, err := os.Stat(serviceFile); os.IsNotExist(err) {
+		return false, fmt.Errorf("OpenClaw service not found at %s — is OpenClaw installed as a systemd service?", serviceFile)
+	}
+
+	dropinDir := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d")
+	if err := os.MkdirAll(dropinDir, 0o700); err != nil {
+		return false, fmt.Errorf("create drop-in dir: %w", err)
+	}
+
+	// Build drop-in content
+	var lines []string
+	lines = append(lines, "# Rampart enforcement drop-in — managed by 'rampart setup openclaw'")
+	lines = append(lines, "# Survives OpenClaw upgrades (npm install -g openclaw does not touch this file)")
+	lines = append(lines, "[Service]")
+
+	// ExecStartPre: re-patch file tools on every restart (survives upgrades).
+	// Uses --patch-tools-only to avoid writing drop-ins or starting services
+	// during an active systemd unit transition (which could deadlock).
+	// The - prefix means failure is non-fatal (OpenClaw still starts).
+	lines = append(lines, fmt.Sprintf("ExecStartPre=-\"%s\" setup openclaw --patch-tools-only --port %d", systemdEnvEscape(rampartBin), port))
+
+	if !noPreload {
+		// LD_PRELOAD enforcement — hooks execve/execvp/system/popen for all child processes
+		lines = append(lines, fmt.Sprintf("Environment=LD_PRELOAD=\"%s\"", systemdEnvEscape(libPath)))
+	}
+
+	// Rampart connection env vars (inherited by all child processes via LD_PRELOAD)
+	lines = append(lines, fmt.Sprintf("Environment=RAMPART_URL=\"%s\"", systemdEnvEscape(url)))
+	lines = append(lines, fmt.Sprintf("Environment=RAMPART_TOKEN=\"%s\"", systemdEnvEscape(token)))
+	lines = append(lines, "Environment=RAMPART_MODE=enforce")
+	lines = append(lines, "Environment=RAMPART_FAIL_OPEN=1")
+	lines = append(lines, "Environment=RAMPART_AGENT=openclaw")
+	lines = append(lines, "")
+
+	dropinPath := filepath.Join(dropinDir, "rampart.conf")
+	content := strings.Join(lines, "\n")
+	if err := os.WriteFile(dropinPath, []byte(content), 0o600); err != nil {
+		return false, fmt.Errorf("write drop-in: %w", err)
+	}
+
+	if noPreload {
+		fmt.Fprintf(out, "✓ Systemd drop-in installed (file tool patching only)\n")
+		fmt.Fprintf(out, "  %s\n", dropinPath)
+	} else {
+		fmt.Fprintf(out, "✓ Systemd drop-in installed (LD_PRELOAD + file tool patching)\n")
+		fmt.Fprintf(out, "  %s\n", dropinPath)
+		fmt.Fprintf(out, "  Library: %s\n", libPath)
+	}
+
+	// Note: daemon-reload is called by startService() which runs after us.
+	return true, nil
+}
+
+// installOpenClawPreloadDarwin patches the OpenClaw launchd plist to add
+// DYLD_INSERT_LIBRARIES for preload enforcement on macOS.
+func installOpenClawPreloadDarwin(cmd *cobra.Command, home, rampartBin, libPath, token, url string, noPreload, force bool) (bool, error) {
+	out := cmd.OutOrStdout()
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.openclaw.gateway.plist")
+
+	// Try alternative names
+	if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+		alt := filepath.Join(home, "Library", "LaunchAgents", "openclaw-gateway.plist")
+		if _, err := os.Stat(alt); err == nil {
+			plistPath = alt
+		} else {
+			return false, fmt.Errorf("OpenClaw LaunchAgent not found — is OpenClaw installed as a launchd service?")
+		}
+	}
+
+	content, err := os.ReadFile(plistPath)
+	if err != nil {
+		return false, fmt.Errorf("read plist: %w", err)
+	}
+
+	plistStr := string(content)
+
+	// Check if already patched
+	if strings.Contains(plistStr, "RAMPART_URL") && !force {
+		fmt.Fprintln(out, "✓ LaunchAgent already patched with Rampart environment")
+		return true, nil
+	}
+
+	// Build environment dict entries to inject
+	var envEntries string
+	if !noPreload {
+		envEntries += fmt.Sprintf(`        <key>DYLD_INSERT_LIBRARIES</key>
+        <string>%s</string>
+        <key>DYLD_FORCE_FLAT_NAMESPACE</key>
+        <string>1</string>
+`, plistXMLEscape(libPath))
+	}
+	envEntries += fmt.Sprintf(`        <key>RAMPART_URL</key>
+        <string>%s</string>
+        <key>RAMPART_TOKEN</key>
+        <string>%s</string>
+        <key>RAMPART_MODE</key>
+        <string>enforce</string>
+        <key>RAMPART_FAIL_OPEN</key>
+        <string>1</string>
+        <key>RAMPART_AGENT</key>
+        <string>openclaw</string>
+`, plistXMLEscape(url), plistXMLEscape(token))
+
+	// Inject into existing EnvironmentVariables dict, or create one
+	if strings.Contains(plistStr, "<key>EnvironmentVariables</key>") {
+		// Insert after the <dict> that follows EnvironmentVariables
+		plistStr = strings.Replace(plistStr,
+			"<key>EnvironmentVariables</key>\n    <dict>\n",
+			"<key>EnvironmentVariables</key>\n    <dict>\n"+envEntries, 1)
+	} else {
+		// Insert before </dict></plist>
+		plistStr = strings.Replace(plistStr,
+			"</dict>\n</plist>",
+			"    <key>EnvironmentVariables</key>\n    <dict>\n"+envEntries+"    </dict>\n</dict>\n</plist>", 1)
+	}
+
+	// Backup original
+	backupPath := plistPath + ".rampart-backup"
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		_ = os.WriteFile(backupPath, content, 0o600)
+	}
+
+	if err := os.WriteFile(plistPath, []byte(plistStr), 0o600); err != nil {
+		return false, fmt.Errorf("write plist: %w", err)
+	}
+
+	fmt.Fprintf(out, "✓ LaunchAgent patched with Rampart environment\n")
+	fmt.Fprintf(out, "  %s\n", plistPath)
+	return true, nil
+}
+
+// generateShimContent produces the shell shim script for the legacy approach.
+func generateShimContent(realShell string, port int, token string) string {
+	return fmt.Sprintf(`#!/usr/bin/env bash
 REAL_SHELL="%s"
 RAMPART_URL="http://127.0.0.1:%d"
 RAMPART_TOKEN="%s"
@@ -441,8 +724,6 @@ if [ "$1" = "-c" ]; then
     fi
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
-    # Detect session context from environment.
-    # RAMPART_SESSION overrides all; otherwise use OPENCLAW_SESSION_KIND if available.
     SESSION="${RAMPART_SESSION:-main}"
     if [ -z "$RAMPART_SESSION" ] && [ -n "$OPENCLAW_SESSION_KIND" ]; then
         SESSION="$OPENCLAW_SESSION_KIND"
@@ -457,12 +738,10 @@ if [ "$1" = "-c" ]; then
     DECISION=$(cat "$RESP_FILE" 2>/dev/null)
     rm -f "$RESP_FILE"
 
-    # Fail open if no response
     if [ -z "$DECISION" ]; then
         exec "$REAL_SHELL" -c "$CMD" "$@"
     fi
 
-    # Check HTTP status — 403 means denied
     if [ "$RAMPART_MODE" = "enforce" ] && [ "$HTTP_CODE" = "403" ]; then
         MSG=$(printf '%%s' "$DECISION" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p' | head -n 1)
         if [ -z "$MSG" ]; then MSG="policy denied"; fi
@@ -470,7 +749,6 @@ if [ "$1" = "-c" ]; then
         exit 126
     fi
 
-    # Check "decision":"deny" as fallback
     DENIED=$(printf '%%s' "$DECISION" | sed -n 's/.*"decision":"\(deny\)".*/\1/p' | head -n 1)
     if [ "$RAMPART_MODE" = "enforce" ] && [ "$DENIED" = "deny" ]; then
         MSG=$(printf '%%s' "$DECISION" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p' | head -n 1)
@@ -479,12 +757,11 @@ if [ "$1" = "-c" ]; then
         exit 126
     fi
 
-    # Handle require_approval — block and poll until resolved
     APPROVAL_ID=$(printf '%%s' "$DECISION" | sed -n 's/.*"approval_id":"\([^"]*\)".*/\1/p' | head -n 1)
     if [ -n "$APPROVAL_ID" ]; then
         MSG=$(printf '%%s' "$DECISION" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p' | head -n 1)
         if [ -z "$MSG" ]; then MSG="approval required"; fi
-        echo "rampart: ⏳ waiting for approval — ${MSG}" >&2
+        echo "rampart: waiting for approval — ${MSG}" >&2
         echo "rampart: approval id: ${APPROVAL_ID}" >&2
 
         ELAPSED=0
@@ -498,17 +775,17 @@ if [ "$1" = "-c" ]; then
 
             case "$STATUS" in
                 approved)
-                    echo "rampart: ✅ approved" >&2
+                    echo "rampart: approved" >&2
                     exec "$REAL_SHELL" -c "$CMD" "$@"
                     ;;
                 denied|expired)
-                    echo "rampart: ❌ ${STATUS}" >&2
+                    echo "rampart: ${STATUS}" >&2
                     exit 126
                     ;;
             esac
         done
 
-        echo "rampart: ⏰ approval timed out after ${APPROVAL_TIMEOUT}s" >&2
+        echo "rampart: approval timed out after ${APPROVAL_TIMEOUT}s" >&2
         exit 126
     fi
 
@@ -517,55 +794,6 @@ fi
 
 exec "$REAL_SHELL" "$@"
 `, realShell, port, token)
-
-			if err := os.WriteFile(shimPath, []byte(shimContent), 0o700); err != nil {
-				return fmt.Errorf("setup: write shim: %w", err)
-			}
-			if shimExists && force {
-				fmt.Fprintln(cmd.OutOrStdout(), "✓ Hooks reconfigured")
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "✓ Shell shim installed at %s\n", shimPath)
-			}
-
-			// Start service (OS-specific)
-			if err := startService(cmd); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not start service: %v\n", err)
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "✓ Rampart proxy service started")
-			}
-
-			// Optionally patch file tools
-			if patchTools {
-				if err := patchOpenClawTools(cmd, fmt.Sprintf("http://127.0.0.1:%d", port), token); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not patch file tools: %v\n", err)
-					fmt.Fprintln(cmd.ErrOrStderr(), "  Shell commands are still protected. Run with --patch-tools again to retry.")
-				}
-			}
-
-			// Print next steps
-			fmt.Fprintln(cmd.OutOrStdout(), "")
-			fmt.Fprintln(cmd.OutOrStdout(), "Next steps:")
-			fmt.Fprintf(cmd.OutOrStdout(), "  1. Set SHELL=%s in your OpenClaw gateway config\n", shimPath)
-			fmt.Fprintln(cmd.OutOrStdout(), "  2. Restart the OpenClaw gateway")
-			fmt.Fprintln(cmd.OutOrStdout(), "  3. Every command will now go through Rampart's policy engine")
-			if !patchTools {
-				fmt.Fprintln(cmd.OutOrStdout(), "")
-				fmt.Fprintln(cmd.OutOrStdout(), "  Optional: Run with --patch-tools to also protect file reads/writes/edits.")
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "")
-			fmt.Fprintf(cmd.OutOrStdout(), "Policy: %s\n", policyPath)
-			fmt.Fprintf(cmd.OutOrStdout(), "Audit:  %s\n", filepath.Join(home, ".rampart", "audit"))
-			fmt.Fprintf(cmd.OutOrStdout(), "Watch:  rampart watch --audit-dir %s\n", filepath.Join(home, ".rampart", "audit"))
-
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing shim and service config")
-	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart shim and service (preserves policies and audit logs)")
-	cmd.Flags().BoolVar(&patchTools, "patch-tools", false, "Also patch OpenClaw's file tools (read/write/edit/grep) for full coverage")
-	cmd.Flags().IntVar(&port, "port", 19090, "Port for Rampart policy server")
-	return cmd
 }
 
 func removeOpenClaw(cmd *cobra.Command) error {
@@ -592,6 +820,18 @@ func removeOpenClaw(cmd *cobra.Command) error {
 				removed = append(removed, plistPath)
 			}
 		}
+
+		// Restore patched OpenClaw plist from backup
+		for _, plistName := range []string{"com.openclaw.gateway.plist", "openclaw-gateway.plist"} {
+			orig := filepath.Join(home, "Library", "LaunchAgents", plistName)
+			bak := orig + ".rampart-backup"
+			if data, err := os.ReadFile(bak); err == nil {
+				if err := os.WriteFile(orig, data, 0o600); err == nil {
+					_ = os.Remove(bak)
+					removed = append(removed, orig+" (restored)")
+				}
+			}
+		}
 	} else {
 		stop := osexec.Command("systemctl", "--user", "stop", "rampart-proxy")
 		_ = stop.Run()
@@ -603,9 +843,23 @@ func removeOpenClaw(cmd *cobra.Command) error {
 			if err := os.Remove(servicePath); err == nil {
 				removed = append(removed, servicePath)
 			}
-			reload := osexec.Command("systemctl", "--user", "daemon-reload")
-			_ = reload.Run()
 		}
+
+		// Remove preload drop-in
+		dropinPath := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
+		if _, err := os.Stat(dropinPath); err == nil {
+			if err := os.Remove(dropinPath); err == nil {
+				removed = append(removed, dropinPath)
+			}
+			// Remove dir if empty
+			dropinDir := filepath.Dir(dropinPath)
+			if entries, err := os.ReadDir(dropinDir); err == nil && len(entries) == 0 {
+				_ = os.Remove(dropinDir)
+			}
+		}
+
+		reload := osexec.Command("systemctl", "--user", "daemon-reload")
+		_ = reload.Run()
 	}
 
 	// Restore patched file tools
@@ -684,8 +938,8 @@ Before=openclaw-gateway.service
 ExecStart=%s serve --port %d --config %s
 Restart=always
 RestartSec=3
-Environment=HOME=%s
-Environment=RAMPART_TOKEN=%s
+Environment=HOME="%s"
+Environment=RAMPART_TOKEN="%s"
 
 [Install]
 WantedBy=default.target
