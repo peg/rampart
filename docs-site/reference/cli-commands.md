@@ -154,18 +154,6 @@ rampart preload --mode monitor -- agent         # Audit only
 rampart preload --debug -- agent                # Debug to stderr
 ```
 
-### `rampart daemon`
-
-Run Rampart as an OpenClaw approval daemon.
-
-```bash
-rampart daemon --token YOUR_TOKEN                    # Connect to OpenClaw Gateway
-rampart daemon --gateway ws://host:port              # Custom gateway URL  
-rampart daemon --signing-key ~/.rampart/key          # Custom signing key
-rampart daemon --api 127.0.0.1:9091                  # Custom API listen address
-rampart daemon --reconnect 5                         # Reconnect interval (seconds)
-```
-
 ### `rampart mcp`
 
 Proxy MCP servers with policy enforcement.
@@ -567,43 +555,6 @@ Remove the configured sync URL, stopping future syncs.
 ```bash
 rampart policy sync stop
 ```
-
-## Benchmarking
-
-### `rampart bench`
-
-Score your policy against the built-in attack corpus. Reports coverage by category, weighted by severity, and lists cases that are not covered ("gaps"). Uses the embedded corpus by default; accepts a custom corpus YAML with `--corpus`.
-
-```bash
-rampart bench                                          # Score with embedded corpus
-rampart bench --policy ~/.rampart/policies/paranoid.yaml  # Custom policy
-rampart bench --category exfil                         # Filter to a single category
-rampart bench --severity critical                      # Only critical cases
-rampart bench --os linux                               # Filter by OS
-rampart bench --strict                                 # Only deny counts as covered
-rampart bench --min-coverage 90                        # Exit 1 if coverage < 90%
-rampart bench --verbose                                # Include per-case results
-rampart bench --json                                   # JSON output
-rampart bench --id EXFIL-                              # Run cases with ID prefix
-rampart bench --corpus custom-corpus.yaml              # Custom corpus file
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--policy` | `~/.rampart/policies/standard.yaml` | Path to policy file |
-| `--corpus` | _(built-in)_ | Path to benchmark corpus YAML |
-| `--category` | _(all)_ | Filter to a single corpus category |
-| `--severity` | `medium` | Minimum severity: `critical`, `high`, or `medium` |
-| `--os` | _(current OS)_ | Filter cases by OS: `linux`, `darwin`, `windows`, or `*` |
-| `--strict` | `false` | Count only `deny` as covered (excludes `require_approval`) |
-| `--min-coverage` | `0` | Exit 1 if coverage is below this percent |
-| `--id` | _(all)_ | Run only cases with this ID prefix |
-| `--verbose` | `false` | Include per-case results in output |
-| `--json` | `false` | Output results as JSON |
-
-Exit code `1` if `--min-coverage` threshold is not met; `0` otherwise.
-
-## Approvals
 
 ### `rampart pending`
 
