@@ -164,11 +164,7 @@ func TestSetupOpenClaw_DropinNoPreload(t *testing.T) {
 	os.MkdirAll(serviceDir, 0o700)
 	os.WriteFile(filepath.Join(serviceDir, "openclaw-gateway.service"), []byte("[Service]\n"), 0o600)
 
-	// Create fake librampart.so (should still be skipped with noPreload)
-	libDir := filepath.Join(home, ".rampart", "lib")
-	os.MkdirAll(libDir, 0o700)
-	os.WriteFile(filepath.Join(libDir, "librampart.so"), []byte("fake"), 0o700)
-
+	// No librampart.so created — --no-preload should NOT require it
 	root := newTestRoot()
 	cmd := newSetupOpenClawCmd(root)
 	var buf strings.Builder

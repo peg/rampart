@@ -559,10 +559,14 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 func installOpenClawPreload(cmd *cobra.Command, home, rampartBin, token string, port int, noPreload, force bool) (bool, error) {
 	out := cmd.OutOrStdout()
 
-	// Resolve the preload library path
-	_, libPath, err := resolvePreloadLibrary()
-	if err != nil {
-		return false, fmt.Errorf("librampart not found: %w\n  Install it to ~/.rampart/lib/ or /usr/local/lib/", err)
+	// Resolve the preload library path (only required when preload is enabled)
+	var libPath string
+	if !noPreload {
+		var resolveErr error
+		_, libPath, resolveErr = resolvePreloadLibrary()
+		if resolveErr != nil {
+			return false, fmt.Errorf("librampart not found: %w\n  Install it to ~/.rampart/lib/ or /usr/local/lib/\n  Or use --no-preload to skip LD_PRELOAD and only patch file tools", resolveErr)
+		}
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -677,6 +681,7 @@ func installOpenClawPreloadDarwin(cmd *cobra.Command, home, rampartBin, libPath,
 `, plistXMLEscape(url), plistXMLEscape(token))
 
 	// Inject into existing EnvironmentVariables dict, or create one
+	original := plistStr
 	if strings.Contains(plistStr, "<key>EnvironmentVariables</key>") {
 		// Insert after the <dict> that follows EnvironmentVariables
 		plistStr = strings.Replace(plistStr,
@@ -687,6 +692,10 @@ func installOpenClawPreloadDarwin(cmd *cobra.Command, home, rampartBin, libPath,
 		plistStr = strings.Replace(plistStr,
 			"</dict>\n</plist>",
 			"    <key>EnvironmentVariables</key>\n    <dict>\n"+envEntries+"    </dict>\n</dict>\n</plist>", 1)
+	}
+
+	if plistStr == original {
+		return false, fmt.Errorf("could not inject Rampart environment into plist %s — unexpected XML formatting. Patch it manually or use --shim-only", plistPath)
 	}
 
 	// Backup original
