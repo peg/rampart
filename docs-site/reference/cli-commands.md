@@ -358,7 +358,7 @@ rampart allow "docker *" --for 1h              # Expires after 1 hour
 rampart allow "npm publish" --once             # Single-use — consumed after first match
 ```
 
-`--for` accepts Go duration strings (`1h`, `30m`, `24h`, `2h30m`). Expired rules are skipped during evaluation (the `expires_at` timestamp is checked before matching). `--once` marks the rule as consumed in audit metadata after its first match, but the rule continues to be evaluated and the YAML is not automatically modified. In both cases, use `rampart rules remove` to clean up expired or consumed rules.
+`--for` accepts Go duration strings (`1h`, `30m`, `24h`, `2h30m`). Expired rules are automatically skipped during evaluation and cleaned up periodically by `rampart serve`. `--once` creates a single-use rule: after its first match, Rampart removes it from the policy file and reloads. This works in both `rampart serve` (proxy) and `rampart hook` (Claude Code) modes.
 
 ### `rampart block`
 
