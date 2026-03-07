@@ -597,7 +597,7 @@
         </div>
         <h1>Your AI agent has full access.<br><span class="accent">That's the problem.</span></h1>
         <p class="sub">
-            Rampart is a policy firewall for AI coding agents. Ships with 40+ rules that block credential theft, exfiltration, and destructive commands out of the box. Fast enough that your agent can't tell it's there. Customize everything.
+            Rampart is a policy firewall for AI coding agents. Ships with 40+ rules that block credential theft, exfiltration, and destructive commands out of the box. Fast enough that your agent can't tell it's there. Customize your rules or generate them from observed behavior.
         </p>
         <div class="hero-install" onclick="copyInstall(this)" title="Click to copy">
             <span class="prompt">$</span> curl -fsSL https://rampart.sh/install | bash
@@ -733,13 +733,12 @@
             <div class="feature-card">
                 <div class="feature-icon">🔍</div>
                 <h3>Generate rules from behavior</h3>
-                <p>Don't write policy from scratch. Run your agent in monitor mode, then <code style="color:var(--accent);">rampart init --from-audit</code> generates rules from what it actually did. Review, tweak, enforce.</p>
-                <span class="feature-stat">record → enforce</span>
+                <p>Start in monitor mode to watch without blocking. Then <code style="color:var(--accent);">rampart init --from-audit</code> turns your audit log into a policy file. No rules to write by hand.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🧠</div>
                 <h3>Response scanning</h3>
-                <p>Most tools only check what goes <em>in</em>. Rampart also checks what comes <em>out</em>. If a file read returns an AWS key, the response gets blocked before your agent sees it.</p>
+                <p>Most tools only check what goes <em>in</em>. Rampart also checks what comes <em>out</em>. If a file read returns an AWS key, the response gets blocked. Works with Claude Code, HTTP proxy, and MCP integrations.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">⏳</div>

@@ -79,7 +79,7 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 | **ASI09: Human-Agent Trust** | `require_approval` for human-in-the-loop gates | ⚠️ Partial |
 | **ASI10: Rogue Agents** | Self-modification protection | ⚠️ Partial |
 
-2 fully covered, 6 partially mitigated, 2 not addressed (identity management, inter-agent communication). [Full mapping →](https://docs.rampart.sh/reference/owasp-mapping/)
+2 fully covered, 7 partially mitigated, 1 not addressed (inter-agent communication). [Full mapping →](https://docs.rampart.sh/reference/owasp-mapping/)
 
 <details>
 <summary><strong>📖 Table of Contents</strong></summary>
