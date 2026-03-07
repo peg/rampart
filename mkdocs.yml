@@ -156,6 +156,7 @@ nav:
     - Production Checklist: deployment/production-checklist.md
   - Reference:
     - CLI Commands: reference/cli-commands.md
+    - API Reference: reference/api-reference.md
     - Policy Schema: reference/policy-schema.md
     - OWASP Mapping: reference/owasp-mapping.md
     - Threat Model: reference/threat-model.md
