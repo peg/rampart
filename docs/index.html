@@ -4,17 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rampart — Guardrails for AI agents</title>
-    <meta name="description" content="Open-source policy firewall for AI coding agents. Checks every tool call in 8µs. Blocks credential access, exfiltration, and destructive commands. Works with Claude Code, Cline, Codex, and any MCP server.">
+    <meta name="description" content="Open-source policy firewall for AI coding agents. Blocks credential access, exfiltration, and destructive commands. Works with Claude Code, Cline, Codex, and any MCP server.">
     <link rel="canonical" href="https://rampart.sh/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Rampart — Guardrails for AI agents">
-    <meta property="og:description" content="Open-source policy firewall for AI agents. 8µs per decision. Blocks the dangerous stuff, lets everything else through.">
+    <meta property="og:description" content="Open-source policy firewall for AI agents. Blocks dangerous commands, lets everything else through. Zero noticeable latency.">
     <meta property="og:image" content="https://rampart.sh/og.png">
     <meta property="og:url" content="https://rampart.sh">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:site" content="@rampartsec">
     <meta name="twitter:title" content="Rampart — Guardrails for AI agents">
-    <meta name="twitter:description" content="Open-source policy firewall for AI agents. 8µs per decision. Blocks the dangerous stuff, lets everything else through.">
+    <meta name="twitter:description" content="Open-source policy firewall for AI agents. Blocks dangerous commands, lets everything else through. Zero noticeable latency.">
     <meta name="twitter:image" content="https://rampart.sh/og.png">
     <script type="application/ld+json">
     {
@@ -195,15 +195,7 @@
         }
         .hero-install:hover { border-color: var(--accent-border); }
         .hero-install .prompt { color: var(--accent); }
-        .hero-install .copy-hint {
-            font-size: 0.72rem;
-            color: var(--text-dim);
-            font-family: 'Archivo', sans-serif;
-            padding: 2px 8px;
-            background: var(--surface-2);
-            border-radius: 4px;
-            border: 1px solid var(--border);
-        }
+
         .hero-buttons {
             display: flex;
             gap: 12px;
@@ -601,7 +593,7 @@
         </p>
         <div class="hero-install" onclick="copyInstall(this)" title="Click to copy">
             <span class="prompt">$</span> curl -fsSL https://rampart.sh/install | bash
-            <span class="copy-hint">copy</span>
+            <span class="install-copy-hint">click to copy</span>
         </div>
         <br>
         <div class="hero-buttons">
@@ -910,15 +902,8 @@ function copyCode(el) {
     }, { threshold: 0.3 }).observe(rows);
 })();
 
-function copyInstall(el) {
-    var cmd = 'curl -fsSL https://rampart.sh/install | bash';
-    var hint = el.querySelector('.copy-hint');
-    navigator.clipboard.writeText(cmd).then(function() {
-        hint.textContent = 'copied!';
-        hint.style.color = 'var(--accent)';
-        setTimeout(function() { hint.textContent = 'copy'; hint.style.color = ''; }, 2000);
-    });
-}
+// copyInstall now uses the unified copyCode function
+var copyInstall = copyCode;
 </script>
 <script data-goatcounter="https://rampart.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
