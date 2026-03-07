@@ -244,3 +244,83 @@ func TestSetupOpenClaw_RemoveDropin(t *testing.T) {
 func newTestRoot() *rootOptions {
 	return &rootOptions{}
 }
+
+func TestSetupOpenClaw_DarwinPlistPatch(t *testing.T) {
+	// Test plist patching logic without requiring macOS
+	// We test the string manipulation directly
+
+	plistContent := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.gateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/node</string>
+    </array>
+</dict>
+</plist>`
+
+	// Simulate the injection logic from installOpenClawPreloadDarwin
+	envEntries := `        <key>RAMPART_URL</key>
+        <string>http://127.0.0.1:9090</string>
+        <key>RAMPART_TOKEN</key>
+        <string>rampart_testtoken</string>
+`
+
+	// No existing EnvironmentVariables — should inject before </dict></plist>
+	if !strings.Contains(plistContent, "<key>EnvironmentVariables</key>") {
+		patched := strings.Replace(plistContent,
+			"</dict>\n</plist>",
+			"    <key>EnvironmentVariables</key>\n    <dict>\n"+envEntries+"    </dict>\n</dict>\n</plist>", 1)
+
+		if patched == plistContent {
+			t.Fatal("plist injection should have modified the content")
+		}
+		if !strings.Contains(patched, "RAMPART_URL") {
+			t.Error("patched plist should contain RAMPART_URL")
+		}
+		if !strings.Contains(patched, "EnvironmentVariables") {
+			t.Error("patched plist should contain EnvironmentVariables key")
+		}
+		if !strings.Contains(patched, "</plist>") {
+			t.Error("patched plist should still end with </plist>")
+		}
+	}
+
+	// Test with existing EnvironmentVariables
+	plistWithEnv := `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/test</string>
+    </dict>
+</dict>
+</plist>`
+
+	patched := strings.Replace(plistWithEnv,
+		"<key>EnvironmentVariables</key>\n    <dict>\n",
+		"<key>EnvironmentVariables</key>\n    <dict>\n"+envEntries, 1)
+
+	if patched == plistWithEnv {
+		t.Fatal("plist injection into existing EnvironmentVariables should modify content")
+	}
+	if !strings.Contains(patched, "RAMPART_URL") {
+		t.Error("patched plist should contain RAMPART_URL")
+	}
+	if !strings.Contains(patched, "HOME") {
+		t.Error("patched plist should preserve existing HOME key")
+	}
+
+	// Test with non-standard formatting (should fail to patch)
+	weirdPlist := `<?xml version="1.0"?><plist><dict><key>Label</key><string>test</string></dict></plist>`
+	patchedWeird := strings.Replace(weirdPlist,
+		"</dict>\n</plist>",
+		"INJECTED\n</dict>\n</plist>", 1)
+	if patchedWeird != weirdPlist {
+		t.Error("non-standard plist formatting should NOT be modified by simple Replace")
+	}
+}
