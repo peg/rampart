@@ -37,13 +37,17 @@ These patterns are evaluated against fetch output and other tool response conten
 The standard profile includes prompt injection monitoring by default in `~/.rampart/policies/standard.yaml`.
 
 ```yaml
-- name: watch-prompt-injection
-  action: watch
-  tool: fetch
-  match:
-    response_patterns:
-      - '(?i)ignore\\s+previous\\s+instructions'
-      - '(?i)send\\s+.*(ssh|token|api[_-]?key)'
+policies:
+  - name: watch-prompt-injection
+    match:
+      tool: ["fetch", "web_search", "read"]
+    rules:
+      - action: log
+        when:
+          response_matches:
+            - '(?i)ignore\s+previous\s+instructions'
+            - '(?i)send\s+.*(ssh|token|api[_-]?key)'
+        message: "Possible prompt injection detected"
 ```
 
 If you maintain a custom profile, copy this policy and adjust patterns to fit your data sources.

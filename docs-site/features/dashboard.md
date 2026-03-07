@@ -50,11 +50,11 @@ Enter this token in the dashboard's token field. It's stored in your browser's `
 
 ## Network Access
 
-By default, `rampart serve` binds to `0.0.0.0` — accessible from your local network. For remote access:
+By default, `rampart serve` binds to `127.0.0.1` (localhost only). To expose it:
 
-- **Tailscale**: Bind to your Tailscale IP for secure access without exposing to the internet
+- **LAN access**: Use `--addr 0.0.0.0` to bind to all interfaces
+- **Tailscale**: Use `--addr <tailscale-ip>` for secure remote access without exposing to the internet
 - **Reverse proxy**: Put nginx/Caddy in front with your own auth
-- **Localhost only**: Use `--port 127.0.0.1:9090` to restrict to local access
 
 !!! warning
     The dashboard token grants full approval authority. Treat it like a password. Don't expose the port to the public internet without additional authentication.
