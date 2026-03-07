@@ -292,15 +292,15 @@
             0% { opacity: 0; transform: translateY(4px); }
             100% { opacity: 1; transform: translateY(0); }
         }
-        .watch-rows > :nth-child(1) { animation-delay: 0.5s; }
-        .watch-rows > :nth-child(2) { animation-delay: 1.5s; }
-        .watch-rows > :nth-child(3) { animation-delay: 2.3s; }
-        .watch-rows > :nth-child(4) { animation-delay: 3.0s; }
-        .watch-rows > :nth-child(5) { animation-delay: 3.6s; }
-        .watch-rows > :nth-child(6) { animation-delay: 5.0s; }
-        .watch-rows > :nth-child(7) { animation-delay: 5.8s; }
-        .watch-rows > :nth-child(8) { animation-delay: 7.0s; }
-        .watch-rows > :nth-child(9) { animation-delay: 8.5s; }
+        /* Rows stay hidden until .animate class is added via IntersectionObserver */
+        .watch-rows.animate > :nth-child(1) { animation-delay: 0.3s; }
+        .watch-rows.animate > :nth-child(2) { animation-delay: 1.0s; }
+        .watch-rows.animate > :nth-child(3) { animation-delay: 1.6s; }
+        .watch-rows.animate > :nth-child(4) { animation-delay: 2.1s; }
+        .watch-rows.animate > :nth-child(5) { animation-delay: 2.5s; }
+        .watch-rows.animate > :nth-child(6) { animation-delay: 3.4s; }
+        .watch-rows.animate > :nth-child(7) { animation-delay: 4.0s; }
+        .watch-rows.animate > :nth-child(8) { animation-delay: 5.0s; }
         .watch-allow .watch-icon { color: var(--green); }
         .watch-deny .watch-icon { color: var(--red); }
         .watch-deny .watch-cmd { color: var(--red); }
@@ -595,9 +595,9 @@
                 <span style="color:var(--text);">stars</span>
             </a>
         </div>
-        <h1>Your AI agent shouldn't be able<br>to <span class="accent">touch your .env</span></h1>
+        <h1>Your AI agent has full access.<br><span class="accent">That's the problem.</span></h1>
         <p class="sub">
-            Policy firewall for AI coding agents. Checks every tool call in <strong style="color:var(--text-bright);">8µs</strong>, blocks credential access and exfiltration, lets everything else through.
+            Rampart is a policy firewall for AI coding agents. Ships with 40+ rules that block credential theft, exfiltration, and destructive commands out of the box. Fast enough that your agent can't tell it's there. Customize everything.
         </p>
         <div class="hero-install" onclick="copyInstall(this)" title="Click to copy">
             <span class="prompt">$</span> curl -fsSL https://rampart.sh/install | bash
@@ -728,7 +728,7 @@
     <div class="container">
         <div class="section-label">How it works</div>
         <h2 class="section-title">A seatbelt, not a cage</h2>
-        <p class="section-desc">One Go binary, no cloud. 8µs per decision. Covers 8 of 10 <a href="https://docs.rampart.sh/reference/owasp-mapping/" style="color:var(--accent);">OWASP Agentic Top 10</a> risks.</p>
+        <p class="section-desc">One Go binary, no cloud, no latency your agent can feel. Covers 8 of 10 <a href="https://docs.rampart.sh/reference/owasp-mapping/" style="color:var(--accent);">OWASP Agentic Top 10</a> risks.</p>
         <div class="feature-grid">
             <div class="feature-card">
                 <div class="feature-icon">🔍</div>
@@ -901,6 +901,15 @@ function copyCode(el) {
         }
     });
 }
+
+// Trigger terminal animation when scrolled into view
+(function() {
+    var rows = document.querySelector('.watch-rows');
+    if (!rows || !('IntersectionObserver' in window)) { if (rows) rows.classList.add('animate'); return; }
+    new IntersectionObserver(function(entries) {
+        if (entries[0].isIntersecting) { rows.classList.add('animate'); }
+    }, { threshold: 0.3 }).observe(rows);
+})();
 
 function copyInstall(el) {
     var cmd = 'curl -fsSL https://rampart.sh/install | bash';
