@@ -31,7 +31,7 @@ sudo systemctl disable rampart-serve
 
 # If running manually
 pkill -f 'rampart serve'
-pkill -f 'rampart daemon'
+pkill -f 'rampart serve'
 ```
 
 ## 3. Remove the Binary

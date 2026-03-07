@@ -9,7 +9,7 @@ Rampart includes an embedded web dashboard for managing `require_approval` decis
 
 ## Accessing the Dashboard
 
-The dashboard is available on both `rampart serve` and `rampart daemon`:
+The dashboard is available when running `rampart serve`:
 
 ```bash
 # Start the server
