@@ -87,6 +87,56 @@ rules:
         - "**/*.pub"             # Exclude public keys
 ```
 
+### URL Matching
+
+Match the full request URL for `fetch` tool calls. Useful when you need more precision than domain matching — for example, to allow a domain but restrict specific paths:
+
+```yaml
+rules:
+  - action: deny
+    when:
+      url_matches:
+        - "https://api.example.com/admin/*"   # Block admin endpoints
+        - "http://*/*"                          # Block non-HTTPS requests
+        - "https://*/v1/secrets*"              # Block any host's secrets path
+```
+
+Use `domain_matches` when you only care about the hostname; use `url_matches` when path, scheme, or query matter.
+
+### Session Matching
+
+Filter rules by session identity — the repo path, branch, or project label Rampart associates with the current run. Useful for per-project policies without separate YAML files:
+
+```yaml
+rules:
+  - action: deny
+    when:
+      session_matches:
+        - "*/production"      # Any repo on the production branch
+        - "infra-*"           # Sessions labelled infra-*
+  - action: allow
+    when:
+      session_not_matches:
+        - "*/main"            # Exclude main branch from this rule
+```
+
+Sessions are set by the agent integration (Claude Code sets them from the project path; MCP proxy uses the client-provided session ID).
+
+### Tool Parameter Matching
+
+Match arbitrary MCP tool input parameters by name and glob pattern. Each key is a parameter name; any matching parameter triggers the rule (OR logic across params):
+
+```yaml
+rules:
+  - action: deny
+    when:
+      tool_param_matches:
+        path: "**/.env*"           # deny if the "path" param targets .env files
+        url: "*webhook.site*"      # deny if the "url" param points to webhook.site
+```
+
+This is particularly useful for MCP tools where the tool name alone doesn't give enough context — for example, a generic `file_read` MCP tool where you want to restrict specific path arguments.
+
 ### Domain Matching
 
 ```yaml
@@ -112,6 +162,30 @@ rules:
         - "-----BEGIN (RSA )?PRIVATE KEY-----"         # Private keys
         - "ghp_[a-zA-Z0-9]{36}"                       # GitHub PAT
 ```
+
+## Rate Limiting
+
+Use `call_count` to trigger a rule when a tool is invoked more than N times in a sliding time window. Useful for capping runaway agents or limiting expensive operations:
+
+```yaml
+rules:
+  - action: require_approval
+    when:
+      call_count:
+        gte: 50       # Threshold: 50 or more calls...
+        window: 10m   # ...within the last 10 minutes
+    message: "High fetch volume — pausing for review"
+
+  - action: deny
+    when:
+      call_count:
+        tool: fetch   # Optional: count only fetch calls (omit for all tools)
+        gte: 200
+        window: 1h
+    message: "Fetch rate limit exceeded"
+```
+
+`window` accepts standard duration strings: `1h`, `30m`, `10m`, `5m`, `1m`. The counter increments on every `PreToolUse` event and resets as calls age out of the window.
 
 ## Priority
 

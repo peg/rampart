@@ -244,7 +244,7 @@ Add PostToolUse hooks alongside PreToolUse in `~/.claude/settings.json`:
 The proxy API also supports response scanning. Include a `response` field in the request body:
 
 ```bash
-curl -X POST http://localhost:9090/api/v1/tool \
+curl -X POST http://localhost:9090/v1/tool/exec \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"tool": "exec", "params": {"command": "env"}, "response": "AWS_SECRET_ACCESS_KEY=..."}'
 ```

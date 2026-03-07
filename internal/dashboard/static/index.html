@@ -525,7 +525,7 @@ function initResizeHandles(){
   initTheme();restoreColWidths();initResizeHandles();
 
   const p=new URLSearchParams(location.search).get('token');
-  if(p){token=p;localStorage.setItem('rampart_token',p)}
+  if(p){token=p;localStorage.setItem('rampart_token',p);history.replaceState({},'',location.pathname)}
   else token=localStorage.getItem('rampart_token')||'';
   document.getElementById('token-input').value=token;
   if(token){connect()}else{const p=document.getElementById('auth-prompt');if(p)p.style.display='block'}

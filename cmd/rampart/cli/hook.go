@@ -183,7 +183,7 @@ func isServeRunning(serveURL string) bool {
 		return false
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := rampartHTTPClient.Do(req)
 	if err != nil {
 		return false
 	}

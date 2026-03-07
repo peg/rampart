@@ -31,6 +31,15 @@ serve: full token: 22ae11b1b9b51c5c7c71dd4a74f44b2ea429cdebc31dda59ad7b8f2dc927b
 
 Enter this token in the dashboard's token field. It's stored in your browser's `localStorage` — never sent to any external service.
 
+### Admin Token vs. Per-Agent Tokens
+
+Rampart has two distinct token types:
+
+- **Admin token** — generated at startup, printed to stdout, and stored in `~/.rampart/token`. Full access to all dashboard APIs.
+- **Per-agent tokens** — created with `rampart token create <name>`. Scoped to specific policy profiles; useful for restricting what a particular agent can approve or query.
+
+Both token types can authenticate to the dashboard and the `/v1/approvals` API. The difference is scope: per-agent tokens may be restricted to a subset of policies (e.g., a `codex` token that can only operate within the `standard` profile). Use per-agent tokens when running multiple agents with different trust levels.
+
 ## Features
 
 - **Pending approvals**: See all `require_approval` decisions waiting for human input
@@ -50,11 +59,11 @@ Enter this token in the dashboard's token field. It's stored in your browser's `
 
 ## Network Access
 
-By default, `rampart serve` binds to `0.0.0.0` — accessible from your local network. For remote access:
+By default, `rampart serve` binds to `127.0.0.1` (localhost only). To expose it:
 
-- **Tailscale**: Bind to your Tailscale IP for secure access without exposing to the internet
+- **LAN access**: Use `--addr 0.0.0.0` to bind to all interfaces
+- **Tailscale**: Use `--addr <tailscale-ip>` for secure remote access without exposing to the internet
 - **Reverse proxy**: Put nginx/Caddy in front with your own auth
-- **Localhost only**: Use `--port 127.0.0.1:9090` to restrict to local access
 
 !!! warning
     The dashboard token grants full approval authority. Treat it like a password. Don't expose the port to the public internet without additional authentication.

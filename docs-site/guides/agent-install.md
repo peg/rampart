@@ -20,7 +20,7 @@ Follow these steps in order. Each step is independently verifiable.
 === "Linux / macOS (curl)"
 
     ```bash
-    curl -fsSL https://rampart.sh/install.sh | sh
+    curl -fsSL https://rampart.sh/install | sh
     ```
 
 === "Go install"

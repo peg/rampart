@@ -157,7 +157,7 @@ func TestSetupOpenClaw_AlreadyConfiguredMessage(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "✓ Hooks already configured (pass --force to reconfigure)") {
+	if !strings.Contains(got, "Already configured (pass --force to reconfigure)") {
 		t.Fatalf("expected already-configured message, got: %s", got)
 	}
 	if strings.Contains(got, "Use --force to overwrite") {

@@ -18,7 +18,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
+
+// httpClient is used for all outgoing requests from the proxy client.
+// It has a timeout to prevent hangs if the target server is unresponsive.
+var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 // ReloadResponse is the JSON body returned by POST /v1/policy/reload.
 type ReloadResponse struct {
@@ -43,7 +48,7 @@ func ReloadPolicy(baseURL, token string) (*ReloadResponse, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("reload: request failed: %w", err)
 	}

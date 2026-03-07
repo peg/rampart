@@ -137,7 +137,7 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := rampartHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to connect to proxy at %s: %w", addr, err)
 	}
@@ -170,7 +170,7 @@ func listPending(cmd *cobra.Command, addr, token string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := rampartHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to connect to proxy at %s: %w", addr, err)
 	}
