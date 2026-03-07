@@ -78,6 +78,31 @@ rampart setup                # Interactive wizard
 rampart setup --force        # Skip confirmations
 ```
 
+### `rampart upgrade`
+
+Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and optionally restarts `rampart serve` if it was running.
+
+```bash
+rampart upgrade              # Upgrade to latest release
+rampart upgrade v0.8.0       # Upgrade to a specific version
+rampart upgrade --yes        # Skip confirmation prompt
+rampart upgrade --dry-run    # Preview without making changes
+rampart upgrade --no-policy-update  # Skip refreshing built-in policy profiles
+```
+
+After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified.
+
+### `rampart uninstall`
+
+Remove Rampart from the system. Removes agent hooks, stops and removes the service, cleans up PATH entries (Windows), and removes the shell shim.
+
+```bash
+rampart uninstall            # Interactive (prompts for confirmation)
+rampart uninstall --yes      # Skip confirmation prompt
+```
+
+After running, delete `~/.rampart/` manually and remove any `rampart`-related lines from your shell profile.
+
 ## Core Commands
 
 ### `rampart hook`
@@ -174,6 +199,51 @@ rampart init --from-audit ~/.rampart/audit/ --output policy.yaml  # Custom outpu
 ```
 
 Only allowed events are used for rule generation — denied events represent behavior you don't want to codify.
+
+## Service Management
+
+### `rampart serve install`
+
+Install `rampart serve` as a persistent system service. On macOS, creates a LaunchAgent plist. On Linux, creates a systemd user service (`rampart-serve.service`). Not supported on Windows.
+
+```bash
+rampart serve install                         # Install with defaults (port 9090)
+rampart serve install --port 8080             # Custom port
+rampart serve install --mode monitor          # Audit-only mode
+rampart serve install --config-dir ~/.rampart/policies  # Custom policy directory
+rampart serve install --audit-dir /var/log/rampart      # Custom audit directory
+rampart serve install --approval-timeout 30m  # Custom approval timeout
+rampart serve install --token mytoken         # Use a specific token
+rampart serve install --force                 # Overwrite existing installation
+```
+
+The token is saved to `~/.rampart/token` and embedded in the service file (mode `0600`). Hooks read it automatically.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port` | `9090` | Proxy listen port |
+| `--config-dir` | _(none)_ | Directory of additional policy YAML files |
+| `--audit-dir` | `~/.rampart/audit` | Directory for audit logs |
+| `--mode` | `enforce` | Enforcement mode: `enforce`, `monitor`, or `disabled` |
+| `--approval-timeout` | `5m` | How long approvals stay pending before expiring |
+| `--token` | _(auto-generated)_ | Override `RAMPART_TOKEN` for the service |
+| `--force` | `false` | Overwrite an existing service installation |
+
+### `rampart serve stop`
+
+Stop a `rampart serve` process that was started with `--background`. Reads the PID from `~/.rampart/serve.pid` and sends `SIGTERM`.
+
+```bash
+rampart serve stop
+```
+
+### `rampart serve uninstall`
+
+Remove the `rampart serve` system service. On macOS, unloads and removes the LaunchAgent plist. On Linux, disables and removes the systemd user service and runs `daemon-reload`.
+
+```bash
+rampart serve uninstall
+```
 
 ## Diagnostics
 
@@ -373,6 +443,166 @@ Evaluate a set of tool calls from a JSON file against your policies.
 rampart policy test --input test-cases.json
 ```
 
+## Policy Management
+
+Commands for linting, discovering, and managing policy profiles from the Rampart registry.
+
+### `rampart policy lint <file>`
+
+Lint a policy YAML file for errors, warnings, and suggestions. Checks for invalid YAML syntax, unknown action/condition values (with typo suggestions), rules with no conditions, excessive glob depth, common field confusion, shadowed rules, and missing `default_action`.
+
+```bash
+rampart policy lint policy.yaml
+rampart policy lint ~/.rampart/policies/custom.yaml
+```
+
+Exit code `1` if errors are found; `0` if only warnings or info.
+
+### `rampart policy list`
+
+List all available policy profiles — both built-in profiles and community policies from the Rampart registry. Uses a local cache (TTL: 1 hour) and falls back to embedded data when offline.
+
+```bash
+rampart policy list                    # List all profiles
+rampart policy list --extended         # Show SOURCE and INSTALLED columns
+rampart policy list --refresh          # Force refresh registry cache
+rampart policy list --json             # JSON output
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--refresh` | `false` | Force refresh of registry cache |
+| `--extended` | `false` | Show `SOURCE` and `INSTALLED` columns |
+| `--json` | `false` | Output as JSON |
+
+### `rampart policy search <query>`
+
+Search community policies in the registry by name, description, or tag. Results are sorted by bench score (descending).
+
+```bash
+rampart policy search docker                     # Search for docker-related policies
+rampart policy search "prompt injection"         # Multi-word search
+rampart policy search ci --tag ci                # Filter by exact tag
+rampart policy search security --min-score 80   # Minimum bench score
+rampart policy search docker --json              # JSON output
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--tag` | _(none)_ | Filter by exact tag |
+| `--min-score` | `0` | Minimum bench score (0–100) |
+| `--json` | `false` | Output as JSON |
+
+### `rampart policy show <name>`
+
+Print the full YAML of a built-in profile or community policy without installing it.
+
+```bash
+rampart policy show standard
+rampart policy show paranoid
+rampart policy show docker-restricted
+```
+
+### `rampart policy fetch <name>`
+
+Download and install a community policy profile to `~/.rampart/policies/<name>.yaml`. Verifies the SHA256 checksum before writing. Falls back to the embedded policy copy when the registry is unreachable.
+
+```bash
+rampart policy fetch docker-restricted          # Install a community policy
+rampart policy fetch docker-restricted --force  # Overwrite if already installed
+rampart policy fetch docker-restricted --dry-run  # Preview install path
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--force` | `false` | Overwrite an existing policy file |
+| `--dry-run` | `false` | Preview download and install path without writing |
+
+### `rampart policy install <name>`
+
+Alias for `rampart policy fetch`. Downloads and installs a community policy profile.
+
+```bash
+rampart policy install docker-restricted
+rampart policy install docker-restricted --force
+rampart policy install docker-restricted --dry-run
+```
+
+### `rampart policy remove <name>`
+
+Remove an installed community policy profile from `~/.rampart/policies/`. Built-in profiles (`standard`, `paranoid`, `yolo`, etc.) cannot be removed.
+
+```bash
+rampart policy remove docker-restricted
+```
+
+### `rampart policy sync <git-url>`
+
+Sync a Rampart policy from a git repository. Requires `git` in `PATH` and an HTTPS URL pointing to a publicly accessible repo. Looks for `rampart.yaml`, `policy.yaml`, or `.rampart/policy.yaml` in the repo root. Writes the result to `~/.rampart/policies/org-sync.yaml` and persists state to `~/.rampart/sync-state.json`.
+
+```bash
+rampart policy sync https://github.com/myorg/policies   # One-shot sync
+rampart policy sync https://github.com/myorg/policies --watch           # Poll for updates
+rampart policy sync https://github.com/myorg/policies --watch --interval 10m  # Custom interval
+rampart policy sync                                      # Re-use previously saved URL
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--watch` | `false` | Poll for policy updates in the foreground |
+| `--interval` | `5m` | How often to poll when using `--watch` |
+
+#### `rampart policy sync status`
+
+Show the current sync configuration and last sync result.
+
+```bash
+rampart policy sync status
+```
+
+#### `rampart policy sync stop`
+
+Remove the configured sync URL, stopping future syncs.
+
+```bash
+rampart policy sync stop
+```
+
+## Benchmarking
+
+### `rampart bench`
+
+Score your policy against the built-in attack corpus. Reports coverage by category, weighted by severity, and lists cases that are not covered ("gaps"). Uses the embedded corpus by default; accepts a custom corpus YAML with `--corpus`.
+
+```bash
+rampart bench                                          # Score with embedded corpus
+rampart bench --policy ~/.rampart/policies/paranoid.yaml  # Custom policy
+rampart bench --category exfil                         # Filter to a single category
+rampart bench --severity critical                      # Only critical cases
+rampart bench --os linux                               # Filter by OS
+rampart bench --strict                                 # Only deny counts as covered
+rampart bench --min-coverage 90                        # Exit 1 if coverage < 90%
+rampart bench --verbose                                # Include per-case results
+rampart bench --json                                   # JSON output
+rampart bench --id EXFIL-                              # Run cases with ID prefix
+rampart bench --corpus custom-corpus.yaml              # Custom corpus file
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--policy` | `~/.rampart/policies/standard.yaml` | Path to policy file |
+| `--corpus` | _(built-in)_ | Path to benchmark corpus YAML |
+| `--category` | _(all)_ | Filter to a single corpus category |
+| `--severity` | `medium` | Minimum severity: `critical`, `high`, or `medium` |
+| `--os` | _(current OS)_ | Filter cases by OS: `linux`, `darwin`, `windows`, or `*` |
+| `--strict` | `false` | Count only `deny` as covered (excludes `require_approval`) |
+| `--min-coverage` | `0` | Exit 1 if coverage is below this percent |
+| `--id` | _(all)_ | Run only cases with this ID prefix |
+| `--verbose` | `false` | Include per-case results in output |
+| `--json` | `false` | Output results as JSON |
+
+Exit code `1` if `--min-coverage` threshold is not met; `0` otherwise.
+
 ## Approvals
 
 ### `rampart pending`
@@ -403,17 +633,76 @@ rampart deny <id>
 
 ### `rampart token`
 
-Print the current bearer token.
+Top-level command for managing authentication tokens. Without a subcommand, shows help. Use `rampart token show` to print the current admin token.
+
+### `rampart token show`
+
+Print the current admin bearer token (read from `~/.rampart/token`).
 
 ```bash
-rampart token
+rampart token show
 ```
 
 ### `rampart token rotate`
 
-Generate and persist a new bearer token.
+Generate and persist a new admin bearer token. Prompts for confirmation unless `--force` is given.
 
 ```bash
 rampart token rotate
 rampart token rotate --force
+```
+
+## Token Management
+
+Per-agent tokens let you issue scoped tokens for individual agents with different policy enforcement levels. Agent tokens are `eval`-only by default — they can submit tool calls but cannot approve requests or modify policies.
+
+### `rampart token create`
+
+Create a new per-agent token. The full token is printed once at creation — save it, as it cannot be retrieved later.
+
+```bash
+rampart token create --agent codex
+rampart token create --agent codex --policy paranoid --note "CI pipeline"
+rampart token create --agent claude-code --expires 30d
+rampart token create --agent admin-bot --scope eval --scope admin
+rampart token create --agent codex --json
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--agent` | _(required)_ | Agent name (e.g., `codex`, `claude-code`, `openclaw`) |
+| `--policy` | _(global)_ | Policy profile to apply (e.g., `paranoid`, `standard`) |
+| `--note` | _(none)_ | Human-readable note |
+| `--scope` | `eval` | Token scopes: `eval`, `admin` (repeatable) |
+| `--expires` | _(never)_ | Token expiry duration (e.g., `24h`, `7d`, `30d`) |
+| `--json` | `false` | Output as JSON |
+
+### `rampart token list`
+
+List all per-agent tokens. Token values are masked — only the ID prefix is shown.
+
+```bash
+rampart token list
+rampart token list --json
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--json` | `false` | Output as JSON |
+
+### `rampart token revoke <token-id-or-prefix>`
+
+Revoke a per-agent token by its ID or ID prefix. Revoked tokens are rejected immediately by the proxy.
+
+```bash
+rampart token revoke abc123
+rampart token revoke abc                  # Revoke by prefix (must be unambiguous)
+```
+
+### `rampart token info <token-id-or-prefix>`
+
+Show full details for a per-agent token.
+
+```bash
+rampart token info abc123
 ```
