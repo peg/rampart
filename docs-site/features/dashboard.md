@@ -31,6 +31,15 @@ serve: full token: 22ae11b1b9b51c5c7c71dd4a74f44b2ea429cdebc31dda59ad7b8f2dc927b
 
 Enter this token in the dashboard's token field. It's stored in your browser's `localStorage` — never sent to any external service.
 
+### Admin Token vs. Per-Agent Tokens
+
+Rampart has two distinct token types:
+
+- **Admin token** — generated at startup, printed to stdout, and stored in `~/.rampart/token`. Full access to all dashboard APIs.
+- **Per-agent tokens** — created with `rampart token create <name>`. Scoped to specific policy profiles; useful for restricting what a particular agent can approve or query.
+
+Both token types can authenticate to the dashboard and the `/v1/approvals` API. The difference is scope: per-agent tokens may be restricted to a subset of policies (e.g., a `codex` token that can only operate within the `standard` profile). Use per-agent tokens when running multiple agents with different trust levels.
+
 ## Features
 
 - **Pending approvals**: See all `require_approval` decisions waiting for human input

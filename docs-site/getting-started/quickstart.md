@@ -24,7 +24,7 @@ Get Rampart protecting your AI agent in one command.
 === "Script"
 
     ```bash
-    curl -fsSL https://rampart.sh/install.sh | sh
+    curl -fsSL https://rampart.sh/install | sh
     ```
 
 === "Homebrew"
@@ -121,10 +121,15 @@ Rampart ships with three starting policies:
 | `standard` | allow | Block dangerous commands, watch suspicious ones, allow the rest |
 | `paranoid` | deny | Explicit allowlist — everything blocked unless permitted |
 | `yolo` | allow | Watch everything, block nothing — observation only |
+| `research-agent` | allow | Tuned for web-heavy research agents; restricts exfiltration, allows broad fetch |
+| `mcp-server` | deny | Conservative default for MCP server deployments; explicit allows required |
 
 ```bash
 rampart init --profile standard
 ```
+
+!!! tip "See all profiles"
+    Run `rampart policy list` to see every available built-in profile and any custom ones you've added.
 
 ## Customize Your Rules
 

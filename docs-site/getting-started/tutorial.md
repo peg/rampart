@@ -32,7 +32,7 @@ Let's set it up.
 === "Script"
 
     ```bash
-    curl -fsSL https://rampart.sh/install.sh | sh
+    curl -fsSL https://rampart.sh/install | sh
     ```
 
 === "Homebrew"
