@@ -49,7 +49,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", "http://127.0.0.1:9091", "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -69,7 +69,7 @@ func newDenyCmd(_ *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", "http://127.0.0.1:9091", "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -91,7 +91,7 @@ are blocked until someone approves or denies them (or they expire).`,
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", "http://127.0.0.1:9091", "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -112,7 +112,7 @@ func resolveToken(token string) string {
 }
 
 func resolveAddr(addr string) string {
-	if env := os.Getenv("RAMPART_API"); env != "" && addr == "http://127.0.0.1:9091" {
+	if env := os.Getenv("RAMPART_API"); env != "" && addr == fmt.Sprintf("http://127.0.0.1:%d", defaultServePort) {
 		return env
 	}
 	return addr

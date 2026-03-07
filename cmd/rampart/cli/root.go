@@ -110,7 +110,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	reportCmd := newReportCmd(opts)
 	watchCmd := newWatchCmd(opts)
 	openClawCmd := newOpenClawCmd(opts)
-	daemonCmd := newDaemonCmd(opts)
+	// daemonCmd removed in v0.9 cleanup — use `rampart serve` instead
+	// daemonCmd := newDaemonCmd(opts)
 	approveCmd := newApproveCmd(opts)
 	denyCmd := newDenyCmd(opts)
 	pendingCmd := newPendingCmd(opts)
@@ -124,7 +125,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	statusCmd := newStatusCmd()
 	tokenCmd := newTokenShowCmd()
 	testCmd := newTestCmd(opts)
-	benchCmd := newBenchCmd(opts)
+	// benchCmd removed in v0.9 cleanup — use `go test -bench` instead
+	// benchCmd := newBenchCmd(opts)
 	quickstartCmd := newQuickstartCmd()
 	upgradeCmd := newUpgradeCmd(opts)
 	uninstallCmd := newUninstallCmd(opts)
@@ -140,7 +142,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 
 	policyCmd.GroupID = groupPolicy
 	testCmd.GroupID = groupPolicy
-	benchCmd.GroupID = groupPolicy
+	// benchCmd.GroupID = groupPolicy
 	watchCmd.GroupID = groupPolicy
 	allowCmd.GroupID = groupPolicy
 	blockRuleCmd.GroupID = groupPolicy
@@ -159,6 +161,13 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	preloadCmd.GroupID = groupHooks
 	wrapCmd.GroupID = groupHooks
 
+	// Group the stragglers so they don't clutter "Additional Commands"
+	auditCmd.GroupID = groupRuntime
+	reportCmd.GroupID = groupRuntime
+	initCmd.GroupID = groupSetup
+	mcpCmd.GroupID = groupHooks
+	openClawCmd.GroupID = groupHooks
+
 	cmd.AddCommand(versionCmd)
 	cmd.AddCommand(initCmd)
 	cmd.AddCommand(serveCmd)
@@ -167,7 +176,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(reportCmd)
 	cmd.AddCommand(watchCmd)
 	cmd.AddCommand(openClawCmd)
-	cmd.AddCommand(daemonCmd)
+	// cmd.AddCommand(daemonCmd)
 	cmd.AddCommand(approveCmd)
 	cmd.AddCommand(denyCmd)
 	cmd.AddCommand(pendingCmd)
@@ -181,7 +190,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(statusCmd)
 	cmd.AddCommand(tokenCmd)
 	cmd.AddCommand(testCmd)
-	cmd.AddCommand(benchCmd)
+	// cmd.AddCommand(benchCmd)
 	cmd.AddCommand(quickstartCmd)
 	cmd.AddCommand(upgradeCmd)
 	cmd.AddCommand(uninstallCmd)

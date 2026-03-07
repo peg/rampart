@@ -148,7 +148,7 @@ Example:
 	cmd.Flags().StringVar(&gatewayURL, "gateway", "ws://127.0.0.1:18789", "OpenClaw Gateway WebSocket URL")
 	cmd.Flags().StringVar(&gatewayToken, "token", "", "Gateway authentication token (or set OPENCLAW_GATEWAY_TOKEN)")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Audit log directory (default ~/.rampart/audit)")
-	cmd.Flags().StringVar(&apiAddr, "api", "127.0.0.1:9091", "Daemon API listen address (for approval management)")
+	cmd.Flags().StringVar(&apiAddr, "api", fmt.Sprintf("127.0.0.1:%d", defaultServePort+1), "Daemon API listen address (for approval management)")
 	cmd.Flags().IntVar(&reconnectSeconds, "reconnect", 5, "Reconnect interval in seconds")
 	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
 

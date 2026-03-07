@@ -205,7 +205,7 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.7.4
+## What's New in v0.8.1
 
 - **`rampart init --from-audit`** — Generate policy YAML from your audit logs. Observe what your agent does, then generate rules to match. [Learn more →](reference/cli-commands.md#rampart-init---from-audit)
 - **Temporal allows** — `rampart allow "docker *" --for 1h` creates rules that expire automatically. `--once` for single-use rules (consumed after first match, removed manually). [Learn more →](reference/cli-commands.md#rampart-allow)

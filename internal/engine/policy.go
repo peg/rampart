@@ -483,6 +483,14 @@ func (s *FileStore) Load() (*Config, error) {
 		return nil, err
 	}
 
+	// Set FilePath on all policies so ConsumeOnceRule and policy scoping
+	// can find the source file to modify.
+	for i := range cfg.Policies {
+		if cfg.Policies[i].FilePath == "" {
+			cfg.Policies[i].FilePath = absPath
+		}
+	}
+
 	return &cfg, nil
 }
 

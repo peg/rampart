@@ -584,6 +584,20 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 			}
 
+			// Consume once:true rules after they fire. Unlike the proxy
+			// (eval_handlers.go) which uses a goroutine because the server
+			// keeps running, the hook is a one-shot process — must be
+			// synchronous or the process exits before completion.
+			if decision.ConsumedOnce && decision.ConsumedRulePolicy != "" && eng != nil {
+				if err := eng.ConsumeOnceRule(decision.ConsumedRulePolicy, decision.ConsumedRuleIndex); err != nil {
+					logger.Error("hook: failed to consume once rule",
+						"policy", decision.ConsumedRulePolicy,
+						"rule_index", decision.ConsumedRuleIndex,
+						"error", err,
+					)
+				}
+			}
+
 			// Return decision
 			cmdStr := extractCommand(call)
 			reasonMsg := projectPolicyPrefix(decision.Message, decision.FromProjectPolicy)

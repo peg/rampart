@@ -673,6 +673,6 @@ Liveness check. No auth required. Safe to use as a load-balancer or container he
   "status": "ok",
   "mode": "enforce",
   "uptime_seconds": 3614,
-  "version": "0.7.2"
+  "version": "0.8.1"
 }
 ```

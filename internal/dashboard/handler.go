@@ -14,8 +14,11 @@
 package dashboard
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 // Handler serves the embedded dashboard static files.
@@ -30,21 +33,72 @@ import (
 //
 // If you need to restrict read access to the dashboard, place it behind a
 // reverse proxy with authentication, or bind the listen address to localhost.
+// indexHTML holds the raw dashboard HTML, loaded once at init.
+// On each request we inject a fresh nonce into <script> and <style> tags.
+var indexHTML string
+
+func init() {
+	data, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		panic("dashboard: failed to read embedded index.html")
+	}
+	indexHTML = string(data)
+}
+
 func Handler() http.Handler {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic("dashboard: failed to build embedded fs")
 	}
-	return securityHeaders(http.FileServer(http.FS(sub)))
+	fileServer := http.FileServer(http.FS(sub))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// For the root/index path, serve nonce-injected HTML.
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" || r.URL.Path == "" {
+			serveIndexWithNonce(w, r)
+			return
+		}
+		// All other static assets served normally with security headers.
+		securityHeadersStatic(w)
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; object-src 'none'; base-uri 'self'")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Cache-Control", "no-store")
-		next.ServeHTTP(w, r)
-	})
+func serveIndexWithNonce(w http.ResponseWriter, _ *http.Request) {
+	nonce := generateNonce()
+
+	// Inject nonce into inline <script> and <style> tags.
+	html := strings.ReplaceAll(indexHTML, "<script>", `<script nonce="`+nonce+`">`)
+	html = strings.ReplaceAll(html, "<style>", `<style nonce="`+nonce+`">`)
+
+	csp := "default-src 'self'; " +
+		"script-src 'nonce-" + nonce + "' 'self'; " +
+		"style-src 'nonce-" + nonce + "' 'self' https://fonts.googleapis.com; " +
+		"font-src https://fonts.gstatic.com; " +
+		"connect-src 'self'; " +
+		"object-src 'none'; " +
+		"base-uri 'self'"
+
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", csp)
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
+func securityHeadersStatic(w http.ResponseWriter) {
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+func generateNonce() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: this should never happen, but don't panic in a request handler.
+		return "fallback-nonce"
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }

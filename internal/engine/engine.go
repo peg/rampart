@@ -14,6 +14,8 @@
 package engine
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -339,11 +341,23 @@ func (e *Engine) Reload() error {
 }
 
 func configFingerprint(cfg *Config) string {
-	fingerprint := ""
+	h := sha256.New()
+	fmt.Fprintf(h, "default=%s|", cfg.DefaultAction)
 	for _, p := range cfg.Policies {
-		fingerprint += fmt.Sprintf("%s:%d;", p.Name, len(p.Rules))
+		fmt.Fprintf(h, "policy:%s:%d{", p.Name, len(p.Rules))
+		for _, r := range p.Rules {
+			// Include rule content so changes to patterns, actions,
+			// messages, etc. are detected even when rule count stays the same.
+			fmt.Fprintf(h, "%s:%v:%s:%v;",
+				r.Action,
+				r.When,
+				r.Message,
+				r.Once,
+			)
+		}
+		h.Write([]byte("}"))
 	}
-	return fmt.Sprintf("default=%s|%s", cfg.DefaultAction, fingerprint)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // PolicyCount returns the number of loaded policies.

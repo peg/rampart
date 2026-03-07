@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -44,15 +45,17 @@ func TestResolveToken(t *testing.T) {
 }
 
 func TestResolveAddr(t *testing.T) {
+	defaultAddr := fmt.Sprintf("http://127.0.0.1:%d", defaultServePort)
+
 	// Default addr, no env
 	os.Unsetenv("RAMPART_API")
-	if got := resolveAddr("http://127.0.0.1:9091"); got != "http://127.0.0.1:9091" {
+	if got := resolveAddr(defaultAddr); got != defaultAddr {
 		t.Errorf("got %q", got)
 	}
 
 	// Default addr, with env override
 	t.Setenv("RAMPART_API", "http://custom:1234")
-	if got := resolveAddr("http://127.0.0.1:9091"); got != "http://custom:1234" {
+	if got := resolveAddr(defaultAddr); got != "http://custom:1234" {
 		t.Errorf("got %q", got)
 	}
 
