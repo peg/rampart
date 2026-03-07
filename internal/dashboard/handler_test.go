@@ -51,7 +51,7 @@ func TestHandlerSetsSecurityHeaders(t *testing.T) {
 
 	assertHeader("X-Frame-Options", "DENY")
 	assertHeader("X-Content-Type-Options", "nosniff")
-	assertHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'")
+	assertHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; object-src 'none'; base-uri 'self'")
 	assertHeader("Referrer-Policy", "no-referrer")
 	assertHeader("Cache-Control", "no-store")
 }
