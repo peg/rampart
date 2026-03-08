@@ -1,0 +1,148 @@
+# Example Rampart test suite
+#
+# Run with:
+#   rampart test examples/rampart-tests.yaml
+#   rampart test examples/rampart-tests.yaml --verbose
+#   rampart test examples/rampart-tests.yaml --json
+#   rampart test examples/rampart-tests.yaml --run "deny*"
+#
+# Uses the standard policy profile by default.
+# Override with: rampart test examples/rampart-tests.yaml --config my-policy.yaml
+
+tests:
+  # --- Exec: should be allowed ---
+
+  - name: allow git status
+    tool: exec
+    params:
+      command: "git status"
+    expect: allow
+
+  - name: allow git push
+    tool: exec
+    params:
+      command: "git push origin main"
+    expect: allow
+
+  - name: allow npm install
+    tool: exec
+    params:
+      command: "npm install express"
+    expect: allow
+
+  - name: allow ls
+    tool: exec
+    params:
+      command: "ls -la"
+    expect: allow
+
+  - name: allow cat source file
+    tool: exec
+    params:
+      command: "cat src/main.go"
+    expect: allow
+
+  # --- Exec: should be denied ---
+
+  - name: deny rm -rf /
+    tool: exec
+    params:
+      command: "rm -rf /"
+    expect: deny
+    expect_message: "Destructive*"
+
+  - name: deny rm -rf home
+    tool: exec
+    params:
+      command: "rm -rf ~"
+    expect: deny
+
+  - name: deny format disk
+    tool: exec
+    params:
+      command: "mkfs.ext4 /dev/sda1"
+    expect: deny
+
+  - name: deny dd to disk
+    tool: exec
+    params:
+      command: "dd if=/dev/zero of=/dev/sda"
+    expect: deny
+
+  - name: deny chmod 777 recursive
+    tool: exec
+    params:
+      command: "chmod -R 777 /"
+    expect: deny
+
+  - name: deny base64 obfuscated command
+    tool: exec
+    params:
+      command: "echo cm0gLXJmIC8= | base64 -d | bash"
+    expect: deny
+
+  - name: deny python exec eval
+    tool: exec
+    params:
+      command: "python3 -c \"exec(__import__('base64').b64decode('cm0gLXJmIC8='))\""
+    expect: deny
+
+  # --- File reads: should be denied ---
+
+  - name: deny read SSH private key
+    tool: read
+    params:
+      path: "~/.ssh/id_rsa"
+    expect: deny
+
+  - name: deny read SSH ed25519 key
+    tool: read
+    params:
+      path: "~/.ssh/id_ed25519"
+    expect: deny
+
+  - name: deny read aws credentials
+    tool: read
+    params:
+      path: "~/.aws/credentials"
+    expect: deny
+
+  - name: deny read env file
+    tool: read
+    params:
+      path: "/home/user/project/.env"
+    expect: deny
+
+  - name: deny read gcloud credentials
+    tool: read
+    params:
+      path: "~/.config/gcloud/credentials.db"
+    expect: deny
+
+  # --- File reads: should be allowed ---
+
+  - name: allow read README
+    tool: read
+    params:
+      path: "README.md"
+    expect: allow
+
+  - name: allow read source code
+    tool: read
+    params:
+      path: "src/main.go"
+    expect: allow
+
+  # --- Privileged commands: should require human approval ---
+
+  - name: ask approval for sudo
+    tool: exec
+    params:
+      command: "sudo apt update"
+    expect: ask
+
+  - name: ask approval for sudo reboot
+    tool: exec
+    params:
+      command: "sudo reboot"
+    expect: ask

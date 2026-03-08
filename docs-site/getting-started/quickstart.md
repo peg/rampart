@@ -92,6 +92,8 @@ rampart test "git push origin main"
 # → allow (or require_approval if you've configured it)
 ```
 
+You can also write test suites to verify your policies in CI. See the [Testing Policies](../guides/testing-policies.md) guide.
+
 Or pipe a raw hook payload:
 
 ```bash
