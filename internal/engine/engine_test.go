@@ -934,3 +934,68 @@ policies:
 		t.Errorf("nonexistent filter: expected deny, got %s (%s)", d.Action, d.Message)
 	}
 }
+
+func TestConfigFingerprintChangesOnRuleEdit(t *testing.T) {
+	cfg1 := &Config{
+		DefaultAction: "deny",
+		Policies: []Policy{{
+			Name:  "test",
+			Rules: []Rule{{Action: "allow", When: Condition{CommandMatches: []string{"git *"}}}},
+		}},
+	}
+	cfg2 := &Config{
+		DefaultAction: "deny",
+		Policies: []Policy{{
+			Name:  "test",
+			Rules: []Rule{{Action: "allow", When: Condition{CommandMatches: []string{"npm *"}}}},
+		}},
+	}
+	// Same policy name, same rule count, different rule content.
+	fp1 := configFingerprint(cfg1)
+	fp2 := configFingerprint(cfg2)
+	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when rule content changes")
+
+	// Same config should produce identical fingerprint.
+	fp1b := configFingerprint(cfg1)
+	assert.Equal(t, fp1, fp1b, "same config should produce identical fingerprint")
+}
+
+func TestConfigFingerprintChangesOnActionChange(t *testing.T) {
+	cfg1 := &Config{
+		DefaultAction: "deny",
+		Policies: []Policy{{
+			Name:  "test",
+			Rules: []Rule{{Action: "allow", When: Condition{CommandMatches: []string{"rm *"}}}},
+		}},
+	}
+	cfg2 := &Config{
+		DefaultAction: "deny",
+		Policies: []Policy{{
+			Name:  "test",
+			Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}},
+		}},
+	}
+	fp1 := configFingerprint(cfg1)
+	fp2 := configFingerprint(cfg2)
+	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when action changes")
+}
+
+func TestConfigFingerprintChangesOnDefaultAction(t *testing.T) {
+	cfg1 := &Config{
+		DefaultAction: "allow",
+		Policies: []Policy{{
+			Name:  "test",
+			Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}},
+		}},
+	}
+	cfg2 := &Config{
+		DefaultAction: "deny",
+		Policies: []Policy{{
+			Name:  "test",
+			Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}},
+		}},
+	}
+	fp1 := configFingerprint(cfg1)
+	fp2 := configFingerprint(cfg2)
+	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when default action changes")
+}
