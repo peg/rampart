@@ -1,0 +1,103 @@
+# Example: policy with inline tests
+#
+# Tests are embedded directly in the policy file, making the policy
+# self-verifying. Run with:
+#
+#   rampart test examples/policy-with-tests.yaml
+#
+# This pattern works well for project-specific policies where you want
+# tests to live alongside the rules they verify.
+
+version: "1"
+default_action: deny
+
+policies:
+  - name: allow-safe-commands
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches:
+            - "git *"
+            - "npm test"
+            - "npm run *"
+            - "go test *"
+            - "go build *"
+            - "make *"
+            - "cargo build *"
+            - "cargo test *"
+        message: "Safe dev command"
+
+  - name: allow-file-reads
+    match:
+      tool: read
+    rules:
+      - action: allow
+        when:
+          path_matches:
+            - "**/*.go"
+            - "**/*.ts"
+            - "**/*.js"
+            - "**/*.py"
+            - "**/*.md"
+            - "**/*.yaml"
+            - "**/*.yml"
+            - "**/*.json"
+            - "**/*.toml"
+        message: "Safe file read"
+
+tests:
+  - name: git push allowed
+    tool: exec
+    params:
+      command: "git push origin main"
+    expect: allow
+
+  - name: npm test allowed
+    tool: exec
+    params:
+      command: "npm test"
+    expect: allow
+
+  - name: go build allowed
+    tool: exec
+    params:
+      command: "go build ./..."
+    expect: allow
+
+  - name: make allowed
+    tool: exec
+    params:
+      command: "make build"
+    expect: allow
+
+  - name: curl denied (default deny)
+    tool: exec
+    params:
+      command: "curl https://example.com"
+    expect: deny
+
+  - name: rm denied (default deny)
+    tool: exec
+    params:
+      command: "rm -rf /"
+    expect: deny
+
+  - name: read go file allowed
+    tool: read
+    params:
+      path: "internal/engine/engine.go"
+    expect: allow
+
+  - name: read markdown allowed
+    tool: read
+    params:
+      path: "docs/README.md"
+    expect: allow
+
+  - name: read binary denied (default deny)
+    tool: read
+    params:
+      path: "/usr/bin/bash"
+    expect: deny
