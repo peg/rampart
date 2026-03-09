@@ -183,13 +183,20 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		}
 	}
 
-	// 12. System info
+	// 12. Preload health (Linux only)
+	if runtime.GOOS == "linux" {
+		if n := doctorPreload(emit); n > 0 {
+			warnings += n
+		}
+	}
+
+	// 13. System info
 	emit("System", "ok", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
 
-	// 13. Project policy (informational only — not a failure)
+	// 14. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
 
-	// 14. Proactive policy suggestions (informational only)
+	// 15. Proactive policy suggestions (informational only)
 	if detectResult, detectErr := detect.Environment(); detectErr == nil {
 		client := newPolicyRegistryClient()
 		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
@@ -609,6 +616,66 @@ func countClaudeHookMatchers(settings map[string]any) int {
 		}
 	}
 	return count
+}
+
+// doctorPreload checks if the LD_PRELOAD drop-in is installed and actually
+// loaded in the running OpenClaw gateway process. Catches the case where
+// setup was run but the gateway wasn't restarted through systemd.
+func doctorPreload(emit emitFn) (warnings int) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+
+	dropinPath := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
+	if _, err := os.Stat(dropinPath); err != nil {
+		// No drop-in installed — preload not configured, nothing to check
+		return 0
+	}
+
+	// Drop-in exists. Find the OpenClaw gateway process and check its env.
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid := entry.Name()
+		if pid[0] < '0' || pid[0] > '9' {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline"))
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(string(cmdline), "openclaw") || !strings.Contains(string(cmdline), "gateway") {
+			continue
+		}
+		// Found the gateway process — check its environment
+		environ, err := os.ReadFile(filepath.Join("/proc", pid, "environ"))
+		if err != nil {
+			// Can't read env (permissions), skip
+			emit("Preload", "ok", "drop-in installed (could not verify process env)")
+			return 0
+		}
+		envStr := string(environ)
+		if strings.Contains(envStr, "LD_PRELOAD") && strings.Contains(envStr, "librampart") {
+			emit("Preload", "ok", "LD_PRELOAD active in OpenClaw gateway")
+			return 0
+		}
+		// Drop-in exists but process doesn't have it loaded
+		emit("Preload", "warn",
+			"drop-in installed but LD_PRELOAD not active — gateway needs a full restart"+
+				hintSep+"systemctl --user restart openclaw-gateway")
+		return 1
+	}
+
+	// No gateway process found
+	emit("Preload", "warn", "drop-in installed but OpenClaw gateway not running")
+	return 1
 }
 
 func doctorAudit(emit emitFn) (issues int, warnings int) {
