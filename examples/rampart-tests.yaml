@@ -107,10 +107,16 @@ tests:
       path: "~/.aws/credentials"
     expect: deny
 
-  - name: deny read env file
+  - name: deny read env file (absolute path)
     tool: read
     params:
       path: "/home/user/project/.env"
+    expect: deny
+
+  - name: deny read env file (bare)
+    tool: read
+    params:
+      path: ".env"
     expect: deny
 
   - name: deny read gcloud credentials

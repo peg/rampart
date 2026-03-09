@@ -218,6 +218,17 @@ func matchDoubleGlob(pattern, name string) bool {
 		return false
 	}
 
+	// When "**" is at the start (prefix is empty) and suffix starts with "/",
+	// also try matching without the leading "/" to handle zero-depth paths.
+	// This matches gitignore semantics: "**/.env" should match both
+	// "project/.env" and bare ".env" (zero directory segments).
+	if prefix == "" && strings.HasPrefix(suffix, "/") {
+		trimmed := suffix[1:]
+		if matched, _ := filepath.Match(trimmed, remainder); matched {
+			return true
+		}
+	}
+
 	return matchSuffixGlob(suffix, remainder)
 }
 
