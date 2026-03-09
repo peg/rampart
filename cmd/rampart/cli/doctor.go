@@ -694,10 +694,6 @@ func doctorPreload(emit emitFn) (warnings int) {
 		"drop-in installed but LD_PRELOAD not active — gateway needs a full restart"+
 			hintSep+"systemctl --user restart openclaw-gateway")
 	return 1
-
-	// No gateway process found
-	emit("Preload", "warn", "drop-in installed but OpenClaw gateway not running")
-	return 1
 }
 
 // doctorFileToolPatches checks if OpenClaw's file tools (read, write, edit, grep)
