@@ -190,13 +190,18 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		}
 	}
 
-	// 13. System info
+	// 13. File tool patches (OpenClaw only)
+	if n := doctorFileToolPatches(emit); n > 0 {
+		warnings += n
+	}
+
+	// 14. System info
 	emit("System", "ok", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
 
-	// 14. Project policy (informational only — not a failure)
+	// 15. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
 
-	// 15. Proactive policy suggestions (informational only)
+	// 16. Proactive policy suggestions (informational only)
 	if detectResult, detectErr := detect.Environment(); detectErr == nil {
 		client := newPolicyRegistryClient()
 		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
@@ -675,6 +680,40 @@ func doctorPreload(emit emitFn) (warnings int) {
 
 	// No gateway process found
 	emit("Preload", "warn", "drop-in installed but OpenClaw gateway not running")
+	return 1
+}
+
+// doctorFileToolPatches checks if OpenClaw's file tools (read, write, edit, grep)
+// are patched with Rampart policy checks. If the tools directory exists but files
+// aren't patched, warns the user — this happens after npm upgrades.
+func doctorFileToolPatches(emit emitFn) (warnings int) {
+	candidates := openclawToolsCandidates()
+	var toolsDir string
+	for _, d := range candidates {
+		if _, err := os.Stat(filepath.Join(d, "read.js")); err == nil {
+			toolsDir = d
+			break
+		}
+	}
+	if toolsDir == "" {
+		// No OpenClaw tools found — not an OpenClaw installation, skip
+		return 0
+	}
+
+	readFile := filepath.Join(toolsDir, "read.js")
+	data, err := os.ReadFile(readFile)
+	if err != nil {
+		return 0
+	}
+
+	if strings.Contains(string(data), "RAMPART_") {
+		emit("File tools", "ok", "OpenClaw file tools patched")
+		return 0
+	}
+
+	emit("File tools", "warn",
+		"OpenClaw file tools not patched — file read/write/edit/grep not policy-checked"+
+			hintSep+"sudo rampart setup openclaw --patch-tools --force")
 	return 1
 }
 

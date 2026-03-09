@@ -1166,6 +1166,20 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 		return nil
 	}
 
+	// Check if we can write to the tools directory before attempting patches.
+	// Global npm installs (sudo npm i -g) create root-owned files.
+	testFile := filepath.Join(toolsDir, ".rampart-write-test")
+	if err := os.WriteFile(testFile, []byte("test"), 0o600); err != nil {
+		if os.IsPermission(err) {
+			return fmt.Errorf("cannot patch file tools: %s is not writable (owned by root?)\n"+
+				"  Run with sudo:  sudo %s setup openclaw --patch-tools --force\n"+
+				"  Or fix ownership: sudo chown -R $(whoami) %s",
+				toolsDir, os.Args[0], toolsDir)
+		}
+		return fmt.Errorf("cannot write to tools directory %s: %w", toolsDir, err)
+	}
+	os.Remove(testFile)
+
 	tokenExpr := `process.env.RAMPART_TOKEN`
 	if token != "" {
 		tokenExpr = fmt.Sprintf(`process.env.RAMPART_TOKEN || "%s"`, token)
