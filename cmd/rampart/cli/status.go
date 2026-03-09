@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
+
 	"os"
 	"path/filepath"
 	"strings"
@@ -248,11 +248,24 @@ func detectProtectedAgents() []string {
 		agents = append(agents, "Cline (hooks)")
 	}
 
-	// OpenClaw shim
-	client := &http.Client{Timeout: 1 * time.Second}
-	if resp, err := client.Get("http://localhost:19090/health"); err == nil {
-		defer resp.Body.Close()
+	// OpenClaw: check for systemd drop-in, shell shim, or SHELL config
+	openclawDropIn := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
+	openclawShim := filepath.Join(home, ".local", "bin", "rampart-shim")
+	openclawConfig := filepath.Join(home, ".openclaw", "openclaw.json")
+	if _, err := os.Stat(openclawDropIn); err == nil {
+		agents = append(agents, "OpenClaw (preload)")
+	} else if _, err := os.Stat(openclawShim); err == nil {
 		agents = append(agents, "OpenClaw (shim)")
+	} else if data, err := os.ReadFile(openclawConfig); err == nil {
+		if strings.Contains(string(data), "rampart") {
+			agents = append(agents, "OpenClaw (config)")
+		}
+	}
+
+	// Codex wrapper
+	codexWrapper := filepath.Join(home, ".rampart", "bin", "codex")
+	if _, err := os.Stat(codexWrapper); err == nil {
+		agents = append(agents, "Codex (wrapper)")
 	}
 
 	return agents
