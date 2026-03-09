@@ -300,6 +300,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 				}
 			}
 
+			printFirstRunTest(cmd.OutOrStdout())
 			return nil
 		},
 	}

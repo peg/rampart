@@ -123,6 +123,8 @@ exec %s preload -- %s "$@"
 
 			fmt.Fprintln(out, "✓ Run 'codex' normally — all tool calls are now enforced by Rampart.")
 			fmt.Fprintln(out, "  Uninstall: rampart setup codex --remove")
+
+			printFirstRunTest(out)
 			return nil
 		},
 	}

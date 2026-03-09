@@ -102,6 +102,7 @@ Use --remove to uninstall the Rampart hook scripts.`,
 			fmt.Fprintln(cmd.OutOrStdout(), "Cline will now route tool calls through Rampart's policy engine.")
 			fmt.Fprintln(cmd.OutOrStdout(), "No additional configuration needed - hooks activate automatically.")
 
+			printFirstRunTest(cmd.OutOrStdout())
 			return nil
 		},
 	}

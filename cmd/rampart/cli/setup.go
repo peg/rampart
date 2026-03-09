@@ -224,6 +224,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 					fmt.Fprintln(cmd.ErrOrStderr(), "  Fix with: sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart")
 				}
 			}
+
+			printFirstRunTest(cmd.OutOrStdout())
 			return nil
 		},
 	}
