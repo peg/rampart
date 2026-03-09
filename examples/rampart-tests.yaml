@@ -6,8 +6,10 @@
 #   rampart test examples/rampart-tests.yaml --json
 #   rampart test examples/rampart-tests.yaml --run "deny*"
 #
-# Uses the standard policy profile by default.
+# Uses the standard policy profile shipped with Rampart.
 # Override with: rampart test examples/rampart-tests.yaml --config my-policy.yaml
+
+policy: ../policies/standard.yaml
 
 tests:
   # --- Exec: should be allowed ---
@@ -107,10 +109,16 @@ tests:
       path: "~/.aws/credentials"
     expect: deny
 
-  - name: deny read env file
+  - name: deny read env file (absolute path)
     tool: read
     params:
       path: "/home/user/project/.env"
+    expect: deny
+
+  - name: deny read env file (bare)
+    tool: read
+    params:
+      path: ".env"
     expect: deny
 
   - name: deny read gcloud credentials

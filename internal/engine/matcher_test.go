@@ -71,6 +71,23 @@ func TestMatchGlob(t *testing.T) {
 		{"**/.ssh/id_*", `C:\Users\Trevor\Documents\file.txt`, false},
 		{"**/.*", `C:\Users\Trevor\.env`, true},
 		{"**/.env", `C:\Users\Trevor\project\.env`, true},
+
+		// Zero-depth: "**/.env" should match bare ".env" (no directory prefix).
+		// This is gitignore semantics — "**" matches zero or more path segments.
+		{"**/.env", ".env", true},
+		{"**/.env", "./.env", true}, // "./" contains a slash so matchSuffixGlob finds it
+		{"**/.env.*", ".env.local", true},
+		{"**/.env.*", ".env.production", true},
+		{"**/.npmrc", ".npmrc", true},
+		{"**/.netrc", ".netrc", true},
+		{"**/.ssh/id_*", ".ssh/id_rsa", true},
+		{"**/.aws/credentials", ".aws/credentials", true},
+		// Zero-depth: negative cases (must NOT over-match)
+		{"**/.ssh/id_*", "id_rsa", false},            // bare filename without .ssh/ dir
+		{"**/.env", ".environment", false},            // longer name
+		{"**/.env", "env", false},                     // no dot-prefix
+		{"**/.env", "not-.env", false},                // prefix before match
+		{"**/.aws/credentials", "credentials", false}, // bare without .aws/ dir
 	}
 
 	for _, tt := range tests {

@@ -139,3 +139,103 @@ func TestVerifyHashChain_Empty(t *testing.T) {
 		t.Error("empty chain should be valid")
 	}
 }
+
+func TestGenerateNarrative(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     *ReportData
+		contains []string
+	}{
+		{
+			name: "zero events",
+			data: &ReportData{TotalEvents: 0},
+			contains: []string{
+				"No tool calls were recorded",
+				"rampart doctor",
+			},
+		},
+		{
+			name: "single denial",
+			data: &ReportData{
+				TotalEvents:  10,
+				DeniedEvents: 1,
+				PeriodDays:   1,
+				ChainValid:   true,
+				TopDenied:    []CommandCount{{Command: "rm -rf /", Count: 1}},
+			},
+			contains: []string{
+				"10 tool calls today",
+				"1 potentially dangerous operation was blocked",
+				"rm -rf /",
+				"audit chain is intact",
+			},
+		},
+		{
+			name: "multiple denials over days",
+			data: &ReportData{
+				TotalEvents:  200,
+				DeniedEvents: 42,
+				PeriodDays:   7,
+				ChainValid:   true,
+				TopDenied:    []CommandCount{{Command: "curl evil.com", Count: 20}},
+			},
+			contains: []string{
+				"200 tool calls over the last 7 days",
+				"42 potentially dangerous operations were blocked",
+				"curl evil.com",
+			},
+		},
+		{
+			name: "no denials",
+			data: &ReportData{
+				TotalEvents:  50,
+				DeniedEvents: 0,
+				PeriodDays:   3,
+				ChainValid:   true,
+			},
+			contains: []string{
+				"No dangerous operations were blocked",
+				"well-behaved",
+			},
+		},
+		{
+			name: "with ask events",
+			data: &ReportData{
+				TotalEvents:  30,
+				DeniedEvents: 5,
+				AskEvents:    3,
+				PeriodDays:   1,
+				ChainValid:   true,
+				TopDenied:    []CommandCount{{Command: "test", Count: 5}},
+			},
+			contains: []string{
+				"3 operations required human approval",
+			},
+		},
+		{
+			name: "broken chain",
+			data: &ReportData{
+				TotalEvents:  10,
+				DeniedEvents: 1,
+				PeriodDays:   1,
+				ChainValid:   false,
+				TopDenied:    []CommandCount{{Command: "test", Count: 1}},
+			},
+			contains: []string{
+				"integrity issues",
+				"modified or deleted",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := generateNarrative(tt.data)
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("narrative missing %q\ngot: %s", want, result)
+				}
+			}
+		})
+	}
+}

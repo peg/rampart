@@ -35,17 +35,22 @@ type ReportData struct {
 	StartTime      time.Time
 	EndTime        time.Time
 	ChainValid     bool
+	Narrative      string
 	TotalEvents    int
 	AllowedEvents  int
 	DeniedEvents   int
 	LoggedEvents   int
+	AskEvents      int
 	AllowedPercent float64
 	DeniedPercent  float64
 	LoggedPercent  float64
+	AskPercent     float64
 	Timeline       []TimelineEntry
 	TopDenied      []CommandCount
 	TopPolicies    []PolicyCount
 	Events         []ReportEvent
+	UniqueAgents   int
+	PeriodDays     int
 }
 
 // TimelineEntry represents an hour's worth of events for the timeline chart.
@@ -159,6 +164,8 @@ func prepareReportData(events []audit.Event, startTime, endTime time.Time) (*Rep
 	policyCounts := make(map[string]int)
 	timelineCounts := make(map[string]map[string]int)
 
+	agents := make(map[string]bool)
+
 	for _, event := range events {
 		switch event.Decision.Action {
 		case "allow":
@@ -167,6 +174,12 @@ func prepareReportData(events []audit.Event, startTime, endTime time.Time) (*Rep
 			data.DeniedEvents++
 		case "log":
 			data.LoggedEvents++
+		case "ask":
+			data.AskEvents++
+		}
+
+		if event.Agent != "" {
+			agents[event.Agent] = true
 		}
 
 		// Count denied commands
@@ -193,6 +206,7 @@ func prepareReportData(events []audit.Event, startTime, endTime time.Time) (*Rep
 		data.AllowedPercent = float64(data.AllowedEvents) / float64(data.TotalEvents) * 100
 		data.DeniedPercent = float64(data.DeniedEvents) / float64(data.TotalEvents) * 100
 		data.LoggedPercent = float64(data.LoggedEvents) / float64(data.TotalEvents) * 100
+		data.AskPercent = float64(data.AskEvents) / float64(data.TotalEvents) * 100
 	}
 
 	// Prepare timeline data
@@ -207,7 +221,67 @@ func prepareReportData(events []audit.Event, startTime, endTime time.Time) (*Rep
 	// Prepare event list
 	data.Events = prepareEventList(events)
 
+	// Metadata
+	data.UniqueAgents = len(agents)
+	data.PeriodDays = int(endTime.Sub(startTime).Hours()/24) + 1
+	if data.PeriodDays < 1 {
+		data.PeriodDays = 1
+	}
+
+	// Generate narrative summary
+	data.Narrative = generateNarrative(data)
+
 	return data, nil
+}
+
+// generateNarrative creates a human-readable summary paragraph for the report.
+func generateNarrative(data *ReportData) string {
+	if data.TotalEvents == 0 {
+		return "No tool calls were recorded during this period. If you expected activity, verify that Rampart hooks are installed with 'rampart doctor'."
+	}
+
+	var parts []string
+
+	// Opening
+	period := "in this period"
+	if data.PeriodDays == 1 {
+		period = "today"
+	} else if data.PeriodDays > 1 {
+		period = fmt.Sprintf("over the last %d days", data.PeriodDays)
+	}
+	if data.UniqueAgents > 1 {
+		parts = append(parts, fmt.Sprintf("Rampart evaluated %d tool calls from %d agents %s.", data.TotalEvents, data.UniqueAgents, period))
+	} else {
+		parts = append(parts, fmt.Sprintf("Rampart evaluated %d tool calls %s.", data.TotalEvents, period))
+	}
+
+	// Denials
+	if data.DeniedEvents > 0 {
+		if data.DeniedEvents == 1 {
+			parts = append(parts, "1 potentially dangerous operation was blocked.")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d potentially dangerous operations were blocked.", data.DeniedEvents))
+		}
+		if len(data.TopDenied) > 0 {
+			parts = append(parts, fmt.Sprintf("The most frequently blocked command was \"%s\".", data.TopDenied[0].Command))
+		}
+	} else {
+		parts = append(parts, "No dangerous operations were blocked — either your agents are well-behaved or your policies may need tightening.")
+	}
+
+	// Approval requests
+	if data.AskEvents > 0 {
+		parts = append(parts, fmt.Sprintf("%d operations required human approval.", data.AskEvents))
+	}
+
+	// Integrity
+	if data.ChainValid {
+		parts = append(parts, "The audit chain is intact — no events have been tampered with.")
+	} else {
+		parts = append(parts, "⚠ The audit chain has integrity issues. Some events may have been modified or deleted.")
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // verifyHashChain checks if the hash chain is valid across all events.
@@ -610,6 +684,12 @@ const htmlTemplate = `<!DOCTYPE html>
             </div>
         </div>
         
+        {{if .Narrative}}
+        <div class="narrative" style="background: #f8f9fa; border-left: 4px solid #2563eb; padding: 16px 20px; margin: 0 0 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.6; color: #374151;">
+            {{.Narrative}}
+        </div>
+        {{end}}
+
         <div class="summary">
             <div class="card total">
                 <div class="card-number">{{.TotalEvents}}</div>
@@ -630,6 +710,13 @@ const htmlTemplate = `<!DOCTYPE html>
                 <div class="card-label">Logged</div>
                 <div class="card-percent">{{printf "%.1f%%" .LoggedPercent}}</div>
             </div>
+            {{if .AskEvents}}
+            <div class="card" style="border-left: 4px solid #8b5cf6;">
+                <div class="card-number">{{.AskEvents}}</div>
+                <div class="card-label">Approvals</div>
+                <div class="card-percent">{{printf "%.1f%%" .AskPercent}}</div>
+            </div>
+            {{end}}
         </div>
         
         {{if .Timeline}}

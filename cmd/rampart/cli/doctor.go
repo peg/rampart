@@ -183,13 +183,25 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		}
 	}
 
-	// 12. System info
+	// 12. Preload health (Linux only)
+	if runtime.GOOS == "linux" {
+		if n := doctorPreload(emit); n > 0 {
+			warnings += n
+		}
+	}
+
+	// 13. File tool patches (OpenClaw only)
+	if n := doctorFileToolPatches(emit); n > 0 {
+		warnings += n
+	}
+
+	// 14. System info
 	emit("System", "ok", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
 
-	// 13. Project policy (informational only — not a failure)
+	// 15. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
 
-	// 14. Proactive policy suggestions (informational only)
+	// 16. Proactive policy suggestions (informational only)
 	if detectResult, detectErr := detect.Environment(); detectErr == nil {
 		client := newPolicyRegistryClient()
 		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
@@ -609,6 +621,113 @@ func countClaudeHookMatchers(settings map[string]any) int {
 		}
 	}
 	return count
+}
+
+// doctorPreload checks if the LD_PRELOAD drop-in is installed and actually
+// loaded in the running OpenClaw gateway process. Catches the case where
+// setup was run but the gateway wasn't restarted through systemd.
+func doctorPreload(emit emitFn) (warnings int) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+
+	dropinPath := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
+	if _, err := os.Stat(dropinPath); err != nil {
+		// No drop-in installed — preload not configured, nothing to check
+		return 0
+	}
+
+	// Drop-in exists. Find the OpenClaw gateway process and check its env.
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0
+	}
+
+	foundGateway := false
+	preloadActive := false
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid := entry.Name()
+		if pid[0] < '0' || pid[0] > '9' {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline"))
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(string(cmdline), "openclaw") || !strings.Contains(string(cmdline), "gateway") {
+			continue
+		}
+		foundGateway = true
+
+		// Check environment for LD_PRELOAD — read only the var names we need
+		environ, err := os.ReadFile(filepath.Join("/proc", pid, "environ"))
+		if err != nil {
+			// Can't read env (permissions), skip this process
+			continue
+		}
+		// Parse null-delimited env vars, only check for LD_PRELOAD
+		for _, envVar := range strings.Split(string(environ), "\x00") {
+			if strings.HasPrefix(envVar, "LD_PRELOAD=") && strings.Contains(envVar, "librampart") {
+				preloadActive = true
+				break
+			}
+		}
+		if preloadActive {
+			break
+		}
+	}
+
+	if !foundGateway {
+		emit("Preload", "warn", "drop-in installed but OpenClaw gateway not running")
+		return 1
+	}
+	if preloadActive {
+		emit("Preload", "ok", "LD_PRELOAD active in OpenClaw gateway")
+		return 0
+	}
+	emit("Preload", "warn",
+		"drop-in installed but LD_PRELOAD not active — gateway needs a full restart"+
+			hintSep+"systemctl --user restart openclaw-gateway")
+	return 1
+}
+
+// doctorFileToolPatches checks if OpenClaw's file tools (read, write, edit, grep)
+// are patched with Rampart policy checks. If the tools directory exists but files
+// aren't patched, warns the user — this happens after npm upgrades.
+func doctorFileToolPatches(emit emitFn) (warnings int) {
+	candidates := openclawToolsCandidates()
+	var toolsDir string
+	for _, d := range candidates {
+		if _, err := os.Stat(filepath.Join(d, "read.js")); err == nil {
+			toolsDir = d
+			break
+		}
+	}
+	if toolsDir == "" {
+		// No OpenClaw tools found — not an OpenClaw installation, skip
+		return 0
+	}
+
+	readFile := filepath.Join(toolsDir, "read.js")
+	data, err := os.ReadFile(readFile)
+	if err != nil {
+		return 0
+	}
+
+	if strings.Contains(string(data), "RAMPART_") {
+		emit("File tools", "ok", "OpenClaw file tools patched")
+		return 0
+	}
+
+	emit("File tools", "warn",
+		"OpenClaw file tools not patched — file read/write/edit/grep not policy-checked"+
+			hintSep+"sudo rampart setup openclaw --patch-tools --force")
+	return 1
 }
 
 func doctorAudit(emit emitFn) (issues int, warnings int) {
