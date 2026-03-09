@@ -1178,7 +1178,7 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 		}
 		return fmt.Errorf("cannot write to tools directory %s: %w", toolsDir, err)
 	}
-	os.Remove(testFile)
+	defer os.Remove(testFile)
 
 	tokenExpr := `process.env.RAMPART_TOKEN`
 	if token != "" {

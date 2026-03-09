@@ -82,6 +82,12 @@ func TestMatchGlob(t *testing.T) {
 		{"**/.netrc", ".netrc", true},
 		{"**/.ssh/id_*", ".ssh/id_rsa", true},
 		{"**/.aws/credentials", ".aws/credentials", true},
+		// Zero-depth: negative cases (must NOT over-match)
+		{"**/.ssh/id_*", "id_rsa", false},            // bare filename without .ssh/ dir
+		{"**/.env", ".environment", false},            // longer name
+		{"**/.env", "env", false},                     // no dot-prefix
+		{"**/.env", "not-.env", false},                // prefix before match
+		{"**/.aws/credentials", "credentials", false}, // bare without .aws/ dir
 	}
 
 	for _, tt := range tests {

@@ -241,11 +241,17 @@ func generateNarrative(data *ReportData) string {
 	var parts []string
 
 	// Opening
-	period := "today"
-	if data.PeriodDays > 1 {
+	period := "in this period"
+	if data.PeriodDays == 1 {
+		period = "today"
+	} else if data.PeriodDays > 1 {
 		period = fmt.Sprintf("over the last %d days", data.PeriodDays)
 	}
-	parts = append(parts, fmt.Sprintf("Rampart evaluated %d tool calls %s.", data.TotalEvents, period))
+	if data.UniqueAgents > 1 {
+		parts = append(parts, fmt.Sprintf("Rampart evaluated %d tool calls from %d agents %s.", data.TotalEvents, data.UniqueAgents, period))
+	} else {
+		parts = append(parts, fmt.Sprintf("Rampart evaluated %d tool calls %s.", data.TotalEvents, period))
+	}
 
 	// Denials
 	if data.DeniedEvents > 0 {

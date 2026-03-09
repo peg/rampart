@@ -644,6 +644,9 @@ func doctorPreload(emit emitFn) (warnings int) {
 		return 0
 	}
 
+	foundGateway := false
+	preloadActive := false
+
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -659,24 +662,38 @@ func doctorPreload(emit emitFn) (warnings int) {
 		if !strings.Contains(string(cmdline), "openclaw") || !strings.Contains(string(cmdline), "gateway") {
 			continue
 		}
-		// Found the gateway process — check its environment
+		foundGateway = true
+
+		// Check environment for LD_PRELOAD — read only the var names we need
 		environ, err := os.ReadFile(filepath.Join("/proc", pid, "environ"))
 		if err != nil {
-			// Can't read env (permissions), skip
-			emit("Preload", "ok", "drop-in installed (could not verify process env)")
-			return 0
+			// Can't read env (permissions), skip this process
+			continue
 		}
-		envStr := string(environ)
-		if strings.Contains(envStr, "LD_PRELOAD") && strings.Contains(envStr, "librampart") {
-			emit("Preload", "ok", "LD_PRELOAD active in OpenClaw gateway")
-			return 0
+		// Parse null-delimited env vars, only check for LD_PRELOAD
+		for _, envVar := range strings.Split(string(environ), "\x00") {
+			if strings.HasPrefix(envVar, "LD_PRELOAD=") && strings.Contains(envVar, "librampart") {
+				preloadActive = true
+				break
+			}
 		}
-		// Drop-in exists but process doesn't have it loaded
-		emit("Preload", "warn",
-			"drop-in installed but LD_PRELOAD not active — gateway needs a full restart"+
-				hintSep+"systemctl --user restart openclaw-gateway")
+		if preloadActive {
+			break
+		}
+	}
+
+	if !foundGateway {
+		emit("Preload", "warn", "drop-in installed but OpenClaw gateway not running")
 		return 1
 	}
+	if preloadActive {
+		emit("Preload", "ok", "LD_PRELOAD active in OpenClaw gateway")
+		return 0
+	}
+	emit("Preload", "warn",
+		"drop-in installed but LD_PRELOAD not active — gateway needs a full restart"+
+			hintSep+"systemctl --user restart openclaw-gateway")
+	return 1
 
 	// No gateway process found
 	emit("Preload", "warn", "drop-in installed but OpenClaw gateway not running")
