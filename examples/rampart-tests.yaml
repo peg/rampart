@@ -6,8 +6,10 @@
 #   rampart test examples/rampart-tests.yaml --json
 #   rampart test examples/rampart-tests.yaml --run "deny*"
 #
-# Uses the standard policy profile by default.
+# Uses the standard policy profile shipped with Rampart.
 # Override with: rampart test examples/rampart-tests.yaml --config my-policy.yaml
+
+policy: ../policies/standard.yaml
 
 tests:
   # --- Exec: should be allowed ---
