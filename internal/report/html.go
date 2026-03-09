@@ -44,6 +44,7 @@ type ReportData struct {
 	AllowedPercent float64
 	DeniedPercent  float64
 	LoggedPercent  float64
+	AskPercent     float64
 	Timeline       []TimelineEntry
 	TopDenied      []CommandCount
 	TopPolicies    []PolicyCount
@@ -205,6 +206,7 @@ func prepareReportData(events []audit.Event, startTime, endTime time.Time) (*Rep
 		data.AllowedPercent = float64(data.AllowedEvents) / float64(data.TotalEvents) * 100
 		data.DeniedPercent = float64(data.DeniedEvents) / float64(data.TotalEvents) * 100
 		data.LoggedPercent = float64(data.LoggedEvents) / float64(data.TotalEvents) * 100
+		data.AskPercent = float64(data.AskEvents) / float64(data.TotalEvents) * 100
 	}
 
 	// Prepare timeline data
@@ -708,6 +710,13 @@ const htmlTemplate = `<!DOCTYPE html>
                 <div class="card-label">Logged</div>
                 <div class="card-percent">{{printf "%.1f%%" .LoggedPercent}}</div>
             </div>
+            {{if .AskEvents}}
+            <div class="card" style="border-left: 4px solid #8b5cf6;">
+                <div class="card-number">{{.AskEvents}}</div>
+                <div class="card-label">Approvals</div>
+                <div class="card-percent">{{printf "%.1f%%" .AskPercent}}</div>
+            </div>
+            {{end}}
         </div>
         
         {{if .Timeline}}
