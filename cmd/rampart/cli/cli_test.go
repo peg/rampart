@@ -228,6 +228,9 @@ func TestServeReadsAndPersistsToken(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
+	// Clear env token so the file-based token is used.
+	t.Setenv("RAMPART_TOKEN", "")
+
 	configPath := filepath.Join(dir, "rampart.yaml")
 	content, err := policies.FS.ReadFile("standard.yaml")
 	require.NoError(t, err)
