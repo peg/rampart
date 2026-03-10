@@ -14,6 +14,7 @@
 package engine
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
@@ -363,7 +364,99 @@ func normalizeSegment(seg string) string {
 		return ""
 	}
 
+	// Strip shell wrapper prefix: /bin/bash -c, /bin/sh -c, bash -c, sh -c.
+	// Agent runtimes (OpenClaw, etc.) wrap commands in `/bin/bash -c <cmd>`,
+	// which hides the real command from glob patterns (#208).
+	tokens = stripShellWrapper(tokens)
+
+	if len(tokens) == 0 {
+		return ""
+	}
+
 	return strings.Join(tokens, " ")
+}
+
+// shellBasenames lists shell binary names that commonly wrap commands via -c.
+var shellBasenames = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "ash": true, "ksh": true,
+}
+
+// isShellBinary checks if a token is a known shell binary, matching by basename
+// to handle arbitrary paths (/bin/bash, /usr/local/bin/bash, etc.).
+func isShellBinary(token string) bool {
+	if shellBasenames[token] {
+		return true
+	}
+	return shellBasenames[filepath.Base(token)]
+}
+
+// hasCFlag checks if a flag token contains -c, either standalone or combined
+// (e.g. -lc, -ic). Returns true for any single-dash flag containing 'c'.
+func hasCFlag(token string) bool {
+	if !strings.HasPrefix(token, "-") || strings.HasPrefix(token, "--") {
+		return false
+	}
+	// Single-dash flag: -c, -lc, -ic, etc.
+	return strings.ContainsRune(token[1:], 'c')
+}
+
+// stripShellWrapper strips a leading shell -c wrapper (e.g. ["/bin/bash", "-c", ...])
+// and returns the inner command tokens. Handles combined flags (-lc), extra flags
+// before -c (--norc -c), and nested wrappers (up to 3 levels).
+func stripShellWrapper(tokens []string) []string {
+	for depth := 0; depth < 3; depth++ {
+		stripped := stripShellWrapperOnce(tokens)
+		if strSlicesEqual(stripped, tokens) {
+			break
+		}
+		tokens = stripped
+	}
+	return tokens
+}
+
+func strSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stripShellWrapperOnce(tokens []string) []string {
+	if len(tokens) < 2 {
+		return tokens
+	}
+	if !isShellBinary(tokens[0]) {
+		return tokens
+	}
+	// Scan for -c flag (or combined flag containing c) in positions 1+.
+	// Skip other flags like --norc, -l, etc.
+	for i := 1; i < len(tokens); i++ {
+		tok := tokens[i]
+		if !strings.HasPrefix(tok, "-") {
+			// Reached a non-flag token without finding -c — not a wrapper.
+			return tokens
+		}
+		if hasCFlag(tok) {
+			inner := tokens[i+1:]
+			if len(inner) == 0 {
+				return tokens
+			}
+			// If the shell got a single quoted string, re-tokenize it.
+			if len(inner) == 1 {
+				re := tokenize(inner[0])
+				if len(re) > 0 {
+					return re
+				}
+			}
+			return inner
+		}
+	}
+	return tokens
 }
 
 // isEnvAssignment returns true if token looks like VAR=value.
