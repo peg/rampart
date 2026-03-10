@@ -519,8 +519,8 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			if preloadInstalled {
 				fmt.Fprintln(out, "Coverage:")
 				fmt.Fprintln(out, "  [P] Shell commands (OpenClaw + all sub-agents)  — LD_PRELOAD")
-				if openclawUsesBundledDist() {
-					fmt.Fprintln(out, "  [ ] File operations (read/write/edit/grep)       — not intercepted (bundled dist)")
+				if openclawDistPatched() {
+					fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — dist patched")
 				} else if patchTools {
 					fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — patched")
 				} else {
@@ -1145,7 +1145,14 @@ func openclawToolsCandidates() []string {
 }
 
 func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
-	// Find the tools directory
+	// Try bundled dist files first (works for modern OpenClaw with webpack/esbuild output).
+	if patched, err := patchOpenClawDistTools(cmd, url, token); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ dist patch failed: %v\n", err)
+	} else if patched {
+		return nil
+	}
+
+	// Fall back to patching source files in node_modules.
 	candidates := openclawToolsCandidates()
 
 	var toolsDir string
@@ -1311,6 +1318,139 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 	fmt.Fprintln(cmd.OutOrStdout(), "")
 	fmt.Fprintln(cmd.OutOrStdout(), "⚠ File tool patches modify node_modules — re-run after OpenClaw upgrades.")
 	return nil
+}
+
+// openclawDistCandidates returns candidate directories for OpenClaw's bundled dist files.
+func openclawDistCandidates() []string {
+	home, _ := os.UserHomeDir()
+	return []string{
+		"/usr/lib/node_modules/openclaw/dist",
+		"/usr/local/lib/node_modules/openclaw/dist",
+		filepath.Join(home, ".npm-global", "lib", "node_modules", "openclaw", "dist"),
+		filepath.Join(home, "node_modules", "openclaw", "dist"),
+	}
+}
+
+// patchOpenClawDistTools patches OpenClaw's bundled dist files (pi-embedded-*.js)
+// to inject Rampart policy checks into the tool execution wrappers.
+// Returns (true, nil) if dist files were found and patched.
+func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error) {
+	var distDir string
+	for _, d := range openclawDistCandidates() {
+		matches, _ := filepath.Glob(filepath.Join(d, "pi-embedded-*.js"))
+		if len(matches) > 0 {
+			distDir = d
+			break
+		}
+	}
+	if distDir == "" {
+		return false, nil
+	}
+
+	// Check write permissions
+	testFile := filepath.Join(distDir, ".rampart-write-test")
+	if err := os.WriteFile(testFile, []byte("test"), 0o600); err != nil {
+		if os.IsPermission(err) {
+			return false, fmt.Errorf("cannot patch dist files: %s is not writable (owned by root?)\n"+
+				"  Run with sudo:  sudo %s setup openclaw --patch-tools --force\n"+
+				"  Or fix ownership: sudo chown -R $(whoami) %s",
+				distDir, os.Args[0], distDir)
+		}
+		return false, fmt.Errorf("cannot write to dist directory: %w", err)
+	}
+	defer os.Remove(testFile)
+
+	tokenExpr := `process.env.RAMPART_TOKEN`
+	if token != "" {
+		tokenExpr = fmt.Sprintf(`process.env.RAMPART_TOKEN || "%s"`, token)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(distDir, "pi-embedded-*.js"))
+	patched := 0
+
+	for _, file := range matches {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		text := string(content)
+
+		// Skip already-patched files
+		if strings.Contains(text, "RAMPART_DIST_CHECK") {
+			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s already patched\n", filepath.Base(file))
+			patched++
+			continue
+		}
+
+		modified := text
+
+		// Patch read tool: inject before executeReadWithAdaptivePaging
+		readOrig := `const result = await executeReadWithAdaptivePaging({`
+		readCheck := fmt.Sprintf(`/* RAMPART_DIST_CHECK_READ */ try {
+				const __rp = typeof record?.path === "string" ? String(record.path) : "";
+				const __rr = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/read", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+					body: JSON.stringify({ agent: "openclaw", session: "main", params: { path: __rp } }),
+					signal: AbortSignal.timeout(3000)
+				});
+				if (__rr.status === 403) {
+					const __rd = await __rr.json().catch(() => ({}));
+					return { content: [{ type: "text", text: "rampart: " + (__rd.message || "policy denied") }] };
+				}
+			} catch (__re) { /* fail-open */ }
+			const result = await executeReadWithAdaptivePaging({`, url, tokenExpr)
+
+		modified = strings.Replace(modified, readOrig, readCheck, 1)
+
+		// Patch write/edit tools: inject before tool.execute in wrapToolParamNormalization
+		wrapOrig := `return tool.execute(toolCallId, normalized`
+		wrapCheck := fmt.Sprintf(`/* RAMPART_DIST_CHECK_WRITE */ try {
+				const __wp = record?.path || record?.file_path || "";
+				const __wt = tool.name === "Edit" ? "edit" : "write";
+				const __wr = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/" + __wt, {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+					body: JSON.stringify({ agent: "openclaw", session: "main", params: { path: __wp } }),
+					signal: AbortSignal.timeout(3000)
+				});
+				if (__wr.status === 403) {
+					const __wd = await __wr.json().catch(() => ({}));
+					return { content: [{ type: "text", text: "rampart: " + (__wd.message || "policy denied") }] };
+				}
+			} catch (__we) { /* fail-open */ }
+			return tool.execute(toolCallId, normalized`, url, tokenExpr)
+
+		modified = strings.ReplaceAll(modified, wrapOrig, wrapCheck)
+
+		if modified == text {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: injection points not found (version mismatch?)\n", filepath.Base(file))
+			continue
+		}
+
+		// Backup original
+		backupPath := file + ".rampart-backup"
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+				return false, fmt.Errorf("backup %s: %w", filepath.Base(file), err)
+			}
+		}
+
+		if err := os.WriteFile(file, []byte(modified), 0o644); err != nil {
+			return false, fmt.Errorf("write %s: %w", filepath.Base(file), err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (read + write/edit)\n", filepath.Base(file))
+		patched++
+	}
+
+	if patched == 0 {
+		return false, nil
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "")
+	fmt.Fprintln(cmd.OutOrStdout(), "⚠ Dist file patches are overwritten by OpenClaw upgrades — re-run after updates.")
+	return true, nil
 }
 
 func hasRampartInMatcher(matcher map[string]any) bool {

@@ -700,12 +700,16 @@ func doctorPreload(emit emitFn) (warnings int) {
 // are patched with Rampart policy checks. If the tools directory exists but files
 // aren't patched, warns the user — this happens after npm upgrades.
 func doctorFileToolPatches(emit emitFn) (warnings int) {
-	// First check if OpenClaw uses bundled dist files — if so, patching
-	// node_modules source has no effect (#204).
+	// Check if OpenClaw uses bundled dist files (#204).
 	if openclawUsesBundledDist() {
+		// Check if dist files are patched
+		if openclawDistPatched() {
+			emit("File tools", "ok", "OpenClaw dist files patched (read + write/edit)")
+			return 0
+		}
 		emit("File tools", "warn",
-			"OpenClaw uses bundled dist files — file tool patching has no effect. "+
-				"File read/write/edit/grep are NOT policy-checked (only exec is intercepted via LD_PRELOAD)")
+			"OpenClaw uses bundled dist files — file tools not policy-checked"+
+				hintSep+"sudo rampart setup openclaw --patch-tools --force")
 		return 1
 	}
 
@@ -769,6 +773,23 @@ func openclawUsesBundledDist() bool {
 				if strings.Contains(string(data), "createReadTool") || strings.Contains(string(data), "readTool") {
 					return true
 				}
+			}
+		}
+	}
+	return false
+}
+
+// openclawDistPatched checks if the bundled dist files have been patched with Rampart checks.
+func openclawDistPatched() bool {
+	for _, d := range openclawDistCandidates() {
+		matches, _ := filepath.Glob(filepath.Join(d, "pi-embedded-*.js"))
+		for _, m := range matches {
+			data, err := os.ReadFile(m)
+			if err != nil {
+				continue
+			}
+			if strings.Contains(string(data), "RAMPART_DIST_CHECK") {
+				return true
 			}
 		}
 	}
