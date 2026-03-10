@@ -1369,11 +1369,21 @@ func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error)
 	patched := 0
 
 	for _, file := range matches {
+		// Skip helper files — only patch main bundles that contain tool wrappers
+		if strings.Contains(filepath.Base(file), "helpers") {
+			continue
+		}
+
 		content, err := os.ReadFile(file)
 		if err != nil {
 			continue
 		}
 		text := string(content)
+
+		// Skip files that don't contain the tool wrappers we need to patch
+		if !strings.Contains(text, "createOpenClawReadTool") && !strings.Contains(text, "wrapToolParamNormalization") {
+			continue
+		}
 
 		// Skip already-patched files
 		if strings.Contains(text, "RAMPART_DIST_CHECK") {
@@ -1421,7 +1431,7 @@ func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error)
 			} catch (__we) { /* fail-open */ }
 			return tool.execute(toolCallId, normalized`, url, tokenExpr)
 
-		modified = strings.ReplaceAll(modified, wrapOrig, wrapCheck)
+		modified = strings.Replace(modified, wrapOrig, wrapCheck, 1)
 
 		if modified == text {
 			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: injection points not found (version mismatch?)\n", filepath.Base(file))
