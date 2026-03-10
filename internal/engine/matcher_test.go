@@ -258,6 +258,47 @@ func TestMatchGlob_DoubleStarLimit(t *testing.T) {
 	}
 }
 
+func TestMatchCondition_ShellWrapperBypass(t *testing.T) {
+	// Issue #208: /bin/bash -c wrapping hides the real command from glob patterns.
+	// Patterns like "cat **/.ssh/id_*" must match even when the exec tool
+	// delivers "/bin/bash -c cat ~/.ssh/id_rsa 2>&1".
+	tests := []struct {
+		name    string
+		pattern string
+		cmd     string
+		want    bool
+	}{
+		{"direct cat blocked", "cat **/.ssh/id_*", "cat ~/.ssh/id_rsa", true},
+		{"bash -c cat blocked", "cat **/.ssh/id_*", "/bin/bash -c cat ~/.ssh/id_rsa", true},
+		{"bash -c cat with redirect", "cat **/.ssh/id_*", "/bin/bash -c cat ~/.ssh/id_rsa 2>&1", true},
+		{"sh -c cat blocked", "cat **/.ssh/id_*", "/bin/sh -c cat ~/.ssh/id_rsa", true},
+		{"rm via bash wrapper", "rm -rf /", "/bin/bash -c rm -rf /", true},
+		{"safe command not blocked", "cat **/.ssh/id_*", "/bin/bash -c ls /tmp", false},
+		{"env + wrapper", "cat **/.ssh/id_*", "FOO=bar /bin/bash -c cat ~/.ssh/id_rsa", true},
+		{"combined -lc flag", "cat **/.ssh/id_*", "bash -lc cat ~/.ssh/id_rsa", true},
+		{"extra flags before -c", "cat **/.ssh/id_*", "/bin/bash --norc -c cat ~/.ssh/id_rsa", true},
+		{"nested wrapper", "rm -rf /", "bash -c 'sh -c rm -rf /'", true},
+		{"homebrew bash path", "cat **/.ssh/id_*", "/usr/local/bin/bash -c cat ~/.ssh/id_rsa", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cond := Condition{
+				CommandMatches: []string{tt.pattern},
+			}
+			call := ToolCall{
+				Tool:   "exec",
+				Params: map[string]interface{}{"command": tt.cmd},
+			}
+			got := matchCondition(cond, call, nil)
+			if got != tt.want {
+				t.Errorf("matchCondition(command_matches=%q, cmd=%q) = %v, want %v",
+					tt.pattern, tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchCondition_AgentDepth(t *testing.T) {
 	gte1 := 1
 	lte2 := 2
