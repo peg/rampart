@@ -75,10 +75,26 @@ func renderProgressBar(pct, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
 }
 
-// isServeRunningLocal returns true if rampart serve is reachable on the default port.
-// This is a convenience wrapper around isServeRunning for status display.
+// isServeRunningLocal returns true if rampart serve is reachable.
+// Checks RAMPART_URL env var first, then default port, then common alternative ports.
 func isServeRunningLocal() bool {
-	return isServeRunning(fmt.Sprintf("http://localhost:%d", defaultServePort))
+	// Check RAMPART_URL env first (custom deployments).
+	if env := os.Getenv("RAMPART_URL"); env != "" {
+		if isServeRunning(env) {
+			return true
+		}
+	}
+	// Try default port.
+	if isServeRunning(fmt.Sprintf("http://localhost:%d", defaultServePort)) {
+		return true
+	}
+	// Try common alternative ports (proxy port, common dev ports).
+	for _, port := range []int{19090, 9091, 8090} {
+		if isServeRunning(fmt.Sprintf("http://localhost:%d", port)) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildStatusBox renders the full status panel.
