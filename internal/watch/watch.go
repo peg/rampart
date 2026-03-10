@@ -380,6 +380,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quietSeen = make(map[string]quietEntry)
 			}
 			m.quietSeen[dedup] = quietEntry{lastSeen: time.Now(), count: 1}
+			// Prune stale entries periodically.
+			if len(m.quietSeen) > 100 {
+				now := time.Now()
+				for k, v := range m.quietSeen {
+					if now.Sub(v.lastSeen) > quietWindow {
+						delete(m.quietSeen, k)
+					}
+				}
+			}
 		}
 
 		// Shift deny flash indices since we prepend at index 0.
