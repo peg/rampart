@@ -75,10 +75,10 @@ esac
 info "Version:  ${BOLD}${VERSION}${RESET}"
 
 # ── Build URLs ─────────────────────────────────────────────────────────────────
-TARBALL="rampart_${OS}_${ARCH}.tar.gz"
+TARBALL="rampart_${VERSION#v}_${OS}_${ARCH}.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 TARBALL_URL="${BASE_URL}/${TARBALL}"
-CHECKSUM_URL="${BASE_URL}/rampart_${OS}_${ARCH}_checksums.txt"
+CHECKSUM_URL="${BASE_URL}/checksums.txt"
 
 if [ "$DRY_RUN" = "1" ]; then
     step "Dry-run — no changes will be made"
