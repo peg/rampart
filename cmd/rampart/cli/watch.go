@@ -35,6 +35,7 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	var tool string
 	var serveURL string
 	var serveToken string
+	var quiet bool
 
 	cmd := &cobra.Command{
 		Use:   "watch",
@@ -69,6 +70,7 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 				Out:        cmd.OutOrStdout(),
 				ServeURL:   resolvedServeURL,
 				ServeToken: resolvedServeToken,
+				Quiet:      quiet,
 			})
 		},
 	}
@@ -81,6 +83,7 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&tool, "tool", "", "Filter by tool name (e.g., exec, read, write)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Serve API URL for interactive approvals")
 	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Bearer token for serve API")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress noisy system commands (ip neigh, systemd, etc.)")
 
 	return cmd
 }
