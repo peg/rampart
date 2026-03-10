@@ -519,7 +519,13 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			if preloadInstalled {
 				fmt.Fprintln(out, "Coverage:")
 				fmt.Fprintln(out, "  [P] Shell commands (OpenClaw + all sub-agents)  — LD_PRELOAD")
-				fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — patched (auto-repatched on restart)")
+				if openclawUsesBundledDist() {
+					fmt.Fprintln(out, "  [ ] File operations (read/write/edit/grep)       — not intercepted (bundled dist)")
+				} else if patchTools {
+					fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — patched")
+				} else {
+					fmt.Fprintln(out, "  [ ] File operations (read/write/edit/grep)       — use --patch-tools")
+				}
 				fmt.Fprintln(out, "  [ ] Network fetch (web_fetch tool)               — use network policies")
 				fmt.Fprintln(out, "  [ ] Browser automation                           — not intercepted")
 				fmt.Fprintln(out, "")

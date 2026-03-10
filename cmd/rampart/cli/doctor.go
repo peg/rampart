@@ -700,6 +700,15 @@ func doctorPreload(emit emitFn) (warnings int) {
 // are patched with Rampart policy checks. If the tools directory exists but files
 // aren't patched, warns the user — this happens after npm upgrades.
 func doctorFileToolPatches(emit emitFn) (warnings int) {
+	// First check if OpenClaw uses bundled dist files — if so, patching
+	// node_modules source has no effect (#204).
+	if openclawUsesBundledDist() {
+		emit("File tools", "warn",
+			"OpenClaw uses bundled dist files — file tool patching has no effect. "+
+				"File read/write/edit/grep are NOT policy-checked (only exec is intercepted via LD_PRELOAD)")
+		return 1
+	}
+
 	candidates := openclawToolsCandidates()
 	var toolsDir string
 	for _, d := range candidates {
@@ -728,6 +737,42 @@ func doctorFileToolPatches(emit emitFn) (warnings int) {
 		"OpenClaw file tools not patched — file read/write/edit/grep not policy-checked"+
 			hintSep+"sudo rampart setup openclaw --patch-tools --force")
 	return 1
+}
+
+// openclawUsesBundledDist checks if the OpenClaw installation uses pre-bundled
+// dist files (pi-embedded-*.js) rather than loading tools from node_modules.
+// When bundled, patching source files in node_modules has no effect.
+func openclawUsesBundledDist() bool {
+	// Check common OpenClaw install locations for bundled dist files
+	candidates := []string{
+		"/usr/lib/node_modules/openclaw/dist",
+		"/usr/local/lib/node_modules/openclaw/dist",
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".npm-global", "lib", "node_modules", "openclaw", "dist"),
+			filepath.Join(home, "node_modules", "openclaw", "dist"),
+		)
+	}
+
+	for _, distDir := range candidates {
+		matches, _ := filepath.Glob(filepath.Join(distDir, "pi-embedded-*.js"))
+		if len(matches) > 0 {
+			// Bundled dist exists. Check if the bundle contains tool definitions
+			// (confirming tools are compiled in, not loaded from node_modules).
+			for _, m := range matches {
+				data, err := os.ReadFile(m)
+				if err != nil {
+					continue
+				}
+				if strings.Contains(string(data), "createReadTool") || strings.Contains(string(data), "readTool") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func doctorAudit(emit emitFn) (issues int, warnings int) {
