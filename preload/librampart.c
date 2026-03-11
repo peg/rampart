@@ -213,7 +213,7 @@ static void init_config(void) {
     config.debug = (debug_str && strcmp(debug_str, "1") == 0) ? 1 : 0;
     
     config.agent = getenv("RAMPART_AGENT");
-    if (!config.agent) config.agent = "preload";
+    if (!config.agent) config.agent = "";
     
     config.session = getenv("RAMPART_SESSION");
     if (!config.session) {
@@ -427,6 +427,13 @@ static int check_policy(const char *command) {
     
     if (strcmp(config.mode, "disabled") == 0) {
         debug_log("Rampart disabled, allowing command");
+        return 1;
+    }
+    
+    // If RAMPART_AGENT is not set, this process is not an agent session.
+    // Skip policy check to avoid intercepting system processes (tailscaled,
+    // networkd, etc.) that inherit LD_PRELOAD but aren't agent-controlled.
+    if (!config.agent[0]) {
         return 1;
     }
     
