@@ -34,6 +34,19 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Allow operational commands (serve lifecycle, read-only queries).
+      - action: allow
+        when:
+          command_contains:
+            - "rampart serve"
+            - "rampart version"
+            - "rampart status"
+            - "rampart doctor"
+            - "rampart log"
+            - "rampart watch"
+            - "rampart convert"
+            - "rampart upgrade"
+        message: "Operational rampart commands are allowed"
       # Substring matching catches ALL shell wrapper bypasses (bash -c, sh -c, etc.)
       # This is the primary defense - simple but robust
       - action: deny

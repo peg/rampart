@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
@@ -251,7 +252,10 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 				}
 
 				if !policyExists || force {
-					if err := os.WriteFile(profilePath, content, 0o644); err != nil {
+					// Stamp with version so doctor can detect stale policies.
+					stamped := []byte(fmt.Sprintf("# rampart-policy-version: %s\n", build.Version))
+					stamped = append(stamped, content...)
+					if err := os.WriteFile(profilePath, stamped, 0o644); err != nil {
 						return fmt.Errorf("cli: write profile file %s: %w", profilePath, err)
 					}
 					policyWritten = true
@@ -301,6 +305,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			printFirstRunTest(cmd.OutOrStdout())
+			printNextStep(cmd.OutOrStdout(), "rampart setup claude-code   # or: codex, cline, openclaw")
 			return nil
 		},
 	}

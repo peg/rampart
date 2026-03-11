@@ -187,6 +187,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 	var assumeYes bool
 	var dryRun bool
 	var skipPolicyUpdate bool
+	var noBinary bool
 
 	cmd := &cobra.Command{
 		Use:   "upgrade [version]",
@@ -196,6 +197,17 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
+			}
+
+			// --no-binary: just refresh built-in policies, skip binary download.
+			if noBinary {
+				if skipPolicyUpdate {
+					return fmt.Errorf("--no-binary and --no-policy-update are mutually exclusive")
+				}
+				if err := upgradeStandardPolicies(cmd.OutOrStdout(), dryRun); err != nil {
+					return fmt.Errorf("policy refresh: %w", err)
+				}
+				return nil
 			}
 
 			current, err := resolved.currentVersion(ctx, resolved.commandRunner, resolved.executablePath)
@@ -226,7 +238,8 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return nil
 			}
 
-			if compareSemver(target, "v0.6.6") >= 0 {
+			// Only show v0.6.6 migration warning when upgrading FROM a version older than v0.6.6.
+			if current != "" && compareSemver(current, "v0.6.6") < 0 && compareSemver(target, "v0.6.6") >= 0 {
 				if err := maybeWarnRequireApprovalMigration(cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin(), assumeYes, resolved.userHomeDir); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ migration policy scan failed: %v\n", err)
 				}
@@ -375,6 +388,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would happen without changing anything")
 	cmd.Flags().BoolVar(&skipPolicyUpdate, "no-policy-update", false, "Skip refreshing built-in policy profiles after upgrade")
+	cmd.Flags().BoolVar(&noBinary, "no-binary", false, "Refresh built-in policies only (skip binary upgrade)")
 
 	return cmd
 }
@@ -970,6 +984,9 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		"yolo.yaml":                   true,
 		"demo.yaml":                   true,
 		"block-prompt-injection.yaml": true,
+		"research-agent.yaml":         true,
+		"mcp-server.yaml":             true,
+		"openclaw.yaml":               true,
 	}
 
 	updated := 0
@@ -997,6 +1014,13 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 			return fmt.Errorf("create temp file: %w", err)
 		}
 		tmpPath := tmp.Name()
+		// Stamp with the current binary version so doctor can detect stale policies.
+		versionStamp := fmt.Sprintf("# rampart-policy-version: %s\n", build.Version)
+		if _, err := tmp.WriteString(versionStamp); err != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+			return fmt.Errorf("write version stamp: %w", err)
+		}
 		if _, err := tmp.Write(content); err != nil {
 			tmp.Close()
 			os.Remove(tmpPath)

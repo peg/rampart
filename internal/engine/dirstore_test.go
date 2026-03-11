@@ -411,9 +411,9 @@ policies:
 		assert.Len(t, cfg.Policies, 1)
 	})
 
-	t.Run("skips duplicate policy names from directory", func(t *testing.T) {
+	t.Run("on-disk overrides embedded for same policy name", func(t *testing.T) {
 		dir := t.TempDir()
-		writeTestFile(t, filepath.Join(dir, "dup.yaml"), `
+		writeTestFile(t, filepath.Join(dir, "override.yaml"), `
 version: "1"
 policies:
   - name: primary-policy
@@ -423,15 +423,18 @@ policies:
       - action: allow
         when:
           command_matches: ["*"]
-        message: "allow all"
+        message: "allow all (disk override)"
 `)
 		primary := NewMemoryStore(primaryYAML, "primary")
 		store := NewMixedStore(primary, dir, nil)
 		cfg, err := store.Load()
 		require.NoError(t, err)
-		// Duplicate should be skipped — only 1 policy.
+		// On-disk version should replace embedded — still 1 policy.
 		assert.Len(t, cfg.Policies, 1)
 		assert.Equal(t, "primary-policy", cfg.Policies[0].Name)
+		// The on-disk version has "allow all" not "no rm".
+		assert.Equal(t, "allow", cfg.Policies[0].Rules[0].Action)
+		assert.Equal(t, "allow all (disk override)", cfg.Policies[0].Rules[0].Message)
 	})
 
 	t.Run("empty dir path returns primary only", func(t *testing.T) {

@@ -275,12 +275,35 @@ func (s *MixedStore) Load() (*Config, error) {
 	if merged.Notify == nil && dirCfg.Notify != nil {
 		merged.Notify = dirCfg.Notify
 	}
+	// On-disk policies override embedded ones with the same name.
+	// Rationale: if a user (or `rampart upgrade`) placed a policy file on disk,
+	// it should take effect. An attacker with write access to the policies dir
+	// can already add new catch-all allow rules, so protecting embedded names
+	// provides no real security benefit while breaking upgrade workflows.
+	dirNames := make(map[string]bool)
+	for _, p := range dirCfg.Policies {
+		dirNames[p.Name] = true
+	}
+	// Remove embedded policies that are superseded by on-disk versions.
+	if len(dirNames) > 0 {
+		filtered := merged.Policies[:0]
+		for _, p := range merged.Policies {
+			if dirNames[p.Name] {
+				s.logger.Debug("engine: on-disk policy overrides embedded", "name", p.Name)
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		merged.Policies = filtered
+		// Rebuild seen set after filtering.
+		seen = make(map[string]bool)
+		for _, p := range merged.Policies {
+			seen[p.Name] = true
+		}
+	}
 	for _, p := range dirCfg.Policies {
 		if seen[p.Name] {
-			// Debug-level: duplicates between the primary store (e.g. embedded standard)
-			// and the config dir are expected — the primary always takes precedence.
-			s.logger.Debug("engine: skip duplicate policy from config dir", "name", p.Name)
-			continue
+			continue // shouldn't happen, but guard against dir-internal dupes
 		}
 		seen[p.Name] = true
 		merged.Policies = append(merged.Policies, p)

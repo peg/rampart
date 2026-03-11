@@ -31,6 +31,24 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Allow serve lifecycle commands — stopping/restarting serve is operational, not policy modification.
+      - action: allow
+        when:
+          command_contains:
+            - "rampart serve"
+        message: "Serve lifecycle commands are allowed"
+      # Allow version/status/doctor — read-only commands.
+      - action: allow
+        when:
+          command_contains:
+            - "rampart version"
+            - "rampart status"
+            - "rampart doctor"
+            - "rampart log"
+            - "rampart watch"
+            - "rampart convert"
+            - "rampart upgrade"
+        message: "Read-only rampart commands are allowed"
       - action: deny
         when:
           command_contains:
@@ -39,6 +57,7 @@ policies:
             - "rampart rules"
             - "rampart policy"
             - "rampart init"
+            - "rampart setup"
         message: "Policy modification must be run by a human, not an agent"
       - action: deny
         when:

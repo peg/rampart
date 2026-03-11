@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -159,7 +160,8 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	warnings += auditWarnings
 
 	// 8. Server running on default port
-	serverIssues, serveURL := doctorServer(emit)
+	protected := detectProtectedAgents()
+	serverIssues, serveURL := doctorServer(emit, protected)
 	issues += serverIssues
 
 	// 9. Token auth check (requires server running)
@@ -386,11 +388,20 @@ func doctorPolicies(emit emitFn) int {
 		case isManagedEmptyCustom:
 			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid placeholder)", rel, count))
 		case lintResult.Warnings > 0:
-			emit("Policy", "warn",
-				fmt.Sprintf("~/%s (%d policies, %d lint warning(s))", rel, count, lintResult.Warnings)+
-					hintSep+fmt.Sprintf("rampart policy lint %s", path))
+			emit("Policy", "ok",
+				fmt.Sprintf("~/%s (%d policies, %d lint warning(s) — policy works, run lint for details)", rel, count, lintResult.Warnings))
 		default:
-			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
+			// Check for stale built-in policies.
+			if builtInProfiles[filepath.Base(path)] {
+				if staleMsg := checkPolicyVersionStamp(path); staleMsg != "" {
+					emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, %s)", rel, count, staleMsg)+
+						hintSep+"rampart upgrade --no-binary")
+				} else {
+					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
+				}
+			} else {
+				emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
+			}
 		}
 	}
 	if !found {
@@ -404,16 +415,74 @@ func doctorPolicies(emit emitFn) int {
 
 // doctorServer checks if rampart serve is running on defaultServePort.
 // Returns (issue count, serve URL for subsequent API checks).
-func doctorServer(emit emitFn) (int, string) {
+// builtInProfiles lists policy files that are managed by rampart and can be auto-updated.
+var builtInProfiles = map[string]bool{
+	"standard.yaml":               true,
+	"paranoid.yaml":               true,
+	"yolo.yaml":                   true,
+	"demo.yaml":                   true,
+	"block-prompt-injection.yaml": true,
+	"research-agent.yaml":         true,
+	"mcp-server.yaml":             true,
+	"openclaw.yaml":               true,
+}
+
+// checkPolicyVersionStamp reads the first line of a policy file looking for
+// "# rampart-policy-version: X.Y.Z". Returns a warning message if the stamp
+// version is older than the running binary, or "" if current/no stamp.
+func checkPolicyVersionStamp(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		return ""
+	}
+	line := scanner.Text()
+
+	const prefix = "# rampart-policy-version: "
+	if !strings.HasPrefix(line, prefix) {
+		// No stamp — policy predates version stamping (pre-v0.9.0).
+		// Don't warn: the user may have never run upgrade, or manually edited the file.
+		return ""
+	}
+
+	stampVer := strings.TrimSpace(line[len(prefix):])
+	if stampVer == build.Version || build.Version == "dev" || stampVer == "dev" {
+		return ""
+	}
+
+	// Normalize for comparison
+	stampNorm := stampVer
+	if !strings.HasPrefix(stampNorm, "v") {
+		stampNorm = "v" + stampNorm
+	}
+	binaryNorm := build.Version
+	if !strings.HasPrefix(binaryNorm, "v") {
+		binaryNorm = "v" + binaryNorm
+	}
+
+	if compareSemver(stampNorm, binaryNorm) < 0 {
+		return fmt.Sprintf("from %s, binary is %s", stampVer, build.Version)
+	}
+	return ""
+}
+
+func doctorServer(emit emitFn, protected []string) (int, string) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	url := fmt.Sprintf("http://localhost:%d/healthz", defaultServePort)
 	resp, err := client.Get(url)
 	if err != nil {
-		// On Windows, serve is optional for basic protection (hook evaluates locally)
-		if runtime.GOOS == "windows" {
-			emit("Server", "warn",
-				fmt.Sprintf("not running on :%d (optional — basic protection works without it)", defaultServePort)+hintSep+
-					"rampart serve  # run in a terminal for dashboard/approvals")
+		// Hook-based agents (Claude Code, Cline) evaluate policies locally.
+		// Serve is only required for LD_PRELOAD/shim modes and the dashboard.
+		hookOnly := isHookBasedOnly(protected)
+		if hookOnly || runtime.GOOS == "windows" {
+			emit("Server", "info",
+				fmt.Sprintf("not running on :%d (optional — hooks evaluate policies locally)", defaultServePort)+hintSep+
+					"rampart serve  # for dashboard + approvals")
 			return 0, ""
 		}
 		emit("Server", "fail",
