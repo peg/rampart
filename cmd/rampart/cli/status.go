@@ -51,6 +51,8 @@ func runStatus(w io.Writer) error {
 
 	box := buildStatusBox(protected, mode, defaultAction, allow, deny, pending, serverRunning, lastDeny, useColor)
 	fmt.Fprintln(w, box)
+
+	printStatusHints(w, serverRunning, protected, allow, deny, pending)
 	return nil
 }
 

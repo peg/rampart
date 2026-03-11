@@ -134,6 +134,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 
 				fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=~/.rampart/serve.log)\n", child.Process.Pid)
+				printNextStep(cmd.OutOrStdout(), "rampart status")
 				return nil
 			}
 

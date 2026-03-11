@@ -457,10 +457,11 @@ func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
 		t.Fatalf("load block-prompt-injection profile: %v", err)
 	}
 
-	if !bytes.Equal(standardPayload, wantStandard) {
+	// Written files now have a version stamp prepended — check content after the stamp line.
+	if !bytes.Contains(standardPayload, wantStandard) {
 		t.Fatal("standard.yaml was not updated to the embedded profile")
 	}
-	if !bytes.Equal(blockPayload, wantBlock) {
+	if !bytes.Contains(blockPayload, wantBlock) {
 		t.Fatal("block-prompt-injection.yaml was not updated to the embedded profile")
 	}
 

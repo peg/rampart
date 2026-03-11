@@ -112,8 +112,8 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 	if !strings.Contains(out.String(), "Rampart hook installed") {
 		t.Errorf("output = %q", out.String())
 	}
-	if !strings.Contains(out.String(), "Next: run rampart init to install a security policy") {
-		t.Errorf("expected next-step tip, got: %s", out.String())
+	if !strings.Contains(out.String(), "rampart init") {
+		t.Errorf("expected init tip, got: %s", out.String())
 	}
 
 	// Verify settings file

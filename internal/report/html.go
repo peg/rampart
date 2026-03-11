@@ -17,6 +17,8 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"crypto/rand"
+	"encoding/base64"
 	"html/template"
 	"io"
 	"os"
@@ -51,6 +53,7 @@ type ReportData struct {
 	Events         []ReportEvent
 	UniqueAgents   int
 	PeriodDays     int
+	Nonce          string
 }
 
 // TimelineEntry represents an hour's worth of events for the timeline chart.
@@ -92,6 +95,8 @@ func GenerateHTMLReport(events []audit.Event, startTime, endTime time.Time, writ
 	if err != nil {
 		return fmt.Errorf("prepare report data: %w", err)
 	}
+
+	data.Nonce = generateReportNonce()
 
 	tmpl, err := template.New("report").Parse(htmlTemplate)
 	if err != nil {
@@ -450,12 +455,22 @@ func prepareEventList(events []audit.Event) []ReportEvent {
 	return reportEvents
 }
 
+// generateReportNonce creates a cryptographic nonce for CSP in the report HTML.
+func generateReportNonce() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "report-fallback-nonce"
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 // htmlTemplate is the complete HTML template for the audit report.
 const htmlTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{.Nonce}}'; img-src data:; base-uri 'none'">
     <title>{{.Title}}</title>
     <style>
         * {
@@ -791,12 +806,12 @@ const htmlTemplate = `<!DOCTYPE html>
             <table id="eventTable">
                 <thead>
                     <tr>
-                        <th onclick="sortTable(0)">Time ↕</th>
-                        <th onclick="sortTable(1)">Tool ↕</th>
-                        <th onclick="sortTable(2)">Command ↕</th>
-                        <th onclick="sortTable(3)">Decision ↕</th>
-                        <th onclick="sortTable(4)">Policy ↕</th>
-                        <th onclick="sortTable(5)">Message ↕</th>
+                        <th data-col="0">Time ↕</th>
+                        <th data-col="1">Tool ↕</th>
+                        <th data-col="2">Command ↕</th>
+                        <th data-col="3">Decision ↕</th>
+                        <th data-col="4">Policy ↕</th>
+                        <th data-col="5">Message ↕</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -815,7 +830,13 @@ const htmlTemplate = `<!DOCTYPE html>
         </div>
     </div>
     
-    <script>
+    <script nonce="{{.Nonce}}">
+        document.querySelectorAll('th[data-col]').forEach(function(th) {
+            th.style.cursor = 'pointer';
+            th.addEventListener('click', function() {
+                sortTable(parseInt(this.getAttribute('data-col')));
+            });
+        });
         function sortTable(columnIndex) {
             const table = document.getElementById('eventTable');
             const tbody = table.querySelector('tbody');
