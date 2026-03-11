@@ -175,6 +175,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(auditCmd)
 	cmd.AddCommand(reportCmd)
 	cmd.AddCommand(watchCmd)
+	cmd.AddCommand(newConvertCmd())
 	cmd.AddCommand(openClawCmd)
 	// cmd.AddCommand(daemonCmd)
 	cmd.AddCommand(approveCmd)
