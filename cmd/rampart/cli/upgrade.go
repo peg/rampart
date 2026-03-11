@@ -201,6 +201,9 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 			// --no-binary: just refresh built-in policies, skip binary download.
 			if noBinary {
+				if skipPolicyUpdate {
+					return fmt.Errorf("--no-binary and --no-policy-update are mutually exclusive")
+				}
 				if err := upgradeStandardPolicies(cmd.OutOrStdout(), dryRun); err != nil {
 					return fmt.Errorf("policy refresh: %w", err)
 				}
@@ -981,6 +984,9 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		"yolo.yaml":                   true,
 		"demo.yaml":                   true,
 		"block-prompt-injection.yaml": true,
+		"research-agent.yaml":         true,
+		"mcp-server.yaml":             true,
+		"openclaw.yaml":               true,
 	}
 
 	updated := 0

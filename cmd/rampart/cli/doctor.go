@@ -445,12 +445,13 @@ func checkPolicyVersionStamp(path string) string {
 
 	const prefix = "# rampart-policy-version: "
 	if !strings.HasPrefix(line, prefix) {
-		// No stamp — policy predates stamping. Treat as potentially stale.
-		return "no version stamp — may be outdated"
+		// No stamp — policy predates version stamping (pre-v0.9.0).
+		// Don't warn: the user may have never run upgrade, or manually edited the file.
+		return ""
 	}
 
 	stampVer := strings.TrimSpace(line[len(prefix):])
-	if stampVer == build.Version {
+	if stampVer == build.Version || build.Version == "dev" || stampVer == "dev" {
 		return ""
 	}
 

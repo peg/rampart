@@ -470,9 +470,9 @@ const htmlTemplate = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-{{.Nonce}}'; script-src 'nonce-{{.Nonce}}'; img-src data:; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{.Nonce}}'; img-src data:; base-uri 'none'">
     <title>{{.Title}}</title>
-    <style nonce="{{.Nonce}}">
+    <style>
         * {
             margin: 0;
             padding: 0;
@@ -806,12 +806,12 @@ const htmlTemplate = `<!DOCTYPE html>
             <table id="eventTable">
                 <thead>
                     <tr>
-                        <th onclick="sortTable(0)">Time ↕</th>
-                        <th onclick="sortTable(1)">Tool ↕</th>
-                        <th onclick="sortTable(2)">Command ↕</th>
-                        <th onclick="sortTable(3)">Decision ↕</th>
-                        <th onclick="sortTable(4)">Policy ↕</th>
-                        <th onclick="sortTable(5)">Message ↕</th>
+                        <th data-col="0">Time ↕</th>
+                        <th data-col="1">Tool ↕</th>
+                        <th data-col="2">Command ↕</th>
+                        <th data-col="3">Decision ↕</th>
+                        <th data-col="4">Policy ↕</th>
+                        <th data-col="5">Message ↕</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -831,6 +831,12 @@ const htmlTemplate = `<!DOCTYPE html>
     </div>
     
     <script nonce="{{.Nonce}}">
+        document.querySelectorAll('th[data-col]').forEach(function(th) {
+            th.style.cursor = 'pointer';
+            th.addEventListener('click', function() {
+                sortTable(parseInt(this.getAttribute('data-col')));
+            });
+        });
         function sortTable(columnIndex) {
             const table = document.getElementById('eventTable');
             const tbody = table.querySelector('tbody');
