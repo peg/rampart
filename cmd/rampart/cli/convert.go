@@ -121,6 +121,20 @@ func runConvert(w io.Writer, inputPath, outputFile string) error {
 		}
 	}
 
+	// Deduplicate rule names by appending a counter
+	nameCounts := make(map[string]int)
+	for i := range rules {
+		nameCounts[rules[i].name]++
+	}
+	nameIdx := make(map[string]int)
+	for i := range rules {
+		n := rules[i].name
+		if nameCounts[n] > 1 {
+			nameIdx[n]++
+			rules[i].name = fmt.Sprintf("%s-%d", n, nameIdx[n])
+		}
+	}
+
 	yaml := renderPolicy(rules, inputPath)
 
 	if outputFile != "" {
@@ -173,6 +187,10 @@ func convertBashRule(specifier, action, original string) *convertedRule {
 		name = convertSlugify("bash-" + action + "-" + specifier)
 	}
 
+	if specifier != "" && specifier != "*" {
+		name = convertSlugify("bash-" + action + "-" + specifier)
+	}
+
 	r := &convertedRule{
 		name:    name,
 		action:  action,
@@ -181,7 +199,6 @@ func convertBashRule(specifier, action, original string) *convertedRule {
 	}
 
 	if specifier == "" || specifier == "*" {
-		// Matches all bash commands
 		r.pattern = "*"
 	} else {
 		r.pattern = specifier
@@ -266,6 +283,10 @@ func parseClaudeRule(rule string) (string, string) {
 // convertSlugify creates a policy rule name from a description.
 func convertSlugify(s string) string {
 	s = strings.ToLower(s)
+	// Replace common patterns with readable names before slugifying
+	s = strings.ReplaceAll(s, "/*", "-all")
+	s = strings.ReplaceAll(s, "~/", "home-")
+	s = strings.ReplaceAll(s, "**", "any")
 	var b strings.Builder
 	for _, r := range s {
 		switch {
@@ -273,7 +294,9 @@ func convertSlugify(s string) string {
 			b.WriteRune(r)
 		case r == '-' || r == '_':
 			b.WriteRune(r)
-		case r == ' ' || r == '/' || r == '.' || r == '*':
+		case r == ' ' || r == '/' || r == '.':
+			b.WriteRune('-')
+		case r == '*':
 			b.WriteRune('-')
 		}
 	}
