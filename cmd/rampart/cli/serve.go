@@ -142,6 +142,12 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				return fmt.Errorf("serve: invalid mode %q (must be enforce, monitor, or disabled)", mode)
 			}
 
+			// Resolve ~/.rampart dir for state/token files.
+			rampartDir := ""
+			if home, hErr := os.UserHomeDir(); hErr == nil {
+				rampartDir = filepath.Join(home, ".rampart")
+			}
+
 			if listenAddr != "" && net.ParseIP(listenAddr) == nil {
 				return fmt.Errorf("serve: invalid --addr %q (must be a valid IP address, e.g. 127.0.0.1 or ::1)", listenAddr)
 			}
@@ -414,6 +420,13 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					logger.Info("serve: metrics enabled on /metrics")
 				}
 
+				// Write serve state file for discovery by doctor/watch/log.
+				if rampartDir != "" {
+					if err := writeServeState(rampartDir, listenPort, os.Getpid()); err != nil {
+						logger.Warn("serve: failed to write state file", "error", err)
+					}
+				}
+
 				proxyErrCh = make(chan error, 1)
 				go func() {
 					if tlsCfg != nil {
@@ -434,6 +447,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				select {
 				case <-sigCtx.Done():
 					logger.Info("serve: shutting down...")
+					if rampartDir != "" {
+						removeServeState(rampartDir)
+					}
 					if proxyServer != nil {
 						shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 						if err := proxyServer.Shutdown(shutdownCtx); err != nil {

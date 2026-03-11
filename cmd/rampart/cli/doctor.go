@@ -473,7 +473,9 @@ func checkPolicyVersionStamp(path string) string {
 
 func doctorServer(emit emitFn, protected []string) (int, string) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	url := fmt.Sprintf("http://localhost:%d/healthz", defaultServePort)
+	serveURL := resolveServeURL("")
+	url := serveURL + "/healthz"
+
 	resp, err := client.Get(url)
 	if err != nil {
 		// Hook-based agents (Claude Code, Cline) evaluate policies locally.
@@ -481,28 +483,53 @@ func doctorServer(emit emitFn, protected []string) (int, string) {
 		hookOnly := isHookBasedOnly(protected)
 		if hookOnly || runtime.GOOS == "windows" {
 			emit("Server", "info",
-				fmt.Sprintf("not running on :%d (optional — hooks evaluate policies locally)", defaultServePort)+hintSep+
+				fmt.Sprintf("not reachable at %s (optional — hooks evaluate policies locally)", serveURL)+hintSep+
 					"rampart serve  # for dashboard + approvals")
 			return 0, ""
 		}
+
+		issues := 1
+
 		emit("Server", "fail",
-			fmt.Sprintf("not running on :%d", defaultServePort)+hintSep+
+			fmt.Sprintf("not reachable at %s", serveURL)+hintSep+
 				"rampart serve --background")
-		return 1, ""
+
+		// Warn about silent policy bypass when fail-open + serve down.
+		failOpen := os.Getenv("RAMPART_FAIL_OPEN")
+		if failOpen == "" || failOpen == "1" || failOpen == "true" {
+			emit("Fail-open", "warn",
+				"serve is down and RAMPART_FAIL_OPEN=1 (default) — commands execute without policy checks"+hintSep+
+					"Start serve or set RAMPART_FAIL_OPEN=0 to block when serve is unreachable")
+			issues++
+		}
+
+		return issues, ""
 	}
 	defer resp.Body.Close()
 
 	// Parse version from health response if available.
 	var health map[string]any
 	versionStr := ""
+	servePort := 0
 	if decErr := json.NewDecoder(resp.Body).Decode(&health); decErr == nil {
 		if v, ok := health["version"].(string); ok {
 			versionStr = " v" + v
 		}
 	}
 
-	serveURL := fmt.Sprintf("http://localhost:%d", defaultServePort)
-	emit("Server", "ok", fmt.Sprintf("rampart serve%s running on :%d", versionStr, defaultServePort))
+	// Extract port from URL for display.
+	if strings.Contains(serveURL, ":") {
+		parts := strings.Split(serveURL, ":")
+		if p := parts[len(parts)-1]; p != "" {
+			fmt.Sscanf(p, "%d", &servePort)
+		}
+	}
+
+	if servePort != 0 && servePort != defaultServePort {
+		emit("Server", "ok", fmt.Sprintf("rampart serve%s running on :%d (non-default port)", versionStr, servePort))
+	} else {
+		emit("Server", "ok", fmt.Sprintf("rampart serve%s running on :%d", versionStr, defaultServePort))
+	}
 	return 0, serveURL
 }
 

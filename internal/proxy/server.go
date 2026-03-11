@@ -377,6 +377,12 @@ type toolRequest struct {
 	Params  map[string]any `json:"params"`
 	Input   map[string]any `json:"input,omitempty"`
 
+	// Convenience fields: callers can pass "command" or "path" at the top level
+	// instead of nesting inside "params". These are promoted into Params by
+	// promoteTopLevelParams if Params doesn't already contain them.
+	Command string `json:"command,omitempty"`
+	Path    string `json:"path,omitempty"`
+
 	// Response is the tool's output for response-side policy evaluation.
 	// The caller executes the tool and submits the output here for scanning
 	// before returning it to the agent. If empty, response-side evaluation
