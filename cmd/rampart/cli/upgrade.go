@@ -226,7 +226,8 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return nil
 			}
 
-			if compareSemver(target, "v0.6.6") >= 0 {
+			// Only show v0.6.6 migration warning when upgrading FROM a version older than v0.6.6.
+			if current != "" && compareSemver(current, "v0.6.6") < 0 && compareSemver(target, "v0.6.6") >= 0 {
 				if err := maybeWarnRequireApprovalMigration(cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin(), assumeYes, resolved.userHomeDir); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ migration policy scan failed: %v\n", err)
 				}

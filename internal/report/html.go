@@ -17,6 +17,8 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"crypto/rand"
+	"encoding/base64"
 	"html/template"
 	"io"
 	"os"
@@ -51,6 +53,7 @@ type ReportData struct {
 	Events         []ReportEvent
 	UniqueAgents   int
 	PeriodDays     int
+	Nonce          string
 }
 
 // TimelineEntry represents an hour's worth of events for the timeline chart.
@@ -92,6 +95,8 @@ func GenerateHTMLReport(events []audit.Event, startTime, endTime time.Time, writ
 	if err != nil {
 		return fmt.Errorf("prepare report data: %w", err)
 	}
+
+	data.Nonce = generateReportNonce()
 
 	tmpl, err := template.New("report").Parse(htmlTemplate)
 	if err != nil {
@@ -450,14 +455,24 @@ func prepareEventList(events []audit.Event) []ReportEvent {
 	return reportEvents
 }
 
+// generateReportNonce creates a cryptographic nonce for CSP in the report HTML.
+func generateReportNonce() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "report-fallback-nonce"
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 // htmlTemplate is the complete HTML template for the audit report.
 const htmlTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-{{.Nonce}}'; script-src 'nonce-{{.Nonce}}'; img-src data:; base-uri 'none'">
     <title>{{.Title}}</title>
-    <style>
+    <style nonce="{{.Nonce}}">
         * {
             margin: 0;
             padding: 0;
@@ -815,7 +830,7 @@ const htmlTemplate = `<!DOCTYPE html>
         </div>
     </div>
     
-    <script>
+    <script nonce="{{.Nonce}}">
         function sortTable(columnIndex) {
             const table = document.getElementById('eventTable');
             const tbody = table.querySelector('tbody');

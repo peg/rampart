@@ -386,9 +386,8 @@ func doctorPolicies(emit emitFn) int {
 		case isManagedEmptyCustom:
 			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid placeholder)", rel, count))
 		case lintResult.Warnings > 0:
-			emit("Policy", "warn",
-				fmt.Sprintf("~/%s (%d policies, %d lint warning(s))", rel, count, lintResult.Warnings)+
-					hintSep+fmt.Sprintf("rampart policy lint %s", path))
+			emit("Policy", "ok",
+				fmt.Sprintf("~/%s (%d policies, %d lint warning(s) — policy works, run lint for details)", rel, count, lintResult.Warnings))
 		default:
 			emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
 		}

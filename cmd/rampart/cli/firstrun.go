@@ -16,6 +16,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"runtime"
 )
 
 // printFirstRunTest prints a guided first-run test after setup or init.
@@ -48,7 +49,11 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 
 	case !serverRunning:
 		// Agent configured but serve not running
-		fmt.Fprintln(w, "\n→ Next: rampart serve")
+		if runtime.GOOS == "windows" {
+			fmt.Fprintln(w, "\n→ Next: rampart serve   (keep this terminal open, or use Task Scheduler for background)")
+		} else {
+			fmt.Fprintln(w, "\n→ Next: rampart serve")
+		}
 
 	case len(protected) == 0:
 		// Serve running but no agents connected

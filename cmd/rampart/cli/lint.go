@@ -54,6 +54,12 @@ Exit code: 1 if errors found, 0 if only warnings/info.`,
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), result.Summary(path))
 
+			if result.Warnings > 0 && result.Errors == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "")
+				fmt.Fprintln(cmd.OutOrStdout(), "Warnings are informational — your policy still works.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Fix them to tighten your rules, or ignore if intentional.")
+			}
+
 			if result.HasErrors() {
 				os.Exit(1)
 			}
