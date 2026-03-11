@@ -75,6 +75,45 @@ type Config struct {
 
 	// ServeToken is the Bearer token for the serve API.
 	ServeToken string
+
+	// Quiet suppresses repetitive allowed system commands (ip neigh, etc.)
+	// that clutter the live feed. Denied events are never suppressed.
+	Quiet bool
+}
+
+// quietEntry tracks a recently seen event in quiet mode.
+type quietEntry struct {
+	lastSeen time.Time
+	count    int
+}
+
+// quietWindow is the dedup window — identical allowed events within this
+// window are suppressed in quiet mode.
+const quietWindow = 30 * time.Second
+
+// noisePatterns are command substrings that are always suppressed in quiet mode
+// when the decision is allow. These are known system/infrastructure commands
+// that flood audit logs but carry no security signal.
+var noisePatterns = []string{
+	"ip neigh",
+	"ip -4 route",
+	"ip -6 route",
+	"networkctl",
+	"tailscaled",
+	"/usr/libexec/",
+	"systemd-",
+	"dbus-",
+}
+
+// isNoisy returns true if the event is a known noise pattern (quiet mode only).
+func isNoisy(cmd string) bool {
+	lower := strings.ToLower(cmd)
+	for _, p := range noisePatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // Stats tracks running totals of decisions.
@@ -101,6 +140,11 @@ type Model struct {
 
 	// denyFlash tracks event indices that should flash (deny highlight).
 	denyFlash map[int]time.Time
+
+	// quietSeen tracks recently seen commands for dedup in quiet mode.
+	// Key: "agent:tool:command", value: last seen time + count.
+	quietSeen    map[string]quietEntry
+	quietSkipped int // total suppressed events
 
 	// Interactive approval support.
 	approvalClient   *ApprovalClient
@@ -315,6 +359,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Apply tool filter.
 		if m.cfg.Tool != "" && !strings.EqualFold(m.cfg.Tool, tool) {
 			return m, waitForTailer(m.tailerCh)
+		}
+
+		// Quiet mode: suppress noisy/repetitive allowed events.
+		if m.cfg.Quiet && action == "allow" {
+			cmd, _ := typed.event.Request["command"].(string)
+			// Always suppress known noise patterns.
+			if isNoisy(cmd) {
+				m.quietSkipped++
+				return m, waitForTailer(m.tailerCh)
+			}
+			// Dedup: suppress identical commands within the quiet window.
+			dedup := typed.event.Agent + ":" + tool + ":" + cmd
+			if entry, ok := m.quietSeen[dedup]; ok && time.Since(entry.lastSeen) < quietWindow {
+				m.quietSeen[dedup] = quietEntry{lastSeen: time.Now(), count: entry.count + 1}
+				m.quietSkipped++
+				return m, waitForTailer(m.tailerCh)
+			}
+			if m.quietSeen == nil {
+				m.quietSeen = make(map[string]quietEntry)
+			}
+			m.quietSeen[dedup] = quietEntry{lastSeen: time.Now(), count: 1}
+			// Prune stale entries periodically.
+			if len(m.quietSeen) > 100 {
+				now := time.Now()
+				for k, v := range m.quietSeen {
+					if now.Sub(v.lastSeen) > quietWindow {
+						delete(m.quietSeen, k)
+					}
+				}
+			}
 		}
 
 		// Shift deny flash indices since we prepend at index 0.
