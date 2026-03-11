@@ -208,7 +208,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
 			if !hasInstalledPolicy() {
-				fmt.Fprintln(cmd.OutOrStdout(), "💡 Next: run rampart init to install a security policy")
+				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init' first to install one")
 			}
 
 			// Check if rampart is in system PATH.
@@ -226,6 +226,11 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 
 			printFirstRunTest(cmd.OutOrStdout())
+			if isServeRunningLocal() {
+				printNextStep(cmd.OutOrStdout(), "rampart status")
+			} else {
+				printNextStep(cmd.OutOrStdout(), "rampart serve")
+			}
 			return nil
 		},
 	}

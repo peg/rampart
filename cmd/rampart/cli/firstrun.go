@@ -29,6 +29,43 @@ func printFirstRunTest(w io.Writer) {
 	fmt.Fprintln(w, "  rampart test \"git status\"          # should be allowed")
 	fmt.Fprintln(w, "  rampart test --tool read ~/.ssh/id_rsa  # should be denied")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "  Or ask your AI agent to run a dangerous command and watch Rampart block it.")
-	fmt.Fprintln(w, "")
+}
+
+// printNextStep prints a "→ Next:" breadcrumb hint.
+func printNextStep(w io.Writer, step string) {
+	fmt.Fprintf(w, "\n→ Next: %s\n", step)
+}
+
+// printStatusHints prints contextual hints based on the current state.
+// Called after the status box to guide the user to the next action.
+func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow, deny, pending int) {
+	total := allow + deny + pending
+
+	switch {
+	case !serverRunning && len(protected) == 0:
+		// Nothing set up yet
+		fmt.Fprintln(w, "\n→ Get started: rampart init && rampart setup claude-code && rampart serve")
+
+	case !serverRunning:
+		// Agent configured but serve not running
+		fmt.Fprintln(w, "\n→ Next: rampart serve")
+
+	case len(protected) == 0:
+		// Serve running but no agents connected
+		fmt.Fprintln(w, "\n→ Next: rampart setup claude-code")
+
+	case total == 0:
+		// Everything set up, no events yet
+		fmt.Fprintln(w, "\n→ Use your agent normally. Events will appear here.")
+
+	case deny > 0:
+		fmt.Fprintf(w, "\n→ Review blocked commands: rampart log --deny\n")
+
+	case pending > 0:
+		fmt.Fprintf(w, "\n→ Pending approvals: rampart watch\n")
+
+	default:
+		// Everything is working, show live view option
+		fmt.Fprintln(w, "\n→ Live view: rampart watch")
+	}
 }

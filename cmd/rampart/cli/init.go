@@ -301,6 +301,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			printFirstRunTest(cmd.OutOrStdout())
+			printNextStep(cmd.OutOrStdout(), "rampart setup claude-code   # or: codex, cline, openclaw")
 			return nil
 		},
 	}
