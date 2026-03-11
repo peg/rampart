@@ -44,8 +44,6 @@ policies:
             - "rampart doctor"
             - "rampart log"
             - "rampart watch"
-            - "rampart test"
-            - "rampart report"
             - "rampart convert"
             - "rampart upgrade"
         message: "Operational rampart commands are allowed"

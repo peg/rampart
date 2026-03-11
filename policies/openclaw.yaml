@@ -46,8 +46,6 @@ policies:
             - "rampart doctor"
             - "rampart log"
             - "rampart watch"
-            - "rampart test"
-            - "rampart report"
             - "rampart convert"
             - "rampart upgrade"
         message: "Read-only rampart commands are allowed"
