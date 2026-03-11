@@ -187,10 +187,6 @@ func convertBashRule(specifier, action, original string) *convertedRule {
 		name = convertSlugify("bash-" + action + "-" + specifier)
 	}
 
-	if specifier != "" && specifier != "*" {
-		name = convertSlugify("bash-" + action + "-" + specifier)
-	}
-
 	r := &convertedRule{
 		name:    name,
 		action:  action,
@@ -308,7 +304,17 @@ func convertSlugify(s string) string {
 	return strings.Trim(result, "-")
 }
 
-// renderPolicy generates YAML output from converted rules.
+// toolDisplayName maps internal tool names to human-friendly policy names.
+var toolDisplayName = map[string]string{
+	"exec":  "exec",
+	"read":  "read",
+	"write": "write",
+	"edit":  "edit",
+	"fetch": "fetch",
+	"mcp":   "mcp",
+}
+
+// renderPolicy generates YAML output from converted rules, grouped by tool.
 func renderPolicy(rules []convertedRule, source string) string {
 	var b strings.Builder
 
@@ -319,37 +325,75 @@ func renderPolicy(rules []convertedRule, source string) string {
 	b.WriteString("# Claude Code and Rampart have different matching semantics —\n")
 	b.WriteString("# test with: rampart policy test <this-file>\n")
 	b.WriteString("\n")
-	b.WriteString("rules:\n")
+	b.WriteString("version: \"1\"\n")
+	b.WriteString("default_action: allow\n")
+	b.WriteString("\n")
+	b.WriteString("policies:\n")
 
+	// Group rules by tool
+	toolOrder := []string{"exec", "read", "write", "edit", "fetch", "mcp"}
+	grouped := make(map[string][]convertedRule)
 	for _, r := range rules {
-		b.WriteString("\n")
-		b.WriteString("  " + r.comment + "\n")
-		b.WriteString(fmt.Sprintf("  - name: %s\n", r.name))
-		b.WriteString(fmt.Sprintf("    action: %s\n", r.action))
+		grouped[r.tool] = append(grouped[r.tool], r)
+	}
 
-		if r.tool != "" {
-			b.WriteString("    when:\n")
-			b.WriteString(fmt.Sprintf("      tool: %s\n", r.tool))
+	for _, tool := range toolOrder {
+		toolRules, ok := grouped[tool]
+		if !ok {
+			continue
+		}
+
+		b.WriteString(fmt.Sprintf("\n  - name: claude-code-%s\n", tool))
+		b.WriteString(fmt.Sprintf("    description: \"%s rules imported from Claude Code\"\n", tool))
+		b.WriteString("    match:\n")
+		b.WriteString(fmt.Sprintf("      tool: [\"%s\"]\n", tool))
+		b.WriteString("    rules:\n")
+
+		for _, r := range toolRules {
+			b.WriteString("\n")
+			b.WriteString("      " + r.comment + "\n")
+			b.WriteString(fmt.Sprintf("      - action: %s\n", r.action))
 
 			if r.pattern != "" {
-				if r.tool == "exec" {
-					b.WriteString(fmt.Sprintf("      command_matches:\n        - \"%s\"\n", r.pattern))
-				} else if r.tool == "read" || r.tool == "write" || r.tool == "edit" {
-					b.WriteString(fmt.Sprintf("      path_matches:\n        - \"%s\"\n", r.pattern))
-				} else if r.tool == "fetch" {
-					b.WriteString(fmt.Sprintf("      url_matches:\n        - \"%s\"\n", r.pattern))
+				b.WriteString("        when:\n")
+
+				switch r.tool {
+				case "exec":
+					b.WriteString(fmt.Sprintf("          command_matches:\n            - \"%s\"\n", r.pattern))
+				case "read", "write", "edit":
+					b.WriteString(fmt.Sprintf("          path_matches:\n            - \"%s\"\n", r.pattern))
+				case "fetch":
+					b.WriteString(fmt.Sprintf("          url_matches:\n            - \"%s\"\n", r.pattern))
 				}
 			}
+
+			b.WriteString(fmt.Sprintf("        message: \"%s\"\n", r.comment[2:])) // strip "# "
 		}
 	}
 
-	b.WriteString("\n  # Default action — adjust based on your security posture.\n")
-	b.WriteString("  # 'allow' = fail-open (recommended for getting started)\n")
-	b.WriteString("  # 'deny' = fail-closed (use with --from-audit generated allowlist)\n")
-	b.WriteString("  - name: default\n")
-	b.WriteString("    action: allow\n")
-	b.WriteString("    when:\n")
-	b.WriteString("      default: true\n")
+	// Catch any tools we didn't anticipate
+	for tool, toolRules := range grouped {
+		found := false
+		for _, t := range toolOrder {
+			if t == tool {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+
+		b.WriteString(fmt.Sprintf("\n  - name: claude-code-%s\n", tool))
+		b.WriteString(fmt.Sprintf("    description: \"%s rules imported from Claude Code (review manually)\"\n", tool))
+		b.WriteString("    rules:\n")
+
+		for _, r := range toolRules {
+			b.WriteString(fmt.Sprintf("\n      # %s\n", r.comment[2:]))
+			b.WriteString(fmt.Sprintf("      - action: %s\n", r.action))
+			b.WriteString(fmt.Sprintf("        message: \"%s\"\n", r.comment[2:]))
+		}
+	}
 
 	return b.String()
 }

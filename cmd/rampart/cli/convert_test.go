@@ -27,10 +27,25 @@ func TestConvert_BasicSettings(t *testing.T) {
 	}
 	out := buf.String()
 
-	// Deny rules come first
-	denyIdx := strings.Index(out, "action: deny")
-	approvalIdx := strings.Index(out, "action: require_approval")
-	allowIdx := strings.Index(out, "action: allow")
+	// Should have valid Rampart policy structure
+	if !strings.Contains(out, `version: "1"`) {
+		t.Error("missing version header")
+	}
+	if !strings.Contains(out, "policies:") {
+		t.Error("missing policies key")
+	}
+	if !strings.Contains(out, "claude-code-exec") {
+		t.Error("missing exec policy group")
+	}
+	if !strings.Contains(out, `tool: ["exec"]`) {
+		t.Error("missing tool match")
+	}
+
+	// Deny rules come first within the rules section
+	rulesSection := out[strings.Index(out, "    rules:"):]
+	denyIdx := strings.Index(rulesSection, "action: deny")
+	approvalIdx := strings.Index(rulesSection, "action: require_approval")
+	allowIdx := strings.Index(rulesSection, "action: allow")
 	if denyIdx < 0 || approvalIdx < 0 || allowIdx < 0 {
 		t.Fatalf("missing expected actions in output:\n%s", out)
 	}
