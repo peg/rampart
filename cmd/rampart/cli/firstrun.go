@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strings"
 )
 
 // printFirstRunTest prints a guided first-run test after setup or init.
@@ -45,10 +46,14 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 	switch {
 	case !serverRunning && len(protected) == 0:
 		// Nothing set up yet
-		fmt.Fprintln(w, "\n→ Get started: rampart init && rampart setup claude-code && rampart serve")
+		fmt.Fprintln(w, "\n→ Get started: rampart init && rampart setup claude-code")
+
+	case !serverRunning && isHookBasedOnly(protected):
+		// Hook-based agents don't need serve for basic allow/deny
+		fmt.Fprintln(w, "\n→ Protection active via hooks. Optional: rampart serve   (for dashboard + approvals)")
 
 	case !serverRunning:
-		// Agent configured but serve not running
+		// LD_PRELOAD/shim agents need serve running
 		if runtime.GOOS == "windows" {
 			fmt.Fprintln(w, "\n→ Next: rampart serve   (keep this terminal open, or use Task Scheduler for background)")
 		} else {
@@ -73,4 +78,20 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 		// Everything is working, show live view option
 		fmt.Fprintln(w, "\n→ Live view: rampart watch")
 	}
+}
+
+// isHookBasedOnly returns true if all protected agents use hook-based integration
+// (Claude Code, Cline) which don't require rampart serve for basic policy enforcement.
+func isHookBasedOnly(protected []string) bool {
+	if len(protected) == 0 {
+		return false
+	}
+	for _, p := range protected {
+		// LD_PRELOAD, shim, and wrapper modes require serve
+		if strings.Contains(p, "preload") || strings.Contains(p, "shim") ||
+			strings.Contains(p, "wrapper") || strings.Contains(p, "config") {
+			return false
+		}
+	}
+	return true
 }

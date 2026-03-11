@@ -159,7 +159,8 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	warnings += auditWarnings
 
 	// 8. Server running on default port
-	serverIssues, serveURL := doctorServer(emit)
+	protected := detectProtectedAgents()
+	serverIssues, serveURL := doctorServer(emit, protected)
 	issues += serverIssues
 
 	// 9. Token auth check (requires server running)
@@ -403,16 +404,18 @@ func doctorPolicies(emit emitFn) int {
 
 // doctorServer checks if rampart serve is running on defaultServePort.
 // Returns (issue count, serve URL for subsequent API checks).
-func doctorServer(emit emitFn) (int, string) {
+func doctorServer(emit emitFn, protected []string) (int, string) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	url := fmt.Sprintf("http://localhost:%d/healthz", defaultServePort)
 	resp, err := client.Get(url)
 	if err != nil {
-		// On Windows, serve is optional for basic protection (hook evaluates locally)
-		if runtime.GOOS == "windows" {
-			emit("Server", "warn",
-				fmt.Sprintf("not running on :%d (optional — basic protection works without it)", defaultServePort)+hintSep+
-					"rampart serve  # run in a terminal for dashboard/approvals")
+		// Hook-based agents (Claude Code, Cline) evaluate policies locally.
+		// Serve is only required for LD_PRELOAD/shim modes and the dashboard.
+		hookOnly := isHookBasedOnly(protected)
+		if hookOnly || runtime.GOOS == "windows" {
+			emit("Server", "info",
+				fmt.Sprintf("not running on :%d (optional — hooks evaluate policies locally)", defaultServePort)+hintSep+
+					"rampart serve  # for dashboard + approvals")
 			return 0, ""
 		}
 		emit("Server", "fail",
