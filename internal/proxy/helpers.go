@@ -54,6 +54,23 @@ func extractToolInput(toolName string, params map[string]any, explicitInput map[
 	return params
 }
 
+// promoteTopLevelParams copies convenience fields (command, path) from the
+// top-level request into Params when they aren't already present. This allows
+// callers to use the flat form {"command":"rm -rf /"} instead of the nested
+// form {"params":{"command":"rm -rf /"}}.
+func promoteTopLevelParams(req *toolRequest) {
+	if req.Command != "" {
+		if _, exists := req.Params["command"]; !exists {
+			req.Params["command"] = req.Command
+		}
+	}
+	if req.Path != "" {
+		if _, exists := req.Params["path"]; !exists {
+			req.Params["path"] = req.Path
+		}
+	}
+}
+
 // enrichParams adds derived fields to params for richer policy matching.
 // For fetch/HTTP tools, it parses the URL to extract domain, scheme, and path.
 func enrichParams(toolName string, params map[string]any) {

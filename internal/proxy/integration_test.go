@@ -210,6 +210,34 @@ func TestEndToEnd_PreflightNoSideEffects(t *testing.T) {
 	assert.Equal(t, "deny", result["decision"])
 }
 
+func TestEndToEnd_PreflightFlatFormat(t *testing.T) {
+	srv := setupStandardProxy(t)
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	// Flat format: "command" at top level instead of inside "params".
+	body, _ := json.Marshal(map[string]any{
+		"agent":   "test",
+		"session": "s1",
+		"command": "rm -rf /",
+	})
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/preflight/exec", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+srv.Token())
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, false, result["allowed"], "flat command should be evaluated — got allowed=true")
+	assert.Equal(t, "deny", result["decision"])
+}
+
 func TestEndToEnd_AuthRequired(t *testing.T) {
 	srv := setupStandardProxy(t)
 	ts := httptest.NewServer(srv.handler())

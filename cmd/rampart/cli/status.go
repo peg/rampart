@@ -78,16 +78,10 @@ func renderProgressBar(pct, width int) string {
 }
 
 // isServeRunningLocal returns true if rampart serve is reachable.
-// Checks RAMPART_URL env var first, then default port, then common alternative ports.
+// Uses resolveServeURL (state file → env → default), then tries common alternative ports.
 func isServeRunningLocal() bool {
-	// Check RAMPART_URL env first (custom deployments).
-	if env := os.Getenv("RAMPART_URL"); env != "" {
-		if isServeRunning(env) {
-			return true
-		}
-	}
-	// Try default port.
-	if isServeRunning(fmt.Sprintf("http://localhost:%d", defaultServePort)) {
+	// Primary: resolved URL (state file, env, default).
+	if isServeRunning(resolveServeURL("")) {
 		return true
 	}
 	// Try common alternative ports (proxy port, common dev ports).

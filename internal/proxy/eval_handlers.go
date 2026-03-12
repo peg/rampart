@@ -28,6 +28,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = map[string]any{}
 	}
+	promoteTopLevelParams(&req)
 
 	toolName := r.PathValue("toolName")
 	decision := engine.Decision{}
@@ -318,6 +319,7 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = map[string]any{}
 	}
+	promoteTopLevelParams(&req)
 
 	// Override agent from token identity (prevent impersonation via preflight).
 	if !identity.IsAdmin && identity.Agent != "" {

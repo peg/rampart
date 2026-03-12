@@ -82,6 +82,7 @@ func containsStr(s, sub string) bool {
 func TestResolveWatchServeConfig_DefaultURLAndTokenFile(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
+	t.Setenv("RAMPART_URL", "")
 	t.Setenv("RAMPART_SERVE_URL", "")
 	t.Setenv("RAMPART_TOKEN", "")
 
@@ -108,7 +109,7 @@ func TestResolveWatchServeConfig_DefaultURLAndTokenFile(t *testing.T) {
 	if token != "tok-123" {
 		t.Fatalf("expected token from file, got %q", token)
 	}
-	if !containsStr(errBuf.String(), "auto-discovered serve URL") {
+	if !containsStr(errBuf.String(), "using serve URL") {
 		t.Fatalf("expected URL note, got: %s", errBuf.String())
 	}
 	if !containsStr(errBuf.String(), "auto-discovered serve token") {

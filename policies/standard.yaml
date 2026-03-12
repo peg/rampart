@@ -790,8 +790,24 @@ policies:
             - "eval $(echo"
             - "eval \"$(echo"
             - "eval `echo"
+            # shell -c with command substitution (decode tricks)
+            - "bash -c $(echo"
+            - "bash -c \"$(echo"
+            - "bash -c $(base64"
+            - "bash -c \"$(base64"
+            - "sh -c $(echo"
+            - "sh -c \"$(echo"
+            - "sh -c $(base64"
+            - "sh -c \"$(base64"
             - "| rev | bash"
             - "| rev | sh"
+            # base64 decode piped to shell
+            - "base64 -d | bash"
+            - "base64 -d | sh"
+            - "base64 --decode | bash"
+            - "base64 --decode | sh"
+            - "base64 -d)|bash"
+            - "base64 -d)|sh"
             # source/dot with process substitution — scoped to obfuscated content only.
             # Broad "source <(" would FP on common idioms like "source <(kubectl completion bash)".
             # Only block when the substitution contains a known obfuscation source.

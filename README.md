@@ -96,13 +96,25 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 
 </details>
 
-### What's New in v0.7.4
+### What's New in v0.9.0
 
-- **`rampart init --from-audit`** — Generate policy YAML from your audit logs. Observe what your agent does, then generate rules to match.
-- **Temporal allows** — `rampart allow "docker *" --for 1h` creates rules that expire automatically. `--once` for single-use exceptions.
-- **TLS on `rampart serve`** — `--tls-auto` generates a self-signed cert, or bring your own with `--tls-cert`/`--tls-key`.
-- **`rampart setup codex`** — One-command persistent wrapper for Codex CLI.
-- **Response scanning** — Block credentials in tool responses before they reach the agent's context window.
+- **Guided CLI flow** — every command shows `→ Next:` hints so you always know what to do next.
+- **`rampart upgrade --no-binary`** — refresh built-in policies without downloading a new binary.
+- **Version-stamped policies** — `rampart doctor` detects stale built-in policies and tells you how to update them.
+- **Operational command whitelist** — `rampart status`, `doctor`, `log`, `serve stop` no longer blocked by self-modification policy.
+- **On-disk policy override** — your on-disk policy edits always take effect, even for built-in profiles.
+- **Report CSP hardening** — HTML audit reports use script nonces and no inline event handlers.
+
+<details>
+<summary>v0.8.x highlights</summary>
+
+- **`rampart convert`** — import Claude Code `settings.json` permissions into Rampart YAML policies.
+- **`rampart init --from-audit`** — generate policy from observed agent behavior.
+- **Temporal allows** — `rampart allow "docker *" --for 1h` or `--once` for single-use exceptions.
+- **Response scanning** — block credentials in tool responses before they reach the agent's context window.
+- **`rampart setup codex`** — one-command persistent wrapper for Codex CLI.
+- **Env var filtering** — LD_PRELOAD strips sensitive env vars from agent child processes.
+</details>
 
 ---
 
@@ -873,8 +885,10 @@ rampart serve --approval-timeout 2h               # Custom approval expiry (defa
 
 # Upgrade
 rampart upgrade                                    # Download latest binary + refresh built-in policies
+rampart upgrade --no-binary                        # Refresh policies only (no binary download)
 rampart upgrade --no-policy-update                 # Download binary only, keep existing policies as-is
-# Standard policies (standard.yaml, paranoid.yaml, yolo.yaml, demo.yaml) are refreshed on upgrade. Your custom.yaml is never touched.
+# Built-in policies are version-stamped. `rampart doctor` warns when they're stale.
+# Your custom.yaml is never touched by upgrade.
 
 # Audit
 rampart audit tail [--follow]

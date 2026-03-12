@@ -94,12 +94,8 @@ func resolveWatchServeConfig(cmd *cobra.Command, serveURL, serveToken string) (s
 	errW := cmd.ErrOrStderr()
 
 	if !cmd.Flags().Changed("serve-url") && resolvedURL == "" {
-		if envURL := strings.TrimSpace(os.Getenv("RAMPART_SERVE_URL")); envURL != "" {
-			resolvedURL = envURL
-		} else {
-			resolvedURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
-			fmt.Fprintf(errW, "Note: using auto-discovered serve URL %s\n", resolvedURL)
-		}
+		resolvedURL = resolveServeURL("")
+		fmt.Fprintf(errW, "Note: using serve URL %s\n", resolvedURL)
 	}
 
 	if !cmd.Flags().Changed("serve-token") && resolvedToken == "" {
