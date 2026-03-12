@@ -358,18 +358,24 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 			fixStalePathCopies(cmd.OutOrStdout(), exePath, resolved)
 
+			serveRestarted := false
 			if activeSvc != "" {
 				if err := resolved.restartSystemdService(resolved.commandRunner, activeSvc, cmd.OutOrStdout()); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %v\n  run manually: systemctl --user restart %s\n", err, activeSvc)
+				} else {
+					serveRestarted = true
 				}
 			} else if pidServeRunning {
 				if err := resolved.restartServe(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 					return err
 				}
+				serveRestarted = true
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart upgraded to %s\n", target)
-			fmt.Fprintln(cmd.OutOrStdout(), "Reminder: restart rampart serve to ensure it uses the new binary.")
+			if !serveRestarted && serveRunning {
+				fmt.Fprintln(cmd.OutOrStdout(), "Reminder: restart rampart serve to ensure it uses the new binary.")
+			}
 
 			// Refresh standard.yaml so security fixes reach existing users.
 			// Only updates the named profile files (standard.yaml, paranoid.yaml, yolo.yaml).

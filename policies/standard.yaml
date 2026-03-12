@@ -113,6 +113,33 @@ policies:
             - "rampart --* setup *"
             - "rampart --* serve *"
         message: "Policy modification commands must be run by a human, not an agent"
+      # Block process-kill commands targeting rampart (prevents agents from
+      # disabling their own enforcement by killing the serve process).
+      - action: deny
+        when:
+          command_contains:
+            - "pkill rampart"
+            - "pkill -9 rampart"
+            - "pkill -f rampart"
+            - "killall rampart"
+            - "killall -9 rampart"
+            - "pgrep rampart"
+            - "kill $(pgrep rampart"
+            - "kill `pgrep rampart"
+            - "kill -9 $(pgrep rampart"
+            - "kill -9 `pgrep rampart"
+            - "kill -KILL $(pgrep rampart"
+            - "kill -TERM $(pgrep rampart"
+        message: "Killing Rampart processes is not allowed — policy enforcement must remain active"
+      # Block removing/overwriting the rampart binary itself.
+      - action: deny
+        when:
+          command_contains:
+            - "rm ~/.local/bin/rampart"
+            - "rm /usr/local/bin/rampart"
+            - "rm -f ~/.local/bin/rampart"
+            - "rm -f /usr/local/bin/rampart"
+        message: "Removing the Rampart binary is not allowed"
 
   - name: block-destructive
     match:
@@ -777,6 +804,32 @@ policies:
             - "/usr/local/bin/perl -e **system**"
             - "/usr/local/bin/perl -e **exec**"
         message: "Interpreter one-liner with system execution blocked"
+      # Interpreter-based base64/encoding obfuscation — exec(decode(...)) patterns.
+      # Scoped to interpreter invocation to avoid FPs on code search.
+      - action: deny
+        when:
+          command_matches:
+            - "python -c **base64.b64decode**"
+            - "python3 -c **base64.b64decode**"
+            - "python -c **codecs.decode**"
+            - "python3 -c **codecs.decode**"
+            - "python -c **binascii.a2b_base64**"
+            - "python3 -c **binascii.a2b_base64**"
+            - "python -c **base64.decodebytes**"
+            - "python3 -c **base64.decodebytes**"
+            - "env python* -c **base64.b64decode**"
+            - "env python* -c **codecs.decode**"
+            # Ruby base64 decode
+            - "ruby -e **Base64.decode64**"
+            - "env ruby -e **Base64.decode64**"
+            # Perl base64 decode
+            - "perl -e **decode_base64**"
+            - "perl -e **MIME::Base64**"
+            - "env perl -e **decode_base64**"
+            # Node.js Buffer.from base64
+            - "node -e **Buffer.from**"
+            - "node --eval **Buffer.from**"
+        message: "Interpreter one-liner with encoded execution blocked"
 
   - name: block-eval-obfuscation
     description: "Block obfuscated command execution via eval and encoding tricks"
