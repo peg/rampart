@@ -532,7 +532,6 @@
             .hero { padding: 60px 0 48px; }
             .pos-grid { grid-template-columns: 1fr; }
             .feature-grid { grid-template-columns: 1fr 1fr; }
-            .features [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
             nav .links a.hide-mobile { display: none; }
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
@@ -603,7 +602,7 @@
         </div>
         <h1>Your AI agent has full access.<br><span class="accent">That's the problem.</span></h1>
         <p class="sub">
-            Rampart watches every command your AI agent runs and blocks the dangerous ones. You set the rules — or use ours.
+            Rampart watches every command your AI agent runs and blocks the dangerous ones. You set the rules, or use ours.
         </p>
         <div class="hero-install" onclick="copyInstall(this)" title="Click to copy">
             <span class="prompt">$</span> curl -fsSL https://rampart.sh/install | bash
@@ -676,24 +675,42 @@
     </div>
 </section>
 
-<!-- Features — tight, scannable -->
-<section class="features" style="padding: 60px 0;">
+<!-- Features -->
+<section class="features">
     <div class="container">
         <div class="section-label">How it works</div>
         <h2 class="section-title">A seatbelt, not a cage</h2>
-        <p class="section-desc">One binary. No cloud. No config file to write on day one.</p>
-        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; max-width:960px;">
-            <div style="padding:24px; border-left:2px solid var(--accent);">
-                <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Watch first, block later</h3>
-                <p style="font-size:0.88rem; color:var(--text); line-height:1.6;">Start in monitor mode. See everything your agent does. Then <code style="color:var(--accent);">rampart init --from-audit</code> generates rules from real behavior.</p>
+        <p class="section-desc">One Go binary, no cloud, no latency your agent can feel.</p>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🔍</div>
+                <h3>Watch first, block later</h3>
+                <p>Start in monitor mode. See everything your agent does. Then generate rules from the audit log. No rules to write by hand.</p>
             </div>
-            <div style="padding:24px; border-left:2px solid var(--accent);">
-                <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Agents can't disable it</h3>
-                <p style="font-size:0.88rem; color:var(--text); line-height:1.6;">Prompt injection tells your agent to weaken its policy? Rampart blocks self-modification. The agent can't <code style="color:var(--accent);">rampart allow</code> its way out.</p>
+            <div class="feature-card">
+                <div class="feature-icon">🛡️</div>
+                <h3>Agents can't disable it</h3>
+                <p>Prompt injection tells your agent to weaken its own policy? Rampart blocks self-modification. The agent can't whitelist its way out.</p>
             </div>
-            <div style="padding:24px; border-left:2px solid var(--accent);">
-                <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Approval gates</h3>
-                <p style="font-size:0.88rem; color:var(--text); line-height:1.6;">Mark any rule <code style="color:var(--accent);">require_approval</code>. Your agent pauses, you get a ping, and nothing runs until you say so.</p>
+            <div class="feature-card">
+                <div class="feature-icon">⏳</div>
+                <h3>Approval gates</h3>
+                <p>Mark any rule as require-approval. Your agent pauses, you get a ping on Discord or Slack, and nothing runs until you say so.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🧠</div>
+                <h3>Response scanning</h3>
+                <p>Most tools only check what goes in. Rampart also checks what comes out. If a file read returns an AWS key, the response gets blocked.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔗</div>
+                <h3>Tamper-proof audit log</h3>
+                <p>Every decision logged with a SHA-256 hash chain. Tamper with one record and the whole chain breaks. Ships syslog and CEF.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔌</div>
+                <h3>Works with everything</h3>
+                <p>Native hooks for Claude Code, Codex, Cline. MCP proxy for Claude Desktop. HTTP API and shell wrapper for everything else.</p>
             </div>
         </div>
     </div>
@@ -770,10 +787,6 @@
 <span style="color:var(--text-dim);"># or target one: rampart setup claude-code / codex / cline</span></pre>
         </div>
 
-        <div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:24px;">
-            <a href="https://docs.rampart.sh" class="btn btn-ghost">Documentation →</a>
-            <a href="https://github.com/peg/rampart/releases" class="btn btn-ghost">Download binary</a>
-        </div>
     </div>
 </section>
 
