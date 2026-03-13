@@ -226,7 +226,7 @@
         .btn-ghost:hover { border-color: var(--text); }
 
         /* ── Terminal ── */
-        .terminal-section { padding: 0 0 80px; }
+        .terminal-section { padding: 0 0 60px; }
         .terminal {
             background: #0c1117;
             border: 1px solid #21262d;
@@ -519,6 +519,7 @@
             .hero { padding: 60px 0 48px; }
             .pos-grid { grid-template-columns: 1fr; }
             .feature-grid { grid-template-columns: 1fr 1fr; }
+            .features [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
             nav .links a.hide-mobile { display: none; }
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
@@ -589,7 +590,7 @@
         </div>
         <h1>Your AI agent has full access.<br><span class="accent">That's the problem.</span></h1>
         <p class="sub">
-            A policy firewall for AI coding agents. Ships with 45+ rules out of the box. &lt;10μs per check.
+            Rampart watches every command your AI agent runs and blocks the dangerous ones. You set the rules — or use ours.
         </p>
         <div class="hero-install" onclick="copyInstall(this)" title="Click to copy">
             <span class="prompt">$</span> curl -fsSL https://rampart.sh/install | bash
@@ -606,37 +607,8 @@
     </div>
 </section>
 
-<!-- Positioning: Sandbox vs Rampart -->
-<section class="positioning">
-    <div class="container">
-        <div class="section-label">A different approach</div>
-        <h2 class="section-title">Your agent needs real access to do real work.<br>It just shouldn't have access to <em>everything</em>.</h2>
-        <p class="section-desc">Sandboxes lock everything down. Rampart lets your agent run npm install, hit staging, and run tests. It blocks credential reads, exfiltration, and destructive commands.</p>
-        <div class="pos-grid">
-            <div class="pos-card negative">
-                <div class="label">Sandbox approach</div>
-                <h3>Lock everything, allow a few things</h3>
-                <p>Agent can't install deps, run tests, or hit your staging API. Secure, but you fight the sandbox to get work done.</p>
-                <pre><span style="color:#484f58;">$ sandbox --allow ./project -- agent</span>
-<span style="color:#ef4444;">✗</span> npm install        <span style="color:#484f58;"># denied</span>
-<span style="color:#ef4444;">✗</span> pytest --db-url ... <span style="color:#484f58;"># denied</span>
-<span style="color:#ef4444;">✗</span> curl staging.api    <span style="color:#484f58;"># denied</span></pre>
-            </div>
-            <div class="pos-card positive">
-                <div class="label">Rampart approach</div>
-                <h3>Allow everything, block what's dangerous</h3>
-                <p>Agent works normally. Rampart only intervenes on credential access, exfiltration, and destructive commands.</p>
-                <pre>$ rampart setup claude-code
-<span style="color:#22c55e;">✔</span> npm install        <span style="color:#484f58;"># allowed</span>
-<span style="color:#22c55e;">✔</span> pytest --db-url ... <span style="color:#484f58;"># allowed</span>
-<span style="color:#FF6392;">✗</span> cat ~/.ssh/id_rsa   <span style="color:#484f58;"># denied</span></pre>
-            </div>
-        </div>
-    </div>
-</section>
-
-<!-- Terminal Demo -->
-<section class="terminal-section">
+<!-- Terminal Demo — show what it looks like first -->
+<section class="terminal-section" style="padding: 0 0 60px;">
     <div class="container-narrow">
         <div class="terminal">
             <div class="terminal-bar">
@@ -648,7 +620,7 @@
             <div class="terminal-body">
                 <div class="terminal-header">RAMPART WATCH — enforce mode — 6 policies matched</div>
                 <div style="margin-bottom: 4px; color: #58a6ff; font-size: 0.78rem;">LIVE FEED</div>
-                <div class="watch-rows">
+                <div class="watch-rows animate">
                     <div class="watch-row watch-deny">
                         <div class="watch-icon">●</div>
                         <div class="watch-time">21:03:41</div>
@@ -715,42 +687,53 @@
     </div>
 </section>
 
-<!-- Features -->
-<section class="features">
+<!-- Positioning: Sandbox vs Rampart -->
+<section class="positioning">
+    <div class="container">
+        <div class="section-label">A different approach</div>
+        <h2 class="section-title">Your agent needs real access to do real work.<br>It just shouldn't have access to <em>everything</em>.</h2>
+        <p class="section-desc">Sandboxes lock everything down. Rampart lets your agent run npm install, hit staging, and run tests. It blocks credential reads, exfiltration, and destructive commands.</p>
+        <div class="pos-grid">
+            <div class="pos-card negative">
+                <div class="label">Sandbox approach</div>
+                <h3>Lock everything, allow a few things</h3>
+                <p>Agent can't install deps, run tests, or hit your staging API. Secure, but you fight the sandbox to get work done.</p>
+                <pre><span style="color:#484f58;">$ sandbox --allow ./project -- agent</span>
+<span style="color:#ef4444;">✗</span> npm install        <span style="color:#484f58;"># denied</span>
+<span style="color:#ef4444;">✗</span> pytest --db-url ... <span style="color:#484f58;"># denied</span>
+<span style="color:#ef4444;">✗</span> curl staging.api    <span style="color:#484f58;"># denied</span></pre>
+            </div>
+            <div class="pos-card positive">
+                <div class="label">Rampart approach</div>
+                <h3>Allow everything, block what's dangerous</h3>
+                <p>Agent works normally. Rampart only intervenes on credential access, exfiltration, and destructive commands.</p>
+                <pre>$ rampart setup claude-code
+<span style="color:#22c55e;">✔</span> npm install        <span style="color:#484f58;"># allowed</span>
+<span style="color:#22c55e;">✔</span> pytest --db-url ... <span style="color:#484f58;"># allowed</span>
+<span style="color:#FF6392;">✗</span> cat ~/.ssh/id_rsa   <span style="color:#484f58;"># denied</span></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features — tight, scannable -->
+<section class="features" style="padding: 60px 0;">
     <div class="container">
         <div class="section-label">How it works</div>
         <h2 class="section-title">A seatbelt, not a cage</h2>
-        <p class="section-desc">One Go binary, no cloud, no latency your agent can feel. See how we map to the <a href="https://docs.rampart.sh/reference/owasp-mapping/" style="color:var(--accent);">OWASP Agentic Top 10</a>.</p>
-        <div class="feature-grid">
-            <div class="feature-card">
-                <div class="feature-icon">🔍</div>
-                <h3>Generate rules from behavior</h3>
-                <p>Start in monitor mode to watch without blocking. Then <code style="color:var(--accent);">rampart init --from-audit</code> turns your audit log into a policy file. No rules to write by hand.</p>
+        <p class="section-desc">One binary. No cloud. No config file to write on day one.</p>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; max-width:960px;">
+            <div style="padding:24px; border-left:2px solid var(--accent);">
+                <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Watch first, block later</h3>
+                <p style="font-size:0.88rem; color:var(--text); line-height:1.6;">Start in monitor mode. See everything your agent does. Then <code style="color:var(--accent);">rampart init --from-audit</code> generates rules from real behavior.</p>
             </div>
-            <div class="feature-card">
-                <div class="feature-icon">🧠</div>
-                <h3>Response scanning</h3>
-                <p>Most tools only check what goes <em>in</em>. Rampart also checks what comes <em>out</em>. If a file read returns an AWS key, the response gets blocked. Works with Claude Code, HTTP proxy, and MCP integrations.</p>
+            <div style="padding:24px; border-left:2px solid var(--accent);">
+                <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Agents can't disable it</h3>
+                <p style="font-size:0.88rem; color:var(--text); line-height:1.6;">Prompt injection tells your agent to weaken its policy? Rampart blocks self-modification. The agent can't <code style="color:var(--accent);">rampart allow</code> its way out.</p>
             </div>
-            <div class="feature-card">
-                <div class="feature-icon">⏳</div>
-                <h3>Approval gates</h3>
-                <p>Mark any rule <code style="color:var(--accent);">require_approval</code>. The agent stops, you get a ping on Discord or Slack, and nothing runs until you say so.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🛡️</div>
-                <h3>Agents can't whitelist themselves</h3>
-                <p>Prompt injection tells your agent to weaken its own policy? Rampart blocks CLI self-modification. The agent can't <code style="color:var(--accent);">rampart allow</code> its way out.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔗</div>
-                <h3>Hash-chained audit log</h3>
-                <p>Every decision logged with a SHA-256 chain. Tamper with one record and the whole chain breaks. Ships syslog and CEF if your team runs a SIEM.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔌</div>
-                <h3>MCP proxy</h3>
-                <p><code style="color:var(--accent);">rampart mcp scan</code> reads an MCP server's tool list and generates policy automatically. Drop-in proxy for Claude Desktop and any MCP client.</p>
+            <div style="padding:24px; border-left:2px solid var(--accent);">
+                <h3 style="font-size:1rem; font-weight:600; color:var(--heading); margin-bottom:8px;">Approval gates</h3>
+                <p style="font-size:0.88rem; color:var(--text); line-height:1.6;">Mark any rule <code style="color:var(--accent);">require_approval</code>. Your agent pauses, you get a ping, and nothing runs until you say so.</p>
             </div>
         </div>
     </div>
