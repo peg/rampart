@@ -20,7 +20,7 @@ hide:
 
 Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked instantly. Everything gets logged to a tamper-evident audit trail where each entry is cryptographically linked to the previous one — if anyone tampers with a record, the chain breaks.
 
-Rampart also scans tool **responses** — if your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. [Learn more →](reference/owasp-mapping.md#response-scanning-owasp-risk-3)
+Rampart also scans tool **responses** — if your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
 
 <div class="grid cards" markdown>
 
@@ -62,13 +62,13 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     Block credentials in tool responses before they reach the agent's context window. Prevents secrets from being exfiltrated in later turns.
 
-    [:octicons-arrow-right-24: How it works](reference/owasp-mapping.md#response-scanning-owasp-risk-3)
+    [:octicons-arrow-right-24: How it works](reference/owasp-mapping.md#response-scanning-asi06)
 
 -   :material-certificate:{ .lg .middle } **OWASP Agentic Top 10**
 
     ---
 
-    Mapped against the 2026 OWASP framework for autonomous AI agents. 2 fully covered, 6 partially mitigated, with honest assessment of gaps.
+    Mapped against the 2026 OWASP framework for autonomous AI agents. 2 fully covered, 7 partially mitigated, 1 not addressed, with honest assessment of gaps.
 
     [:octicons-arrow-right-24: Full mapping](reference/owasp-mapping.md)
 
@@ -205,7 +205,7 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.8.1
+## What's New in v0.9.0
 
 - **`rampart init --from-audit`** — Generate policy YAML from your audit logs. Observe what your agent does, then generate rules to match. [Learn more →](reference/cli-commands.md#rampart-init---from-audit)
 - **Temporal allows** — `rampart allow "docker *" --for 1h` creates rules that expire automatically. `--once` for single-use rules (consumed after first match, removed manually). [Learn more →](reference/cli-commands.md#rampart-allow)

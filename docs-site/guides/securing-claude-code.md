@@ -78,7 +78,7 @@ Rampart includes a `watch-prompt-injection` policy in the standard profile. It m
 
 This matters for Claude Code because prompts are not the only input channel. Web pages, fetched docs, and MCP tool output can all carry hidden or explicit instructions intended to redirect the agent.
 
-The default action is `watch` so you can see detections without breaking normal browsing and research workflows.
+The default action is `ask` — when a high-confidence injection pattern is detected, Rampart pauses execution and requires human approval before the agent continues.
 
 ## Verifying It Works
 
