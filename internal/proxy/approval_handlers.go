@@ -97,7 +97,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 
@@ -176,7 +176,7 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 

@@ -36,7 +36,7 @@ type autoAllowedRule struct {
 }
 
 func (s *Server) handleGetAutoAllowed(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 

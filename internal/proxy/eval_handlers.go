@@ -366,9 +366,9 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 
 // handleTest evaluates a command against the loaded policy engine and returns
 // the decision. This powers the "Try a command" REPL in the dashboard Policy tab.
+// Admin-only: prevents agent tokens from probing the policy engine for bypasses.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
-	identity := s.checkAuthIdentity(w, r)
-	if identity == nil {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 
@@ -395,11 +395,6 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		req.Tool = "exec"
 	}
 
-	// Override agent from token identity (prevent impersonation via test endpoint).
-	if !identity.IsAdmin && identity.Agent != "" {
-		req.Agent = identity.Agent
-	}
-
 	params := map[string]any{"command": req.Command}
 	if req.Tool == "write" || req.Tool == "read" {
 		params = map[string]any{"path": req.Command}
@@ -413,16 +408,9 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now(),
 	}
 
-	// Apply same policy scoping as handleToolCall.
+	// Admin-only endpoint: evaluate with global scope, no default deny.
 	evalOpts := engine.EvalOptions{}
 	policyScope := "global"
-	if !identity.IsAdmin {
-		evalOpts.DefaultDeny = true
-		if identity.Policy != "" {
-			evalOpts.PolicyFilter = identity.Policy
-			policyScope = identity.Policy
-		}
-	}
 	decision := s.engine.EvaluateWith(call, evalOpts)
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -441,8 +429,9 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePolicySummary returns a transparency-oriented summary of active rules.
+// Admin-only to prevent agent tokens from enumerating policy rules.
 func (s *Server) handlePolicySummary(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 
@@ -470,7 +459,7 @@ func (s *Server) handlePolicySummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 

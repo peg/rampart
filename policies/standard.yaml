@@ -34,18 +34,18 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Allow operational commands (serve lifecycle, read-only queries).
+      # Allow read-only operational commands. Note: "rampart serve" is NOT
+      # allowed here — an agent must not be able to restart the enforcer
+      # with different flags (e.g. --mode disabled, --addr 0.0.0.0).
       - action: allow
         when:
           command_contains:
-            - "rampart serve"
             - "rampart version"
             - "rampart status"
             - "rampart doctor"
             - "rampart log"
             - "rampart watch"
             - "rampart convert"
-            - "rampart upgrade"
         message: "Operational rampart commands are allowed"
       # Substring matching catches ALL shell wrapper bypasses (bash -c, sh -c, etc.)
       # This is the primary defense - simple but robust
@@ -140,6 +140,16 @@ policies:
             - "rm -f ~/.local/bin/rampart"
             - "rm -f /usr/local/bin/rampart"
         message: "Removing the Rampart binary is not allowed"
+      # Block tampering with integration hook files. These are the actual
+      # enforcement choke points — editing them disables Rampart.
+      - action: deny
+        when:
+          command_contains:
+            - ".claude/settings.json"
+            - ".local/bin/codex"
+            - ".local/bin/rampart-shim"
+            - ".claude/settings.local.json"
+        message: "Modifying Rampart integration hooks is not allowed"
 
   - name: block-destructive
     match:
@@ -437,7 +447,10 @@ policies:
             - "**/.env.*"
             - "**/.envrc"
             - "**/.netrc"
-            - "**/token*"
+            - "**/.rampart/token"
+            - "**/.rampart/tokens.json"
+            - "**/token.json"
+            - "**/token.txt"
             - "**/.git-credentials"
             - "**/.vault-token"
             - "**/.npmrc"
