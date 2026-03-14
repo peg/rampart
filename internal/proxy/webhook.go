@@ -18,7 +18,7 @@ import (
 
 // executeWebhookAction calls the configured webhook URL and returns an
 // allow or deny decision based on the response. On error/timeout, behavior
-// is determined by the fail_open setting (default: fail open).
+// is determined by the fail_open setting (default: fail closed).
 func (s *Server) executeWebhookAction(call engine.ToolCall, decision engine.Decision) engine.Decision {
 	cfg := decision.WebhookConfig
 	if cfg == nil || cfg.URL == "" {
