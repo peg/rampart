@@ -426,7 +426,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				// Write serve state file for discovery by doctor/watch/log.
 				if rampartDir != "" {
-					if err := writeServeState(rampartDir, listenPort, os.Getpid()); err != nil {
+					if err := writeServeState(rampartDir, listenPort, os.Getpid(), tlsCfg != nil); err != nil {
 						logger.Warn("serve: failed to write state file", "error", err)
 					}
 				}

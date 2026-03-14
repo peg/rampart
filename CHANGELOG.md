@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Self-protection policies** (`standard.yaml`): block agents from killing Rampart processes (`pkill rampart`, `killall rampart`, `kill $(pgrep rampart)`) or removing the Rampart binary.
+- **Interpreter base64 obfuscation blocking** (`standard.yaml`): deny `python3 -c "exec(base64.b64decode(...))"`, Ruby `Base64.decode64`, Perl `MIME::Base64`, Node `Buffer.from` one-liners.
+- **`rampart report export`**: shareable audit summary command.
+
+### Changed
+
+- **BREAKING: Eval token scope narrowed.** Audit reads, status checks, approval listing, and rule management now require admin-scoped tokens. Eval tokens are limited to tool call evaluation (`POST /v1/eval`). Update integrations using eval tokens for audit/status endpoints.
+
+### Fixed
+
+- **OpenClaw profile self-bypass** (`openclaw.yaml`): bare `rampart serve` and `rampart upgrade` no longer allowed — an agent could restart serve with altered flags or upgrade to a tampered binary. Only explicit safe subcommands (`serve stop`, `serve install`) are permitted.
+- **Serve state TLS scheme**: `writeServeState` now records `https://` when TLS is enabled. Fixes `doctor`, `watch`, and `status` probing the wrong URL after `rampart serve --tls-auto`.
+- **Upgrade restart reminder**: only shown when serve was not successfully auto-restarted.
+- **Docs accuracy**: OWASP ASI05 downgraded from Covered to Partial, broken anchors fixed, version references updated, prompt injection default action corrected.
+
+### Security
+
+- Self-protection policies prevent agents from disabling their own enforcement.
+- OpenClaw profile hardened against serve restart and upgrade abuse.
+
 ## [0.7.1] - 2026-03-01
 
 ### Fixed
