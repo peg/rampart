@@ -469,8 +469,11 @@
         .agent-chip .dot {
             width: 8px; height: 8px;
             border-radius: 50%;
-            background: var(--accent);
+            background: var(--text-dim);
             flex-shrink: 0;
+        }
+        .agent-chip--native .dot {
+            background: var(--accent);
         }
 
         /* ── Install ── */
@@ -721,17 +724,14 @@
     <div class="container">
         <div class="section-label">Compatibility</div>
         <h2 class="section-title">Hooks into what you already use</h2>
-        <p class="section-desc">Native hooks for the big ones. MCP proxy for Claude Desktop. Shell wrapper and HTTP API for everything else.</p>
+        <p class="section-desc">Native <code>rampart setup</code> for the big ones. Shell wrapper and HTTP API for everything else.</p>
         <div class="agent-grid">
-            <div class="agent-chip"><span class="dot"></span> Claude Code</div>
-            <div class="agent-chip"><span class="dot"></span> Cline</div>
-            <div class="agent-chip"><span class="dot"></span> Codex CLI</div>
-            <div class="agent-chip"><span class="dot"></span> OpenClaw</div>
-            <div class="agent-chip"><span class="dot"></span> Claude Desktop</div>
-            <div class="agent-chip"><span class="dot"></span> Aider</div>
-            <div class="agent-chip"><span class="dot"></span> OpenCode</div>
-            <div class="agent-chip"><span class="dot"></span> Continue</div>
-            <div class="agent-chip"><span class="dot"></span> Python agents</div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span> Claude Code</div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span> Cline</div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span> Codex CLI</div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span> OpenClaw</div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span> Claude Desktop</div>
+            <div class="agent-chip"><span class="dot"></span> Any shell-wrapped agent</div>
             <div class="agent-chip"><span class="dot"></span> Any MCP server</div>
         </div>
     </div>

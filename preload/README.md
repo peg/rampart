@@ -2,6 +2,28 @@
 
 A production-quality LD_PRELOAD interceptor library that provides universal agent protection by intercepting exec-family syscalls and consulting the Rampart policy server before execution.
 
+## Building
+
+The compiled library is not distributed in the repository. Build it from source:
+
+```bash
+cd preload
+make          # builds librampart.so (Linux) or librampart.dylib (macOS)
+make install  # copies to ~/.rampart/lib/
+```
+
+**Dependencies:** `gcc`, `libcurl-dev`, `libpthread`
+
+```bash
+# Ubuntu/Debian
+sudo apt install build-essential libcurl4-openssl-dev
+
+# macOS
+brew install curl
+```
+
+`rampart setup` runs `make install` automatically when it detects the preload integration mode.
+
 ## Overview
 
 The Rampart preload library (`librampart.so` / `librampart.dylib`) works by:
