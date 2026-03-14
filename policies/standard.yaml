@@ -40,6 +40,9 @@ policies:
       - action: allow
         when:
           command_contains:
+            - "rampart serve stop"
+            - "rampart serve install"
+            - "rampart serve uninstall"
             - "rampart version"
             - "rampart status"
             - "rampart doctor"
@@ -48,7 +51,10 @@ policies:
             - "rampart convert"
         message: "Operational rampart commands are allowed"
       # Substring matching catches ALL shell wrapper bypasses (bash -c, sh -c, etc.)
-      # This is the primary defense - simple but robust
+      # This is the primary defense - simple but robust.
+      # SECURITY: "rampart serve" denied because an agent could restart with
+      # --mode disabled or altered flags. "rampart upgrade" denied because
+      # an agent could replace the binary. Safe serve subcommands are allowed above.
       - action: deny
         when:
           command_contains:
@@ -59,6 +65,7 @@ policies:
             - "rampart init"
             - "rampart setup"
             - "rampart serve"
+            - "rampart upgrade"
         message: "Policy modification commands must be run by a human, not an agent"
       # Block shell redirects writing to .rampart directory (config/policy tampering)
       - action: deny
@@ -1085,6 +1092,17 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Allow localhost/127.0.0.1 requests even if URL query params contain
+      # exfil domain names (e.g. searching for "webhook.site" on a local
+      # search engine). The exfil domain is in the query string, not the target.
+      - action: allow
+        when:
+          command_matches:
+            - "*curl*localhost*"
+            - "*curl*127.0.0.1*"
+            - "*wget*localhost*"
+            - "*wget*127.0.0.1*"
+        message: "Local request allowed (exfil domain in query params, not target)"
       - action: deny
         when:
           command_contains:
@@ -1451,6 +1469,28 @@ policies:
             - "pwsh -e "
             - "pwsh -EncodedCommand"
         message: "Windows reverse shell pattern blocked"
+
+  - name: require-windows-registry-management
+    description: "Require approval for general Windows registry writes — agents should not freely modify the registry"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "reg add *"
+            - "reg delete *"
+            - "reg import *"
+            - "reg restore *"
+            - "New-Item*HKLM:*"
+            - "New-Item*HKCU:*"
+            - "Set-ItemProperty*HKLM:*"
+            - "Set-ItemProperty*HKCU:*"
+            - "New-ItemProperty*HKLM:*"
+            - "New-ItemProperty*HKCU:*"
+            - "Remove-Item*HKLM:*"
+            - "Remove-Item*HKCU:*"
+        message: "Windows registry modification requires approval"
 
   - name: block-windows-registry-persistence
     description: "Block registry-based persistence mechanisms"

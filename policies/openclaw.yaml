@@ -47,6 +47,10 @@ policies:
             - "rampart watch"
             - "rampart convert"
         message: "Read-only/safe rampart commands are allowed"
+      # SECURITY: deny policy modification AND serve/upgrade abuse.
+      # "rampart serve" denied because agent could restart with --mode disabled.
+      # "rampart upgrade" denied because agent could replace the binary.
+      # Safe serve subcommands (stop, install, uninstall) allowed above.
       - action: deny
         when:
           command_contains:
@@ -56,6 +60,8 @@ policies:
             - "rampart policy"
             - "rampart init"
             - "rampart setup"
+            - "rampart serve"
+            - "rampart upgrade"
         message: "Policy modification must be run by a human, not an agent"
       - action: deny
         when:

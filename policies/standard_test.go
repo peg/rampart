@@ -198,6 +198,14 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny python codecs decode", tool: "exec", command: `python3 -c "exec(codecs.decode('...', 'rot13'))"`, expected: engine.ActionDeny},
 		{name: "deny ruby base64 decode", tool: "exec", command: `ruby -e "eval(Base64.decode64('dGVzdA=='))"`, expected: engine.ActionDeny},
 		{name: "deny node buffer base64", tool: "exec", command: `node -e "eval(Buffer.from('dGVzdA==','base64').toString())"`, expected: engine.ActionDeny},
+
+		// Self-protection: serve and upgrade abuse
+		{name: "deny rampart serve bare", tool: "exec", command: "rampart serve", expected: engine.ActionDeny},
+		{name: "deny rampart serve mode disabled", tool: "exec", command: "rampart serve --mode disabled", expected: engine.ActionDeny},
+		{name: "deny rampart upgrade", tool: "exec", command: "rampart upgrade", expected: engine.ActionDeny},
+		{name: "allow rampart serve stop", tool: "exec", command: "rampart serve stop", expected: engine.ActionAllow},
+		{name: "allow rampart serve install", tool: "exec", command: "rampart serve install", expected: engine.ActionAllow},
+		{name: "allow rampart version", tool: "exec", command: "rampart version", expected: engine.ActionAllow},
 	}
 
 	for _, tc := range tests {
