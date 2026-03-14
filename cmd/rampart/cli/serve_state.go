@@ -24,9 +24,13 @@ type serveState struct {
 const serveStateFile = "serve.state"
 
 // writeServeState writes the serve state to ~/.rampart/serve.state.
-func writeServeState(dir string, port, pid int) error {
+func writeServeState(dir string, port, pid int, tls bool) error {
+	scheme := "http"
+	if tls {
+		scheme = "https"
+	}
 	state := serveState{
-		URL:     fmt.Sprintf("http://localhost:%d", port),
+		URL:     fmt.Sprintf("%s://localhost:%d", scheme, port),
 		Port:    port,
 		PID:     pid,
 		Started: time.Now().UTC().Format(time.RFC3339),
