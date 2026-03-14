@@ -75,6 +75,48 @@ Examples:
 	cmd.Flags().StringVar(&reportOpts.last, "last", "24h", "Time window (e.g., 24h, 7d, 30d)")
 
 	cmd.AddCommand(newReportComplianceCmd(opts, defaultAuditDir))
+	cmd.AddCommand(newReportExportCmd(defaultAuditDir))
+	return cmd
+}
+
+func newReportExportCmd(defaultAuditDir string) *cobra.Command {
+	var auditDir, output, last string
+
+	cmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export audit summary for sharing",
+		Long: `Export an audit summary as JSON for sharing with the Rampart team.
+
+The export includes rule hit counts, sample commands, and tool usage
+breakdown. Review the output before sharing — it contains your actual
+commands and file paths.
+
+Examples:
+  rampart report export                        # Last 7 days, auto-named file
+  rampart report export --last 30d             # Last 30 days
+  rampart report export --output my-export.json`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			exportReport, outPath, err := report.GenerateExport(report.ExportOptions{
+				AuditDir: auditDir,
+				Last:     last,
+				Output:   output,
+			})
+			if err != nil {
+				return err
+			}
+
+			report.PrintExportSummary(exportReport)
+
+			absPath, _ := filepath.Abs(outPath)
+			fmt.Printf("📁 Saved to: %s\n", absPath)
+			fmt.Println("→ Review the file, then share via GitHub issue or paste.")
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&auditDir, "audit-dir", defaultAuditDir, "Directory containing audit JSONL files")
+	cmd.Flags().StringVar(&output, "output", "", "Output file path (default: rampart-export-YYYY-MM-DD.json)")
+	cmd.Flags().StringVar(&last, "last", "7d", "Time window (e.g., 24h, 7d, 30d)")
 	return cmd
 }
 
