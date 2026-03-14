@@ -27,3 +27,7 @@ site/
 reddit-post.md
 .home/
 rampart-export-*.json
+
+# Preload library build artifacts (build from source with: cd preload && make)
+preload/librampart.so
+preload/librampart.dylib
