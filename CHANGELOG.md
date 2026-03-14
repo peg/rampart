@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Self-protection policies** (`standard.yaml`): block agents from killing Rampart processes (`pkill rampart`, `killall rampart`, `kill $(pgrep rampart)`) or removing the Rampart binary.
+- **Interpreter base64 obfuscation blocking** (`standard.yaml`): deny `python3 -c "exec(base64.b64decode(...))"`, Ruby `Base64.decode64`, Perl `MIME::Base64`, Node `Buffer.from` one-liners.
+- **`rampart report export`**: shareable audit summary command.
+
+### Changed
+
+- **BREAKING: Eval token scope narrowed.** Audit reads, status checks, approval listing, and rule management now require admin-scoped tokens. Eval tokens are limited to tool call evaluation (`POST /v1/eval`). Update integrations using eval tokens for audit/status endpoints.
+
+### Fixed
+
+- **OpenClaw profile self-bypass** (`openclaw.yaml`): bare `rampart serve` and `rampart upgrade` no longer allowed — an agent could restart serve with altered flags or upgrade to a tampered binary. Only explicit safe subcommands (`serve stop`, `serve install`) are permitted.
+- **Serve state TLS scheme**: `writeServeState` now records `https://` when TLS is enabled. Fixes `doctor`, `watch`, and `status` probing the wrong URL after `rampart serve --tls-auto`.
+- **Upgrade restart reminder**: only shown when serve was not successfully auto-restarted.
+- **Docs accuracy**: OWASP ASI05 downgraded from Covered to Partial, broken anchors fixed, version references updated, prompt injection default action corrected.
+
+### Security
+
+- **Admin token leaked to `serve.log`**: `serve --background` created the log file 0644 and printed the full admin token to stderr (redirected to the log). Log is now 0600 and the token is suppressed in background mode.
+- **Eval tokens had excessive read access**: Audit events, approval queue, policy summary, status, and `/v1/test` were accessible with any agent token. All now require admin auth. Agent tokens are limited to `POST /v1/eval`.
+- **`/v1/test` was a policy oracle**: Any agent token could probe arbitrary commands against the loaded policy to iterate toward bypasses. Now admin-only.
+- **`serve.pid` and `ACTIVE_POLICY.md` were 0644**: Exposed process info and policy inventory to local users. Now 0600.
+- **`rampart serve` allow-before-deny bug**: `block-self-modification` allowed `rampart serve` before the deny rule — first-match-wins meant agents could run `rampart serve --mode disabled`. Allow entry removed.
+- **Integration hooks unprotected**: `~/.claude/settings.json`, `~/.local/bin/codex` wrapper, and `rampart-shim` could be modified by agents. Added to `block-self-modification`.
+- **Localhost search false positives**: `curl localhost:8888/search?q=webhook.site` was denied by `block-exfil-domains-exec` because the URL query string matched exfil domain patterns. Added localhost/127.0.0.1 allow rule with regression test.
+- **`**/token*` read-deny too broad**: Was blocking reads of `src/tokenizer.go`, `docs/token-guide.md`. Replaced with specific patterns (`.rampart/token`, `token.json`, `token.txt`).
+- Self-protection policies prevent agents from disabling their own enforcement.
+- OpenClaw profile hardened against serve restart and upgrade abuse.
+
 ## [0.7.1] - 2026-03-01
 
 ### Fixed
@@ -773,7 +803,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.9.1...HEAD
 [0.5.0]: https://github.com/peg/rampart/compare/v0.4.12...v0.5.0
 [0.4.12]: https://github.com/peg/rampart/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/peg/rampart/compare/v0.4.10...v0.4.11

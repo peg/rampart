@@ -184,6 +184,28 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "ask write etc hosts", tool: "write", path: "/etc/hosts", expected: engine.ActionAsk},
 		{name: "ask security find generic password", tool: "exec", command: "security find-generic-password -s MyApp", expected: engine.ActionAsk},
 		{name: "ask aws s3 cp generic bucket", tool: "exec", command: "aws s3 cp ./build/ s3://staging-bucket/", expected: engine.ActionAsk},
+
+		// Self-protection: process kills
+		{name: "deny pkill rampart", tool: "exec", command: "pkill rampart", expected: engine.ActionDeny},
+		{name: "deny pkill -9 rampart", tool: "exec", command: "pkill -9 rampart", expected: engine.ActionDeny},
+		{name: "deny killall rampart", tool: "exec", command: "killall rampart", expected: engine.ActionDeny},
+		{name: "deny kill pgrep rampart", tool: "exec", command: "kill $(pgrep rampart)", expected: engine.ActionDeny},
+		{name: "deny kill -9 pgrep rampart", tool: "exec", command: "kill -9 $(pgrep rampart)", expected: engine.ActionDeny},
+		{name: "deny rm rampart binary", tool: "exec", command: "rm ~/.local/bin/rampart", expected: engine.ActionDeny},
+
+		// Interpreter base64 obfuscation
+		{name: "deny python base64 decode exec", tool: "exec", command: `python3 -c "exec(base64.b64decode('dGVzdA=='))"`, expected: engine.ActionDeny},
+		{name: "deny python codecs decode", tool: "exec", command: `python3 -c "exec(codecs.decode('...', 'rot13'))"`, expected: engine.ActionDeny},
+		{name: "deny ruby base64 decode", tool: "exec", command: `ruby -e "eval(Base64.decode64('dGVzdA=='))"`, expected: engine.ActionDeny},
+		{name: "deny node buffer base64", tool: "exec", command: `node -e "eval(Buffer.from('dGVzdA==','base64').toString())"`, expected: engine.ActionDeny},
+
+		// Self-protection: serve and upgrade abuse
+		{name: "deny rampart serve bare", tool: "exec", command: "rampart serve", expected: engine.ActionDeny},
+		{name: "deny rampart serve mode disabled", tool: "exec", command: "rampart serve --mode disabled", expected: engine.ActionDeny},
+		{name: "deny rampart upgrade", tool: "exec", command: "rampart upgrade", expected: engine.ActionDeny},
+		{name: "allow rampart serve stop", tool: "exec", command: "rampart serve stop", expected: engine.ActionAllow},
+		{name: "allow rampart serve install", tool: "exec", command: "rampart serve install", expected: engine.ActionAllow},
+		{name: "allow rampart version", tool: "exec", command: "rampart version", expected: engine.ActionAllow},
 	}
 
 	for _, tc := range tests {

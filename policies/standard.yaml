@@ -34,21 +34,27 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Allow operational commands (serve lifecycle, read-only queries).
+      # Allow read-only operational commands. Note: "rampart serve" is NOT
+      # allowed here — an agent must not be able to restart the enforcer
+      # with different flags (e.g. --mode disabled, --addr 0.0.0.0).
       - action: allow
         when:
           command_contains:
-            - "rampart serve"
+            - "rampart serve stop"
+            - "rampart serve install"
+            - "rampart serve uninstall"
             - "rampart version"
             - "rampart status"
             - "rampart doctor"
             - "rampart log"
             - "rampart watch"
             - "rampart convert"
-            - "rampart upgrade"
         message: "Operational rampart commands are allowed"
       # Substring matching catches ALL shell wrapper bypasses (bash -c, sh -c, etc.)
-      # This is the primary defense - simple but robust
+      # This is the primary defense - simple but robust.
+      # SECURITY: "rampart serve" denied because an agent could restart with
+      # --mode disabled or altered flags. "rampart upgrade" denied because
+      # an agent could replace the binary. Safe serve subcommands are allowed above.
       - action: deny
         when:
           command_contains:
@@ -59,6 +65,7 @@ policies:
             - "rampart init"
             - "rampart setup"
             - "rampart serve"
+            - "rampart upgrade"
         message: "Policy modification commands must be run by a human, not an agent"
       # Block shell redirects writing to .rampart directory (config/policy tampering)
       - action: deny
@@ -113,6 +120,43 @@ policies:
             - "rampart --* setup *"
             - "rampart --* serve *"
         message: "Policy modification commands must be run by a human, not an agent"
+      # Block process-kill commands targeting rampart (prevents agents from
+      # disabling their own enforcement by killing the serve process).
+      - action: deny
+        when:
+          command_contains:
+            - "pkill rampart"
+            - "pkill -9 rampart"
+            - "pkill -f rampart"
+            - "killall rampart"
+            - "killall -9 rampart"
+            - "pgrep rampart"
+            - "kill $(pgrep rampart"
+            - "kill `pgrep rampart"
+            - "kill -9 $(pgrep rampart"
+            - "kill -9 `pgrep rampart"
+            - "kill -KILL $(pgrep rampart"
+            - "kill -TERM $(pgrep rampart"
+        message: "Killing Rampart processes is not allowed — policy enforcement must remain active"
+      # Block removing/overwriting the rampart binary itself.
+      - action: deny
+        when:
+          command_contains:
+            - "rm ~/.local/bin/rampart"
+            - "rm /usr/local/bin/rampart"
+            - "rm -f ~/.local/bin/rampart"
+            - "rm -f /usr/local/bin/rampart"
+        message: "Removing the Rampart binary is not allowed"
+      # Block tampering with integration hook files. These are the actual
+      # enforcement choke points — editing them disables Rampart.
+      - action: deny
+        when:
+          command_contains:
+            - ".claude/settings.json"
+            - ".local/bin/codex"
+            - ".local/bin/rampart-shim"
+            - ".claude/settings.local.json"
+        message: "Modifying Rampart integration hooks is not allowed"
 
   - name: block-destructive
     match:
@@ -410,7 +454,10 @@ policies:
             - "**/.env.*"
             - "**/.envrc"
             - "**/.netrc"
-            - "**/token*"
+            - "**/.rampart/token"
+            - "**/.rampart/tokens.json"
+            - "**/token.json"
+            - "**/token.txt"
             - "**/.git-credentials"
             - "**/.vault-token"
             - "**/.npmrc"
@@ -777,6 +824,32 @@ policies:
             - "/usr/local/bin/perl -e **system**"
             - "/usr/local/bin/perl -e **exec**"
         message: "Interpreter one-liner with system execution blocked"
+      # Interpreter-based base64/encoding obfuscation — exec(decode(...)) patterns.
+      # Scoped to interpreter invocation to avoid FPs on code search.
+      - action: deny
+        when:
+          command_matches:
+            - "python -c **base64.b64decode**"
+            - "python3 -c **base64.b64decode**"
+            - "python -c **codecs.decode**"
+            - "python3 -c **codecs.decode**"
+            - "python -c **binascii.a2b_base64**"
+            - "python3 -c **binascii.a2b_base64**"
+            - "python -c **base64.decodebytes**"
+            - "python3 -c **base64.decodebytes**"
+            - "env python* -c **base64.b64decode**"
+            - "env python* -c **codecs.decode**"
+            # Ruby base64 decode
+            - "ruby -e **Base64.decode64**"
+            - "env ruby -e **Base64.decode64**"
+            # Perl base64 decode
+            - "perl -e **decode_base64**"
+            - "perl -e **MIME::Base64**"
+            - "env perl -e **decode_base64**"
+            # Node.js Buffer.from base64
+            - "node -e **Buffer.from**"
+            - "node --eval **Buffer.from**"
+        message: "Interpreter one-liner with encoded execution blocked"
 
   - name: block-eval-obfuscation
     description: "Block obfuscated command execution via eval and encoding tricks"
@@ -1019,6 +1092,17 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Allow localhost/127.0.0.1 requests even if URL query params contain
+      # exfil domain names (e.g. searching for "webhook.site" on a local
+      # search engine). The exfil domain is in the query string, not the target.
+      - action: allow
+        when:
+          command_matches:
+            - "*curl*localhost*"
+            - "*curl*127.0.0.1*"
+            - "*wget*localhost*"
+            - "*wget*127.0.0.1*"
+        message: "Local request allowed (exfil domain in query params, not target)"
       - action: deny
         when:
           command_contains:
@@ -1385,6 +1469,28 @@ policies:
             - "pwsh -e "
             - "pwsh -EncodedCommand"
         message: "Windows reverse shell pattern blocked"
+
+  - name: require-windows-registry-management
+    description: "Require approval for general Windows registry writes — agents should not freely modify the registry"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "reg add *"
+            - "reg delete *"
+            - "reg import *"
+            - "reg restore *"
+            - "New-Item*HKLM:*"
+            - "New-Item*HKCU:*"
+            - "Set-ItemProperty*HKLM:*"
+            - "Set-ItemProperty*HKCU:*"
+            - "New-ItemProperty*HKLM:*"
+            - "New-ItemProperty*HKCU:*"
+            - "Remove-Item*HKLM:*"
+            - "Remove-Item*HKCU:*"
+        message: "Windows registry modification requires approval"
 
   - name: block-windows-registry-persistence
     description: "Block registry-based persistence mechanisms"

@@ -38,7 +38,8 @@ const (
 	// Prefix for all rampart tokens.
 	Prefix = "rampart_"
 
-	// ScopeEval allows tool call evaluation, audit reads, and status checks.
+	// ScopeEval allows tool call evaluation (POST /v1/eval).
+	// Audit reads, status checks, approvals, and rule management require ScopeAdmin.
 	ScopeEval = "eval"
 
 	// ScopeAdmin allows mutations: approvals, rule deletion, policy reload, token management.

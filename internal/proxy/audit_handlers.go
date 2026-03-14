@@ -36,7 +36,7 @@ func WithAuditDir(dir string) Option {
 
 // handleAuditEvents serves GET /v1/audit/events — query audit events with pagination and filtering.
 func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 	if s.auditDir == "" {
@@ -155,7 +155,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 
 // handleAuditDates serves GET /v1/audit/dates — list available audit log dates.
 func (s *Server) handleAuditDates(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 	if s.auditDir == "" {
@@ -202,7 +202,7 @@ func (s *Server) handleAuditDates(w http.ResponseWriter, r *http.Request) {
 
 // handleAuditExport serves GET /v1/audit/export — download a day's audit log as JSONL.
 func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 	if s.auditDir == "" {
@@ -243,7 +243,7 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 
 // handleAuditStats serves GET /v1/audit/stats — quick stats for a date range.
 func (s *Server) handleAuditStats(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuth(w, r) {
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 	if s.auditDir == "" {

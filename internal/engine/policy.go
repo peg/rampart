@@ -280,8 +280,8 @@ type Condition struct {
 	CommandNotMatches []string `yaml:"command_not_matches,omitempty"`
 
 	// CommandContains is a list of literal substrings.
-	// The command must contain ALL specified substrings (AND logic within a single
-	// entry is not supported; use multiple entries for OR logic).
+	// The command must contain ANY of the specified substrings (OR logic).
+	// Case-insensitive matching.
 	// Useful for patterns that glob can't express, e.g. process substitution
 	// with URLs: bash <(curl ...) where the / in URLs breaks glob * matching.
 	CommandContains []string `yaml:"command_contains,omitempty"`

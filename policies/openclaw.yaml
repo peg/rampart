@@ -31,24 +31,26 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Allow serve lifecycle commands — stopping/restarting serve is operational, not policy modification.
+      # Allow read-only and safe operational commands.
+      # SECURITY: do NOT allow bare "rampart serve" — an agent could restart
+      # with --mode disabled or altered flags. Only allow explicit safe subcommands.
       - action: allow
         when:
           command_contains:
-            - "rampart serve"
-        message: "Serve lifecycle commands are allowed"
-      # Allow version/status/doctor — read-only commands.
-      - action: allow
-        when:
-          command_contains:
+            - "rampart serve stop"
+            - "rampart serve install"
+            - "rampart serve uninstall"
             - "rampart version"
             - "rampart status"
             - "rampart doctor"
             - "rampart log"
             - "rampart watch"
             - "rampart convert"
-            - "rampart upgrade"
-        message: "Read-only rampart commands are allowed"
+        message: "Read-only/safe rampart commands are allowed"
+      # SECURITY: deny policy modification AND serve/upgrade abuse.
+      # "rampart serve" denied because agent could restart with --mode disabled.
+      # "rampart upgrade" denied because agent could replace the binary.
+      # Safe serve subcommands (stop, install, uninstall) allowed above.
       - action: deny
         when:
           command_contains:
@@ -58,6 +60,8 @@ policies:
             - "rampart policy"
             - "rampart init"
             - "rampart setup"
+            - "rampart serve"
+            - "rampart upgrade"
         message: "Policy modification must be run by a human, not an agent"
       - action: deny
         when:

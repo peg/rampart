@@ -98,7 +98,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 
 				logPath := filepath.Join(rampartDir, "serve.log")
-				logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+				logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 				if err != nil {
 					return fmt.Errorf("serve: open log file: %w", err)
 				}
@@ -129,7 +129,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 
 				pidPath := filepath.Join(rampartDir, "serve.pid")
-				if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o644); err != nil {
+				if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o600); err != nil {
 					return fmt.Errorf("serve: write pid file: %w", err)
 				}
 
@@ -400,7 +400,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					startSpinDone = true
 				}
 
-				fmt.Fprintf(cmd.ErrOrStderr(), "  🔑 Full token : %s\n", token)
+				// Only print the full token to an interactive terminal, never to
+				// a log file (background mode redirects stderr to serve.log).
+				if !background {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  🔑 Full token : %s\n", token)
+				}
 				scheme := "http"
 				if tlsCfg != nil {
 					scheme = "https"
@@ -422,7 +426,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				// Write serve state file for discovery by doctor/watch/log.
 				if rampartDir != "" {
-					if err := writeServeState(rampartDir, listenPort, os.Getpid()); err != nil {
+					if err := writeServeState(rampartDir, listenPort, os.Getpid(), tlsCfg != nil); err != nil {
 						logger.Warn("serve: failed to write state file", "error", err)
 					}
 				}
@@ -618,7 +622,7 @@ func writeActivePolicyMarkdown(eng *engine.Engine) error {
 	b.WriteString("\nUse `rampart watch`, `rampart log`, and `rampart approve` for live transparency and approvals.\n")
 
 	outPath := filepath.Join(rampartDir, "ACTIVE_POLICY.md")
-	if err := os.WriteFile(outPath, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(outPath, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
 	return nil
