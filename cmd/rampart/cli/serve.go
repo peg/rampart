@@ -401,10 +401,10 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 
 				// Only print the full token to an interactive terminal, never to
-			// a log file (background mode redirects stderr to serve.log).
-			if !background {
-				fmt.Fprintf(cmd.ErrOrStderr(), "  🔑 Full token : %s\n", token)
-			}
+				// a log file (background mode redirects stderr to serve.log).
+				if !background {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  🔑 Full token : %s\n", token)
+				}
 				scheme := "http"
 				if tlsCfg != nil {
 					scheme = "https"

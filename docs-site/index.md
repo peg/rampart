@@ -68,7 +68,7 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     ---
 
-    Mapped against the 2026 OWASP framework for autonomous AI agents. 2 fully covered, 7 partially mitigated, 1 not addressed, with honest assessment of gaps.
+    Mapped against the 2026 OWASP framework for autonomous AI agents. 1 fully covered, 8 partially mitigated, 1 not addressed, with honest assessment of gaps.
 
     [:octicons-arrow-right-24: Full mapping](reference/owasp-mapping.md)
 
@@ -205,7 +205,7 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.9.0
+## What's New in v0.9.2
 
 - **`rampart init --from-audit`** — Generate policy YAML from your audit logs. Observe what your agent does, then generate rules to match. [Learn more →](reference/cli-commands.md#rampart-init---from-audit)
 - **Temporal allows** — `rampart allow "docker *" --for 1h` creates rules that expire automatically. `--once` for single-use rules (consumed after first match, removed manually). [Learn more →](reference/cli-commands.md#rampart-allow)

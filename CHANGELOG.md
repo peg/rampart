@@ -803,7 +803,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.9.1...HEAD
 [0.5.0]: https://github.com/peg/rampart/compare/v0.4.12...v0.5.0
 [0.4.12]: https://github.com/peg/rampart/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/peg/rampart/compare/v0.4.10...v0.4.11
