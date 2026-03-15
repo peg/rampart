@@ -74,7 +74,7 @@ func runInitProject(cmd *cobra.Command) error {
 		return fmt.Errorf("cli: check %s: %w", dest, err)
 	}
 
-	if err := os.WriteFile(dest, []byte(projectPolicyTemplate), 0o644); err != nil {
+	if err := os.WriteFile(dest, []byte(projectPolicyTemplate), 0o600); err != nil {
 		return fmt.Errorf("cli: write %s: %w", dest, err)
 	}
 
@@ -233,7 +233,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 			// Write config file (skip if exists and no --force)
 			configWritten := false
 			if !configExists || force {
-				if err := os.WriteFile(path, content, 0o644); err != nil {
+				if err := os.WriteFile(path, content, 0o600); err != nil {
 					return fmt.Errorf("cli: write config file %s: %w", path, err)
 				}
 				configWritten = true
@@ -255,7 +255,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 					// Stamp with version so doctor can detect stale policies.
 					stamped := []byte(fmt.Sprintf("# rampart-policy-version: %s\n", build.Version))
 					stamped = append(stamped, content...)
-					if err := os.WriteFile(profilePath, stamped, 0o644); err != nil {
+					if err := os.WriteFile(profilePath, stamped, 0o600); err != nil {
 						return fmt.Errorf("cli: write profile file %s: %w", profilePath, err)
 					}
 					policyWritten = true
