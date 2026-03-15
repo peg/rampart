@@ -681,7 +681,7 @@
             </div>
             <div class="pos-card positive">
                 <div class="label">Rampart approach</div>
-                <h3>Allow everything, block what's dangerous</h3>
+                <h3>Allow everything, block the dangerous stuff</h3>
                 <p>Agent works normally. Rampart only intervenes on credential access, exfiltration, and destructive commands.</p>
                 <pre>$ rampart setup claude-code
 <span style="color:#22c55e;">✔</span> npm install        <span style="color:#484f58;"># allowed</span>
@@ -693,7 +693,7 @@
 </section>
 
 <!-- Features -->
-<section class="features">
+<section class="features" style="padding-top:60px;">
     <div class="container">
         <div class="section-label">How it works</div>
         <h2 class="section-title">A seatbelt, not a cage</h2>
@@ -709,9 +709,9 @@
                 <div class="feature-icon">🛡️</div>
                 <h3>Survives prompt injection</h3>
                 <p>An injected prompt tells your agent to disable its own guardrails? Rampart runs at the OS layer. The agent can't edit its way out by touching a config file.</p>
-                <pre>- id: block-self-modification
-  match: { path: "~/.rampart/**" }
-  action: deny</pre>
+                <pre>name: block-self-modification
+action: deny
+# agents can't touch policy files</pre>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">⏳</div>
