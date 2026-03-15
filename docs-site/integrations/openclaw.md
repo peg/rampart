@@ -8,7 +8,7 @@ description: "Protect OpenClaw agents and their sub-agents (Codex, Claude Code) 
 For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart provides multiple layers of protection: a shell shim for OpenClaw's exec tool, LD_PRELOAD interception for sub-agents, and optional file tool patching.
 
 !!! info "Version requirement"
-    Requires OpenClaw 2026.2.x or later.
+    Requires OpenClaw 2026.2.x or later. OpenClaw 2026.3.x added native exec approvals — see [below](#openclaw-exec-approvals) for how they interact with Rampart.
 
 !!! tip "Fastest path"
     If you want your OpenClaw agent to install and configure Rampart for you, just say:
@@ -129,3 +129,39 @@ Policies and audit logs in `~/.rampart/` are preserved.
 
 !!! note "Patch verification"
     `--patch-tools` targets specific internal file paths. If an upgrade changes the code, the patch script logs warnings for each failed injection point and continues — file tools that couldn't be patched will be unprotected (fail-open). Always check the output of `rampart setup openclaw --patch-tools` after upgrades.
+
+## OpenClaw Exec Approvals
+
+OpenClaw 2026.3.x introduced native exec approvals — commands can be held for human confirmation via Discord or other channels before running. This is similar to Rampart's `action: ask` but operates at the OpenClaw layer, not the OS layer.
+
+**They complement each other. They don't clash** — as long as you use the `openclaw.yaml` profile.
+
+### How they divide responsibility
+
+| What triggers approval | Layer | Why |
+|----------------------|-------|-----|
+| `kubectl apply`, `terraform apply`, `docker push`, `helm install/upgrade` | Rampart (`openclaw.yaml`) | Rampart intercepts first; OpenClaw never sees blocked commands |
+| `sudo **` | Rampart (`standard.yaml`) | OpenClaw doesn't gate sudo |
+| `crontab -e`, `systemctl enable` | Rampart (`standard.yaml`) | Persistence gating |
+| Everything else OpenClaw is configured to gate | OpenClaw exec approvals | Passes through Rampart's allow-first policy |
+
+### Avoiding double-prompts
+
+If you run Rampart with `standard.yaml` (not `openclaw.yaml`) **and** have OpenClaw exec approvals enabled, you may get prompted twice for production commands like `kubectl apply` — once by Rampart, once by OpenClaw.
+
+**Fix:** Use the `openclaw.yaml` profile with Rampart. It's designed to co-exist with OpenClaw's native approvals:
+
+```bash
+rampart init --profile openclaw
+```
+
+The `openclaw.yaml` profile handles production deployment commands via `require_approval` and leaves everything else to OpenClaw's approval layer. No duplication.
+
+### What Rampart adds that OpenClaw approvals don't cover
+
+- **Hard blocks** — credential access, destructive commands, and exfiltration are denied outright, not just approval-gated. OpenClaw approvals can't hard-block.
+- **Pattern-based policy** — Rampart knows `npm test` is safe and `cat ~/.ssh/id_rsa` is not. OpenClaw approvals gate by tool or user config, not command semantics.
+- **Sub-agent coverage** — OpenClaw exec approvals only cover OpenClaw sessions. Rampart also covers Codex, Claude Code, and any LD_PRELOAD-wrapped agent.
+- **Response scanning** — Rampart checks what comes back from file reads. OpenClaw approvals don't.
+- **Tamper-evident audit** — hash-chained log that can be verified offline. Discord messages are not an audit trail.
+- **Agent-agnostic** — works whether or not OpenClaw is running.

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-03-15
+
+### Added
+
+- **`rampart report export` test coverage**: 4 test cases covering empty audit dir, events with correct totals/rules/tools, invalid duration, and file permissions (0600).
+
+### Fixed
+
+- **Policy file permissions 0644 → 0600**: `init.go`, `init_from_audit.go`, `convert.go`, `policy_registry.go`, `serve_state.go` wrote policy files world-readable. Reveals exact security rules to other local users.
+- **Credential regex lengths**: `glpat-` and Stripe patterns used exact-length anchors (`{20}`, `{24}`); changed to minimums (`{20,}`, `{24,}`) to catch format variants.
+- **Dashboard SSE auth error message**: EventSource silently fails on 401/403; added a pre-flight fetch to show a clear "requires admin token" message instead of generic "Cannot reach Rampart".
+- **Audit event ordering in HMAC persist guard**: persist=true check now fires before audit write, so the audit log never records `always_allowed` for a request that was actually rejected.
+
+### Security
+
+- **SSE stream required admin auth**: `GET /v1/events/stream` used `checkAuthOrTokenParam` instead of `checkAdminAuth`. Any agent eval token could subscribe to real-time audit events for all agents (commands, paths, decisions). Now admin-only.
+- **HMAC approval URLs blocked from `persist=true`**: Webhook notification URLs are HMAC-signed per approval ID but the resolve handler accepted `persist=true`, which permanently adds an auto-allow rule to disk. A leaked webhook URL could create a permanent policy bypass. Now rejected with 403.
+
+### Policy
+
+- **LaunchAgent write bypass fixed**: `block-sensitive-writes` blocked `launchctl load` via exec but not direct writes to `~/Library/LaunchAgents/` via write/edit tool. Added LaunchAgents, LaunchDaemons, and Windows autostart paths.
+- **`doas` and `runas` added to privileged approval**: `require-privileged-approval` only covered `sudo`. Added `doas` (Linux/OpenBSD) and `runas`/`runas.exe` (Windows).
+- **Credential scan gaps fixed**: `block-credential-leaks` only covered `exec` and `read` tools. Now also covers `fetch` and `mcp`. Added 9 new patterns: GitLab PATs (`glpat-`), Stripe live/test/restricted keys, npm tokens (`npm_`), SendGrid, `github_pat_`, `ASIA*` AWS session keys.
+
+## [0.9.2] - 2026-03-14
+
 ### Added
 
 - **Self-protection policies** (`standard.yaml`): block agents from killing Rampart processes (`pkill rampart`, `killall rampart`, `kill $(pgrep rampart)`) or removing the Rampart binary.
@@ -803,7 +829,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/peg/rampart/compare/v0.9.2...v0.9.3
+[0.9.2]: https://github.com/peg/rampart/compare/v0.9.1...v0.9.2
 [0.5.0]: https://github.com/peg/rampart/compare/v0.4.12...v0.5.0
 [0.4.12]: https://github.com/peg/rampart/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/peg/rampart/compare/v0.4.10...v0.4.11

@@ -388,7 +388,10 @@ policies:
         when:
           command_matches:
             - "sudo **"
-        message: "sudo requires approval"
+            - "doas **"
+            - "runas **"
+            - "runas.exe **"
+        message: "Privileged execution requires approval"
 
   - name: require-persistence-approval
     description: "Ask before creating persistence via cron/systemd; block obvious malicious cron payloads"
@@ -1001,6 +1004,12 @@ policies:
             - "**/.envrc"
             - "**/.env"
             - "**/.env.*"
+            # macOS persistence paths — writing plists here installs launch agents
+            - "**/Library/LaunchAgents/**"
+            - "**/Library/LaunchDaemons/**"
+            # Windows autostart paths
+            - "**\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\**"
+            - "**\\AppData\\Local\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\**"
           path_not_matches:
             - "/etc/hosts"
             - "**/etc/hosts"
@@ -1161,17 +1170,35 @@ policies:
 
   - name: block-credential-leaks
     match:
-      tool: ["exec", "read"]
+      tool: ["exec", "read", "fetch", "mcp"]
     rules:
       - action: deny
         when:
           response_matches:
+            # AWS
             - "AKIA[0-9A-Z]{16}"
+            - "ASIA[0-9A-Z]{16}"
+            # Private keys
             - "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+            # GitHub
             - "ghp_[a-zA-Z0-9]{36}"
+            - "github_pat_[a-zA-Z0-9_]{80,}"
+            # GitLab
+            - "glpat-[a-zA-Z0-9_-]{20,}"
+            # OpenAI / Anthropic
             - "sk-[a-zA-Z0-9]{20,}"
+            # Stripe
+            - "sk_live_[a-zA-Z0-9]{24,}"
+            - "sk_test_[a-zA-Z0-9]{24,}"
+            - "rk_live_[a-zA-Z0-9]{24,}"
+            # npm
+            - "npm_[a-zA-Z0-9]{36}"
+            # Slack
             - "xox[bsapr]-[a-zA-Z0-9-]+"
+            # JWT
             - "eyJ[a-zA-Z0-9_-]+\\.eyJ[a-zA-Z0-9_-]+"
+            # SendGrid
+            - "SG\\.[a-zA-Z0-9_-]{22}\\.[a-zA-Z0-9_-]{43}"
         message: "Sensitive credential detected in response"
 
   - name: watch-prompt-injection

@@ -134,6 +134,7 @@
         .hero {
             padding: 100px 0 60px;
             text-align: center;
+            background: radial-gradient(ellipse 600px 400px at 50% 30%, rgba(255, 99, 146, 0.06) 0%, transparent 70%);
         }
         .hero .badges {
             display: flex;
@@ -187,9 +188,9 @@
             border-radius: 10px;
             padding: 14px 24px;
             font-family: var(--mono);
-            font-size: 0.9rem;
+            font-size: 0.92rem;
             color: var(--text-bright);
-            margin-bottom: 20px;
+            margin-bottom: 28px;
             cursor: pointer;
             transition: border-color 0.15s;
         }
@@ -198,7 +199,7 @@
 
         .hero-buttons {
             display: flex;
-            gap: 12px;
+            gap: 20px;
             justify-content: center;
             flex-wrap: wrap;
         }
@@ -206,7 +207,7 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 12px 28px;
+            padding: 14px 32px;
             border-radius: 8px;
             text-decoration: none;
             font-weight: 600;
@@ -226,7 +227,7 @@
         .btn-ghost:hover { border-color: var(--text); }
 
         /* ── Terminal ── */
-        .terminal-section { padding: 0 0 60px; }
+        .terminal-section { padding: 40px 0 120px; }
         .policy-tab {
             font-family: var(--mono);
             font-size: 0.78rem;
@@ -245,7 +246,7 @@
             border: 1px solid #21262d;
             border-radius: 12px;
             overflow: hidden;
-            max-width: 780px;
+            max-width: 860px;
             margin: 0 auto;
         }
         .terminal-bar {
@@ -268,10 +269,10 @@
             font-family: var(--mono);
         }
         .terminal-body {
-            padding: 20px 24px;
+            padding: 24px 28px;
             font-family: var(--mono);
             font-size: 0.82rem;
-            line-height: 1.5;
+            line-height: 1.7;
         }
         .terminal-header {
             color: #8b949e;
@@ -284,7 +285,7 @@
             grid-template-columns: 20px 70px 42px 1fr auto;
             gap: 8px;
             align-items: baseline;
-            padding: 3px 0;
+            padding: 5px 0;
             opacity: 0;
             animation: fadeInRow 0.4s ease forwards;
         }
@@ -341,6 +342,7 @@
         }
         .section-desc {
             color: var(--text);
+            font-size: 1.05rem;
             max-width: 560px;
             margin-bottom: 48px;
             line-height: 1.7;
@@ -355,7 +357,7 @@
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: 12px;
-            padding: 28px;
+            padding: 36px;
         }
         .pos-card.negative { opacity: 0.6; }
         .pos-card.positive { border-color: var(--accent-border); }
@@ -408,6 +410,7 @@
             border: 1px solid var(--border);
             border-radius: 12px;
             padding: 28px;
+            min-height: 200px;
             transition: border-color 0.2s;
         }
         .feature-card:hover { border-color: var(--border-light); }
@@ -423,15 +426,26 @@
             margin-bottom: 16px;
         }
         .feature-card h3 {
-            font-size: 1rem;
+            font-size: 1.15rem;
             font-weight: 600;
             color: var(--heading);
             margin-bottom: 8px;
         }
         .feature-card p {
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             color: var(--text);
             line-height: 1.6;
+        }
+        .feature-card pre {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            color: var(--accent);
+            margin-top: 12px;
+            overflow-x: auto;
         }
         .feature-stat {
             display: inline-block;
@@ -623,8 +637,8 @@
 </section>
 
 <!-- Terminal Demo with Profile Selector -->
-<section class="terminal-section" style="padding: 0 0 60px;">
-    <div class="container-narrow">
+<section class="terminal-section">
+    <div class="container">
         <div class="policy-tabs" style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-bottom:20px;">
             <button class="policy-tab active" onclick="switchProfile('standard',this)">standard.yaml</button>
             <button class="policy-tab" onclick="switchProfile('paranoid',this)">paranoid.yaml</button>
@@ -650,7 +664,7 @@
 </section>
 
 <!-- Positioning: Sandbox vs Rampart -->
-<section class="positioning">
+<section class="positioning" style="padding: 100px 0;">
     <div class="container">
         <div class="section-label">A different approach</div>
         <h2 class="section-title">Your agent needs real access to do real work.<br>It just shouldn't have access to <em>everything</em>.</h2>
@@ -667,7 +681,7 @@
             </div>
             <div class="pos-card positive">
                 <div class="label">Rampart approach</div>
-                <h3>Allow everything, block what's dangerous</h3>
+                <h3>Allow everything, block the dangerous stuff</h3>
                 <p>Agent works normally. Rampart only intervenes on credential access, exfiltration, and destructive commands.</p>
                 <pre>$ rampart setup claude-code
 <span style="color:#22c55e;">✔</span> npm install        <span style="color:#484f58;"># allowed</span>
@@ -679,7 +693,7 @@
 </section>
 
 <!-- Features -->
-<section class="features">
+<section class="features" style="padding-top:60px;">
     <div class="container">
         <div class="section-label">How it works</div>
         <h2 class="section-title">A seatbelt, not a cage</h2>
@@ -687,52 +701,30 @@
         <div class="feature-grid">
             <div class="feature-card">
                 <div class="feature-icon">🔍</div>
-                <h3>Watch first, block later</h3>
-                <p>Start in monitor mode. See everything your agent does. Then generate rules from the audit log. No rules to write by hand.</p>
+                <h3>Watch before you block</h3>
+                <p>Run in monitor mode first. See exactly what your agent does, then generate rules from the audit log. You don't have to write a single policy by hand.</p>
+                <pre>$ rampart watch</pre>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🛡️</div>
-                <h3>Raises the bar on prompt injection</h3>
-                <p>Prompt injection tells your agent to weaken its policy? Rampart blocks self-modification attempts and protects its own config files.</p>
+                <h3>Survives prompt injection</h3>
+                <p>An injected prompt tells your agent to disable its own guardrails? Rampart runs at the OS layer. The agent can't edit its way out by touching a config file.</p>
+                <pre>name: block-self-modification
+action: deny
+# agents can't touch policy files</pre>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">⏳</div>
                 <h3>Approval gates</h3>
-                <p>Flag sensitive commands for human review. Your agent pauses and waits for you to approve or deny before proceeding.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🧠</div>
-                <h3>Response scanning</h3>
-                <p>Most tools only check what goes in. Rampart also checks what comes out. If a file read returns an AWS key, the response gets blocked.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔗</div>
-                <h3>Tamper-proof audit log</h3>
-                <p>Every decision logged with a SHA-256 hash chain. Tamper with one record and the whole chain breaks. Ships syslog and CEF.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔌</div>
-                <h3>Hooks into your tools</h3>
-                <p>Native setup for Claude Code, Codex, and Cline. MCP proxy for Claude Desktop. HTTP API and shell wrapper for custom integrations.</p>
+                <p>Mark any rule as require-approval. Rampart holds the command and pings you. Nothing runs until you say so.</p>
+                <pre>action: require-approval</pre>
             </div>
         </div>
-    </div>
-</section>
-
-<!-- Compatibility -->
-<section class="compat">
-    <div class="container">
-        <div class="section-label">Compatibility</div>
-        <h2 class="section-title">Hooks into what you already use</h2>
-        <p class="section-desc">Native <code>rampart setup</code> for the big ones. Shell wrapper and HTTP API for everything else.</p>
-        <div class="agent-grid">
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Claude Code</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Cline</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Codex CLI</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> OpenClaw</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Claude Desktop</div>
-            <div class="agent-chip"><span class="dot"></span> Any shell-wrapped agent</div>
-            <div class="agent-chip"><span class="dot"></span> Any MCP server</div>
+        <div style="text-align:center; margin-top:40px;">
+            <div style="display:inline-block; border:1px solid var(--border); border-radius:8px; padding:14px 28px; font-size:0.9rem; color:var(--text);">
+                Works with <code style="color:var(--text-bright);">rampart setup</code>:
+                Claude Code &middot; Cline &middot; Codex CLI &middot; OpenClaw &middot; Claude Desktop &middot; any shell-wrapped agent
+            </div>
         </div>
     </div>
 </section>

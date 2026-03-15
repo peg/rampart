@@ -70,8 +70,9 @@ func (h *sseHub) Close() {
 }
 
 func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAuthOrTokenParam(r) {
-		writeError(w, http.StatusUnauthorized, "invalid authorization token")
+	// Admin-only: SSE stream carries real-time audit events for all agents.
+	// Agent tokens must not receive cross-agent command/path/decision data.
+	if !s.checkAdminAuth(w, r) {
 		return
 	}
 

@@ -138,7 +138,7 @@ func runConvert(w io.Writer, inputPath, outputFile string) error {
 	yaml := renderPolicy(rules, inputPath)
 
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, []byte(yaml), 0o644); err != nil {
+		if err := os.WriteFile(outputFile, []byte(yaml), 0o600); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
 		fmt.Fprintf(w, "Wrote %d rules to %s\n", len(rules), outputFile)

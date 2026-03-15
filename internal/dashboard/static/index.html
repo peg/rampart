@@ -661,6 +661,18 @@ function reconnect(){hideError();connect()}
 
 function startSSE(){
   if(evtSource)evtSource.close();
+  // EventSource can't expose HTTP status codes — probe first so auth errors
+  // show a useful message instead of generic "Cannot reach Rampart".
+  fetch('/v1/events/stream',{headers:{'Authorization':'Bearer '+token},method:'HEAD'}).then(r=>{
+    if(r.status===401||r.status===403){
+      showError('Dashboard requires an admin token. Agent-scoped tokens cannot access the event stream.');
+      return;
+    }
+    _startSSEInner();
+  }).catch(()=>_startSSEInner());
+}
+function _startSSEInner(){
+  if(evtSource)evtSource.close();
   evtSource=new EventSource(`/v1/events/stream?token=${encodeURIComponent(token)}`);
   evtSource.onmessage=function(e){
     try{

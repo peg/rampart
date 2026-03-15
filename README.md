@@ -710,6 +710,8 @@ Supports recent OpenClaw versions with shell shim capabilities.
 
 ⚠️ **Re-run after OpenClaw upgrades** — the patch modifies files in `node_modules` that get replaced on update. Between upgrade and re-patch, file tools bypass Rampart (exec shim remains active).
 
+**OpenClaw exec approvals (2026.3.x+):** OpenClaw has native exec approvals that can gate commands via Discord. These complement Rampart — Rampart enforces hard policy blocks and covers sub-agents; OpenClaw handles the interactive approval UX. Use `rampart init --profile openclaw` to avoid double-prompting on production commands. See the [OpenClaw integration guide](https://docs.rampart.sh/integrations/openclaw/) for details.
+
 Works on Linux (systemd) and macOS (launchd).
 
 ---

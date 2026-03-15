@@ -445,7 +445,7 @@ func newPolicyFetchCmd(_ *rootOptions) *cobra.Command {
 			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 				return fmt.Errorf("policy: create policies directory: %w", err)
 			}
-			if err := os.WriteFile(dest, content, 0o644); err != nil {
+			if err := os.WriteFile(dest, content, 0o600); err != nil {
 				return fmt.Errorf("policy: write %s: %w", dest, err)
 			}
 
