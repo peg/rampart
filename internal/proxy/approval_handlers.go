@@ -260,6 +260,14 @@ authorized:
 		"resolved_by", req.ResolvedBy,
 	)
 
+	// HMAC-signed URLs are scoped to a single approval action — they must not
+	// be able to make permanent policy changes. Reject before any further
+	// processing so the audit log never records a false "always_allowed".
+	if hmacAuthed && req.Persist {
+		writeError(w, http.StatusForbidden, "persist=true requires admin token authentication, not a signed approval URL")
+		return
+	}
+
 	// Write audit event for the resolution.
 	if s.sink != nil {
 		resolution := "denied"
@@ -294,15 +302,6 @@ authorized:
 			s.logger.Error("proxy: audit write for approval resolution failed", "error", err)
 		}
 		s.broadcastSSE(map[string]any{"type": "audit", "event": auditEvent})
-	}
-
-	// Persist as auto-allow rule if requested.
-	// HMAC-signed URLs are scoped to a single approval action — they must not
-	// be able to make permanent policy changes. Only admin bearer tokens can
-	// add auto-allow rules.
-	if hmacAuthed && req.Persist {
-		writeError(w, http.StatusForbidden, "persist=true requires admin token authentication, not a signed approval URL")
-		return
 	}
 	var persisted bool
 	if req.Approved && req.Persist {

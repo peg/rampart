@@ -1184,13 +1184,13 @@ policies:
             - "ghp_[a-zA-Z0-9]{36}"
             - "github_pat_[a-zA-Z0-9_]{80,}"
             # GitLab
-            - "glpat-[a-zA-Z0-9_-]{20}"
+            - "glpat-[a-zA-Z0-9_-]{20,}"
             # OpenAI / Anthropic
             - "sk-[a-zA-Z0-9]{20,}"
             # Stripe
-            - "sk_live_[a-zA-Z0-9]{24}"
-            - "sk_test_[a-zA-Z0-9]{24}"
-            - "rk_live_[a-zA-Z0-9]{24}"
+            - "sk_live_[a-zA-Z0-9]{24,}"
+            - "sk_test_[a-zA-Z0-9]{24,}"
+            - "rk_live_[a-zA-Z0-9]{24,}"
             # npm
             - "npm_[a-zA-Z0-9]{36}"
             # Slack
