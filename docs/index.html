@@ -687,53 +687,24 @@
         <div class="feature-grid">
             <div class="feature-card">
                 <div class="feature-icon">🔍</div>
-                <h3>Watch first, block later</h3>
-                <p>Start in monitor mode. See everything your agent does. Then generate rules from the audit log. No rules to write by hand.</p>
+                <h3>Watch before you block</h3>
+                <p>Run in monitor mode first. See exactly what your agent does, then generate rules from the audit log. You don't have to write a single policy by hand.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🛡️</div>
-                <h3>Raises the bar on prompt injection</h3>
-                <p>Prompt injection tells your agent to weaken its policy? Rampart blocks self-modification attempts and protects its own config files. Harder to bypass than client-side controls.</p>
+                <h3>Survives prompt injection</h3>
+                <p>An injected prompt tells your agent to disable its own guardrails? Rampart runs at the OS layer. The agent can't edit its way out by touching a config file.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">⏳</div>
                 <h3>Approval gates</h3>
-                <p>Flag sensitive commands for human review. Rampart holds the command and notifies you — nothing runs until you say so.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🧠</div>
-                <h3>Response scanning</h3>
-                <p>Most tools only check what goes in. Rampart also checks what comes out. If a file read returns an AWS key, the response gets blocked.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔗</div>
-                <h3>Tamper-proof audit log</h3>
-                <p>Every decision logged with a SHA-256 hash chain. Tamper with one record and the whole chain breaks. Ships syslog and CEF.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔌</div>
-                <h3>Hooks into your tools</h3>
-                <p>Native setup for Claude Code, Codex, and Cline. MCP proxy for Claude Desktop. HTTP API and shell wrapper for custom integrations.</p>
+                <p>Mark any rule as require-approval. Rampart holds the command and pings you. Nothing runs until you say so.</p>
             </div>
         </div>
-    </div>
-</section>
-
-<!-- Compatibility -->
-<section class="compat">
-    <div class="container">
-        <div class="section-label">Compatibility</div>
-        <h2 class="section-title">Hooks into what you already use</h2>
-        <p class="section-desc">Native <code>rampart setup</code> for the big ones. Shell wrapper and HTTP API for everything else.</p>
-        <div class="agent-grid">
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Claude Code</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Cline</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Codex CLI</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> OpenClaw</div>
-            <div class="agent-chip agent-chip--native"><span class="dot"></span> Claude Desktop</div>
-            <div class="agent-chip"><span class="dot"></span> Any shell-wrapped agent</div>
-            <div class="agent-chip"><span class="dot"></span> Any MCP server</div>
-        </div>
+        <p style="text-align:center; margin-top:32px; color:var(--text-dim); font-size:0.88rem;">
+            Works with <code style="color:var(--text-bright);">rampart setup</code>:
+            Claude Code &middot; Cline &middot; Codex CLI &middot; OpenClaw &middot; Claude Desktop &middot; any shell-wrapped agent
+        </p>
     </div>
 </section>
 
