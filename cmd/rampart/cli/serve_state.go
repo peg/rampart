@@ -39,7 +39,7 @@ func writeServeState(dir string, port, pid int, tls bool) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, serveStateFile), data, 0o644)
+	return os.WriteFile(filepath.Join(dir, serveStateFile), data, 0o600)
 }
 
 // removeServeState removes the state file on shutdown.

@@ -102,7 +102,7 @@ func writeGeneratedPolicy(w io.Writer, content, output string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("init: from-audit: create dir: %w", err)
 	}
-	if err := os.WriteFile(outputPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("init: from-audit: write: %w", err)
 	}
 
