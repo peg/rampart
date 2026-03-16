@@ -1143,6 +1143,9 @@ func hasRampartHook(settings claudeSettings) bool {
 func openclawToolsCandidates() []string {
 	home, _ := os.UserHomeDir()
 	return []string{
+		// User-local install (npm install -g --prefix ~/.local) — check first
+		filepath.Join(home, ".local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
+		// System-wide installs
 		"/usr/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
 		"/usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
 		filepath.Join(home, ".npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
@@ -1329,6 +1332,7 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 func openclawDistCandidates() []string {
 	home, _ := os.UserHomeDir()
 	return []string{
+		filepath.Join(home, ".local", "lib", "node_modules", "openclaw", "dist"),
 		"/usr/lib/node_modules/openclaw/dist",
 		"/usr/local/lib/node_modules/openclaw/dist",
 		filepath.Join(home, ".npm-global", "lib", "node_modules", "openclaw", "dist"),
