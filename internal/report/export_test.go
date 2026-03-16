@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -147,13 +148,15 @@ func TestGenerateExport_WithEvents(t *testing.T) {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 
-	// File should be 0600.
-	info, err := os.Stat(outPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("file mode = %o, want 0600", info.Mode().Perm())
+	// File should be 0600 (Unix only — Windows doesn't enforce Unix perms).
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(outPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("file mode = %o, want 0600", info.Mode().Perm())
+		}
 	}
 }
 
