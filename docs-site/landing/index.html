@@ -19,7 +19,7 @@
   <meta name="author" content="Trevor" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
   <script type="application/ld+json">
   {
@@ -57,11 +57,11 @@
       --text-muted:    #8b8d98;
       --text-dim:      #4e5058;
 
-      /* Accent */
-      --amber:         #f5a623;
-      --amber-400:     #fbbf24;
-      --amber-glow:    rgba(245, 166, 35, 0.15);
-      --amber-bg:      rgba(245, 166, 35, 0.08);
+      /* Accent — Rampart pink (NOT amber; amber belongs to Snare) */
+      --amber:         #FF6392;
+      --amber-400:     #ff7aa8;
+      --amber-glow:    rgba(255, 99, 146, 0.15);
+      --amber-bg:      rgba(255, 99, 146, 0.08);
 
       /* Verdict colors */
       --green:         #22c55e;
@@ -74,7 +74,7 @@
       --border-solid:  #232328;
 
       /* Typography */
-      --font-sans:     'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-sans:     'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
       --font-mono:     'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
 
       /* Layout */
@@ -144,7 +144,7 @@
       color: var(--text-dim);
       transition: color 150ms, border-color 150ms;
     }
-    .nav-github:hover .nav-github-stars { color: var(--amber); border-color: rgba(245,166,35,0.3); }
+    .nav-github:hover .nav-github-stars { color: var(--amber); border-color: rgba(255,99,146,0.3); }
 
     .nav-install {
       font-family: var(--font-mono);
@@ -159,11 +159,15 @@
       white-space: nowrap;
       line-height: 1.5;
     }
-    .nav-install:hover { border-color: rgba(245,166,35,0.4); color: var(--amber); }
+    .nav-install:hover { border-color: rgba(255,99,146,0.4); color: var(--amber); }
 
     /* ── Hero ───────────────────────────────────────────────────────────── */
     .hero {
       position: relative;
+      min-height: 100svh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       padding: clamp(5rem, 12vw, 9rem) 0 clamp(3rem, 6vw, 5rem);
       text-align: center;
       overflow: hidden;
@@ -172,22 +176,22 @@
     .hero::before {
       content: '';
       position: absolute;
-      top: 28%;
+      top: 35%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 140%;
-      height: 90%;
+      width: 160%;
+      height: 100%;
       background: radial-gradient(
         ellipse at center,
-        rgba(245, 166, 35, 0.075) 0%,
-        rgba(245, 166, 35, 0.028) 38%,
-        rgba(245, 166, 35, 0.006) 60%,
-        transparent 72%
+        rgba(255, 99, 146, 0.09) 0%,
+        rgba(255, 99, 146, 0.035) 35%,
+        rgba(255, 99, 146, 0.008) 58%,
+        transparent 70%
       );
       pointer-events: none;
       z-index: 0;
     }
-    .hero > .container { position: relative; z-index: 1; }
+    .hero > .container { position: relative; z-index: 1; width: 100%; }
 
     .hero-tag {
       display: inline-flex;
@@ -205,10 +209,10 @@
     .hero-tag-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex-shrink: 0; }
 
     h1 {
-      font-size: clamp(2.25rem, 5vw, 3.75rem);
-      font-weight: 700;
-      line-height: 1.12;
-      letter-spacing: -0.025em;
+      font-size: clamp(2.5rem, 5.5vw, 4.25rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
       color: var(--text);
       margin-bottom: 1.25rem;
       max-width: 780px;
@@ -253,8 +257,8 @@
       min-width: 360px;
     }
     .install-block:hover {
-      border-color: rgba(245, 166, 35, 0.45);
-      box-shadow: 0 0 22px rgba(245, 166, 35, 0.08);
+      border-color: rgba(255, 99, 146, 0.45);
+      box-shadow: 0 0 22px rgba(255, 99, 146, 0.08);
     }
     .install-prompt { color: var(--amber); user-select: none; }
     .install-cmd { color: var(--text); flex: 1; text-align: left; }
@@ -366,10 +370,10 @@
       margin-bottom: 0.875rem;
     }
     h2 {
-      font-size: clamp(1.5rem, 3vw, 2.125rem);
-      font-weight: 700;
-      line-height: 1.2;
-      letter-spacing: -0.02em;
+      font-size: clamp(1.625rem, 3.5vw, 2.375rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.025em;
       margin-bottom: 0.75rem;
     }
     .section-sub {
@@ -454,7 +458,7 @@
       content: '';
       position: absolute;
       inset: -60px;
-      background: radial-gradient(ellipse at center, rgba(245, 166, 35, 0.06) 0%, transparent 65%);
+      background: radial-gradient(ellipse at center, rgba(255, 99, 146, 0.06) 0%, transparent 65%);
       pointer-events: none;
       z-index: -1;
       filter: blur(32px);
@@ -520,10 +524,10 @@
       border-radius: 3px;
       transition: background 100ms;
     }
-    .log-line.allow  { }
-    .log-line.watch  { background: rgba(245, 166, 35, 0.04); }
-    .log-line.deny   { background: rgba(239, 68, 68, 0.05); }
-    .log-line.human  { background: rgba(59, 130, 246, 0.05); }
+    .log-line.allow  { border-left: 2px solid rgba(34, 197, 94, 0.2); padding-left: 0.4rem; }
+    .log-line.watch  { background: rgba(255, 99, 146, 0.04); border-left: 2px solid rgba(255, 99, 146, 0.4); padding-left: 0.4rem; }
+    .log-line.deny   { background: rgba(239, 68, 68, 0.05); border-left: 2px solid rgba(239, 68, 68, 0.45); padding-left: 0.4rem; }
+    .log-line.human  { background: rgba(59, 130, 246, 0.05); border-left: 2px solid rgba(59, 130, 246, 0.4); padding-left: 0.4rem; }
     .log-line.entering { animation: log-in 220ms var(--ease-out) both; }
     @keyframes log-in {
       from { opacity: 0; transform: translateY(4px); }
@@ -538,7 +542,7 @@
     .log-cmd.pending  { color: var(--blue); }
     .log-note { font-size: 0.72rem; color: var(--text-dim); white-space: nowrap; text-align: right; }
     .log-note.red    { color: rgba(239,68,68,0.65); }
-    .log-note.amber  { color: rgba(245,166,35,0.65); }
+    .log-note.amber  { color: rgba(255,99,146,0.65); }
     .log-note.blue   { color: rgba(59,130,246,0.65); }
 
     /* deny line border pulse on first show */
@@ -706,7 +710,7 @@
     }
     .y-key     { color: #7ec8e3; }
     .y-str     { color: #a8d8a8; }
-    .y-hi      { background: rgba(245,166,35,0.12); color: var(--amber); border-radius: 2px; padding: 0 2px; }
+    .y-hi      { background: rgba(255,99,146,0.12); color: var(--amber); border-radius: 2px; padding: 0 2px; }
     .y-blue    { background: rgba(59,130,246,0.10); color: #93c5fd; border-radius: 2px; padding: 0 2px; }
     .y-comment { color: var(--text-dim); }
     .y-num     { color: #f9a8d4; }
