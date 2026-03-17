@@ -10,7 +10,6 @@
 #
 # REMAINING GAPS (require OS-level sandboxing):
 # - Variable expansion: $CMD, ${CMD}
-# - Base64 payloads: echo dGVzdA== | base64 -d | bash
 # - Obfuscation: rev, xxd, printf escapes
 #
 # For adversarial threat models, combine Rampart with containers,
@@ -284,10 +283,19 @@ policies:
             #      printf '\x63\x61\x74...' | bash
             - "base64 -d | bash"
             - "base64 -d | sh"
+            - "base64 -d | zsh"
+            - "base64 -d | dash"
             - "base64 --decode | bash"
             - "base64 --decode | sh"
+            - "base64 --decode | zsh"
+            - "base64 --decode | dash"
             - "base64 -d|bash"
             - "base64 -d|sh"
+            - "base64 -d|zsh"
+            - "base64 -d|dash"
+            - "base64 -d <<<"
+            - "base64 --decode <<<"
+            - "[Convert]::FromBase64String"
             # Hex/octal encoding: printf '\x63\x61\x74...' | bash
             - "printf '\\x"
             - "printf \"\\x"
@@ -877,13 +885,28 @@ policies:
             - "sh -c \"$(base64"
             - "| rev | bash"
             - "| rev | sh"
-            # base64 decode piped to shell
+            # base64 decode piped to shell (all common shells)
             - "base64 -d | bash"
             - "base64 -d | sh"
+            - "base64 -d | zsh"
+            - "base64 -d | dash"
             - "base64 --decode | bash"
             - "base64 --decode | sh"
+            - "base64 --decode | zsh"
+            - "base64 --decode | dash"
+            - "base64 -d|bash"
+            - "base64 -d|sh"
+            - "base64 -d|zsh"
+            - "base64 -d|dash"
             - "base64 -d)|bash"
             - "base64 -d)|sh"
+            - "base64 -d)|zsh"
+            - "base64 -d)|dash"
+            # base64 here-string piped to shell: base64 -d <<< "..." | bash
+            - "base64 -d <<<"
+            - "base64 --decode <<<"
+            # PowerShell base64 decode to execution
+            - "[Convert]::FromBase64String"
             # source/dot with process substitution — scoped to obfuscated content only.
             # Broad "source <(" would FP on common idioms like "source <(kubectl completion bash)".
             # Only block when the substitution contains a known obfuscation source.
