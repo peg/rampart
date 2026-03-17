@@ -59,6 +59,7 @@
       --red:    #ef4444;
       --orange: #f59e0b;
       --cyan:   #06b6d4;
+      --verdict-size: 0.75rem;
       --font-sans: 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
       --font-mono: 'JetBrains Mono', ui-monospace, monospace;
       --content-width: 1100px;
@@ -265,9 +266,26 @@
     .c-allow { color: var(--green); } .c-deny { color: var(--red); } .c-dim { color: var(--text-dim); }
 
     /* ── FEATURES ── */
-    .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: 2.5rem; }
-    @media (max-width: 860px) { .features-grid { grid-template-columns: 1fr 1fr; } }
-    @media (max-width: 520px) { .features-grid { grid-template-columns: 1fr; } }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 1px; background: var(--border);
+      border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: 2.5rem;
+    }
+    /* Top row: 3 cards, each 2 cols */
+    .feature-card:nth-child(1),
+    .feature-card:nth-child(2),
+    .feature-card:nth-child(3) { grid-column: span 2; }
+    /* Bottom row: 2 cards, each 3 cols — perfectly centered */
+    .feature-card:nth-child(4),
+    .feature-card:nth-child(5) { grid-column: span 3; }
+    @media (max-width: 860px) {
+      .features-grid { grid-template-columns: 1fr 1fr; }
+      .feature-card:nth-child(n) { grid-column: span 1; }
+    }
+    @media (max-width: 520px) {
+      .features-grid { grid-template-columns: 1fr; }
+    }
     .feature-card { background: var(--surface); padding: 1.625rem 1.5rem; transition: background 180ms; }
     .feature-card:hover { background: var(--surface-2); }
     .feature-num {
@@ -381,10 +399,10 @@
   <!-- HERO -->
   <section class="hero">
     <div class="container">
-      <div class="hero-badge"><span class="hero-badge-dot"></span>v0.9.5 — open source &nbsp;·&nbsp; Apache 2.0</div>
+      <div class="hero-badge"><span class="hero-badge-dot"></span>v0.9.5 &nbsp;·&nbsp; now with response scanning</div>
       <h1>Your agent has root.<br>That's the problem.</h1>
       <p class="hero-sub">
-        Every command, file access, and network request evaluated against your YAML policy before it executes. One Go binary. No cloud. No latency your agent can feel.
+        Rampart sits between your agent and your system. Every command evaluated against your YAML policy before it runs. One binary. No cloud. 8µs overhead.
       </p>
       <div class="hero-install" onclick="copyInstall(this)" title="Click to copy">
         <span class="prompt">$</span>
@@ -478,12 +496,12 @@
         <div class="feature-card reveal">
           <div class="feature-num">01</div>
           <div class="feature-title">Policy enforcement</div>
-          <div class="feature-desc">Every command evaluated before it runs. Pattern matching handles 95%+ of decisions instantly. The optional <code>rampart-verify</code> sidecar adds LLM-based classification for ambiguous commands.</div>
+          <div class="feature-desc">Every command evaluated before it runs. 95%+ of decisions happen instantly via pattern matching. Edge cases go to an optional LLM sidecar — <code>rampart-verify</code> — that you can turn on when you need it.</div>
         </div>
         <div class="feature-card reveal reveal-d1">
           <div class="feature-num">02</div>
           <div class="feature-title">Response scanning</div>
-          <div class="feature-desc">If your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. Not just input filtering — output filtering too.</div>
+          <div class="feature-desc">If your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. Most tools only filter what goes in. This filters what comes back out too.</div>
         </div>
         <div class="feature-card reveal reveal-d2">
           <div class="feature-num">03</div>
@@ -493,12 +511,12 @@
         <div class="feature-card reveal reveal-d3">
           <div class="feature-num">04</div>
           <div class="feature-title">Approval gates</div>
-          <div class="feature-desc">Sensitive operations pause and wait for human review. Set <code>action: require-approval</code> on any rule. Policy modifications must be made by a human.</div>
+          <div class="feature-desc">Some commands you want a human to approve before they run. Set <code>action: require-approval</code> on any rule and Rampart holds it — nothing executes until you say yes or no.</div>
         </div>
         <div class="feature-card reveal reveal-d4">
           <div class="feature-num">05</div>
           <div class="feature-title">Tamper-evident audit</div>
-          <div class="feature-desc">Hash-chained JSONL audit log. Every decision recorded. See exactly what your agent does, then generate new rules directly from the audit log.</div>
+          <div class="feature-desc">Every allow, deny, and approval gets logged and chained — you can't edit the history without breaking it. Run <code>rampart audit</code> to see what your agent actually did. Feed the log back to generate new policies.</div>
         </div>
       </div>
     </div>
@@ -520,8 +538,8 @@
   <section class="section">
     <div class="container">
       <div class="section-label reveal">Compatibility</div>
-      <h2 class="section-title reveal">Works with your agent</h2>
-      <p class="section-sub reveal">Native integration for the agents you're already using. Universal wrapper for everything else.</p>
+      <h2 class="section-title reveal">Claude Code, Codex, Cline — and anything else.</h2>
+      <p class="section-sub reveal">Native hooks for the big four. If your agent isn't on the list, <code>rampart wrap -- &lt;cmd&gt;</code> covers it.</p>
       <div class="agents-table-wrap reveal">
         <table>
           <thead>
@@ -544,7 +562,7 @@
     <div class="container">
       <div class="section-label reveal">Configuration</div>
       <h2 class="section-title reveal">It's just YAML.</h2>
-      <p class="section-sub reveal" style="margin: 0 auto;">No DSL, no SDK, no proprietary format. 40+ policies ship with Rampart. Write your own in minutes.</p>
+      <p class="section-sub reveal" style="margin: 0 auto;">No DSL, no SDK, no proprietary format. 40+ policies included. The YAML block below is the whole syntax.</p>
       <div class="yaml-wrap reveal">
         <div class="yaml-bar">
           <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
@@ -594,7 +612,7 @@
   <section class="section text-center">
     <div class="container">
       <div class="section-label reveal">Get started</div>
-      <h2 class="section-title reveal">Start in two minutes</h2>
+      <h2 class="section-title reveal">Three commands.</h2>
       <div class="qs-steps">
         <div class="qs-step reveal">
           <div class="qs-num">1</div>
@@ -626,7 +644,7 @@
     <div class="container">
       <div class="section-label reveal">Ecosystem</div>
       <h2 class="section-title reveal">Rampart + Snare</h2>
-      <p class="section-sub reveal">Two tools. Full coverage. Rampart stops dangerous actions before they run. Snare catches credential theft after it happens.</p>
+      <p class="section-sub reveal">Rampart blocks dangerous actions before they run. Snare is a companion tool for a different problem: knowing when credentials have already been stolen — even weeks later.</p>
       <div class="eco-grid">
         <div class="eco-card reveal">
           <div class="eco-name">Rampart</div>
