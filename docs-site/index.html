@@ -335,7 +335,7 @@
     .yaml-wrap { max-width: 640px; margin: 2.5rem auto 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .yaml-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem; background: var(--surface-2); border-bottom: 1px solid var(--border); }
     .yaml-filename { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); margin-left: 0.25rem; }
-    .yaml-wrap pre { padding: 1.25rem 1.375rem; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.75; color: var(--text); overflow-x: auto; white-space: pre; }
+    .yaml-wrap pre { padding: 1.25rem 1.375rem; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.75; color: var(--text); overflow-x: auto; white-space: pre; text-align: left; }
     .yk { color: var(--cyan); } .ys { color: var(--green); }
     .yd { color: var(--red); font-weight: 700; } .yc { color: var(--text-dim); }
 
@@ -573,11 +573,11 @@
   </section>
 
   <!-- YAML -->
-  <section class="section text-center">
+  <section class="section">
     <div class="container">
       <div class="section-label reveal">Configuration</div>
       <h2 class="section-title reveal">It's just YAML.</h2>
-      <p class="section-sub reveal" style="margin: 0 auto;">No DSL, no SDK, no proprietary format. 40+ policies included. The YAML block below is the whole syntax.</p>
+      <p class="section-sub reveal">No DSL, no SDK, no proprietary format. 40+ policies included. The YAML block below is the whole syntax.</p>
       <div class="yaml-wrap reveal">
         <div class="yaml-bar">
           <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
