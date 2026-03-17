@@ -208,7 +208,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
 			if !hasInstalledPolicy() {
-				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init' first to install one")
+				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile openclaw' to install the OpenClaw-optimized policy")
 			}
 
 			// Check if rampart is in system PATH.
@@ -556,6 +556,11 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			fmt.Fprintf(out, "Policy: %s\n", policyPath)
 			fmt.Fprintf(out, "Audit:  %s\n", filepath.Join(home, ".rampart", "audit"))
 			fmt.Fprintf(out, "Watch:  rampart watch\n")
+			if !hasInstalledPolicy() {
+				fmt.Fprintln(out, "")
+				fmt.Fprintln(out, "💡 No policy installed yet. For OpenClaw, the openclaw profile is recommended:")
+				fmt.Fprintln(out, "   rampart init --profile openclaw")
+			}
 
 			return nil
 		},
