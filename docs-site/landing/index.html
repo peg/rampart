@@ -17,6 +17,7 @@
   <meta name="twitter:image" content="https://rampart.sh/og.png" />
   <meta name="keywords" content="AI agent firewall, Claude Code security, Codex security policy, YAML policy engine, rampart, AI agent safety, LLM agent guardrails, open source agent security" />
   <meta name="author" content="Trevor" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡</text></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -589,7 +590,7 @@
     /* ── Stats row ──────────────────────────────────────────────────────── */
     .stats-row {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 1px;
       background: var(--border);
       border: 1px solid var(--border-solid);
@@ -736,11 +737,13 @@
       color: var(--text);
       font-style: italic;
       margin-bottom: 1.25rem;
+      text-align: left;
     }
     .quote-primary-attr {
       font-family: var(--font-mono);
       font-size: 0.75rem;
       color: var(--text-dim);
+      text-align: left;
     }
     .quote-primary-mark {
       font-size: 5rem;
@@ -786,11 +789,13 @@
       color: var(--text-muted);
       margin-bottom: 0.875rem;
       padding-top: 0.25rem;
+      text-align: left;
     }
     .quote-attr {
       font-family: var(--font-mono);
       font-size: 0.7rem;
       color: var(--text-dim);
+      text-align: left;
     }
 
     /* ── Quickstart terminal ────────────────────────────────────────────── */
@@ -954,7 +959,7 @@
     }
     @media (max-width: 640px) {
       .install-block { min-width: unset; width: 100%; }
-      .stats-row { grid-template-columns: repeat(2, 1fr); }
+      .stats-row { grid-template-columns: repeat(3, 1fr); }
       .quotes-grid { grid-template-columns: 1fr; }
       .feature-grid { grid-template-columns: 1fr; }
       .ecosystem-cards { grid-template-columns: 1fr; text-align: center; }
@@ -967,6 +972,9 @@
       .log-time { display: none; }
       .log-note { font-size: 0.65rem; }
       .hero-agent-pills { gap: 0.35rem; }
+    }
+    @media (max-width: 420px) {
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -1002,7 +1010,7 @@
       <div class="container">
         <div class="hero-tag">
           <span class="hero-tag-dot"></span>
-          v0.9.5 · open source · Apache 2.0
+          v0.9.5 — open source agent firewall · Apache 2.0
         </div>
 
         <h1>Your agent has root.<br>That's the problem.</h1>
@@ -1044,12 +1052,12 @@
     ════════════════════════════════════════════════════════ -->
     <section id="threat">
       <div class="container">
-        <div class="section-label reveal">§ 01 · the problem</div>
-        <h2 class="reveal">The actual threat model</h2>
+        <div class="section-label reveal">§ 01 · the actual threat model</div>
+        <h2 class="reveal">Your agent has root. That's the problem.</h2>
         <p class="section-sub reveal">
           Claude Code runs with <code>--dangerously-skip-permissions</code>.
           Codex runs <code>--full-auto</code>. Your agent has the same access you
-          do — and no judgment about how to use it.
+          do — and no judgment about how to use it. Here's what that means.
         </p>
 
         <div class="threat-grid reveal">
@@ -1084,7 +1092,7 @@
     <section>
       <div class="container">
         <div style="text-align:center; margin-bottom: 2rem;">
-          <div class="section-label reveal">§ 02 · live output</div>
+          <div class="section-label reveal">§ 02 · what your agent did today</div>
           <h2 class="reveal">What your agent did today</h2>
           <p class="section-sub reveal" style="margin: 0.5rem auto 0;">
             <code>rampart watch</code> streams every operation in real time.
@@ -1118,7 +1126,7 @@
     ════════════════════════════════════════════════════════ -->
     <section id="features">
       <div class="container">
-        <div class="section-label reveal">§ 03 · protection</div>
+        <div class="section-label reveal">§ 03 · a seatbelt, not a cage</div>
         <h2 class="reveal">A seatbelt, not a cage.</h2>
         <p class="section-sub reveal">
           Rampart doesn't sandbox your agent into uselessness. It lets the safe
@@ -1185,6 +1193,11 @@
             <span class="stat-label">cloud deps</span>
             <span class="stat-sub">one binary</span>
           </div>
+          <div class="stat">
+            <span class="stat-num" id="stat-agents">4</span>
+            <span class="stat-label">native agents</span>
+            <span class="stat-sub">+ universal wrap</span>
+          </div>
         </div>
       </div>
     </section>
@@ -1194,7 +1207,7 @@
     ════════════════════════════════════════════════════════ -->
     <section>
       <div class="container">
-        <div class="section-label reveal">§ 04 · compatibility</div>
+        <div class="section-label reveal">§ 04 · works with everything you're running</div>
         <h2 class="reveal">Works with everything you're already running</h2>
         <p class="section-sub reveal">One setup command. Native hooks for the big four, universal wrapping for everything else.</p>
 
@@ -1252,7 +1265,7 @@
       <div class="container">
         <div class="yaml-section-inner">
           <div>
-            <div class="section-label reveal">§ 05 · policy</div>
+            <div class="section-label reveal">§ 05 · the policy</div>
             <h2 class="reveal">YAML in, policy out.</h2>
             <p class="section-sub reveal" style="margin-bottom: 1.25rem;">
               Policies are just YAML files. Write them by hand, generate them
@@ -1310,7 +1323,7 @@
     ════════════════════════════════════════════════════════ -->
     <section style="text-align:center;">
       <div class="container">
-        <div class="section-label">why it exists</div>
+        <div class="section-label reveal">why it exists</div>
         <div class="quotes-section">
           <!-- Primary quote — founder, full-width -->
           <div class="quote-primary reveal">
@@ -1349,7 +1362,7 @@
     ════════════════════════════════════════════════════════ -->
     <section id="quickstart">
       <div class="container" style="text-align:center;">
-        <div class="section-label reveal">§ 06 · install</div>
+        <div class="section-label reveal">§ 06 · get started</div>
         <h2 class="reveal">Three commands. That's it.</h2>
 
         <div class="terminal reveal" style="max-width:680px; margin: 2rem auto 0; text-align:left;">
@@ -1610,6 +1623,7 @@
         { id: 'stat-rules',   end: 40, suffix: '+',   duration: 900 },
         { id: 'stat-pattern', end: 95, suffix: '%',   duration: 800 },
         { id: 'stat-cloud',   end: 0,  suffix: '',    duration: 500 },
+        { id: 'stat-agents',  end: 4,  suffix: '',    duration: 600 },
       ];
 
       const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
