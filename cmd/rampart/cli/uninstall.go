@@ -160,6 +160,38 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 		}
 	}
 
+	// 6. Remove OpenClaw gateway drop-in (LD_PRELOAD + RAMPART_URL injection)
+	dropIn := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
+	if _, err := os.Stat(dropIn); err == nil {
+		if err := os.Remove(dropIn); err == nil {
+			removed = append(removed, "OpenClaw gateway drop-in (rampart.conf)")
+			// Reload systemd so the removed drop-in takes effect
+			_ = runSilent("systemctl", "--user", "daemon-reload")
+			_ = runSilent("systemctl", "--user", "restart", "openclaw-gateway")
+		} else {
+			failed = append(failed, fmt.Sprintf("OpenClaw gateway drop-in (%s)", dropIn))
+		}
+	}
+
+	// 7. Restore patched OpenClaw file tools from backups
+	toolCandidates := openclawToolsCandidates()
+	toolNames := []string{"read", "write", "edit", "grep"}
+	for _, dir := range toolCandidates {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, tool := range toolNames {
+			backup := filepath.Join(dir, tool+".js.rampart-backup")
+			target := filepath.Join(dir, tool+".js")
+			if _, err := os.Stat(backup); err == nil {
+				if err := os.Rename(backup, target); err == nil {
+					removed = append(removed, fmt.Sprintf("restored %s.js", tool))
+				}
+			}
+		}
+		break // only restore from the first found dir
+	}
+
 	// Summary
 	fmt.Fprintln(w, "")
 	if len(removed) > 0 {
