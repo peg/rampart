@@ -449,12 +449,17 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 	}
 
 	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if err != nil {
 		b.logger.Warn("bridge: serve escalation failed, failing open", "error", err)
 		b.resolveApproval(conn, req.ID, "allow-once")
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b.logger.Warn("bridge: serve escalation returned non-2xx, failing open", "status", resp.StatusCode)
+		b.resolveApproval(conn, req.ID, "allow-once")
+		return
+	}
 
 	var result struct {
 		ID string `json:"id"`
