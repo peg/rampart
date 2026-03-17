@@ -212,20 +212,45 @@ func (b *OpenClawBridge) connectAndListen(ctx context.Context) error {
 	}
 }
 
-// sendConnect sends the connect request and reads the response.
-// The connect request authenticates and subscribes to the operator.approvals scope.
+// sendConnect performs the OpenClaw gateway connect handshake:
+//
+//  1. Wait for the server's connect.challenge event (contains a nonce).
+//  2. Send a connect request with auth token, scopes, and protocol version.
+//  3. Wait for the server's res frame confirming hello-ok.
 func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
+	// Step 1: wait for connect.challenge.
+	_, challengeMsg, err := conn.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("read connect challenge: %w", err)
+	}
+	var challengeFrame gatewayFrame
+	if err := json.Unmarshal(challengeMsg, &challengeFrame); err != nil {
+		return fmt.Errorf("parse connect challenge: %w", err)
+	}
+	if challengeFrame.Type != "event" || challengeFrame.Event != "connect.challenge" {
+		return fmt.Errorf("expected connect.challenge, got type=%s event=%s", challengeFrame.Type, challengeFrame.Event)
+	}
+
+	// Step 2: send connect request.
 	reqID := uuid.New().String()
 	frame := gatewayRequest{
 		Type:   "req",
 		ID:     reqID,
 		Method: "connect",
 		Params: map[string]any{
+			"minProtocol": 3,
+			"maxProtocol": 3,
+			"client": map[string]any{
+				"id":          "rampart-bridge",
+				"displayName": "Rampart Bridge",
+				"mode":        "backend",
+			},
 			"auth": map[string]any{
 				"token": b.token,
 			},
 			"scopes": []string{"operator.approvals"},
-			"role":   "backend",
+			"role":   "operator",
+			"caps":   []string{},
 		},
 	}
 
@@ -241,21 +266,21 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 		return fmt.Errorf("send connect: %w", err)
 	}
 
-	// Read the response.
+	// Step 3: read hello-ok response.
 	_, resp, err := conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("read connect response: %w", err)
 	}
 
-	var frame2 gatewayFrame
-	if err := json.Unmarshal(resp, &frame2); err != nil {
+	var resFrame gatewayFrame
+	if err := json.Unmarshal(resp, &resFrame); err != nil {
 		return fmt.Errorf("parse connect response: %w", err)
 	}
-	if frame2.Type == "err" {
-		return fmt.Errorf("connect rejected: %s", string(frame2.Error))
+	if resFrame.Type == "err" {
+		return fmt.Errorf("connect rejected: %s", string(resFrame.Error))
 	}
-	if frame2.Type != "res" {
-		return fmt.Errorf("unexpected connect response type: %s", frame2.Type)
+	if resFrame.Type != "res" {
+		return fmt.Errorf("unexpected connect response type: %s", resFrame.Type)
 	}
 
 	return nil
@@ -471,12 +496,12 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 		if err != nil {
 			continue
 		}
-		defer pollResp.Body.Close()
 
 		var status struct {
 			Status string `json:"status"`
 		}
 		json.NewDecoder(pollResp.Body).Decode(&status)
+		pollResp.Body.Close()
 
 		switch status.Status {
 		case "approved":

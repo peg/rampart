@@ -65,22 +65,32 @@ func (mg *mockGateway) url() string {
 }
 
 func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
-	// Read the connect request (type-frame protocol).
+	// Step 1: send connect.challenge.
+	challenge := map[string]any{
+		"type":    "event",
+		"event":   "connect.challenge",
+		"payload": map[string]any{"nonce": "test-nonce-abc123"},
+		"seq":     0,
+	}
+	data, _ := json.Marshal(challenge)
+	conn.WriteMessage(websocket.TextMessage, data)
+
+	// Step 2: read connect request.
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		return
 	}
-
 	var req gatewayRequest
 	json.Unmarshal(msg, &req)
 
-	// Respond with a type-frame res.
+	// Step 3: respond with hello-ok.
 	resp := map[string]any{
-		"type":   "res",
-		"id":     req.ID,
-		"result": map[string]any{"type": "hello-ok"},
+		"type":    "res",
+		"id":      req.ID,
+		"ok":      true,
+		"payload": map[string]any{"type": "hello-ok"},
 	}
-	data, _ := json.Marshal(resp)
+	data, _ = json.Marshal(resp)
 	conn.WriteMessage(websocket.TextMessage, data)
 
 	close(mg.ready)
