@@ -381,9 +381,30 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	}
 }
 
-// resolveApproval sends exec.approval.resolve to the gateway.
+// resolveApproval sends exec.approval.resolve to the gateway on the given conn.
+// If the write fails (e.g. conn was replaced by a reconnect), it retries on
+// the current active connection so in-flight escalations aren't silently lost.
 // decision is "allow-once", "allow-always", or "deny".
 func (b *OpenClawBridge) resolveApproval(conn *websocket.Conn, approvalID, decision string) {
+	if err := b.sendResolve(conn, approvalID, decision); err != nil {
+		b.logger.Warn("bridge: resolve on original conn failed, retrying on current conn",
+			"id", approvalID, "error", err)
+		b.mu.Lock()
+		current := b.conn
+		b.mu.Unlock()
+		if current != nil && current != conn {
+			if err2 := b.sendResolve(current, approvalID, decision); err2 != nil {
+				b.logger.Error("bridge: resolve failed on both conns, approval lost",
+					"id", approvalID, "error", err2)
+			}
+		}
+		return
+	}
+	b.logger.Info("bridge: resolved approval", "id", approvalID, "decision", decision)
+}
+
+// sendResolve writes an exec.approval.resolve frame to a specific connection.
+func (b *OpenClawBridge) sendResolve(conn *websocket.Conn, approvalID, decision string) error {
 	frame := gatewayRequest{
 		Type:   "req",
 		ID:     uuid.New().String(),
@@ -396,20 +417,13 @@ func (b *OpenClawBridge) resolveApproval(conn *websocket.Conn, approvalID, decis
 
 	data, err := json.Marshal(frame)
 	if err != nil {
-		b.logger.Error("bridge: failed to marshal resolve", "error", err)
-		return
+		return fmt.Errorf("marshal: %w", err)
 	}
 
 	b.writeMu.Lock()
 	err = conn.WriteMessage(websocket.TextMessage, data)
 	b.writeMu.Unlock()
-
-	if err != nil {
-		b.logger.Error("bridge: failed to send resolve", "id", approvalID, "error", err)
-		return
-	}
-
-	b.logger.Info("bridge: resolved approval", "id", approvalID, "decision", decision)
+	return err
 }
 
 // escalateToServe forwards the approval to Rampart serve for human review.
