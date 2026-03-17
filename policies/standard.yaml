@@ -577,8 +577,10 @@ policies:
             - "cat **/.docker/config.json"
             - "**/.kube/config"
             - "**/.docker/config.json"
-            # Token / secrets files
+            # Token / secrets files (bare and path-prefixed forms)
+            - "cat .env"
             - "cat **/.env"
+            - "cat .env.*"
             - "cat **/.env.*"
             - "cat **/.envrc"
             - "cat **/.netrc"
