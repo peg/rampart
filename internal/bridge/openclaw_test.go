@@ -65,20 +65,20 @@ func (mg *mockGateway) url() string {
 }
 
 func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
-	// Read the subscribe request.
+	// Read the connect request (type-frame protocol).
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		return
 	}
 
-	var subReq jsonRPCMessage
-	json.Unmarshal(msg, &subReq)
+	var req gatewayRequest
+	json.Unmarshal(msg, &req)
 
-	// Send subscribe response.
+	// Respond with a type-frame res.
 	resp := map[string]any{
-		"jsonrpc": "2.0",
-		"result":  map[string]any{"ok": true},
-		"id":      subReq.ID,
+		"type":   "res",
+		"id":     req.ID,
+		"result": map[string]any{"type": "hello-ok"},
 	}
 	data, _ := json.Marshal(resp)
 	conn.WriteMessage(websocket.TextMessage, data)
@@ -88,17 +88,19 @@ func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
 
 func (mg *mockGateway) sendApprovalRequest(id, command, agent string) {
 	<-mg.ready
-	params, _ := json.Marshal(approvalRequestParams{
+	payload, _ := json.Marshal(approvalRequestParams{
 		ID:         id,
 		Command:    command,
 		AgentID:    agent,
 		SessionKey: "test-session",
 	})
 
+	// Type-frame event format.
 	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "exec.approval.requested",
-		"params":  json.RawMessage(params),
+		"type":    "event",
+		"event":   "exec.approval.requested",
+		"payload": json.RawMessage(payload),
+		"seq":     1,
 	}
 	data, _ := json.Marshal(msg)
 	mg.writeMu.Lock()
@@ -110,9 +112,10 @@ func (mg *mockGateway) readResponse() map[string]any {
 	_, msg, err := mg.conn.ReadMessage()
 	require.NoError(mg.t, err)
 
-	var resp map[string]any
-	json.Unmarshal(msg, &resp)
-	return resp
+	// Expect a type-frame req: {"type":"req","id":"...","method":"exec.approval.resolve","params":{...}}
+	var frame map[string]any
+	json.Unmarshal(msg, &frame)
+	return frame
 }
 
 func (mg *mockGateway) close() {

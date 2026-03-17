@@ -18,6 +18,17 @@
 // the engine auto-resolves (allow/deny) are sent back immediately. Approvals
 // that require human review are forwarded to a running Rampart serve instance
 // via its HTTP API.
+//
+// Wire protocol: OpenClaw gateway uses a custom type-discriminated frame format,
+// NOT JSON-RPC 2.0:
+//
+//	Request:  {"type":"req",   "id":"<uuid>", "method":"...", "params":{...}}
+//	Response: {"type":"res",   "id":"<uuid>", "result":{...}} or {"type":"err",...}
+//	Event:    {"type":"event", "event":"exec.approval.requested", "payload":{...}, "seq":N}
+//
+// Authentication is via a connect request (first frame after dial):
+//
+//	method="connect", params={"auth":{"token":"<gateway_token>"},"scopes":["operator.approvals"]}
 package bridge
 
 import (
@@ -30,9 +41,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/peg/rampart/internal/engine"
 )
@@ -43,15 +54,17 @@ type OpenClawBridge struct {
 	engine     *engine.Engine
 	gatewayURL string
 	token      string
-	serveURL   string // Rampart serve URL for human-review escalation
+	serveURL   string
 	logger     *slog.Logger
 
 	reconnectInterval time.Duration
 
-	mu      sync.Mutex
-	writeMu sync.Mutex // guards WebSocket writes
+	mu      sync.Mutex   // guards conn
+	writeMu sync.Mutex   // guards WebSocket writes
 	conn    *websocket.Conn
-	seq     atomic.Int64
+
+	pendingMu sync.Mutex
+	pending   map[string]chan struct{} // approval ID → close to signal resolution
 }
 
 // Config holds bridge configuration.
@@ -91,12 +104,25 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		serveURL:          cfg.ServeURL,
 		logger:            cfg.Logger,
 		reconnectInterval: cfg.ReconnectInterval,
+		pending:           make(map[string]chan struct{}),
 	}
 }
 
-// Start connects to the gateway, subscribes to approval events, and processes
-// them until the context is cancelled. It automatically reconnects on disconnect.
+// Close closes the bridge's active WebSocket connection, unblocking any pending
+// reads and causing Start to return.
+func (b *OpenClawBridge) Close() {
+	b.mu.Lock()
+	conn := b.conn
+	b.mu.Unlock()
+	if conn != nil {
+		conn.Close()
+	}
+}
+
+// Start connects to the gateway and processes approval events until the context
+// is cancelled. It automatically reconnects on disconnect with backoff.
 func (b *OpenClawBridge) Start(ctx context.Context) error {
+	backoff := b.reconnectInterval
 	for {
 		err := b.connectAndListen(ctx)
 		if ctx.Err() != nil {
@@ -104,12 +130,15 @@ func (b *OpenClawBridge) Start(ctx context.Context) error {
 		}
 
 		b.logger.Warn("bridge: disconnected from gateway", "error", err)
-		b.logger.Info("bridge: reconnecting", "interval", b.reconnectInterval)
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(b.reconnectInterval):
+		case <-time.After(backoff):
+			// Double backoff up to 30s.
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
 		}
 	}
 }
@@ -117,21 +146,24 @@ func (b *OpenClawBridge) Start(ctx context.Context) error {
 func (b *OpenClawBridge) connectAndListen(ctx context.Context) error {
 	b.logger.Info("bridge: connecting to gateway", "url", b.gatewayURL)
 
-	header := http.Header{}
-	header.Set("Authorization", "Bearer "+b.token)
-
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, b.gatewayURL, header)
+	dialer := websocket.DefaultDialer
+	conn, _, err := dialer.DialContext(ctx, b.gatewayURL, nil)
 	if err != nil {
-		return fmt.Errorf("bridge: connect: %w", err)
+		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
 
 	b.mu.Lock()
 	b.conn = conn
-	b.seq.Store(0)
 	b.mu.Unlock()
 
-	// Set up ping/pong to detect dead connections.
+	defer func() {
+		b.mu.Lock()
+		b.conn = nil
+		b.mu.Unlock()
+	}()
+
+	// Ping/pong for dead connection detection.
 	const pongWait = 90 * time.Second
 	const pingInterval = 30 * time.Second
 	conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -140,36 +172,30 @@ func (b *OpenClawBridge) connectAndListen(ctx context.Context) error {
 		return nil
 	})
 
-	// Start ping ticker in background.
-	pingDone := make(chan struct{})
+	pingCtx, pingCancel := context.WithCancel(ctx)
+	defer pingCancel()
 	go func() {
-		defer close(pingDone)
 		ticker := time.NewTicker(pingInterval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-pingCtx.Done():
 				return
 			case <-ticker.C:
 				b.writeMu.Lock()
-				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+				conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
 				b.writeMu.Unlock()
-				if err != nil {
-					return
-				}
 			}
 		}
 	}()
-	defer func() { <-pingDone }()
 
-	// Subscribe to approval events via JSON-RPC.
-	if err := b.subscribe(); err != nil {
-		return fmt.Errorf("bridge: subscribe: %w", err)
+	// Authenticate and subscribe via the connect request.
+	if err := b.sendConnect(conn); err != nil {
+		return fmt.Errorf("connect handshake: %w", err)
 	}
 
 	b.logger.Info("bridge: connected to OpenClaw gateway, listening for approval requests")
 
-	// Listen for messages.
 	for {
 		select {
 		case <-ctx.Done():
@@ -179,132 +205,121 @@ func (b *OpenClawBridge) connectAndListen(ctx context.Context) error {
 
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			return fmt.Errorf("bridge: read: %w", err)
+			return fmt.Errorf("read: %w", err)
 		}
-
 		conn.SetReadDeadline(time.Now().Add(pongWait))
-		b.handleMessage(ctx, message)
+		b.handleFrame(ctx, conn, message)
 	}
 }
 
-// subscribe sends the scope.subscribe JSON-RPC request.
-func (b *OpenClawBridge) subscribe() error {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "scope.subscribe",
-		"params": map[string]any{
-			"scope": "operator.approvals",
+// sendConnect sends the connect request and reads the response.
+// The connect request authenticates and subscribes to the operator.approvals scope.
+func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
+	reqID := uuid.New().String()
+	frame := gatewayRequest{
+		Type:   "req",
+		ID:     reqID,
+		Method: "connect",
+		Params: map[string]any{
+			"auth": map[string]any{
+				"token": b.token,
+			},
+			"scopes": []string{"operator.approvals"},
+			"role":   "backend",
 		},
-		"id": b.nextID(),
 	}
 
-	data, err := json.Marshal(msg)
+	data, err := json.Marshal(frame)
 	if err != nil {
-		return fmt.Errorf("marshal subscribe: %w", err)
+		return fmt.Errorf("marshal connect: %w", err)
 	}
 
 	b.writeMu.Lock()
-	err = b.conn.WriteMessage(websocket.TextMessage, data)
+	err = conn.WriteMessage(websocket.TextMessage, data)
 	b.writeMu.Unlock()
-
 	if err != nil {
-		return fmt.Errorf("send subscribe: %w", err)
+		return fmt.Errorf("send connect: %w", err)
 	}
 
-	// Read subscribe response.
-	_, respMsg, err := b.conn.ReadMessage()
+	// Read the response.
+	_, resp, err := conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("read subscribe response: %w", err)
+		return fmt.Errorf("read connect response: %w", err)
 	}
 
-	var resp jsonRPCResponse
-	if err := json.Unmarshal(respMsg, &resp); err != nil {
-		return fmt.Errorf("parse subscribe response: %w", err)
+	var frame2 gatewayFrame
+	if err := json.Unmarshal(resp, &frame2); err != nil {
+		return fmt.Errorf("parse connect response: %w", err)
 	}
-
-	if resp.Error != nil {
-		return fmt.Errorf("subscribe rejected: %s", string(resp.Error.Message))
+	if frame2.Type == "err" {
+		return fmt.Errorf("connect rejected: %s", string(frame2.Error))
+	}
+	if frame2.Type != "res" {
+		return fmt.Errorf("unexpected connect response type: %s", frame2.Type)
 	}
 
 	return nil
 }
 
-// jsonRPCMessage is a generic JSON-RPC 2.0 message (notification or request).
-type jsonRPCMessage struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      any             `json:"id,omitempty"`
-}
-
-// jsonRPCResponse is a JSON-RPC 2.0 response.
-type jsonRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *jsonRPCError   `json:"error,omitempty"`
-	ID      any             `json:"id,omitempty"`
-}
-
-// jsonRPCError is a JSON-RPC error object.
-type jsonRPCError struct {
-	Code    int             `json:"code"`
-	Message json.RawMessage `json:"message"`
-}
-
-// approvalRequestParams is the params of an exec.approval.requested notification.
-type approvalRequestParams struct {
-	ID         string `json:"id"`
-	Command    string `json:"command"`
-	CWD        string `json:"cwd"`
-	AgentID    string `json:"agentId"`
-	SessionKey string `json:"sessionKey"`
-}
-
-func (b *OpenClawBridge) handleMessage(ctx context.Context, raw []byte) {
-	var msg jsonRPCMessage
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		b.logger.Warn("bridge: unparseable message", "error", err)
+// handleFrame dispatches an incoming gateway frame.
+func (b *OpenClawBridge) handleFrame(ctx context.Context, conn *websocket.Conn, data []byte) {
+	var frame gatewayFrame
+	if err := json.Unmarshal(data, &frame); err != nil {
+		b.logger.Debug("bridge: failed to parse frame", "error", err)
 		return
 	}
 
-	// Skip responses to our own requests.
-	if msg.Method == "" {
-		// This is likely a response — check for errors.
-		var resp jsonRPCResponse
-		if err := json.Unmarshal(raw, &resp); err == nil && resp.Error != nil {
-			b.logger.Error("bridge: gateway rejected request",
-				"id", resp.ID,
-				"error", string(resp.Error.Message),
-			)
+	switch frame.Type {
+	case "event":
+		b.handleEvent(ctx, conn, frame)
+	case "res", "err":
+		// Responses to our requests — currently fire-and-forget for resolveApproval.
+	default:
+		b.logger.Debug("bridge: unknown frame type", "type", frame.Type)
+	}
+}
+
+// handleEvent handles an incoming event frame.
+func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, frame gatewayFrame) {
+	switch frame.Event {
+	case "exec.approval.requested":
+		var req approvalRequestParams
+		if err := json.Unmarshal(frame.Payload, &req); err != nil {
+			b.logger.Error("bridge: failed to parse approval request", "error", err)
+			return
 		}
-		return
-	}
+		go b.handleApprovalRequested(ctx, conn, req)
 
-	if msg.Method != "exec.approval.requested" {
-		return
+	case "exec.approval.resolved":
+		// Another client resolved this approval — cancel any pending escalation.
+		var resolved struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(frame.Payload, &resolved); err == nil {
+			b.pendingMu.Lock()
+			if ch, ok := b.pending[resolved.ID]; ok {
+				close(ch)
+				delete(b.pending, resolved.ID)
+			}
+			b.pendingMu.Unlock()
+		}
 	}
-
-	var req approvalRequestParams
-	if err := json.Unmarshal(msg.Params, &req); err != nil {
-		b.logger.Warn("bridge: unparseable approval request", "error", err)
-		return
-	}
-
-	go b.handleApprovalRequested(ctx, req)
 }
 
-func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, req approvalRequestParams) {
-	start := time.Now()
-
+// handleApprovalRequested evaluates a command against the policy engine and
+// resolves the approval accordingly.
+func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *websocket.Conn, req approvalRequestParams) {
 	call := engine.ToolCall{
-		ID:        req.ID,
-		Agent:     req.AgentID,
-		Session:   req.SessionKey,
-		Tool:      "exec",
-		Params:    map[string]any{"command": req.Command, "cwd": req.CWD},
+		Tool:    "exec",
+		Agent:   req.AgentID,
+		Session: req.SessionKey,
+		Params: map[string]any{
+			"command": req.Command,
+		},
 		Timestamp: time.Now(),
 	}
 
+	start := time.Now()
 	decision := b.engine.Evaluate(call)
 	evalDuration := time.Since(start)
 
@@ -318,85 +333,45 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, req approv
 
 	switch decision.Action {
 	case engine.ActionAllow, engine.ActionWatch:
-		b.resolveApproval(req.ID, "allow-once")
+		b.resolveApproval(conn, req.ID, "allow-once")
+
 	case engine.ActionDeny:
-		b.resolveApproval(req.ID, "deny")
-	case engine.ActionRequireApproval:
-		b.escalateToServe(ctx, req, decision)
+		b.resolveApproval(conn, req.ID, "deny")
+
+	case engine.ActionRequireApproval, engine.ActionAsk:
+		// Escalate to Rampart serve for human review.
+		b.escalateToServe(ctx, conn, req, decision)
+
+	case engine.ActionWebhook:
+		// Webhook actions delegate to an external system.
+		// Don't resolve — let OpenClaw's approval flow handle it or time out.
+		b.logger.Info("bridge: webhook action — deferring to OpenClaw approval flow",
+			"id", req.ID, "command", req.Command)
+
 	default:
-		// Fail closed for unknown actions.
-		b.resolveApproval(req.ID, "deny")
+		// Unknown action — fail open so we don't silently block commands.
+		b.logger.Warn("bridge: unknown action, allowing (fail-open)",
+			"id", req.ID, "action", decision.Action.String())
+		b.resolveApproval(conn, req.ID, "allow-once")
 	}
 }
 
-// escalateToServe forwards the approval to a running Rampart serve instance
-// and polls for resolution.
-func (b *OpenClawBridge) escalateToServe(ctx context.Context, req approvalRequestParams, decision engine.Decision) {
-	b.logger.Warn("bridge: approval requires human review — escalating to serve",
-		"id", req.ID,
-		"command", req.Command,
-		"serve_url", b.serveURL,
-	)
-
-	// POST to Rampart serve's eval endpoint to create a pending approval.
-	evalReq := map[string]any{
-		"tool":    "exec",
-		"command": req.Command,
-		"cwd":     req.CWD,
-		"agent":   req.AgentID,
-		"session": req.SessionKey,
-	}
-	body, _ := json.Marshal(evalReq)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.serveURL+"/v1/eval", bytes.NewReader(body))
-	if err != nil {
-		b.logger.Error("bridge: failed to create escalation request", "error", err)
-		b.resolveApproval(req.ID, "deny")
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		b.logger.Error("bridge: failed to escalate to serve", "error", err)
-		b.resolveApproval(req.ID, "deny")
-		return
-	}
-	resp.Body.Close()
-
-	// For now, if the serve endpoint requires approval, deny the OpenClaw request.
-	// The human will see the pending approval in the Rampart dashboard.
-	// Future: poll the approval status and relay resolution back.
-	b.logger.Warn("bridge: escalated to serve — denying until human resolves via dashboard",
-		"id", req.ID,
-	)
-	b.resolveApproval(req.ID, "deny")
-}
-
-func (b *OpenClawBridge) resolveApproval(approvalID, decision string) {
-	b.mu.Lock()
-	conn := b.conn
-	b.mu.Unlock()
-
-	if conn == nil {
-		b.logger.Error("bridge: cannot resolve approval, not connected")
-		return
-	}
-
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "exec.approval.resolve",
-		"params": map[string]any{
+// resolveApproval sends exec.approval.resolve to the gateway.
+// decision is "allow-once", "allow-always", or "deny".
+func (b *OpenClawBridge) resolveApproval(conn *websocket.Conn, approvalID, decision string) {
+	frame := gatewayRequest{
+		Type:   "req",
+		ID:     uuid.New().String(),
+		Method: "exec.approval.resolve",
+		Params: map[string]any{
 			"id":       approvalID,
 			"decision": decision,
 		},
-		"id": b.nextID(),
 	}
 
-	data, err := json.Marshal(msg)
+	data, err := json.Marshal(frame)
 	if err != nil {
-		b.logger.Error("bridge: failed to marshal resolve message", "error", err, "approvalId", approvalID)
+		b.logger.Error("bridge: failed to marshal resolve", "error", err)
 		return
 	}
 
@@ -405,26 +380,146 @@ func (b *OpenClawBridge) resolveApproval(approvalID, decision string) {
 	b.writeMu.Unlock()
 
 	if err != nil {
-		b.logger.Error("bridge: failed to resolve approval", "error", err, "approvalId", approvalID)
-	} else {
-		b.logger.Info("bridge: resolved approval", "id", approvalID, "decision", decision)
+		b.logger.Error("bridge: failed to send resolve", "id", approvalID, "error", err)
+		return
+	}
+
+	b.logger.Info("bridge: resolved approval", "id", approvalID, "decision", decision)
+}
+
+// escalateToServe forwards the approval to Rampart serve for human review.
+func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Conn, req approvalRequestParams, decision engine.Decision) {
+	b.logger.Warn("bridge: approval requires human review — escalating to serve",
+		"id", req.ID, "command", req.Command, "serve_url", b.serveURL)
+
+	// Register a cancellation channel so exec.approval.resolved events can interrupt.
+	cancelCh := make(chan struct{})
+	b.pendingMu.Lock()
+	b.pending[req.ID] = cancelCh
+	b.pendingMu.Unlock()
+
+	defer func() {
+		b.pendingMu.Lock()
+		delete(b.pending, req.ID)
+		b.pendingMu.Unlock()
+	}()
+
+	body, _ := json.Marshal(map[string]any{
+		"tool":    "exec",
+		"command": req.Command,
+		"agent":   req.AgentID,
+		"session": req.SessionKey,
+		"message": decision.Message,
+	})
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.serveURL+"/v1/approvals", bytes.NewReader(body))
+	if err != nil {
+		b.logger.Error("bridge: failed to create escalation request", "error", err)
+		b.resolveApproval(conn, req.ID, "allow-once") // fail-open
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if token := os.Getenv("RAMPART_TOKEN"); token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b.logger.Warn("bridge: serve escalation failed, failing open", "error", err)
+		b.resolveApproval(conn, req.ID, "allow-once")
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if result.ID == "" {
+		b.resolveApproval(conn, req.ID, "allow-once")
+		return
+	}
+
+	// Poll for the Rampart approval decision.
+	const pollInterval = 2 * time.Second
+	const pollTimeout = 5 * time.Minute
+	deadline := time.Now().Add(pollTimeout)
+
+	for {
+		select {
+		case <-ctx.Done():
+			b.resolveApproval(conn, req.ID, "deny")
+			return
+		case <-cancelCh:
+			// Resolved by another client.
+			return
+		case <-time.After(pollInterval):
+		}
+
+		if time.Now().After(deadline) {
+			b.logger.Warn("bridge: escalation timed out", "id", req.ID)
+			b.resolveApproval(conn, req.ID, "deny")
+			return
+		}
+
+		pollReq, _ := http.NewRequestWithContext(ctx, "GET", b.serveURL+"/v1/approvals/"+result.ID, nil)
+		if token := os.Getenv("RAMPART_TOKEN"); token != "" {
+			pollReq.Header.Set("Authorization", "Bearer "+token)
+		}
+		pollResp, err := http.DefaultClient.Do(pollReq)
+		if err != nil {
+			continue
+		}
+		defer pollResp.Body.Close()
+
+		var status struct {
+			Status string `json:"status"`
+		}
+		json.NewDecoder(pollResp.Body).Decode(&status)
+
+		switch status.Status {
+		case "approved":
+			b.resolveApproval(conn, req.ID, "allow-once")
+			return
+		case "denied", "expired":
+			b.resolveApproval(conn, req.ID, "deny")
+			return
+		}
 	}
 }
 
-func (b *OpenClawBridge) nextID() int64 {
-	return b.seq.Add(1)
+// --- Wire protocol types ---
+
+// gatewayRequest is an outgoing request frame.
+type gatewayRequest struct {
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	Method string `json:"method"`
+	Params any    `json:"params,omitempty"`
 }
 
-// Close gracefully shuts down the bridge.
-func (b *OpenClawBridge) Close() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.conn != nil {
-		return b.conn.Close()
-	}
-	return nil
+// gatewayFrame is a generic incoming frame (response or event).
+type gatewayFrame struct {
+	Type    string          `json:"type"`
+	ID      string          `json:"id,omitempty"`
+	Event   string          `json:"event,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   json.RawMessage `json:"error,omitempty"`
+	Seq     int             `json:"seq,omitempty"`
 }
+
+// approvalRequestParams is the payload of an exec.approval.requested event.
+type approvalRequestParams struct {
+	ID         string `json:"id"`
+	Command    string `json:"command"`
+	AgentID    string `json:"agentId"`
+	SessionKey string `json:"sessionKey"`
+	CWD        string `json:"cwd,omitempty"`
+}
+
+// --- Discovery helpers ---
 
 // DiscoverGatewayConfig reads the OpenClaw gateway URL and token from
 // ~/.openclaw/openclaw.json. Returns url, token, error.
@@ -463,20 +558,7 @@ func ReadGatewayConfig(path string) (string, string, error) {
 	return url, token, nil
 }
 
-// openclawConfig represents the relevant subset of ~/.openclaw/openclaw.json.
-type openclawConfig struct {
-	Gateway struct {
-		URL  string `json:"url"`
-		Auth struct {
-			Token string `json:"token"`
-		} `json:"auth"`
-	} `json:"gateway"`
-}
-
-// discoverServeURL finds the Rampart serve URL by checking (in order):
-// 1. RAMPART_URL env var
-// 2. ~/.rampart/serve.state
-// 3. Default http://127.0.0.1:9090
+// discoverServeURL finds the Rampart serve URL from serve.state or environment.
 func discoverServeURL() string {
 	if v := os.Getenv("RAMPART_URL"); v != "" {
 		return v
@@ -496,4 +578,14 @@ func discoverServeURL() string {
 		return "http://127.0.0.1:9090"
 	}
 	return state.URL
+}
+
+// openclawConfig represents the relevant subset of ~/.openclaw/openclaw.json.
+type openclawConfig struct {
+	Gateway struct {
+		URL  string `json:"url"`
+		Auth struct {
+			Token string `json:"token"`
+		} `json:"auth"`
+	} `json:"gateway"`
 }
