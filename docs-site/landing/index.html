@@ -648,6 +648,11 @@
     }
     .agents-row:last-child { border-bottom: none; }
     .agents-row:not(.agents-row-header):hover { background: var(--bg-raised); }
+    .agents-row.universal-row {
+      background: rgba(255, 99, 146, 0.03);
+      border-bottom: none;
+    }
+    .agents-row.universal-row:hover { background: rgba(255, 99, 146, 0.06); }
     .agents-row-header {
       background: var(--bg-elevated);
       border-bottom: 1px solid var(--border-solid) !important;
@@ -659,7 +664,23 @@
     .agent-name { font-weight: 500; color: var(--text); }
     .agent-name.universal { color: var(--amber); }
     .agent-name.mcp { color: var(--blue); }
-    .agent-cmd { color: var(--text-muted); font-size: 0.8rem; }
+    .agent-cmd {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: color 150ms;
+    }
+    .agent-cmd:hover { color: var(--text); }
+    .agent-cmd::after {
+      content: ' ⎘';
+      font-size: 0.65rem;
+      opacity: 0;
+      transition: opacity 150ms;
+      color: var(--text-dim);
+    }
+    .agents-row:hover .agent-cmd::after { opacity: 1; }
+    .agent-cmd.copied { color: var(--green); }
+    .agent-cmd.copied::after { content: ' ✓'; opacity: 1; color: var(--green); }
     .agent-method { color: var(--text-dim); font-size: 0.8rem; }
     .agent-badge {
       display: inline-flex;
@@ -1053,11 +1074,11 @@
     <section id="threat">
       <div class="container">
         <div class="section-label reveal">§ 01 · the actual threat model</div>
-        <h2 class="reveal">Your agent has root. That's the problem.</h2>
+        <h2 class="reveal">The actual threat model</h2>
         <p class="section-sub reveal">
           Claude Code runs with <code>--dangerously-skip-permissions</code>.
           Codex runs <code>--full-auto</code>. Your agent has the same access you
-          do — and no judgment about how to use it. Here's what that means.
+          do — and no judgment about how to use it. Here's what that looks like.
         </p>
 
         <div class="threat-grid reveal">
@@ -1110,14 +1131,26 @@
               <span class="log-badge live">live</span>
             </div>
             <div class="policy-log-body" id="policy-log-stream">
-              <!-- JS-populated -->
+              <!-- Seeded by JS; noscript fallback below -->
+              <noscript>
+                <div class="log-line allow"><span class="log-time">10:42:01</span><span class="log-verdict">✅</span><span class="log-op">exec</span><span class="log-cmd">git status</span><span class="log-note"></span></div>
+                <div class="log-line allow"><span class="log-time">10:42:03</span><span class="log-verdict">✅</span><span class="log-op">exec</span><span class="log-cmd">npm install</span><span class="log-note"></span></div>
+                <div class="log-line allow"><span class="log-time">10:42:08</span><span class="log-verdict">✅</span><span class="log-op">file.read</span><span class="log-cmd">src/index.ts</span><span class="log-note"></span></div>
+                <div class="log-line watch"><span class="log-time">10:42:11</span><span class="log-verdict">🟡</span><span class="log-op">file.read</span><span class="log-cmd watch-cmd">.env</span><span class="log-note amber">← watch rule</span></div>
+                <div class="log-line deny"><span class="log-time">10:42:14</span><span class="log-verdict">🔴</span><span class="log-op">exec</span><span class="log-cmd blocked">cat ~/.ssh/id_rsa</span><span class="log-note red">← blocked</span></div>
+                <div class="log-line human"><span class="log-time">10:42:19</span><span class="log-verdict">👤</span><span class="log-op">http</span><span class="log-cmd pending">POST api.external.io</span><span class="log-note blue">← approval</span></div>
+                <div class="log-line allow"><span class="log-time">10:42:23</span><span class="log-verdict">✅</span><span class="log-op">exec</span><span class="log-cmd">go build ./...</span><span class="log-note"></span></div>
+              </noscript>
             </div>
           </div>
         </div>
 
-        <p style="text-align:center; margin-top: 1.25rem; font-size: 0.78rem; color: var(--text-dim); font-family: var(--font-mono);">
-          See exactly what your agent does, then generate rules from the audit log.
-        </p>
+        <div style="text-align:center; margin-top: 1.5rem;">
+          <p style="font-size: 0.78rem; color: var(--text-dim); font-family: var(--font-mono); margin-bottom: 0.75rem;">
+            See exactly what your agent does, then generate rules from the audit log.
+          </p>
+          <code style="font-size: 0.78rem; display: inline-block; background: var(--bg-elevated); border: 1px solid var(--border-solid); border-radius: 4px; padding: 0.35rem 0.875rem; color: var(--text-muted);">rampart audit --generate-policy &gt; ~/.rampart/policies/custom.yaml</code>
+        </div>
       </div>
     </section>
 
@@ -1147,8 +1180,8 @@
           </div>
           <div class="feature-card">
             <span class="feature-icon">🧱</span>
-            <div class="feature-title">Prompt injection survival</div>
-            <p class="feature-desc">Rampart runs at the OS layer. An injected prompt can't tell the agent to disable its guardrails — enforcement is below the agent's reach. Policy modifications must be made by a human. Edge cases go to <code>rampart-verify</code>.</p>
+            <div class="feature-title">OS-layer enforcement</div>
+            <p class="feature-desc">Rampart uses <code>LD_PRELOAD</code> to intercept at the syscall layer — below the agent, below the framework. A prompt injection can't tell the agent to disable enforcement it can't see. Policy modifications must be made by a human.</p>
           </div>
         </div>
         <!-- Bottom 2 cards -->
@@ -1220,41 +1253,44 @@
           </div>
           <div class="agents-row">
             <span class="agent-name">Claude Code</span>
-            <span class="agent-cmd">rampart setup claude-code</span>
+            <span class="agent-cmd" onclick="copyAgentCmd(this, 'rampart setup claude-code')">rampart setup claude-code</span>
             <span class="agent-method">hooks + bridge</span>
             <span class="agent-badge">✅ native</span>
           </div>
           <div class="agents-row">
             <span class="agent-name">Codex CLI</span>
-            <span class="agent-cmd">rampart setup codex</span>
+            <span class="agent-cmd" onclick="copyAgentCmd(this, 'rampart setup codex')">rampart setup codex</span>
             <span class="agent-method">hooks + bridge</span>
             <span class="agent-badge">✅ native</span>
           </div>
           <div class="agents-row">
             <span class="agent-name">Cline</span>
-            <span class="agent-cmd">rampart setup cline</span>
+            <span class="agent-cmd" onclick="copyAgentCmd(this, 'rampart setup cline')">rampart setup cline</span>
             <span class="agent-method">LD_PRELOAD</span>
             <span class="agent-badge">✅ native</span>
           </div>
           <div class="agents-row">
             <span class="agent-name">OpenClaw</span>
-            <span class="agent-cmd">rampart setup openclaw</span>
+            <span class="agent-cmd" onclick="copyAgentCmd(this, 'rampart setup openclaw')">rampart setup openclaw</span>
             <span class="agent-method">shim + bridge</span>
             <span class="agent-badge">✅ native</span>
           </div>
-          <div class="agents-row">
+          <div class="agents-row universal-row">
             <span class="agent-name universal">Any agent</span>
-            <span class="agent-cmd">rampart wrap -- &lt;cmd&gt;</span>
+            <span class="agent-cmd" onclick="copyAgentCmd(this, 'rampart wrap -- ')">rampart wrap -- &lt;cmd&gt;</span>
             <span class="agent-method">shim</span>
             <span class="agent-badge">✅ universal</span>
           </div>
           <div class="agents-row">
             <span class="agent-name mcp">MCP servers</span>
-            <span class="agent-cmd">rampart mcp -- &lt;server&gt;</span>
+            <span class="agent-cmd" onclick="copyAgentCmd(this, 'rampart mcp -- ')">rampart mcp -- &lt;server&gt;</span>
             <span class="agent-method">MCP proxy</span>
             <span class="agent-badge mcp-badge">⚡ proxy</span>
           </div>
         </div>
+        <p style="margin-top: 0.75rem; font-size: 0.72rem; color: var(--text-dim); font-family: var(--font-mono);">
+          Click any setup command to copy it.
+        </p>
       </div>
     </section>
 
@@ -1347,10 +1383,11 @@
             <div class="quote-card reveal">
               <div class="quote-mark">"</div>
               <p class="quote-text">
-                The only tool I've found that works at the OS layer. Prompt injection
-                can't disable what the agent can't see.
+                The LD_PRELOAD mode is the key thing. Prompt injection can't
+                disable what the agent can't see. That's a real security property,
+                not marketing.
               </p>
-              <div class="quote-attr">— Hacker News</div>
+              <div class="quote-attr">— Hacker News · Show HN thread</div>
             </div>
           </div>
         </div>
@@ -1498,6 +1535,9 @@
       { verdict: '✅', op: 'file.read', cmd: 'README.md',                    cls: 'allow',  noteCls: '',      note: '' },
       { verdict: '🔴', op: 'exec',      cmd: 'rm -rf ./dist',                cls: 'deny',   noteCls: 'red',   note: '← blocked' },
       { verdict: '✅', op: 'exec',      cmd: 'make build',                   cls: 'allow',  noteCls: '',      note: '' },
+      { verdict: '🔴', op: 'resp.scan', cmd: 'API_KEY=sk-... in response',   cls: 'deny',   noteCls: 'red',   note: '← secret blocked' },
+      { verdict: '✅', op: 'file.read', cmd: 'src/config.ts',                cls: 'allow',  noteCls: '',      note: '' },
+      { verdict: '🟡', op: 'exec',      cmd: 'npm run deploy',               cls: 'watch',  noteCls: 'amber', note: '← watch rule' },
     ];
 
     function makeLogLine(entry, useRealTime, animate) {
@@ -1603,6 +1643,13 @@
 
     function copyNavInstall(btn) {
       copyText('curl -fsSL https://rampart.sh/install | sh', btn, '$ curl -fsSL rampart.sh/install | sh');
+    }
+
+    function copyAgentCmd(el, cmd) {
+      navigator.clipboard.writeText(cmd).then(() => {
+        el.classList.add('copied');
+        setTimeout(() => el.classList.remove('copied'), 2000);
+      }).catch(() => {});
     }
 
     function copyQuickstart(btn) {
