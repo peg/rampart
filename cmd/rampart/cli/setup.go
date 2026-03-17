@@ -208,7 +208,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
 			if !hasInstalledPolicy() {
-				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init' first to install one")
+				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile openclaw' to install the OpenClaw-optimized policy")
 			}
 
 			// Check if rampart is in system PATH.
@@ -526,12 +526,18 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 				fmt.Fprintln(out, "  [P] Shell commands (OpenClaw + all sub-agents)  — LD_PRELOAD")
 				if openclawDistPatched() {
 					fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — dist patched")
-				} else if patchTools {
+				} else if patchTools && openclawToolsPatched() {
 					fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — patched")
+				} else if patchTools {
+					fmt.Fprintln(out, "  [!] File operations (read/write/edit/grep)       — patch failed (check warnings above)")
 				} else {
 					fmt.Fprintln(out, "  [ ] File operations (read/write/edit/grep)       — use --patch-tools")
 				}
-				fmt.Fprintln(out, "  [ ] Network fetch (web_fetch tool)               — use network policies")
+				if openclawWebFetchPatched() {
+				fmt.Fprintln(out, "  [P] Network fetch (web_fetch)                    — dist patched")
+			} else {
+				fmt.Fprintln(out, "  [ ] Network fetch (web_fetch tool)               — use --patch-tools")
+			}
 				fmt.Fprintln(out, "  [ ] Browser automation                           — not intercepted")
 				fmt.Fprintln(out, "")
 				fmt.Fprintln(out, "Restart the OpenClaw gateway to activate:")
@@ -550,6 +556,11 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			fmt.Fprintf(out, "Policy: %s\n", policyPath)
 			fmt.Fprintf(out, "Audit:  %s\n", filepath.Join(home, ".rampart", "audit"))
 			fmt.Fprintf(out, "Watch:  rampart watch\n")
+			if !hasInstalledPolicy() {
+				fmt.Fprintln(out, "")
+				fmt.Fprintln(out, "💡 No policy installed yet. For OpenClaw, the openclaw profile is recommended:")
+				fmt.Fprintln(out, "   rampart init --profile openclaw")
+			}
 
 			return nil
 		},
@@ -1143,6 +1154,9 @@ func hasRampartHook(settings claudeSettings) bool {
 func openclawToolsCandidates() []string {
 	home, _ := os.UserHomeDir()
 	return []string{
+		// User-local install (npm install -g --prefix ~/.local) — check first
+		filepath.Join(home, ".local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
+		// System-wide installs
 		"/usr/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
 		"/usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools",
 		filepath.Join(home, ".npm-global/lib/node_modules/openclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/tools"),
@@ -1329,6 +1343,7 @@ func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
 func openclawDistCandidates() []string {
 	home, _ := os.UserHomeDir()
 	return []string{
+		filepath.Join(home, ".local", "lib", "node_modules", "openclaw", "dist"),
 		"/usr/lib/node_modules/openclaw/dist",
 		"/usr/local/lib/node_modules/openclaw/dist",
 		filepath.Join(home, ".npm-global", "lib", "node_modules", "openclaw", "dist"),
@@ -1459,13 +1474,85 @@ func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error)
 		patched++
 	}
 
-	if patched == 0 {
+	// Patch web_fetch in all *.js files in the dist directory
+	webFetchPatched := patchWebFetchInDist(cmd, distDir, url, tokenExpr)
+
+	if patched == 0 && !webFetchPatched {
 		return false, nil
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), "")
 	fmt.Fprintln(cmd.OutOrStdout(), "⚠ Dist file patches are overwritten by OpenClaw upgrades — re-run after updates.")
 	return true, nil
+}
+
+// patchWebFetchInDist scans all *.js files in distDir for the web_fetch execute
+// handler and injects a Rampart preflight check. Returns true if any file was patched.
+func patchWebFetchInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {
+	allJS, _ := filepath.Glob(filepath.Join(distDir, "*.js"))
+	patched := false
+
+	for _, file := range allJS {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		text := string(content)
+
+		// Skip files without web_fetch handler
+		if !strings.Contains(text, `const url = readStringParam(params, "url", { required: true`)  {
+			continue
+		}
+
+		// Skip already-patched files
+		if strings.Contains(text, "RAMPART_DIST_CHECK_WEBFETCH") {
+			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s web_fetch already patched\n", filepath.Base(file))
+			patched = true
+			continue
+		}
+
+		// The anchor: the line after extracting the url param
+		webFetchOrig := `const url = readStringParam(params, "url", { required: true });`
+		webFetchCheck := fmt.Sprintf(`const url = readStringParam(params, "url", { required: true });
+        /* RAMPART_DIST_CHECK_WEBFETCH */ try {
+            const __wfu = typeof url === "string" ? url : "";
+            const __wfr = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/web_fetch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+                body: JSON.stringify({ agent: "openclaw", session: "main", params: { url: __wfu } }),
+                signal: AbortSignal.timeout(3000)
+            });
+            if (__wfr.status === 403) {
+                const __wfd = await __wfr.json().catch(() => ({}));
+                return { content: [{ type: "text", text: "rampart: " + (__wfd.message || "policy denied") }] };
+            }
+        } catch (__wfe) { /* fail-open */ }`, url, tokenExpr)
+
+		modified := strings.Replace(text, webFetchOrig, webFetchCheck, 1)
+		if modified == text {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: web_fetch injection point not found (skipping)\n", filepath.Base(file))
+			continue
+		}
+
+		// Backup original (if not already backed up by pi-embedded patch)
+		backupPath := file + ".rampart-backup"
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: backup failed: %v\n", filepath.Base(file), err)
+				continue
+			}
+		}
+
+		if err := os.WriteFile(file, []byte(modified), 0o644); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: write failed: %v\n", filepath.Base(file), err)
+			continue
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (web_fetch)\n", filepath.Base(file))
+		patched = true
+	}
+
+	return patched
 }
 
 func hasRampartInMatcher(matcher map[string]any) bool {

@@ -157,6 +157,15 @@ rampart init --profile openclaw
 
 The `openclaw.yaml` profile handles production deployment commands via `require_approval` and leaves everything else to OpenClaw's approval layer. No duplication.
 
+### Rampart deny overrides OpenClaw approval
+
+!!! important "Approving in OpenClaw does not override a Rampart deny"
+    The execution order is: **OpenClaw approval → Rampart shim intercept**. If you approve a command in Discord via OpenClaw's exec approval flow, and Rampart has a `action: deny` rule for that command, Rampart will still block it. The command never runs.
+
+    This is intentional. `action: deny` rules in Rampart are hard stops — they're meant for things like `rm -rf /` or credential access where no human should be able to accidentally approve them through a chat interface.
+
+    If you want a command to be human-approvable, use `action: ask` in your Rampart policy instead of `action: deny`. That creates a Rampart approval gate that can be resolved, while `deny` is always final.
+
 ### What Rampart adds that OpenClaw approvals don't cover
 
 - **Hard blocks** — credential access, destructive commands, and exfiltration are denied outright, not just approval-gated. OpenClaw approvals can't hard-block.

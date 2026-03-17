@@ -800,7 +800,11 @@ func doctorFileToolPatches(emit emitFn) (warnings int) {
 	if openclawUsesBundledDist() {
 		// Check if dist files are patched
 		if openclawDistPatched() {
-			emit("File tools", "ok", "OpenClaw dist files patched (read + write/edit)")
+			msg := "OpenClaw dist files patched (read + write/edit)"
+			if openclawWebFetchPatched() {
+				msg = "OpenClaw dist files patched (read + write/edit + web_fetch)"
+			}
+			emit("File tools", "ok", msg)
 			return 0
 		}
 		emit("File tools", "warn",
@@ -887,6 +891,37 @@ func openclawDistPatched() bool {
 			if strings.Contains(string(data), "RAMPART_DIST_CHECK") {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// openclawWebFetchPatched checks if any dist *.js files have the web_fetch Rampart patch.
+func openclawWebFetchPatched() bool {
+	for _, d := range openclawDistCandidates() {
+		allJS, _ := filepath.Glob(filepath.Join(d, "*.js"))
+		for _, m := range allJS {
+			data, err := os.ReadFile(m)
+			if err != nil {
+				continue
+			}
+			if strings.Contains(string(data), "RAMPART_DIST_CHECK_WEBFETCH") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func openclawToolsPatched() bool {
+	for _, d := range openclawToolsCandidates() {
+		readFile := filepath.Join(d, "read.js")
+		data, err := os.ReadFile(readFile)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(data), "RAMPART") {
+			return true
 		}
 	}
 	return false

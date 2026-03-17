@@ -149,7 +149,18 @@ func runQuickstart(cmd *cobra.Command, agentsFlag, envAlias, profile string, ski
 
 	selectedProfile := strings.TrimSpace(profile)
 	if selectedProfile == "" {
-		selectedProfile = "standard"
+		// Auto-select openclaw profile when OpenClaw is one of the configured agents.
+		// It includes standard.yaml rules plus OpenClaw-specific session awareness
+		// and production deployment gates (kubectl, terraform, docker push).
+		for _, agent := range selectedAgents {
+			if agent.SetupCmd == "openclaw" {
+				selectedProfile = "openclaw"
+				break
+			}
+		}
+		if selectedProfile == "" {
+			selectedProfile = "standard"
+		}
 	}
 
 	fmt.Fprintln(w, "  Installing policies...")

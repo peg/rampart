@@ -199,6 +199,22 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny ruby base64 decode", tool: "exec", command: `ruby -e "eval(Base64.decode64('dGVzdA=='))"`, expected: engine.ActionDeny},
 		{name: "deny node buffer base64", tool: "exec", command: `node -e "eval(Buffer.from('dGVzdA==','base64').toString())"`, expected: engine.ActionDeny},
 
+		// Base64 pipeline decode-and-exec patterns
+		{name: "deny echo base64 -d pipe bash", tool: "exec", command: `echo "cm0gLXJmIC8=" | base64 -d | bash`, expected: engine.ActionDeny},
+		{name: "deny echo base64 --decode pipe bash", tool: "exec", command: `echo "cm0gLXJmIC8=" | base64 --decode | bash`, expected: engine.ActionDeny},
+		{name: "deny base64 -d herestring pipe bash", tool: "exec", command: `base64 -d <<< "cm0gLXJmIC8=" | bash`, expected: engine.ActionDeny},
+		{name: "deny printf base64 -d pipe sh", tool: "exec", command: `printf "cm0gLXJmIC8=" | base64 -d | sh`, expected: engine.ActionDeny},
+		{name: "deny echo base64 -d pipe zsh", tool: "exec", command: `echo "cm0gLXJmIC8=" | base64 -d | zsh`, expected: engine.ActionDeny},
+		{name: "deny echo base64 -d pipe dash", tool: "exec", command: `echo "payload" | base64 -d | dash`, expected: engine.ActionDeny},
+		{name: "deny cat file base64 -d pipe bash", tool: "exec", command: `cat /tmp/encoded.txt | base64 -d | bash`, expected: engine.ActionDeny},
+		{name: "deny base64 -d file pipe bash", tool: "exec", command: `base64 -d /tmp/encoded.txt | bash`, expected: engine.ActionDeny},
+		{name: "deny powershell FromBase64String", tool: "exec", command: `[Convert]::FromBase64String("dGVzdA==") | Invoke-Expression`, expected: engine.ActionDeny},
+		{name: "deny base64 nospace pipe bash", tool: "exec", command: `echo "cm0gLXJmIC8=" | base64 -d|bash`, expected: engine.ActionDeny},
+		// Base64 legitimate usage must not be blocked
+		{name: "allow base64 encode", tool: "exec", command: `echo "hello" | base64`, expected: engine.ActionAllow},
+		{name: "allow base64 decode to file", tool: "exec", command: `base64 -d input.b64 > output.bin`, expected: engine.ActionAllow},
+		{name: "allow base64 decode to stdout", tool: "exec", command: `echo "aGVsbG8=" | base64 -d`, expected: engine.ActionAllow},
+
 		// Self-protection: serve and upgrade abuse
 		{name: "deny rampart serve bare", tool: "exec", command: "rampart serve", expected: engine.ActionDeny},
 		{name: "deny rampart serve mode disabled", tool: "exec", command: "rampart serve --mode disabled", expected: engine.ActionDeny},
