@@ -529,7 +529,7 @@
         <div class="feature-card reveal">
           <div class="feature-num">01</div>
           <div class="feature-title">Policy enforcement</div>
-          <div class="feature-desc">Every command evaluated before it runs. 95%+ of decisions happen instantly via pattern matching. For edge cases, there's an optional LLM sidecar (<code>rampart-verify</code>) you can enable when you need it.</div>
+          <div class="feature-desc">Every command evaluated before it runs. 95%+ of decisions happen instantly via pattern matching. For edge cases, there's an optional LLM sidecar (<a href="https://github.com/peg/rampart-verify" style="color:var(--accent);">rampart-verify</a>) you can enable when you need it.</div>
         </div>
         <div class="feature-card reveal reveal-d1">
           <div class="feature-num">02</div>
@@ -567,12 +567,43 @@
     </div>
   </div>
 
+  <!-- QUICKSTART -->
+  <section class="section">
+    <div class="container">
+      <div class="section-label reveal">Get started</div>
+      <h2 class="section-title reveal">Three commands.</h2>
+      <div class="qs-steps">
+        <div class="qs-step reveal">
+          <div class="qs-num">1</div>
+          <div class="qs-body">
+            <div class="qs-label">Install</div>
+            <div class="qs-cmd"><span class="p">$ </span>curl -fsSL https://rampart.sh/install | sh</div>
+          </div>
+        </div>
+        <div class="qs-step reveal reveal-d1">
+          <div class="qs-num">2</div>
+          <div class="qs-body">
+            <div class="qs-label">Connect your agent</div>
+            <div class="qs-cmd"><span class="p">$ </span>rampart setup claude-code</div>
+          </div>
+        </div>
+        <div class="qs-step reveal reveal-d2">
+          <div class="qs-num">3</div>
+          <div class="qs-body">
+            <div class="qs-label">Watch it work</div>
+            <div class="qs-cmd"><span class="p">$ </span>rampart watch</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- AGENTS -->
   <section class="section">
     <div class="container">
       <div class="section-label reveal">Compatibility</div>
-      <h2 class="section-title reveal">Claude Code, Codex, Cline — and anything else.</h2>
-      <p class="section-sub reveal">One command per agent. Or run <code>rampart setup</code> with no arguments and it auto-detects everything installed.</p>
+      <h2 class="section-title reveal">Claude Code, Codex, Cline, and anything else.</h2>
+      <p class="section-sub reveal">One command per agent. Or just run <code>rampart setup</code> with no arguments and it auto-detects everything installed.</p>
 
       <div class="agent-cards reveal">
 
@@ -676,40 +707,9 @@
       <div class="quote-outer reveal">
         <div class="quote-card">
           <p class="quote-text">I built Rampart after my own agent nearly nuked a directory on my homelab</p>
-          <div class="quote-attr">— Trevor &nbsp;<a href="https://github.com/peg">@peg</a> &nbsp;·&nbsp; creator of Rampart</div>
+          <div class="quote-attr">Trevor &nbsp;·&nbsp; <a href="https://github.com/peg">@peg</a> &nbsp;·&nbsp; creator of Rampart</div>
           <div class="quote-context">
             This isn't a security research project or a VC-funded platform. It's a tool built by someone who runs AI agents every day and got burned by the lack of guardrails. The fail-open philosophy (allow by default, block the dangerous stuff) came from getting tired of sandboxes that fight you harder than the agents they're supposed to protect.
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- QUICKSTART -->
-  <section class="section text-center">
-    <div class="container">
-      <div class="section-label reveal">Get started</div>
-      <h2 class="section-title reveal">Three commands.</h2>
-      <div class="qs-steps">
-        <div class="qs-step reveal">
-          <div class="qs-num">1</div>
-          <div class="qs-body">
-            <div class="qs-label">Install</div>
-            <div class="qs-cmd"><span class="p">$ </span>curl -fsSL https://rampart.sh/install | sh</div>
-          </div>
-        </div>
-        <div class="qs-step reveal reveal-d1">
-          <div class="qs-num">2</div>
-          <div class="qs-body">
-            <div class="qs-label">Connect your agent</div>
-            <div class="qs-cmd"><span class="p">$ </span>rampart setup claude-code</div>
-          </div>
-        </div>
-        <div class="qs-step reveal reveal-d2">
-          <div class="qs-num">3</div>
-          <div class="qs-body">
-            <div class="qs-label">Watch it work</div>
-            <div class="qs-cmd"><span class="p">$ </span>rampart watch</div>
           </div>
         </div>
       </div>
@@ -721,7 +721,7 @@
     <div class="container">
       <div class="section-label reveal">Ecosystem</div>
       <h2 class="section-title reveal">Rampart + Snare</h2>
-      <p class="section-sub reveal">Rampart blocks dangerous actions before they run. Snare is a companion tool for a different problem: knowing when credentials have already been stolen — even weeks later.</p>
+      <p class="section-sub reveal">Rampart blocks dangerous actions before they run. Snare is a companion tool for a different problem: knowing when credentials have already been stolen, even weeks after the fact.</p>
       <div class="eco-grid">
         <div class="eco-card reveal">
           <div class="eco-name">Rampart</div>
@@ -731,7 +731,7 @@
         <a href="https://snare.sh" class="eco-card reveal reveal-d1" style="display:block;text-decoration:none;color:inherit;">
           <div class="eco-name">Snare</div>
           <div class="eco-url">snare.sh →</div>
-          <div class="eco-desc">Credential canary tokens. Know the instant stolen credentials are used — even weeks after the fact.</div>
+          <div class="eco-desc">Credential canary tokens. Know the instant stolen credentials are used, even weeks after the fact.</div>
         </a>
       </div>
       <p class="eco-tagline reveal">Rampart blocks. Snare catches.</p>
