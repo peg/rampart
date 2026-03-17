@@ -511,27 +511,27 @@
         <div class="feature-card reveal">
           <div class="feature-num">01</div>
           <div class="feature-title">Policy enforcement</div>
-          <div class="feature-desc">Every command evaluated before it runs. 95%+ of decisions happen instantly via pattern matching. Edge cases go to an optional LLM sidecar — <code>rampart-verify</code> — that you can turn on when you need it.</div>
+          <div class="feature-desc">Every command evaluated before it runs. 95%+ of decisions happen instantly via pattern matching. For edge cases, there's an optional LLM sidecar (<code>rampart-verify</code>) you can enable when you need it.</div>
         </div>
         <div class="feature-card reveal reveal-d1">
           <div class="feature-num">02</div>
           <div class="feature-title">Response scanning</div>
-          <div class="feature-desc">If your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. Most tools only filter what goes in. This filters what comes back out too.</div>
+          <div class="feature-desc">If your agent reads a file containing credentials, the response is blocked before those secrets reach the agent. Most tools only filter what goes in. Rampart also filters what comes back out.</div>
         </div>
         <div class="feature-card reveal reveal-d2">
           <div class="feature-num">03</div>
           <div class="feature-title">Prompt injection resistant</div>
-          <div class="feature-desc">An injected prompt tells your agent to disable its own guardrails? Rampart runs at the OS layer. The agent can't edit its way out by touching a config file.</div>
+          <div class="feature-desc">If a prompt injection tells your agent to disable its own guardrails, it doesn't matter. Rampart runs at the OS layer, outside the agent's reach. It can't be turned off from inside the agent.</div>
         </div>
         <div class="feature-card reveal reveal-d3">
           <div class="feature-num">04</div>
           <div class="feature-title">Approval gates</div>
-          <div class="feature-desc">Some commands you want a human to approve before they run. Set <code>action: require-approval</code> on any rule and Rampart holds it — nothing executes until you say yes or no.</div>
+          <div class="feature-desc">Some commands you want a human to approve before they run. Set <code>action: require-approval</code> on any rule and Rampart holds the command until you say yes or no.</div>
         </div>
         <div class="feature-card reveal reveal-d4">
           <div class="feature-num">05</div>
           <div class="feature-title">Tamper-evident audit</div>
-          <div class="feature-desc">Every allow, deny, and approval gets logged and chained — you can't edit the history without breaking it. Run <code>rampart audit</code> to see what your agent actually did. Feed the log back to generate new policies.</div>
+          <div class="feature-desc">Every allow, deny, and approval is logged in a hash-chained file. You can't edit the history without breaking it. Run <code>rampart audit</code> to see what your agent actually did, then feed the log back to generate new policies.</div>
         </div>
       </div>
     </div>
