@@ -303,16 +303,50 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		if cmd == "" {
 			return false, ""
 		}
-		// Exclusions apply to both command_matches and command_contains.
-		if matchAny(cond.CommandNotMatches, cmd) {
-			return false, ""
-		}
-		// command_matches (glob) — OR with command_contains below.
+
+		// command_matches (glob) — mirror matchCondition: try raw, normalized,
+		// compound segments, and subcommands.
 		if len(cond.CommandMatches) > 0 {
 			if matched := matchFirst(cond.CommandMatches, cmd); matched != "" {
-				return true, fmt.Sprintf("command_matches [%q]", matched)
+				if !matchAny(cond.CommandNotMatches, cmd) {
+					return true, fmt.Sprintf("command_matches [%q]", matched)
+				}
+			}
+			// Try normalized form.
+			norm := NormalizeCommand(cmd)
+			if norm != cmd {
+				if matched := matchFirst(cond.CommandMatches, norm); matched != "" {
+					if !matchAny(cond.CommandNotMatches, cmd) && !matchAny(cond.CommandNotMatches, norm) {
+						return true, fmt.Sprintf("command_matches [%q] (normalized)", matched)
+					}
+				}
+			}
+			// Try each segment of compound commands.
+			for _, seg := range SplitCompoundCommand(cmd) {
+				if matched := matchFirst(cond.CommandMatches, seg); matched != "" {
+					return true, fmt.Sprintf("command_matches [%q] (compound segment)", matched)
+				}
+				nseg := NormalizeCommand(seg)
+				if nseg != seg {
+					if matched := matchFirst(cond.CommandMatches, nseg); matched != "" {
+						return true, fmt.Sprintf("command_matches [%q] (normalized compound segment)", matched)
+					}
+				}
+			}
+			// Check subcommands (command substitution, backticks, eval).
+			for _, sub := range ExtractSubcommands(cmd) {
+				if matched := matchFirst(cond.CommandMatches, sub); matched != "" {
+					return true, fmt.Sprintf("command_matches [%q] (subcommand)", matched)
+				}
+				nsub := NormalizeCommand(sub)
+				if nsub != sub {
+					if matched := matchFirst(cond.CommandMatches, nsub); matched != "" {
+						return true, fmt.Sprintf("command_matches [%q] (normalized subcommand)", matched)
+					}
+				}
 			}
 		}
+
 		// command_contains (case-insensitive substring) — catches patterns glob can't
 		// express, e.g. bash <(curl URL) where the URL's / breaks glob * matching.
 		// Case-insensitive so BASH <(CURL URL) doesn't bypass.
