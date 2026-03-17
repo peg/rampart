@@ -79,9 +79,9 @@
 
     .section-label {
       font-family: var(--font-mono);
-      font-size: 0.7rem;
+      font-size: 0.75rem;
       text-transform: uppercase;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.1em;
       color: var(--accent);
       margin-bottom: 1rem;
     }
@@ -221,20 +221,35 @@
       animation: logIn 260ms var(--ease-out) both;
     }
     @keyframes logIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
-    .log-v { font-size: 0.875rem; }
+    /* Verdict badge — CSS text tokens, no emoji */
+    .log-v {
+      font-family: var(--font-mono);
+      font-size: 0.675rem;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      white-space: nowrap;
+      align-self: center;
+    }
+    .log-v-allow { color: var(--green);  background: rgba(34,197,94,0.1);  border: 1px solid rgba(34,197,94,0.2); }
+    .log-v-watch { color: var(--orange); background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); }
+    .log-v-deny  { color: var(--red);    background: rgba(239,68,68,0.1);  border: 1px solid rgba(239,68,68,0.2); }
+    .log-v-approve { color: var(--cyan); background: rgba(6,182,212,0.1);  border: 1px solid rgba(6,182,212,0.2); }
+
     .log-t { color: var(--text-dim); font-size: 0.775rem; }
     .log-o { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
     .log-c { color: var(--text-bright); overflow: hidden; text-overflow: ellipsis; }
     .log-n {
-      font-size: 0.725rem; color: var(--text-dim);
-      padding: 0 0.375rem; border-radius: 3px; white-space: nowrap;
+      font-size: 0.75rem; color: var(--text-dim);
+      white-space: nowrap;
     }
     .log-line[data-v="deny"]    .log-c { color: var(--red); }
-    .log-line[data-v="deny"]    .log-n { color: var(--red); opacity: 0.6; }
+    .log-line[data-v="deny"]    .log-n { color: var(--red); opacity: 0.5; }
     .log-line[data-v="watch"]   .log-c { color: var(--orange); }
-    .log-line[data-v="watch"]   .log-n { color: var(--orange); opacity: 0.6; }
+    .log-line[data-v="watch"]   .log-n { color: var(--orange); opacity: 0.5; }
     .log-line[data-v="approve"] .log-c { color: var(--cyan); }
-    .log-line[data-v="approve"] .log-n { color: var(--cyan); opacity: 0.6; }
+    .log-line[data-v="approve"] .log-n { color: var(--cyan); opacity: 0.5; }
     @media (max-width: 620px) {
       .log-line { grid-template-columns: 1.5rem 5.5rem 1fr; }
       .log-t { display: none; } .log-n { display: none; }
@@ -289,7 +304,7 @@
     .feature-card { background: var(--surface); padding: 1.625rem 1.5rem; transition: background 180ms; }
     .feature-card:hover { background: var(--surface-2); }
     .feature-num {
-      display: inline-block; font-family: var(--font-mono); font-size: 0.6875rem;
+      display: inline-block; font-family: var(--font-mono); font-size: 0.75rem;
       color: var(--accent); background: var(--accent-bg); border: 1px solid var(--accent-border);
       padding: 0.125rem 0.5rem; border-radius: 3px; margin-bottom: 1rem;
     }
@@ -413,23 +428,6 @@
     </div>
   </section>
 
-  <!-- POLICY LOG -->
-  <div class="policy-log-wrap">
-    <div class="container">
-      <div class="policy-log-intro reveal">
-        <div class="section-label">rampart watch</div>
-      </div>
-      <div class="policy-log reveal reveal-d1">
-        <div class="log-bar">
-          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-          <span class="log-bar-title">rampart watch — agent-01</span>
-          <span class="log-live">live</span>
-        </div>
-        <div class="log-body" id="log-stream"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- THREAT -->
   <section class="section text-center">
     <div class="container">
@@ -446,6 +444,23 @@
       <p class="threat-foot reveal reveal-d2">No guardrails. No audit log. No way to know it happened.</p>
     </div>
   </section>
+
+  <!-- POLICY LOG -->
+  <div class="policy-log-wrap">
+    <div class="container">
+      <div class="policy-log-intro reveal">
+        <div class="section-label">rampart watch — this is what it looks like</div>
+      </div>
+      <div class="policy-log reveal reveal-d1">
+        <div class="log-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="log-bar-title">rampart watch — agent-01</span>
+          <span class="log-live">live</span>
+        </div>
+        <div class="log-body" id="log-stream"></div>
+      </div>
+    </div>
+  </div>
 
   <!-- COMPARISON -->
   <section class="section">
@@ -726,51 +741,44 @@
         { v: 'watch',   op: 'file.read',  cmd: 'config/secrets.yaml',       note: '← watch rule' },
         { v: 'allow',   op: 'exec',       cmd: 'eslint src/' },
       ];
-      const icons = { allow: '✅', watch: '🟡', deny: '🔴', approve: '👤' };
       const container = document.getElementById('log-stream');
       let idx = 0;
+
+      const verdictLabel = { allow: 'ALLOW', watch: 'WATCH', deny: 'DENY', approve: 'WAIT' };
 
       function ts() {
         return new Date().toTimeString().slice(0, 8);
       }
 
-      function addLine() {
-        const e = entries[idx % entries.length];
-        idx++;
+      function makeLine(e, timestamp) {
         const line = document.createElement('div');
         line.className = 'log-line';
         line.setAttribute('data-v', e.v);
         line.innerHTML =
-          '<span class="log-v">' + icons[e.v] + '</span>' +
-          '<span class="log-t">' + ts() + '</span>' +
+          '<span class="log-v log-v-' + e.v + '">' + verdictLabel[e.v] + '</span>' +
+          '<span class="log-t">' + (timestamp || ts()) + '</span>' +
           '<span class="log-o">' + e.op + '</span>' +
           '<span class="log-c">' + e.cmd + '</span>' +
           '<span class="log-n">' + (e.note || '') + '</span>';
-        container.appendChild(line);
+        return line;
+      }
+
+      function addLine() {
+        const e = entries[idx % entries.length];
+        idx++;
+        container.appendChild(makeLine(e));
         while (container.children.length > 9) container.removeChild(container.firstChild);
       }
 
-      // Seed with 6 lines instantly on load
+      // Seed with 6 lines using real current time
       setTimeout(() => {
         for (let i = 0; i < 6; i++) {
-          const e = entries[i];
-          const line = document.createElement('div');
-          line.className = 'log-line';
-          line.setAttribute('data-v', e.v);
-          line.innerHTML =
-            '<span class="log-v">' + icons[e.v] + '</span>' +
-            '<span class="log-t">17:42:0' + i + '</span>' +
-            '<span class="log-o">' + e.op + '</span>' +
-            '<span class="log-c">' + e.cmd + '</span>' +
-            '<span class="log-n">' + (e.note || '') + '</span>';
-          container.appendChild(line);
+          container.appendChild(makeLine(entries[i]));
         }
         idx = 6;
 
-        // Stream new lines at realistic terminal pace
         function loop() {
-          const delay = 750 + Math.random() * 600;
-          setTimeout(() => { addLine(); loop(); }, delay);
+          setTimeout(() => { addLine(); loop(); }, 750 + Math.random() * 600);
         }
         loop();
       }, 500);
