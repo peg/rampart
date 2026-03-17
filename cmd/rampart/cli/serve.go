@@ -33,6 +33,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/peg/rampart/internal/audit"
+	"github.com/peg/rampart/internal/bridge"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/proxy"
 	"github.com/peg/rampart/internal/signing"
@@ -71,6 +72,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var tlsCert string
 	var tlsKey string
 	var tlsAuto bool
+	var noOpenClawBridge bool
 
 	resolvedDeps := defaultServeDeps()
 	if deps != nil {
@@ -443,6 +445,29 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}()
 			}
 
+			// Auto-start OpenClaw bridge if gateway is discoverable.
+			var openclawBridge *bridge.OpenClawBridge
+			if !noOpenClawBridge {
+				gwURL, gwToken, discoverErr := bridge.DiscoverGatewayConfig()
+				if discoverErr == nil {
+					openclawBridge = bridge.NewOpenClawBridge(eng, bridge.Config{
+						GatewayURL:   gwURL,
+						GatewayToken: gwToken,
+						Logger:       logger,
+					})
+					bridgeCtx, bridgeCancel := context.WithCancel(cmd.Context())
+					defer bridgeCancel()
+					go func() {
+						if err := openclawBridge.Start(bridgeCtx); err != nil && bridgeCtx.Err() == nil {
+							logger.Warn("bridge: OpenClaw bridge stopped", "error", err)
+						}
+					}()
+					logger.Info("bridge: connected to OpenClaw gateway", "url", gwURL)
+				} else {
+					logger.Debug("bridge: OpenClaw gateway not discoverable, skipping bridge", "error", discoverErr)
+				}
+			}
+
 			sigCtx, stop := resolvedDeps.notifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
@@ -451,6 +476,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				select {
 				case <-sigCtx.Done():
 					logger.Info("serve: shutting down...")
+					if openclawBridge != nil {
+						_ = openclawBridge.Close()
+					}
 					if rampartDir != "" {
 						removeServeState(rampartDir)
 					}
@@ -532,6 +560,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&tlsCert, "tls-cert", "", "Path to TLS certificate PEM file")
 	cmd.Flags().StringVar(&tlsKey, "tls-key", "", "Path to TLS private key PEM file")
 	cmd.Flags().BoolVar(&tlsAuto, "tls-auto", false, "Auto-generate self-signed TLS certificate")
+	cmd.Flags().BoolVar(&noOpenClawBridge, "no-openclaw-bridge", false, "Disable auto-starting the OpenClaw bridge even if gateway is discoverable")
 
 	cmd.AddCommand(newServeInstallCmd(opts, nil))
 	cmd.AddCommand(newServeUninstallCmd(nil))

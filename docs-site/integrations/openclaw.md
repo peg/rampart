@@ -1,14 +1,14 @@
 ---
 title: Securing OpenClaw
-description: "Protect OpenClaw agents and their sub-agents (Codex, Claude Code) with Rampart. Shell shim, LD_PRELOAD, and file tool patching for full coverage."
+description: "Native Rampart integration for OpenClaw — policy enforcement, exec approval routing, and file tool protection in one command."
 ---
 
 # OpenClaw
 
-For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart provides multiple layers of protection: a shell shim for OpenClaw's exec tool, LD_PRELOAD interception for sub-agents, and optional file tool patching.
+Rampart integrates natively with OpenClaw 2026.3.x. One command sets up full protection and connects Rampart's policy engine to OpenClaw's exec approval system.
 
 !!! info "Version requirement"
-    Requires OpenClaw 2026.2.x or later. OpenClaw 2026.3.x added native exec approvals — see [below](#openclaw-exec-approvals) for how they interact with Rampart.
+    Requires OpenClaw 2026.3.x or later for native exec approval integration. Earlier versions work with shell shim only.
 
 !!! tip "Fastest path"
     If you want your OpenClaw agent to install and configure Rampart for you, just say:
@@ -20,157 +20,118 @@ For [OpenClaw](https://github.com/openclaw/openclaw) users, Rampart provides mul
 ## Setup
 
 ```bash
-# Fastest: auto-detect, install service, configure hooks, run health check
-rampart quickstart --yes
-
-# Manual: shell command protection only
-rampart setup openclaw
-
-# Manual: full protection (shell commands + file tools)
-rampart setup openclaw --patch-tools
+rampart quickstart
 ```
 
-Or use the interactive wizard:
+That's it. Rampart:
+
+1. Installs `rampart serve` as a boot service
+2. Configures the OpenClaw shell shim (exec protection)
+3. Patches OpenClaw file tools (read/write/edit/grep protection)
+4. Patches `web_fetch` (network exfiltration protection)
+5. Auto-selects the `openclaw.yaml` policy profile
+6. Connects to the OpenClaw gateway for native exec approval routing
+
+## How it works after setup
+
+When `rampart serve` starts, it automatically connects to the OpenClaw gateway WebSocket and subscribes to exec approval events. This is the native integration — Rampart becomes the policy engine inside OpenClaw's approval flow.
+
+```
+Agent wants to run a command
+  └─ OpenClaw fires exec.approval.requested
+       └─ Rampart evaluates policy
+            ├─ Hard deny (rm -rf /, cat ~/.ssh/id_rsa, etc.)
+            │    → resolved immediately, command never runs
+            │    → user sees nothing (no prompt needed)
+            │
+            ├─ Safe command (npm test, git status, etc.)
+            │    → resolved allow-once immediately
+            │    → command runs, no prompt
+            │
+            └─ Needs human review (kubectl apply, sudo, etc.)
+                 → Rampart creates approval, notifies via your
+                   configured channel (Discord, Telegram, etc.)
+                 → command waits until you approve or deny
+```
+
+You can verify the bridge is connected:
 
 ```bash
-rampart setup
+rampart status
+# Shows: OpenClaw bridge: connected (ws://127.0.0.1:18789)
+```
+
+Or check the serve log:
+
+```bash
+rampart log
+# bridge: connected to OpenClaw gateway, listening for approval requests
 ```
 
 ## Protecting Sub-Agents
 
-OpenClaw can spawn sub-agents like Codex CLI and Claude Code. These agents execute commands through their own shell processes, **not** through OpenClaw's exec tool — so the shell shim alone doesn't catch them.
-
-Use `rampart setup codex` to install a wrapper that intercepts all Codex commands via LD_PRELOAD:
+OpenClaw can spawn sub-agents like Codex CLI and Claude Code. These agents execute commands through their own shell processes, not through OpenClaw's exec tool. The bridge doesn't cover sub-agents — they need their own interception.
 
 ```bash
-rampart setup codex
+rampart setup codex       # Wraps Codex CLI with LD_PRELOAD
+rampart setup claude-code # Adds hooks to ~/.claude/settings.json
 ```
 
-This creates a wrapper at `~/.local/bin/codex` that transparently routes every command through Rampart's policy engine. The wrapper inherits to all child processes — no configuration needed per sub-agent.
-
-For Claude Code, use `rampart setup claude-code` which adds hooks to `~/.claude/settings.json`.
-
-For any other CLI agent, use `rampart preload`:
-
-```bash
-rampart preload -- <agent-command>
-```
+`rampart quickstart` handles this automatically if Codex or Claude Code are detected.
 
 ## Coverage Matrix
 
 | What | Protected by | Notes |
 |------|-------------|-------|
-| OpenClaw shell commands (`exec` tool) | ✅ Shell shim | Via `$SHELL` env var |
-| File reads/writes/edits/grep | ✅ `--patch-tools` | Re-run after OpenClaw upgrades |
+| OpenClaw exec commands | ✅ Native bridge | Policy engine inside approval flow |
+| File reads/writes/edits | ✅ File tool patches | Re-run after OpenClaw upgrades |
+| `web_fetch` requests | ✅ Dist patch | Exfiltration via URL blocked |
 | Codex CLI commands | ✅ `rampart setup codex` | LD_PRELOAD — all child processes |
 | Claude Code commands | ✅ `rampart setup claude-code` | Native hooks |
 | Other sub-agent commands | ✅ `rampart preload --` | LD_PRELOAD — universal |
-| HTTP fetch (`web_fetch` tool) | ⚠️ Not intercepted | Uses Node.js HTTP internals, not exec. Block via `rampart block --tool fetch '*'` or OS-level firewall rules |
-| Browser automation | ⚠️ Not intercepted | Runs in a separate browser process |
+| Browser automation | ⚠️ Not intercepted | Separate browser process |
+| `message` tool | ⚠️ Not intercepted | Issue [#221](https://github.com/peg/rampart/issues/221) |
 
-## How It Works
+## Rampart deny overrides OpenClaw approval
 
-```
-OpenClaw Gateway
-  ├─ exec tool → Shell Shim → rampart serve → Policy Engine → allow/deny
-  ├─ file tools → Patched JS → rampart serve → Policy Engine → allow/deny
-  ├─ Codex CLI → librampart.so (LD_PRELOAD) → Policy Engine → allow/deny
-  └─ Claude Code → Native hooks → Policy Engine → allow/deny
-```
+!!! important "Approving in OpenClaw does not override a Rampart deny"
+    With the native bridge, Rampart evaluates the command **before** OpenClaw shows it to you. Hard deny rules (`action: deny`) are resolved immediately and the command never runs — you won't see an approval prompt at all.
 
-**Shell shim**: A bash script at `~/.local/bin/rampart-shim` that intercepts every `bash -c "command"` call, sends it to Rampart's policy server, and blocks if denied. Configured via `env.vars.SHELL` in OpenClaw's config.
+    For commands that should be human-approvable, use `action: ask` in your policy. That creates an approval gate where Rampart notifies you and waits for your decision before resolving OpenClaw's approval.
 
-**LD_PRELOAD**: `librampart.so` hooks `execve`, `execvp`, `execvpe`, `system()`, `popen()`, and `posix_spawn()` at the C library level. Inherited by all child processes automatically. Cannot be bypassed by choosing a different shell.
+## The `openclaw.yaml` profile
 
-**File tool patches**: Injects a policy check into OpenClaw's internal read/write/edit/grep tool implementations. Same fail-open behavior.
+`rampart quickstart` auto-selects the `openclaw.yaml` policy profile when OpenClaw is detected. This profile includes everything in `standard.yaml` plus:
 
-**Fail-open**: All interception layers fail open — if Rampart is unreachable, commands pass through. This is deliberate ([design philosophy](../reference/threat-model.md)).
+- **Session-aware rules**: main session (direct chat) has different permissions from subagents and cron jobs
+- **Deployment gates**: `kubectl apply`, `terraform apply`, `docker push`, `helm install/upgrade` require approval
+- **Tighter sub-agent restrictions**: subagents face more restrictions on sensitive file access and external actions
 
-**require_approval**: When a policy uses `action: require_approval`, the shim blocks execution and creates a pending approval. If webhooks are configured, Rampart sends notifications (Discord, Slack, etc.) to alert humans. The command stays blocked until resolved via `rampart approve <id>`, `rampart deny <id>`, or the HTTP API.
-
-!!! warning "File patches require re-running after OpenClaw upgrades"
-    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw (`npm install -g openclaw`), run:
-    ```bash
-    rampart setup openclaw --patch-tools --force
-    ```
-
-## Configuration
-
-After running `rampart setup openclaw`, add the shim to your OpenClaw config (replace the path with your actual home directory — run `echo ~/.local/bin/rampart-shim` to get it):
-
-```json
-{
-  "env": {
-    "vars": {
-      "SHELL": "/home/youruser/.local/bin/rampart-shim"
-    }
-  }
-}
-```
-
-Then restart the gateway: `openclaw gateway restart`.
-
-## Monitor
-
-```bash
-rampart watch       # Live dashboard
-rampart status      # Quick check
-rampart log --deny  # Recent denies
-```
-
-## Uninstall
-
-```bash
-rampart setup openclaw --remove   # Remove shim, service, restore patched tools
-rampart setup codex --remove      # Remove Codex wrapper
-```
-
-Policies and audit logs in `~/.rampart/` are preserved.
-
-!!! note "Patch verification"
-    `--patch-tools` targets specific internal file paths. If an upgrade changes the code, the patch script logs warnings for each failed injection point and continues — file tools that couldn't be patched will be unprotected (fail-open). Always check the output of `rampart setup openclaw --patch-tools` after upgrades.
-
-## OpenClaw Exec Approvals
-
-OpenClaw 2026.3.x introduced native exec approvals — commands can be held for human confirmation via Discord or other channels before running. This is similar to Rampart's `action: ask` but operates at the OpenClaw layer, not the OS layer.
-
-**They complement each other. They don't clash** — as long as you use the `openclaw.yaml` profile.
-
-### How they divide responsibility
-
-| What triggers approval | Layer | Why |
-|----------------------|-------|-----|
-| `kubectl apply`, `terraform apply`, `docker push`, `helm install/upgrade` | Rampart (`openclaw.yaml`) | Rampart intercepts first; OpenClaw never sees blocked commands |
-| `sudo **` | Rampart (`standard.yaml`) | OpenClaw doesn't gate sudo |
-| `crontab -e`, `systemctl enable` | Rampart (`standard.yaml`) | Persistence gating |
-| Everything else OpenClaw is configured to gate | OpenClaw exec approvals | Passes through Rampart's allow-first policy |
-
-### Avoiding double-prompts
-
-If you run Rampart with `standard.yaml` (not `openclaw.yaml`) **and** have OpenClaw exec approvals enabled, you may get prompted twice for production commands like `kubectl apply` — once by Rampart, once by OpenClaw.
-
-**Fix:** Use the `openclaw.yaml` profile with Rampart. It's designed to co-exist with OpenClaw's native approvals:
+To install it manually:
 
 ```bash
 rampart init --profile openclaw
 ```
 
-The `openclaw.yaml` profile handles production deployment commands via `require_approval` and leaves everything else to OpenClaw's approval layer. No duplication.
+## Disabling the bridge
 
-### Rampart deny overrides OpenClaw approval
+To run Rampart without the native bridge (shim-only mode):
 
-!!! important "Approving in OpenClaw does not override a Rampart deny"
-    The execution order is: **OpenClaw approval → Rampart shim intercept**. If you approve a command in Discord via OpenClaw's exec approval flow, and Rampart has a `action: deny` rule for that command, Rampart will still block it. The command never runs.
+```bash
+rampart serve --no-openclaw-bridge
+```
 
-    This is intentional. `action: deny` rules in Rampart are hard stops — they're meant for things like `rm -rf /` or credential access where no human should be able to accidentally approve them through a chat interface.
+## Uninstall
 
-    If you want a command to be human-approvable, use `action: ask` in your Rampart policy instead of `action: deny`. That creates a Rampart approval gate that can be resolved, while `deny` is always final.
+```bash
+rampart uninstall --yes
+```
 
-### What Rampart adds that OpenClaw approvals don't cover
+Removes the service, shell shim, OpenClaw gateway drop-in, and restores patched tool files. Policies and audit logs in `~/.rampart/` are preserved.
 
-- **Hard blocks** — credential access, destructive commands, and exfiltration are denied outright, not just approval-gated. OpenClaw approvals can't hard-block.
-- **Pattern-based policy** — Rampart knows `npm test` is safe and `cat ~/.ssh/id_rsa` is not. OpenClaw approvals gate by tool or user config, not command semantics.
-- **Sub-agent coverage** — OpenClaw exec approvals only cover OpenClaw sessions. Rampart also covers Codex, Claude Code, and any LD_PRELOAD-wrapped agent.
-- **Response scanning** — Rampart checks what comes back from file reads. OpenClaw approvals don't.
-- **Tamper-evident audit** — hash-chained log that can be verified offline. Discord messages are not an audit trail.
-- **Agent-agnostic** — works whether or not OpenClaw is running.
+!!! warning "File patches require re-running after OpenClaw upgrades"
+    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw, run:
+    ```bash
+    rampart setup openclaw --patch-tools --force
+    ```
+    Or restart the OpenClaw gateway — the `ExecStartPre` drop-in re-patches automatically on gateway restart.

@@ -265,12 +265,12 @@ func detectProtectedAgents() []string {
 	openclawShim := filepath.Join(home, ".local", "bin", "rampart-shim")
 	openclawConfig := filepath.Join(home, ".openclaw", "openclaw.json")
 	if _, err := os.Stat(openclawDropIn); err == nil {
-		agents = append(agents, "OpenClaw (preload)")
+		agents = append(agents, "OpenClaw (preload+bridge)")
 	} else if _, err := os.Stat(openclawShim); err == nil {
-		agents = append(agents, "OpenClaw (shim)")
+		agents = append(agents, "OpenClaw (shim+bridge)")
 	} else if data, err := os.ReadFile(openclawConfig); err == nil {
 		if strings.Contains(string(data), "rampart") {
-			agents = append(agents, "OpenClaw (config)")
+			agents = append(agents, "OpenClaw (bridge)")
 		}
 	}
 

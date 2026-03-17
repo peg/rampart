@@ -133,6 +133,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	allowCmd := newAllowCmd(opts)
 	blockRuleCmd := newBlockCmd(opts)
 	rulesCmd := newRulesCmd(opts)
+	// bridgeCmd removed — bridge is auto-started by rampart serve, no CLI needed
 
 	setupCmd.GroupID = groupSetup
 	quickstartCmd.GroupID = groupSetup

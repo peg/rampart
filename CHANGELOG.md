@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-03-17
+
+### Added
+
+- **OpenClaw native bridge**: `rampart serve` now auto-connects to the OpenClaw gateway WebSocket when `~/.openclaw/openclaw.json` is found. Rampart subscribes to `exec.approval.requested` events and becomes the policy engine inside OpenClaw's approval flow:
+  - Hard deny rules are resolved immediately — command never runs, no prompt shown
+  - Safe commands are auto-resolved — no interruption
+  - `action: ask` commands are escalated for human review via your configured channel
+- **`--no-openclaw-bridge`** flag on `rampart serve` to disable the bridge
+- **Status shows bridge**: `rampart status` now shows `OpenClaw (shim+bridge)` or `OpenClaw (preload+bridge)` when OpenClaw is detected
+
+### Changed
+
+- **`rampart quickstart` auto-selects `openclaw.yaml` profile** when OpenClaw is detected (previously defaulted to `standard.yaml`, missing session-aware rules and deployment gates)
+
+### Docs
+
+- OpenClaw integration guide rewritten to reflect native bridge architecture
+
 ## [0.9.3] - 2026-03-15
 
 ### Added
@@ -829,7 +848,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/peg/rampart/compare/v0.9.4...v0.9.5
+[0.9.4]: https://github.com/peg/rampart/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/peg/rampart/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/peg/rampart/compare/v0.9.1...v0.9.2
 [0.5.0]: https://github.com/peg/rampart/compare/v0.4.12...v0.5.0
