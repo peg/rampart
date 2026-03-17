@@ -81,7 +81,7 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		cfg.ReconnectInterval = 5 * time.Second
 	}
 	if cfg.ServeURL == "" {
-		cfg.ServeURL = "http://127.0.0.1:19090"
+		cfg.ServeURL = discoverServeURL()
 	}
 
 	return &OpenClawBridge{
@@ -471,4 +471,29 @@ type openclawConfig struct {
 			Token string `json:"token"`
 		} `json:"auth"`
 	} `json:"gateway"`
+}
+
+// discoverServeURL finds the Rampart serve URL by checking (in order):
+// 1. RAMPART_URL env var
+// 2. ~/.rampart/serve.state
+// 3. Default http://127.0.0.1:9090
+func discoverServeURL() string {
+	if v := os.Getenv("RAMPART_URL"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "http://127.0.0.1:9090"
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".rampart", "serve.state"))
+	if err != nil {
+		return "http://127.0.0.1:9090"
+	}
+	var state struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil || state.URL == "" {
+		return "http://127.0.0.1:9090"
+	}
+	return state.URL
 }
