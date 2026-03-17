@@ -277,7 +277,7 @@
       padding: 0.6rem 1rem; background: var(--surface-2); border-bottom: 1px solid var(--border);
     }
     .compare-name { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); margin-left: 0.25rem; }
-    .compare-body { padding: 1rem; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.9; }
+    .compare-body { padding: 1rem; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.75; }
     .c-allow { color: var(--green); } .c-deny { color: var(--red); } .c-dim { color: var(--text-dim); }
 
     /* ── FEATURES ── */
@@ -319,17 +319,35 @@
     .stat-num { display: block; font-size: clamp(1.875rem, 4.5vw, 2.75rem); font-weight: 800; color: var(--heading); letter-spacing: -0.025em; }
     .stat-label { display: block; font-size: 0.8rem; color: var(--text-dim); font-weight: 300; margin-top: 0.25rem; font-family: var(--font-mono); }
 
-    /* ── AGENTS TABLE ── */
-    .agents-table-wrap { margin-top: 2.5rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    thead tr { background: var(--surface-2); }
-    th { text-align: left; padding: 0.75rem 1rem; color: var(--text-dim); font-weight: 400; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--border); }
-    td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
-    tr:last-child td { border-bottom: none; }
-    .agent-name { color: var(--heading); font-weight: 700; }
-    td code { font-size: 0.8rem; color: var(--text-bright); background: var(--surface-2); padding: 0.125rem 0.375rem; border-radius: 3px; }
-    .badge-native { font-family: var(--font-mono); font-size: 0.7rem; color: var(--green); background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.18); padding: 0.125rem 0.5rem; border-radius: 3px; }
-    @media (max-width: 600px) { .agents-table-wrap { overflow-x: auto; } table { min-width: 520px; } }
+    /* ── AGENT CARDS ── */
+    .agent-cards { display: flex; flex-direction: column; gap: 0.625rem; margin-top: 2.5rem; max-width: 700px; }
+    .agent-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 1rem 1.25rem; display: flex; align-items: center; gap: 1.25rem;
+      transition: border-color 180ms;
+    }
+    .agent-card:hover { border-color: var(--border-light); }
+    .agent-card-universal { opacity: 0.7; }
+    .agent-card-info { flex: 1; min-width: 0; }
+    .agent-card-name { font-weight: 700; color: var(--heading); font-size: 0.9375rem; margin-bottom: 0.2rem; }
+    .agent-card-method { font-size: 0.8rem; color: var(--text-dim); }
+    .badge-native { font-family: var(--font-mono); font-size: 0.7rem; color: var(--green); background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.18); padding: 0.1rem 0.4rem; border-radius: 3px; }
+    .agent-setup-cmd {
+      font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-bright);
+      background: var(--bg); border: 1px solid var(--border);
+      padding: 0.45rem 0.875rem; border-radius: 5px; cursor: pointer;
+      white-space: nowrap; transition: border-color 180ms; user-select: none;
+      display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;
+    }
+    .agent-setup-cmd:hover { border-color: var(--border-light); }
+    .agent-setup-cmd-dim { cursor: default; }
+    .agent-setup-cmd-dim:hover { border-color: var(--border); }
+    .agent-cmd-prompt { color: var(--accent); user-select: none; }
+    .agent-cmd-icon { width: 13px; height: 13px; opacity: 0.4; flex-shrink: 0; }
+    @media (max-width: 600px) {
+      .agent-card { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+      .agent-setup-cmd { font-size: 0.75rem; width: 100%; justify-content: space-between; }
+    }
 
     /* ── YAML BLOCK ── */
     .yaml-wrap { max-width: 640px; margin: 2.5rem auto 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
@@ -417,7 +435,7 @@
       <div class="hero-badge"><span class="hero-badge-dot"></span>v0.9.5 &nbsp;·&nbsp; now with response scanning</div>
       <h1>Your agent has root.<br>That's the problem.</h1>
       <p class="hero-sub">
-        Rampart sits between your agent and your system. Every command evaluated against your YAML policy before it runs. One binary. No cloud. 8µs overhead.
+        Rampart sits between your agent and your system. Every command evaluated against your YAML policy before it runs. One binary. No cloud. No latency your agent can feel.
       </p>
       <div class="hero-install" onclick="copyInstall(this)" title="Click to copy">
         <span class="prompt">$</span>
@@ -554,20 +572,64 @@
     <div class="container">
       <div class="section-label reveal">Compatibility</div>
       <h2 class="section-title reveal">Claude Code, Codex, Cline — and anything else.</h2>
-      <p class="section-sub reveal">Native hooks for the big four. If your agent isn't on the list, <code>rampart wrap -- &lt;cmd&gt;</code> covers it.</p>
-      <div class="agents-table-wrap reveal">
-        <table>
-          <thead>
-            <tr><th>Agent</th><th>Setup</th><th>Method</th><th>Status</th></tr>
-          </thead>
-          <tbody>
-            <tr><td class="agent-name">Claude Code</td><td><code>rampart setup claude-code</code></td><td>hooks + bridge</td><td><span class="badge-native">✓ native</span></td></tr>
-            <tr><td class="agent-name">Codex CLI</td><td><code>rampart setup codex</code></td><td>hooks + bridge</td><td><span class="badge-native">✓ native</span></td></tr>
-            <tr><td class="agent-name">Cline</td><td><code>rampart setup cline</code></td><td>LD_PRELOAD</td><td><span class="badge-native">✓ native</span></td></tr>
-            <tr><td class="agent-name">OpenClaw</td><td><code>rampart setup openclaw</code></td><td>shim + bridge</td><td><span class="badge-native">✓ native</span></td></tr>
-            <tr><td class="agent-name">Any agent</td><td><code>rampart wrap -- &lt;cmd&gt;</code></td><td>shim</td><td><span class="badge-native">✓ universal</span></td></tr>
-          </tbody>
-        </table>
+      <p class="section-sub reveal">One command per agent. Or run <code>rampart setup</code> with no arguments and it auto-detects everything installed.</p>
+
+      <div class="agent-cards reveal">
+
+        <div class="agent-card">
+          <div class="agent-card-info">
+            <div class="agent-card-name">Claude Code</div>
+            <div class="agent-card-method">hooks + bridge &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+          </div>
+          <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup claude-code">
+            <span class="agent-cmd-prompt">$ </span>rampart setup claude-code
+            <svg class="agent-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </div>
+        </div>
+
+        <div class="agent-card">
+          <div class="agent-card-info">
+            <div class="agent-card-name">Codex CLI</div>
+            <div class="agent-card-method">hooks + bridge &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+          </div>
+          <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup codex">
+            <span class="agent-cmd-prompt">$ </span>rampart setup codex
+            <svg class="agent-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </div>
+        </div>
+
+        <div class="agent-card">
+          <div class="agent-card-info">
+            <div class="agent-card-name">Cline</div>
+            <div class="agent-card-method">LD_PRELOAD &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+          </div>
+          <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup cline">
+            <span class="agent-cmd-prompt">$ </span>rampart setup cline
+            <svg class="agent-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </div>
+        </div>
+
+        <div class="agent-card">
+          <div class="agent-card-info">
+            <div class="agent-card-name">OpenClaw</div>
+            <div class="agent-card-method">shim + bridge &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+          </div>
+          <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup openclaw">
+            <span class="agent-cmd-prompt">$ </span>rampart setup openclaw
+            <svg class="agent-cmd-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </div>
+        </div>
+
+        <div class="agent-card agent-card-universal">
+          <div class="agent-card-info">
+            <div class="agent-card-name">Any agent</div>
+            <div class="agent-card-method">shim &nbsp;·&nbsp; <span class="badge-native">✓ universal</span></div>
+          </div>
+          <div class="agent-setup-cmd agent-setup-cmd-dim">
+            <span class="agent-cmd-prompt">$ </span>rampart wrap -- &lt;cmd&gt;
+          </div>
+        </div>
+
       </div>
     </div>
   </section>
@@ -698,6 +760,16 @@
         const n = d.stargazers_count;
         if (n) document.getElementById('gh-stars').textContent = '★ ' + (n >= 1000 ? (n/1000).toFixed(1) + 'k' : n);
       }).catch(() => {});
+
+    // Copy agent setup command
+    function copySetup(el) {
+      const cmd = el.getAttribute('data-cmd');
+      if (!cmd) return;
+      navigator.clipboard.writeText(cmd).then(() => {
+        el.style.borderColor = 'var(--green)';
+        setTimeout(() => { el.style.borderColor = ''; }, 1600);
+      });
+    }
 
     // Copy install command
     function copyInstall(el) {
