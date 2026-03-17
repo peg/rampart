@@ -133,7 +133,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	allowCmd := newAllowCmd(opts)
 	blockRuleCmd := newBlockCmd(opts)
 	rulesCmd := newRulesCmd(opts)
-	bridgeCmd := newBridgeCmd(opts)
+	// bridgeCmd removed — bridge is auto-started by rampart serve, no CLI needed
 
 	setupCmd.GroupID = groupSetup
 	quickstartCmd.GroupID = groupSetup
@@ -168,7 +168,6 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	initCmd.GroupID = groupSetup
 	mcpCmd.GroupID = groupHooks
 	openClawCmd.GroupID = groupHooks
-	bridgeCmd.GroupID = groupHooks
 
 	cmd.AddCommand(versionCmd)
 	cmd.AddCommand(initCmd)
@@ -200,7 +199,6 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(allowCmd)
 	cmd.AddCommand(blockRuleCmd)
 	cmd.AddCommand(rulesCmd)
-	cmd.AddCommand(bridgeCmd)
 
 	return cmd
 }
