@@ -65,22 +65,32 @@ func (mg *mockGateway) url() string {
 }
 
 func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
-	// Read the subscribe request.
+	// Step 1: send connect.challenge.
+	challenge := map[string]any{
+		"type":    "event",
+		"event":   "connect.challenge",
+		"payload": map[string]any{"nonce": "test-nonce-abc123"},
+		"seq":     0,
+	}
+	data, _ := json.Marshal(challenge)
+	conn.WriteMessage(websocket.TextMessage, data)
+
+	// Step 2: read connect request.
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		return
 	}
+	var req gatewayRequest
+	json.Unmarshal(msg, &req)
 
-	var subReq jsonRPCMessage
-	json.Unmarshal(msg, &subReq)
-
-	// Send subscribe response.
+	// Step 3: respond with hello-ok.
 	resp := map[string]any{
-		"jsonrpc": "2.0",
-		"result":  map[string]any{"ok": true},
-		"id":      subReq.ID,
+		"type":    "res",
+		"id":      req.ID,
+		"ok":      true,
+		"payload": map[string]any{"type": "hello-ok"},
 	}
-	data, _ := json.Marshal(resp)
+	data, _ = json.Marshal(resp)
 	conn.WriteMessage(websocket.TextMessage, data)
 
 	close(mg.ready)
@@ -88,17 +98,19 @@ func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
 
 func (mg *mockGateway) sendApprovalRequest(id, command, agent string) {
 	<-mg.ready
-	params, _ := json.Marshal(approvalRequestParams{
+	payload, _ := json.Marshal(approvalRequestParams{
 		ID:         id,
 		Command:    command,
 		AgentID:    agent,
 		SessionKey: "test-session",
 	})
 
+	// Type-frame event format.
 	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "exec.approval.requested",
-		"params":  json.RawMessage(params),
+		"type":    "event",
+		"event":   "exec.approval.requested",
+		"payload": json.RawMessage(payload),
+		"seq":     1,
 	}
 	data, _ := json.Marshal(msg)
 	mg.writeMu.Lock()
@@ -110,9 +122,10 @@ func (mg *mockGateway) readResponse() map[string]any {
 	_, msg, err := mg.conn.ReadMessage()
 	require.NoError(mg.t, err)
 
-	var resp map[string]any
-	json.Unmarshal(msg, &resp)
-	return resp
+	// Expect a type-frame req: {"type":"req","id":"...","method":"exec.approval.resolve","params":{...}}
+	var frame map[string]any
+	json.Unmarshal(msg, &frame)
+	return frame
 }
 
 func (mg *mockGateway) close() {

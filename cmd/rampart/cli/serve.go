@@ -457,12 +457,12 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					})
 					bridgeCtx, bridgeCancel := context.WithCancel(cmd.Context())
 					defer bridgeCancel()
+					logger.Info("bridge: starting OpenClaw gateway bridge", "url", gwURL)
 					go func() {
 						if err := openclawBridge.Start(bridgeCtx); err != nil && bridgeCtx.Err() == nil {
 							logger.Warn("bridge: OpenClaw bridge stopped", "error", err)
 						}
 					}()
-					logger.Info("bridge: connected to OpenClaw gateway", "url", gwURL)
 				} else {
 					logger.Debug("bridge: OpenClaw gateway not discoverable, skipping bridge", "error", discoverErr)
 				}
@@ -477,7 +477,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				case <-sigCtx.Done():
 					logger.Info("serve: shutting down...")
 					if openclawBridge != nil {
-						_ = openclawBridge.Close()
+						openclawBridge.Close()
 					}
 					if rampartDir != "" {
 						removeServeState(rampartDir)
