@@ -892,6 +892,20 @@ func openclawDistPatched() bool {
 	return false
 }
 
+func openclawToolsPatched() bool {
+	for _, d := range openclawToolsCandidates() {
+		readFile := filepath.Join(d, "read.js")
+		data, err := os.ReadFile(readFile)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(data), "RAMPART") {
+			return true
+		}
+	}
+	return false
+}
+
 func doctorAudit(emit emitFn) (issues int, warnings int) {
 	home, err := os.UserHomeDir()
 	if err != nil {

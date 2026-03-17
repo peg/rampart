@@ -526,8 +526,10 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 				fmt.Fprintln(out, "  [P] Shell commands (OpenClaw + all sub-agents)  — LD_PRELOAD")
 				if openclawDistPatched() {
 					fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — dist patched")
-				} else if patchTools {
+				} else if patchTools && openclawToolsPatched() {
 					fmt.Fprintln(out, "  [P] File operations (read/write/edit/grep)       — patched")
+				} else if patchTools {
+					fmt.Fprintln(out, "  [!] File operations (read/write/edit/grep)       — patch failed (check warnings above)")
 				} else {
 					fmt.Fprintln(out, "  [ ] File operations (read/write/edit/grep)       — use --patch-tools")
 				}
