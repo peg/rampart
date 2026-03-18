@@ -18,13 +18,13 @@ func TestGeneralizeCommand(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"kubectl apply -f deployment.yaml", "kubectl apply *"},
-		{"npm install express", "npm install *"},
-		{"git push origin main", "git push *"},
+		{"kubectl apply -f deployment.yaml", "kubectl apply*"},
+		{"npm install express", "npm install*"},
+		{"git push origin main", "git push*"},
 		{"ls", "ls"},
-		{"cat /etc/passwd", "cat /etc/passwd *"},
+		{"cat /etc/passwd", "cat /etc/passwd*"},
 		{"", "*"},
-		{"  kubectl   apply  -f  foo  ", "kubectl apply *"},
+		{"  kubectl   apply  -f  foo  ", "kubectl apply*"},
 		// Dangerous commands: never generalized.
 		{"rm -rf /tmp/build", "rm -rf /tmp/build"},
 		{"rm foo.txt", "rm foo.txt"},
@@ -57,8 +57,8 @@ func TestGenerateAllowRule_Exec(t *testing.T) {
 	if p.Rules[0].Action != "allow" {
 		t.Errorf("expected allow action, got %s", p.Rules[0].Action)
 	}
-	if len(p.Rules[0].When.CommandMatches) != 1 || p.Rules[0].When.CommandMatches[0] != "kubectl apply *" {
-		t.Errorf("expected command_matches [kubectl apply *], got %v", p.Rules[0].When.CommandMatches)
+	if len(p.Rules[0].When.CommandMatches) != 1 || p.Rules[0].When.CommandMatches[0] != "kubectl apply*" {
+		t.Errorf("expected command_matches [kubectl apply*], got %v", p.Rules[0].When.CommandMatches)
 	}
 	if !strings.HasPrefix(p.Name, "auto-allow-kubectl-apply-") {
 		t.Errorf("unexpected name: %s", p.Name)

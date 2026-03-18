@@ -74,8 +74,8 @@ func TestInitFromAudit_BasicGeneration(t *testing.T) {
 	data, err := os.ReadFile(outputPath)
 	require.NoError(t, err)
 	content := string(data)
-	assert.Contains(t, content, "npm install *")
-	assert.Contains(t, content, "git push *")
+	assert.Contains(t, content, "npm install*")
+	assert.Contains(t, content, "git push*")
 }
 
 func TestInitFromAudit_DeniedEventsSkipped(t *testing.T) {
@@ -121,7 +121,7 @@ func TestInitFromAudit_Deduplication(t *testing.T) {
 	require.NoError(t, err)
 
 	output := buf.String()
-	// All three should deduplicate to "npm install *"
+	// All three should deduplicate to "npm install*"
 	assert.Contains(t, output, "1 patterns")
 }
 
@@ -231,5 +231,5 @@ func TestInitFromAudit_Directory(t *testing.T) {
 	require.NoError(t, err)
 	content := string(data)
 	assert.Contains(t, content, "git status")
-	assert.Contains(t, content, "go test *")
+	assert.Contains(t, content, "go test*")
 }

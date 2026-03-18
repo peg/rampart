@@ -88,12 +88,13 @@ func GeneralizeCommand(cmd string) string {
 	}
 
 	if len(tokens) <= 2 {
-		// Short commands: keep as-is plus wildcard.
-		return strings.Join(tokens, " ") + " *"
+		// Short commands: keep as-is plus wildcard (no space before glob so
+		// the exact command without extra args also matches).
+		return strings.Join(tokens, " ") + "*"
 	}
 
 	// Keep first two tokens, wildcard the rest.
-	return tokens[0] + " " + tokens[1] + " *"
+	return tokens[0] + " " + tokens[1] + "*"
 }
 
 // GenerateAllowRule creates a Policy from a ToolCall that would allow
