@@ -129,7 +129,7 @@ Or pick your preferred method:
 
 ```bash
 # Homebrew (macOS and Linux)
-brew install peg/rampart/rampart
+brew install peg/tap/rampart
 
 # Go install (requires Go 1.24+)
 go install github.com/peg/rampart/cmd/rampart@latest
