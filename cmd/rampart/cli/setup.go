@@ -465,6 +465,16 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 				fmt.Fprintf(out, "✓ Default policy written to %s\n", policyPath)
 			}
 
+			// Create user-overrides.yaml if it doesn't exist.
+			// This file holds allow-always rules and is never overwritten by upgrades.
+			overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
+			if _, err := os.Stat(overridesPath); os.IsNotExist(err) {
+				header := "# Rampart user override policies\n# Allow-always rules are written here automatically.\n# This file is never overwritten by upgrades or rampart setup.\npolicies: []\n"
+				if err := os.WriteFile(overridesPath, []byte(header), 0o600); err != nil {
+					return fmt.Errorf("setup: write user-overrides policy: %w", err)
+				}
+			}
+
 			// Find rampart binary path
 			rampartBin, err := os.Executable()
 			if err != nil {
