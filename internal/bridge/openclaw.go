@@ -289,6 +289,7 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 		return fmt.Errorf("unexpected connect response type: %s", resFrame.Type)
 	}
 
+	b.logger.Info("bridge: handshake complete", "client_id", "rampart-bridge", "scopes", []string{"operator.approvals"})
 	return nil
 }
 
