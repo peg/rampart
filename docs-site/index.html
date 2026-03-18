@@ -100,6 +100,17 @@
       line-height: 1.65;
     }
 
+    /* ── HERO LOAD-IN ── */
+    @keyframes hero-fade-up {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .hero-badge    { animation: hero-fade-up 500ms var(--ease-out) both; animation-delay:   0ms; }
+    .hero h1       { animation: hero-fade-up 520ms var(--ease-out) both; animation-delay: 110ms; }
+    .hero-sub      { animation: hero-fade-up 520ms var(--ease-out) both; animation-delay: 220ms; }
+    .hero-install  { animation: hero-fade-up 520ms var(--ease-out) both; animation-delay: 320ms; }
+    .hero-meta     { animation: hero-fade-up 400ms var(--ease-out) both; animation-delay: 430ms; }
+
     /* ── REVEAL ── */
     .reveal { opacity: 0; transform: translateY(14px); transition: opacity 500ms var(--ease-out), transform 500ms var(--ease-out); }
     .reveal.visible { opacity: 1; transform: none; }
@@ -144,7 +155,7 @@
     }
     .hero::before {
       content: ''; position: absolute; inset: 0; pointer-events: none;
-      background: radial-gradient(ellipse 600px 400px at 50% 30%, rgba(255,99,146,0.07) 0%, transparent 70%);
+      background: radial-gradient(ellipse 700px 450px at 50% 30%, rgba(255,99,146,0.09) 0%, transparent 70%);
     }
     .hero > .container { position: relative; z-index: 1; }
 
@@ -184,7 +195,7 @@
     .hero-meta code { font-size: 0.75rem; color: var(--text); }
 
     /* ── POLICY LOG ── */
-    .policy-log-wrap { padding: 0 0 var(--section-gap); }
+    .policy-log-wrap { padding: var(--section-gap) 0; border-top: 1px solid var(--border); }
     .policy-log-intro {
       margin-bottom: 1.5rem;
     }
@@ -211,22 +222,25 @@
     .log-live::before { content: '● '; animation: pulse 2s ease-in-out infinite; display: inline; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
     .log-body {
-      padding: 1rem 1.125rem; font-family: var(--font-mono); font-size: 0.8125rem;
-      line-height: 1.7; min-height: 256px; overflow: hidden;
+      padding: 0.75rem 0; font-family: var(--font-mono); font-size: 0.8125rem;
+      line-height: 1.7; min-height: 300px; overflow: hidden;
     }
     .log-line {
       display: grid;
       grid-template-columns: 4.5rem 6.5rem 6.5rem 1fr auto;
       gap: 1rem; white-space: nowrap; align-items: baseline;
       animation: logIn 260ms var(--ease-out) both;
+      padding: 0.22rem 1.125rem;
+      border-left: 2px solid transparent;
     }
     @keyframes logIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
-    /* Verdict — plain colored text, no background box */
+
+    /* Verdict — colored text labels */
     .log-v {
       font-family: var(--font-mono);
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 500;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.04em;
       white-space: nowrap;
       align-self: baseline;
       text-align: right;
@@ -236,6 +250,12 @@
     .log-v-deny   { color: var(--red); }
     .log-v-approve { color: var(--cyan); }
 
+    /* Per-verdict left border + background tint */
+    .log-line[data-v="allow"]  { border-left-color: rgba(34,197,94,0.35); }
+    .log-line[data-v="deny"]   { border-left-color: var(--red); background: rgba(239,68,68,0.04); }
+    .log-line[data-v="watch"]  { border-left-color: var(--orange); background: rgba(245,158,11,0.04); }
+    .log-line[data-v="approve"]{ border-left-color: var(--cyan); background: rgba(6,182,212,0.04); }
+
     .log-t { color: var(--text-dim); font-size: 0.775rem; }
     .log-o { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
     .log-c { color: var(--text-bright); overflow: hidden; text-overflow: ellipsis; }
@@ -244,13 +264,13 @@
       white-space: nowrap;
     }
     .log-line[data-v="deny"]    .log-c { color: var(--red); }
-    .log-line[data-v="deny"]    .log-n { color: var(--red); opacity: 0.5; }
+    .log-line[data-v="deny"]    .log-n { color: var(--red); opacity: 0.55; }
     .log-line[data-v="watch"]   .log-c { color: var(--orange); }
-    .log-line[data-v="watch"]   .log-n { color: var(--orange); opacity: 0.5; }
+    .log-line[data-v="watch"]   .log-n { color: var(--orange); opacity: 0.55; }
     .log-line[data-v="approve"] .log-c { color: var(--cyan); }
-    .log-line[data-v="approve"] .log-n { color: var(--cyan); opacity: 0.5; }
+    .log-line[data-v="approve"] .log-n { color: var(--cyan); opacity: 0.55; }
     @media (max-width: 620px) {
-      .log-line { grid-template-columns: 3.5rem 5rem 1fr; }
+      .log-line { grid-template-columns: 3.5rem 5rem 1fr; padding-left: 0.75rem; }
       .log-t { display: none; } .log-n { display: none; }
     }
 
@@ -316,6 +336,7 @@
     .stats-inner { display: flex; justify-content: center; gap: clamp(2.5rem,6vw,5rem); flex-wrap: wrap; }
     .stat { text-align: center; }
     .stat-num { display: block; font-size: clamp(1.875rem, 4.5vw, 2.75rem); font-weight: 800; color: var(--heading); letter-spacing: -0.025em; }
+    .stat-num-accent { color: var(--accent); }
     .stat-label { display: block; font-size: 0.8rem; color: var(--text-dim); font-weight: 300; margin-top: 0.25rem; font-family: var(--font-mono); }
 
     /* ── AGENT CARDS ── */
@@ -466,15 +487,21 @@
     <div class="container">
       <div class="policy-log-intro reveal">
         <div class="section-label">rampart watch</div>
+        <h2 class="section-title" style="margin-top:0.75rem;">What your agent did today.</h2>
+        <p class="section-sub" style="margin-bottom:1.75rem;">Every operation in real time. Green means go. Red means stopped. You see everything <em>before</em> it happens.</p>
       </div>
-      <div class="policy-log reveal reveal-d1">
-        <div class="log-bar">
-          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-          <span class="log-bar-title">rampart watch — agent-01</span>
-          <span class="log-live">live</span>
+      <div style="position:relative; max-width:900px; margin:0 auto;">
+        <div style="position:absolute;inset:-60px;background:radial-gradient(ellipse at center, rgba(255,99,146,0.08) 0%, transparent 70%);pointer-events:none;z-index:0;"></div>
+        <div class="policy-log reveal reveal-d1" style="position:relative;z-index:1;">
+          <div class="log-bar">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="log-bar-title">rampart watch — agent-01</span>
+            <span class="log-live">live</span>
+          </div>
+          <div class="log-body" id="log-stream"></div>
         </div>
-        <div class="log-body" id="log-stream"></div>
       </div>
+      <p class="reveal reveal-d2" style="margin-top:1.5rem; font-size:0.8125rem; color:var(--text-dim); font-weight:300; max-width:900px; margin-left:auto; margin-right:auto;">See exactly what your agent does, then generate rules from the audit log: <code style="font-size:0.78rem;">rampart audit --generate-policy</code></p>
     </div>
   </div>
 
@@ -557,10 +584,10 @@
   <div class="stats-section">
     <div class="container">
       <div class="stats-inner">
-        <div class="stat reveal"><span class="stat-num">8µs</span><span class="stat-label">policy eval</span></div>
-        <div class="stat reveal reveal-d1"><span class="stat-num">40+</span><span class="stat-label">built-in rules</span></div>
-        <div class="stat reveal reveal-d2"><span class="stat-num">95%</span><span class="stat-label">via pattern match</span></div>
-        <div class="stat reveal reveal-d3"><span class="stat-num">0</span><span class="stat-label">cloud deps</span></div>
+        <div class="stat reveal"><span class="stat-num stat-num-accent" id="stat-us">8µs</span><span class="stat-label">policy eval</span></div>
+        <div class="stat reveal reveal-d1"><span class="stat-num" id="stat-rules">40+</span><span class="stat-label">built-in rules</span></div>
+        <div class="stat reveal reveal-d2"><span class="stat-num" id="stat-pct">95%</span><span class="stat-label">via pattern match</span></div>
+        <div class="stat reveal reveal-d3"><span class="stat-num" id="stat-cloud">0</span><span class="stat-label">cloud deps</span></div>
       </div>
     </div>
   </div>
@@ -788,6 +815,43 @@
       });
     }, { threshold: 0.1 });
     document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+    // Stats count-up on scroll-into-view
+    (function() {
+      const stats = [
+        { id: 'stat-us',    target: 8,  suffix: 'µs' },
+        { id: 'stat-rules', target: 40, suffix: '+' },
+        { id: 'stat-pct',   target: 95, suffix: '%' },
+        // 0 needs no animation — it's the most emphatic as a static "0"
+      ];
+
+      function animateStat(s) {
+        const el = document.getElementById(s.id);
+        if (!el) return;
+        const start = performance.now();
+        const dur = 1000;
+        function step(now) {
+          const t = Math.min((now - start) / dur, 1);
+          const ease = 1 - Math.pow(1 - t, 3); // ease-out-cubic
+          const val = Math.round(s.target * ease);
+          el.textContent = val + s.suffix;
+          if (t < 1) requestAnimationFrame(step);
+          else el.textContent = s.target + s.suffix;
+        }
+        requestAnimationFrame(step);
+      }
+
+      const statsObs = new IntersectionObserver((entries) => {
+        entries.forEach(e => {
+          if (e.isIntersecting) {
+            stats.forEach(s => animateStat(s));
+            statsObs.disconnect();
+          }
+        });
+      }, { threshold: 0.4 });
+      const statsSection = document.querySelector('.stats-section');
+      if (statsSection) statsObs.observe(statsSection);
+    })();
 
     // Policy log
     (function() {
