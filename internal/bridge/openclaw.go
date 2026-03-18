@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,8 +64,9 @@ type OpenClawBridge struct {
 	writeMu sync.Mutex   // guards WebSocket writes
 	conn    *websocket.Conn
 
-	pendingMu sync.Mutex
-	pending   map[string]chan struct{} // approval ID → close to signal resolution
+	pendingMu       sync.Mutex
+	pending         map[string]chan struct{} // approval ID → close to signal resolution
+	pendingCommands map[string]string       // approval ID → command (for allow-always writeback)
 }
 
 // Config holds bridge configuration.
@@ -104,7 +106,8 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		serveURL:          cfg.ServeURL,
 		logger:            cfg.Logger,
 		reconnectInterval: cfg.ReconnectInterval,
-		pending:           make(map[string]chan struct{}),
+		pending:         make(map[string]chan struct{}),
+		pendingCommands: make(map[string]string),
 	}
 }
 
@@ -317,8 +320,10 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 
 	case "exec.approval.resolved":
 		// Another client resolved this approval — cancel any pending escalation.
+		// If decision is "allow-always", write a user override rule.
 		var resolved struct {
-			ID string `json:"id"`
+			ID       string `json:"id"`
+			Decision string `json:"decision"`
 		}
 		if err := json.Unmarshal(frame.Payload, &resolved); err == nil {
 			b.pendingMu.Lock()
@@ -326,7 +331,13 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 				close(ch)
 				delete(b.pending, resolved.ID)
 			}
+			cmd := b.pendingCommands[resolved.ID]
+			delete(b.pendingCommands, resolved.ID)
 			b.pendingMu.Unlock()
+
+			if resolved.Decision == "allow-always" && cmd != "" {
+				go b.writeAllowAlwaysRule(cmd)
+			}
 		}
 	}
 }
@@ -431,15 +442,17 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 	b.logger.Warn("bridge: approval requires human review — escalating to serve",
 		"id", req.ID, "command", req.Command, "serve_url", b.serveURL)
 
-	// Register a cancellation channel so exec.approval.resolved events can interrupt.
+	// Register cancellation channel and store command for allow-always writeback.
 	cancelCh := make(chan struct{})
 	b.pendingMu.Lock()
 	b.pending[req.ID] = cancelCh
+	b.pendingCommands[req.ID] = req.Command
 	b.pendingMu.Unlock()
 
 	defer func() {
 		b.pendingMu.Lock()
 		delete(b.pending, req.ID)
+		delete(b.pendingCommands, req.ID)
 		b.pendingMu.Unlock()
 	}()
 
@@ -531,6 +544,62 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 			return
 		}
 	}
+}
+
+// writeAllowAlwaysRule appends an allow rule for the given command to
+// ~/.rampart/policies/user-overrides.yaml and hot-reloads the engine.
+// This is called when a human clicks "Always Allow" in the OpenClaw approval UI.
+func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		b.logger.Error("bridge: allow-always: resolve home dir", "error", err)
+		return
+	}
+
+	overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
+
+	// Hash the command for a stable rule name.
+	hb := sha256Command(command)
+	ruleName := fmt.Sprintf("user-allow-%x", hb)
+
+	// Build the rule block to append.
+	rule := fmt.Sprintf("\n- name: %s\n  match:\n    tool: exec\n  rules:\n    - when:\n        command_matches:\n          - %q\n      action: allow\n      message: \"User allowed (always)\"\n",
+		ruleName, command)
+
+	// Read existing file or create with header.
+	var existing string
+	data, err := os.ReadFile(overridesPath)
+	if err != nil {
+		existing = "# Rampart user override policies\n# Auto-generated entries are added here when you click \"Always Allow\"\n# This file is never overwritten by upgrades or rampart setup\npolicies:\n"
+	} else {
+		existing = string(data)
+		// Don't add a duplicate rule.
+		if strings.Contains(existing, ruleName) {
+			b.logger.Info("bridge: allow-always rule already exists", "rule", ruleName, "command", command)
+			return
+		}
+	}
+
+	if err := os.WriteFile(overridesPath, []byte(existing+rule), 0o600); err != nil {
+		b.logger.Error("bridge: allow-always: write user-overrides.yaml", "error", err)
+		return
+	}
+
+	b.logger.Info("bridge: allow-always rule written", "rule", ruleName, "command", command, "path", overridesPath)
+
+	// Hot-reload the engine so the new rule takes effect immediately.
+	if err := b.engine.Reload(); err != nil {
+		b.logger.Warn("bridge: allow-always: engine reload failed", "error", err)
+	}
+}
+
+// sha256Command returns 4 bytes derived from a djb2 hash of the command string.
+func sha256Command(s string) [4]byte {
+	var hash uint32 = 5381
+	for _, b := range []byte(s) {
+		hash = hash*33 + uint32(b)
+	}
+	return [4]byte{byte(hash >> 24), byte(hash >> 16), byte(hash >> 8), byte(hash)}
 }
 
 // --- Wire protocol types ---
