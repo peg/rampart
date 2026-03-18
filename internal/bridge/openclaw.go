@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -246,6 +247,8 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 			"client": map[string]any{
 				"id":          "rampart-bridge",
 				"displayName": "Rampart Bridge",
+				"version":     "0.0.1",
+				"platform":    runtime.GOOS,
 				"mode":        "backend",
 			},
 			"auth": map[string]any{
