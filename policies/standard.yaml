@@ -1102,7 +1102,7 @@ policies:
 
   - name: block-exfil-domains
     match:
-      tool: ["fetch"]
+      tool: ["fetch", "web_fetch"]
     rules:
       - action: deny
         when:
