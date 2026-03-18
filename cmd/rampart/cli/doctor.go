@@ -898,6 +898,21 @@ func openclawDistPatched() bool {
 
 // openclawWebFetchPatched checks if any dist *.js files have the web_fetch Rampart patch.
 func openclawWebFetchPatched() bool {
+	return openclawDistCheckPatched("RAMPART_DIST_CHECK_WEBFETCH")
+}
+
+// openclawBrowserPatched checks if the browser tool is patched.
+func openclawBrowserPatched() bool {
+	return openclawDistCheckPatched("RAMPART_DIST_CHECK_BROWSER")
+}
+
+// openclawMessagePatched checks if the message tool is patched.
+func openclawMessagePatched() bool {
+	return openclawDistCheckPatched("RAMPART_DIST_CHECK_MESSAGE")
+}
+
+// openclawDistCheckPatched returns true if any dist *.js file contains the given marker.
+func openclawDistCheckPatched(marker string) bool {
 	for _, d := range openclawDistCandidates() {
 		allJS, _ := filepath.Glob(filepath.Join(d, "*.js"))
 		for _, m := range allJS {
@@ -905,7 +920,7 @@ func openclawWebFetchPatched() bool {
 			if err != nil {
 				continue
 			}
-			if strings.Contains(string(data), "RAMPART_DIST_CHECK_WEBFETCH") {
+			if strings.Contains(string(data), marker) {
 				return true
 			}
 		}

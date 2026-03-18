@@ -538,7 +538,16 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			} else {
 				fmt.Fprintln(out, "  [ ] Network fetch (web_fetch tool)               — use --patch-tools")
 			}
-				fmt.Fprintln(out, "  [ ] Browser automation                           — not intercepted")
+			if openclawBrowserPatched() {
+				fmt.Fprintln(out, "  [P] Browser automation (browser)                 — dist patched")
+			} else {
+				fmt.Fprintln(out, "  [ ] Browser automation (browser tool)            — use --patch-tools")
+			}
+			if openclawMessagePatched() {
+				fmt.Fprintln(out, "  [P] Outbound messaging (message)                 — dist patched")
+			} else {
+				fmt.Fprintln(out, "  [ ] Outbound messaging (message tool)            — use --patch-tools")
+			}
 				fmt.Fprintln(out, "")
 				fmt.Fprintln(out, "Restart the OpenClaw gateway to activate:")
 				fmt.Fprintln(out, "  systemctl --user restart openclaw-gateway")
@@ -1357,8 +1366,10 @@ func openclawDistCandidates() []string {
 func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error) {
 	var distDir string
 	for _, d := range openclawDistCandidates() {
-		matches, _ := filepath.Glob(filepath.Join(d, "pi-embedded-*.js"))
-		if len(matches) > 0 {
+		// Accept dist dir if it has pi-embedded-*.js OR auth-profiles-*.js (newer OpenClaw)
+		piMatches, _ := filepath.Glob(filepath.Join(d, "pi-embedded-*.js"))
+		authMatches, _ := filepath.Glob(filepath.Join(d, "auth-profiles-*.js"))
+		if len(piMatches) > 0 || len(authMatches) > 0 {
 			distDir = d
 			break
 		}
@@ -1474,10 +1485,12 @@ func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error)
 		patched++
 	}
 
-	// Patch web_fetch in all *.js files in the dist directory
+	// Patch web_fetch, browser, and message tools in dist files
 	webFetchPatched := patchWebFetchInDist(cmd, distDir, url, tokenExpr)
+	browserPatched := patchBrowserInDist(cmd, distDir, url, tokenExpr)
+	messagePatched := patchMessageInDist(cmd, distDir, url, tokenExpr)
 
-	if patched == 0 && !webFetchPatched {
+	if patched == 0 && !webFetchPatched && !browserPatched && !messagePatched {
 		return false, nil
 	}
 
@@ -1549,6 +1562,157 @@ func patchWebFetchInDist(cmd *cobra.Command, distDir, url, tokenExpr string) boo
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (web_fetch)\n", filepath.Base(file))
+		patched = true
+	}
+
+	return patched
+}
+
+// patchBrowserInDist patches OpenClaw's browser tool to intercept navigate and open
+// actions and check URLs against Rampart policy. Closes #220.
+func patchBrowserInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {
+	allJS, _ := filepath.Glob(filepath.Join(distDir, "*.js"))
+	patched := false
+
+	for _, file := range allJS {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		text := string(content)
+
+		if !strings.Contains(text, `case "navigate": {`) {
+			continue
+		}
+		if strings.Contains(text, "RAMPART_DIST_CHECK_BROWSER") {
+			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s browser already patched\n", filepath.Base(file))
+			patched = true
+			continue
+		}
+
+		navigateOrig := `case "navigate": {
+					const targetUrl = readTargetUrlParam(params);`
+		navigateCheck := fmt.Sprintf(`case "navigate": {
+					const targetUrl = readTargetUrlParam(params);
+					/* RAMPART_DIST_CHECK_BROWSER_NAVIGATE */ try {
+						const __bnu = typeof targetUrl === "string" ? targetUrl : "";
+						const __bnr = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/browser", {
+							method: "POST",
+							headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+							body: JSON.stringify({ agent: "openclaw", session: "main", params: { action: "navigate", url: __bnu } }),
+							signal: AbortSignal.timeout(3000)
+						});
+						if (__bnr.status === 403) {
+							const __bnd = await __bnr.json().catch(() => ({}));
+							return { content: [{ type: "text", text: "rampart: " + (__bnd.message || "policy denied") }] };
+						}
+					} catch (__bne) { /* fail-open */ }`, url, tokenExpr)
+
+		openOrig := `case "open": {
+					const targetUrl = readTargetUrlParam(params);`
+		openCheck := fmt.Sprintf(`case "open": {
+					const targetUrl = readTargetUrlParam(params);
+					/* RAMPART_DIST_CHECK_BROWSER_OPEN */ try {
+						const __bou = typeof targetUrl === "string" ? targetUrl : "";
+						const __bor = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/browser", {
+							method: "POST",
+							headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+							body: JSON.stringify({ agent: "openclaw", session: "main", params: { action: "open", url: __bou } }),
+							signal: AbortSignal.timeout(3000)
+						});
+						if (__bor.status === 403) {
+							const __bod = await __bor.json().catch(() => ({}));
+							return { content: [{ type: "text", text: "rampart: " + (__bod.message || "policy denied") }] };
+						}
+					} catch (__boe) { /* fail-open */ }`, url, tokenExpr)
+
+		modified := strings.Replace(text, navigateOrig, navigateCheck, 1)
+		modified = strings.Replace(modified, openOrig, openCheck, 1)
+		if modified == text {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: browser injection point not found (skipping)\n", filepath.Base(file))
+			continue
+		}
+
+		backupPath := file + ".rampart-backup"
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: backup failed: %v\n", filepath.Base(file), err)
+				continue
+			}
+		}
+
+		if err := os.WriteFile(file, []byte(modified), 0o644); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: write failed: %v\n", filepath.Base(file), err)
+			continue
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (browser navigate+open)\n", filepath.Base(file))
+		patched = true
+	}
+
+	return patched
+}
+
+// patchMessageInDist patches OpenClaw's message tool to intercept outbound sends
+// and check them against Rampart policy. Closes #221.
+func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {
+	allJS, _ := filepath.Glob(filepath.Join(distDir, "*.js"))
+	patched := false
+
+	for _, file := range allJS {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		text := string(content)
+
+		if !strings.Contains(text, "runMessageAction({") {
+			continue
+		}
+		if strings.Contains(text, "RAMPART_DIST_CHECK_MESSAGE") {
+			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s message already patched\n", filepath.Base(file))
+			patched = true
+			continue
+		}
+
+		messageOrig := `const result = await runMessageAction({`
+		messageCheck := fmt.Sprintf(`/* RAMPART_DIST_CHECK_MESSAGE */ try {
+				const __maa = typeof params.action === "string" ? params.action : "send";
+				const __mat = typeof params.target === "string" ? params.target : (typeof params.to === "string" ? params.to : (typeof params.channelId === "string" ? params.channelId : ""));
+				const __mac = typeof params.message === "string" ? params.message : (typeof params.text === "string" ? params.text : (typeof params.content === "string" ? params.content : ""));
+				const __mar = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/message", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+					body: JSON.stringify({ agent: "openclaw", session: "main", params: { action: __maa, target: __mat, message: __mac } }),
+					signal: AbortSignal.timeout(3000)
+				});
+				if (__mar.status === 403) {
+					const __mad = await __mar.json().catch(() => ({}));
+					return { content: [{ type: "text", text: "rampart: " + (__mad.message || "policy denied") }] };
+				}
+			} catch (__mae) { /* fail-open */ }
+			const result = await runMessageAction({`, url, tokenExpr)
+
+		modified := strings.Replace(text, messageOrig, messageCheck, 1)
+		if modified == text {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: message injection point not found (skipping)\n", filepath.Base(file))
+			continue
+		}
+
+		backupPath := file + ".rampart-backup"
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: backup failed: %v\n", filepath.Base(file), err)
+				continue
+			}
+		}
+
+		if err := os.WriteFile(file, []byte(modified), 0o644); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: write failed: %v\n", filepath.Base(file), err)
+			continue
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (message send)\n", filepath.Base(file))
 		patched = true
 	}
 
