@@ -16,6 +16,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -190,10 +191,21 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("policy: create engine: %w", err)
 			}
 
+			params := map[string]any{"command": command}
+			// For URL-based tools, parse the argument as a URL and enrich params
+			// so domain_matches and url_matches policies evaluate correctly.
+			if tool == "web_fetch" || tool == "fetch" || tool == "http" || tool == "browser" {
+				params = map[string]any{"url": command}
+				if parsed, err := url.Parse(command); err == nil && parsed.Host != "" {
+					params["domain"] = parsed.Hostname()
+					params["scheme"] = parsed.Scheme
+					params["path"] = parsed.Path
+				}
+			}
 			call := engine.ToolCall{
 				Agent:     normalizeAgent(agent),
 				Tool:      tool,
-				Params:    map[string]any{"command": command},
+				Params:    params,
 				Timestamp: time.Now().UTC(),
 			}
 			decision := eng.Evaluate(call)

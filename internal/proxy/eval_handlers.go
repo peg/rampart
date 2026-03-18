@@ -34,7 +34,20 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	decision := engine.Decision{}
 
 	// Enrich params with derived fields for policy matching.
+	// Also enrich the input map so MCP-style {"input":{"url":"..."}} requests
+	// have domain/scheme/path available for domain_matches policies.
 	enrichParams(toolName, req.Params)
+	if len(req.Input) > 0 {
+		enrichParams(toolName, req.Input)
+		// Promote enriched fields from input into params so the engine sees them.
+		for _, field := range []string{"url", "domain", "scheme", "path", "command"} {
+			if v, ok := req.Input[field]; ok {
+				if _, exists := req.Params[field]; !exists {
+					req.Params[field] = v
+				}
+			}
+		}
+	}
 
 	// Per-agent tokens override the agent identity from the request.
 	// This prevents an agent from impersonating another agent.
