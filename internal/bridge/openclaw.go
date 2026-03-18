@@ -245,7 +245,7 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 			"minProtocol": 3,
 			"maxProtocol": 3,
 			"client": map[string]any{
-				"id":          "rampart-bridge",
+				"id":          "gateway-client",
 				"displayName": "Rampart Bridge",
 				"version":     "0.0.1",
 				"platform":    runtime.GOOS,
