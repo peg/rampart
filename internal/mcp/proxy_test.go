@@ -226,7 +226,7 @@ func TestHandleToolsCall_RequireApproval(t *testing.T) {
 		}
 	}
 
-	if err := store.Resolve(pending.ID, true, "test"); err != nil {
+	if err := store.Resolve(pending.ID, true, "test", false); err != nil {
 		t.Fatalf("resolve approval: %v", err)
 	}
 
@@ -281,7 +281,7 @@ func TestHandleToolsCall_RequireApprovalDenied(t *testing.T) {
 		}
 	}
 
-	if err := store.Resolve(pending.ID, false, "test"); err != nil {
+	if err := store.Resolve(pending.ID, false, "test", false); err != nil {
 		t.Fatalf("resolve approval: %v", err)
 	}
 

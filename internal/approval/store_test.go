@@ -49,7 +49,7 @@ func TestCreateAndResolveApproval(t *testing.T) {
 	assert.False(t, req.ExpiresAt.IsZero())
 
 	// Approve it.
-	err := store.Resolve(req.ID, true, "cli")
+	err := store.Resolve(req.ID, true, "cli", false)
 	require.NoError(t, err)
 
 	assert.Equal(t, StatusApproved, req.Status)
@@ -67,7 +67,7 @@ func TestDenyApproval(t *testing.T) {
 	store := NewStore()
 	req, _ := store.Create(testCall(), testDecision())
 
-	err := store.Resolve(req.ID, false, "api")
+	err := store.Resolve(req.ID, false, "api", false)
 	require.NoError(t, err)
 
 	assert.Equal(t, StatusDenied, req.Status)
@@ -75,7 +75,7 @@ func TestDenyApproval(t *testing.T) {
 
 func TestResolveUnknownID(t *testing.T) {
 	store := NewStore()
-	err := store.Resolve("nonexistent", true, "cli")
+	err := store.Resolve("nonexistent", true, "cli", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown id")
 }
@@ -84,8 +84,8 @@ func TestDoubleResolve(t *testing.T) {
 	store := NewStore()
 	req, _ := store.Create(testCall(), testDecision())
 
-	require.NoError(t, store.Resolve(req.ID, true, "cli"))
-	err := store.Resolve(req.ID, false, "cli")
+	require.NoError(t, store.Resolve(req.ID, true, "cli", false))
+	err := store.Resolve(req.ID, false, "cli", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already")
 }
@@ -127,7 +127,7 @@ func TestListPending(t *testing.T) {
 func TestCleanup(t *testing.T) {
 	store := NewStore()
 	req, _ := store.Create(testCall(), testDecision())
-	require.NoError(t, store.Resolve(req.ID, true, "cli"))
+	require.NoError(t, store.Resolve(req.ID, true, "cli", false))
 
 	// Should not clean up yet (too recent).
 	removed := store.Cleanup(1 * time.Hour)
@@ -169,7 +169,7 @@ func TestWaitForResolution(t *testing.T) {
 	// Resolve in background after a delay.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		store.Resolve(req.ID, true, "cli")
+		store.Resolve(req.ID, true, "cli", false)
 	}()
 
 	select {
