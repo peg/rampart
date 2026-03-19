@@ -1733,6 +1733,24 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 // patchExecInDist patches OpenClaw's exec approval flow to check Rampart policy
 // before OpenClaw's own allowlist evaluation. This ensures all exec calls from
 // the OpenClaw agent go through Rampart — not just Claude Code via the shim.
+//
+// The patch fires inside processGatewayAllowlist(), before OpenClaw decides
+// whether to create a gateway approval. This means:
+//   - If Rampart says DENY: an error is thrown, the command never runs, and
+//     no exec.approval.requested event is fired (no bridge race).
+//   - If Rampart says ALLOW: the function returns normally, the command runs,
+//     and no exec.approval.requested event is fired (no bridge race).
+//   - If Rampart says ASK: the patch blocks polling for approval. Once resolved,
+//     the function returns normally — again no gateway approval event.
+//
+// The Rampart bridge only intercepts exec.approval.requested events, which are
+// only fired AFTER processGatewayAllowlist returns with requiresAsk=true. Since
+// our patch intercepts before that point, the bridge and exec patch never race.
+//
+// Note: this patch fires for human-initiated execs via the OpenClaw agent
+// runtime. AI agent tool calls (from my own sessions) go through the gateway's
+// server-side handler and are intercepted by the bridge instead.
+//
 // Closes #239.
 func patchExecInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {
 	allJS, _ := filepath.Glob(filepath.Join(distDir, "*.js"))
