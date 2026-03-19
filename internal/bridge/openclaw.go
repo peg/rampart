@@ -403,8 +403,18 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		b.resolveApproval(conn, req.ID, "deny")
 
 	case engine.ActionRequireApproval, engine.ActionAsk:
-		// Escalate to Rampart serve for human review.
-		b.escalateToServe(ctx, conn, req, decision)
+		// For OpenClaw bridge approvals, defer to OpenClaw's own approval UI
+		// (Discord/Telegram embed). Don't escalate to Rampart serve — that creates
+		// a competing timer and confusing dual-approval UX.
+		//
+		// Instead, just register the command in pendingCommands so that when the
+		// user clicks "Always Allow" in Discord, the exec.approval.resolved handler
+		// can write the rule to user-overrides.yaml.
+		//
+		// The command is already stored in pendingCommands by handleEvent() at
+		// exec.approval.requested time, so nothing more is needed here.
+		b.logger.Info("bridge: deferring to OpenClaw approval UI",
+			"id", req.ID, "command", req.command(), "policy", decision.Message)
 
 	case engine.ActionWebhook:
 		// Webhook actions delegate to an external system.
@@ -449,8 +459,9 @@ func (b *OpenClawBridge) sendResolve(conn *websocket.Conn, approvalID, decision 
 		ID:     uuid.New().String(),
 		Method: "exec.approval.resolve",
 		Params: map[string]any{
-			"id":       approvalID,
-			"decision": decision,
+			"id":         approvalID,
+			"decision":   decision,
+			"resolvedBy": "rampart-policy",
 		},
 	}
 
