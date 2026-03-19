@@ -11,8 +11,10 @@ agents: {
 
 intercept: {
   label: "Interception"
-  hooks: "Native Hooks"
-  shim: "Shell Shim"
+  hooks: "Native Hooks\n(PreToolUse)"
+  bridge: "Gateway Bridge\n(exec approvals)"
+  patches: "Dist Patches\n(web_fetch / browser / message)"
+  shim: "Shell Shim\n(exec)"
   preload: "LD_PRELOAD"
   mcp: "MCP Proxy"
 }
@@ -57,11 +59,15 @@ outcomes: {
 
 agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
-agents.openclaw -> intercept.shim
+agents.openclaw -> intercept.bridge: "exec approvals"
+agents.openclaw -> intercept.patches: "tool calls"
+agents.openclaw -> intercept.shim: "subagents"
 agents.codex -> intercept.preload
 agents.other -> intercept.mcp
 
 intercept.hooks -> engine
+intercept.bridge -> engine
+intercept.patches -> engine
 intercept.shim -> engine
 intercept.preload -> engine
 intercept.mcp -> engine
