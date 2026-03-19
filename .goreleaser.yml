@@ -53,12 +53,12 @@ release:
 
 # Homebrew tap auto-update on release.
 # Requires HOMEBREW_TAP_GITHUB_TOKEN secret in GitHub Actions — a PAT with repo scope
-# that has write access to the peg/homebrew-rampart repository.
+# that has write access to the peg/homebrew-tap repository.
 brews:
   - directory: Formula
     repository:
       owner: peg
-      name: homebrew-rampart
+      name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://rampart.sh"
     description: "Open-source firewall for AI agents"
