@@ -528,7 +528,7 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 
 	// Poll for the Rampart approval decision.
 	const pollInterval = 2 * time.Second
-	const pollTimeout = 5 * time.Minute
+	const pollTimeout = 150 * time.Second // Slightly over OpenClaw's 130s approval window
 	deadline := time.Now().Add(pollTimeout)
 
 	for {

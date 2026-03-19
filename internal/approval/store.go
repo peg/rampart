@@ -128,7 +128,7 @@ func NewStore(opts ...Option) *Store {
 	s := &Store{
 		pending:         make(map[string]*Request),
 		autoApproveRuns: make(map[string]time.Time),
-		timeout:         1 * time.Hour,
+		timeout:         2 * time.Minute, // Match OpenClaw's DEFAULT_APPROVAL_REQUEST_TIMEOUT_MS (130s)
 		stop:            make(chan struct{}),
 	}
 	for _, opt := range opts {
