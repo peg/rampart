@@ -592,7 +592,7 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 	_ = cmd.Flags().MarkHidden("patch-tools-only")
 	cmd.Flags().BoolVar(&noPreload, "no-preload", false, "Skip LD_PRELOAD but still auto-patch file tools via systemd drop-in")
 	cmd.Flags().BoolVar(&shimOnly, "shim-only", false, "Use legacy shell shim only (no systemd drop-in, no sub-agent coverage)")
-	cmd.Flags().IntVar(&port, "port", 19090, "Port for Rampart policy server")
+	cmd.Flags().IntVar(&port, "port", defaultServePort, "Port for Rampart policy server")
 	return cmd
 }
 
@@ -1495,12 +1495,13 @@ func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error)
 		patched++
 	}
 
-	// Patch web_fetch, browser, and message tools in dist files
+	// Patch web_fetch, browser, message, and exec tools in dist files
 	webFetchPatched := patchWebFetchInDist(cmd, distDir, url, tokenExpr)
 	browserPatched := patchBrowserInDist(cmd, distDir, url, tokenExpr)
 	messagePatched := patchMessageInDist(cmd, distDir, url, tokenExpr)
+	execPatched := patchExecInDist(cmd, distDir, url, tokenExpr)
 
-	if patched == 0 && !webFetchPatched && !browserPatched && !messagePatched {
+	if patched == 0 && !webFetchPatched && !browserPatched && !messagePatched && !execPatched {
 		return false, nil
 	}
 
@@ -1723,6 +1724,115 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (message send)\n", filepath.Base(file))
+		patched = true
+	}
+
+	return patched
+}
+
+// patchExecInDist patches OpenClaw's exec approval flow to check Rampart policy
+// before OpenClaw's own allowlist evaluation. This ensures all exec calls from
+// the OpenClaw agent go through Rampart — not just Claude Code via the shim.
+//
+// The patch fires inside processGatewayAllowlist(), before OpenClaw decides
+// whether to create a gateway approval. This means:
+//   - If Rampart says DENY: an error is thrown, the command never runs, and
+//     no exec.approval.requested event is fired (no bridge race).
+//   - If Rampart says ALLOW: the function returns normally, the command runs,
+//     and no exec.approval.requested event is fired (no bridge race).
+//   - If Rampart says ASK: the patch blocks polling for approval. Once resolved,
+//     the function returns normally — again no gateway approval event.
+//
+// The Rampart bridge only intercepts exec.approval.requested events, which are
+// only fired AFTER processGatewayAllowlist returns with requiresAsk=true. Since
+// our patch intercepts before that point, the bridge and exec patch never race.
+//
+// Note: this patch fires for human-initiated execs via the OpenClaw agent
+// runtime. AI agent tool calls (from my own sessions) go through the gateway's
+// server-side handler and are intercepted by the bridge instead.
+//
+// Closes #239.
+func patchExecInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {
+	allJS, _ := filepath.Glob(filepath.Join(distDir, "*.js"))
+	patched := false
+
+	for _, file := range allJS {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		text := string(content)
+
+		// Anchor: entry point of the gateway exec approval flow
+		if !strings.Contains(text, "async function processGatewayAllowlist(params) {") {
+			continue
+		}
+		if strings.Contains(text, "RAMPART_DIST_CHECK_EXEC") {
+			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s exec already patched\n", filepath.Base(file))
+			patched = true
+			continue
+		}
+
+		execOrig := `async function processGatewayAllowlist(params) {`
+		execCheck := fmt.Sprintf(`async function processGatewayAllowlist(params) {
+	/* RAMPART_DIST_CHECK_EXEC */ try {
+		const __exc = typeof params.command === "string" ? params.command : "";
+		const __exr = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/exec", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+			body: JSON.stringify({ agent: "openclaw", session: "main", params: { command: __exc } }),
+			signal: AbortSignal.timeout(3000)
+		});
+		if (__exr.status === 403) {
+			const __exd = await __exr.json().catch(() => ({}));
+			throw new Error("rampart: " + (__exd.message || "policy denied"));
+		}
+		if (__exr.status === 202) {
+			const __exa = await __exr.json().catch(() => ({}));
+			const __exid = __exa.approval_id;
+			if (__exid) {
+				// Poll for approval decision
+				const __ext = Date.now() + 300000;
+				while (Date.now() < __ext) {
+					await new Promise(r => setTimeout(r, 3000));
+					const __epp = await fetch((process.env.RAMPART_URL || "%s") + "/v1/approvals/" + __exid, {
+						headers: { "Authorization": "Bearer " + (%s) },
+						signal: AbortSignal.timeout(3000)
+					}).catch(() => null);
+					if (!__epp) continue;
+					const __eps = await __epp.json().catch(() => ({}));
+					if (__eps.status === "approved") break;
+					if (__eps.status === "denied" || __eps.status === "expired") {
+						throw new Error("rampart: " + (__eps.status === "denied" ? "policy denied" : "approval timed out"));
+					}
+				}
+			}
+		}
+	} catch (__exe) {
+		if (__exe.message?.startsWith("rampart:")) throw __exe;
+		/* fail-open for network errors */
+	}`, url, tokenExpr, url, tokenExpr)
+
+		modified := strings.Replace(text, execOrig, execCheck, 1)
+		if modified == text {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: exec injection point not found (skipping)\n", filepath.Base(file))
+			continue
+		}
+
+		backupPath := file + ".rampart-backup"
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: backup failed: %v\n", filepath.Base(file), err)
+				continue
+			}
+		}
+
+		if err := os.WriteFile(file, []byte(modified), 0o644); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: write failed: %v\n", filepath.Base(file), err)
+			continue
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (exec)\n", filepath.Base(file))
 		patched = true
 	}
 

@@ -98,11 +98,21 @@ func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
 
 func (mg *mockGateway) sendApprovalRequest(id, command, agent string) {
 	<-mg.ready
-	payload, _ := json.Marshal(approvalRequestParams{
-		ID:         id,
-		Command:    command,
-		AgentID:    agent,
-		SessionKey: "test-session",
+	type requestInner struct {
+		Command    string `json:"command"`
+		AgentID    string `json:"agentId"`
+		SessionKey string `json:"sessionKey"`
+	}
+	payload, _ := json.Marshal(struct {
+		ID      string      `json:"id"`
+		Request requestInner `json:"request"`
+	}{
+		ID: id,
+		Request: requestInner{
+			Command:    command,
+			AgentID:    agent,
+			SessionKey: "test-session",
+		},
 	})
 
 	// Type-frame event format.

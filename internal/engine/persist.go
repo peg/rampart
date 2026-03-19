@@ -88,12 +88,13 @@ func GeneralizeCommand(cmd string) string {
 	}
 
 	if len(tokens) <= 2 {
-		// Short commands: keep as-is plus wildcard.
-		return strings.Join(tokens, " ") + " *"
+		// Short commands: keep as-is plus wildcard (no space before glob so
+		// the exact command without extra args also matches).
+		return strings.Join(tokens, " ") + "*"
 	}
 
 	// Keep first two tokens, wildcard the rest.
-	return tokens[0] + " " + tokens[1] + " *"
+	return tokens[0] + " " + tokens[1] + "*"
 }
 
 // GenerateAllowRule creates a Policy from a ToolCall that would allow
@@ -157,6 +158,47 @@ func GenerateAllowRule(call ToolCall) Policy {
 		},
 		Rules: []Rule{rule},
 	}
+}
+
+// MigrateAllowRuleGlobs rewrites old-format command_matches patterns that
+// have a space before the trailing glob ("cmd arg *" → "cmd arg*").
+// This migration is needed after the v0.9.7 GeneralizeCommand fix.
+// Safe to call multiple times — only rewrites if patterns are found.
+func MigrateAllowRuleGlobs(policyPath string) (int, error) {
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("persist: read %s: %w", policyPath, err)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return 0, fmt.Errorf("persist: parse %s: %w", policyPath, err)
+	}
+
+	migrated := 0
+	for pi := range cfg.Policies {
+		for ri := range cfg.Policies[pi].Rules {
+			for ci, pat := range cfg.Policies[pi].Rules[ri].When.CommandMatches {
+				// Rewrite "cmd arg *" → "cmd arg*" (space before trailing glob only)
+				if strings.HasSuffix(pat, " *") {
+					cfg.Policies[pi].Rules[ri].When.CommandMatches[ci] = pat[:len(pat)-2] + "*"
+					migrated++
+				}
+			}
+		}
+	}
+
+	if migrated == 0 {
+		return 0, nil
+	}
+
+	if err := writeConfigAtomic(policyPath, &cfg); err != nil {
+		return 0, fmt.Errorf("persist: write migrated %s: %w", policyPath, err)
+	}
+	return migrated, nil
 }
 
 // AppendAllowRule generates an allow rule from a ToolCall and appends it

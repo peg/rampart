@@ -278,7 +278,7 @@ policies:
 	assert.Equal(t, "sudo reboot", pending[0].Call.Command())
 
 	// Approve it.
-	require.NoError(t, d.Approvals().Resolve(pending[0].ID, true, "test"))
+	require.NoError(t, d.Approvals().Resolve(pending[0].ID, true, "test", false))
 
 	// The daemon should now resolve the OpenClaw approval.
 	time.Sleep(200 * time.Millisecond)

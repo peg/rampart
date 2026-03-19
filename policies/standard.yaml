@@ -1108,7 +1108,9 @@ policies:
         when:
           domain_matches:
             - "*.ngrok.io"
+            - "ngrok.io"
             - "*.ngrok-free.app"
+            - "ngrok-free.app"
             - "*.requestbin.com"
             - "requestbin.com"
             - "*.hookbin.com"

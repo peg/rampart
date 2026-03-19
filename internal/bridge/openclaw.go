@@ -235,29 +235,53 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 		return fmt.Errorf("expected connect.challenge, got type=%s event=%s", challengeFrame.Type, challengeFrame.Event)
 	}
 
-	// Step 2: send connect request.
+	// Extract nonce from challenge payload.
+	var challengePayload struct {
+		Nonce string `json:"nonce"`
+	}
+	if len(challengeFrame.Payload) > 0 {
+		_ = json.Unmarshal(challengeFrame.Payload, &challengePayload)
+	}
+
+	// Step 2: send connect request with device identity so the gateway preserves
+	// our operator.approvals scope. Without device identity, the gateway silently
+	// strips all scopes via clearUnboundScopes(), preventing exec.approval.* events.
+	scopes := []string{"operator.approvals"}
+
+	connectParams := map[string]any{
+		"minProtocol": 3,
+		"maxProtocol": 3,
+		"client": map[string]any{
+			"id":          "gateway-client",
+			"displayName": "Rampart Bridge",
+			"version":     "0.0.1",
+			"platform":    runtime.GOOS,
+			"mode":        "backend",
+		},
+		"auth": map[string]any{
+			"token": b.token,
+		},
+		"scopes": scopes,
+		"role":   "operator",
+		"caps":   []string{},
+	}
+
+	// Include device identity if available — required to preserve scopes.
+	if identity, err := loadOpenClawDeviceIdentity(); err != nil {
+		b.logger.Warn("bridge: device identity unavailable — scopes may be stripped by gateway", "error", err)
+	} else if devicePayload, err := identity.buildDeviceAuthPayload(challengePayload.Nonce, b.token, scopes); err != nil {
+		b.logger.Warn("bridge: device auth payload failed — scopes may be stripped by gateway", "error", err)
+	} else {
+		connectParams["device"] = devicePayload
+		b.logger.Debug("bridge: device identity loaded", "device_id", identity.DeviceID)
+	}
+
 	reqID := uuid.New().String()
 	frame := gatewayRequest{
 		Type:   "req",
 		ID:     reqID,
 		Method: "connect",
-		Params: map[string]any{
-			"minProtocol": 3,
-			"maxProtocol": 3,
-			"client": map[string]any{
-				"id":          "gateway-client",
-				"displayName": "Rampart Bridge",
-				"version":     "0.0.1",
-				"platform":    runtime.GOOS,
-				"mode":        "backend",
-			},
-			"auth": map[string]any{
-				"token": b.token,
-			},
-			"scopes": []string{"operator.approvals"},
-			"role":   "operator",
-			"caps":   []string{},
-		},
+		Params: connectParams,
 	}
 
 	data, err := json.Marshal(frame)
@@ -289,6 +313,7 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 		return fmt.Errorf("unexpected connect response type: %s", resFrame.Type)
 	}
 
+	b.logger.Info("bridge: handshake complete", "client_id", "rampart-bridge", "scopes", []string{"operator.approvals"})
 	return nil
 }
 
@@ -350,10 +375,10 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *websocket.Conn, req approvalRequestParams) {
 	call := engine.ToolCall{
 		Tool:    "exec",
-		Agent:   req.AgentID,
-		Session: req.SessionKey,
+		Agent:   req.agentID(),
+		Session: req.Request.SessionKey,
 		Params: map[string]any{
-			"command": req.Command,
+			"command": req.command(),
 		},
 		Timestamp: time.Now(),
 	}
@@ -364,8 +389,8 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 
 	b.logger.Info("bridge: evaluated approval request",
 		"id", req.ID,
-		"command", req.Command,
-		"agent", req.AgentID,
+		"command", req.command(),
+		"agent", req.agentID(),
 		"action", decision.Action.String(),
 		"duration", evalDuration,
 	)
@@ -385,7 +410,7 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		// Webhook actions delegate to an external system.
 		// Don't resolve — let OpenClaw's approval flow handle it or time out.
 		b.logger.Info("bridge: webhook action — deferring to OpenClaw approval flow",
-			"id", req.ID, "command", req.Command)
+			"id", req.ID, "command", req.command())
 
 	default:
 		// Unknown action — fail open so we don't silently block commands.
@@ -443,13 +468,13 @@ func (b *OpenClawBridge) sendResolve(conn *websocket.Conn, approvalID, decision 
 // escalateToServe forwards the approval to Rampart serve for human review.
 func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Conn, req approvalRequestParams, decision engine.Decision) {
 	b.logger.Warn("bridge: approval requires human review — escalating to serve",
-		"id", req.ID, "command", req.Command, "serve_url", b.serveURL)
+		"id", req.ID, "command", req.command(), "serve_url", b.serveURL)
 
 	// Register cancellation channel and store command for allow-always writeback.
 	cancelCh := make(chan struct{})
 	b.pendingMu.Lock()
 	b.pending[req.ID] = cancelCh
-	b.pendingCommands[req.ID] = req.Command
+	b.pendingCommands[req.ID] = req.command()
 	b.pendingMu.Unlock()
 
 	defer func() {
@@ -461,9 +486,9 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 
 	body, _ := json.Marshal(map[string]any{
 		"tool":    "exec",
-		"command": req.Command,
-		"agent":   req.AgentID,
-		"session": req.SessionKey,
+		"command": req.command(),
+		"agent":   req.agentID(),
+		"session": req.Request.SessionKey,
 		"message": decision.Message,
 	})
 
@@ -627,13 +652,22 @@ type gatewayFrame struct {
 }
 
 // approvalRequestParams is the payload of an exec.approval.requested event.
+// The gateway broadcasts: {id, request: {command, agentId, sessionKey, cwd, ...}, createdAtMs, expiresAtMs}
 type approvalRequestParams struct {
-	ID         string `json:"id"`
-	Command    string `json:"command"`
-	AgentID    string `json:"agentId"`
-	SessionKey string `json:"sessionKey"`
-	CWD        string `json:"cwd,omitempty"`
+	ID      string `json:"id"`
+	Request struct {
+		Command    string `json:"command"`
+		AgentID    string `json:"agentId"`
+		SessionKey string `json:"sessionKey"`
+		CWD        string `json:"cwd,omitempty"`
+	} `json:"request"`
 }
+
+// command returns the command string from the nested request object.
+func (p approvalRequestParams) command() string { return p.Request.Command }
+
+// agentID returns the agent ID from the nested request object.
+func (p approvalRequestParams) agentID() string { return p.Request.AgentID }
 
 // --- Discovery helpers ---
 

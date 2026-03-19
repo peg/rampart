@@ -228,6 +228,15 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				store = engine.NewFileStore(opts.configPath)
 			}
 
+			// Migrate old-format allow-always rules (space before glob: "cmd *" → "cmd*").
+			// Safe to run on every startup — no-ops if already migrated.
+			autoAllowedPath := engine.DefaultAutoAllowedPath()
+			if n, mErr := engine.MigrateAllowRuleGlobs(autoAllowedPath); mErr != nil {
+				logger.Warn("serve: auto-allowed glob migration failed", "error", mErr)
+			} else if n > 0 {
+				logger.Info("serve: migrated allow-always glob patterns", "count", n, "path", autoAllowedPath)
+			}
+
 			eng, err := engine.New(store, logger)
 			if err != nil {
 				return fmt.Errorf("serve: create engine: %w", err)

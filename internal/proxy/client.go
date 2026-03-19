@@ -39,7 +39,7 @@ type ReloadResponse struct {
 // or an error if the request fails or the server returns a non-200 status.
 //
 // baseURL should be the base URL of the running serve instance
-// (e.g. "http://localhost:19090"). token is the bearer auth token.
+// (e.g. "http://localhost:9090"). token is the bearer auth token.
 func ReloadPolicy(baseURL, token string) (*ReloadResponse, error) {
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/policy/reload", nil)
 	if err != nil {

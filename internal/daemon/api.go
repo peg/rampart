@@ -90,6 +90,7 @@ func (a *API) handleList(w http.ResponseWriter, r *http.Request) {
 type resolveReq struct {
 	Approved   bool   `json:"approved"`
 	ResolvedBy string `json:"resolved_by"`
+	Persist    bool   `json:"persist"`
 }
 
 func (a *API) handleResolve(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +127,7 @@ authorized:
 		req.ResolvedBy = "api"
 	}
 
-	if err := a.approvals.Resolve(id, req.Approved, req.ResolvedBy); err != nil {
+	if err := a.approvals.Resolve(id, req.Approved, req.ResolvedBy, req.Persist); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}

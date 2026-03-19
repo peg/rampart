@@ -53,18 +53,45 @@ const hintSep = "\n  💡 "
 
 func newDoctorCmd() *cobra.Command {
 	var jsonOut bool
+	var fix bool
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check Rampart installation health",
 		Long:  "Run diagnostic checks on your Rampart installation and report any issues.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if fix {
+				return runDoctorFix(cmd)
+			}
 			return runDoctor(cmd.OutOrStdout(), jsonOut)
 		},
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
+	cmd.Flags().BoolVar(&fix, "fix", false, "Automatically apply fixes for detected issues (re-runs patch-tools if needed)")
 	return cmd
+}
+
+// runDoctorFix checks for missing patches and applies them automatically.
+func runDoctorFix(cmd *cobra.Command) error {
+	needsPatch := !openclawWebFetchPatched() || !openclawBrowserPatched() ||
+		!openclawMessagePatched() || !openclawExecPatched() || !openclawDistPatched()
+
+	if !needsPatch {
+		fmt.Fprintln(cmd.OutOrStdout(), "✓ All patches already applied — nothing to fix.")
+		return nil
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "Applying missing patches...")
+	_, err := patchOpenClawDistTools(cmd, fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "")
+	if err != nil {
+		// May need sudo — tell the user
+		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Auto-fix failed (may need sudo): %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Run manually: sudo rampart setup openclaw --patch-tools --force\n")
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "✓ Patches applied. Restart OpenClaw for changes to take effect.")
+	return nil
 }
 
 func runDoctor(w io.Writer, jsonOut bool) error {
@@ -798,19 +825,54 @@ func doctorPreload(emit emitFn) (warnings int) {
 func doctorFileToolPatches(emit emitFn) (warnings int) {
 	// Check if OpenClaw uses bundled dist files (#204).
 	if openclawUsesBundledDist() {
-		// Check if dist files are patched
-		if openclawDistPatched() {
-			msg := "OpenClaw dist files patched (read + write/edit)"
-			if openclawWebFetchPatched() {
-				msg = "OpenClaw dist files patched (read + write/edit + web_fetch)"
-			}
-			emit("File tools", "ok", msg)
+		distPatched := openclawDistPatched()
+		webFetchPatched := openclawWebFetchPatched()
+		browserPatched := openclawBrowserPatched()
+		messagePatched := openclawMessagePatched()
+		execPatched := openclawExecPatched()
+
+		if distPatched && webFetchPatched && browserPatched && messagePatched && execPatched {
+			emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")
 			return 0
 		}
-		emit("File tools", "warn",
-			"OpenClaw uses bundled dist files — file tools not policy-checked"+
-				hintSep+"sudo rampart setup openclaw --patch-tools --force")
-		return 1
+
+		// Report each unpatched tool separately so users know exactly what to fix.
+		if !distPatched {
+			emit("Tool patches", "warn",
+				"OpenClaw dist files not patched — read/write/edit not policy-checked"+
+					hintSep+"sudo rampart setup openclaw --patch-tools --force")
+			warnings++
+		} else {
+			emit("Tool patches", "ok", "OpenClaw dist files patched (read + write/edit)")
+		}
+		if !webFetchPatched {
+			emit("web_fetch patch", "warn",
+				"OpenClaw web_fetch not patched — URL fetch requests not policy-checked"+
+					hintSep+"sudo rampart setup openclaw --patch-tools --force")
+			warnings++
+		}
+		if !browserPatched {
+			emit("browser patch", "warn",
+				"OpenClaw browser tool not patched — navigate/open not policy-checked"+
+					hintSep+"sudo rampart setup openclaw --patch-tools --force")
+			warnings++
+		}
+		if !messagePatched {
+			emit("message patch", "warn",
+				"OpenClaw message tool not patched — outbound sends not policy-checked"+
+					hintSep+"sudo rampart setup openclaw --patch-tools --force")
+			warnings++
+		}
+		if !execPatched {
+			emit("exec patch", "warn",
+				"OpenClaw exec tool not patched — human-initiated execs bypass pre-check"+
+					hintSep+"sudo rampart setup openclaw --patch-tools --force")
+			warnings++
+		}
+		if warnings > 0 {
+			return warnings
+		}
+		return 0
 	}
 
 	candidates := openclawToolsCandidates()
@@ -861,7 +923,10 @@ func openclawUsesBundledDist() bool {
 	}
 
 	for _, distDir := range candidates {
-		matches, _ := filepath.Glob(filepath.Join(distDir, "pi-embedded-*.js"))
+		// Check for pi-embedded-*.js (older OpenClaw) or auth-profiles-*.js (newer OpenClaw)
+		piMatches, _ := filepath.Glob(filepath.Join(distDir, "pi-embedded-*.js"))
+		authMatches, _ := filepath.Glob(filepath.Join(distDir, "auth-profiles-*.js"))
+		matches := append(piMatches, authMatches...)
 		if len(matches) > 0 {
 			// Bundled dist exists. Check if the bundle contains tool definitions
 			// (confirming tools are compiled in, not loaded from node_modules).
@@ -870,7 +935,8 @@ func openclawUsesBundledDist() bool {
 				if err != nil {
 					continue
 				}
-				if strings.Contains(string(data), "createReadTool") || strings.Contains(string(data), "readTool") {
+				if strings.Contains(string(data), "createReadTool") || strings.Contains(string(data), "readTool") ||
+					strings.Contains(string(data), "processGatewayAllowlist") || strings.Contains(string(data), "runMessageAction") {
 					return true
 				}
 			}
@@ -880,20 +946,9 @@ func openclawUsesBundledDist() bool {
 }
 
 // openclawDistPatched checks if the bundled dist files have been patched with Rampart checks.
+// Checks both pi-embedded-*.js (older OpenClaw) and auth-profiles-*.js (newer OpenClaw).
 func openclawDistPatched() bool {
-	for _, d := range openclawDistCandidates() {
-		matches, _ := filepath.Glob(filepath.Join(d, "pi-embedded-*.js"))
-		for _, m := range matches {
-			data, err := os.ReadFile(m)
-			if err != nil {
-				continue
-			}
-			if strings.Contains(string(data), "RAMPART_DIST_CHECK") {
-				return true
-			}
-		}
-	}
-	return false
+	return openclawDistCheckPatched("RAMPART_DIST_CHECK")
 }
 
 // openclawWebFetchPatched checks if any dist *.js files have the web_fetch Rampart patch.
@@ -909,6 +964,11 @@ func openclawBrowserPatched() bool {
 // openclawMessagePatched checks if the message tool is patched.
 func openclawMessagePatched() bool {
 	return openclawDistCheckPatched("RAMPART_DIST_CHECK_MESSAGE")
+}
+
+// openclawExecPatched checks if the exec tool is patched.
+func openclawExecPatched() bool {
+	return openclawDistCheckPatched("RAMPART_DIST_CHECK_EXEC")
 }
 
 // openclawDistCheckPatched returns true if any dist *.js file contains the given marker.

@@ -85,6 +85,9 @@ type Request struct {
 	// ResolvedBy is who resolved the approval (e.g., "cli", "api", "timeout").
 	ResolvedBy string
 
+	// Persisted indicates this approval resulted in a persistent allow-always rule.
+	Persisted bool
+
 	// dedupKey is the SHA-256 hash of tool+command+agent for deduplication.
 	dedupKey string
 
@@ -225,7 +228,7 @@ func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request
 
 // Resolve approves or denies a pending request.
 // Returns an error if the request doesn't exist or is already resolved.
-func (s *Store) Resolve(id string, approved bool, resolvedBy string) error {
+func (s *Store) Resolve(id string, approved bool, resolvedBy string, persist bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -245,6 +248,7 @@ func (s *Store) Resolve(id string, approved bool, resolvedBy string) error {
 	}
 	req.ResolvedAt = time.Now()
 	req.ResolvedBy = resolvedBy
+	req.Persisted = approved && persist // Only set if approved with persist=true
 
 	close(req.done)
 	return nil

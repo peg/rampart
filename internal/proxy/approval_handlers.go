@@ -201,6 +201,8 @@ func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
 	if !req.ResolvedAt.IsZero() {
 		item["resolved_at"] = req.ResolvedAt.Format(time.RFC3339)
 		item["resolved_by"] = req.ResolvedBy
+		// persisted indicates this was an allow-always decision that wrote a persistent rule.
+		item["persisted"] = req.Persisted
 	}
 
 	writeJSON(w, http.StatusOK, item)
@@ -242,7 +244,7 @@ authorized:
 		req.ResolvedBy = "api"
 	}
 
-	if err := s.approvals.Resolve(id, req.Approved, req.ResolvedBy); err != nil {
+	if err := s.approvals.Resolve(id, req.Approved, req.ResolvedBy, req.Persist); err != nil {
 		// Distinguish "already resolved" (replay) from "unknown id".
 		if existing, ok := s.approvals.Get(id); ok && existing.Status != approval.StatusPending {
 			writeError(w, http.StatusGone, "approval already resolved; URL cannot be reused")
@@ -378,7 +380,7 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		if ap.Call.RunID != req.RunID {
 			continue
 		}
-		if err := s.approvals.Resolve(ap.ID, approved, resolvedBy); err != nil {
+		if err := s.approvals.Resolve(ap.ID, approved, resolvedBy, false); err != nil {
 			s.logger.Warn("proxy: bulk-resolve skipped approval", "id", ap.ID, "error", err)
 			continue
 		}

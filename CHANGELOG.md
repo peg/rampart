@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-03-20
+
+### Added
+
+- **Native OpenClaw exec approval integration**: The bridge now correctly receives `exec.approval.requested` events. Root cause: the gateway silently stripped `operator.approvals` scope from clients connecting without a device identity (`clearUnboundScopes()`). Fixed by loading OpenClaw's existing `~/.openclaw/identity/device.json` and including a signed V3 device auth payload in the connect handshake. The bridge now intercepts all exec approvals, evaluates against Rampart policy, and resolves allow/deny decisions before the Discord/Telegram UI shows buttons.
+- **"Always Allow" writes to `user-overrides.yaml`**: When a user clicks "Always Allow" on an exec approval, the bridge captures the `exec.approval.resolved` event and writes a persistent rule to `~/.rampart/policies/user-overrides.yaml`. This file is never overwritten by upgrades or `rampart setup`.
+- **`patchExecInDist()`**: `rampart setup openclaw --patch-tools` now also patches the exec tool in OpenClaw dist files, adding a Rampart pre-check before OpenClaw's own allowlist evaluation for human-initiated execs.
+- **`rampart doctor` improvements**: Granular per-tool patch detection (web_fetch, browser, message, exec checked individually). `--fix` flag auto-applies missing patches without requiring the full setup command. Fixed detection for modern OpenClaw dist format (`auth-profiles-*.js`).
+- **`persisted` field in approval poll responses**: `GET /v1/approvals/{id}` now returns `persisted: true` when the resolution was an allow-always decision that wrote a persistent rule.
+
+### Fixed
+
+- **MCP-style input bypass**: `domain_matches` policies were not evaluated for MCP-style `{"input":{"url":"..."}}` requests — `enrichParams()` only processed `req.Params`, not `req.Input`. Now enriches both and promotes fields into `req.Params`.
+- **`policy explain` URL params**: `rampart policy explain --tool web_fetch "https://..."` always returned ALLOW because the CLI hardcoded `command=arg` instead of parsing the URL. Now correctly sets domain/scheme/path for URL-based tools.
+- **ngrok.io bare domain**: `ngrok.io` was not in the `block-exfil-domains` blocklist (only `*.ngrok.io` was covered). Added `ngrok.io` and `ngrok-free.app` bare domains.
+- **allow-always glob pattern**: `GeneralizeCommand` appended `" *"` (space before glob) so commands like `shred /tmp/file` were generalized to `"shred /tmp/file *"`, which didn't match the exact command without extra args. Fixed to `"shred /tmp/file*"`.
+- **Startup migration for old glob patterns**: `rampart serve` now automatically migrates existing `auto-allowed.yaml` rules from the old `"cmd arg *"` format to the correct `"cmd arg*"` format on first start after upgrading.
+- **Default port consistency**: `rampart setup --port` flag, `rampart status` port probe, service file generation, shim URL, and dist patches all now consistently use port 9090 (was 19090 in some places).
+- **`approvalRequestParams` struct**: The bridge was parsing `exec.approval.requested` payloads with a flat struct — command/agentId were nested under `request:{}` in the actual gateway payload, causing the bridge to evaluate empty commands (and auto-allow everything). Fixed with correct nested struct.
+- **`rampart doctor` dist detection**: `openclawUsesBundledDist()` only checked for `pi-embedded-*.js` (older OpenClaw) and missed `auth-profiles-*.js` (newer OpenClaw), causing incorrect "not patched" warnings on modern installations.
+
+## [0.9.6] - 2026-03-18
+
 ## [0.9.5] - 2026-03-17
 
 ### Added
