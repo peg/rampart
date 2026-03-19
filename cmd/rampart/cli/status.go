@@ -85,7 +85,7 @@ func isServeRunningLocal() bool {
 		return true
 	}
 	// Try common alternative ports (proxy port, common dev ports).
-	for _, port := range []int{19090, 9091, 8090} {
+	for _, port := range []int{defaultServePort, 9091, 8090} {
 		if isServeRunning(fmt.Sprintf("http://localhost:%d", port)) {
 			return true
 		}
