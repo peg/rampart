@@ -124,7 +124,9 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	s.writeAudit(req, toolName, decision)
 
+	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
 	resp := map[string]any{
+		"allowed":          allowed,
 		"decision":         decision.Action.String(),
 		"message":          decision.Message,
 		"eval_duration_us": decision.EvalDuration.Microseconds(),
@@ -133,11 +135,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	if len(decision.MatchedPolicies) > 0 {
 		resp["policy"] = decision.MatchedPolicies[0]
 	}
+	if len(decision.Suggestions) > 0 {
+		resp["suggestions"] = decision.Suggestions
+	}
 
 	if s.mode == "enforce" && decision.Action == engine.ActionDeny {
-		if len(decision.Suggestions) > 0 {
-			resp["suggestions"] = decision.Suggestions
-		}
 		writeJSON(w, http.StatusForbidden, resp)
 		return
 	}
@@ -437,6 +439,9 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePolicy returns a summary of the current active policy configuration.
+// handlePolicy returns server status including policy counts.
+// Deprecated: prefer GET /v1/status for status info, GET /v1/policies for
+// full per-policy detail with source file information.
 func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	s.handleStatus(w, r)
 }
