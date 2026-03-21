@@ -441,6 +441,24 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	s.handleStatus(w, r)
 }
 
+// handlePoliciesSnapshot returns all loaded policies with source file info.
+// Admin-only — exposes rule names and match conditions.
+func (s *Server) handlePoliciesSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	if s.engine == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"policies": []any{}, "default_action": "allow"})
+		return
+	}
+	policies, defaultAction := s.engine.Snapshot()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"policies":       policies,
+		"default_action": defaultAction,
+		"count":          len(policies),
+	})
+}
+
 // handlePolicySummary returns a transparency-oriented summary of active rules.
 // Admin-only to prevent agent tokens from enumerating policy rules.
 func (s *Server) handlePolicySummary(w http.ResponseWriter, r *http.Request) {
