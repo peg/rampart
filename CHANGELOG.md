@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **API consistency** — `POST /v1/tool/{name}` responses now include `allowed: true/false` (was only on preflight responses) and `suggestions` (was only on deny). Tool call and preflight responses are now consistent in shape.
 - **Bridge ASK deferral** — bridge no longer creates a competing Rampart HTTP approval when policy says ASK. Instead it defers entirely to OpenClaw's Discord embed, eliminating the dual-timer UX problem where approvals would time out before the user could click.
-- **Approval timeout alignment** — Rampart serve default approval timeout changed from 1h to 2m to match OpenClaw's 130s approval window. Bridge poll timeout changed from 5m to 150s. No more silent hangs after OpenClaw times out.
+- **Approval timeout alignment** — Rampart serve default approval timeout changed from 1h to 2m to match OpenClaw's 130s approval window. Bridge poll timeout changed from 5m to 150s. No more silent hangs after OpenClaw times out. If you have workflows that rely on the 1h window, use `rampart serve --approval-timeout 1h` to restore the previous behaviour.
 - **Architecture diagram** — updated to accurately show OpenClaw's three interception layers (bridge, dist patches, shell shim) with dark theme.
 - **`GET /v1/policy`** — marked deprecated in favour of `GET /v1/status` (for server status) and `GET /v1/policies` (for policy detail). Kept functional for backwards compatibility.
 
