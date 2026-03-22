@@ -135,8 +135,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	if len(decision.MatchedPolicies) > 0 {
 		resp["policy"] = decision.MatchedPolicies[0]
 	}
-	if len(decision.Suggestions) > 0 {
+	// Always include suggestions so schema is consistent regardless of decision.
+	if decision.Suggestions != nil {
 		resp["suggestions"] = decision.Suggestions
+	} else {
+		resp["suggestions"] = []string{}
 	}
 
 	if s.mode == "enforce" && decision.Action == engine.ActionDeny {
