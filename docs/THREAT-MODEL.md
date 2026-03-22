@@ -183,7 +183,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
-| `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
+| `rampart setup openclaw --patch-tools` | ✅ (bridge+shim) | ✅ (patched) | ✅ (bridge) | ❌ |
 | `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |
 | MCP proxy | ✅ | ✅ | ✅ | ❌ |

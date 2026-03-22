@@ -1,30 +1,51 @@
+vars: {
+  d2-config: {
+    theme-id: 200
+  }
+}
+
 direction: right
 
 agents: {
   label: "AI Agents"
+  style.border-radius: 8
+
   claude: "Claude Code"
   cline: "Cline"
-  openclaw: "OpenClaw"
+  openclaw: "OpenClaw" {
+    style.fill: "#1a1f2e"
+    style.stroke: "#FF6392"
+    style.font-color: "#FF6392"
+    style.border-radius: 6
+  }
   codex: "Codex CLI"
   other: "Any Agent"
 }
 
 intercept: {
   label: "Interception"
+  style.border-radius: 8
+
   hooks: "Native Hooks"
+  bridge: "Gateway Bridge" {
+    style.fill: "#1a1f2e"
+    style.stroke: "#FF6392"
+    style.font-color: "#FF6392"
+    style.border-radius: 6
+  }
   shim: "Shell Shim"
   preload: "LD_PRELOAD"
   mcp: "MCP Proxy"
 }
 
-engine: "YAML Policy Engine\n<10μs" {
+engine: "Policy Engine\n<10μs" {
   style.fill: "#1d3320"
   style.stroke: "#2ea043"
   style.font-color: "#3fb950"
   style.border-radius: 8
 }
 
-verify: "rampart-verify\n(optional sidecar)" {
+verify: "rampart-verify\n(optional)" {
   style.stroke-dash: 4
   style.border-radius: 8
 }
@@ -47,7 +68,7 @@ outcomes: {
     style.font-color: "#f85149"
     style.border-radius: 6
   }
-  approval: "Approval" {
+  ask: "Approval" {
     style.fill: "#2d2508"
     style.stroke: "#d29922"
     style.font-color: "#d29922"
@@ -55,17 +76,22 @@ outcomes: {
   }
 }
 
+# Agent connections
 agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
-agents.openclaw -> intercept.shim
+agents.openclaw -> intercept.bridge: "exec approvals\n+ tool patches"
+agents.openclaw -> intercept.shim: "subagents"
 agents.codex -> intercept.preload
 agents.other -> intercept.mcp
 
+# Intercept to engine
 intercept.hooks -> engine
+intercept.bridge -> engine
 intercept.shim -> engine
 intercept.preload -> engine
 intercept.mcp -> engine
 
+# Engine outcomes
 engine -> outcomes.allow: "allow"
 engine -> outcomes.deny: "deny"
 engine -> verify: "ambiguous"
@@ -73,4 +99,4 @@ engine -> audit
 
 verify -> outcomes.allow
 verify -> outcomes.deny
-verify -> outcomes.approval
+verify -> outcomes.ask

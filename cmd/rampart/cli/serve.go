@@ -565,7 +565,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().BoolVarP(&background, "background", "b", false, "Run serve in background and write logs to ~/.rampart/serve.log")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 0, "How often to re-read policy files (0 = disabled; fsnotify handles hot-reload automatically)")
-	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 1h)")
+	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 2m, matches OpenClaw)")
 	cmd.Flags().StringVar(&tlsCert, "tls-cert", "", "Path to TLS certificate PEM file")
 	cmd.Flags().StringVar(&tlsKey, "tls-key", "", "Path to TLS private key PEM file")
 	cmd.Flags().BoolVar(&tlsAuto, "tls-auto", false, "Auto-generate self-signed TLS certificate")

@@ -367,6 +367,34 @@ func (e *Engine) PolicyCount() int {
 	return len(e.config.Policies)
 }
 
+// PolicySnapshot is a summary of a loaded policy for display purposes.
+type PolicySnapshot struct {
+	Name       string   `json:"name"`
+	Priority   int      `json:"priority,omitempty"`
+	SourceFile string   `json:"source_file"`
+	MatchTools []string `json:"match_tools,omitempty"`
+	MatchAgent string   `json:"match_agent,omitempty"`
+	RuleCount  int      `json:"rule_count"`
+}
+
+// Snapshot returns the currently loaded policies with source file information.
+func (e *Engine) Snapshot() ([]PolicySnapshot, string) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	var out []PolicySnapshot
+	for _, p := range e.config.Policies {
+		out = append(out, PolicySnapshot{
+			Name:       p.Name,
+			Priority:   p.Priority,
+			SourceFile: p.FilePath,
+			MatchTools: p.Match.Tool,
+			MatchAgent: p.Match.Agent,
+			RuleCount:  len(p.Rules),
+		})
+	}
+	return out, e.config.DefaultAction
+}
+
 // RuleCount returns the total number of rules across all loaded policies.
 func (e *Engine) RuleCount() int {
 	e.mu.RLock()

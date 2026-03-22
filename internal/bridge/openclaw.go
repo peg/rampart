@@ -366,6 +366,14 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 			if resolved.Decision == "allow-always" && cmd != "" {
 				go b.writeAllowAlwaysRule(cmd)
 			}
+
+			// Cross-resolve: if the shim created a matching Rampart HTTP approval
+			// for the same command, resolve it so the shim poll unblocks.
+			// This connects the Discord approval UI to Claude Code running via shim.
+			if cmd != "" && b.serveURL != "" && resolved.Decision != "" {
+				approved := resolved.Decision != "deny"
+				go b.crossResolveShimApproval(cmd, approved, resolved.Decision == "allow-always")
+			}
 		}
 	}
 }
@@ -403,8 +411,18 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		b.resolveApproval(conn, req.ID, "deny")
 
 	case engine.ActionRequireApproval, engine.ActionAsk:
-		// Escalate to Rampart serve for human review.
-		b.escalateToServe(ctx, conn, req, decision)
+		// For OpenClaw bridge approvals, defer to OpenClaw's own approval UI
+		// (Discord/Telegram embed). Don't escalate to Rampart serve — that creates
+		// a competing timer and confusing dual-approval UX.
+		//
+		// Instead, just register the command in pendingCommands so that when the
+		// user clicks "Always Allow" in Discord, the exec.approval.resolved handler
+		// can write the rule to user-overrides.yaml.
+		//
+		// The command is already stored in pendingCommands by handleEvent() at
+		// exec.approval.requested time, so nothing more is needed here.
+		b.logger.Info("bridge: deferring to OpenClaw approval UI",
+			"id", req.ID, "command", req.command(), "policy", decision.Message)
 
 	case engine.ActionWebhook:
 		// Webhook actions delegate to an external system.
@@ -449,8 +467,9 @@ func (b *OpenClawBridge) sendResolve(conn *websocket.Conn, approvalID, decision 
 		ID:     uuid.New().String(),
 		Method: "exec.approval.resolve",
 		Params: map[string]any{
-			"id":       approvalID,
-			"decision": decision,
+			"id":         approvalID,
+			"decision":   decision,
+			"resolvedBy": "rampart-policy",
 		},
 	}
 
@@ -528,7 +547,7 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 
 	// Poll for the Rampart approval decision.
 	const pollInterval = 2 * time.Second
-	const pollTimeout = 5 * time.Minute
+	const pollTimeout = 150 * time.Second // Slightly over OpenClaw's 130s approval window
 	deadline := time.Now().Add(pollTimeout)
 
 	for {
@@ -577,6 +596,90 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 // writeAllowAlwaysRule appends an allow rule for the given command to
 // ~/.rampart/policies/user-overrides.yaml and hot-reloads the engine.
 // This is called when a human clicks "Always Allow" in the OpenClaw approval UI.
+// crossResolveShimApproval finds a pending Rampart HTTP approval matching the
+// given command and resolves it. This connects the Discord approval UI (OpenClaw
+// gateway flow) to the shim polling flow (Claude Code running inside OpenClaw).
+//
+// Without this, a Claude Code command intercepted by the shim creates a pending
+// Rampart HTTP approval that nobody resolves — the Discord embed fires via
+// OpenClaw's native flow but the shim poll just times out.
+func (b *OpenClawBridge) crossResolveShimApproval(command string, approved, persist bool) {
+	token := os.Getenv("RAMPART_TOKEN")
+
+	// Step 1: list pending Rampart HTTP approvals.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	listReq, err := http.NewRequestWithContext(ctx, "GET", b.serveURL+"/v1/approvals", nil)
+	if err != nil {
+		return
+	}
+	if token != "" {
+		listReq.Header.Set("Authorization", "Bearer "+token)
+	}
+	listResp, err := http.DefaultClient.Do(listReq)
+	if err != nil || listResp.StatusCode != http.StatusOK {
+		return
+	}
+	defer listResp.Body.Close()
+
+	var result struct {
+		Approvals []struct {
+			ID      string `json:"id"`
+			Command string `json:"command"`
+			Status  string `json:"status"`
+		} `json:"approvals"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&result); err != nil {
+		return
+	}
+
+	// Step 2: find matching pending approval by command.
+	var matchID string
+	for _, item := range result.Approvals {
+		if item.Status == "pending" && item.Command == command {
+			matchID = item.ID
+			break
+		}
+	}
+	if matchID == "" {
+		return // no matching shim approval — normal for OpenClaw-native exec
+	}
+
+	// Step 3: resolve the matching approval.
+	body, _ := json.Marshal(map[string]any{
+		"approved":    approved,
+		"persist":     persist,
+		"resolved_by": "openclaw-discord",
+	})
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+
+	resolveReq, err := http.NewRequestWithContext(ctx2, "POST",
+		b.serveURL+"/v1/approvals/"+matchID+"/resolve",
+		bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	resolveReq.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		resolveReq.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(resolveReq)
+	if err != nil {
+		b.logger.Debug("bridge: cross-resolve shim approval failed", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		b.logger.Info("bridge: cross-resolved shim approval via Discord",
+			"approval_id", matchID, "command", command, "approved", approved, "persist", persist)
+	}
+}
+
 func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -16,6 +16,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -54,6 +55,7 @@ func newPolicyCmd(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newPolicyLintCmd())
 	cmd.AddCommand(newPolicyGenerateCmd(opts))
 	cmd.AddCommand(newPolicyListCmd(opts))
+	cmd.AddCommand(newPolicyRulesCmd(opts))
 	cmd.AddCommand(newPolicySearchCmd(opts))
 	cmd.AddCommand(newPolicyShowCmd(opts))
 	cmd.AddCommand(newPolicyFetchCmd(opts))
@@ -402,6 +404,108 @@ func normalizeAgent(agent string) string {
 		return "*"
 	}
 	return agent
+}
+
+// newPolicyRulesCmd implements `rampart policy rules` — shows all currently
+// loaded policies with their source files, so users can see exactly what's
+// active and where each rule came from.
+func newPolicyRulesCmd(opts *rootOptions) *cobra.Command {
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "rules",
+		Short: "Show all active policies and their source files",
+		Long: `List all policies currently loaded by rampart serve, including which
+file each policy came from (standard.yaml, user-overrides.yaml, auto-allowed.yaml, etc.).
+
+Requires rampart serve to be running.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			serveURL := os.Getenv("RAMPART_SERVE_URL")
+			if serveURL == "" {
+				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
+			}
+			token := os.Getenv("RAMPART_TOKEN")
+			if token == "" {
+				token, _ = readPersistedToken()
+			}
+
+			req, _ := http.NewRequestWithContext(cmd.Context(), "GET", serveURL+"/v1/policies", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("policy rules: connect to serve: %w\n  Is rampart serve running? Try: rampart status", err)
+			}
+			defer resp.Body.Close()
+
+			var result struct {
+				Policies      []policyRulesEntry `json:"policies"`
+				DefaultAction string             `json:"default_action"`
+				Count         int                `json:"count"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("policy rules: decode response: %w", err)
+			}
+
+			if jsonOut {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(result)
+			}
+
+			// Group by source file for cleaner output.
+			byFile := make(map[string][]policyRulesEntry)
+			var fileOrder []string
+			seen := make(map[string]bool)
+			for _, p := range result.Policies {
+				src := p.SourceFile
+				if src == "" {
+					src = "(built-in / embedded)"
+				}
+				if !seen[src] {
+					seen[src] = true
+					fileOrder = append(fileOrder, src)
+				}
+				byFile[src] = append(byFile[src], p)
+			}
+
+			home, _ := os.UserHomeDir()
+			shortPath := func(p string) string {
+				if home != "" {
+					if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") {
+						return "~/" + rel
+					}
+				}
+				return p
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Active policies  (default: %s)\n\n", result.DefaultAction)
+			for _, file := range fileOrder {
+				policies := byFile[file]
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", shortPath(file))
+				for _, p := range policies {
+					tools := "*"
+					if len(p.MatchTools) > 0 {
+						tools = strings.Join(p.MatchTools, ",")
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "    %-40s  [%s]  %d rule(s)\n", p.Name, tools, p.RuleCount)
+				}
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%d policies loaded\n", result.Count)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
+	return cmd
+}
+
+type policyRulesEntry struct {
+	Name       string   `json:"name"`
+	Priority   int      `json:"priority,omitempty"`
+	SourceFile string   `json:"source_file"`
+	MatchTools []string `json:"match_tools,omitempty"`
+	MatchAgent string   `json:"match_agent,omitempty"`
+	RuleCount  int      `json:"rule_count"`
 }
 
 func renderCommand(params map[string]any) string {
