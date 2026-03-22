@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-03-22
+
+### Added
+
+- **`rampart policy rules`** — new CLI command that shows all currently loaded policies grouped by source file. Makes it easy to see exactly what's active and where each rule came from (standard.yaml, user-overrides.yaml, auto-allowed.yaml, etc.). Backed by new `GET /v1/policies` API endpoint.
+- **Bridge cross-resolve** — when a user clicks Allow/Deny/Always Allow on an OpenClaw Discord approval embed, the bridge now also resolves any matching pending Rampart HTTP approval for the same command. This connects the two previously parallel approval flows so Claude Code running inside OpenClaw (via the shim) unblocks correctly when the user clicks Discord buttons.
+- **`GET /v1/policies`** — new API endpoint returning all loaded policies with source file, matched tools, and rule count per policy.
+
+### Fixed
+
+- **API consistency** — `POST /v1/tool/{name}` responses now include `allowed: true/false` (was only on preflight responses) and `suggestions` (was only on deny). Tool call and preflight responses are now consistent in shape.
+- **Bridge ASK deferral** — bridge no longer creates a competing Rampart HTTP approval when policy says ASK. Instead it defers entirely to OpenClaw's Discord embed, eliminating the dual-timer UX problem where approvals would time out before the user could click.
+- **Approval timeout alignment** — Rampart serve default approval timeout changed from 1h to 2m to match OpenClaw's 130s approval window. Bridge poll timeout changed from 5m to 150s. No more silent hangs after OpenClaw times out.
+- **Architecture diagram** — updated to accurately show OpenClaw's three interception layers (bridge, dist patches, shell shim) with dark theme.
+- **`GET /v1/policy`** — marked deprecated in favour of `GET /v1/status` (for server status) and `GET /v1/policies` (for policy detail). Kept functional for backwards compatibility.
+
 ## [0.9.7] - 2026-03-20
 
 ### Added
