@@ -336,7 +336,7 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		return nil
 	}
 
-	if p.mode == "enforce" && decision.Action == engine.ActionRequireApproval {
+	if p.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk) {
 		message := strings.TrimSpace(decision.Message)
 		if message == "" {
 			message = "request requires approval"

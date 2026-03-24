@@ -40,9 +40,9 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/build"
-	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -939,12 +939,24 @@ func findRequireApprovalUsages(userHomeDir func() (string, error)) ([]requireApp
 			continue
 		}
 		path := filepath.Join(policyDir, e.Name())
-		cfg, err := engine.NewFileStore(path).Load()
+		// Use raw YAML struct to avoid engine validation rejecting require_approval.
+		// The scanner must still detect it even though the engine now rejects it.
+		data, err := os.ReadFile(path)
 		if err != nil {
-			// Keep upgrade resilient: unreadable/invalid files are skipped.
 			continue
 		}
-		for _, p := range cfg.Policies {
+		var raw struct {
+			Policies []struct {
+				Name  string `yaml:"name"`
+				Rules []struct {
+					Action string `yaml:"action"`
+				} `yaml:"rules"`
+			} `yaml:"policies"`
+		}
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			continue
+		}
+		for _, p := range raw.Policies {
 			for _, r := range p.Rules {
 				if strings.EqualFold(strings.TrimSpace(r.Action), "require_approval") {
 					findings = append(findings, requireApprovalUsage{

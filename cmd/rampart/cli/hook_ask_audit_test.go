@@ -76,17 +76,19 @@ policies:
 	}
 }
 
-func TestHookActionRequireApproval_AliasUsesNativeAskAndRegistersAudit(t *testing.T) {
+func TestHookActionAskAudit_UsesNativeAskAndRegistersAudit(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
 	const policy = `version: "1"
 policies:
-  - name: test-require-approval-alias
+  - name: test-ask-audit
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
+        ask:
+          audit: true
         message: "approval required"
 `
 	configPath := filepath.Join(dir, "policy.yaml")
@@ -128,7 +130,7 @@ policies:
 		t.Fatalf("hook RunE error: %v", hookErr)
 	}
 	if createCount.Load() != 1 {
-		t.Fatalf("expected exactly 1 serve approval registration for require_approval alias, got %d", createCount.Load())
+		t.Fatalf("expected exactly 1 serve approval registration for ask+audit, got %d", createCount.Load())
 	}
 
 	var out hookOutput

@@ -347,7 +347,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)
 	mux.HandleFunc("GET /v1/audit/stats", s.handleAuditStats)
 	mux.HandleFunc("GET /v1/events/stream", s.handleEventStream)
-	mux.HandleFunc("GET /v1/policy", s.handlePolicy)
 	mux.HandleFunc("GET /v1/policy/summary", s.handlePolicySummary)
 	mux.HandleFunc("GET /v1/policies", s.handlePoliciesSnapshot)
 	mux.HandleFunc("POST /v1/policy/reload", s.handlePolicyReload)

@@ -333,7 +333,7 @@ func buildPolicyFromIntent(spec intentSpec) (generatedIntent, error) {
 
 func parseIntentAction(text string) string {
 	if containsAllKeywords(text, []string{"require", "approval"}) || containsAllKeywords(text, []string{"needs", "approval"}) {
-		return "require_approval"
+		return "ask"
 	}
 	if stringContainsAny(text, []string{"watch", "monitor", "log", "audit"}) {
 		return "watch"
@@ -493,12 +493,12 @@ func applyStrictness(rule *engine.Rule, strictness string) {
 	switch strictness {
 	case "lenient":
 		if rule.Action == "deny" {
-			rule.Action = "require_approval"
+			rule.Action = "ask"
 			rule.Message = strings.TrimSpace(rule.Message + " (lenient mode)")
 		}
 	case "strict":
 		if rule.Action == "watch" {
-			rule.Action = "require_approval"
+			rule.Action = "ask"
 			rule.Message = strings.TrimSpace(rule.Message + " (strict mode)")
 		}
 	}
@@ -521,7 +521,7 @@ func defaultRuleMessage(action string, typ templateConditionType) string {
 		return subject + " allowed by generated policy"
 	case "watch":
 		return subject + " logged by generated policy"
-	case "require_approval":
+	case "ask", "require_approval":
 		return subject + " requires approval"
 	default:
 		return subject + " blocked by generated policy"

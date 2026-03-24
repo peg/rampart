@@ -215,7 +215,7 @@ func ParseAction(s string) (Action, error) {
 	case "log": // deprecated alias for watch
 		return ActionWatch, nil
 	case "require_approval":
-		return ActionRequireApproval, nil
+		return 0, fmt.Errorf("action \"require_approval\" was removed in v0.9.9; use \"ask\" instead (see migration guide)")
 	case "webhook":
 		return ActionWebhook, nil
 	case "ask":

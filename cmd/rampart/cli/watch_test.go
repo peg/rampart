@@ -97,9 +97,8 @@ func TestResolveWatchServeConfig_DefaultURLAndTokenFile(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetErr(&errBuf)
 	cmd.Flags().String("serve-url", "", "")
-	cmd.Flags().String("serve-token", "", "")
 
-	url, token, err := resolveWatchServeConfig(cmd, "", "")
+	url, token, err := resolveWatchServeConfig(cmd, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,30 +116,22 @@ func TestResolveWatchServeConfig_DefaultURLAndTokenFile(t *testing.T) {
 	}
 }
 
-func TestResolveWatchServeConfig_ExplicitWins(t *testing.T) {
+func TestResolveWatchServeConfig_ExplicitURLNoToken(t *testing.T) {
+	t.Setenv("RAMPART_TOKEN", "")
 	var errBuf bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetErr(&errBuf)
 	cmd.Flags().String("serve-url", "", "")
-	cmd.Flags().String("serve-token", "", "")
 	if err := cmd.Flags().Set("serve-url", "http://example:9090"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Flags().Set("serve-token", "tok-explicit"); err != nil {
-		t.Fatal(err)
-	}
 
-	url, token, err := resolveWatchServeConfig(cmd, "http://example:9090", "tok-explicit")
+	url, token, err := resolveWatchServeConfig(cmd, "http://example:9090")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if url != "http://example:9090" {
 		t.Fatalf("unexpected URL: %s", url)
 	}
-	if token != "tok-explicit" {
-		t.Fatalf("unexpected token: %s", token)
-	}
-	if errBuf.Len() != 0 {
-		t.Fatalf("expected no notes for explicit flags, got: %s", errBuf.String())
-	}
+	_ = token // token resolved from env/file (empty in test)
 }

@@ -34,14 +34,13 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	var decision string
 	var tool string
 	var serveURL string
-	var serveToken string
 	var quiet bool
 
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Live TUI dashboard for audit decisions",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolvedServeURL, resolvedServeToken, err := resolveWatchServeConfig(cmd, serveURL, serveToken)
+			resolvedServeURL, resolvedServeToken, err := resolveWatchServeConfig(cmd, serveURL)
 			if err != nil {
 				return err
 			}
@@ -82,15 +81,14 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&decision, "decision", "", "Filter by decision (allow, deny, log, webhook)")
 	cmd.Flags().StringVar(&tool, "tool", "", "Filter by tool name (e.g., exec, read, write)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Serve API URL for interactive approvals")
-	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Bearer token for serve API")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress noisy system commands (ip neigh, systemd, etc.)")
 
 	return cmd
 }
 
-func resolveWatchServeConfig(cmd *cobra.Command, serveURL, serveToken string) (string, string, error) {
+func resolveWatchServeConfig(cmd *cobra.Command, serveURL string) (string, string, error) {
 	resolvedURL := strings.TrimSpace(serveURL)
-	resolvedToken := strings.TrimSpace(serveToken)
+	var resolvedToken string
 	errW := cmd.ErrOrStderr()
 
 	if !cmd.Flags().Changed("serve-url") && resolvedURL == "" {
@@ -98,13 +96,11 @@ func resolveWatchServeConfig(cmd *cobra.Command, serveURL, serveToken string) (s
 		fmt.Fprintf(errW, "Note: using serve URL %s\n", resolvedURL)
 	}
 
-	if !cmd.Flags().Changed("serve-token") && resolvedToken == "" {
-		if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
-			resolvedToken = envToken
-		} else if tok, err := readPersistedToken(); err == nil && tok != "" {
-			resolvedToken = tok
-			fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")
-		}
+	if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
+		resolvedToken = envToken
+	} else if tok, err := readPersistedToken(); err == nil && tok != "" {
+		resolvedToken = tok
+		fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")
 	}
 
 	return resolvedURL, resolvedToken, nil

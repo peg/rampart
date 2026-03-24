@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-03-24
+
+### Removed (Breaking)
+
+- **`action: require_approval`** — removed from the policy engine. This action was deprecated in v0.6.6. Policies using `require_approval` must migrate to `action: ask` before upgrading. Both `rampart policy lint` and policy load now return an error with a migration hint.
+- **`GET /v1/policy`** — deprecated endpoint removed. Use `GET /v1/status` for server status or `GET /v1/policies` for policy detail.
+- **`--serve-token` flag** — removed from `rampart watch` and `rampart hook`. Use the `RAMPART_TOKEN` environment variable or `~/.rampart/token` instead.
+- **`--env` flag** — removed from `rampart quickstart`. Use `--agents` instead.
+
+### Fixed
+
+- **Always Allow writeback** — clicking "Always Allow" in a Discord/Telegram approval embed now correctly writes a persistent rule to `user-overrides.yaml`. The command was being stored in the wrong place (escalation path only), so the `exec.approval.resolved` handler could not find it. Rule writeback now works for all deferred approvals.
+- **HMAC approval security** — `handleResolveApproval` previously resolved the approval before checking whether the HMAC-signed URL holder was allowed to persist. A signed URL with `persist=true` would commit the approval before the 403 response was sent. The persist check now happens before `Resolve()`.
+- **Bridge audit trail** — commands evaluated via the OpenClaw bridge now appear in the audit JSONL with full parameters. Previously all bridge-evaluated commands logged as `{}` because the bridge had no audit sink wired in.
+- **`rampart watch` serve check** — if `rampart serve` is not reachable when `rampart watch` starts, a clear warning is printed before the TUI opens instead of silently running without interactive approvals.
+
+### Added
+
+- **Bridge audit sink** — the bridge now writes audit events for all commands it evaluates, including deferred approvals. Events include tool, agent, session, params, decision, and policy name.
+- **Tests** — added regression tests for always-allow writeback, bridge audit sink, ActionAsk pendingCommands population, and `rampart allow --for <duration>` end-to-end.
+
+### Changed
+
+- **`action: require_approval` lint severity** — upgraded from warning to error. If you have existing policies using this action, `rampart policy lint` will now fail rather than warn.
+- **ROADMAP.md** — updated to reflect current state: v0.9.9 items, v0.9.10 reliability work, and v1.0 launch plan.
+
+
 ## [0.9.8] - 2026-03-22
 
 ### Added

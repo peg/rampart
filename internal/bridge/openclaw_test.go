@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -367,3 +368,202 @@ func TestDiscoverGatewayConfigMissingFile(t *testing.T) {
 	_, _, err := ReadGatewayConfig("/nonexistent/openclaw.json")
 	assert.Error(t, err)
 }
+
+// TestWriteAllowAlwaysRule verifies that writeAllowAlwaysRule creates a YAML
+// policy file with the correct structure for an allow rule.
+func TestWriteAllowAlwaysRule(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Override HOME (Linux/macOS) and USERPROFILE (Windows) so
+	// writeAllowAlwaysRule writes to our temp dir on all platforms.
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
+
+	eng := newTestEngine(t, writeTestPolicy(t, tmpDir))
+	b := NewOpenClawBridge(eng, Config{
+		GatewayURL:   "ws://127.0.0.1:1",
+		GatewayToken: "test-token",
+	})
+
+	const testCmd = "echo hello-world"
+	b.writeAllowAlwaysRule(testCmd)
+
+	overridesPath := filepath.Join(tmpDir, ".rampart", "policies", "user-overrides.yaml")
+	data, err := os.ReadFile(overridesPath)
+	if err != nil {
+		t.Fatalf("user-overrides.yaml not written: %v", err)
+	}
+
+	content := string(data)
+
+	// Must contain the tool: exec match.
+	if !strings.Contains(content, "tool: exec") {
+		t.Errorf("expected 'tool: exec' in overrides, got:\n%s", content)
+	}
+
+	// Must contain the command in the command_matches list.
+	if !strings.Contains(content, testCmd) {
+		t.Errorf("expected command %q in overrides, got:\n%s", testCmd, content)
+	}
+
+	// Must contain the allow action.
+	if !strings.Contains(content, "action: allow") {
+		t.Errorf("expected 'action: allow' in overrides, got:\n%s", content)
+	}
+
+	// Must NOT write a duplicate rule on second call.
+	b.writeAllowAlwaysRule(testCmd)
+	data2, _ := os.ReadFile(overridesPath)
+	if strings.Count(string(data2), testCmd) > strings.Count(content, testCmd) {
+		t.Error("duplicate rule written on second call to writeAllowAlwaysRule")
+	}
+}
+
+// TestHandleApprovalRequestedAsk is a regression test for the bug where
+// ActionAsk commands were not stored in pendingCommands, breaking allow-always
+// writeback when the user clicked "Always Allow" in the Discord approval UI.
+func TestHandleApprovalRequestedAsk(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write a policy that returns ActionAsk for the sudo command.
+	askPolicy := `version: "1"
+default_action: deny
+policies:
+  - name: ask-sudo
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "sudo *"
+        message: "sudo command — approve or deny?"
+`
+	policyPath := filepath.Join(tmpDir, "ask-policy.yaml")
+	if err := os.WriteFile(policyPath, []byte(askPolicy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mg := newMockGateway(t)
+	defer mg.close()
+
+	eng := newTestEngine(t, policyPath)
+	b := NewOpenClawBridge(eng, Config{
+		GatewayURL:        mg.url(),
+		GatewayToken:      "test-token",
+		ReconnectInterval: 100 * time.Millisecond,
+	})
+	defer b.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { b.Start(ctx) }() //nolint:errcheck
+
+	// Wait for connection to establish.
+	time.Sleep(500 * time.Millisecond)
+
+	const approvalID = "ask-approval-001"
+	const testCmd = "sudo systemctl restart nginx"
+
+	mg.sendApprovalRequest(approvalID, testCmd, "claude-code")
+
+	// Give the bridge time to evaluate and update pendingCommands.
+	time.Sleep(300 * time.Millisecond)
+
+	b.pendingMu.Lock()
+	cmd, stored := b.pendingCommands[approvalID]
+	b.pendingMu.Unlock()
+
+	if !stored {
+		t.Errorf("expected command to be stored in pendingCommands for ActionAsk, but it was not")
+	} else if cmd != testCmd {
+		t.Errorf("expected pendingCommands[%q] = %q, got %q", approvalID, testCmd, cmd)
+	}
+
+	cancel()
+}
+
+// TestBridgeAuditSinkWrite verifies that bridge-evaluated approvals are written
+// to the audit sink, fixing the empty-params audit trail bug.
+func TestBridgeAuditSinkWrite(t *testing.T) {
+	mg := newMockGateway(t)
+	defer mg.close()
+
+	tmpDir := t.TempDir()
+	policyPath := writeTestPolicy(t, tmpDir)
+	eng := newTestEngine(t, policyPath)
+
+	// Simple in-memory audit sink for testing.
+	var mu sync.Mutex
+	var written []audit.Event
+	sink := &testAuditSink{writeFn: func(ev audit.Event) error {
+		mu.Lock()
+		written = append(written, ev)
+		mu.Unlock()
+		return nil
+	}}
+
+	b := NewOpenClawBridge(eng, Config{
+		GatewayURL:        mg.url(),
+		GatewayToken:      "test-token",
+		ReconnectInterval: 100 * time.Millisecond,
+		AuditSink:         sink,
+	})
+	defer b.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { b.Start(ctx) }() //nolint:errcheck
+
+	time.Sleep(500 * time.Millisecond)
+
+	mg.sendApprovalRequest("audit-test-001", "go test ./...", "test-agent")
+	time.Sleep(300 * time.Millisecond)
+
+	// Consume the gateway response to unblock.
+	mg.readResponse()
+
+	mu.Lock()
+	n := len(written)
+	var ev audit.Event
+	if n > 0 {
+		ev = written[0]
+	}
+	mu.Unlock()
+
+	if n == 0 {
+		t.Fatal("expected audit event to be written, got none")
+	}
+	if ev.Tool != "exec" {
+		t.Errorf("expected Tool=exec, got %q", ev.Tool)
+	}
+	if ev.Agent != "test-agent" {
+		t.Errorf("expected Agent=test-agent, got %q", ev.Agent)
+	}
+	if ev.Request == nil {
+		t.Error("expected non-nil Request params in audit event")
+	} else if ev.Request["command"] != "go test ./..." {
+		t.Errorf("expected command in audit Request, got %v", ev.Request)
+	}
+	if ev.ID == "" {
+		t.Error("expected non-empty event ID")
+	}
+
+	cancel()
+}
+
+// testAuditSink is a minimal in-memory AuditSink for tests.
+type testAuditSink struct {
+	writeFn func(audit.Event) error
+}
+
+func (s *testAuditSink) Write(ev audit.Event) error {
+	if s.writeFn != nil {
+		return s.writeFn(ev)
+	}
+	return nil
+}
+func (s *testAuditSink) Flush() error { return nil }
+func (s *testAuditSink) Close() error { return nil }

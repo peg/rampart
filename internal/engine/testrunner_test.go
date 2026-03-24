@@ -45,7 +45,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "kubectl apply *"
@@ -87,7 +87,7 @@ func TestRunTests_AllPass(t *testing.T) {
 			{Name: "deny rm", Tool: "exec", Params: map[string]any{"command": "rm -rf /"}, Expect: "deny"},
 			{Name: "allow git", Tool: "exec", Params: map[string]any{"command": "git status"}, Expect: "allow"},
 			{Name: "deny shadow", Tool: "read", Params: map[string]any{"path": "/etc/shadow"}, Expect: "deny"},
-			{Name: "approve kubectl", Tool: "exec", Params: map[string]any{"command": "kubectl apply -f app.yaml"}, Expect: "require_approval"},
+			{Name: "approve kubectl", Tool: "exec", Params: map[string]any{"command": "kubectl apply -f app.yaml"}, Expect: "ask"},
 			{Name: "ask sudo", Tool: "exec", Params: map[string]any{"command": "sudo whoami"}, Expect: "ask"},
 		},
 	}

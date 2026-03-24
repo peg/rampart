@@ -1211,7 +1211,7 @@ policies:
     match:
       tool: "*"
     rules:
-      - action: require_approval
+      - action: ask
         when:
           default: true
 `)

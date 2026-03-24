@@ -173,7 +173,7 @@ func TestDevopsAgentRequiresApproval(t *testing.T) {
 	yamlBytes, _ := p.RenderYAML()
 	content := string(yamlBytes)
 	
-	if !strings.Contains(content, "require_approval") {
-		t.Error("devops-agent should use require_approval for sensitive ops")
+	if !strings.Contains(content, "ask") {
+		t.Error("devops-agent should use ask for sensitive ops")
 	}
 }

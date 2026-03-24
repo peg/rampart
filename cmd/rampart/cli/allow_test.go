@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/internal/policy"
 	"gopkg.in/yaml.v3"
@@ -583,5 +584,78 @@ func TestMultipleAllowBlockRules(t *testing.T) {
 
 	if p2.TotalRules() != 4 {
 		t.Errorf("expected 4 rules, got %d", p2.TotalRules())
+	}
+}
+
+// TestAllowCmd_ForDuration verifies that --for sets expires_at approximately
+// 1 hour from now on the written rule, confirming end-to-end --for implementation.
+func TestAllowCmd_ForDuration(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	_ = os.MkdirAll(filepath.Join(dir, ".rampart", "policies"), 0o755)
+	policyPath := filepath.Join(dir, ".rampart", "policies", "custom.yaml")
+
+	before := time.Now()
+
+	outBuf := &bytes.Buffer{}
+	cmd := NewRootCmd(context.Background(), outBuf, &bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"allow",
+		"test-command-*",
+		"--global",
+		"--yes",
+		"--for", "1h",
+		"--api", "http://127.0.0.1:0", // unreachable — that's fine
+	})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("allow --for 1h failed: %v", err)
+	}
+
+	after := time.Now()
+
+	// Read the written YAML.
+	p, err := policy.LoadCustomPolicy(policyPath)
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	if p.TotalRules() == 0 {
+		t.Fatal("expected at least one rule to be written")
+	}
+
+	// Find the rule matching test-command-* and verify it.
+	var foundRule *policy.CustomRule
+	for i := range p.Policies {
+		for j := range p.Policies[i].Rules {
+			r := &p.Policies[i].Rules[j]
+			for _, pat := range r.When.CommandMatches {
+				if pat == "test-command-*" {
+					foundRule = r
+				}
+			}
+		}
+	}
+	if foundRule == nil {
+		t.Fatal("expected rule for test-command-* not found in policy")
+	}
+	if foundRule.Action != "allow" {
+		t.Errorf("expected action=allow, got %q", foundRule.Action)
+	}
+	if foundRule.ExpiresAt == nil {
+		t.Fatal("expected expires_at to be set, but it is nil")
+	}
+
+	// expires_at should be approximately 1 hour from now (within a 5-second window).
+	wantExpiry := before.Add(time.Hour)
+	wantExpiryMax := after.Add(time.Hour)
+	const window = 5 * time.Second
+
+	if foundRule.ExpiresAt.Before(wantExpiry.Add(-window)) {
+		t.Errorf("expires_at %v is too early; expected ~%v", foundRule.ExpiresAt, wantExpiry)
+	}
+	if foundRule.ExpiresAt.After(wantExpiryMax.Add(window)) {
+		t.Errorf("expires_at %v is too late; expected ~%v", foundRule.ExpiresAt, wantExpiryMax)
 	}
 }

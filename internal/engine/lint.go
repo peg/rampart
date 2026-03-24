@@ -68,13 +68,12 @@ type LintResult struct {
 
 // validActions are the known action values.
 var validActions = map[string]bool{
-	"allow":            true,
-	"deny":             true,
-	"watch":            true,
-	"log":              true, // deprecated alias for watch
-	"require_approval": true,
-	"webhook":          true,
-	"ask":              true,
+	"allow":   true,
+	"deny":    true,
+	"watch":   true,
+	"log":     true, // deprecated alias for watch
+	"webhook": true,
+	"ask":     true,
 }
 
 // validConditionFields are the known fields in a `when:` block.
@@ -121,8 +120,8 @@ var commonActionTypos = map[string]string{
 	"allaw":    "allow",
 	"permit":   "allow",
 	"logging":  "log",
-	"approve":  "require_approval",
-	"approval": "require_approval",
+	"approve":  "ask",
+	"approval": "ask",
 }
 
 // LintPolicyFile lints a policy YAML file and returns findings.
@@ -248,16 +247,12 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 			Message:  fmt.Sprintf("policy %q rule %d: action \"log\" is deprecated — use \"watch\" instead (same behavior, clearer name)", p.Name, ruleIdx+1),
 		})
 	}
-	// Deprecation warning for action: require_approval (v0.6.6 migration path).
+	// Error for action: require_approval — removed in v0.9.9.
 	if actionLower == "require_approval" {
 		result.add(LintFinding{
 			File:     filename,
-			Severity: LintWarning,
-			Message: "action \"require_approval\" is deprecated as of v0.6.6 and will be removed in v1.0.\n" +
-				"  - For interactive use:  action: ask\n" +
-				"  - For interactive + audit logging: action: ask (with ask.audit: true)\n" +
-				"  - For CI/headless (blocking): action: ask (with ask.audit: true and ask.headless_only: true)\n" +
-				"  See: https://rampart.sh/docs/migration/v0.6.6",
+			Severity: LintError,
+			Message:  "action \"require_approval\" was removed in v0.9.9; use \"ask\" instead",
 		})
 	}
 

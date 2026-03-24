@@ -80,7 +80,7 @@ func TestPolicyGeneratePreset_PrintDevopsAgent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "devops-approve-kubectl-write")
 	assert.Contains(t, out, "devops-approve-ssh")
-	assert.Contains(t, out, "require_approval")
+	assert.Contains(t, out, "ask")
 }
 
 func TestPolicyGeneratePreset_UnknownPreset(t *testing.T) {
@@ -225,7 +225,7 @@ func TestCIAgent_BlocksNetwork(t *testing.T) {
 func TestDevopsAgent_RequiresApprovalForKubectl(t *testing.T) {
 	p, _ := generate.FindPreset("devops-agent")
 	data, _ := p.RenderYAML()
-	assert.Contains(t, string(data), "require_approval")
+	assert.Contains(t, string(data), "ask")
 	assert.Contains(t, string(data), "kubectl apply *")
 	assert.Contains(t, string(data), "ssh *")
 }

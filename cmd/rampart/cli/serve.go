@@ -463,6 +463,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 						GatewayURL:   gwURL,
 						GatewayToken: gwToken,
 						Logger:       logger,
+						AuditSink:    sink,
 					})
 					bridgeCtx, bridgeCancel := context.WithCancel(cmd.Context())
 					defer bridgeCancel()

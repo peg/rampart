@@ -471,7 +471,7 @@ var DevopsAgent = Preset{
 				Match:    engine.Match{Tool: engine.StringOrSlice{"exec"}},
 				Rules: []engine.Rule{
 					{
-						Action: "require_approval",
+						Action: "ask",
 						When: engine.Condition{
 							CommandMatches: []string{
 								"kubectl apply *",
@@ -514,7 +514,7 @@ var DevopsAgent = Preset{
 				Match:    engine.Match{Tool: engine.StringOrSlice{"exec"}},
 				Rules: []engine.Rule{
 					{
-						Action: "require_approval",
+						Action: "ask",
 						When: engine.Condition{
 							CommandMatches: []string{
 								"helm install *",
@@ -545,7 +545,7 @@ var DevopsAgent = Preset{
 				Match:    engine.Match{Tool: engine.StringOrSlice{"exec"}},
 				Rules: []engine.Rule{
 					{
-						Action: "require_approval",
+						Action: "ask",
 						When: engine.Condition{
 							CommandMatches: []string{
 								"terraform apply *",
@@ -576,7 +576,7 @@ var DevopsAgent = Preset{
 				Match:    engine.Match{Tool: engine.StringOrSlice{"exec"}},
 				Rules: []engine.Rule{
 					{
-						Action: "require_approval",
+						Action: "ask",
 						When: engine.Condition{
 							CommandMatches: []string{
 								"ssh *",
@@ -596,7 +596,7 @@ var DevopsAgent = Preset{
 				Match:    engine.Match{Tool: engine.StringOrSlice{"exec"}},
 				Rules: []engine.Rule{
 					{
-						Action: "require_approval",
+						Action: "ask",
 						When: engine.Condition{
 							CommandMatches: []string{
 								"docker push *",

@@ -59,7 +59,7 @@ func TestDetectEnv_MultiAgentDetection(t *testing.T) {
 func TestQuickstartSelectAgents_DefaultAllDetected(t *testing.T) {
 	result := &detect.DetectResult{ClaudeCode: true, HasCodex: true, HasCursor: true}
 
-	selected, err := selectQuickstartAgents(result, "", "")
+	selected, err := selectQuickstartAgents(result, "")
 	if err != nil {
 		t.Fatalf("selectQuickstartAgents error = %v", err)
 	}
@@ -74,7 +74,7 @@ func TestQuickstartSelectAgents_DefaultAllDetected(t *testing.T) {
 func TestQuickstartSelectAgents_AgentsFlagOverride(t *testing.T) {
 	result := &detect.DetectResult{ClaudeCode: true}
 
-	selected, err := selectQuickstartAgents(result, "codex,cursor", "")
+	selected, err := selectQuickstartAgents(result, "codex,cursor")
 	if err != nil {
 		t.Fatalf("selectQuickstartAgents error = %v", err)
 	}
@@ -86,10 +86,10 @@ func TestQuickstartSelectAgents_AgentsFlagOverride(t *testing.T) {
 	}
 }
 
-func TestQuickstartSelectAgents_EnvAliasOverride(t *testing.T) {
+func TestQuickstartSelectAgents_AgentsFlagSingleAgent(t *testing.T) {
 	result := &detect.DetectResult{}
 
-	selected, err := selectQuickstartAgents(result, "", "openclaw")
+	selected, err := selectQuickstartAgents(result, "openclaw")
 	if err != nil {
 		t.Fatalf("selectQuickstartAgents error = %v", err)
 	}
@@ -131,7 +131,7 @@ func TestQuickstartSuggestedPolicies_SkipsInstalled(t *testing.T) {
 }
 
 func TestQuickstartUnsupportedAgentWrapSuggestion(t *testing.T) {
-	selected, err := selectQuickstartAgents(&detect.DetectResult{HasCursor: true}, "", "")
+	selected, err := selectQuickstartAgents(&detect.DetectResult{HasCursor: true}, "")
 	if err != nil {
 		t.Fatalf("selectQuickstartAgents error = %v", err)
 	}
@@ -153,12 +153,10 @@ func TestQuickstartCmd_Flags(t *testing.T) {
 	if agentsFlag == nil {
 		t.Fatal("--agents flag not registered")
 	}
+	// --env was removed in v0.9.9 (deprecated alias for --agents)
 	envFlag := cmd.Flags().Lookup("env")
-	if envFlag == nil {
-		t.Fatal("--env alias flag not registered")
-	}
-	if !envFlag.Hidden {
-		t.Fatal("--env flag should be hidden")
+	if envFlag != nil {
+		t.Fatal("--env flag should be removed in v0.9.9")
 	}
 	profileFlag := cmd.Flags().Lookup("profile")
 	if profileFlag == nil {

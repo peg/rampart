@@ -52,7 +52,6 @@ func quickstartAgents() []quickstartAgent {
 
 func newQuickstartCmd() *cobra.Command {
 	var agentsFlag string
-	var envAlias string
 	var profile string
 	var skipDoctor bool
 	var yes bool
@@ -69,20 +68,18 @@ Detected unsupported agents receive wrap guidance.
 Use --yes to run non-interactively (AI agents, CI, automated setup).
 For OpenClaw, --yes also enables --patch-tools for full file-operation coverage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuickstart(cmd, agentsFlag, envAlias, profile, skipDoctor, yes)
+			return runQuickstart(cmd, agentsFlag, profile, skipDoctor, yes)
 		},
 	}
 
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agents to configure (claude-code,codex,cline,openclaw,cursor,aider,windsurf,copilot,none)")
-	cmd.Flags().StringVar(&envAlias, "env", "", "(deprecated) single agent alias for --agents")
-	_ = cmd.Flags().MarkHidden("env")
 	cmd.Flags().StringVar(&profile, "profile", "", "Policy profile for initialization (default: standard)")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "skip final health check summary")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive mode: for OpenClaw, also enables --patch-tools (full file coverage); safe to pass for any agent")
 	return cmd
 }
 
-func runQuickstart(cmd *cobra.Command, agentsFlag, envAlias, profile string, skipDoctor, yes bool) error {
+func runQuickstart(cmd *cobra.Command, agentsFlag, profile string, skipDoctor, yes bool) error {
 	w := cmd.OutOrStdout()
 
 	fmt.Fprintln(w, "◆ Rampart quickstart")
@@ -100,7 +97,7 @@ func runQuickstart(cmd *cobra.Command, agentsFlag, envAlias, profile string, ski
 	printDetectedTools(w, result)
 	fmt.Fprintln(w)
 
-	selectedAgents, err := selectQuickstartAgents(result, agentsFlag, envAlias)
+	selectedAgents, err := selectQuickstartAgents(result, agentsFlag)
 	if err != nil {
 		return err
 	}
@@ -231,11 +228,8 @@ func runQuickstart(cmd *cobra.Command, agentsFlag, envAlias, profile string, ski
 	return nil
 }
 
-func selectQuickstartAgents(result *detect.DetectResult, agentsFlag, envAlias string) ([]quickstartAgent, error) {
+func selectQuickstartAgents(result *detect.DetectResult, agentsFlag string) ([]quickstartAgent, error) {
 	override := strings.TrimSpace(agentsFlag)
-	if override == "" {
-		override = strings.TrimSpace(envAlias)
-	}
 
 	selectedKeys, err := parseAgentOverride(override)
 	if err != nil {
