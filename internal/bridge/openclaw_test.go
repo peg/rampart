@@ -374,8 +374,10 @@ func TestDiscoverGatewayConfigMissingFile(t *testing.T) {
 func TestWriteAllowAlwaysRule(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Override HOME so writeAllowAlwaysRule writes to our temp dir.
+	// Override HOME (Linux/macOS) and USERPROFILE (Windows) so
+	// writeAllowAlwaysRule writes to our temp dir on all platforms.
 	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	eng := newTestEngine(t, writeTestPolicy(t, tmpDir))
 	b := NewOpenClawBridge(eng, Config{
