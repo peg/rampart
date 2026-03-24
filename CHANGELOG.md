@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Bridge audit sink** — the bridge now writes audit events for all commands it evaluates, including deferred approvals. Events include tool, agent, session, params, decision, policy name, and a `"source": "bridge"` marker.
+- **Bridge audit sink** — the bridge now writes audit events for all commands it evaluates, including deferred approvals. Events include tool, agent, session, params, decision, and policy name.
 - **Tests** — added regression tests for always-allow writeback, bridge audit sink, ActionAsk pendingCommands population, and `rampart allow --for <duration>` end-to-end.
 
 ### Changed
