@@ -45,7 +45,6 @@ func TestParseAction_AllActions(t *testing.T) {
 		{"allow", ActionAllow},
 		{"deny", ActionDeny},
 		{"watch", ActionWatch},
-		{"require_approval", ActionRequireApproval},
 		{"webhook", ActionWebhook},
 		{"ask", ActionAsk},
 	}
@@ -61,6 +60,12 @@ func TestParseAction_AllActions(t *testing.T) {
 		if got.String() != tc.input {
 			t.Errorf("Action(%q).String() = %q, want %q", tc.input, got.String(), tc.input)
 		}
+	}
+
+	// require_approval was removed in v0.9.9 and should return an error.
+	_, err := ParseAction("require_approval")
+	if err == nil {
+		t.Error("ParseAction(\"require_approval\") expected error, got nil")
 	}
 }
 
@@ -84,12 +89,7 @@ func TestRuleParseAction_Ask(t *testing.T) {
 	}
 }
 
-func TestRuleAskAuditEnabled_RequireApprovalAlias(t *testing.T) {
-	r := Rule{Action: "require_approval"}
-	if !r.AskAuditEnabled() {
-		t.Fatal("expected require_approval to be treated as ask+audit")
-	}
-}
+// TestRuleAskAuditEnabled_RequireApprovalAlias removed — require_approval was removed in v0.9.9.
 
 func TestRuleAskAuditEnabled_AskExplicitAudit(t *testing.T) {
 	r := Rule{Action: "ask", Ask: AskActionConfig{Audit: true}}
@@ -112,12 +112,7 @@ func TestRuleHeadlessOnlyEnabled_AskExplicit(t *testing.T) {
 	}
 }
 
-func TestRuleHeadlessOnlyEnabled_RequireApprovalFalse(t *testing.T) {
-	r := Rule{Action: "require_approval", Ask: AskActionConfig{HeadlessOnly: true}}
-	if r.HeadlessOnlyEnabled() {
-		t.Fatal("expected require_approval not to enable headless-only mode")
-	}
-}
+// TestRuleHeadlessOnlyEnabled_RequireApprovalFalse removed — require_approval was removed in v0.9.9.
 
 // ── Policy evaluation with action: ask ───────────────────────────────────────
 

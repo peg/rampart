@@ -244,6 +244,14 @@ authorized:
 		req.ResolvedBy = "api"
 	}
 
+	// HMAC-signed URLs are scoped to a single approval action — they must not
+	// be able to make permanent policy changes. Check before resolving so the
+	// approval is never committed with Persist=true via a signed URL.
+	if hmacAuthed && req.Persist {
+		writeError(w, http.StatusForbidden, "persist=true requires admin token authentication, not a signed approval URL")
+		return
+	}
+
 	if err := s.approvals.Resolve(id, req.Approved, req.ResolvedBy, req.Persist); err != nil {
 		// Distinguish "already resolved" (replay) from "unknown id".
 		if existing, ok := s.approvals.Get(id); ok && existing.Status != approval.StatusPending {
@@ -261,14 +269,6 @@ authorized:
 		"approved", req.Approved,
 		"resolved_by", req.ResolvedBy,
 	)
-
-	// HMAC-signed URLs are scoped to a single approval action — they must not
-	// be able to make permanent policy changes. Reject before any further
-	// processing so the audit log never records a false "always_allowed".
-	if hmacAuthed && req.Persist {
-		writeError(w, http.StatusForbidden, "persist=true requires admin token authentication, not a signed approval URL")
-		return
-	}
 
 	// Write audit event for the resolution.
 	if s.sink != nil {

@@ -233,7 +233,7 @@ func (r Rule) ParseAction() (Action, error) {
 	case "watch", "log": // "log" kept as deprecated alias
 		return ActionWatch, nil
 	case "require_approval":
-		return ActionRequireApproval, nil
+		return 0, fmt.Errorf("action \"require_approval\" was removed in v0.9.9; use \"ask\" instead (see migration guide)")
 	case "webhook":
 		return ActionWebhook, nil
 	case "ask":
@@ -244,14 +244,8 @@ func (r Rule) ParseAction() (Action, error) {
 }
 
 // AskAuditEnabled reports whether this rule should be treated as ask+audit.
-//
-// action: require_approval is kept as a policy alias and is interpreted as
-// action: ask + ask.audit=true for hook-side behavior.
 func (r Rule) AskAuditEnabled() bool {
 	action := strings.ToLower(strings.TrimSpace(r.Action))
-	if action == "require_approval" {
-		return true
-	}
 	if action == "ask" {
 		return r.Ask.Audit
 	}

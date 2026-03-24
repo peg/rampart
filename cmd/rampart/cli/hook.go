@@ -197,7 +197,6 @@ func newHookCmd(opts *rootOptions) *cobra.Command {
 	var mode string
 	var format string
 	var serveURL string
-	var serveToken string
 	var configDir string
 
 	cmd := &cobra.Command{
@@ -242,19 +241,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
 				serveAutoDiscovered = true
 			}
-			if cmd.Flags().Changed("serve-token") {
-				fmt.Fprintln(os.Stderr, "Warning: --serve-token is visible in process list. Prefer RAMPART_TOKEN env var.")
-			}
-			if serveToken == "" {
-				serveToken = os.Getenv("RAMPART_TOKEN")
-			}
-			// Auto-read token from ~/.rampart/token when not set via env/flag.
+			// Resolve token from RAMPART_TOKEN env var or ~/.rampart/token file.
 			// This means settings.json never needs to contain credentials —
 			// the hook discovers both the URL and the token from standard locations.
-			if serveToken == "" {
-				if tok, err := readPersistedToken(); err == nil && tok != "" {
-					serveToken = tok
-				}
+			var serveToken string
+			if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
+				serveToken = envToken
+			} else if tok, err := readPersistedToken(); err == nil && tok != "" {
+				serveToken = tok
 			}
 
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
@@ -719,8 +713,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of rampart serve instance (default: auto-discover on localhost:9090, env: RAMPART_SERVE_URL)")
-	cmd.Flags().StringVar(&serveToken, "serve-token", "", "Auth token for rampart serve (env: RAMPART_TOKEN)")
-	cmd.Flags().MarkDeprecated("serve-token", "use RAMPART_TOKEN env var instead (--serve-token is visible in process list)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 
 	return cmd

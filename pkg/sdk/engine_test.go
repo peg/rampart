@@ -227,7 +227,7 @@ policies:
 	}
 }
 
-func TestPreflight_RequireApproval(t *testing.T) {
+func TestPreflight_AskAction(t *testing.T) {
 	s := setupSDK(t, `
 version: "1"
 default_action: allow
@@ -236,7 +236,7 @@ policies:
     match:
       tool: exec
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches: ["sudo *"]
         message: "needs approval"
@@ -244,10 +244,10 @@ policies:
 
 	result := s.Preflight(context.Background(), "exec", map[string]any{"command": "sudo reboot"})
 	if result.Allowed {
-		t.Fatal("require_approval should not be 'allowed'")
+		t.Fatal("ask action should not be 'allowed'")
 	}
-	if result.Action != "require_approval" {
-		t.Fatalf("expected require_approval, got %s", result.Action)
+	if result.Action != "ask" {
+		t.Fatalf("expected ask, got %s", result.Action)
 	}
 }
 

@@ -441,14 +441,6 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePolicy returns a summary of the current active policy configuration.
-// handlePolicy returns server status including policy counts.
-// Deprecated: prefer GET /v1/status for status info, GET /v1/policies for
-// full per-policy detail with source file information.
-func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
-	s.handleStatus(w, r)
-}
-
 // handlePoliciesSnapshot returns all loaded policies with source file info.
 // Admin-only — exposes rule names and match conditions.
 func (s *Server) handlePoliciesSnapshot(w http.ResponseWriter, r *http.Request) {

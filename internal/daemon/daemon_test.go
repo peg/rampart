@@ -236,7 +236,7 @@ policies:
     match:
       tool: exec
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "sudo *"

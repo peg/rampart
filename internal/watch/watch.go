@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -212,9 +214,37 @@ func NewModel(cfg Config) *Model {
 	return m
 }
 
+// checkServeReachable does a quick health check against the serve API.
+// Returns true if reachable, false otherwise.
+func checkServeReachable(serveURL, token string) bool {
+	statusURL := strings.TrimRight(serveURL, "/") + "/v1/status"
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, statusURL, nil)
+	if err != nil {
+		return false
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode < 300
+}
+
 // Run starts the watch TUI.
 func Run(ctx context.Context, cfg Config) error {
 	model := NewModel(cfg)
+
+	// Warn if serve is configured but not reachable — interactive approvals won't work.
+	if cfg.ServeURL != "" {
+		if !checkServeReachable(cfg.ServeURL, cfg.ServeToken) {
+			fmt.Fprintf(os.Stderr, "⚠  rampart serve is not reachable at %s — interactive approvals will be unavailable\n   Start it with: rampart serve --background\n", cfg.ServeURL)
+		}
+	}
+
 	model.tailerCh = model.tailer.start(ctx)
 	opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithAltScreen()}
 	if cfg.Out != nil {

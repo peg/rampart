@@ -384,7 +384,7 @@ func (d *Daemon) handleApproval(ctx context.Context, req approvalRequest) {
 		d.resolveApproval(req.ID, "deny")
 	case engine.ActionWatch:
 		d.resolveApproval(req.ID, "allow-once")
-	case engine.ActionRequireApproval:
+	case engine.ActionRequireApproval, engine.ActionAsk:
 		d.handleHumanApproval(ctx, req, call, decision)
 	default:
 		d.resolveApproval(req.ID, "deny")
