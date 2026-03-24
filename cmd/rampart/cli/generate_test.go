@@ -37,7 +37,7 @@ func TestBuildPolicyFromIntent_Examples(t *testing.T) {
 		{
 			name:   "require approval npm installs",
 			intent: "require approval for npm installs",
-			action: "require_approval",
+			action: "ask",
 			tools:  []string{"exec"},
 			assertWhen: func(t *testing.T, when engine.Condition) {
 				containsValue(t, when.CommandMatches, "npm install *")
@@ -83,7 +83,7 @@ func TestBuildPolicyFromIntent_Examples(t *testing.T) {
 		{
 			name:   "require approval sudo",
 			intent: "require approval for sudo",
-			action: "require_approval",
+			action: "ask",
 			tools:  []string{"exec"},
 			assertWhen: func(t *testing.T, when engine.Condition) {
 				containsValue(t, when.CommandMatches, "sudo **")
