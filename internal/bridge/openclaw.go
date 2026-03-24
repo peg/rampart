@@ -47,6 +47,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 )
 
@@ -58,6 +59,7 @@ type OpenClawBridge struct {
 	token      string
 	serveURL   string
 	logger     *slog.Logger
+	sink       audit.AuditSink
 
 	reconnectInterval time.Duration
 
@@ -86,6 +88,10 @@ type Config struct {
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
+
+	// AuditSink is an optional sink to write audit events for bridge-evaluated
+	// approvals. If nil, audit events are skipped for bridge traffic.
+	AuditSink audit.AuditSink
 }
 
 // NewOpenClawBridge creates a new bridge.
@@ -106,9 +112,10 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		token:             cfg.GatewayToken,
 		serveURL:          cfg.ServeURL,
 		logger:            cfg.Logger,
+		sink:              cfg.AuditSink,
 		reconnectInterval: cfg.ReconnectInterval,
-		pending:         make(map[string]chan struct{}),
-		pendingCommands: make(map[string]string),
+		pending:           make(map[string]chan struct{}),
+		pendingCommands:   make(map[string]string),
 	}
 }
 
@@ -405,6 +412,27 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		"duration", evalDuration,
 	)
 
+	// Write an audit event so bridge-evaluated commands appear in the JSONL trail.
+	if b.sink != nil {
+		ev := audit.Event{
+			ID:        audit.NewEventID(),
+			Timestamp: time.Now().UTC(),
+			Agent:     call.Agent,
+			Session:   call.Session,
+			Tool:      call.Tool,
+			Request:   call.Params,
+			Decision: audit.EventDecision{
+				Action:          decision.Action.String(),
+				MatchedPolicies: decision.MatchedPolicies,
+				EvalTimeUS:      decision.EvalDuration.Microseconds(),
+				Message:         decision.Message,
+			},
+		}
+		if err := b.sink.Write(ev); err != nil {
+			b.logger.Warn("bridge: failed to write audit event", "error", err)
+		}
+	}
+
 	switch decision.Action {
 	case engine.ActionAllow, engine.ActionWatch:
 		b.resolveApproval(conn, req.ID, "allow-once")
@@ -698,6 +726,12 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	// Build the rule block to append.
 	rule := fmt.Sprintf("\n- name: %s\n  match:\n    tool: exec\n  rules:\n    - when:\n        command_matches:\n          - %q\n      action: allow\n      message: \"User allowed (always)\"\n",
 		ruleName, command)
+
+	// Ensure the policies directory exists before writing.
+	if err := os.MkdirAll(filepath.Dir(overridesPath), 0o750); err != nil {
+		b.logger.Error("bridge: allow-always: create policies dir", "error", err)
+		return
+	}
 
 	// Read existing file or create with header.
 	var existing string
