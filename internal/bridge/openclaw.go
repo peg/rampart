@@ -335,6 +335,8 @@ func (b *OpenClawBridge) handleFrame(ctx context.Context, conn *websocket.Conn, 
 	}
 }
 
+
+
 // handleEvent handles an incoming event frame.
 func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, frame gatewayFrame) {
 	switch frame.Event {
@@ -415,12 +417,12 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		// (Discord/Telegram embed). Don't escalate to Rampart serve — that creates
 		// a competing timer and confusing dual-approval UX.
 		//
-		// Instead, just register the command in pendingCommands so that when the
-		// user clicks "Always Allow" in Discord, the exec.approval.resolved handler
-		// can write the rule to user-overrides.yaml.
-		//
-		// The command is already stored in pendingCommands by handleEvent() at
-		// exec.approval.requested time, so nothing more is needed here.
+		// Register the command so that when the user clicks "Always Allow" in
+		// Discord, the exec.approval.resolved handler can write the rule to
+		// user-overrides.yaml.
+		b.pendingMu.Lock()
+		b.pendingCommands[req.ID] = req.command()
+		b.pendingMu.Unlock()
 		b.logger.Info("bridge: deferring to OpenClaw approval UI",
 			"id", req.ID, "command", req.command(), "policy", decision.Message)
 
