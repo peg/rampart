@@ -97,12 +97,17 @@ rampart doctor --fix
 sudo rampart setup openclaw --patch-tools --force
 ```
 
-Check bridge connection:
+## Verify it's working
+
+Check that the bridge connected successfully after starting OpenClaw:
 
 ```bash
-journalctl --user -u rampart-proxy -n 20 | grep bridge
-# Should show: "bridge: handshake complete" with no disconnect
+journalctl --user -u rampart-serve -n 20 | grep "bridge: connected"
 ```
+
+You should see a line like `bridge: connected to gateway ws://localhost:9000`. No output means the bridge hasn't connected — check that `rampart serve` is running and OpenClaw's gateway is up.
+
+> **Note:** `rampart doctor` will soon include an explicit `ask: on-miss` check to verify the OpenClaw config is set correctly. Once that fix lands, `rampart doctor` will flag misconfigured setups automatically.
 
 ## OpenClaw config recommendation
 
@@ -110,12 +115,7 @@ For the best experience, set `ask` to `on-miss` in `~/.openclaw/openclaw.json`:
 
 ```json
 {
-  "tools": {
-    "exec": {
-      "security": "full",
-      "ask": "on-miss"
-    }
-  }
+  "ask": "on-miss"
 }
 ```
 

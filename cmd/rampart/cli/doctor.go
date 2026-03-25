@@ -230,7 +230,12 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// 15. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
 
-	// 16. Proactive policy suggestions (informational only)
+	// 16. OpenClaw ask mode check
+	if n := doctorOpenClawAskMode(emit); n > 0 {
+		warnings += n
+	}
+
+	// 17. Proactive policy suggestions (informational only)
 	if detectResult, detectErr := detect.Environment(); detectErr == nil {
 		client := newPolicyRegistryClient()
 		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
@@ -1168,6 +1173,43 @@ func doctorProjectPolicy(w io.Writer, emit emitFn, collect bool) {
 		} else {
 			fmt.Fprintf(w, "  No project policy (.rampart/policy.yaml not found in this repo)\n")
 		}
+	}
+}
+
+// doctorOpenClawAskMode checks if ~/.openclaw/openclaw.json has ask set to
+// "on-miss" or "always", which is required for exec approval events to reach
+// Rampart's bridge. If the file doesn't exist, the check is skipped silently.
+func doctorOpenClawAskMode(emit emitFn) (warnings int) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		// File doesn't exist — not everyone uses OpenClaw, skip silently.
+		return 0
+	}
+
+	var cfg struct {
+		Ask string `json:"ask"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		emit("OpenClaw ask mode", "warn", fmt.Sprintf("failed to parse %s: %v", configPath, err))
+		return 1
+	}
+
+	switch cfg.Ask {
+	case "on-miss", "always":
+		emit("OpenClaw ask mode", "ok", fmt.Sprintf("%s (exec approvals will reach Rampart bridge)", cfg.Ask))
+		return 0
+	default:
+		emit("OpenClaw ask mode", "warn",
+			"not configured for exec interception"+hintSep+
+				"Add \"ask\": \"on-miss\" to ~/.openclaw/openclaw.json, then restart OpenClaw\n"+
+				"       Without this, exec approval events are never sent to Rampart's bridge")
+		return 1
 	}
 }
 
