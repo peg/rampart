@@ -30,7 +30,19 @@ Pattern-based deny rules can be evaded by obfuscated commands (quoting, variable
 
 ## Can I require human approval for certain commands?
 
-Yes. Set `action: require_approval` on any policy rule. Your agent pauses, Rampart sends a notification (Discord, Slack, or any webhook), and the command stays blocked until you approve or deny it from the [dashboard](../features/dashboard.md) or CLI.
+Yes. Set `action: ask` on any policy rule. Your agent pauses, Rampart sends a notification (Discord, Slack, or any webhook), and the command stays blocked until you approve or deny it from the [dashboard](../features/dashboard.md) or CLI.
+
+```yaml
+policies:
+  - name: approve-deploys
+    rules:
+      - action: ask
+        when:
+          command_matches: ["kubectl apply *"]
+        message: "Deployment requires approval"
+```
+
+See the [Native Ask Prompt guide](../guides/native-ask.md) for full details.
 
 ## Is this a sandbox?
 

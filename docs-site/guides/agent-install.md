@@ -132,7 +132,7 @@ policies:
       tool: ["exec"]
       command_contains: ["kubectl", "helm", "--namespace prod"]
     rules:
-      - action: require_approval
+      - action: ask
         message: "Production deploy requires human approval"
 ```
 

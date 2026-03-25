@@ -62,14 +62,17 @@ Use `default_action` and explicit rule ordering to control strictness. In higher
 
 If a legitimate command gets blocked, add a targeted `allow` rule that is as specific as possible. Match by command prefix, working path, or repository scope instead of broad wildcards.
 
-For operations that are valid but risky, use `require_approval` instead of unconditional allow. This keeps velocity while preserving human control over sensitive actions.
+For operations that are valid but risky, use `action: ask` instead of unconditional allow. This keeps velocity while preserving human control over sensitive actions.
 
 ```yaml
 - name: deploy-prod
-  action: require_approval
-  tool: exec
   match:
-    command: kubectl apply -f prod/*.yaml
+    tool: exec
+  rules:
+    - action: ask
+      when:
+        command_matches: ["kubectl apply -f prod/*.yaml"]
+      message: "Production deploy — approve?"
 ```
 
 ## Prompt Injection Protection
@@ -98,7 +101,7 @@ Then trigger a known blocked command from Claude Code, such as `rm -rf /` in a t
 A: Policy evaluation takes under 10 microseconds. You will not notice it.
 
 **Q: What if a legitimate command gets blocked?**  
-A: Add an allow rule to your policy, or use require_approval so you decide per-instance.
+A: Add an allow rule to your policy, or use `action: ask` so you decide per-instance.
 
 **Q: Does this work with --dangerously-skip-permissions?**  
 A: Yes — Rampart hooks into Claude Code's hook system, which operates independently of the permissions mode.

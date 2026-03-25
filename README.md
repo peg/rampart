@@ -100,7 +100,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart setup openclaw --patch-tools` | Native bridge + shell shim + tool patches |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Codex CLI** | `rampart setup codex` | Persistent wrapper with LD_PRELOAD |
+| **Codex CLI** | `rampart setup codex` | Shell wrapper (v0.4.5+); LD_PRELOAD fallback for older versions |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -502,7 +502,7 @@ rampart quickstart                           # Auto-detect, install, configure, 
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
 rampart setup openclaw --patch-tools         # OpenClaw full integration
-rampart setup codex                          # Codex CLI wrapper (Linux)
+rampart setup codex                          # Codex CLI shell wrapper (Linux, macOS)
 rampart setup <agent> --remove               # Clean uninstall
 
 # Run
@@ -568,7 +568,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
 | OpenClaw | `rampart setup openclaw --patch-tools` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS, Windows |
-| Codex CLI | `rampart setup codex` | Linux (wrapper); macOS (preload) |
+| Codex CLI | `rampart setup codex` | Linux, macOS (shell wrapper v0.4.5+; LD_PRELOAD fallback) |
 | Claude Desktop | `rampart mcp` | All |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |
@@ -589,6 +589,48 @@ go test ./...
 ```
 
 Requires Go 1.24+.
+
+---
+
+## Upgrading from v0.9.8?
+
+v0.9.9 contains three breaking changes:
+
+**`action: require_approval` is now a hard error.**
+Update your policies from:
+```yaml
+- action: require_approval
+```
+to:
+```yaml
+- action: ask
+  ask:
+    audit: true
+```
+Run `rampart policy lint` to find all occurrences.
+
+**`--serve-token` flag removed.**
+Use the `RAMPART_TOKEN` environment variable instead:
+```bash
+# Before (v0.9.8 and earlier)
+rampart serve --serve-token mysecrettoken
+
+# After (v0.9.9+)
+RAMPART_TOKEN=mysecrettoken rampart serve
+```
+
+**`GET /v1/policy` endpoint removed.**
+Use `GET /v1/status` for server health or `GET /v1/policies` to list active policies.
+
+---
+
+## Companion Tool: Snare
+
+Rampart blocks. [Snare](https://snare.sh) catches.
+
+Snare plants canary tokens in your AI agent's environment — API keys, cloud credentials, file paths. If your agent (or something that compromised it) uses those tokens, you get an instant alert.
+
+**Rampart + Snare = preventive + detective controls.** Use both.
 
 ---
 

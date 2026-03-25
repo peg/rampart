@@ -5,7 +5,7 @@ description: "Secure Codex CLI with Rampart using LD_PRELOAD syscall interceptio
 
 # Codex CLI
 
-Codex CLI doesn't have a native hook system. Rampart uses **LD_PRELOAD** to intercept exec syscalls at the OS level — covering Codex and every process it spawns.
+Codex CLI v0.4.5+ is protected via a **shell wrapper** installed by `rampart setup codex`. For older versions, Rampart falls back to **LD_PRELOAD** syscall interception.
 
 ## Setup
 

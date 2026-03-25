@@ -176,7 +176,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "git push *main*"
@@ -205,7 +205,7 @@ rampart policy lint ~/.rampart/policy.yaml
 
 # Test a specific command against your policy
 rampart test "git push origin main"
-# → require_approval (approve-deploys)
+# → ask (approve-deploys)
 
 rampart test "rm -rf /"
 # → deny (block-destructive)
