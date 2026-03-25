@@ -46,6 +46,9 @@ func TestSetupOpenClaw_ShimOnlyFlag(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("not supported on Windows")
 	}
+	if runtime.GOOS == "darwin" {
+		t.Skip("macOS launchd setup requires OpenClaw to be installed — skip in CI")
+	}
 
 	// Create a temp home directory
 	home := t.TempDir()
