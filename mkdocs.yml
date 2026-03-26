@@ -128,6 +128,15 @@ nav:
     - Install via an AI Agent: guides/agent-install.md
     - Generate Policy from Behavior: guides/from-audit.md
     - Testing Policies: guides/testing-policies.md
+    - Native Ask Prompt: guides/native-ask.md
+    - Project Policies: guides/project-policies.md
+    - Benchmarking: guides/benchmarking.md
+    - Windows Setup: guides/windows.md
+    - CI/Headless Agents: guides/ci-headless.md
+    - OpenClaw Approval Flow: guides/openclaw-approval.md
+    - Wazuh Integration: guides/wazuh-integration.md
+    - Codex Integration: guides/codex-integration.md
+    - Community Policies: community-policies.md
   - Integration Guides:
     - Overview: integrations/index.md
     - Claude Code: integrations/claude-code.md

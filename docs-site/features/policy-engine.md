@@ -153,13 +153,13 @@ Permit the tool call. Logged at default level.
 
 Permit but flag for review. Shows with 🟡 in `rampart watch`.
 
-### `require_approval`
+### `ask`
 
 Block until a human approves:
 
 ```yaml
 rules:
-  - action: require_approval
+  - action: ask
     when:
       command_matches: ["kubectl apply *", "terraform apply *"]
     message: "Production deployment requires approval"

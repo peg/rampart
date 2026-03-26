@@ -27,7 +27,7 @@ policies:
     match:
       tool: ["exec"]  # Which tool types this applies to
     rules:
-      - action: deny  # deny | allow | log | require_approval
+      - action: deny  # deny | allow | log | ask | watch | webhook
         when:
           command_matches: ["rm -rf *"]
         message: "Destructive command blocked"
@@ -40,7 +40,7 @@ policies:
 | `deny` | Block the tool call. Agent receives an error. |
 | `allow` | Permit the tool call. |
 | `log` | Permit but log with elevated visibility. |
-| `require_approval` | Block until a human approves or denies. |
+| `ask` | Block until a human approves or denies (use `audit: true` to log the decision). |
 | `webhook` | Delegate the decision to an external HTTP endpoint. |
 
 **Deny always wins.** If any matching policy says `deny`, the call is denied regardless of other policies.
@@ -169,7 +169,7 @@ Use `call_count` to trigger a rule when a tool is invoked more than N times in a
 
 ```yaml
 rules:
-  - action: require_approval
+  - action: ask
     when:
       call_count:
         gte: 50       # Threshold: 50 or more calls...
@@ -222,7 +222,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "kubectl apply *"
@@ -235,7 +235,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "pip install *"
@@ -269,7 +269,7 @@ default_action: allow
 
 notify:
   url: "https://discord.com/api/webhooks/your/webhook"
-  on: ["deny", "require_approval"]  # Options: deny, log, require_approval
+  on: ["deny", "ask"]  # Options: deny, log, ask
 
 policies:
   # ... your policies
