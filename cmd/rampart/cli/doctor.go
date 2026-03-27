@@ -1192,17 +1192,28 @@ func doctorOpenClawAskMode(emit emitFn) (warnings int) {
 		return 0
 	}
 
+	// ask can be set at top-level OR at tools.exec.ask
 	var cfg struct {
-		Ask string `json:"ask"`
+		Ask   string `json:"ask"`
+		Tools struct {
+			Exec struct {
+				Ask string `json:"ask"`
+			} `json:"exec"`
+		} `json:"tools"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		emit("OpenClaw ask mode", "warn", fmt.Sprintf("failed to parse %s: %v", configPath, err))
 		return 1
 	}
 
-	switch cfg.Ask {
+	askVal := cfg.Ask
+	if askVal == "" {
+		askVal = cfg.Tools.Exec.Ask
+	}
+
+	switch askVal {
 	case "on-miss", "always":
-		emit("OpenClaw ask mode", "ok", fmt.Sprintf("%s (exec approvals will reach Rampart bridge)", cfg.Ask))
+		emit("OpenClaw ask mode", "ok", fmt.Sprintf("%s (exec approvals will reach Rampart bridge)", askVal))
 		return 0
 	default:
 		emit("OpenClaw ask mode", "warn",

@@ -1523,8 +1523,10 @@ func patchWebFetchInDist(cmd *cobra.Command, distDir, url, tokenExpr string) boo
 		}
 		text := string(content)
 
-		// Skip files without web_fetch handler
-		if !strings.Contains(text, `const url = readStringParam(params, "url", { required: true`)  {
+		// Skip files without web_fetch handler — check both old and new bundle patterns
+		hasWebFetch := strings.Contains(text, `const url = readStringParam(params, "url", { required: true`) ||
+			strings.Contains(text, `const url = readStringParam$1(rawParams, "url", { required: true`)
+		if !hasWebFetch {
 			continue
 		}
 
@@ -1535,8 +1537,11 @@ func patchWebFetchInDist(cmd *cobra.Command, distDir, url, tokenExpr string) boo
 			continue
 		}
 
-		// The anchor: the line after extracting the url param
+		// Try both old and new bundle patterns (OpenClaw 2026.3.x renamed readStringParam → readStringParam$1)
 		webFetchOrig := `const url = readStringParam(params, "url", { required: true });`
+		if !strings.Contains(text, webFetchOrig) {
+			webFetchOrig = `const url = readStringParam$1(rawParams, "url", { required: true });`
+		}
 		webFetchCheck := fmt.Sprintf(`const url = readStringParam(params, "url", { required: true });
         /* RAMPART_DIST_CHECK_WEBFETCH */ try {
             const __wfu = typeof url === "string" ? url : "";
@@ -1686,8 +1691,13 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 			continue
 		}
 
-		messageOrig := `const result = await runMessageAction({`
-		messageCheck := fmt.Sprintf(`/* RAMPART_DIST_CHECK_MESSAGE */ try {
+		// Try both old and new dist bundle patterns for runMessageAction.
+		// OpenClaw 2026.3.x changed from `const result = await runMessageAction({`
+		// to `= async () => await runMessageAction({`.
+		messagePatterns := []struct{ orig, replacement string }{
+			{
+				orig: `const result = await runMessageAction({`,
+				replacement: fmt.Sprintf(`/* RAMPART_DIST_CHECK_MESSAGE */ try {
 				const __maa = typeof params.action === "string" ? params.action : "send";
 				const __mat = typeof params.target === "string" ? params.target : (typeof params.to === "string" ? params.to : (typeof params.channelId === "string" ? params.channelId : ""));
 				const __mac = typeof params.message === "string" ? params.message : (typeof params.text === "string" ? params.text : (typeof params.content === "string" ? params.content : ""));
@@ -1702,10 +1712,38 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 					return { content: [{ type: "text", text: "rampart: " + (__mad.message || "policy denied") }] };
 				}
 			} catch (__mae) { /* fail-open */ }
-			const result = await runMessageAction({`, url, tokenExpr)
+			const result = await runMessageAction({`, url, tokenExpr),
+			},
+			{
+				orig: `= async () => await runMessageAction({`,
+				replacement: fmt.Sprintf(`= async () => { /* RAMPART_DIST_CHECK_MESSAGE */ try {
+				const __maa = typeof params.action === "string" ? params.action : "send";
+				const __mat = typeof params.target === "string" ? params.target : (typeof params.to === "string" ? params.to : (typeof params.channelId === "string" ? params.channelId : ""));
+				const __mac = typeof params.message === "string" ? params.message : (typeof params.text === "string" ? params.text : (typeof params.content === "string" ? params.content : ""));
+				const __mar = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/message", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+					body: JSON.stringify({ agent: "openclaw", session: "main", params: { action: __maa, target: __mat, message: __mac } }),
+					signal: AbortSignal.timeout(3000)
+				});
+				if (__mar.status === 403) {
+					const __mad = await __mar.json().catch(() => ({}));
+					return { content: [{ type: "text", text: "rampart: " + (__mad.message || "policy denied") }] };
+				}
+			} catch (__mae) { /* fail-open */ } return await runMessageAction({`, url, tokenExpr),
+			},
+		}
 
-		modified := strings.Replace(text, messageOrig, messageCheck, 1)
-		if modified == text {
+		modified := text
+		injected := false
+		for _, mp := range messagePatterns {
+			if strings.Contains(modified, mp.orig) {
+				modified = strings.Replace(modified, mp.orig, mp.replacement, 1)
+				injected = true
+				break
+			}
+		}
+		if !injected {
 			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: message injection point not found (skipping)\n", filepath.Base(file))
 			continue
 		}
