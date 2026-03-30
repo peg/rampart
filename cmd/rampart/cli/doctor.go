@@ -884,13 +884,18 @@ func doctorPreload(emit emitFn) (warnings int) {
 // are patched with Rampart policy checks. If the tools directory exists but files
 // aren't patched, warns the user — this happens after npm upgrades.
 func doctorFileToolPatches(emit emitFn) (warnings int) {
+	// If the native plugin is installed, it intercepts all tool calls via before_tool_call hook.
+	// Dist patches for web_fetch/browser/message/exec are redundant — only dist patches for
+	// read/write/edit (file content visibility) still add value.
+	pluginInstalled := isOpenClawPluginInstalled()
+
 	// Check if OpenClaw uses bundled dist files (#204).
 	if openclawUsesBundledDist() {
 		distPatched := openclawDistPatched()
-		webFetchPatched := openclawWebFetchPatched()
-		browserPatched := openclawBrowserPatched()
-		messagePatched := openclawMessagePatched()
-		execPatched := openclawExecPatched()
+		webFetchPatched := openclawWebFetchPatched() || pluginInstalled
+		browserPatched := openclawBrowserPatched() || pluginInstalled
+		messagePatched := openclawMessagePatched() || pluginInstalled
+		execPatched := openclawExecPatched() || pluginInstalled
 
 		if distPatched && webFetchPatched && browserPatched && messagePatched && execPatched {
 			emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")
