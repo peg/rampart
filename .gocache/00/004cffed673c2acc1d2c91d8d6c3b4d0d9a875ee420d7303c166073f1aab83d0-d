@@ -1,0 +1,11 @@
+./decision.go
+./dirstore.go
+./engine.go
+./lint.go
+./matcher.go
+./persist.go
+./policy.go
+./ratelimit.go
+./shellparse.go
+./suggestions.go
+./testrunner.go

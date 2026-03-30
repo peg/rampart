@@ -1,0 +1,10 @@
+./anchor.go
+./cef.go
+./event.go
+./jsonl.go
+./reader.go
+./rotate.go
+./sink.go
+./syslog.go
+./jsonl_test.go
+./syslog_test.go

@@ -1,0 +1,4 @@
+./gen.go
+./graphemes.go
+./trie.go
+./width.go

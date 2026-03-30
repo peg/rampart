@@ -1,0 +1,83 @@
+# test log
+getenv PWD
+stat /tmp/fix-setup-docs/policies/standard.yaml
+open /tmp/fix-setup-docs/policies/standard.yaml
+stat ~
+stat ~
+stat C:
+stat C:
+stat C:
+stat C:
+stat /server
+stat /server
+stat ~
+stat ~
+stat ~
+stat C:
+stat C:
+stat C:
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat C:
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat ~
+stat /etc
+stat /etc/hosts
+stat /etc
+stat /etc/hosts
+stat /etc
+stat /etc/hosts
+stat /etc
+stat /etc/hosts
+stat /etc
+stat /etc/hosts

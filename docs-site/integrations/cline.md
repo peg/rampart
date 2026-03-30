@@ -48,7 +48,7 @@ rampart watch
 
 ## Start in Monitor Mode
 
-Not sure about your policies yet? Set your policy's `default_action: allow` and use `action: log` rules instead of `deny` — everything gets logged but nothing gets blocked. Check `rampart watch` to see what would be caught, then switch rules to `deny` when you're confident.
+Not sure about your policies yet? Set your policy's `default_action: allow` and use `action: log` rules instead of `deny` — everything gets logged but nothing gets blocked. In v0.9.x, `action: log` was renamed to `action: watch`. Check `rampart watch` to see what would be caught, then switch rules to `deny` when you're confident.
 
 ## Troubleshooting
 

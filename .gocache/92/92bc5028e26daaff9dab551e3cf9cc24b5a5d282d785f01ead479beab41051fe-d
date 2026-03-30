@@ -1,0 +1,15 @@
+./buffer.go
+./cell.go
+./errors.go
+./geom.go
+./hardscroll.go
+./hashmap.go
+./link.go
+./pen.go
+./screen.go
+./sequence.go
+./style.go
+./tabstop.go
+./utils.go
+./wrap.go
+./writer.go

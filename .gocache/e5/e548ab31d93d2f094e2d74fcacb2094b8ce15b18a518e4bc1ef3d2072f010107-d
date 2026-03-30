@@ -1,0 +1,20 @@
+# test log
+getenv TMPDIR
+stat /tmp/TestWriteToFileCreatesDir3340272275/001/nested/deep
+stat /tmp/TestWriteToFileCreatesDir3340272275/001/nested
+stat /tmp/TestWriteToFileCreatesDir3340272275/001
+stat /tmp/TestWriteToFileCreatesDir3340272275/001/nested/deep/policy.yaml
+open /tmp/TestWriteToFileCreatesDir3340272275/001/nested/deep/policy.yaml
+stat /tmp/TestWriteToFileCreatesDir3340272275/001/nested/deep/policy.yaml
+open /tmp
+getenv TMPDIR
+open /tmp/TestWriteToFileNoOverwrite4132138678/001/policy.yaml
+stat /tmp/TestWriteToFileNoOverwrite4132138678/001
+stat /tmp/TestWriteToFileNoOverwrite4132138678/001/policy.yaml
+open /tmp
+getenv TMPDIR
+open /tmp/TestWriteToFileForceOverwrite3556050472/001/policy.yaml
+stat /tmp/TestWriteToFileForceOverwrite3556050472/001
+open /tmp/TestWriteToFileForceOverwrite3556050472/001/policy.yaml
+open /tmp/TestWriteToFileForceOverwrite3556050472/001/policy.yaml
+open /tmp

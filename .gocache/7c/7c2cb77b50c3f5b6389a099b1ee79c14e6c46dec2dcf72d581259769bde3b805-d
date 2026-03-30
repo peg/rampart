@@ -1,0 +1,18 @@
+# test log
+open /does/not/exist.yaml
+getenv TMPDIR
+open /tmp/TestLoadCustomPolicy_Existing3815905755/001/custom.yaml
+open /tmp/TestLoadCustomPolicy_Existing3815905755/001/custom.yaml
+open /tmp
+getenv TMPDIR
+stat /tmp/TestSaveCustomPolicy_ValidYAML1344405786/001
+open /tmp/TestSaveCustomPolicy_ValidYAML1344405786/001/.custom-959820222.yaml
+stat /tmp/TestSaveCustomPolicy_ValidYAML1344405786/001/custom.yaml
+open /tmp/TestSaveCustomPolicy_ValidYAML1344405786/001/custom.yaml
+open /tmp
+getenv TMPDIR
+stat /tmp/TestRoundTrip221495532/001
+open /tmp/TestRoundTrip221495532/001/.custom-3912744014.yaml
+stat /tmp/TestRoundTrip221495532/001/custom.yaml
+open /tmp/TestRoundTrip221495532/001/custom.yaml
+open /tmp

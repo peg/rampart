@@ -1,0 +1,21 @@
+# test log
+getenv TMPDIR
+open /tmp/TestLoadOrCreateKeyReadError3334652347/001/dir-as-file
+open /tmp
+getenv TMPDIR
+open /tmp/TestLoadOrCreateKeyWriteError3278061122/001/no-write/signing.key
+stat /tmp/TestLoadOrCreateKeyWriteError3278061122/001/no-write
+open /tmp/TestLoadOrCreateKeyWriteError3278061122/001/no-write/signing.key
+open /tmp
+getenv TMPDIR
+getenv TMPDIR
+open /tmp/TestLoadOrCreateKeyCreateAndLoad958319498/001/nested/signing.key
+stat /tmp/TestLoadOrCreateKeyCreateAndLoad958319498/001/nested
+stat /tmp/TestLoadOrCreateKeyCreateAndLoad958319498/001
+open /tmp/TestLoadOrCreateKeyCreateAndLoad958319498/001/nested/signing.key
+stat /tmp/TestLoadOrCreateKeyCreateAndLoad958319498/001/nested/signing.key
+open /tmp/TestLoadOrCreateKeyCreateAndLoad958319498/001/nested/signing.key
+open /tmp
+open /tmp/TestLoadOrCreateKeyCreateDirError3568257811/001/not-a-dir
+open /tmp/TestLoadOrCreateKeyCreateDirError3568257811/001/not-a-dir/signing.key
+open /tmp

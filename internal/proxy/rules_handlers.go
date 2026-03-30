@@ -104,6 +104,10 @@ func (s *Server) handleDeleteAutoAllowed(w http.ResponseWriter, r *http.Request)
 	}
 
 	policyPath := engine.DefaultAutoAllowedPath()
+
+	s.policyWriteMu.Lock()
+	defer s.policyWriteMu.Unlock()
+
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		if os.IsNotExist(err) {

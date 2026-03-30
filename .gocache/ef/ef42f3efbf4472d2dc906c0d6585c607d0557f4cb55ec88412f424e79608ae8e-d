@@ -1,0 +1,7 @@
+./approval_format.go
+./detect.go
+./discord.go
+./notifier.go
+./openclaw.go
+./slack.go
+./teams.go

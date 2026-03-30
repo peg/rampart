@@ -240,7 +240,10 @@ func getOpenClawVersion(openclawBin string) (string, error) {
 		version = strings.TrimPrefix(version, prefix)
 	}
 	// Take the first line/word only.
-	version = strings.Fields(version)[0]
+	fields := strings.Fields(version)
+	if len(fields) > 0 {
+		version = fields[0]
+	}
 	return version, nil
 }
 
