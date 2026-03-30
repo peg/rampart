@@ -16,7 +16,6 @@ package policy
 import (
 	"fmt"
 	"net/url"
-	"path/filepath"
 	"strings"
 )
 
@@ -151,7 +150,11 @@ func isSensitivePathToken(token string) bool {
 		return false
 	}
 
-	path := filepath.Clean(cleaned)
+	// Normalize using forward slashes only (filepath.Clean uses backslashes on Windows)
+	path := strings.ReplaceAll(cleaned, "\\", "/")
+	for path != "/" && strings.HasSuffix(path, "/") {
+		path = path[:len(path)-1]
+	}
 	sensitiveRoots := []string{
 		"/",
 		"/boot",
