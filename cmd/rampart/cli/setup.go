@@ -343,6 +343,8 @@ func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 	var patchToolsOnly bool
 	var noPreload bool
 	var shimOnly bool
+	var plugin bool
+	var migrate bool
 
 	cmd := &cobra.Command{
 		Use:   "openclaw",
@@ -363,6 +365,12 @@ Use --shim-only to skip LD_PRELOAD and use the legacy shell shim approach.
 Use --no-preload to skip the LD_PRELOAD drop-in (still patches file tools).
 Use --remove to uninstall (preserves policies and audit logs).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if plugin {
+				return runSetupOpenClawPlugin(cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
+			if migrate {
+				return runSetupOpenClawMigrate(cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
 			if remove {
 				return removeOpenClaw(cmd)
 			}
@@ -593,6 +601,8 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 	cmd.Flags().BoolVar(&noPreload, "no-preload", false, "Skip LD_PRELOAD but still auto-patch file tools via systemd drop-in")
 	cmd.Flags().BoolVar(&shimOnly, "shim-only", false, "Use legacy shell shim only (no systemd drop-in, no sub-agent coverage)")
 	cmd.Flags().IntVar(&port, "port", defaultServePort, "Port for Rampart policy server")
+	cmd.Flags().BoolVar(&plugin, "plugin", false, "Install the Rampart native OpenClaw plugin (requires OpenClaw >= "+openclawMinVersion+")")
+	cmd.Flags().BoolVar(&migrate, "migrate", false, "Migrate from legacy dist-patch/bridge integration to native plugin")
 	return cmd
 }
 

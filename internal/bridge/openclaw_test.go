@@ -28,6 +28,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -595,7 +596,7 @@ func TestBuildAllowPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := buildAllowPattern(tt.input)
+			got := policy.BuildAllowPattern(tt.input)
 			assert.Equal(t, tt.want, got)
 		})
 	}

@@ -49,6 +49,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/policy"
 )
 
 // OpenClawBridge connects to the OpenClaw gateway and handles exec approval
@@ -720,11 +721,11 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
 
 	// Build a smart glob pattern from the command.
-	pattern := buildAllowPattern(command)
+	pattern := policy.BuildAllowPattern(command)
 
 	// Hash the pattern for a stable rule name.
-	hb := sha256Command(pattern)
-	ruleName := fmt.Sprintf("user-allow-%x", hb)
+	hash := policy.HashPattern(pattern)
+	ruleName := fmt.Sprintf("user-allow-%s", hash)
 
 	// Build the rule block to append.
 	rule := fmt.Sprintf("\n- name: %s\n  match:\n    tool: exec\n  rules:\n    - when:\n        command_matches:\n          - %q\n      action: allow\n      message: \"User allowed (always)\"\n",
@@ -763,53 +764,8 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	}
 }
 
-// buildAllowPattern converts a literal command string into a smart glob pattern
-// suitable for command_matches. It strips output redirection/pipes and replaces
-// trailing arguments with wildcards so that similar commands (e.g. different
-// package names) are covered by a single rule.
-func buildAllowPattern(cmd string) string {
-	// Step 1: Strip output redirection and pipes.
-	// Remove everything after the first |, 2>&1, >, >>, or 2>.
-	clean := cmd
-	for _, sep := range []string{" 2>&1", " |", " >>", " 2>", " >"} {
-		if idx := strings.Index(clean, sep); idx != -1 {
-			clean = clean[:idx]
-		}
-	}
-	clean = strings.TrimSpace(clean)
-	if clean == "" {
-		return cmd
-	}
-
-	// Step 2: Tokenize.
-	tokens := strings.Fields(clean)
-
-	// Step 3: For 3+ tokens, replace trailing argument(s) with *.
-	if len(tokens) >= 3 {
-		// Keep all tokens except the last, append *
-		return strings.Join(tokens[:len(tokens)-1], " ") + " *"
-	}
-
-	// Step 4: For 1-2 tokens, keep as-is.
-	// Append * if the last token looks like a filename (contains a dot or slash).
-	if len(tokens) > 0 {
-		last := tokens[len(tokens)-1]
-		if strings.Contains(last, ".") || strings.Contains(last, "/") {
-			return strings.Join(tokens, " ") + " *"
-		}
-	}
-
-	return clean
-}
-
-// sha256Command returns 4 bytes derived from a djb2 hash of the command string.
-func sha256Command(s string) [4]byte {
-	var hash uint32 = 5381
-	for _, b := range []byte(s) {
-		hash = hash*33 + uint32(b)
-	}
-	return [4]byte{byte(hash >> 24), byte(hash >> 16), byte(hash >> 8), byte(hash)}
-}
+// buildAllowPattern and sha256Command have been moved to internal/policy/glob.go
+// as BuildAllowPattern and HashPattern for shared use.
 
 // --- Wire protocol types ---
 

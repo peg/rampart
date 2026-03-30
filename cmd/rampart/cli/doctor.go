@@ -235,7 +235,12 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		warnings += n
 	}
 
-	// 17. Proactive policy suggestions (informational only)
+	// 17. OpenClaw plugin health
+	if n := doctorOpenClawPlugin(emit); n > 0 {
+		warnings += n
+	}
+
+	// 18. Proactive policy suggestions (informational only)
 	if detectResult, detectErr := detect.Environment(); detectErr == nil {
 		client := newPolicyRegistryClient()
 		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
@@ -1174,6 +1179,31 @@ func doctorProjectPolicy(w io.Writer, emit emitFn, collect bool) {
 			fmt.Fprintf(w, "  No project policy (.rampart/policy.yaml not found in this repo)\n")
 		}
 	}
+}
+
+// doctorOpenClawPlugin checks whether the Rampart native plugin is installed
+// in ~/.openclaw/extensions/rampart/. This is the preferred integration method
+// for OpenClaw >= 2026.3.28 (uses the before_tool_call hook instead of dist patches).
+//
+// Emits:
+//   - ok if plugin directory exists
+//   - warn (with hint) if OpenClaw is installed but plugin is missing
+//   - skipped silently if OpenClaw is not installed at all
+func doctorOpenClawPlugin(emit emitFn) (warnings int) {
+	// Skip silently if OpenClaw is not installed.
+	if !isOpenClawInstalled() {
+		return 0
+	}
+
+	if isOpenClawPluginInstalled() {
+		emit("OpenClaw plugin", "ok", "installed (before_tool_call hook active)")
+		return 0
+	}
+
+	emit("OpenClaw plugin", "warn",
+		"not installed — native hook interception disabled"+hintSep+
+			"rampart setup openclaw --plugin")
+	return 1
 }
 
 // doctorOpenClawAskMode checks if ~/.openclaw/openclaw.json has ask set to
