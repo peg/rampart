@@ -1,6 +1,0 @@
-./cast.go
-./fips140.go
-./hash.go
-./indicator.go
-./notasan.go
-./notboring.go

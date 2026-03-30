@@ -1,6 +1,0 @@
-./compliance.go
-./export.go
-./html.go
-./compliance_test.go
-./export_test.go
-./html_test.go

@@ -1,5 +1,0 @@
-./collectors.go
-./dbstats_collector.go
-./expvar_collector.go
-./go_collector_latest.go
-./process_collector.go

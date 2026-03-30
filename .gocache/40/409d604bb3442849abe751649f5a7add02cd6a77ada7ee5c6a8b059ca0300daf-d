@@ -1,6 +1,0 @@
-./approval_client.go
-./format.go
-./tailer.go
-./watch.go
-./approval_test.go
-./watch_test.go

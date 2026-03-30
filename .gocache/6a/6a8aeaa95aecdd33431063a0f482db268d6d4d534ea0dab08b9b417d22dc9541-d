@@ -1,4 +1,0 @@
-./api.go
-./daemon.go
-./api_test.go
-./daemon_test.go
