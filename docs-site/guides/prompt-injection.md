@@ -42,7 +42,7 @@ policies:
     match:
       tool: ["fetch", "web_search", "read"]
     rules:
-      - action: log
+      - action: log # Renamed to action: watch in v0.9.x.
         when:
           response_matches:
             - '(?i)ignore\s+previous\s+instructions'
@@ -80,7 +80,7 @@ Documentation, security articles, and academic papers legitimately contain injec
 
 ```yaml
 rules:
-  - action: log
+  - action: log # Renamed to action: watch in v0.9.x.
     when:
       response_matches:
         - '(?i)ignore\s+previous\s+instructions'
@@ -90,7 +90,7 @@ rules:
     message: "Possible prompt injection detected"
 ```
 
-Start with `action: log` and review a few days of audit history before promoting anything to `action: deny`. High-confidence, zero-ambiguity patterns (exact control tokens, structured roleplay markers) are safer to deny than natural-language instruction phrases.
+Start with `action: log` (renamed to `action: watch` in v0.9.x) and review a few days of audit history before promoting anything to `action: deny`. High-confidence, zero-ambiguity patterns (exact control tokens, structured roleplay markers) are safer to deny than natural-language instruction phrases.
 
 ## Response Scanning Requirements
 

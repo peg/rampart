@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/peg/rampart/internal/engine"
@@ -98,14 +97,17 @@ func (s *Server) handleDeleteAutoAllowed(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	indexStr := r.PathValue("index")
-	index, err := strconv.Atoi(indexStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid index")
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "rule name is required")
 		return
 	}
 
 	policyPath := engine.DefaultAutoAllowedPath()
+
+	s.policyWriteMu.Lock()
+	defer s.policyWriteMu.Unlock()
+
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -122,13 +124,21 @@ func (s *Server) handleDeleteAutoAllowed(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if index < 0 || index >= len(cfg.Policies) {
-		writeError(w, http.StatusNotFound, "rule index out of range")
+	// Find the policy with matching name.
+	found := -1
+	for i, p := range cfg.Policies {
+		if p.Name == name {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("no rule with name %q", name))
 		return
 	}
 
-	// Remove the rule at index.
-	cfg.Policies = append(cfg.Policies[:index], cfg.Policies[index+1:]...)
+	// Remove the rule by name.
+	cfg.Policies = append(cfg.Policies[:found], cfg.Policies[found+1:]...)
 
 	// If no rules left, delete the file.
 	if len(cfg.Policies) == 0 {

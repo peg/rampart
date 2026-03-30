@@ -213,7 +213,7 @@ The token is saved to `~/.rampart/token` and embedded in the service file (mode 
 | `--config-dir` | _(none)_ | Directory of additional policy YAML files |
 | `--audit-dir` | `~/.rampart/audit` | Directory for audit logs |
 | `--mode` | `enforce` | Enforcement mode: `enforce`, `monitor`, or `disabled` |
-| `--approval-timeout` | `5m` | How long approvals stay pending before expiring |
+| `--approval-timeout` | `2m` | How long approvals stay pending before expiring |
 | `--token` | _(auto-generated)_ | Override `RAMPART_TOKEN` for the service |
 | `--force` | `false` | Overwrite an existing service installation |
 

@@ -14,6 +14,8 @@
 package approval
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -178,4 +180,105 @@ func TestWaitForResolution(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for resolution")
 	}
+}
+
+func TestApprovalStorePersistence(t *testing.T) {
+	// Use a temp file for persistence.
+	f, err := os.CreateTemp(t.TempDir(), "approvals-*.jsonl")
+	require.NoError(t, err)
+	f.Close()
+	persistFile := f.Name()
+
+	// 1. Create a store with a pending approval.
+	store1 := NewStore(WithPersistenceFile(persistFile))
+	req, err := store1.Create(testCall(), testDecision())
+	require.NoError(t, err)
+	assert.Equal(t, StatusPending, req.Status)
+	store1.Close()
+
+	// 2. Create a NEW store pointing to the same file.
+	store2 := NewStore(WithPersistenceFile(persistFile))
+	defer store2.Close()
+
+	// 3. Verify the approval is restored and still pending.
+	restored, ok := store2.Get(req.ID)
+	require.True(t, ok, "approval should be restored from disk")
+	assert.Equal(t, StatusPending, restored.Status)
+	assert.Equal(t, req.ID, restored.ID)
+	assert.Equal(t, req.Call.Tool, restored.Call.Tool)
+	assert.Equal(t, req.Call.Agent, restored.Call.Agent)
+
+	// Also verify it shows up in List().
+	pending := store2.List()
+	assert.Len(t, pending, 1)
+	assert.Equal(t, req.ID, pending[0].ID)
+}
+
+func TestApprovalStorePersistenceExpiredNotRestored(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "approvals-expired-*.jsonl")
+	require.NoError(t, err)
+	f.Close()
+	persistFile := f.Name()
+
+	// Create a store with a very short timeout so approval expires immediately.
+	store1 := NewStore(
+		WithPersistenceFile(persistFile),
+		WithTimeout(1*time.Millisecond),
+	)
+	req, err := store1.Create(testCall(), testDecision())
+	require.NoError(t, err)
+	assert.NotEmpty(t, req.ID)
+	// Wait for expiry.
+	time.Sleep(50 * time.Millisecond)
+	store1.Close()
+
+	// Create a new store: expired approval should NOT be restored.
+	store2 := NewStore(WithPersistenceFile(persistFile))
+	defer store2.Close()
+
+	_, ok := store2.Get(req.ID)
+	assert.False(t, ok, "expired approval should not be restored from disk")
+	assert.Empty(t, store2.List(), "no pending approvals should be restored")
+}
+
+func TestApprovalStorePersistenceResolvedNotRestored(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "approvals-resolved-*.jsonl")
+	require.NoError(t, err)
+	f.Close()
+	persistFile := f.Name()
+
+	store1 := NewStore(WithPersistenceFile(persistFile))
+	req, err := store1.Create(testCall(), testDecision())
+	require.NoError(t, err)
+
+	// Resolve the approval.
+	err = store1.Resolve(req.ID, true, "cli", false)
+	require.NoError(t, err)
+	store1.Close()
+
+	// Create a new store: resolved approval should NOT be restored.
+	store2 := NewStore(WithPersistenceFile(persistFile))
+	defer store2.Close()
+
+	_, ok := store2.Get(req.ID)
+	assert.False(t, ok, "resolved approval should not be restored from disk")
+	assert.Empty(t, store2.List())
+}
+
+func TestApprovalStorePersistenceMissingFile(t *testing.T) {
+	// Point to a nonexistent file — should not panic or error.
+	persistFile := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
+	store := NewStore(WithPersistenceFile(persistFile))
+	defer store.Close()
+
+	// Should work fine with an empty store.
+	assert.Empty(t, store.List())
+
+	// Create should work and create the file.
+	req, err := store.Create(testCall(), testDecision())
+	require.NoError(t, err)
+	assert.Equal(t, StatusPending, req.Status)
+
+	_, err = os.Stat(persistFile)
+	assert.NoError(t, err, "persistence file should be created on first write")
 }

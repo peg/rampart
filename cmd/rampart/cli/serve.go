@@ -337,6 +337,11 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if approvalTimeout > 0 {
 					proxyOpts = append(proxyOpts, proxy.WithApprovalTimeout(approvalTimeout))
 				}
+				// Persist pending approvals so they survive a serve restart.
+				if rampartDir != "" {
+					persistFile := filepath.Join(rampartDir, "pending-approvals.jsonl")
+					proxyOpts = append(proxyOpts, proxy.WithApprovalPersistenceFile(persistFile))
+				}
 				// Resolve token: flag > env > persisted file > generate new.
 				// Mirrors serve install behaviour so the token survives restarts.
 				{

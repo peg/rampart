@@ -94,29 +94,29 @@ tests:
     params: {command: "rm -rf /tmp/build"}
     expect: allow
 
-  # ── Privilege escalation (require_approval) ─────────────────────────────────
+  # ── Privilege escalation (ask) ─────────────────────────────────
 
-  - name: "require_approval: sudo apt update"
+  - name: "ask: sudo apt update"
     tool: exec
     params: {command: "sudo apt update"}
-    expect: require_approval
+    expect: ask
 
-  - name: "require_approval: sudo systemctl restart nginx"
+  - name: "ask: sudo systemctl restart nginx"
     tool: exec
     params: {command: "sudo systemctl restart nginx"}
-    expect: require_approval
+    expect: ask
 
-  - name: "require_approval: sudo rm /etc/hosts"
+  - name: "ask: sudo rm /etc/hosts"
     tool: exec
     params: {command: "sudo rm /etc/hosts"}
-    expect: require_approval
+    expect: ask
 
-  # ── Destructive (require_approval for shred) ────────────────────────────────
+  # ── Destructive (ask for shred) ────────────────────────────────
 
-  - name: "require_approval: shred secrets"
+  - name: "ask: shred secrets"
     tool: exec
     params: {command: "shred -u secrets.txt"}
-    expect: require_approval
+    expect: ask
 
   # ── Credential access (must deny) ───────────────────────────────────────────
 

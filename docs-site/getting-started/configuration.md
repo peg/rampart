@@ -207,7 +207,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: log       # Renamed to action: watch in v0.9.x.
         when:
           command_matches: ["curl *"]
 ```

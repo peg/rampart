@@ -11,6 +11,12 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	// Prevent setup commands from auto-detecting and calling the real openclaw binary.
+	os.Setenv("RAMPART_TEST", "1")
+	os.Exit(m.Run())
+}
+
 func TestGenerateShimContent(t *testing.T) {
 	shim := generateShimContent("/bin/bash", 19090, "rampart_test123")
 

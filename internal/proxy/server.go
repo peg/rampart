@@ -38,27 +38,29 @@ const statusCallCountWindow = time.Hour
 
 // Server is Rampart's HTTP proxy runtime for policy-aware tool calls.
 type Server struct {
-	engine          *engine.Engine
-	sink            audit.AuditSink
-	approvals       *approval.Store
-	approvalTimeout time.Duration
-	token           string
-	tokenStore      *token.Store
-	mode            string
-	configPath      string
-	logger          *slog.Logger
-	resolveBaseURL  string
-	listenAddr      string
-	signer          *signing.Signer
-	mu              sync.Mutex
-	server          *http.Server
-	startedAt       time.Time
-	notifyConfig    *engine.NotifyConfig
-	metricsEnabled  bool
-	auditDir        string
-	sse             *sseHub
-	lastReloadAPI   time.Time // Rate limiting for /v1/policy/reload
-	stopCleanup     chan struct{}
+	engine              *engine.Engine
+	sink                audit.AuditSink
+	approvals           *approval.Store
+	approvalTimeout     time.Duration
+	token               string
+	tokenStore          *token.Store
+	mode                string
+	configPath          string
+	logger              *slog.Logger
+	resolveBaseURL      string
+	listenAddr          string
+	signer              *signing.Signer
+	mu                  sync.Mutex
+	policyWriteMu       sync.Mutex
+	server              *http.Server
+	startedAt           time.Time
+	notifyConfig        *engine.NotifyConfig
+	metricsEnabled      bool
+	auditDir            string
+	sse                 *sseHub
+	lastReloadAPI       time.Time // Rate limiting for /v1/policy/reload
+	stopCleanup         chan struct{}
+	approvalPersistFile string
 }
 
 // Option configures a proxy server.
@@ -129,6 +131,14 @@ func WithApprovalTimeout(d time.Duration) Option {
 	}
 }
 
+// WithApprovalPersistenceFile sets the path for the JSONL file used to persist
+// pending approvals across server restarts. If empty, persistence is disabled.
+func WithApprovalPersistenceFile(path string) Option {
+	return func(s *Server) {
+		s.approvalPersistFile = path
+	}
+}
+
 // WithConfigPath sets the config path string shown in the /v1/policy endpoint.
 // Use "embedded:standard" when the embedded default policy is active.
 func WithConfigPath(path string) Option {
@@ -160,11 +170,15 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 		s.mode = defaultMode
 	}
 
-	// Initialize approval store with timeout.
+	// Initialize approval store with timeout and optional persistence.
 	var storeOpts []approval.Option
 	if s.approvalTimeout > 0 {
 		storeOpts = append(storeOpts, approval.WithTimeout(s.approvalTimeout))
 	}
+	if s.approvalPersistFile != "" {
+		storeOpts = append(storeOpts, approval.WithPersistenceFile(s.approvalPersistFile))
+	}
+	storeOpts = append(storeOpts, approval.WithLogger(s.logger))
 	storeOpts = append(storeOpts, approval.WithExpireCallback(func(req *approval.Request) {
 		s.broadcastSSE(map[string]any{"type": "approvals"})
 		// Write audit event so expired approvals appear in History as denied.
@@ -341,7 +355,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
 	mux.HandleFunc("POST /v1/approvals/bulk-resolve", s.handleBulkResolve)
 	mux.HandleFunc("GET /v1/rules/auto-allowed", s.handleGetAutoAllowed)
-	mux.HandleFunc("DELETE /v1/rules/auto-allowed/{index}", s.handleDeleteAutoAllowed)
+	mux.HandleFunc("DELETE /v1/rules/auto-allowed/{name}", s.handleDeleteAutoAllowed)
+	mux.HandleFunc("POST /v1/rules/learn", s.handleLearnRule)
 	mux.HandleFunc("GET /v1/audit/events", s.handleAuditEvents)
 	mux.HandleFunc("GET /v1/audit/dates", s.handleAuditDates)
 	mux.HandleFunc("GET /v1/audit/export", s.handleAuditExport)
