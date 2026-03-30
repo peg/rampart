@@ -16,6 +16,7 @@ package policy
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 )
 
@@ -61,27 +62,40 @@ func BuildAllowPattern(cmd string) string {
 	return clean
 }
 
+// wrapperPrefixes are tokens that can precede a command without changing its semantics,
+// e.g. "sudo docker run" should still match the "docker run" dangerous prefix.
+var wrapperPrefixes = map[string]bool{
+	"sudo": true, "env": true, "nice": true, "nohup": true,
+	"time": true, "strace": true, "ltrace": true,
+}
+
 func shouldKeepExact(clean string, tokens []string) bool {
 	if len(tokens) == 0 {
 		return false
 	}
 
-	if hasDangerousPrefix(tokens, []string{"docker", "run"}) ||
-		hasDangerousPrefix(tokens, []string{"docker", "exec"}) ||
-		hasDangerousPrefix(tokens, []string{"kubectl", "apply"}) ||
-		hasDangerousPrefix(tokens, []string{"kubectl", "exec"}) ||
-		hasDangerousPrefix(tokens, []string{"kubectl", "delete"}) ||
-		hasDangerousPrefix(tokens, []string{"sudo", "rm"}) ||
-		hasDangerousPrefix(tokens, []string{"sudo", "dd"}) ||
-		hasDangerousPrefix(tokens, []string{"sudo", "mkfs"}) {
+	// Strip leading wrapper prefixes so "sudo docker run" matches "docker run"
+	effective := tokens
+	for len(effective) > 0 && wrapperPrefixes[effective[0]] {
+		effective = effective[1:]
+	}
+
+	if hasDangerousPrefix(effective, []string{"docker", "run"}) ||
+		hasDangerousPrefix(effective, []string{"docker", "exec"}) ||
+		hasDangerousPrefix(effective, []string{"kubectl", "apply"}) ||
+		hasDangerousPrefix(effective, []string{"kubectl", "exec"}) ||
+		hasDangerousPrefix(effective, []string{"kubectl", "delete"}) ||
+		hasDangerousPrefix(effective, []string{"rm"}) ||
+		hasDangerousPrefix(effective, []string{"dd"}) ||
+		hasDangerousPrefix(effective, []string{"mkfs"}) {
 		return true
 	}
 
-	if isExternalDownload(tokens) {
+	if isExternalDownload(effective) {
 		return true
 	}
 
-	if isSensitiveOwnershipChange(tokens) {
+	if isSensitiveOwnershipChange(effective) {
 		return true
 	}
 
@@ -151,10 +165,8 @@ func isSensitivePathToken(token string) bool {
 	}
 
 	// Normalize using forward slashes only (filepath.Clean uses backslashes on Windows)
-	path := strings.ReplaceAll(cleaned, "\\", "/")
-	for path != "/" && strings.HasSuffix(path, "/") {
-		path = path[:len(path)-1]
-	}
+	// path.Clean resolves .., ., and double slashes safely on all platforms.
+	normalized := path.Clean(strings.ReplaceAll(cleaned, "\\", "/"))
 	sensitiveRoots := []string{
 		"/",
 		"/boot",
@@ -166,7 +178,7 @@ func isSensitivePathToken(token string) bool {
 		"/var",
 	}
 	for _, root := range sensitiveRoots {
-		if path == root || strings.HasPrefix(path, root+"/") {
+		if normalized == root || strings.HasPrefix(normalized, root+"/") {
 			return true
 		}
 	}
