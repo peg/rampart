@@ -280,7 +280,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 
 	fmt.Fprintln(w)
 	if issues == 0 && warnings == 0 {
-		fmt.Fprintln(w, "No issues found.")
+		printDoctorSummary(w, useColor)
 	} else if issues == 0 && warnings > 0 {
 		fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
 	} else {
@@ -300,6 +300,57 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		return exitCodeError{code: 1}
 	}
 	return nil
+}
+
+// printDoctorSummary prints an encouraging all-clear summary with next steps.
+func printDoctorSummary(w io.Writer, useColor bool) {
+	green := ""
+	bold := ""
+	dim := ""
+	reset := ""
+	if useColor {
+		green = colorGreen
+		bold = "\033[1m"
+		dim = colorDim
+		reset = colorReset
+	}
+
+	fmt.Fprintf(w, "%s%s🛡️  Rampart is protecting your AI agents%s\n\n", bold, green, reset)
+
+	// Gather some live stats for the summary lines.
+	protected := detectProtectedAgents()
+	allow, deny, _, _ := todayEvents()
+	serverRunning := isServeRunningLocal()
+
+	// Server status line
+	if serverRunning {
+		fmt.Fprintf(w, "  %s✓%s rampart serve running (:9090)\n", green, reset)
+	}
+
+	// Protected agents
+	if len(protected) > 0 {
+		for _, p := range protected {
+			fmt.Fprintf(w, "  %s✓%s %s\n", green, reset, p)
+		}
+	}
+
+	// Policies
+	_, defaultAction := detectMode()
+	if defaultAction != "" {
+		fmt.Fprintf(w, "  %s✓%s Policies loaded (default: %s)\n", green, reset, defaultAction)
+	}
+
+	// Audit events
+	total := allow + deny
+	if total > 0 {
+		fmt.Fprintf(w, "  %s✓%s Audit trail: %d events logged today\n", green, reset, total)
+	}
+
+	// Next steps
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  %s→ rampart watch%s    — see policy decisions in real time\n", dim, reset)
+	fmt.Fprintf(w, "  %s→ rampart log%s      — view recent allow/deny history\n", dim, reset)
+	fmt.Fprintf(w, "  %s→ rampart status%s   — dashboard summary\n", dim, reset)
 }
 
 type emitFn func(name, status, msg string)

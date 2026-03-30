@@ -14,13 +14,16 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/peg/rampart/policies"
 )
@@ -49,6 +52,13 @@ const openclawPluginDevPath = "/home/clap/.openclaw/workspace/rampart-openclaw-p
 //  6. Run rampart doctor for a health summary.
 //  7. Print success and next steps.
 func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
+	// 0. Ensure rampart serve is running (start as systemd service if needed).
+	if err := ensureServeRunning(w, errW); err != nil {
+		fmt.Fprintf(errW, "⚠ Could not start rampart serve: %v\n", err)
+		fmt.Fprintln(errW, "  Start manually: rampart serve --background")
+		// Non-fatal — continue setup, serve can be started later.
+	}
+
 	// 1. Locate openclaw.
 	openclawBin, err := findOpenClawBinary()
 	if err != nil {
@@ -109,18 +119,21 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 
 	// 7. Success message.
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "✓ Rampart OpenClaw plugin setup complete!")
+	fmt.Fprintln(w, "✅ Rampart is protecting your OpenClaw agent")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Next steps:")
-	fmt.Fprintln(w, "  1. Restart the OpenClaw gateway:")
-	fmt.Fprintln(w, "       systemctl --user restart openclaw-gateway")
-	fmt.Fprintln(w, "  2. Verify the hook is active:")
-	fmt.Fprintln(w, "       rampart doctor")
-	fmt.Fprintln(w, "  3. Watch live tool calls:")
-	fmt.Fprintln(w, "       rampart watch")
+	fmt.Fprintln(w, "  Protected tools: exec, read, write, edit, web_fetch, browser, message")
+	serveStatus := "http://localhost:9090"
+	if isSetupServeReachable() {
+		serveStatus += " (running)"
+	} else {
+		serveStatus += " (not running — start with: rampart serve --background)"
+	}
+	fmt.Fprintf(w, "  Policy engine:   %s\n", serveStatus)
+	fmt.Fprintln(w, "  Audit log:       ~/.rampart/audit/")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "The Rampart before_tool_call hook now intercepts ALL OpenClaw tool calls")
-	fmt.Fprintln(w, "natively — no dist patching or LD_PRELOAD needed.")
+	fmt.Fprintln(w, "  → Restart the gateway:  systemctl --user restart openclaw-gateway")
+	fmt.Fprintln(w, "  → Run `rampart watch` to see policy decisions in real time")
+	fmt.Fprintln(w, "  → Run `rampart doctor` to verify your setup")
 
 	return nil
 }
@@ -442,4 +455,54 @@ func detectOpenClawVersion() (string, error) {
 		return "", err
 	}
 	return getOpenClawVersion(bin)
+}
+
+// ensureServeRunning checks whether rampart serve is reachable, and if not,
+// installs and starts it as a systemd/launchd service via `rampart serve install`.
+func ensureServeRunning(w io.Writer, errW io.Writer) error {
+	if isSetupServeReachable() {
+		fmt.Fprintln(w, "✓ Rampart serve is running")
+		return nil
+	}
+
+	fmt.Fprintln(w, "Starting rampart serve...")
+	rampartBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find rampart binary: %w", err)
+	}
+
+	installCmd := osexec.Command(rampartBin, "serve", "install")
+	installCmd.Stdout = w
+	installCmd.Stderr = errW
+	if err := installCmd.Run(); err != nil {
+		return fmt.Errorf("rampart serve install failed: %w", err)
+	}
+
+	// Wait up to 3 seconds for serve to come up.
+	for i := 0; i < 6; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if isSetupServeReachable() {
+			fmt.Fprintln(w, "✓ Rampart serve started (systemd service)")
+			return nil
+		}
+	}
+
+	return fmt.Errorf("rampart serve installed but not reachable after 3s")
+}
+
+// isSetupServeReachable does a quick healthz check against the default serve port.
+func isSetupServeReachable() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost:9090/healthz", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 400
 }

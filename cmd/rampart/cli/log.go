@@ -68,6 +68,10 @@ Examples:
 				filtered := make([]audit.Event, 0, len(events))
 				for _, e := range events {
 					if strings.EqualFold(e.Decision.Action, "deny") {
+						// Skip noise: hook process restarts show as "unknown" tool with EOF/parse failure messages
+						if isLogNoise(e) {
+							continue
+						}
 						filtered = append(filtered, e)
 					}
 				}
@@ -156,51 +160,75 @@ func writePrettyEvents(w io.Writer, events []audit.Event, disableColor bool) err
 	return nil
 }
 
+// isLogNoise returns true for events that are hook process restarts, not real policy
+// decisions. These show as tool=="unknown" with EOF or parse failure messages.
+func isLogNoise(e audit.Event) bool {
+	if !strings.EqualFold(strings.TrimSpace(e.Tool), "unknown") {
+		return false
+	}
+	msg := strings.ToLower(e.Decision.Message)
+	detail := strings.ToLower(extractPrimaryRequestValue(e.Request))
+	combined := msg + " " + detail
+	return strings.Contains(combined, "eof") ||
+		strings.Contains(combined, "parse failure") ||
+		strings.Contains(combined, "parse error") ||
+		strings.Contains(combined, "unexpected end")
+}
+
 // formatLogLine produces a single pretty-printed line for a log event.
+// Format: HH:MM:SS  ICON  TOOL:DECISION  COMMAND/PATH              POLICY
 func formatLogLine(e audit.Event, disableColor bool) string {
 	ts := e.Timestamp.Format("15:04:05")
-	tool := e.Tool
+	tool := strings.TrimSpace(e.Tool)
+	if tool == "" {
+		tool = "unknown"
+	}
 	detail := extractPrimaryRequestValue(e.Request)
-	decision := strings.ToLower(e.Decision.Action)
+	decision := strings.ToLower(strings.TrimSpace(e.Decision.Action))
 
 	policy := "(no match)"
 	if len(e.Decision.MatchedPolicies) > 0 {
 		policy = e.Decision.MatchedPolicies[0]
 	}
 
-	// Truncate detail
-	if len(detail) > 45 {
-		detail = detail[:42] + "..."
+	// Truncate detail to 48 chars
+	if len([]rune(detail)) > 48 {
+		runes := []rune(detail)
+		detail = string(runes[:45]) + "..."
 	}
 
-	var icon, decLabel string
+	// toolDecision: "exec:deny", "read:allow", etc.
+	toolDecision := tool + ":" + decision
+
+	var icon string
 	switch decision {
-	case "allow":
-		icon = "✅"
-		decLabel = "allow"
-	case "deny":
-		icon = "🛡️"
-		decLabel = "deny"
-	case "log":
-		icon = "📝"
-		decLabel = "log"
+	case "allow", "approved", "always_allowed":
+		icon = "✓"
+	case "deny", "denied":
+		icon = "🛡"
+	case "ask", "require_approval":
+		icon = "⏸"
+	case "log", "watch":
+		icon = "👁"
 	default:
 		icon = "•"
-		decLabel = decision
 	}
 
-	line := fmt.Sprintf("%s  %s %-5s  %-6s %-45s %s", ts, icon, decLabel, tool, detail, policy)
+	line := fmt.Sprintf("%s  %s  %-22s  %-48s  %s", ts, icon, toolDecision, detail, policy)
 
 	if disableColor {
 		return line
 	}
 
 	switch decision {
-	case "allow":
-		return "\033[32m" + line + "\033[0m"
-	case "deny":
+	case "allow", "approved", "always_allowed":
+		// Dim/faint for allow — not noise, just not alarming
+		return "\033[2m" + line + "\033[0m"
+	case "deny", "denied":
 		return "\033[1;31m" + line + "\033[0m"
-	case "log":
+	case "ask", "require_approval":
+		return "\033[1;33m" + line + "\033[0m"
+	case "log", "watch":
 		return "\033[33m" + line + "\033[0m"
 	}
 	return line
