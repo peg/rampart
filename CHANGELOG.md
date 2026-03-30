@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-03-30
+
+### Added (OpenClaw Native Plugin — Primary Integration)
+
+- **Native OpenClaw plugin** (`rampart-openclaw-plugin`) — intercepts all tool calls via OpenClaw's `before_tool_call` hook API. Replaces brittle dist file patching. Works with OpenClaw >= 2026.3.28. Install with `rampart setup openclaw` (auto-detected).
+- **`rampart setup openclaw` auto-detects OpenClaw version** — automatically uses the plugin path on OpenClaw >= 2026.3.28, falls back to legacy dist patches on older versions. No flags required.
+- **`rampart setup openclaw` auto-starts serve** — if `rampart serve` isn't running when setup is invoked, it is installed and started as a systemd service automatically.
+- **`POST /v1/rules/learn`** — new API endpoint for "Always Allow" writeback from the plugin. Accepts `{tool, args, decision, source}`, computes a smart glob pattern, and appends a persistent rule to `user-overrides.yaml`.
+- **`policies/openclaw.yaml` profile** — 13 focused policies covering the full OpenClaw tool surface (exec, read, write, edit, web_fetch, web_search, browser, message, canvas).
+- **`rampart setup openclaw --migrate`** — migrates from legacy dist-patch/bridge integration to the native plugin in one command.
+- **`rampart doctor` plugin check** — shows `✓ OpenClaw plugin: installed (before_tool_call hook active)` when the plugin is present.
+- **`rampart doctor` summary block** — when all checks pass, prints "🛡️ Rampart is protecting your AI agents" with live stats and next-step hints.
+- **Approval store persistence** — pending approvals survive `rampart serve` restarts.
+- **`rampart audit verify --since <date>`** — skip audit chain verification for files before a given date.
+
+### Fixed
+
+- **EOF noise removed** — hook parse failures from stdin EOF no longer appear in `rampart log --deny`.
+- **OpenClaw 2026.3.x dist patch compatibility** — updated patterns for new bundle format.
+- **Always Allow writeback** — clicking "Always Allow" in Discord now correctly writes a persistent rule.
+- **Smart Always Allow globs** — writes `sudo apt-get install *` instead of exact strings.
+- **`.env` file protection for read/write tools** — `watch-env-access` now covers `read` and `write`.
+- **`rampart doctor` false positives** — web_fetch/browser/message/exec warnings suppressed when plugin is installed.
+- **`rampart doctor` checks `tools.exec.ask`** — checks both top-level and nested config path.
+- **Bridge audit trail** — bridge-evaluated commands now appear in JSONL with full params.
+- **MCP proxy configurable agent identity** — `--agent-id` and `--session-id` flags.
+- **Name-based rule deletion** — `DELETE /v1/rules/auto-allowed/{name}`.
+
+### Changed
+
+- **`install.sh` UX** — detects OpenClaw/Claude Code and prints setup command. `--auto-setup` flag available.
+- **`rampart log` format** — cleaner icons, tool:decision token, policy name on right.
+
+
+
 ## [0.9.9] - 2026-03-24
 
 ### Removed (Breaking)
