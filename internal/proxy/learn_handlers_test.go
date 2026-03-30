@@ -134,7 +134,8 @@ func TestLearnRule_CorrectGlob(t *testing.T) {
 	}{
 		{"sudo apt-get install nmap", "sudo apt-get install *"},
 		{"sudo apt-get install nmap --dry-run 2>&1 | head -1", "sudo apt-get install nmap *"},
-		{"docker run nginx", "docker run *"},
+		{"docker run nginx", "docker run nginx"},
+		{"curl https://example.com/install.sh", "curl https://example.com/install.sh"},
 		{"ls", "ls"},
 		{"cat /etc/hosts", "cat /etc/hosts *"},
 	}

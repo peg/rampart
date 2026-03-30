@@ -106,7 +106,7 @@ func (mg *mockGateway) sendApprovalRequest(id, command, agent string) {
 		SessionKey string `json:"sessionKey"`
 	}
 	payload, _ := json.Marshal(struct {
-		ID      string      `json:"id"`
+		ID      string       `json:"id"`
 		Request requestInner `json:"request"`
 	}{
 		ID: id,
@@ -576,22 +576,24 @@ func TestBuildAllowPattern(t *testing.T) {
 	}{
 		// 3+ tokens: replace last arg with *
 		{"sudo apt-get install nmap", "sudo apt-get install *"},
-		{"kubectl apply -f prod.yaml", "kubectl apply -f *"},
-		{"docker run nginx", "docker run *"},
+		{"kubectl apply -f prod.yaml", "kubectl apply -f prod.yaml"},
+		{"docker run nginx", "docker run nginx"},
+		{"curl https://example.com/install.sh", "curl https://example.com/install.sh"},
+		{"chmod 600 /etc/shadow", "chmod 600 /etc/shadow"},
 		{"npm install lodash", "npm install *"},
 		// Strip pipes and redirection first
 		{"sudo apt-get install nmap --dry-run 2>&1 | head -1", "sudo apt-get install nmap *"},
-		{"cat /etc/passwd > /tmp/out", "cat /etc/passwd *"},  // 2 tokens after strip, path-like → append *
-		{"ls -la >> log.txt", "ls -la"},                       // 2 tokens after strip, no dot/slash → as-is
-		{"some-cmd 2> /dev/null", "some-cmd"},                 // 1 token after strip → as-is
+		{"cat /etc/passwd > /tmp/out", "cat /etc/passwd *"}, // 2 tokens after strip, path-like → append *
+		{"ls -la >> log.txt", "ls -la"},                     // 2 tokens after strip, no dot/slash → as-is
+		{"some-cmd 2> /dev/null", "some-cmd"},               // 1 token after strip → as-is
 		// git commit -m "message" — quoted args become multiple fields
 		{"git commit -m fix-bug", "git commit -m *"},
 		// Short commands (1-2 tokens)
 		{"ls", "ls"},
 		{"whoami", "whoami"},
-		{"cat /etc/hosts", "cat /etc/hosts *"}, // path-like → append *
+		{"cat /etc/hosts", "cat /etc/hosts *"},       // path-like → append *
 		{"python3 script.py", "python3 script.py *"}, // dot → append *
-		{"echo hello", "echo hello"}, // no dot/slash → keep as-is
+		{"echo hello", "echo hello"},                 // no dot/slash → keep as-is
 	}
 
 	for _, tt := range tests {
