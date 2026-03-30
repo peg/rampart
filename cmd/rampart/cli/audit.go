@@ -131,10 +131,18 @@ func followAuditFile(cmd *cobra.Command, auditDir, startFile string, noColor boo
 
 func newAuditVerifyCmd() *cobra.Command {
 	var auditDir string
+	var since string
 
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Verify audit hash-chain integrity",
+		Long: `Verify the hash-chain integrity of audit log files.
+
+Use --since to skip files before a given date (useful when older files have
+a known break in the chain from a previous dev session).
+
+Example:
+  rampart audit verify --since 2026-03-20`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			files, err := listAuditFiles(auditDir)
 			if err != nil {
@@ -142,6 +150,33 @@ func newAuditVerifyCmd() *cobra.Command {
 			}
 			if len(files) == 0 {
 				return fmt.Errorf("audit: no .jsonl files found in %s", auditDir)
+			}
+
+			// Filter files by --since date if provided
+			if since != "" {
+				sinceDate, parseErr := time.Parse("2006-01-02", since)
+				if parseErr != nil {
+					return fmt.Errorf("audit: invalid --since date %q: expected YYYY-MM-DD format", since)
+				}
+				filtered := files[:0]
+				for _, f := range files {
+					base := filepath.Base(f)
+					// Filename format: YYYY-MM-DD.jsonl
+					datePart := strings.TrimSuffix(base, ".jsonl")
+					fileDate, dateErr := time.Parse("2006-01-02", datePart)
+					if dateErr != nil {
+						// Can't parse date from filename — include it to be safe
+						filtered = append(filtered, f)
+						continue
+					}
+					if !fileDate.Before(sinceDate) {
+						filtered = append(filtered, f)
+					}
+				}
+				files = filtered
+				if len(files) == 0 {
+					return fmt.Errorf("audit: no .jsonl files found in %s at or after %s", auditDir, since)
+				}
 			}
 
 			count, hashesByID, err := verifyAuditChain(files)
@@ -161,6 +196,7 @@ func newAuditVerifyCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "~/.rampart/audit", "Directory containing audit JSONL files")
+	cmd.Flags().StringVar(&since, "since", "", "Only verify files from this date forward (YYYY-MM-DD), skipping older files")
 	return cmd
 }
 

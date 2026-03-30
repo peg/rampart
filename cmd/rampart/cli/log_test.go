@@ -65,8 +65,8 @@ func TestFormatLogLine_NoColor(t *testing.T) {
 	if !strings.Contains(line, "14:30:00") {
 		t.Errorf("expected timestamp, got: %s", line)
 	}
-	if !strings.Contains(line, "allow") {
-		t.Errorf("expected 'allow', got: %s", line)
+	if !strings.Contains(line, "exec:allow") {
+		t.Errorf("expected 'exec:allow', got: %s", line)
 	}
 	if !strings.Contains(line, "git status") {
 		t.Errorf("expected command, got: %s", line)
@@ -76,8 +76,8 @@ func TestFormatLogLine_NoColor(t *testing.T) {
 	}
 
 	line2 := formatLogLine(events[1], true)
-	if !strings.Contains(line2, "deny") {
-		t.Errorf("expected 'deny', got: %s", line2)
+	if !strings.Contains(line2, "exec:deny") {
+		t.Errorf("expected 'exec:deny', got: %s", line2)
 	}
 	if !strings.Contains(line2, "block-destructive") {
 		t.Errorf("expected policy name, got: %s", line2)
@@ -87,14 +87,51 @@ func TestFormatLogLine_NoColor(t *testing.T) {
 func TestFormatLogLine_WithColor(t *testing.T) {
 	events := testEvents()
 
+	// allow entries should be dimmed (\033[2m)
 	line := formatLogLine(events[0], false)
-	if !strings.Contains(line, "\033[32m") {
-		t.Errorf("expected green color for allow, got: %s", line)
+	if !strings.Contains(line, "\033[2m") {
+		t.Errorf("expected dim color for allow, got: %q", line)
 	}
 
+	// deny entries should be bright red
 	line2 := formatLogLine(events[1], false)
 	if !strings.Contains(line2, "\033[1;31m") {
-		t.Errorf("expected red color for deny, got: %s", line2)
+		t.Errorf("expected red color for deny, got: %q", line2)
+	}
+}
+
+func TestIsLogNoise(t *testing.T) {
+	eofEvent := audit.Event{
+		Tool: "unknown",
+		Decision: audit.EventDecision{
+			Action:  "deny",
+			Message: "unexpected EOF",
+		},
+	}
+	if !isLogNoise(eofEvent) {
+		t.Error("expected EOF unknown event to be noise")
+	}
+
+	realEvent := audit.Event{
+		Tool: "exec",
+		Request: map[string]any{"command": "cat ~/.ssh/id_rsa"},
+		Decision: audit.EventDecision{
+			Action:          "deny",
+			MatchedPolicies: []string{"block-credential-commands"},
+		},
+	}
+	if isLogNoise(realEvent) {
+		t.Error("expected real deny event to NOT be noise")
+	}
+
+	unknownRealEvent := audit.Event{
+		Tool: "unknown",
+		Decision: audit.EventDecision{
+			Action: "deny",
+		},
+	}
+	if isLogNoise(unknownRealEvent) {
+		t.Error("expected unknown tool without EOF/parse message to NOT be filtered")
 	}
 }
 

@@ -7,7 +7,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -352,6 +354,16 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
+
+				// Clean EOF is normal — hook process exits when the agent
+				// restarts or stdin closes.  Don't record an audit entry;
+				// it's not a real policy decision and just creates noise in
+				// `rampart log --deny`.
+				if errors.Is(err, io.EOF) || err.Error() == "EOF" {
+					logger.Debug("hook: clean EOF on stdin, skipping audit")
+					return outputHookResult(cmd, format, hookAllow, false, "parse failure: EOF", "")
+				}
+
 				// In enforce mode, fail closed — a parse failure must not silently
 				// allow the tool call. In monitor/audit modes, allow through so the
 				// agent is never blocked by a Rampart bug.

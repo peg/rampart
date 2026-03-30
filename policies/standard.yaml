@@ -334,9 +334,9 @@ policies:
         message: "Cloud upload requires approval"
 
   - name: watch-env-access
-    description: "Log access to environment variables — may contain API keys or secrets"
+    description: "Log access to environment variables and .env files — may contain API keys or secrets"
     match:
-      tool: ["exec"]
+      tool: ["exec", "read", "write"]
     rules:
       - action: watch
         when:
@@ -346,6 +346,19 @@ policies:
             - "printenv"
             - "printenv *"
         message: "Environment variable dump logged"
+      - action: watch
+        when:
+          path_matches:
+            - "**/.env"
+            - "**/.env.*"
+            - "**/.envrc"
+          path_not_matches:
+            - "**/.env.example"
+            - "**/.env.example.*"
+            - "**/*.env.example"
+            - "**/.env.sample"
+            - "**/.env.template"
+        message: ".env file access logged — may contain secrets"
 
   - name: block-env-var-injection
     description: "Block environment variable injection with no legitimate agent use — preloaders, startup hooks, shell init files"
@@ -461,9 +474,6 @@ policies:
             - "**/.kube/config"
             - "**/.docker/config.json"
             # Token / secrets files
-            - "**/.env"
-            - "**/.env.*"
-            - "**/.envrc"
             - "**/.netrc"
             - "**/.rampart/token"
             - "**/.rampart/tokens.json"
@@ -481,13 +491,6 @@ policies:
             - "**/.secrets/**"
             - "**/.keys/**"
             - "**/.pki/**"
-          path_not_matches:
-            # Allow example/template env files (contain placeholder values, not real secrets)
-            - "**/.env.example"
-            - "**/.env.example.*"
-            - "**/*.env.example"
-            - "**/.env.sample"
-            - "**/.env.template"
         message: "Credential file access blocked"
       # System authentication / privilege files
       - action: deny

@@ -1,39 +1,29 @@
+# rampart-policy-version: 1.0.0
 # Rampart built-in profile: openclaw
 # Use with: rampart init --profile openclaw
 #
-# Session-aware policy for OpenClaw AI agent orchestrators. Applies the
-# "seatbelt not a cage" philosophy: the main session (direct human chat)
-# has full workspace access, while subagents and cron jobs face tighter
-# restrictions on sensitive files and external actions.
+# Policy profile for OpenClaw AI agent environments.
+# Covers OpenClaw's full tool surface: read, write, edit, exec,
+# web_fetch, web_search, browser, message, canvas.
+#
+# Philosophy: deny by default, allow known-safe operations explicitly.
+# Designed to be layered with standard.yaml for comprehensive protection.
 #
 # Prerequisites:
-#   rampart setup openclaw --patch-tools
-#
-# Session context:
-#   The OpenClaw shell shim sends session identity via the RAMPART_SESSION
-#   or OPENCLAW_SESSION_KIND environment variable. Set these in your
-#   OpenClaw configuration to distinguish session types:
-#     main        — direct chat with the human operator
-#     subagent:*  — spawned sub-agent sessions
-#     cron:*      — scheduled/periodic tasks
-#
-# Default action: allow (permissive baseline — rules restrict specific risks)
+#   rampart setup openclaw --plugin   (native hook interception, recommended)
+#   rampart setup openclaw --patch-tools  (legacy dist patching)
 
 version: "1"
-default_action: allow
+default_action: deny
 
 policies:
   # ── Self-modification protection ──────────────────────────────────────
-  # No session can modify its own Rampart policy. Human-only.
-  - name: openclaw-block-self-modification
-    description: "Prevent any agent session from modifying Rampart policy"
-    priority: 1
+  # Agents cannot modify their own Rampart policy or disable enforcement.
+  - name: block-self-modification
+    description: "Prevent AI agents from modifying their own Rampart policy"
     match:
       tool: ["exec"]
     rules:
-      # Allow read-only and safe operational commands.
-      # SECURITY: do NOT allow bare "rampart serve" — an agent could restart
-      # with --mode disabled or altered flags. Only allow explicit safe subcommands.
       - action: allow
         when:
           command_contains:
@@ -46,11 +36,7 @@ policies:
             - "rampart log"
             - "rampart watch"
             - "rampart convert"
-        message: "Read-only/safe rampart commands are allowed"
-      # SECURITY: deny policy modification AND serve/upgrade abuse.
-      # "rampart serve" denied because agent could restart with --mode disabled.
-      # "rampart upgrade" denied because agent could replace the binary.
-      # Safe serve subcommands (stop, install, uninstall) allowed above.
+        message: "Read-only Rampart commands allowed"
       - action: deny
         when:
           command_contains:
@@ -72,96 +58,178 @@ policies:
             - ">> ~/.rampart/"
         message: "Direct writes to .rampart/ directory blocked"
 
-  # ── Credential protection ─────────────────────────────────────────────
-  # Block reads of SSH keys, cloud credentials, and secrets — all sessions.
-  - name: openclaw-block-credentials
-    description: "Block access to SSH keys, cloud credentials, and secret files"
-    priority: 2
+  # ── Safe workspace reads ───────────────────────────────────────────────
+  # Allow reading workspace files and common project files.
+  - name: allow-workspace-reads
+    description: "Allow reading workspace and project files"
     match:
-      tool: ["read", "exec"]
+      tool: ["read"]
     rules:
-      - action: deny
+      - action: allow
         when:
           path_matches:
+            # Workspace files
+            - "**/.openclaw/workspace/**"
+            - "**/workspace/**"
+            # Common project files
+            - "**/*.go"
+            - "**/*.ts"
+            - "**/*.js"
+            - "**/*.py"
+            - "**/*.md"
+            - "**/*.yaml"
+            - "**/*.yml"
+            - "**/*.json"
+            - "**/*.toml"
+            - "**/*.txt"
+            - "**/*.sh"
+            - "**/*.rs"
+            - "**/*.html"
+            - "**/*.css"
+            - "**/*.sql"
+            - "**/*.env.example"
+          path_not_matches:
+            # Block credentials even within workspace
             - "**/.ssh/id_*"
-            - "**/.ssh/known_hosts"
             - "**/.aws/credentials"
             - "**/.kube/config"
             - "**/.docker/config.json"
             - "**/.git-credentials"
             - "**/.netrc"
-        message: "Credential file access blocked"
-      - action: deny
-        when:
-          command_matches:
-            - "cat */.ssh/id_*"
-            - "cat */.aws/credentials"
-            - "cat */.env"
-        message: "Credential read via exec blocked"
+            - "**/.env"
+            - "**/.env.*"
+        message: "Workspace file read allowed"
 
-  # ── Response scanning ─────────────────────────────────────────────────
-  # Block credentials from leaking into the agent's context window.
-  - name: openclaw-response-scanning
-    description: "Block secrets in tool responses before they enter agent context"
-    priority: 3
-    match:
-      tool: ["read", "exec"]
-    rules:
-      - action: deny
-        when:
-          response_matches:
-            - "(?i)(AWS_SECRET_ACCESS_KEY|AKIA[0-9A-Z]{16})"
-            - "(?i)(PRIVATE KEY-----)"
-            - "(?i)(ghp_[a-zA-Z0-9]{36})"
-            - "(?i)(sk-[a-zA-Z0-9]{20,})"
-        message: "Response blocked: contains credentials"
-
-  # ── Subagent restrictions ─────────────────────────────────────────────
-  # Subagents and cron jobs cannot modify identity/config files.
-  - name: openclaw-subagent-write-guard
-    description: "Restrict subagent and cron write access to sensitive files"
-    priority: 10
+  # ── Memory and log file writes ─────────────────────────────────────────
+  # Allow writing to memory files, daily logs, and workspace outputs.
+  - name: allow-workspace-writes
+    description: "Allow writing memory files, logs, and workspace outputs"
     match:
       tool: ["write", "edit"]
     rules:
-      - action: deny
+      - action: allow
         when:
-          session_matches: ["subagent:*", "cron:*"]
           path_matches:
+            # Memory and daily notes
+            - "**/memory/**"
+            - "**/memory/*.md"
+            - "**/MEMORY.md"
+            - "**/HEARTBEAT.md"
+            # Workspace outputs
+            - "**/.openclaw/workspace/**"
+            - "**/workspace/**"
+            # Common project files (safe to write)
+            - "**/*.go"
+            - "**/*.ts"
+            - "**/*.js"
+            - "**/*.py"
+            - "**/*.md"
+            - "**/*.yaml"
+            - "**/*.yml"
+            - "**/*.json"
+            - "**/*.toml"
+            - "**/*.txt"
+            - "**/*.sh"
+            - "**/*.rs"
+            - "**/*.html"
+            - "**/*.css"
+            - "**/*.sql"
+          path_not_matches:
+            # Never write credentials or identity files via subagent
+            - "**/.ssh/**"
+            - "**/.aws/**"
+            - "**/.gnupg/**"
+            - "**/.rampart/**"
             - "**/SOUL.md"
             - "**/IDENTITY.md"
-            - "**/USER.md"
-            - "**/AGENTS.md"
-            - "**/.openclaw/config*"
-            - "**/.openclaw/openclaw.json*"
-        message: "Subagents and cron jobs cannot modify identity or config files"
+            - "**/.openclaw/openclaw.json"
+        message: "Workspace file write allowed"
 
-  # ── Exfiltration protection ───────────────────────────────────────────
-  # Block data exfiltration via curl/wget POST to unknown endpoints.
-  - name: openclaw-block-exfil
-    description: "Block data exfiltration via HTTP POST to unknown hosts"
-    priority: 5
+  # ── Safe exec commands ─────────────────────────────────────────────────
+  # Allow common development and system commands.
+  - name: allow-safe-exec
+    description: "Allow common dev tools and shell operations"
     match:
       tool: ["exec"]
     rules:
-      - action: deny
+      - action: allow
         when:
-          command_contains:
-            - "curl -X POST"
-            - "curl --data "
-            - "curl -d @"
-            - "wget --post-data"
-            - "wget --post-file"
+          command_matches:
+            # Go toolchain
+            - "go build *"
+            - "go test *"
+            - "go run *"
+            - "go fmt *"
+            - "go vet *"
+            - "go mod *"
+            - "go get *"
+            - "go install *"
+            - "go generate *"
+            # Git operations
+            - "git *"
+            # Node/npm/yarn
+            - "node *"
+            - "npm *"
+            - "yarn *"
+            - "npx *"
+            - "pnpm *"
+            # Python
+            - "python *"
+            - "python3 *"
+            - "pip *"
+            - "pip3 *"
+            # Common CLI tools
+            - "ls *"
+            - "ls"
+            - "cat *"
+            - "echo *"
+            - "grep *"
+            - "rg *"
+            - "find *"
+            - "head *"
+            - "tail *"
+            - "wc *"
+            - "sort *"
+            - "uniq *"
+            - "cut *"
+            - "awk *"
+            - "sed *"
+            - "tr *"
+            - "diff *"
+            - "cp *"
+            - "mv *"
+            - "mkdir *"
+            - "touch *"
+            - "chmod *"
+            - "pwd"
+            - "date"
+            - "which *"
+            - "type *"
+            - "env"
+            - "printenv *"
+            - "bash *"
+            - "sh *"
+            - "curl *"
+            - "wget *"
+            - "jq *"
+            - "yq *"
+            - "make *"
+            - "docker *"
+            - "kubectl *"
           command_not_matches:
-            - "*localhost*"
-            - "*127.0.0.1*"
-        message: "HTTP POST to external host blocked — potential data exfiltration"
+            # Block destructive variants
+            - "rm -rf /*"
+            - "rm -rf ~/*"
+            - "rm -rf /"
+            - "rm -rf ~"
+            - "chmod -R 777 /"
+            - "dd **of=/dev/sd**"
+            - "dd **of=/dev/nvme**"
+        message: "Safe exec command allowed"
 
-  # ── Destructive commands ──────────────────────────────────────────────
-  # Block obviously destructive operations.
-  - name: openclaw-block-destructive
-    description: "Block commands that could destroy the system"
-    priority: 1
+  # ── Block destructive exec ─────────────────────────────────────────────
+  - name: block-destructive-exec
+    description: "Block destructive filesystem and system commands"
     match:
       tool: ["exec"]
     rules:
@@ -174,43 +242,205 @@ policies:
             - "rm -rf ~"
             - "mkfs*"
             - "> /dev/sda"
-            - "dd if=/dev/zero of=/dev/*"
+            - "dd **of=/dev/**"
             - ":(){ :|:& };:"
         message: "Destructive command blocked"
 
-  # ── Network-aware logging ─────────────────────────────────────────────
-  # Log network access for audit trail (allow but record).
-  - name: openclaw-log-network
-    description: "Log outbound network commands for audit visibility"
-    priority: 50
+  # ── Block credential access ────────────────────────────────────────────
+  - name: block-credential-reads
+    description: "Block access to SSH keys, cloud credentials, and secret files"
     match:
-      tool: ["exec"]
+      tool: ["read"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.ssh/id_*"
+            - "**/.aws/credentials"
+            - "**/.aws/config"
+            - "**/.kube/config"
+            - "**/.docker/config.json"
+            - "**/.git-credentials"
+            - "**/.netrc"
+            - "**/.gnupg/**"
+            - "**/.env"
+            - "**/.env.*"
+            - "**/etc/shadow"
+            - "**/etc/passwd"
+          path_not_matches:
+            - "**/.ssh/*.pub"
+            - "**/.env.example"
+            - "**/.env.sample"
+            - "**/.env.template"
+        message: "Credential file access blocked"
+
+  # ── web_fetch: allow known-safe domains ───────────────────────────────
+  # Allow fetches to common dev/research domains; block exfil destinations.
+  - name: allow-safe-web-fetch
+    description: "Allow web_fetch to known-safe domains"
+    match:
+      tool: ["fetch", "web_fetch"]
+    rules:
+      - action: allow
+        when:
+          domain_matches:
+            # Package registries and docs
+            - "pkg.go.dev"
+            - "docs.rs"
+            - "crates.io"
+            - "npmjs.com"
+            - "*.npmjs.com"
+            - "pypi.org"
+            # Developer resources
+            - "github.com"
+            - "*.github.com"
+            - "raw.githubusercontent.com"
+            - "api.github.com"
+            - "docs.github.com"
+            - "stackoverflow.com"
+            - "*.stackoverflow.com"
+            # Search and reference
+            - "duckduckgo.com"
+            - "google.com"
+            - "wikipedia.org"
+            - "*.wikipedia.org"
+            - "developer.mozilla.org"
+            # OpenClaw and Rampart related
+            - "rampart.sh"
+            - "*.rampart.sh"
+            # LLM APIs (agents may need these)
+            - "api.anthropic.com"
+            - "api.openai.com"
+        message: "Web fetch to known-safe domain allowed"
+      - action: deny
+        when:
+          domain_matches:
+            # Known exfiltration services
+            - "*.ngrok.io"
+            - "ngrok.io"
+            - "*.ngrok-free.app"
+            - "*.requestbin.com"
+            - "*.hookbin.com"
+            - "*.webhook.site"
+            - "webhook.site"
+            - "*.pipedream.net"
+            - "*.beeceptor.com"
+        message: "Potential exfiltration domain blocked"
+
+  # ── web_search: always allow ───────────────────────────────────────────
+  - name: allow-web-search
+    description: "Allow web_search tool (read-only, no exfiltration risk)"
+    match:
+      tool: ["web_search"]
+    rules:
+      - action: allow
+        when:
+          default: true
+        message: "Web search allowed"
+
+  # ── browser: allow known-safe + watch unknown domains ─────────────────
+  - name: allow-safe-browser
+    description: "Allow browser navigation to known-safe domains"
+    match:
+      tool: ["browser"]
+    rules:
+      - action: allow
+        when:
+          domain_matches:
+            # Discord / Telegram for OpenClaw message plugin UIs
+            - "discord.com"
+            - "*.discord.com"
+            - "telegram.org"
+            - "*.telegram.org"
+            - "web.telegram.org"
+            # Developer portals
+            - "github.com"
+            - "*.github.com"
+            - "localhost"
+            - "127.0.0.1"
+            - "*.local"
+        message: "Browser navigation to known-safe domain allowed"
+
+  # ── watch-browser-navigation: audit unknown domain visits ─────────────
+  # Log browser tool calls to unknown/unclassified domains for audit visibility.
+  - name: watch-browser-navigation
+    description: "Audit browser navigation to unknown domains"
+    match:
+      tool: ["browser"]
     rules:
       - action: watch
         when:
-          command_matches:
-            - "curl *"
-            - "wget *"
-            - "ssh *"
-            - "scp *"
-        message: "Network access logged"
+          default: true
+        message: "Browser navigation to unclassified domain logged for audit"
 
-  # ── Production safety gates ───────────────────────────────────────────
-  # Require human approval for production-impacting commands.
-  - name: openclaw-prod-approval
-    description: "Require human approval for production deployments"
-    priority: 20
+  # ── message: allow send to known channels ─────────────────────────────
+  # Allow message sends to configured channels; log and review unknown targets.
+  - name: allow-safe-message
+    description: "Allow message tool for common channels (Discord, Telegram)"
     match:
-      tool: ["exec"]
+      tool: ["message"]
     rules:
-      - action: require_approval
+      - action: allow
         when:
-          command_matches:
-            - "kubectl apply *"
-            - "kubectl delete *"
-            - "terraform apply *"
-            - "terraform destroy *"
-            - "docker push *"
-            - "helm install *"
-            - "helm upgrade *"
-        message: "Production command requires human approval"
+          default: true
+        message: "Message tool action allowed"
+
+  # ── canvas: allow all canvas operations ───────────────────────────────
+  # Canvas is presentation/UI only — low risk.
+  - name: allow-canvas
+    description: "Allow canvas operations (presentation/UI, low risk)"
+    match:
+      tool: ["canvas"]
+    rules:
+      - action: allow
+        when:
+          default: true
+        message: "Canvas operation allowed"
+
+  # ── Subagent write guard ───────────────────────────────────────────────
+  # Subagents cannot modify identity/config files.
+  - name: openclaw-subagent-write-guard
+    description: "Restrict subagent write access to identity and config files"
+    priority: 10
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          session_matches: ["subagent:*", "cron:*"]
+          path_matches:
+            - "**/SOUL.md"
+            - "**/IDENTITY.md"
+            - "**/USER.md"
+            - "**/AGENTS.md"
+            - "**/.openclaw/openclaw.json"
+        message: "Subagents cannot modify identity or config files"
+
+  # ── Response scanning ──────────────────────────────────────────────────
+  # Block credentials from leaking into agent context.
+  - name: block-credential-in-response
+    description: "Block secrets in tool responses before they enter agent context"
+    match:
+      tool: ["read", "exec", "web_fetch"]
+    rules:
+      - action: deny
+        when:
+          response_matches:
+            - "AKIA[0-9A-Z]{16}"
+            - "ASIA[0-9A-Z]{16}"
+            - "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+            - "ghp_[a-zA-Z0-9]{36}"
+            - "github_pat_[a-zA-Z0-9_]{80,}"
+            - "sk-[a-zA-Z0-9]{20,}"
+        message: "Response blocked: contains credentials"
+
+  # ── Allow-unmatched catch-all (lowest priority) ────────────────────────
+  # With default_action: deny, this is unreachable for non-matched rules.
+  # Kept for documentation clarity. Do not remove.
+  - name: allow-unmatched
+    priority: 10000
+    rules:
+      - action: deny
+        when:
+          default: true
+        message: "No matching OpenClaw policy rule — blocked by default"

@@ -87,6 +87,26 @@ func WithApprovalStore(store *approval.Store) Option {
 	}
 }
 
+// WithAgentID sets the agent identity used in policy evaluation and audit events.
+// Defaults to "mcp-client" if not set.
+func WithAgentID(id string) Option {
+	return func(p *Proxy) {
+		if strings.TrimSpace(id) != "" {
+			p.agentID = strings.TrimSpace(id)
+		}
+	}
+}
+
+// WithSessionID sets the session identity used in policy evaluation and audit events.
+// Defaults to "mcp-proxy" if not set.
+func WithSessionID(id string) Option {
+	return func(p *Proxy) {
+		if strings.TrimSpace(id) != "" {
+			p.sessionID = strings.TrimSpace(id)
+		}
+	}
+}
+
 // Proxy evaluates MCP tools/call requests before forwarding to child MCP server.
 type Proxy struct {
 	engine *engine.Engine
@@ -97,6 +117,8 @@ type Proxy struct {
 	filterTools bool
 	toolMapping map[string]string
 	approvals   *approval.Store
+	agentID     string
+	sessionID   string
 
 	childIn   io.WriteCloser
 	childOut  io.Reader
@@ -138,6 +160,12 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 	}
 	if p.mode == "" {
 		p.mode = defaultMode
+	}
+	if p.agentID == "" {
+		p.agentID = "mcp-client"
+	}
+	if p.sessionID == "" {
+		p.sessionID = "mcp-proxy"
 	}
 	return p
 }
@@ -314,8 +342,8 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 
 	call := engine.ToolCall{
 		ID:        audit.NewEventID(),
-		Agent:     "mcp-client",
-		Session:   "mcp-proxy",
+		Agent:     p.agentID,
+		Session:   p.sessionID,
 		Tool:      mappedTool,
 		Params:    requestData,
 		Input:     params.Arguments,
@@ -637,8 +665,8 @@ func (p *Proxy) maybeFilterToolsList(resp Response) ([]byte, bool, error) {
 		}
 		call := engine.ToolCall{
 			ID:        audit.NewEventID(),
-			Agent:     "mcp-client",
-			Session:   "mcp-proxy",
+			Agent:     p.agentID,
+			Session:   p.sessionID,
 			Tool:      toolType,
 			Params:    requestData,
 			Timestamp: time.Now().UTC(),

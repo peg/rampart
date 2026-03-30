@@ -230,7 +230,17 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// 15. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
 
-	// 16. Proactive policy suggestions (informational only)
+	// 16. OpenClaw ask mode check
+	if n := doctorOpenClawAskMode(emit); n > 0 {
+		warnings += n
+	}
+
+	// 17. OpenClaw plugin health
+	if n := doctorOpenClawPlugin(emit); n > 0 {
+		warnings += n
+	}
+
+	// 18. Proactive policy suggestions (informational only)
 	if detectResult, detectErr := detect.Environment(); detectErr == nil {
 		client := newPolicyRegistryClient()
 		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
@@ -270,7 +280,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 
 	fmt.Fprintln(w)
 	if issues == 0 && warnings == 0 {
-		fmt.Fprintln(w, "No issues found.")
+		printDoctorSummary(w, useColor)
 	} else if issues == 0 && warnings > 0 {
 		fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
 	} else {
@@ -290,6 +300,57 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		return exitCodeError{code: 1}
 	}
 	return nil
+}
+
+// printDoctorSummary prints an encouraging all-clear summary with next steps.
+func printDoctorSummary(w io.Writer, useColor bool) {
+	green := ""
+	bold := ""
+	dim := ""
+	reset := ""
+	if useColor {
+		green = colorGreen
+		bold = "\033[1m"
+		dim = colorDim
+		reset = colorReset
+	}
+
+	fmt.Fprintf(w, "%s%s🛡️  Rampart is protecting your AI agents%s\n\n", bold, green, reset)
+
+	// Gather some live stats for the summary lines.
+	protected := detectProtectedAgents()
+	allow, deny, _, _ := todayEvents()
+	serverRunning := isServeRunningLocal()
+
+	// Server status line
+	if serverRunning {
+		fmt.Fprintf(w, "  %s✓%s rampart serve running (:9090)\n", green, reset)
+	}
+
+	// Protected agents
+	if len(protected) > 0 {
+		for _, p := range protected {
+			fmt.Fprintf(w, "  %s✓%s %s\n", green, reset, p)
+		}
+	}
+
+	// Policies
+	_, defaultAction := detectMode()
+	if defaultAction != "" {
+		fmt.Fprintf(w, "  %s✓%s Policies loaded (default: %s)\n", green, reset, defaultAction)
+	}
+
+	// Audit events
+	total := allow + deny
+	if total > 0 {
+		fmt.Fprintf(w, "  %s✓%s Audit trail: %d events logged today\n", green, reset, total)
+	}
+
+	// Next steps
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  %s→ rampart watch%s    — see policy decisions in real time\n", dim, reset)
+	fmt.Fprintf(w, "  %s→ rampart log%s      — view recent allow/deny history\n", dim, reset)
+	fmt.Fprintf(w, "  %s→ rampart status%s   — dashboard summary\n", dim, reset)
 }
 
 type emitFn func(name, status, msg string)
@@ -823,13 +884,18 @@ func doctorPreload(emit emitFn) (warnings int) {
 // are patched with Rampart policy checks. If the tools directory exists but files
 // aren't patched, warns the user — this happens after npm upgrades.
 func doctorFileToolPatches(emit emitFn) (warnings int) {
+	// If the native plugin is installed, it intercepts all tool calls via before_tool_call hook.
+	// Dist patches for web_fetch/browser/message/exec are redundant — only dist patches for
+	// read/write/edit (file content visibility) still add value.
+	pluginInstalled := isOpenClawPluginInstalled()
+
 	// Check if OpenClaw uses bundled dist files (#204).
 	if openclawUsesBundledDist() {
 		distPatched := openclawDistPatched()
-		webFetchPatched := openclawWebFetchPatched()
-		browserPatched := openclawBrowserPatched()
-		messagePatched := openclawMessagePatched()
-		execPatched := openclawExecPatched()
+		webFetchPatched := openclawWebFetchPatched() || pluginInstalled
+		browserPatched := openclawBrowserPatched() || pluginInstalled
+		messagePatched := openclawMessagePatched() || pluginInstalled
+		execPatched := openclawExecPatched() || pluginInstalled
 
 		if distPatched && webFetchPatched && browserPatched && messagePatched && execPatched {
 			emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")
@@ -1168,6 +1234,79 @@ func doctorProjectPolicy(w io.Writer, emit emitFn, collect bool) {
 		} else {
 			fmt.Fprintf(w, "  No project policy (.rampart/policy.yaml not found in this repo)\n")
 		}
+	}
+}
+
+// doctorOpenClawPlugin checks whether the Rampart native plugin is installed
+// in ~/.openclaw/extensions/rampart/. This is the preferred integration method
+// for OpenClaw >= 2026.3.28 (uses the before_tool_call hook instead of dist patches).
+//
+// Emits:
+//   - ok if plugin directory exists
+//   - warn (with hint) if OpenClaw is installed but plugin is missing
+//   - skipped silently if OpenClaw is not installed at all
+func doctorOpenClawPlugin(emit emitFn) (warnings int) {
+	// Skip silently if OpenClaw is not installed.
+	if !isOpenClawInstalled() {
+		return 0
+	}
+
+	if isOpenClawPluginInstalled() {
+		emit("OpenClaw plugin", "ok", "installed (before_tool_call hook active)")
+		return 0
+	}
+
+	emit("OpenClaw plugin", "warn",
+		"not installed — native hook interception disabled"+hintSep+
+			"rampart setup openclaw --plugin")
+	return 1
+}
+
+// doctorOpenClawAskMode checks if ~/.openclaw/openclaw.json has ask set to
+// "on-miss" or "always", which is required for exec approval events to reach
+// Rampart's bridge. If the file doesn't exist, the check is skipped silently.
+func doctorOpenClawAskMode(emit emitFn) (warnings int) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		// File doesn't exist — not everyone uses OpenClaw, skip silently.
+		return 0
+	}
+
+	// ask can be set at top-level OR at tools.exec.ask
+	var cfg struct {
+		Ask   string `json:"ask"`
+		Tools struct {
+			Exec struct {
+				Ask string `json:"ask"`
+			} `json:"exec"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		emit("OpenClaw ask mode", "warn", fmt.Sprintf("failed to parse %s: %v", configPath, err))
+		return 1
+	}
+
+	askVal := cfg.Ask
+	if askVal == "" {
+		askVal = cfg.Tools.Exec.Ask
+	}
+
+	switch askVal {
+	case "on-miss", "always":
+		emit("OpenClaw ask mode", "ok", fmt.Sprintf("%s (exec approvals will reach Rampart bridge)", askVal))
+		return 0
+	default:
+		emit("OpenClaw ask mode", "warn",
+			"not configured for exec interception"+hintSep+
+				"Add \"ask\": \"on-miss\" to ~/.openclaw/openclaw.json, then restart OpenClaw\n"+
+				"       Without this, exec approval events are never sent to Rampart's bridge")
+		return 1
 	}
 }
 
