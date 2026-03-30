@@ -49,7 +49,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
-	"github.com/peg/rampart/internal/policy"
 )
 
 // OpenClawBridge connects to the OpenClaw gateway and handles exec approval
@@ -59,8 +58,8 @@ type OpenClawBridge struct {
 	gatewayURL string
 	token      string
 	serveURL   string
-	logger     *slog.Logger
 	sink       audit.AuditSink
+	logger     *slog.Logger
 
 	reconnectInterval time.Duration
 
@@ -87,12 +86,11 @@ type Config struct {
 	// ReconnectInterval is how long to wait before reconnecting after a disconnect.
 	ReconnectInterval time.Duration
 
+	// AuditSink is the audit sink for logging bridge-evaluated tool calls.
+	AuditSink audit.AuditSink
+
 	// Logger is the structured logger.
 	Logger *slog.Logger
-
-	// AuditSink is an optional sink to write audit events for bridge-evaluated
-	// approvals. If nil, audit events are skipped for bridge traffic.
-	AuditSink audit.AuditSink
 }
 
 // NewOpenClawBridge creates a new bridge.
@@ -112,11 +110,11 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		gatewayURL:        cfg.GatewayURL,
 		token:             cfg.GatewayToken,
 		serveURL:          cfg.ServeURL,
-		logger:            cfg.Logger,
 		sink:              cfg.AuditSink,
+		logger:            cfg.Logger,
 		reconnectInterval: cfg.ReconnectInterval,
-		pending:           make(map[string]chan struct{}),
-		pendingCommands:   make(map[string]string),
+		pending:         make(map[string]chan struct{}),
+		pendingCommands: make(map[string]string),
 	}
 }
 
@@ -243,53 +241,29 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 		return fmt.Errorf("expected connect.challenge, got type=%s event=%s", challengeFrame.Type, challengeFrame.Event)
 	}
 
-	// Extract nonce from challenge payload.
-	var challengePayload struct {
-		Nonce string `json:"nonce"`
-	}
-	if len(challengeFrame.Payload) > 0 {
-		_ = json.Unmarshal(challengeFrame.Payload, &challengePayload)
-	}
-
-	// Step 2: send connect request with device identity so the gateway preserves
-	// our operator.approvals scope. Without device identity, the gateway silently
-	// strips all scopes via clearUnboundScopes(), preventing exec.approval.* events.
-	scopes := []string{"operator.approvals"}
-
-	connectParams := map[string]any{
-		"minProtocol": 3,
-		"maxProtocol": 3,
-		"client": map[string]any{
-			"id":          "gateway-client",
-			"displayName": "Rampart Bridge",
-			"version":     "0.0.1",
-			"platform":    runtime.GOOS,
-			"mode":        "backend",
-		},
-		"auth": map[string]any{
-			"token": b.token,
-		},
-		"scopes": scopes,
-		"role":   "operator",
-		"caps":   []string{},
-	}
-
-	// Include device identity if available — required to preserve scopes.
-	if identity, err := loadOpenClawDeviceIdentity(); err != nil {
-		b.logger.Warn("bridge: device identity unavailable — scopes may be stripped by gateway", "error", err)
-	} else if devicePayload, err := identity.buildDeviceAuthPayload(challengePayload.Nonce, b.token, scopes); err != nil {
-		b.logger.Warn("bridge: device auth payload failed — scopes may be stripped by gateway", "error", err)
-	} else {
-		connectParams["device"] = devicePayload
-		b.logger.Debug("bridge: device identity loaded", "device_id", identity.DeviceID)
-	}
-
+	// Step 2: send connect request.
 	reqID := uuid.New().String()
 	frame := gatewayRequest{
 		Type:   "req",
 		ID:     reqID,
 		Method: "connect",
-		Params: connectParams,
+		Params: map[string]any{
+			"minProtocol": 3,
+			"maxProtocol": 3,
+			"client": map[string]any{
+				"id":          "gateway-client",
+				"displayName": "Rampart Bridge",
+				"version":     "0.0.1",
+				"platform":    runtime.GOOS,
+				"mode":        "backend",
+			},
+			"auth": map[string]any{
+				"token": b.token,
+			},
+			"scopes": []string{"operator.approvals"},
+			"role":   "operator",
+			"caps":   []string{},
+		},
 	}
 
 	data, err := json.Marshal(frame)
@@ -321,7 +295,6 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 		return fmt.Errorf("unexpected connect response type: %s", resFrame.Type)
 	}
 
-	b.logger.Info("bridge: handshake complete", "client_id", "rampart-bridge", "scopes", []string{"operator.approvals"})
 	return nil
 }
 
@@ -335,6 +308,7 @@ func (b *OpenClawBridge) handleFrame(ctx context.Context, conn *websocket.Conn, 
 
 	switch frame.Type {
 	case "event":
+		b.logger.Debug("bridge: received event", "event", frame.Event)
 		b.handleEvent(ctx, conn, frame)
 	case "res", "err":
 		// Responses to our requests — currently fire-and-forget for resolveApproval.
@@ -342,8 +316,6 @@ func (b *OpenClawBridge) handleFrame(ctx context.Context, conn *websocket.Conn, 
 		b.logger.Debug("bridge: unknown frame type", "type", frame.Type)
 	}
 }
-
-
 
 // handleEvent handles an incoming event frame.
 func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, frame gatewayFrame) {
@@ -353,6 +325,13 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 		if err := json.Unmarshal(frame.Payload, &req); err != nil {
 			b.logger.Error("bridge: failed to parse approval request", "error", err)
 			return
+		}
+		// Store the command immediately so allow-always writeback works
+		// regardless of who ultimately resolves the approval (Rampart or OpenClaw native flow).
+		if req.ID != "" && req.command() != "" {
+			b.pendingMu.Lock()
+			b.pendingCommands[req.ID] = req.command()
+			b.pendingMu.Unlock()
 		}
 		go b.handleApprovalRequested(ctx, conn, req)
 
@@ -376,14 +355,6 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 			if resolved.Decision == "allow-always" && cmd != "" {
 				go b.writeAllowAlwaysRule(cmd)
 			}
-
-			// Cross-resolve: if the shim created a matching Rampart HTTP approval
-			// for the same command, resolve it so the shim poll unblocks.
-			// This connects the Discord approval UI to Claude Code running via shim.
-			if cmd != "" && b.serveURL != "" && resolved.Decision != "" {
-				approved := resolved.Decision != "deny"
-				go b.crossResolveShimApproval(cmd, approved, resolved.Decision == "allow-always")
-			}
 		}
 	}
 }
@@ -394,7 +365,7 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	call := engine.ToolCall{
 		Tool:    "exec",
 		Agent:   req.agentID(),
-		Session: req.Request.SessionKey,
+		Session: req.sessionKey(),
 		Params: map[string]any{
 			"command": req.command(),
 		},
@@ -413,7 +384,7 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		"duration", evalDuration,
 	)
 
-	// Write an audit event so bridge-evaluated commands appear in the JSONL trail.
+	// Write audit event so bridge-evaluated commands appear in the JSONL trail.
 	if b.sink != nil {
 		ev := audit.Event{
 			ID:        audit.NewEventID(),
@@ -437,23 +408,15 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	switch decision.Action {
 	case engine.ActionAllow, engine.ActionWatch:
 		b.resolveApproval(conn, req.ID, "allow-once")
+		b.cleanPendingCommand(req.ID)
 
 	case engine.ActionDeny:
 		b.resolveApproval(conn, req.ID, "deny")
+		b.cleanPendingCommand(req.ID)
 
 	case engine.ActionRequireApproval, engine.ActionAsk:
-		// For OpenClaw bridge approvals, defer to OpenClaw's own approval UI
-		// (Discord/Telegram embed). Don't escalate to Rampart serve — that creates
-		// a competing timer and confusing dual-approval UX.
-		//
-		// Register the command so that when the user clicks "Always Allow" in
-		// Discord, the exec.approval.resolved handler can write the rule to
-		// user-overrides.yaml.
-		b.pendingMu.Lock()
-		b.pendingCommands[req.ID] = req.command()
-		b.pendingMu.Unlock()
-		b.logger.Info("bridge: deferring to OpenClaw approval UI",
-			"id", req.ID, "command", req.command(), "policy", decision.Message)
+		// Escalate to Rampart serve for human review.
+		b.escalateToServe(ctx, conn, req, decision)
 
 	case engine.ActionWebhook:
 		// Webhook actions delegate to an external system.
@@ -498,9 +461,8 @@ func (b *OpenClawBridge) sendResolve(conn *websocket.Conn, approvalID, decision 
 		ID:     uuid.New().String(),
 		Method: "exec.approval.resolve",
 		Params: map[string]any{
-			"id":         approvalID,
-			"decision":   decision,
-			"resolvedBy": "rampart-policy",
+			"id":       approvalID,
+			"decision": decision,
 		},
 	}
 
@@ -520,17 +482,18 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 	b.logger.Warn("bridge: approval requires human review — escalating to serve",
 		"id", req.ID, "command", req.command(), "serve_url", b.serveURL)
 
-	// Register cancellation channel and store command for allow-always writeback.
+	// Register cancellation channel. Command already stored in pendingCommands
+	// at exec.approval.requested time so allow-always writeback works for all flows.
 	cancelCh := make(chan struct{})
 	b.pendingMu.Lock()
 	b.pending[req.ID] = cancelCh
-	b.pendingCommands[req.ID] = req.command()
 	b.pendingMu.Unlock()
 
 	defer func() {
 		b.pendingMu.Lock()
 		delete(b.pending, req.ID)
-		delete(b.pendingCommands, req.ID)
+		// pendingCommands is cleaned up by the resolved event handler
+		// so allow-always writeback works even after escalation completes.
 		b.pendingMu.Unlock()
 	}()
 
@@ -538,7 +501,7 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 		"tool":    "exec",
 		"command": req.command(),
 		"agent":   req.agentID(),
-		"session": req.Request.SessionKey,
+		"session": req.sessionKey(),
 		"message": decision.Message,
 	})
 
@@ -578,7 +541,7 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 
 	// Poll for the Rampart approval decision.
 	const pollInterval = 2 * time.Second
-	const pollTimeout = 150 * time.Second // Slightly over OpenClaw's 130s approval window
+	const pollTimeout = 5 * time.Minute
 	deadline := time.Now().Add(pollTimeout)
 
 	for {
@@ -624,93 +587,17 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 	}
 }
 
+// cleanPendingCommand removes a command from pendingCommands after auto-resolution.
+// For escalated commands, cleanup happens in the resolved event handler instead.
+func (b *OpenClawBridge) cleanPendingCommand(id string) {
+	b.pendingMu.Lock()
+	delete(b.pendingCommands, id)
+	b.pendingMu.Unlock()
+}
+
 // writeAllowAlwaysRule appends an allow rule for the given command to
 // ~/.rampart/policies/user-overrides.yaml and hot-reloads the engine.
 // This is called when a human clicks "Always Allow" in the OpenClaw approval UI.
-// crossResolveShimApproval finds a pending Rampart HTTP approval matching the
-// given command and resolves it. This connects the Discord approval UI (OpenClaw
-// gateway flow) to the shim polling flow (Claude Code running inside OpenClaw).
-//
-// Without this, a Claude Code command intercepted by the shim creates a pending
-// Rampart HTTP approval that nobody resolves — the Discord embed fires via
-// OpenClaw's native flow but the shim poll just times out.
-func (b *OpenClawBridge) crossResolveShimApproval(command string, approved, persist bool) {
-	token := os.Getenv("RAMPART_TOKEN")
-
-	// Step 1: list pending Rampart HTTP approvals.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	listReq, err := http.NewRequestWithContext(ctx, "GET", b.serveURL+"/v1/approvals", nil)
-	if err != nil {
-		return
-	}
-	if token != "" {
-		listReq.Header.Set("Authorization", "Bearer "+token)
-	}
-	listResp, err := http.DefaultClient.Do(listReq)
-	if err != nil || listResp.StatusCode != http.StatusOK {
-		return
-	}
-	defer listResp.Body.Close()
-
-	var result struct {
-		Approvals []struct {
-			ID      string `json:"id"`
-			Command string `json:"command"`
-			Status  string `json:"status"`
-		} `json:"approvals"`
-	}
-	if err := json.NewDecoder(listResp.Body).Decode(&result); err != nil {
-		return
-	}
-
-	// Step 2: find matching pending approval by command.
-	var matchID string
-	for _, item := range result.Approvals {
-		if item.Status == "pending" && item.Command == command {
-			matchID = item.ID
-			break
-		}
-	}
-	if matchID == "" {
-		return // no matching shim approval — normal for OpenClaw-native exec
-	}
-
-	// Step 3: resolve the matching approval.
-	body, _ := json.Marshal(map[string]any{
-		"approved":    approved,
-		"persist":     persist,
-		"resolved_by": "openclaw-discord",
-	})
-
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel2()
-
-	resolveReq, err := http.NewRequestWithContext(ctx2, "POST",
-		b.serveURL+"/v1/approvals/"+matchID+"/resolve",
-		bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	resolveReq.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		resolveReq.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := http.DefaultClient.Do(resolveReq)
-	if err != nil {
-		b.logger.Debug("bridge: cross-resolve shim approval failed", "error", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		b.logger.Info("bridge: cross-resolved shim approval via Discord",
-			"approval_id", matchID, "command", command, "approved", approved, "persist", persist)
-	}
-}
-
 func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -720,22 +607,13 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 
 	overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
 
-	// Build a smart glob pattern from the command.
-	pattern := policy.BuildAllowPattern(command)
-
-	// Hash the pattern for a stable rule name.
-	hash := policy.HashPattern(pattern)
-	ruleName := fmt.Sprintf("user-allow-%s", hash)
+	// Hash the command for a stable rule name.
+	hb := sha256Command(command)
+	ruleName := fmt.Sprintf("user-allow-%x", hb)
 
 	// Build the rule block to append.
 	rule := fmt.Sprintf("\n- name: %s\n  match:\n    tool: exec\n  rules:\n    - when:\n        command_matches:\n          - %q\n      action: allow\n      message: \"User allowed (always)\"\n",
-		ruleName, pattern)
-
-	// Ensure the policies directory exists before writing.
-	if err := os.MkdirAll(filepath.Dir(overridesPath), 0o750); err != nil {
-		b.logger.Error("bridge: allow-always: create policies dir", "error", err)
-		return
-	}
+		ruleName, command)
 
 	// Read existing file or create with header.
 	var existing string
@@ -751,6 +629,10 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 		}
 	}
 
+	if err := os.MkdirAll(filepath.Dir(overridesPath), 0o700); err != nil {
+		b.logger.Error("bridge: allow-always: create policies dir", "error", err)
+		return
+	}
 	if err := os.WriteFile(overridesPath, []byte(existing+rule), 0o600); err != nil {
 		b.logger.Error("bridge: allow-always: write user-overrides.yaml", "error", err)
 		return
@@ -764,8 +646,14 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	}
 }
 
-// buildAllowPattern and sha256Command have been moved to internal/policy/glob.go
-// as BuildAllowPattern and HashPattern for shared use.
+// sha256Command returns 4 bytes derived from a djb2 hash of the command string.
+func sha256Command(s string) [4]byte {
+	var hash uint32 = 5381
+	for _, b := range []byte(s) {
+		hash = hash*33 + uint32(b)
+	}
+	return [4]byte{byte(hash >> 24), byte(hash >> 16), byte(hash >> 8), byte(hash)}
+}
 
 // --- Wire protocol types ---
 
@@ -789,7 +677,6 @@ type gatewayFrame struct {
 }
 
 // approvalRequestParams is the payload of an exec.approval.requested event.
-// The gateway broadcasts: {id, request: {command, agentId, sessionKey, cwd, ...}, createdAtMs, expiresAtMs}
 type approvalRequestParams struct {
 	ID      string `json:"id"`
 	Request struct {
@@ -800,11 +687,9 @@ type approvalRequestParams struct {
 	} `json:"request"`
 }
 
-// command returns the command string from the nested request object.
-func (p approvalRequestParams) command() string { return p.Request.Command }
-
-// agentID returns the agent ID from the nested request object.
-func (p approvalRequestParams) agentID() string { return p.Request.AgentID }
+func (r approvalRequestParams) command() string    { return r.Request.Command }
+func (r approvalRequestParams) agentID() string    { return r.Request.AgentID }
+func (r approvalRequestParams) sessionKey() string { return r.Request.SessionKey }
 
 // --- Discovery helpers ---
 
