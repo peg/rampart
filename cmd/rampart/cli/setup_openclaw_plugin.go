@@ -433,3 +433,13 @@ func isOpenClawPluginInstalled() bool {
 	info, err := os.Stat(pluginDir)
 	return err == nil && info.IsDir()
 }
+
+// detectOpenClawVersion finds the OpenClaw binary and returns its version string.
+// Returns an error if OpenClaw is not installed or version cannot be determined.
+func detectOpenClawVersion() (string, error) {
+	bin, err := findOpenClawBinary()
+	if err != nil {
+		return "", err
+	}
+	return getOpenClawVersion(bin)
+}

@@ -374,6 +374,17 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			if remove {
 				return removeOpenClaw(cmd)
 			}
+			// Auto-detect: if OpenClaw >= 2026.3.28 is installed and --plugin/--migrate
+			// weren't explicitly requested, use the native plugin path automatically.
+			// Skip in test environments (RAMPART_TEST=1) to avoid running openclaw binary.
+			if !patchTools && !patchToolsOnly && !shimOnly && !noPreload && os.Getenv("RAMPART_TEST") != "1" {
+				if ver, err := detectOpenClawVersion(); err == nil {
+					if ok, _ := openclawVersionAtLeast(ver, openclawMinVersion); ok {
+						fmt.Fprintf(cmd.OutOrStdout(), "✓ OpenClaw %s detected — using native plugin integration\n", ver)
+						return runSetupOpenClawPlugin(cmd.OutOrStdout(), cmd.ErrOrStderr())
+					}
+				}
+			}
 			// --patch-tools-only: used by ExecStartPre to re-patch file tools
 			// without writing drop-ins or starting services (avoids systemd deadlock).
 			if patchToolsOnly {
