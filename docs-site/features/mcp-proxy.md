@@ -201,7 +201,7 @@ policies:
     match:
       tool: ["mcp"]
     rules:
-      - action: log
+      - action: log # Renamed to action: watch in v0.9.x.
         message: "MCP tool call logged"
 ```
 
@@ -225,7 +225,7 @@ policies:
     match:
       tool: ["mcp__proxmox__vm_stop", "mcp__proxmox__vm_shutdown"]
     rules:
-      - action: log
+      - action: log # Renamed to action: watch in v0.9.x.
         message: "VM power operation logged"
 
   - name: block-disk-resize

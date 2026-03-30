@@ -55,8 +55,7 @@ Common decision/action values across responses:
 - `allow`
 - `deny`
 - `watch`
-- `ask`
-- `require_approval`
+- `ask` (approval-required decision; `require_approval` was removed in v0.9.9)
 - `approved` / `denied` / `always_allowed` (approval resolution audit context)
 
 ## Endpoints

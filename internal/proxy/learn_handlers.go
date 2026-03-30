@@ -49,9 +49,9 @@ type userOverridesPolicy struct {
 }
 
 type userOverrideEntry struct {
-	Name  string              `yaml:"name"`
-	Match userOverrideMatch   `yaml:"match"`
-	Rules []userOverrideRule  `yaml:"rules"`
+	Name  string             `yaml:"name"`
+	Match userOverrideMatch  `yaml:"match"`
+	Rules []userOverrideRule `yaml:"rules"`
 }
 
 // toolList unmarshals both scalar ("exec") and sequence (["exec"]) YAML forms.
@@ -125,6 +125,9 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create policies dir: %v", err))
 		return
 	}
+
+	s.policyWriteMu.Lock()
+	defer s.policyWriteMu.Unlock()
 
 	// Read or initialize the file.
 	var cfg userOverridesPolicy
@@ -231,5 +234,3 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		Source:   req.Source,
 	})
 }
-
-

@@ -38,28 +38,29 @@ const statusCallCountWindow = time.Hour
 
 // Server is Rampart's HTTP proxy runtime for policy-aware tool calls.
 type Server struct {
-	engine          *engine.Engine
-	sink            audit.AuditSink
-	approvals       *approval.Store
-	approvalTimeout time.Duration
-	token           string
-	tokenStore      *token.Store
-	mode            string
-	configPath      string
-	logger          *slog.Logger
-	resolveBaseURL        string
-	listenAddr            string
-	signer                *signing.Signer
-	mu                    sync.Mutex
-	server                *http.Server
-	startedAt             time.Time
-	notifyConfig          *engine.NotifyConfig
-	metricsEnabled        bool
-	auditDir              string
-	sse                   *sseHub
-	lastReloadAPI         time.Time // Rate limiting for /v1/policy/reload
-	stopCleanup           chan struct{}
-	approvalPersistFile   string
+	engine              *engine.Engine
+	sink                audit.AuditSink
+	approvals           *approval.Store
+	approvalTimeout     time.Duration
+	token               string
+	tokenStore          *token.Store
+	mode                string
+	configPath          string
+	logger              *slog.Logger
+	resolveBaseURL      string
+	listenAddr          string
+	signer              *signing.Signer
+	mu                  sync.Mutex
+	policyWriteMu       sync.Mutex
+	server              *http.Server
+	startedAt           time.Time
+	notifyConfig        *engine.NotifyConfig
+	metricsEnabled      bool
+	auditDir            string
+	sse                 *sseHub
+	lastReloadAPI       time.Time // Rate limiting for /v1/policy/reload
+	stopCleanup         chan struct{}
+	approvalPersistFile string
 }
 
 // Option configures a proxy server.

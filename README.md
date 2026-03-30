@@ -363,7 +363,7 @@ rampart approve abc123   # Let it through
 rampart deny abc123      # Block it
 ```
 
-Pending approvals expire after 1 hour by default (`--approval-timeout` to change).
+Pending approvals expire after 2 minutes by default (`--approval-timeout` to change).
 
 ---
 
