@@ -54,8 +54,27 @@ type userOverrideEntry struct {
 	Rules []userOverrideRule  `yaml:"rules"`
 }
 
+// toolList unmarshals both scalar ("exec") and sequence (["exec"]) YAML forms.
+type toolList []string
+
+func (t *toolList) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Try sequence first
+	var seq []string
+	if err := unmarshal(&seq); err == nil {
+		*t = seq
+		return nil
+	}
+	// Fall back to scalar string
+	var s string
+	if err := unmarshal(&s); err != nil {
+		return err
+	}
+	*t = []string{s}
+	return nil
+}
+
 type userOverrideMatch struct {
-	Tool []string `yaml:"tool,flow"`
+	Tool toolList `yaml:"tool"`
 }
 
 type userOverrideRule struct {
