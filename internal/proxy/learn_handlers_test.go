@@ -32,9 +32,10 @@ func setupLearnTestServer(t *testing.T) (*httptest.Server, string, string) {
 
 	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
 
-	// Override HOME so user-overrides.yaml goes to a temp dir.
+	// Override HOME (Linux/macOS) and USERPROFILE (Windows) so user-overrides.yaml goes to a temp dir.
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
 
 	ts := httptest.NewServer(srv.handler())
 	t.Cleanup(ts.Close)
