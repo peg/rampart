@@ -60,8 +60,10 @@ func TestOpenClawPolicyDecisions(t *testing.T) {
 		// ── exec: dangerous docker/kubectl surface for approval ────────
 		{name: "ask: docker run privileged not in safe list", tool: "exec", command: "docker run --privileged ubuntu", expected: engine.ActionAsk},
 		{name: "ask: kubectl delete namespace", tool: "exec", command: "kubectl delete namespace production", expected: engine.ActionAsk},
-		{name: "ask: git push force", tool: "exec", command: "git push --force origin main", expected: engine.ActionAsk},
-		{name: "ask: git push delete branch", tool: "exec", command: "git push origin --delete main", expected: engine.ActionAsk},
+		{name: "deny: git push force", tool: "exec", command: "git push --force origin main", expected: engine.ActionDeny},
+		{name: "deny: git push -f trailing", tool: "exec", command: "git push origin main -f", expected: engine.ActionDeny},
+		{name: "deny: git push delete branch", tool: "exec", command: "git push origin --delete main", expected: engine.ActionDeny},
+		{name: "deny: compound git force push", tool: "exec", command: "echo x && git push origin --force main", expected: engine.ActionDeny},
 
 		// ── read: credential files require approval ────────────────────
 		{name: "ask: .env file", tool: "read", path: "/home/user/project/.env", expected: engine.ActionAsk},

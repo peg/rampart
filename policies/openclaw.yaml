@@ -265,6 +265,7 @@ policies:
             # Never allow force-push or branch deletion via git push
             - "git push *--force*"
             - "git push *-f *"
+            - "git push *-f"
             - "git push *--delete*"
             - "git push *:*"
         message: "Safe exec command allowed"
@@ -295,6 +296,27 @@ policies:
             # Allow rampart learn endpoint specifically
             - "curl*http://localhost:9090/v1/*"
         message: "External curl/wget blocked — use web_fetch tool for external requests (policy-aware)"
+
+  # ── Block force-push ───────────────────────────────────────────────────
+  # Dedicated deny for force-push variants so compound commands
+  # (e.g. "echo x && git push --force") can't bypass allow-rule exclusions.
+  - name: block-force-push
+    description: "Block git force-push and branch deletion regardless of command context"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "git push *--force*"
+            - "git push *-f *"
+            - "git push *-f"
+            - "git push *--delete*"
+            - "*git push *--force*"
+            - "*git push *-f *"
+            - "*git push *-f"
+            - "*git push *--delete*"
+        message: "Git force-push and branch deletion blocked — run manually if intentional"
 
   # ── Block destructive exec ─────────────────────────────────────────────
   - name: block-destructive-exec
