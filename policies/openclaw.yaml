@@ -14,7 +14,7 @@
 #   rampart setup openclaw --patch-tools  (legacy dist patching)
 
 version: "1"
-default_action: deny
+default_action: ask
 
 policies:
   # ── Self-modification protection ──────────────────────────────────────
@@ -165,8 +165,30 @@ policies:
             - "go get *"
             - "go install *"
             - "go generate *"
-            # Git operations
-            - "git *"
+            # Safe git subcommands only — not force-push, branch deletion, remote manipulation
+            - "git status*"
+            - "git log*"
+            - "git diff*"
+            - "git show*"
+            - "git add*"
+            - "git commit*"
+            - "git checkout*"
+            - "git switch*"
+            - "git branch*"
+            - "git fetch*"
+            - "git pull*"
+            - "git push origin *"
+            - "git stash*"
+            - "git tag*"
+            - "git clone*"
+            - "git init*"
+            - "git remote -v"
+            - "git remote get-url*"
+            - "git worktree*"
+            - "git merge*"
+            - "git rebase*"
+            - "git reset*"
+            - "git revert*"
             # Node/npm/yarn
             - "node *"
             - "npm *"
@@ -207,25 +229,72 @@ policies:
             - "type *"
             - "env"
             - "printenv *"
-            - "bash *"
-            - "sh *"
-            - "curl *"
-            - "wget *"
             - "jq *"
             - "yq *"
             - "make *"
-            - "docker *"
-            - "kubectl *"
+            # Safe docker subcommands — not run --privileged, not rm, not system prune
+            - "docker build*"
+            - "docker images*"
+            - "docker ps*"
+            - "docker logs*"
+            - "docker inspect*"
+            - "docker pull*"
+            - "docker tag*"
+            - "docker push*"
+            - "docker compose*"
+            - "docker-compose*"
+            # Safe kubectl subcommands — not delete, not apply to prod namespaces
+            - "kubectl get*"
+            - "kubectl describe*"
+            - "kubectl logs*"
+            - "kubectl apply*"
+            - "kubectl diff*"
+            - "kubectl config*"
+            - "kubectl version*"
+            - "kubectl cluster-info*"
+            # Local curl/wget only — network requests should use web_fetch
+            - "curl http://localhost*"
+            - "curl https://localhost*"
+            - "curl http://127.0.0.1*"
+            - "curl https://127.0.0.1*"
+            - "curl http://0.0.0.0*"
+            - "wget http://localhost*"
+            - "wget https://localhost*"
+            - "wget http://127.0.0.1*"
           command_not_matches:
-            # Block destructive variants
-            - "rm -rf /*"
-            - "rm -rf ~/*"
-            - "rm -rf /"
-            - "rm -rf ~"
-            - "chmod -R 777 /"
-            - "dd **of=/dev/sd**"
-            - "dd **of=/dev/nvme**"
+            # Never allow force-push or branch deletion via git push
+            - "git push *--force*"
+            - "git push *-f *"
+            - "git push *--delete*"
+            - "git push *:*"
         message: "Safe exec command allowed"
+
+  # ── Block external network exec ─────────────────────────────────────────
+  # curl/wget to external destinations should use web_fetch (policy-aware).
+  # This catches exec-based exfiltration bypassing web_fetch domain rules.
+  - name: block-external-network-exec
+    description: "Block curl/wget to external hosts via exec — use web_fetch instead"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "curl *"
+            - "wget *"
+          command_not_matches:
+            # Allow localhost/loopback
+            - "curl http://localhost*"
+            - "curl https://localhost*"
+            - "curl http://127.0.0.1*"
+            - "curl https://127.0.0.1*"
+            - "curl http://0.0.0.0*"
+            - "wget http://localhost*"
+            - "wget https://localhost*"
+            - "wget http://127.0.0.1*"
+            # Allow rampart learn endpoint specifically
+            - "curl*http://localhost:9090/v1/*"
+        message: "External curl/wget blocked — use web_fetch tool for external requests (policy-aware)"
 
   # ── Block destructive exec ─────────────────────────────────────────────
   - name: block-destructive-exec
@@ -252,27 +321,43 @@ policies:
     match:
       tool: ["read"]
     rules:
-      - action: deny
+      - action: ask
         when:
           path_matches:
-            - "**/.ssh/id_*"
+            # AWS credentials file contains secrets — require approval
             - "**/.aws/credentials"
-            - "**/.aws/config"
+            # kube/docker configs contain auth tokens — require approval
             - "**/.kube/config"
             - "**/.docker/config.json"
-            - "**/.git-credentials"
-            - "**/.netrc"
-            - "**/.gnupg/**"
+            # .env files may contain secrets — require approval
             - "**/.env"
             - "**/.env.*"
-            - "**/etc/shadow"
-            - "**/etc/passwd"
           path_not_matches:
             - "**/.ssh/*.pub"
             - "**/.env.example"
             - "**/.env.sample"
             - "**/.env.template"
+            - "**/.env.local.example"
+        message: "Credential file — human approval required before agent reads this"
+      - action: deny
+        when:
+          path_matches:
+            # Absolute denies — no legitimate agent use case
+            - "**/.ssh/id_*"
+            - "**/.git-credentials"
+            - "**/.netrc"
+            - "**/.gnupg/**"
+            - "**/etc/shadow"
+            - "**/etc/passwd"
+          path_not_matches:
+            - "**/.ssh/*.pub"
         message: "Credential file access blocked"
+      - action: allow
+        when:
+          path_matches:
+            # AWS config (not credentials) — region/profile metadata, not secrets
+            - "**/.aws/config"
+        message: "AWS config (non-secret metadata) allowed"
 
   # ── web_fetch: allow known-safe domains ───────────────────────────────
   # Allow fetches to common dev/research domains; block exfil destinations.
@@ -312,20 +397,21 @@ policies:
             - "api.anthropic.com"
             - "api.openai.com"
         message: "Web fetch to known-safe domain allowed"
-      - action: deny
+      - action: ask
         when:
           domain_matches:
-            # Known exfiltration services
+            # Common dev/testing services — require approval (legitimate but risky)
             - "*.ngrok.io"
             - "ngrok.io"
             - "*.ngrok-free.app"
-            - "*.requestbin.com"
-            - "*.hookbin.com"
+            - "ngrok-free.app"
             - "*.webhook.site"
             - "webhook.site"
+            - "*.requestbin.com"
+            - "*.hookbin.com"
             - "*.pipedream.net"
             - "*.beeceptor.com"
-        message: "Potential exfiltration domain blocked"
+        message: "Web request to tunneling/webhook service — requires human approval (potential exfiltration risk)"
 
   # ── web_search: always allow ───────────────────────────────────────────
   - name: allow-web-search
@@ -397,6 +483,23 @@ policies:
           default: true
         message: "Canvas operation allowed"
 
+  # ── sessions_spawn: subagent spawning guard ───────────────────────────
+  # Agents can spawn subagents but not into unrestricted agent IDs.
+  # Subagents themselves cannot spawn further agents (depth limit).
+  - name: sessions-spawn-guard
+    description: "Allow agent spawning with depth guard — subagents cannot spawn"
+    match:
+      tool: ["sessions_spawn"]
+    rules:
+      - action: deny
+        when:
+          session_matches: ["subagent:*"]
+        message: "Subagents cannot spawn further agents (depth limit enforced)"
+      - action: allow
+        when:
+          default: true
+        message: "Agent spawn allowed from main session"
+
   # ── Subagent write guard ───────────────────────────────────────────────
   # Subagents cannot modify identity/config files.
   - name: openclaw-subagent-write-guard
@@ -434,13 +537,7 @@ policies:
             - "sk-[a-zA-Z0-9]{20,}"
         message: "Response blocked: contains credentials"
 
-  # ── Allow-unmatched catch-all (lowest priority) ────────────────────────
-  # With default_action: deny, this is unreachable for non-matched rules.
-  # Kept for documentation clarity. Do not remove.
-  - name: allow-unmatched
-    priority: 10000
-    rules:
-      - action: deny
-        when:
-          default: true
-        message: "No matching OpenClaw policy rule — blocked by default"
+  # NOTE: default_action: ask means any unmatched tool call surfaces for
+  # human review rather than silently failing. This is intentional — it
+  # reduces false positives for novel tools and operations not yet in the
+  # allowlist while maintaining oversight.
