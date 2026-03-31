@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.11] - 2026-03-31
+
+### Security
+
+- **`openclaw.yaml`: closed bash/sh exec bypass** — `bash *` and `sh *` were in the exec allowlist, allowing `bash -c 'rm -rf /'` to match an allow rule before hitting the destructive block. Both patterns removed.
+- **`openclaw.yaml`: closed curl/wget exec bypass** — `curl *` and `wget *` wildcards allowed agents to exfiltrate via exec while `web_fetch` domain rules were correctly enforced. New `block-external-network-exec` rule denies all external curl/wget via exec; localhost requests remain allowed.
+- **`openclaw.yaml`: tightened git push** — `git push origin *` no longer matches force-push (`--force`, `-f`) or branch deletion (`--delete`) variants; those surface for human approval.
+- **`openclaw.yaml`: tightened docker/kubectl** — replaced `docker *` and `kubectl *` wildcards with explicit safe subcommand lists; `docker run --privileged` and `kubectl delete` surface for approval instead of being allowed.
+
+### Added
+
+- **`openclaw.yaml`: `sessions_spawn` depth guard** — subagents cannot spawn further agents (prevents unbounded agent trees and lateral escalation). Main session spawning remains allowed.
+- **`openclaw.yaml`: `default_action: ask`** — novel tool calls (not matched by any policy rule) now surface for human review instead of silently failing. Fixes a major false-positive source for users with custom tools.
+- **`engine.go`: `default_action: ask` support** — `parseDefaultAction` now accepts `ask` as a valid value.
+- **`policies/openclaw_test.go`** — 37 test cases covering all `openclaw.yaml` policy decisions.
+
+### Changed
+
+- **`openclaw.yaml`: credential reads → ask instead of deny** — `.aws/credentials`, `.kube/config`, `.docker/config.json`, and `.env*` files now require human approval instead of hard-blocking. Absolute denies remain for SSH private keys, `.git-credentials`, `/etc/shadow`, `.gnupg`.
+- **`openclaw.yaml`: `.aws/config` allowed** — AWS config contains region/profile metadata, not secrets. No longer blocked.
+- **`openclaw.yaml`: exfil domains → ask instead of deny** — ngrok, webhook.site, requestbin, and similar services now prompt for approval (developers legitimately use these for local testing).
+
 ## [0.9.10] - 2026-03-30
 
 ### Added (OpenClaw Native Plugin — Primary Integration)
