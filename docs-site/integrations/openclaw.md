@@ -1,125 +1,172 @@
 ---
 title: Securing OpenClaw
-description: "Native Rampart integration for OpenClaw — policy enforcement, exec approval routing, and file tool protection in one command."
+description: "Native Rampart integration for OpenClaw — policy enforcement via before_tool_call hook. One command, full coverage."
 ---
 
 # OpenClaw
 
-Rampart integrates natively with OpenClaw 2026.3.x. One command sets up full protection and connects Rampart's policy engine to OpenClaw's exec approval system.
+Rampart integrates natively with OpenClaw via the `before_tool_call` plugin API. Every tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
 
-!!! info "Version requirement"
-    Requires OpenClaw 2026.3.x or later for native exec approval integration. Earlier versions work with shell shim only.
+!!! info "Version requirements"
+    - **OpenClaw >= 2026.3.28**: Native plugin (recommended) — full tool coverage via `before_tool_call` hook
+    - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades
 
-!!! tip "Fastest path"
-    If you want your OpenClaw agent to install and configure Rampart for you, just say:
-    > "Install Rampart and protect this machine."
-
-    The agent will run `rampart quickstart --yes` which handles everything automatically.
-    See the [agent install guide](../guides/agent-install.md) for full details.
+    `rampart setup openclaw` auto-detects your version and uses the right method.
 
 ## Setup
 
 ```bash
-rampart quickstart
+rampart setup openclaw
 ```
 
 That's it. Rampart:
 
-1. Installs `rampart serve` as a boot service
-2. Configures the OpenClaw shell shim (exec protection)
-3. Patches OpenClaw file tools (read/write/edit/grep protection)
-4. Patches `web_fetch` (network exfiltration protection)
-5. Auto-selects the `openclaw.yaml` policy profile
-6. Connects to the OpenClaw gateway for native exec approval routing
+1. Detects your OpenClaw version
+2. **If >= 2026.3.28**: Extracts the bundled plugin and installs it via `openclaw plugins install`
+3. Configures OpenClaw to route decisions through Rampart (`tools.exec.ask: off`)
+4. Copies the `openclaw.yaml` policy profile to `~/.rampart/policies/openclaw.yaml`
+5. Starts `rampart serve` as a boot service (if not already running)
 
-## How it works after setup
+No external downloads, no npm install — the plugin is bundled inside the `rampart` binary.
 
-When `rampart serve` starts, it automatically connects to the OpenClaw gateway WebSocket and subscribes to exec approval events. This is the native integration — Rampart becomes the policy engine inside OpenClaw's approval flow.
-
-```
-Agent wants to run a command
-  └─ OpenClaw fires exec.approval.requested
-       └─ Rampart evaluates policy
-            ├─ Hard deny (rm -rf /, cat ~/.ssh/id_rsa, etc.)
-            │    → resolved immediately, command never runs
-            │    → user sees nothing (no prompt needed)
-            │
-            ├─ Safe command (npm test, git status, etc.)
-            │    → resolved allow-once immediately
-            │    → command runs, no prompt
-            │
-            └─ Needs human review (kubectl apply, sudo, etc.)
-                 → Rampart creates approval, notifies via your
-                   configured channel (Discord, Telegram, etc.)
-                 → command waits until you approve or deny
-```
-
-You can verify the bridge is connected:
+### Force the native plugin
 
 ```bash
-rampart status
-# Shows: OpenClaw bridge: connected (ws://127.0.0.1:18789)
+rampart setup openclaw --plugin
 ```
 
-Or check the serve log:
+### Migrate from the old shim/bridge integration
 
 ```bash
-rampart log
-# bridge: connected to OpenClaw gateway, listening for approval requests
+rampart setup openclaw --migrate
 ```
 
-## Protecting Sub-Agents
+Removes old dist patches and bridge config, installs the native plugin.
 
-OpenClaw can spawn sub-agents like Codex CLI and Claude Code. These agents execute commands through their own shell processes, not through OpenClaw's exec tool. The bridge doesn't cover sub-agents — they need their own interception.
+## How it works
 
-```bash
-rampart setup codex       # Wraps Codex CLI with LD_PRELOAD
-rampart setup claude-code # Adds hooks to ~/.claude/settings.json
+```
+Agent wants to run a tool (exec, read, write, web_fetch, ...)
+  └─ OpenClaw fires before_tool_call hook
+       └─ Rampart plugin POSTs to localhost:9090/v1/tool/<name>
+            └─ Rampart evaluates openclaw.yaml policy
+                 ├─ allow  → tool runs
+                 ├─ deny   → tool blocked, agent gets error message
+                 └─ ask    → Rampart creates approval, notifies you
+                              tool waits until you approve or deny
 ```
 
-`rampart quickstart` handles this automatically if Codex or Claude Code are detected.
+## Coverage
 
-## Coverage Matrix
+With the native plugin, **all tool calls are covered**:
 
-| What | Protected by | Notes |
-|------|-------------|-------|
-| OpenClaw exec commands | ✅ Native bridge | Policy engine inside approval flow |
-| File reads/writes/edits | ✅ File tool patches | Re-run after OpenClaw upgrades |
-| `web_fetch` requests | ✅ Dist patch | Exfiltration via URL blocked |
-| Codex CLI commands | ✅ `rampart setup codex` | LD_PRELOAD — all child processes |
-| Claude Code commands | ✅ `rampart setup claude-code` | Native hooks |
-| Other sub-agent commands | ✅ `rampart preload --` | LD_PRELOAD — universal |
-| Browser automation | ⚠️ Not intercepted | Separate browser process |
-| `message` tool | ⚠️ Not intercepted | Issue [#221](https://github.com/peg/rampart/issues/221) |
+| Tool | Coverage | Notes |
+|------|----------|-------|
+| `exec` | ✅ Native plugin | All commands evaluated |
+| `read` | ✅ Native plugin | Path-based policy matching |
+| `write` / `edit` | ✅ Native plugin | Path-based policy matching |
+| `web_fetch` | ✅ Native plugin | Domain allowlist/blocklist |
+| `web_search` | ✅ Native plugin | Always allowed by default |
+| `browser` | ✅ Native plugin | Domain-based rules |
+| `message` | ✅ Native plugin | Read actions always allowed; sends to unknown channels require approval |
+| `canvas` | ✅ Native plugin | Always allowed (UI only) |
+| `sessions_spawn` | ✅ Native plugin | Subagents cannot spawn further agents |
 
-## Rampart deny overrides OpenClaw approval
-
-!!! important "Approving in OpenClaw does not override a Rampart deny"
-    With the native bridge, Rampart evaluates the command **before** OpenClaw shows it to you. Hard deny rules (`action: deny`) are resolved immediately and the command never runs — you won't see an approval prompt at all.
-
-    For commands that should be human-approvable, use `action: ask` in your policy. That creates an approval gate where Rampart notifies you and waits for your decision before resolving OpenClaw's approval.
+!!! note "Sub-agents"
+    The `before_tool_call` hook fires for tool calls from subagents too. The `openclaw.yaml` profile uses `session_matches: ["subagent:*"]` to apply stricter rules to subagent sessions.
 
 ## The `openclaw.yaml` profile
 
-`rampart quickstart` auto-selects the `openclaw.yaml` policy profile when OpenClaw is detected. This profile includes everything in `standard.yaml` plus:
+The default profile installed by `rampart setup openclaw`. Key behaviors:
 
-- **Session-aware rules**: main session (direct chat) has different permissions from subagents and cron jobs
-- **Deployment gates**: `kubectl apply`, `terraform apply`, `docker push`, `helm install/upgrade` require approval
-- **Tighter sub-agent restrictions**: subagents face more restrictions on sensitive file access and external actions
+- **`default_action: ask`** — any tool call not matched by an explicit rule surfaces for human approval (no silent failures)
+- **Safe exec commands allowed** — `go build`, `npm install`, `git commit`, `docker build`, etc.
+- **Dangerous exec requires approval** — `sudo`, `docker run --privileged`, `kubectl delete`, force-push blocked
+- **Credential reads require approval** — `.env`, `.kube/config`, `.aws/credentials` ask before reading; SSH keys hard-denied
+- **External curl/wget blocked** — use `web_fetch` tool instead (which is policy-aware)
+- **Subagent depth guard** — subagents cannot spawn further agents
 
-To install it manually:
+Install manually:
 
 ```bash
 rampart init --profile openclaw
 ```
 
-## Disabling the bridge
+## Always Allow writeback
 
-To run Rampart without the native bridge (shim-only mode):
+When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a permanent smart-glob rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
+
+For example, approving `sudo apt-get install nmap` always writes:
+```yaml
+- name: user-allow-<hash>
+  match:
+    tool: exec
+  rules:
+    - when:
+        command_matches: ["sudo apt-get install *"]
+      action: allow
+```
+
+## Verify the integration
 
 ```bash
-rampart serve --no-openclaw-bridge
+rampart doctor
 ```
+
+Expected output when fully configured:
+
+```
+✓ rampart serve: running (pid 12345)
+✓ OpenClaw plugin: installed (before_tool_call hook active)
+✓ Policy: openclaw.yaml loaded (N rules, default: ask)
+✓ Approval store: persistent (N pending)
+```
+
+Or check plugin status directly:
+
+```bash
+openclaw plugins list
+# rampart  v0.9.12  ✓ active
+```
+
+## Troubleshooting
+
+**Plugin not loading after setup:**
+
+```bash
+openclaw plugins list   # check rampart is listed
+rampart doctor          # shows plugin check status
+```
+
+If missing, re-run setup:
+
+```bash
+rampart setup openclaw --plugin --force
+```
+
+**OpenClaw version too old:**
+
+```bash
+npm install -g openclaw@latest
+rampart setup openclaw   # auto-detects new version
+```
+
+**Checking what's being blocked:**
+
+```bash
+rampart log --deny   # recent denials
+rampart log --ask    # recent approvals
+```
+
+## Legacy: shim + bridge (OpenClaw < 2026.3.28)
+
+If you're on an older OpenClaw version, `rampart setup openclaw` falls back to:
+
+1. Shell shim (exec interception via `SHELL` env override)
+2. OpenClaw gateway bridge (WebSocket, exec-only coverage)
+3. Dist patches for file tools (fragile, re-run after OpenClaw upgrades)
+
+Upgrade OpenClaw to get the native plugin and avoid the upgrade fragility.
 
 ## Uninstall
 
@@ -127,11 +174,4 @@ rampart serve --no-openclaw-bridge
 rampart uninstall --yes
 ```
 
-Removes the service, shell shim, OpenClaw gateway drop-in, and restores patched tool files. Policies and audit logs in `~/.rampart/` are preserved.
-
-!!! warning "File patches require re-running after OpenClaw upgrades"
-    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw, run:
-    ```bash
-    rampart setup openclaw --patch-tools --force
-    ```
-    Or restart the OpenClaw gateway — the `ExecStartPre` drop-in re-patches automatically on gateway restart.
+Removes the service, OpenClaw plugin, gateway drop-in, and restores any patched files. Policies and audit logs in `~/.rampart/` are preserved.
