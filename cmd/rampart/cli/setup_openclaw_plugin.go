@@ -109,11 +109,13 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		fmt.Fprintln(w, "✓ Set tools.exec.ask = \"off\" (Rampart now handles all decisions)")
 	}
 
-	// 4b. Add rampart to plugins.allow so OpenClaw doesn't warn about unallowlisted plugins.
-	if err := addToOpenClawPluginsAllow("rampart"); err != nil {
+	// 4b. Add rampart to plugins.allow. Existing plugins are preserved — we only append.
+	if added, existing, err := addToOpenClawPluginsAllow("rampart"); err != nil {
 		fmt.Fprintf(errW, "⚠ Could not update plugins.allow in openclaw.json: %v\n", err)
+	} else if added {
+		fmt.Fprintf(w, "✓ Added rampart to plugins.allow (existing: %v)\n", existing)
 	} else {
-		fmt.Fprintln(w, "✓ Added rampart to plugins.allow")
+		fmt.Fprintln(w, "✓ rampart already in plugins.allow (no changes to other plugins)")
 	}
 
 	// 5. Copy openclaw.yaml policy profile.
@@ -300,21 +302,21 @@ func parseCalVer(v string) []int {
 
 // setOpenClawExecAsk sets tools.exec.ask in ~/.openclaw/openclaw.json.
 // addToOpenClawPluginsAllow adds pluginID to the plugins.allow list in openclaw.json
-// if it is not already present. This prevents OpenClaw's security audit from flagging
-// non-allowlisted plugins.
-func addToOpenClawPluginsAllow(pluginID string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+// if it is not already present. Returns (added, existingIDs, error).
+// NEVER removes or overwrites existing entries — only appends.
+func addToOpenClawPluginsAllow(pluginID string) (added bool, existing []string, err error) {
+	home, herr := os.UserHomeDir()
+	if herr != nil {
+		return false, nil, herr
 	}
 	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
+	data, rerr := os.ReadFile(configPath)
+	if rerr != nil {
+		return false, nil, rerr
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return err
+	if jerr := json.Unmarshal(data, &cfg); jerr != nil {
+		return false, nil, jerr
 	}
 	plugins, _ := cfg["plugins"].(map[string]any)
 	if plugins == nil {
@@ -322,17 +324,22 @@ func addToOpenClawPluginsAllow(pluginID string) error {
 		cfg["plugins"] = plugins
 	}
 	allowRaw, _ := plugins["allow"].([]any)
+	// Collect existing string entries and check for duplicates.
 	for _, v := range allowRaw {
-		if s, ok := v.(string); ok && s == pluginID {
-			return nil // already present
+		if s, ok := v.(string); ok {
+			existing = append(existing, s)
+			if s == pluginID {
+				return false, existing, nil // already present, no change
+			}
 		}
 	}
+	// Append only — preserve all existing entries.
 	plugins["allow"] = append(allowRaw, pluginID)
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
+	out, merr := json.MarshalIndent(cfg, "", "  ")
+	if merr != nil {
+		return false, existing, merr
 	}
-	return os.WriteFile(configPath, out, 0o600)
+	return true, existing, os.WriteFile(configPath, out, 0o600)
 }
 
 func setOpenClawExecAsk(value string) error {
