@@ -636,8 +636,28 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 		b.logger.Error("bridge: allow-always: create policies dir", "error", err)
 		return
 	}
-	if err := os.WriteFile(overridesPath, []byte(existing+rule), 0o600); err != nil {
-		b.logger.Error("bridge: allow-always: write user-overrides.yaml", "error", err)
+	// Atomic write: write to temp file then rename to avoid partial reads.
+	dir := filepath.Dir(overridesPath)
+	tmp, err := os.CreateTemp(dir, ".rampart-user-overrides-*.yaml.tmp")
+	if err != nil {
+		b.logger.Error("bridge: allow-always: create temp file", "error", err)
+		return
+	}
+	tmpPath := tmp.Name()
+	if _, werr := tmp.WriteString(existing + rule); werr != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		b.logger.Error("bridge: allow-always: write temp file", "error", werr)
+		return
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		os.Remove(tmpPath)
+		b.logger.Error("bridge: allow-always: close temp file", "error", cerr)
+		return
+	}
+	if rerr := os.Rename(tmpPath, overridesPath); rerr != nil {
+		os.Remove(tmpPath)
+		b.logger.Error("bridge: allow-always: rename to final path", "error", rerr)
 		return
 	}
 

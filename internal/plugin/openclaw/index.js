@@ -1,0 +1,397 @@
+/**
+ * Rampart OpenClaw Plugin
+ *
+ * Native before_tool_call hook integration for Rampart AI agent firewall.
+ * Replaces brittle dist-file patching with the official OpenClaw plugin API.
+ *
+ * @see https://github.com/peg/rampart
+ * @version 0.1.0
+ */
+
+import { readFile } from "fs/promises";
+
+// ─── Token loading ────────────────────────────────────────────────────────────
+
+let _cachedToken = null;
+let _tokenLoadedAt = 0;
+const TOKEN_CACHE_TTL_MS = 60_000; // re-read token file at most once per minute
+
+async function loadToken() {
+  // Env var always wins
+  if (process.env.RAMPART_TOKEN) return process.env.RAMPART_TOKEN;
+
+  // Cache the file-loaded token to avoid hammering disk on every tool call
+  const now = Date.now();
+  if (_cachedToken !== null && now - _tokenLoadedAt < TOKEN_CACHE_TTL_MS) {
+    return _cachedToken;
+  }
+
+  try {
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    const raw = await readFile(`${home}/.rampart/token`, "utf8");
+    _cachedToken = raw.trim();
+    _tokenLoadedAt = now;
+    return _cachedToken;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Params extraction ────────────────────────────────────────────────────────
+
+/**
+ * Extract a human-readable "subject" from tool params for approval descriptions.
+ * Different tools use different field names for their primary target.
+ */
+function extractSubject(toolName, params) {
+  switch (toolName) {
+    case "exec":
+      return (
+        params.command ??
+        params.input?.command ??
+        params.script ??
+        "<unknown command>"
+      );
+
+    case "read":
+    case "write":
+    case "edit":
+      return (
+        params.path ??
+        params.file ??
+        params.filePath ??
+        params.file_path ??
+        "<unknown path>"
+      );
+
+    case "web_fetch":
+      return params.url ?? "<unknown url>";
+
+    case "web_search":
+      return params.query ?? "<unknown query>";
+
+    case "message":
+      return params.message ?? params.action ?? "<unknown message action>";
+
+    case "browser":
+      return params.url ?? params.action ?? "<unknown browser action>";
+
+    case "image":
+      return params.image ?? params.images?.[0] ?? "<unknown image>";
+
+    default:
+      // Try common field names as fallback
+      return (
+        params.command ??
+        params.url ??
+        params.path ??
+        params.file ??
+        params.query ??
+        params.message ??
+        JSON.stringify(params).slice(0, 120)
+      );
+  }
+}
+
+// ─── Rampart API client ───────────────────────────────────────────────────────
+
+/**
+ * Call the Rampart serve endpoint to check if a tool call should be allowed.
+ *
+ * Request shape (matches Rampart's toolRequest struct):
+ *   POST /v1/tool/{toolName}
+ *   { agent, session, run_id, params, input? }
+ *
+ * Returns:
+ *   { allowed: true, decision: "allow" }              → allow (pass through)
+ *   { allowed: false, decision: "deny", message }     → block
+ *   { decision: "ask", approval_id, message }         → require approval
+ *   null                                              → Rampart unreachable (fail-open)
+ */
+async function checkWithRampart(toolName, params, ctx, config) {
+  const serveUrl = config?.serveUrl ?? "http://localhost:9090";
+  const timeoutMs = config?.timeoutMs ?? 3000;
+
+  const token = await loadToken();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    // Rampart's toolRequest expects flat fields: agent, session, run_id, params.
+    // (not a nested "context" object)
+    const body = JSON.stringify({
+      agent:   ctx.agentId   ?? ctx.agent   ?? "",
+      session: ctx.sessionKey ?? ctx.sessionId ?? ctx.session ?? "",
+      run_id:  ctx.runId     ?? ctx.run_id   ?? "",
+      params,
+    });
+
+    const resp = await fetch(`${serveUrl}/v1/tool/${encodeURIComponent(toolName)}`, {
+      method: "POST",
+      headers,
+      body,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!resp.ok) {
+      // 4xx from Rampart: treat 403/401 as deny, fail-open on everything else
+      if (resp.status === 403 || resp.status === 401) {
+        const text = await resp.text().catch(() => "");
+        return { allowed: false, decision: "deny", message: `Rampart: HTTP ${resp.status}${text ? ` — ${text}` : ""}` };
+      }
+      // 5xx or unexpected — fail-open (warn, not debug, since serve is reachable but broken)
+      return { _serveError: true, _status: resp.status };
+    }
+
+    return await resp.json();
+  } catch (err) {
+    clearTimeout(timer);
+    if (err?.name === "AbortError") {
+      // Timeout — fail-open silently (serve may be slow or overloaded)
+      return null;
+    }
+    if (
+      err?.code === "ECONNREFUSED" ||
+      err?.code === "ENOENT" ||
+      err?.cause?.code === "ECONNREFUSED" ||
+      err?.message?.includes("ECONNREFUSED") ||
+      err?.message?.includes("fetch failed")
+    ) {
+      // Rampart serve is not running — fail-open (debug only, not warn)
+      return { _unreachable: true };
+    }
+    // Unknown fetch error — fail-open
+    return null;
+  }
+}
+
+/**
+ * Resolve a pending Rampart approval.
+ * Called by onResolution when the user clicks allow/deny in OpenClaw.
+ *
+ * For "allow-always", passes persist=true so Rampart writes the rule to
+ * the auto-allowed YAML file (user-overrides / auto-allowed.yaml).
+ */
+async function resolveRampartApproval(approvalId, approved, persist, serveUrl, logger) {
+  if (!approvalId) return; // no approval_id = Rampart didn't create one (shouldn't happen)
+
+  const token = await loadToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  try {
+    const resp = await fetch(`${serveUrl}/v1/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        approved,
+        resolved_by: "openclaw",
+        persist: !!persist,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      logger.warn(`[rampart] approval resolve failed (HTTP ${resp.status}): ${text}`);
+    }
+  } catch (err) {
+    logger.warn(`[rampart] approval resolve error: ${err.message}`);
+  }
+}
+
+// ─── Audit log ────────────────────────────────────────────────────────────────
+
+async function auditLog(toolName, params, ctx, outcome, config) {
+  const serveUrl = config?.serveUrl ?? "http://localhost:9090";
+  const token = await loadToken();
+
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    await fetch(`${serveUrl}/v1/audit`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        tool: toolName,
+        params,
+        outcome,
+        agent:   ctx.agentId   ?? ctx.agent   ?? "",
+        session: ctx.sessionKey ?? ctx.sessionId ?? ctx.session ?? "",
+        run_id:  ctx.runId     ?? ctx.run_id   ?? "",
+        ts: Date.now(),
+      }),
+      signal: AbortSignal.timeout(1000), // fire-and-forget, short timeout
+    });
+  } catch {
+    // Audit is best-effort — never fail the agent for it
+  }
+}
+
+// ─── Plugin entry ─────────────────────────────────────────────────────────────
+
+export const id = "rampart";
+export const name = "Rampart";
+export const description = "AI agent firewall — YAML policy-as-code for every tool call";
+export const version = "0.1.0";
+
+export function register(api) {
+  const pluginConfig = api.pluginConfig ?? {};
+
+  // Skip everything if disabled in config
+  if (pluginConfig.enabled === false) {
+    api.logger.info("[rampart] plugin disabled via config, skipping hook registration");
+    return;
+  }
+
+  const serveUrl = pluginConfig.serveUrl ?? "http://localhost:9090";
+  api.logger.info(`[rampart] v${version} loaded (serve: ${serveUrl})`);
+
+  // Severity emoji for approval embeds
+  const severityEmoji = { info: "ℹ️", warning: "⚠️", critical: "🚨" };
+
+  // ── before_tool_call ────────────────────────────────────────────────────────
+  api.on("before_tool_call", async (event, ctx) => {
+    const { toolName, params } = event;
+
+    const result = await checkWithRampart(toolName, params, ctx, pluginConfig);
+
+    // Serve unreachable → fail-open silently (debug log only)
+    if (result?._unreachable) {
+      api.logger.debug(`[rampart] serve unreachable — failing open for: ${toolName}`);
+      return;
+    }
+
+    // null (timeout/unknown error) → fail-open
+    if (result === null) {
+      api.logger.debug(`[rampart] check timed out or failed — failing open for: ${toolName}`);
+      return;
+    }
+
+    // Serve returned an error status → warn and fail-open
+    if (result?._serveError) {
+      api.logger.warn(`[rampart] serve returned HTTP ${result._status} for ${toolName} — failing open`);
+      return;
+    }
+
+    const decision = result.decision ?? (result.allowed === false ? "deny" : "allow");
+
+    // Debug log every decision (not just blocks/approvals)
+    api.logger.debug(`[rampart] ${toolName} → ${decision}${result.policy ? ` (policy: ${result.policy})` : ""}`);
+
+    switch (decision) {
+      case "deny": {
+        const reason = result.message ?? result.reason ?? "policy violation";
+        api.logger.warn(`[rampart] BLOCKED ${toolName}: ${reason}${result.policy ? ` [${result.policy}]` : ""}`);
+        return {
+          block: true,
+          blockReason: `rampart: ${reason}`,
+        };
+      }
+
+      case "ask": {
+        const subject = extractSubject(toolName, params);
+        const severity = result.severity ?? "warning";
+        const emoji = severityEmoji[severity] ?? "⚠️";
+        const approvalId = result.approval_id ?? null;
+
+        return {
+          requireApproval: {
+            title: `🛡️ Rampart — ${toolName} blocked`,
+            description: [
+              `**Command:** \`${subject}\``,
+              result.policy  ? `**Policy:** ${result.policy}`                 : null,
+              result.message ? `**Risk:** ${result.message}`                  : `**Risk:** ${emoji} Requires approval`,
+            ].filter(Boolean).join("\n"),
+            severity,
+            timeoutMs: pluginConfig.approvalTimeoutMs ?? 120_000,
+            timeoutBehavior: "deny",
+            onResolution: async (resolution) => {
+              api.logger.info(`[rampart] approval resolved: ${toolName} → ${resolution}`);
+
+              if (resolution === "allow-always") {
+                // Write a persistent allow rule via /v1/rules/learn.
+                // This works regardless of whether an approval_id exists.
+                try {
+                  const token = await loadToken();
+                  const learnResp = await fetch(`${serveUrl}/v1/rules/learn`, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    body: JSON.stringify({ tool: toolName, args: subject, decision: "allow", source: "openclaw-approval" }),
+                    signal: AbortSignal.timeout(5000),
+                  });
+                  if (learnResp.ok) {
+                    api.logger.info(`[rampart] always-allow rule written: ${toolName}:${subject}`);
+                  } else {
+                    api.logger.warn(`[rampart] always-allow rule write failed: HTTP ${learnResp.status}`);
+                    if (approvalId) await resolveRampartApproval(approvalId, true, true, serveUrl, api.logger);
+                  }
+                } catch (err) {
+                  api.logger.warn(`[rampart] always-allow write error: ${err.message}`);
+                }
+              } else if (resolution === "allow-once") {
+                // One-time approval — tell Rampart it was approved (no persist)
+                await resolveRampartApproval(approvalId, true, false, serveUrl, api.logger);
+              } else {
+                // Denied (or timed out) — tell Rampart
+                await resolveRampartApproval(approvalId, false, false, serveUrl, api.logger);
+              }
+            },
+          },
+        };
+      }
+
+      case "watch":
+      case "allow":
+      default:
+        // Allowed — check if Rampart wants to modify params
+        if (result.params && typeof result.params === "object") {
+          return { params: result.params };
+        }
+        return; // void = allow as-is
+    }
+  });
+
+  // ── after_tool_call (audit trail) ──────────────────────────────────────────
+  api.on("after_tool_call", async (event, ctx) => {
+    const { toolName, params, error, durationMs } = event;
+
+    // Fire-and-forget — do not block the tool result
+    Promise.resolve().then(async () => {
+      try {
+        api.logger.debug(`[rampart] tool completed: ${toolName} (${durationMs ?? "?"}ms)`);
+
+        // Best-effort audit POST — Rampart serve already logs via before_tool_call path
+        await auditLog(
+          toolName,
+          params,
+          ctx,
+          {
+            type: "result",
+            success: !error,
+            error: error ?? null,
+            durationMs: durationMs ?? null,
+          },
+          pluginConfig
+        );
+      } catch {
+        // Audit is best-effort — never surface errors here
+      }
+    });
+  });
+
+  api.logger.info("[rampart] hooks registered ✓");
+}
+
+// Support both named and default export for OpenClaw plugin loader compatibility
+export default { id, name, description, version, register };
