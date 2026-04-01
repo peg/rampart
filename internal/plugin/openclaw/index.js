@@ -9,26 +9,23 @@
  */
 
 import { readFile } from "fs/promises";
+import { homedir } from "os";
 
 // ─── Token loading ────────────────────────────────────────────────────────────
+// Token is loaded from ~/.rampart/token (written by `rampart serve` on startup).
+// This is a local auth token for the Rampart daemon on localhost:9090 only.
 
 let _cachedToken = null;
 let _tokenLoadedAt = 0;
-const TOKEN_CACHE_TTL_MS = 60_000; // re-read token file at most once per minute
+const TOKEN_CACHE_TTL_MS = 60_000; // re-read at most once per minute
 
 async function loadToken() {
-  // Env var always wins
-  if (process.env.RAMPART_TOKEN) return process.env.RAMPART_TOKEN;
-
-  // Cache the file-loaded token to avoid hammering disk on every tool call
   const now = Date.now();
   if (_cachedToken !== null && now - _tokenLoadedAt < TOKEN_CACHE_TTL_MS) {
     return _cachedToken;
   }
-
   try {
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    const raw = await readFile(`${home}/.rampart/token`, "utf8");
+    const raw = await readFile(`${homedir()}/.rampart/token`, "utf8");
     _cachedToken = raw.trim();
     _tokenLoadedAt = now;
     return _cachedToken;
