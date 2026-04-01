@@ -15,6 +15,9 @@
   "openclaw": {
     "extensions": [
       "./index.js"
+    ],
+    "hooks": [
+      "./index.js"
     ]
   }
 }
