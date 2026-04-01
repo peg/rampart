@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
 )
 
@@ -36,9 +37,8 @@ const openclawPluginDir = "extensions/rampart"
 // before_tool_call hook used by the Rampart plugin.
 const openclawMinVersion = "2026.3.28"
 
-// TODO: bundle the plugin inside the rampart binary and extract to a temp dir.
-// For now, point at the development checkout path.
-const openclawPluginDevPath = "/home/clap/.openclaw/workspace/rampart-openclaw-plugin"
+// The plugin is bundled inside the binary via //go:embed and extracted to a
+// temp directory during setup. No external checkout or npm install required.
 
 // runSetupOpenClawPlugin installs the Rampart native plugin into OpenClaw.
 //
@@ -81,18 +81,23 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		fmt.Fprintf(w, "✓ OpenClaw version: %s (>= %s required)\n", version, openclawMinVersion)
 	}
 
-	// 3. Install the plugin.
-	pluginPath := openclawPluginDevPath
-	if _, err := os.Stat(pluginPath); os.IsNotExist(err) {
-		return fmt.Errorf("Rampart OpenClaw plugin not found at %s\n  Build it first: cd %s && npm install && npm run build", pluginPath, pluginPath)
+	// 3. Extract the bundled plugin to a temp dir and install it.
+	pluginDir, err := os.MkdirTemp("", "rampart-openclaw-plugin-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir for plugin: %w", err)
 	}
-	fmt.Fprintf(w, "Installing plugin from: %s\n", pluginPath)
+	defer os.RemoveAll(pluginDir)
 
-	installCmd := osexec.Command(openclawBin, "plugins", "install", pluginPath)
+	if err := ocplugin.Extract(pluginDir); err != nil {
+		return fmt.Errorf("failed to extract bundled plugin: %w", err)
+	}
+	fmt.Fprintf(w, "Installing bundled plugin (v%s)...\n", ocplugin.Version())
+
+	installCmd := osexec.Command(openclawBin, "plugins", "install", pluginDir)
 	installCmd.Stdout = w
 	installCmd.Stderr = errW
 	if err := installCmd.Run(); err != nil {
-		return fmt.Errorf("openclaw plugins install failed: %w\n  Try running manually: openclaw plugins install %s", err, pluginPath)
+		return fmt.Errorf("openclaw plugins install failed: %w\n  Try running manually: openclaw plugins install <extracted-plugin-path>", err)
 	}
 	fmt.Fprintln(w, "✓ Rampart plugin installed into OpenClaw")
 
