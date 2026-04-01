@@ -230,14 +230,19 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// 15. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
 
-	// 16. OpenClaw ask mode check
-	if n := doctorOpenClawAskMode(emit); n > 0 {
+	// 16. OpenClaw plugin health (runs before ask mode — plugin supersedes bridge)
+	pluginActive := isOpenClawPluginInstalled()
+	if n := doctorOpenClawPlugin(emit); n > 0 {
 		warnings += n
 	}
 
-	// 17. OpenClaw plugin health
-	if n := doctorOpenClawPlugin(emit); n > 0 {
-		warnings += n
+	// 17. OpenClaw ask mode — only needed for legacy bridge users.
+	// With the native plugin active, before_tool_call covers all tool calls
+	// and the bridge ask mode config is irrelevant.
+	if !pluginActive {
+		if n := doctorOpenClawAskMode(emit); n > 0 {
+			warnings += n
+		}
 	}
 
 	// 18. Proactive policy suggestions (informational only)
@@ -891,14 +896,20 @@ func doctorFileToolPatches(emit emitFn) (warnings int) {
 
 	// Check if OpenClaw uses bundled dist files (#204).
 	if openclawUsesBundledDist() {
-		distPatched := openclawDistPatched()
+		// With the native plugin, before_tool_call intercepts all tools including
+		// read/write/edit — dist patches are fully redundant.
+		distPatched := openclawDistPatched() || pluginInstalled
 		webFetchPatched := openclawWebFetchPatched() || pluginInstalled
 		browserPatched := openclawBrowserPatched() || pluginInstalled
 		messagePatched := openclawMessagePatched() || pluginInstalled
 		execPatched := openclawExecPatched() || pluginInstalled
 
 		if distPatched && webFetchPatched && browserPatched && messagePatched && execPatched {
-			emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")
+			if pluginInstalled {
+				emit("Tool patches", "ok", "All OpenClaw tools covered (native plugin: read/write/edit + web_fetch + browser + message + exec)")
+			} else {
+				emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")
+			}
 			return 0
 		}
 

@@ -1,12 +1,15 @@
 {
   "id": "rampart",
   "name": "Rampart",
-  "description": "AI agent firewall — YAML policy-as-code for every tool call",
-  "version": "0.1.0",
+  "description": "AI agent firewall \u2014 YAML policy-as-code for every tool call",
+  "version": "0.9.12",
   "author": "peg",
   "homepage": "https://rampart.sh",
   "repository": "https://github.com/peg/rampart",
-  "hooks": ["before_tool_call", "after_tool_call"],
+  "hooks": [
+    "before_tool_call",
+    "after_tool_call"
+  ],
   "minHostVersion": "2026.3.28",
   "configSchema": {
     "type": "object",
