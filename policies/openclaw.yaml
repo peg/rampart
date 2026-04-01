@@ -482,22 +482,19 @@ policies:
         message: "Browser navigation to unclassified domain logged for audit"
 
   # ── message: allow read actions, ask for sends to unknown targets ──────
+  # ── message: allow all message operations ─────────────────────────────
+  # The message tool has no filterable fields supported by the policy engine.
+  # All message actions are allowed; use agent-level tool restrictions if
+  # more granular control is needed.
   - name: allow-safe-message
-    description: "Allow message reads freely; sends to unknown targets require approval"
+    description: "Allow message tool actions (read, send, react, etc.)"
     match:
       tool: ["message"]
     rules:
       - action: allow
         when:
-          params_match:
-            action: ["read", "list-pins", "reactions", "thread-list", "channel-list", "channel-info", "member-info", "role-info", "emoji-list"]
-        message: "Message read action allowed"
-      - action: allow
-        when:
-          params_match:
-            action: ["send", "edit", "delete", "react", "pin", "unpin", "thread-reply", "thread-create"]
-            channel: ["discord", "telegram", "slack"]
-        message: "Message send to known channel allowed"
+          default: true
+        message: "Message tool action allowed"
 
   # ── canvas: allow all canvas operations ───────────────────────────────
   # Canvas is presentation/UI only — low risk.
