@@ -230,14 +230,19 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// 15. Project policy (informational only — not a failure)
 	doctorProjectPolicy(w, emit, collect)
 
-	// 16. OpenClaw ask mode check
-	if n := doctorOpenClawAskMode(emit); n > 0 {
+	// 16. OpenClaw plugin health (runs before ask mode — plugin supersedes bridge)
+	pluginActive := isOpenClawPluginInstalled()
+	if n := doctorOpenClawPlugin(emit); n > 0 {
 		warnings += n
 	}
 
-	// 17. OpenClaw plugin health
-	if n := doctorOpenClawPlugin(emit); n > 0 {
-		warnings += n
+	// 17. OpenClaw ask mode — only needed for legacy bridge users.
+	// With the native plugin active, before_tool_call covers all tool calls
+	// and the bridge ask mode config is irrelevant.
+	if !pluginActive {
+		if n := doctorOpenClawAskMode(emit); n > 0 {
+			warnings += n
+		}
 	}
 
 	// 18. Proactive policy suggestions (informational only)
