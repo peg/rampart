@@ -205,10 +205,11 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.9.2
+## What's New in v0.9.11
 
-- **`rampart init --from-audit`** — Generate policy YAML from your audit logs. Observe what your agent does, then generate rules to match. [Learn more →](reference/cli-commands.md#rampart-init---from-audit)
-- **Temporal allows** — `rampart allow "docker *" --for 1h` creates rules that expire automatically. `--once` for single-use rules (consumed after first match, removed manually). [Learn more →](reference/cli-commands.md#rampart-allow)
-- **TLS on `rampart serve`** — `--tls-auto` generates a self-signed cert, or bring your own with `--tls-cert`/`--tls-key`. [Learn more →](reference/cli-commands.md#rampart-serve)
-- **Docker image** — `docker run ghcr.io/peg/rampart:latest` — multi-arch distroless container. [Installation →](getting-started/installation.md#docker)
-- **`rampart setup codex`** — One-command persistent wrapper for Codex CLI via LD_PRELOAD. [Learn more →](integrations/codex-cli.md)
+- **Native OpenClaw plugin** — `rampart setup openclaw` auto-detects your OpenClaw version and installs a native `before_tool_call` hook. Covers every tool call (exec, read, write, web_fetch, browser, message) without fragile dist patching. Requires OpenClaw >= 2026.3.28. [Learn more →](integrations/openclaw.md)
+- **`default_action: ask` in openclaw.yaml** — Novel or unlisted tool calls surface for human approval instead of silently failing. Eliminates false positives for custom tools.
+- **Always Allow writeback** — Click "Always Allow" in the OpenClaw approval UI and Rampart writes a permanent smart-glob rule to `~/.rampart/policies/user-overrides.yaml`.
+- **Approval store persistence** — Pending approvals survive `rampart serve` restarts via JSONL journal.
+- **`rampart doctor` plugin check** — Shows `✓ OpenClaw plugin: installed` when the native hook is active.
+- **Security hardening** — Closed bash/sh/curl/wget exec bypass holes; hardened git push, docker, kubectl allowlists; sessions_spawn depth guard prevents subagents from spawning agents.
