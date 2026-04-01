@@ -20,14 +20,14 @@ rampart wrap --config /path/to/policy.yaml -- agent
 
 ```yaml
 version: "1"
-default_action: allow  # allow | deny
+default_action: allow  # allow | deny | ask | watch
 
 policies:
   - name: my-policy
     match:
       tool: ["exec"]  # Which tool types this applies to
     rules:
-      - action: deny  # deny | allow | log | ask | watch | webhook
+      - action: deny  # deny | allow | ask | watch | webhook
         when:
           command_matches: ["rm -rf *"]
         message: "Destructive command blocked"
@@ -39,8 +39,8 @@ policies:
 |--------|--------|
 | `deny` | Block the tool call. Agent receives an error. |
 | `allow` | Permit the tool call. |
-| `log` | Permit but log with elevated visibility. |
-| `ask` | Block until a human approves or denies (use `audit: true` to log the decision). |
+| `watch` | Permit but log with elevated visibility. (Previously called `log` — `log` still works as an alias.) |
+| `ask` | Block until a human approves or denies. Also valid as `default_action: ask` to surface unmatched calls for review. |
 | `webhook` | Delegate the decision to an external HTTP endpoint. |
 
 **Deny always wins.** If any matching policy says `deny`, the call is denied regardless of other policies.

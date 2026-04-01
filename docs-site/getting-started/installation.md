@@ -97,7 +97,7 @@ volumes:
   rampart-audit:
 ```
 
-Available tags: `latest`, `0.7.4`, `0.7`. At release time, `latest` points to `0.7.4`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+Available tags: `latest`, `0.9.12`, `0.9`. `latest` always points to the current stable release. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
 
 ## Build from Source
 

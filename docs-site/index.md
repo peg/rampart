@@ -205,11 +205,23 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.9.11
+## What's New in v0.9.12
+
+- **Plugin bundled in binary** — The OpenClaw plugin is now embedded directly in the `rampart` binary. `rampart setup openclaw --plugin` works on any machine — no external checkout or npm install required. [Learn more →](integrations/openclaw.md)
+- **Bridge hardened** — Errors during require_approval escalations now fail closed (deny) instead of silently allowing. `writeAllowAlwaysRule` uses atomic writes.
+- **Learn endpoint secured** — `POST /v1/rules/learn` now rate-limited and restricted to `allow` decisions only. Deny rules belong in policy YAML.
+- **`openclaw.yaml` message policy** — `message` tool actions distinguished: reads always allowed, sends to unknown channels require approval.
+
+### v0.9.11
+
+- **`openclaw.yaml` security hardening** — Closed `bash *`/`sh *`/`curl *`/`wget *` exec bypass holes. Dedicated `block-force-push` policy. Tightened docker/kubectl/git subcommand allowlists.
+- **`default_action: ask` in openclaw.yaml** — Novel or unlisted tool calls surface for human approval instead of silently failing.
+- **`sessions_spawn` depth guard** — Subagents cannot spawn further agents.
+
+### v0.9.10
 
 - **Native OpenClaw plugin** — `rampart setup openclaw` auto-detects your OpenClaw version and installs a native `before_tool_call` hook. Covers every tool call (exec, read, write, web_fetch, browser, message) without fragile dist patching. Requires OpenClaw >= 2026.3.28. [Learn more →](integrations/openclaw.md)
-- **`default_action: ask` in openclaw.yaml** — Novel or unlisted tool calls surface for human approval instead of silently failing. Eliminates false positives for custom tools.
 - **Always Allow writeback** — Click "Always Allow" in the OpenClaw approval UI and Rampart writes a permanent smart-glob rule to `~/.rampart/policies/user-overrides.yaml`.
 - **Approval store persistence** — Pending approvals survive `rampart serve` restarts via JSONL journal.
 - **`rampart doctor` plugin check** — Shows `✓ OpenClaw plugin: installed` when the native hook is active.
-- **Security hardening** — Closed bash/sh/curl/wget exec bypass holes; hardened git push, docker, kubectl allowlists; sessions_spawn depth guard prevents subagents from spawning agents.
+- **Smart Always Allow globs** — `sudo apt-get install nmap` writes `sudo apt-get install *`, not an exact match. High-risk prefixes (`docker run`, `kubectl apply`, external `curl`) kept exact.

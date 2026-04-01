@@ -45,17 +45,19 @@ rampart setup cline --remove  # Remove hooks
 
 ### `rampart setup openclaw`
 
-Install shell shim and background service for OpenClaw.
+Install Rampart integration for OpenClaw. Auto-detects your OpenClaw version and uses the best available method.
 
 ```bash
-rampart setup openclaw                    # Install shim + service
-rampart setup openclaw --patch-tools      # Full coverage (shell + file tools)
-rampart setup openclaw --force            # Overwrite existing config
-rampart setup openclaw --remove           # Remove shim + service
+rampart setup openclaw           # Auto-detect: native plugin (>= 2026.3.28) or legacy shim
+rampart setup openclaw --plugin  # Force native plugin install (requires >= 2026.3.28)
+rampart setup openclaw --migrate # Migrate from legacy shim/bridge to native plugin
+rampart setup openclaw --force   # Overwrite existing config
+rampart setup openclaw --remove  # Remove integration
 ```
 
-!!! warning "Re-run after OpenClaw upgrades"
-    `--patch-tools` modifies files in `node_modules`. After upgrading OpenClaw (`npm install -g openclaw`), run `rampart setup openclaw --patch-tools --force` to re-apply.
+**Native plugin (OpenClaw >= 2026.3.28):** Installs the bundled `before_tool_call` hook plugin. Covers all tool calls (exec, read, write, web_fetch, browser, message). Plugin is embedded in the `rampart` binary — no external download required.
+
+**Legacy shim (OpenClaw < 2026.3.28):** Installs shell shim + optionally patches file tools via `--patch-tools`. Requires re-running after OpenClaw upgrades.
 
 ### `rampart setup codex`
 
@@ -241,6 +243,17 @@ Health check — verifies installation, policies, server, hooks, audit trail, an
 
 ```bash
 rampart doctor
+```
+
+When the OpenClaw native plugin is installed, doctor shows:
+```
+✓ OpenClaw plugin: installed (before_tool_call hook active)
+```
+
+If the plugin is missing or the OpenClaw version is too old:
+```
+✗ OpenClaw plugin: not installed
+  → Run: rampart setup openclaw --plugin
 ```
 
 ### `rampart status`

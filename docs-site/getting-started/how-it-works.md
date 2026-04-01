@@ -23,14 +23,14 @@ This wires an agent to use the daemon. What it does depends on the agent:
 | **Claude Code** | Writes `PreToolUse` hook in `~/.claude/settings.json` |
 | **Codex** | Writes hook config in `~/.codex/config.json` |
 | **Cline** | Writes hook config in `~/.cline/settings.json` |
-| **OpenClaw** | Installs LD_PRELOAD (exec interception) + patches file tools |
+| **OpenClaw** | Installs native `before_tool_call` plugin (all tools) on >= 2026.3.28; legacy shim on older versions |
 | **MCP servers** | Use `rampart mcp --` prefix instead of setup |
 
 After setup, every tool call the agent makes goes through the daemon for policy evaluation before execution.
 
 ```
 rampart setup claude-code   # one-time, survives agent updates
-rampart setup openclaw      # needs re-run after OpenClaw upgrades
+rampart setup openclaw      # auto-detects version; native plugin on >= 2026.3.28
 ```
 
 ## Live monitoring (`rampart watch`)

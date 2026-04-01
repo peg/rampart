@@ -526,6 +526,56 @@ curl -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:9090/v1/rules/auto-allowed"
 ```
 
+## POST /v1/rules/learn
+Writes a permanent allow rule to `~/.rampart/policies/user-overrides.yaml`. Used by the OpenClaw plugin for "Always Allow" writeback. Rate-limited to ~5 writes/sec.
+
+### Request Headers
+- `Authorization: Bearer <token>` (admin scope required)
+- `Content-Type: application/json`
+
+### Request Body Schema
+
+```json
+{
+  "type": "object",
+  "required": ["tool", "args", "decision"],
+  "properties": {
+    "tool":     { "type": "string", "example": "exec" },
+    "args":     { "type": "string", "description": "Command or path — a smart glob pattern is computed automatically", "example": "sudo apt-get install nmap" },
+    "decision": { "type": "string", "enum": ["allow"], "description": "Only 'allow' is accepted — use policy YAML for deny rules" },
+    "source":   { "type": "string", "description": "Optional origin label for audit trail", "example": "openclaw-approval" }
+  }
+}
+```
+
+### Response Body Schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "rule_name": { "type": "string", "example": "user-allow-a3f2b1c4" },
+    "pattern":   { "type": "string", "example": "sudo apt-get install *" },
+    "created":   { "type": "boolean" }
+  }
+}
+```
+
+### Status Codes
+- `201 Created` — rule written and policy reloaded
+- `409 Conflict` — rule already exists (returns existing pattern)
+- `400 Bad Request` — invalid request body or decision value
+- `401 Unauthorized`
+- `429 Too Many Requests` — rate limited
+
+### curl
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tool":"exec","args":"sudo apt-get install nmap","decision":"allow","source":"manual"}' \
+  "http://127.0.0.1:9090/v1/rules/learn"
+```
+
 ## DELETE /v1/rules/auto-allowed/{index}
 Deletes one auto-allowed rule by index and reloads policy engine.
 
