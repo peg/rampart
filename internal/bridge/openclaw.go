@@ -34,6 +34,7 @@ package bridge
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -425,10 +426,11 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 			"id", req.ID, "command", req.command())
 
 	default:
-		// Unknown action — fail open so we don't silently block commands.
-		b.logger.Warn("bridge: unknown action, allowing (fail-open)",
+		// Unknown action — fail closed. An unrecognized action should never
+		// silently allow a command that may require human review.
+		b.logger.Warn("bridge: unknown action, denying (fail-closed)",
 			"id", req.ID, "action", decision.Action.String())
-		b.resolveApproval(conn, req.ID, "allow-once")
+		b.resolveApproval(conn, req.ID, "deny")
 	}
 }
 
@@ -507,8 +509,8 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.serveURL+"/v1/approvals", bytes.NewReader(body))
 	if err != nil {
-		b.logger.Error("bridge: failed to create escalation request", "error", err)
-		b.resolveApproval(conn, req.ID, "allow-once") // fail-open
+		b.logger.Error("bridge: failed to create escalation request, denying (fail-closed)", "error", err)
+		b.resolveApproval(conn, req.ID, "deny")
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -518,14 +520,14 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		b.logger.Warn("bridge: serve escalation failed, failing open", "error", err)
-		b.resolveApproval(conn, req.ID, "allow-once")
+		b.logger.Warn("bridge: serve escalation failed, denying (fail-closed)", "error", err)
+		b.resolveApproval(conn, req.ID, "deny")
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b.logger.Warn("bridge: serve escalation returned non-2xx, failing open", "status", resp.StatusCode)
-		b.resolveApproval(conn, req.ID, "allow-once")
+		b.logger.Warn("bridge: serve escalation returned non-2xx, denying (fail-closed)", "status", resp.StatusCode)
+		b.resolveApproval(conn, req.ID, "deny")
 		return
 	}
 
@@ -535,7 +537,8 @@ func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Co
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	if result.ID == "" {
-		b.resolveApproval(conn, req.ID, "allow-once")
+		b.logger.Warn("bridge: serve escalation returned empty approval ID, denying (fail-closed)")
+		b.resolveApproval(conn, req.ID, "deny")
 		return
 	}
 
@@ -607,9 +610,9 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 
 	overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
 
-	// Hash the command for a stable rule name.
-	hb := sha256Command(command)
-	ruleName := fmt.Sprintf("user-allow-%x", hb)
+	// Hash the command for a stable rule name using SHA-256 (first 8 hex chars).
+	hb := commandHash(command)
+	ruleName := fmt.Sprintf("user-allow-%s", hb)
 
 	// Build the rule block to append.
 	rule := fmt.Sprintf("\n- name: %s\n  match:\n    tool: exec\n  rules:\n    - when:\n        command_matches:\n          - %q\n      action: allow\n      message: \"User allowed (always)\"\n",
@@ -646,13 +649,11 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	}
 }
 
-// sha256Command returns 4 bytes derived from a djb2 hash of the command string.
-func sha256Command(s string) [4]byte {
-	var hash uint32 = 5381
-	for _, b := range []byte(s) {
-		hash = hash*33 + uint32(b)
-	}
-	return [4]byte{byte(hash >> 24), byte(hash >> 16), byte(hash >> 8), byte(hash)}
+// commandHash returns the first 8 hex characters of the SHA-256 hash of s.
+// Used to generate stable, collision-resistant rule names for allow-always entries.
+func commandHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", sum[:4])
 }
 
 // --- Wire protocol types ---

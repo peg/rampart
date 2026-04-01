@@ -59,6 +59,7 @@ type Server struct {
 	auditDir            string
 	sse                 *sseHub
 	lastReloadAPI       time.Time // Rate limiting for /v1/policy/reload
+	lastLearnAPI        time.Time // Rate limiting for /v1/rules/learn
 	stopCleanup         chan struct{}
 	approvalPersistFile string
 }

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/peg/rampart/internal/policy"
 	"gopkg.in/yaml.v3"
@@ -86,6 +87,10 @@ type userOverrideRule struct {
 type userOverrideWhen struct {
 	CommandMatches []string `yaml:"command_matches,omitempty,flow"`
 }
+
+// learnRateLimit is the minimum interval between successful /v1/rules/learn writes.
+// Prevents bulk rule injection via a compromised admin token.
+const learnRateLimit = 200 * time.Millisecond // max ~5 writes/sec
 
 func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
@@ -179,6 +184,16 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to marshal policy: %v", err))
 		return
 	}
+
+	// Rate limit: only throttle successful writes, not validation rejections.
+	s.mu.Lock()
+	if time.Since(s.lastLearnAPI) < learnRateLimit {
+		s.mu.Unlock()
+		writeError(w, http.StatusTooManyRequests, "learn rate limited — slow down rule writes")
+		return
+	}
+	s.lastLearnAPI = time.Now()
+	s.mu.Unlock()
 
 	header := "# Rampart user override policies\n# Auto-generated entries are added here when you click \"Always Allow\"\n# This file is never overwritten by upgrades or rampart setup\n"
 	content := header + string(out)
