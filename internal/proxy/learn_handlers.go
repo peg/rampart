@@ -107,8 +107,10 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "tool and args are required")
 		return
 	}
-	if req.Decision != "allow" && req.Decision != "deny" {
-		writeError(w, http.StatusBadRequest, "decision must be \"allow\" or \"deny\"")
+	// Only "allow" is accepted — this endpoint exists for "Always Allow" writeback.
+	// Deny rules belong in policy YAML, not auto-generated via the learn API.
+	if req.Decision != "allow" {
+		writeError(w, http.StatusBadRequest, "decision must be \"allow\" — use policy YAML for deny rules")
 		return
 	}
 

@@ -255,8 +255,8 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().BoolVar(&filterTools, "filter-tools", false, "Filter denied tools from tools/list responses")
-	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identity for policy evaluation and audit (default: mcp-client)")
-	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session identity for policy evaluation and audit (default: mcp-proxy)")
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identity for policy evaluation and audit (default: mcp-client). Advisory only — not verified by Rampart. Do not use as a security boundary.")
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session identity for policy evaluation and audit (default: mcp-proxy). Advisory only — not verified by Rampart.")
 
 	return cmd
 }
