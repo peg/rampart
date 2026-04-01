@@ -481,17 +481,23 @@ policies:
           default: true
         message: "Browser navigation to unclassified domain logged for audit"
 
-  # ── message: allow send to known channels ─────────────────────────────
-  # Allow message sends to configured channels; log and review unknown targets.
+  # ── message: allow read actions, ask for sends to unknown targets ──────
   - name: allow-safe-message
-    description: "Allow message tool for common channels (Discord, Telegram)"
+    description: "Allow message reads freely; sends to unknown targets require approval"
     match:
       tool: ["message"]
     rules:
       - action: allow
         when:
-          default: true
-        message: "Message tool action allowed"
+          params_match:
+            action: ["read", "list-pins", "reactions", "thread-list", "channel-list", "channel-info", "member-info", "role-info", "emoji-list"]
+        message: "Message read action allowed"
+      - action: allow
+        when:
+          params_match:
+            action: ["send", "edit", "delete", "react", "pin", "unpin", "thread-reply", "thread-create"]
+            channel: ["discord", "telegram", "slack"]
+        message: "Message send to known channel allowed"
 
   # ── canvas: allow all canvas operations ───────────────────────────────
   # Canvas is presentation/UI only — low risk.
