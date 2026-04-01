@@ -57,7 +57,7 @@ rampart status
 Rampart looks for policies in this order:
 
 1. Path specified via `--config` flag
-2. `~/.rampart/policy.yaml`
+2. `~/.rampart/policies/` directory (all `.yaml` files merged)
 3. Built-in `standard` profile (default)
 
 ### 3. Does your rule actually match?
@@ -157,6 +157,43 @@ rampart status
 # Dry-run a command against your policy
 rampart test "rm -rf /"
 rampart test --tool read "/etc/shadow"
+```
+
+## OpenClaw plugin not intercepting tool calls
+
+**Check if the plugin is installed:**
+
+```bash
+openclaw plugins list
+# Should show: rampart  v0.9.12  ✓ active
+
+rampart doctor
+# Should show: ✓ OpenClaw plugin: installed (before_tool_call hook active)
+```
+
+**Plugin missing — reinstall:**
+
+```bash
+rampart setup openclaw --plugin --force
+# Then restart the OpenClaw gateway
+```
+
+**OpenClaw version too old:**
+
+The native plugin requires OpenClaw >= 2026.3.28. Upgrade:
+
+```bash
+npm install -g openclaw@latest
+rampart setup openclaw  # auto-detects and installs plugin
+```
+
+**Rampart serve not running:**
+
+The plugin calls `localhost:9090` on every tool call. If serve isn't running, all calls fail-open (allowed silently).
+
+```bash
+rampart status          # check if serve is running
+rampart serve --start   # start if not running
 ```
 
 ## Still stuck?
