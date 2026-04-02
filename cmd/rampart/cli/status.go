@@ -264,7 +264,11 @@ func detectProtectedAgents() []string {
 	openclawDropIn := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
 	openclawShim := filepath.Join(home, ".local", "bin", "rampart-shim")
 	openclawConfig := filepath.Join(home, ".openclaw", "openclaw.json")
-	if _, err := os.Stat(openclawDropIn); err == nil {
+	// Check for native plugin first (preferred path)
+	pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
+	if _, err := os.Stat(pluginDir); err == nil {
+		agents = append(agents, "OpenClaw (plugin)")
+	} else if _, err := os.Stat(openclawDropIn); err == nil {
 		agents = append(agents, "OpenClaw (preload+bridge)")
 	} else if _, err := os.Stat(openclawShim); err == nil {
 		agents = append(agents, "OpenClaw (shim+bridge)")
