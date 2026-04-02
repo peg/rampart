@@ -100,6 +100,8 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		return fmt.Errorf("openclaw plugins install failed: %w\n  Try running manually: openclaw plugins install <extracted-plugin-path>", err)
 	}
 	fmt.Fprintln(w, "✓ Rampart plugin installed into OpenClaw")
+	fmt.Fprintln(w, "  Note: OpenClaw may warn about suspicious code patterns — this is a false positive.")
+	fmt.Fprintln(w, "  Rampart reads a local token file and talks to localhost:9090 only. See: https://docs.rampart.sh/integrations/openclaw#security-scanner")
 
 	// 4. Set tools.exec.ask to "off" in openclaw.json.
 	if err := setOpenClawExecAsk("off"); err != nil {
