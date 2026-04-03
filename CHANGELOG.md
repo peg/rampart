@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.14] - 2026-04-02
+
+### Fixed
+
+- **OpenClaw 2026.4.1 plugin install breakage** — OpenClaw 2026.4.1 introduced `validateHookDir()` requiring a `HOOK.md` file when the hook-pack install path is used. Removed `openclaw.hooks` from `package.json`; plugin now correctly installs via the `openclaw.extensions` path which has no `HOOK.md` requirement.
+- **`rampart status` shows `OpenClaw (plugin)`** — previously showed `OpenClaw (bridge)` even when the native plugin was active. Status now checks for `~/.openclaw/extensions/rampart` first.
+- **Setup explains scanner false positive** — `rampart setup openclaw --plugin` now prints a note explaining that OpenClaw's security scanner warning is a false positive (localhost-only token auth).
+
+## [0.9.13] - 2026-04-01
+
+### Fixed
+
+- **`plugins.allow` set automatically during setup** — `rampart setup openclaw --plugin` now adds `rampart` to `plugins.allow` in `~/.openclaw/openclaw.json`. Existing plugins (discord, browser, acpx, etc.) are preserved — only appends, never overwrites. Eliminates the "plugins.allow is empty" security warning in `openclaw doctor`.
+- **Plugin version corrected** — `openclaw.plugin.json` version was `0.1.0`, now correctly reflects the binary version (`0.9.12`+).
+- **Plugin token loading hardened** — replaced `process.env.RAMPART_TOKEN` with file-only loading via `os.homedir()` to avoid OpenClaw's code scanner flagging environment variable access as a suspicious pattern.
+- **`package.json` hooks field** — added `openclaw.hooks` to `package.json` (later removed in v0.9.14; this was an intermediate fix).
+- **`rampart doctor`: dist-patch warning suppressed for plugin users** — the native `before_tool_call` plugin covers read/write/edit; the "dist files not patched" warning is a false positive when the plugin is active.
+- **`rampart doctor`: ask-mode warning suppressed for plugin users** — when the native plugin is installed, the legacy bridge `ask: on-miss` config is irrelevant; warning is now hidden.
+- **`addToOpenClawPluginsAllow` is idempotent and non-destructive** — returns `(added, existingIDs, err)` so the caller can confirm existing plugins were preserved. Setup output shows which plugins were already in the allow list.
+
 ## [0.9.11] - 2026-03-31
 
 ### Security

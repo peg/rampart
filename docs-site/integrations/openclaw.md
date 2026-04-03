@@ -10,6 +10,7 @@ Rampart integrates natively with OpenClaw via the `before_tool_call` plugin API.
 !!! info "Version requirements"
     - **OpenClaw >= 2026.3.28**: Native plugin (recommended) — full tool coverage via `before_tool_call` hook
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades
+    - **Tested on**: OpenClaw 2026.4.1, 2026.4.2
 
     `rampart setup openclaw` auto-detects your version and uses the right method.
 
@@ -23,11 +24,16 @@ That's it. Rampart:
 
 1. Detects your OpenClaw version
 2. **If >= 2026.3.28**: Extracts the bundled plugin and installs it via `openclaw plugins install`
-3. Configures OpenClaw to route decisions through Rampart (`tools.exec.ask: off`)
-4. Copies the `openclaw.yaml` policy profile to `~/.rampart/policies/openclaw.yaml`
-5. Starts `rampart serve` as a boot service (if not already running)
+3. Adds `rampart` to `plugins.allow` — existing plugins (discord, browser, etc.) are preserved
+4. Configures OpenClaw to route decisions through Rampart (`tools.exec.ask: off`)
+5. Copies the `openclaw.yaml` policy profile to `~/.rampart/policies/openclaw.yaml`
+6. Starts `rampart serve` as a boot service (if not already running)
 
 No external downloads, no npm install — the plugin is bundled inside the `rampart` binary.
+
+### Security scanner note
+
+During install, OpenClaw may show: **"Plugin 'rampart' has 1 suspicious code pattern(s)"**. This is a false positive — Rampart reads a local token file (`~/.rampart/token`) and talks to `localhost:9090` only. No external network access. The warning does not block installation and can be safely ignored.
 
 ### Force the native plugin
 
@@ -74,6 +80,9 @@ With the native plugin, **all tool calls are covered**:
 
 !!! note "Sub-agents"
     The `before_tool_call` hook fires for tool calls from subagents too. The `openclaw.yaml` profile uses `session_matches: ["subagent:*"]` to apply stricter rules to subagent sessions.
+
+!!! success "Enforcement verified"
+    `before_tool_call` is properly awaited and blocking in OpenClaw 2026.3.28+. Deny decisions are enforced end-to-end, not just logged.
 
 ## The `openclaw.yaml` profile
 
@@ -126,7 +135,7 @@ Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v0.9.12  ✓ active
+# rampart  v0.9.14  active
 ```
 
 ## Troubleshooting
@@ -134,14 +143,16 @@ openclaw plugins list
 **Plugin not loading after setup:**
 
 ```bash
-openclaw plugins list   # check rampart is listed
-rampart doctor          # shows plugin check status
+openclaw plugins list         # check rampart is listed
+rampart doctor                # shows plugin check status
+openclaw doctor               # check for plugin warnings
 ```
 
 If missing, re-run setup:
 
 ```bash
-rampart setup openclaw --plugin --force
+rampart setup openclaw --plugin
+systemctl --user restart openclaw-gateway
 ```
 
 **OpenClaw version too old:**
