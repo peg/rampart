@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/internal/policy"
 	"gopkg.in/yaml.v3"
@@ -208,5 +209,216 @@ func TestIsPathPatternCommands(t *testing.T) {
 		if !policy.IsPathPattern(p) {
 			t.Errorf("IsPathPattern(%q) = false, want true (should be path)", p)
 		}
+	}
+}
+
+func TestDetectTool(t *testing.T) {
+	tests := []struct {
+		pattern string
+		want    string
+	}{
+		{"npm install *", "exec"},
+		{"git commit -m *", "exec"},
+		{"/etc/**", "path"},
+		{"~/Documents/**", "path"},
+		{"**/node_modules/**", "path"},
+		{"./config.yaml", "path"},
+		{"rm -rf /", "exec"},
+		{"curl https://example.com", "exec"},
+	}
+	for _, tt := range tests {
+		got := policy.DetectTool(tt.pattern)
+		if got != tt.want {
+			t.Errorf("DetectTool(%q) = %q, want %q", tt.pattern, got, tt.want)
+		}
+	}
+}
+
+func TestFlattenRules(t *testing.T) {
+	p := &policy.CustomPolicy{Version: "1"}
+	_ = p.AddRule("allow", "npm install *", "allow npm", "")
+	_ = p.AddRule("deny", "rm -rf /", "block rm", "exec")
+	_ = p.AddRule("allow", "/etc/passwd", "allow etc", "")
+
+	flat := p.FlattenRules()
+	if len(flat) != 3 {
+		t.Fatalf("expected 3 flat rules, got %d", len(flat))
+	}
+
+	// Check first rule (npm install)
+	if flat[0].Action != "allow" || flat[0].Pattern != "npm install *" {
+		t.Errorf("rule 0: got %+v", flat[0])
+	}
+
+	// Check second rule (rm -rf)
+	if flat[1].Action != "deny" || flat[1].Pattern != "rm -rf /" || flat[1].Tool != "exec" {
+		t.Errorf("rule 1: got %+v", flat[1])
+	}
+
+	// Check third rule (etc)
+	if flat[2].Action != "allow" || flat[2].Pattern != "/etc/passwd" {
+		t.Errorf("rule 2: got %+v", flat[2])
+	}
+
+	// All should have entry/rule indices
+	for i, rule := range flat {
+		if rule.EntryIdx < 0 || rule.RuleIdx < 0 {
+			t.Errorf("rule %d missing indices: %+v", i, rule)
+		}
+	}
+}
+
+func TestHasPattern(t *testing.T) {
+	p := &policy.CustomPolicy{Version: "1"}
+	_ = p.AddRule("allow", "npm install *", "", "")
+	_ = p.AddRule("deny", "rm -rf /", "", "")
+
+	// Test existing pattern
+	exists, action, tool := p.HasPattern("npm install *")
+	if !exists {
+		t.Error("HasPattern should find npm install *")
+	}
+	if action != "allow" {
+		t.Errorf("action = %q, want allow", action)
+	}
+
+	// Test another existing pattern
+	exists, action, tool = p.HasPattern("rm -rf /")
+	if !exists {
+		t.Error("HasPattern should find rm -rf /")
+	}
+	if action != "deny" {
+		t.Errorf("action = %q, want deny", action)
+	}
+
+	// Test non-existent pattern
+	exists, action, tool = p.HasPattern("nonexistent pattern")
+	if exists {
+		t.Error("HasPattern should not find nonexistent pattern")
+	}
+	if action != "" || tool != "" {
+		t.Errorf("empty result should have empty action and tool, got %q, %q", action, tool)
+	}
+}
+
+func TestRemoveRuleAt(t *testing.T) {
+	p := &policy.CustomPolicy{Version: "1"}
+	_ = p.AddRule("allow", "npm install *", "", "")
+	_ = p.AddRule("allow", "yarn install", "", "")
+	_ = p.AddRule("deny", "rm -rf /", "", "")
+
+	if p.TotalRules() != 3 {
+		t.Fatalf("expected 3 rules initially, got %d", p.TotalRules())
+	}
+
+	// Remove middle rule (flat index 1)
+	if err := policy.RemoveRuleAt(p, 1); err != nil {
+		t.Fatalf("RemoveRuleAt(1): %v", err)
+	}
+
+	if p.TotalRules() != 2 {
+		t.Errorf("after removal, expected 2 rules, got %d", p.TotalRules())
+	}
+
+	flat := p.FlattenRules()
+	if len(flat) != 2 {
+		t.Errorf("after removal, expected 2 flat rules, got %d", len(flat))
+	}
+
+	// Verify the right rules remain
+	patterns := []string{}
+	for _, r := range flat {
+		patterns = append(patterns, r.Pattern)
+	}
+	if patterns[0] != "npm install *" || patterns[1] != "rm -rf /" {
+		t.Errorf("wrong rules after removal: %v", patterns)
+	}
+}
+
+func TestRemoveRuleAt_Last(t *testing.T) {
+	p := &policy.CustomPolicy{Version: "1"}
+	_ = p.AddRule("allow", "npm install *", "", "")
+
+	if err := policy.RemoveRuleAt(p, 0); err != nil {
+		t.Fatalf("RemoveRuleAt(0): %v", err)
+	}
+
+	if p.TotalRules() != 0 {
+		t.Errorf("after removing last rule, expected 0 rules, got %d", p.TotalRules())
+	}
+	if len(p.Policies) != 0 {
+		t.Errorf("entry should be removed when empty, got %d entries", len(p.Policies))
+	}
+}
+
+func TestRemoveRuleAt_InvalidIndex(t *testing.T) {
+	p := &policy.CustomPolicy{Version: "1"}
+	_ = p.AddRule("allow", "npm install *", "", "")
+
+	// Test negative index
+	err := policy.RemoveRuleAt(p, -1)
+	if err == nil {
+		t.Error("expected error for negative index")
+	}
+
+	// Test out of range
+	err = policy.RemoveRuleAt(p, 10)
+	if err == nil {
+		t.Error("expected error for out of range index")
+	}
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("error should mention 'out of range', got: %v", err)
+	}
+}
+
+func TestAddRuleTemporal_Expiration(t *testing.T) {
+	p := &policy.CustomPolicy{Version: "1"}
+
+	// Create an expiration time 1 hour from now
+	expTime := time.Now().Add(1 * time.Hour)
+	opts := policy.TemporalOpts{
+		ExpiresAt: &expTime,
+		Once:      false,
+	}
+	if err := p.AddRuleTemporal("allow", "npm install *", "temp npm", "", opts); err != nil {
+		t.Fatalf("AddRuleTemporal: %v", err)
+	}
+
+	if p.TotalRules() != 1 {
+		t.Fatalf("expected 1 rule, got %d", p.TotalRules())
+	}
+
+	flat := p.FlattenRules()
+	if flat[0].Pattern != "npm install *" {
+		t.Errorf("pattern mismatch: got %q", flat[0].Pattern)
+	}
+
+	// Check the raw rule for temporal fields
+	rule := p.Policies[0].Rules[0]
+	if rule.ExpiresAt == nil {
+		t.Error("ExpiresAt should be set")
+	}
+	if rule.Once {
+		t.Error("Once should be false")
+	}
+}
+
+func TestAddRuleTemporal_Once(t *testing.T) {
+	p := &policy.CustomPolicy{Version: "1"}
+
+	opts := policy.TemporalOpts{
+		ExpiresAt: nil,
+		Once:      true,
+	}
+	if err := p.AddRuleTemporal("deny", "curl *", "one-time block", "", opts); err != nil {
+		t.Fatalf("AddRuleTemporal: %v", err)
+	}
+
+	rule := p.Policies[0].Rules[0]
+	if !rule.Once {
+		t.Error("Once should be true")
+	}
+	if rule.ExpiresAt != nil {
+		t.Error("ExpiresAt should be nil")
 	}
 }

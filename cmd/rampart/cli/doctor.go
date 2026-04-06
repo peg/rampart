@@ -245,6 +245,13 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		}
 	}
 
+	// 17a. Coverage cross-check — warn if OpenClaw is configured but claude
+	// binary is present with no native hooks (OpenClaw only covers sessions
+	// run through it; direct `claude` invocations would be unprotected).
+	if n := doctorCoverage(emit, protected); n > 0 {
+		warnings += n
+	}
+
 	// 18. Proactive policy suggestions (informational only)
 	if detectResult, detectErr := detect.Environment(); detectErr == nil {
 		client := newPolicyRegistryClient()
@@ -716,7 +723,9 @@ func doctorHooks(emit emitFn) int {
 		return 0
 	}
 	claudeDir := filepath.Join(home, ".claude")
-	if _, err := os.Stat(claudeDir); err == nil {
+	_, claudeDirErr := os.Stat(claudeDir)
+	claudeBinary, _ := exec.LookPath("claude")
+	if claudeDirErr == nil || claudeBinary != "" {
 		claudeSettingsPath := filepath.Join(claudeDir, "settings.json")
 		data, err := os.ReadFile(claudeSettingsPath)
 		if err == nil {
@@ -773,6 +782,35 @@ func doctorHooks(emit emitFn) int {
 	}
 
 	return issues
+}
+
+// doctorCoverage cross-checks whether a user with OpenClaw protection but no
+// Claude Code native hooks is running the claude binary directly unprotected.
+// OpenClaw plugin only intercepts tool calls made through OpenClaw — direct
+// `claude` invocations bypass it entirely.
+func doctorCoverage(emit emitFn, protected []string) int {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return 0 // claude binary not present — no gap
+	}
+	hasClaudeHooks := false
+	hasOpenClaw := false
+	for _, p := range protected {
+		if strings.Contains(p, "Claude Code") {
+			hasClaudeHooks = true
+		}
+		if strings.Contains(p, "OpenClaw") {
+			hasOpenClaw = true
+		}
+	}
+	if hasClaudeHooks || !hasOpenClaw {
+		return 0 // native hooks active, or no OpenClaw to cause false confidence
+	}
+	emit("Coverage", "warn",
+		"Claude Code binary detected but native hooks not configured — "+
+			"direct `claude` invocations are not covered by Rampart "+
+			"(OpenClaw plugin only protects sessions run through OpenClaw)"+
+			hintSep+"rampart setup claude-code")
+	return 1
 }
 
 // countClaudeHookMatchers counts Rampart-related hook matchers in Claude settings.

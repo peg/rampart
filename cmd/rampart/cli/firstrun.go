@@ -16,6 +16,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os/exec"
 	"runtime"
 	"strings"
 )
@@ -77,6 +78,28 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 	default:
 		// Everything is working, show live view option
 		fmt.Fprintln(w, "\n→ Live view: rampart watch")
+	}
+
+	// Coverage gap: always warn if the claude binary is present but no native
+	// hooks are configured, even when OpenClaw protection is active.
+	// OpenClaw plugin only intercepts sessions run through OpenClaw — direct
+	// `claude` invocations are a blind spot regardless of other protection.
+	if _, err := exec.LookPath("claude"); err == nil {
+		hasClaudeHooks := false
+		hasOpenClaw := false
+		for _, p := range protected {
+			if strings.Contains(p, "Claude Code") {
+				hasClaudeHooks = true
+			}
+			if strings.Contains(p, "OpenClaw") {
+				hasOpenClaw = true
+			}
+		}
+		if !hasClaudeHooks && hasOpenClaw {
+			fmt.Fprintln(w, "⚠  Direct `claude` invocations are not covered by Rampart.")
+			fmt.Fprintln(w, "   OpenClaw plugin only protects sessions run through OpenClaw.")
+			fmt.Fprintln(w, "   Fix: rampart setup claude-code")
+		}
 	}
 }
 

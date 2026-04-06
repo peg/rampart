@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.15] - 2026-04-06
+
+### Added
+
+- **`rampart doctor`: OpenClaw-only coverage warning** — new `doctorCoverage()` check (step 17a) warns when OpenClaw is in the protected agents list but native hooks are not installed. Prevents false confidence where only the OpenClaw plugin path is covered while native `claude` CLI calls go unprotected.
+- **`rampart status` hint: coverage gap warning** — `printStatusHints()` now appends a warning when agents are protected via OpenClaw plugin but no native hooks are present, prompting users to run `rampart setup` for full coverage.
+- **`rampart convert`: `allowedTools` / `disabledTools` support** — the settings migration command now reads both the legacy `permissions.*` format and the newer flat arrays (`allowedTools`, `disabledTools`, `disallowedTools`) introduced in Claude Code 1.x. Duplicate patterns across both formats are deduplicated automatically.
+- **`internal/policy` test coverage: 60.3% → 83.1%** — added 8 new test cases covering previously untested functions: `DetectTool`, `FlattenRules`, `HasPattern`, `RemoveRuleAt` (including last-rule and invalid-index cases), and `AddRuleTemporal` (expiration and once-only variants).
+
+### Fixed
+
+- **`rampart doctor`: hooks check triggers without `~/.claude/`** — `doctorHooks()` now fires whenever the `claude` binary is found in PATH, regardless of whether `~/.claude/` exists (e.g. fresh installs or non-default config paths).
+
 ## [0.9.14] - 2026-04-02
 
 ### Fixed

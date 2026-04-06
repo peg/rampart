@@ -76,6 +76,90 @@ func TestConvert_NoPermissions(t *testing.T) {
 	}
 }
 
+func TestConvert_AllowedTools(t *testing.T) {
+	settings := `{
+		"allowedTools": ["Bash(git *)", "Read"],
+		"disabledTools": ["Bash(rm -rf *)"],
+		"disallowedTools": ["WebFetch(domain:evil.com)"]
+	}`
+	tmp := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(tmp, []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := runConvert(&buf, tmp, ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, `version: "1"`) {
+		t.Error("missing version header")
+	}
+	if !strings.Contains(out, "action: allow") {
+		t.Error("expected allow rules from allowedTools")
+	}
+	if !strings.Contains(out, "action: deny") {
+		t.Error("expected deny rules from disabledTools/disallowedTools")
+	}
+	if !strings.Contains(out, `"git *"`) {
+		t.Error("expected git pattern from allowedTools")
+	}
+	if !strings.Contains(out, `"rm -rf *"`) {
+		t.Error("expected rm -rf pattern from disabledTools")
+	}
+}
+
+func TestConvert_MixedFormats(t *testing.T) {
+	// Both formats present — should merge and deduplicate
+	settings := `{
+		"permissions": {
+			"allow": ["Bash(npm run *)"],
+			"deny":  ["Bash(sudo *)"]
+		},
+		"allowedTools": ["Bash(npm run *)", "Read"],
+		"disabledTools": ["Bash(curl *)"]
+	}`
+	tmp := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(tmp, []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := runConvert(&buf, tmp, ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+
+	// "npm run *" appears in both permissions.allow and allowedTools — should not be duplicated
+	if count := strings.Count(out, `"npm run *"`); count != 1 {
+		t.Errorf("expected 1 occurrence of npm run pattern, got %d", count)
+	}
+
+	// sudo and curl should both be denied
+	if !strings.Contains(out, `"sudo *"`) {
+		t.Error("expected sudo deny rule from permissions.deny")
+	}
+	if !strings.Contains(out, `"curl *"`) {
+		t.Error("expected curl deny rule from disabledTools")
+	}
+}
+
+func TestConvert_EmptyWithFlatArrays(t *testing.T) {
+	// Empty permissions but has allowedTools — should not error
+	settings := `{"permissions": {}, "allowedTools": ["Read"]}`
+	tmp := filepath.Join(t.TempDir(), "settings.json")
+	os.WriteFile(tmp, []byte(settings), 0o644)
+
+	var buf bytes.Buffer
+	if err := runConvert(&buf, tmp, ""); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !strings.Contains(buf.String(), "action: allow") {
+		t.Error("expected allow rule from allowedTools")
+	}
+}
+
 func TestConvert_OutputFile(t *testing.T) {
 	settings := `{"permissions": {"deny": ["Bash(rm -rf /)"]}}`
 	tmp := filepath.Join(t.TempDir(), "settings.json")
