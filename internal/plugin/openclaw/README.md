@@ -110,15 +110,14 @@ Expected response shapes:
 ```json
 { "allowed": true,  "decision": "allow", "message": "..." }
 { "allowed": false, "decision": "deny",  "message": "blocked by policy X", "policy": "no-rm-rf" }
-{ "allowed": false, "decision": "ask",   "message": "shell command requires approval", "severity": "warning", "approval_id": "abc123" }
+{ "allowed": false, "decision": "ask",   "message": "shell command requires approval", "severity": "warning" }
 ```
 
-When `decision` is `ask`, the plugin uses `approval_id` to call back into Rampart's approval API when the user resolves the prompt:
+For OpenClaw-hosted plugin flows, Rampart evaluates the tool call but does **not** create a second hidden Rampart approval record. OpenClaw's native approval UI is the only operator-facing approval surface. When the user resolves the native OpenClaw approval:
 
-```
-POST http://localhost:9090/v1/approvals/{approval_id}/resolve
-{ "approved": true, "resolved_by": "openclaw", "persist": true }
-```
+- `allow-once` is handled entirely by OpenClaw
+- `deny` is handled entirely by OpenClaw
+- `allow-always` writes a persistent Rampart rule via `POST /v1/rules/learn`
 
 The plugin also posts to `POST /v1/audit` after each tool call (best-effort, fire-and-forget).
 

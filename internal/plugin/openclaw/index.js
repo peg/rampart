@@ -102,7 +102,7 @@ function extractSubject(toolName, params) {
  * Returns:
  *   { allowed: true, decision: "allow" }              → allow (pass through)
  *   { allowed: false, decision: "deny", message }     → block
- *   { decision: "ask", approval_id, message }         → require approval
+ *   { decision: "ask", message }                     → require OpenClaw approval
  *   null                                              → Rampart unreachable (fail-open)
  */
 async function checkWithRampart(toolName, params, ctx, config) {
@@ -125,6 +125,8 @@ async function checkWithRampart(toolName, params, ctx, config) {
       session: ctx.sessionKey ?? ctx.sessionId ?? ctx.session ?? "",
       run_id:  ctx.runId     ?? ctx.run_id   ?? "",
       params,
+      openclaw_hosted: true,
+      skip_pending_approval: true,
     });
 
     const resp = await fetch(`${serveUrl}/v1/tool/${encodeURIComponent(toolName)}`, {
@@ -165,41 +167,6 @@ async function checkWithRampart(toolName, params, ctx, config) {
     }
     // Unknown fetch error — fail-open
     return null;
-  }
-}
-
-/**
- * Resolve a pending Rampart approval.
- * Called by onResolution when the user clicks allow/deny in OpenClaw.
- *
- * For "allow-always", passes persist=true so Rampart writes the rule to
- * the auto-allowed YAML file (user-overrides / auto-allowed.yaml).
- */
-async function resolveRampartApproval(approvalId, approved, persist, serveUrl, logger) {
-  if (!approvalId) return; // no approval_id = Rampart didn't create one (shouldn't happen)
-
-  const token = await loadToken();
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
-  try {
-    const resp = await fetch(`${serveUrl}/v1/approvals/${encodeURIComponent(approvalId)}/resolve`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        approved,
-        resolved_by: "openclaw",
-        persist: !!persist,
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      logger.warn(`[rampart] approval resolve failed (HTTP ${resp.status}): ${text}`);
-    }
-  } catch (err) {
-    logger.warn(`[rampart] approval resolve error: ${err.message}`);
   }
 }
 
@@ -297,8 +264,6 @@ export function register(api) {
         const subject = extractSubject(toolName, params);
         const severity = result.severity ?? "warning";
         const emoji = severityEmoji[severity] ?? "⚠️";
-        const approvalId = result.approval_id ?? null;
-
         return {
           requireApproval: {
             title: `🛡️ Rampart — ${toolName} blocked`,
@@ -331,18 +296,18 @@ export function register(api) {
                     api.logger.info(`[rampart] always-allow rule written: ${toolName}:${subject}`);
                   } else {
                     api.logger.warn(`[rampart] always-allow rule write failed: HTTP ${learnResp.status}`);
-                    if (approvalId) await resolveRampartApproval(approvalId, true, true, serveUrl, api.logger);
                   }
                 } catch (err) {
                   api.logger.warn(`[rampart] always-allow write error: ${err.message}`);
                 }
-              } else if (resolution === "allow-once") {
-                // One-time approval — tell Rampart it was approved (no persist)
-                await resolveRampartApproval(approvalId, true, false, serveUrl, api.logger);
-              } else {
-                // Denied (or timed out) — tell Rampart
-                await resolveRampartApproval(approvalId, false, false, serveUrl, api.logger);
               }
+              // For native OpenClaw plugin approvals, OpenClaw itself is the pending approval system.
+              // Rampart should not create or resolve a second hidden approval record here, or Discord
+              // ends up watching a different queue than the one the user is interacting with.
+              //
+              // Allow-once and deny are fully handled by OpenClaw's approval outcome for this tool call.
+              // Persisting an allow rule is the only side effect we need to send back to Rampart.
+            },
             },
           },
         };
