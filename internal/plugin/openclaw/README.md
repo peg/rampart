@@ -37,9 +37,10 @@ Every time the OpenClaw agent calls a tool (`exec`, `read`, `write`, `web_fetch`
 
 When Rampart returns `ask` and you click **Allow Always** in the OpenClaw approval UI:
 
-1. The plugin calls `POST /v1/approvals/{id}/resolve` with `persist: true`
-2. Rampart writes a rule to `~/.rampart/policies/auto-allowed.yaml`
-3. Future calls matching the same tool + pattern are automatically allowed — you are never asked again
+1. OpenClaw resolves the native approval for the current tool call
+2. The plugin writes a persistent allow rule via `POST /v1/rules/learn`
+3. Rampart stores the learned rule in its user policy files
+4. Future matching calls are automatically allowed without creating a second approval queue
 
 ### Fail-open behavior
 
@@ -119,26 +120,15 @@ For OpenClaw-hosted plugin flows, Rampart evaluates the tool call but does **not
 - `deny` is handled entirely by OpenClaw
 - `allow-always` writes a persistent Rampart rule via `POST /v1/rules/learn`
 
-The plugin also posts to `POST /v1/audit` after each tool call (best-effort, fire-and-forget).
+The plugin also records best-effort audit information for completed tool calls, but approval ownership remains native to OpenClaw for OpenClaw-hosted flows.
 
 ---
 
-## Replacing the dist-patching approach
+## Legacy dist patching
 
-Previously, Rampart intercepted OpenClaw tool calls by patching JavaScript files inside OpenClaw's bundled `dist/` directory:
+Older Rampart/OpenClaw setups used `--patch-tools` to patch OpenClaw's bundled `dist/` files directly.
 
-```bash
-sudo rampart setup openclaw --patch-tools --force
-```
-
-This was fragile — every `openclaw upgrade` would overwrite the patches.
-
-With this plugin installed, you can remove the dist patches:
-
-```bash
-# Re-install OpenClaw without the patches (or let an upgrade overwrite them)
-# The plugin handles interception through the stable hook API instead.
-```
+That path is now considered **legacy compatibility**, not the primary integration model. The native OpenClaw plugin is the preferred path because it survives upgrades much better and keeps approval ownership inside OpenClaw.
 
 ---
 

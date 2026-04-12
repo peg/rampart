@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 )
 
-//go:embed index.js package.json openclaw.plugin.json README.md
+//go:embed index.js package.json openclaw.plugin.json README.md hooks/rampart/HOOK.md hooks/rampart/index.js
 var PluginFS embed.FS
 
 // Version returns the bundled plugin version from package.json.
@@ -45,13 +45,23 @@ func Version() string {
 // Extract writes the embedded plugin files to dir and returns the path.
 // The caller is responsible for cleanup if the returned path is a temp dir.
 func Extract(dir string) error {
-	files := []string{"index.js", "package.json", "openclaw.plugin.json", "README.md"}
+	files := []string{
+		"index.js",
+		"package.json",
+		"openclaw.plugin.json",
+		"README.md",
+		"hooks/rampart/HOOK.md",
+		"hooks/rampart/index.js",
+	}
 	for _, name := range files {
 		data, err := PluginFS.ReadFile(name)
 		if err != nil {
 			return fmt.Errorf("read embedded plugin file %q: %w", name, err)
 		}
 		dest := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("create plugin dir for %q: %w", dest, err)
+		}
 		if err := os.WriteFile(dest, data, 0o644); err != nil {
 			return fmt.Errorf("write plugin file %q: %w", dest, err)
 		}

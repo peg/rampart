@@ -46,8 +46,9 @@ const openclawMinVersion = "2026.3.28"
 //  1. Locate the openclaw binary.
 //  2. Verify the OpenClaw version is >= openclawMinVersion (requires before_tool_call hook).
 //  3. Run: openclaw plugins install <plugin-path>
-//  4. Set tools.exec.ask to "off" in ~/.openclaw/openclaw.json
-//     (Rampart handles all decisions now — no need for OpenClaw's own ask prompt).
+//  4. Set tools.exec.ask to "off" in ~/.openclaw/openclaw.json.
+//     Native OpenClaw approvals remain the visible approval owner while
+//     Rampart evaluates policy and persists allow-always behavior.
 //  5. Copy the openclaw.yaml policy profile to ~/.rampart/policies/openclaw.yaml.
 //  6. Run rampart doctor for a health summary.
 //  7. Print success and next steps.
@@ -108,7 +109,7 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		fmt.Fprintf(errW, "⚠ Could not update tools.exec.ask in openclaw.json: %v\n", err)
 		fmt.Fprintln(errW, "  Add manually: set tools.exec.ask to \"off\" in ~/.openclaw/openclaw.json")
 	} else {
-		fmt.Fprintln(w, "✓ Set tools.exec.ask = \"off\" (Rampart now handles all decisions)")
+		fmt.Fprintln(w, "✓ Set tools.exec.ask = \"off\" (OpenClaw keeps native approval ownership; Rampart evaluates policy behind it)")
 	}
 
 	// 4b. Add rampart to plugins.allow. Existing plugins are preserved — we only append.
