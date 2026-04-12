@@ -90,6 +90,14 @@ function extractSubject(toolName, params) {
   }
 }
 
+function truncateForApprovalDescription(text, max = 220) {
+  if (typeof text !== "string") return "<unknown>";
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return "<unknown>";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
 // ─── Rampart API client ───────────────────────────────────────────────────────
 
 /**
@@ -249,6 +257,9 @@ export function register(api) {
 
     // Debug log every decision (not just blocks/approvals)
     api.logger.debug(`[rampart] ${toolName} → ${decision}${result.policy ? ` (policy: ${result.policy})` : ""}`);
+    if (Object.prototype.hasOwnProperty.call(result, "approval_id")) {
+      api.logger.warn(`[rampart] unexpected approval_id from Rampart eval for OpenClaw-hosted ${toolName}; this would create dual-queue ownership`);
+    }
 
     switch (decision) {
       case "deny": {
@@ -262,21 +273,29 @@ export function register(api) {
 
       case "ask": {
         const subject = extractSubject(toolName, params);
+        const subjectPreview = truncateForApprovalDescription(subject, 160);
         const severity = result.severity ?? "warning";
         const emoji = severityEmoji[severity] ?? "⚠️";
+
+        if (toolName === "exec") {
+          api.logger.info(`[rampart] exec requires approval via native OpenClaw exec flow, not plugin approval (subject: ${subjectPreview})`);
+          return;
+        }
+
+        api.logger.info(`[rampart] returning requireApproval for ${toolName} (subject: ${subjectPreview})`);
         return {
           requireApproval: {
             title: `🛡️ Rampart — ${toolName} blocked`,
             description: [
-              `**Command:** \`${subject}\``,
-              result.policy  ? `**Policy:** ${result.policy}`                 : null,
-              result.message ? `**Risk:** ${result.message}`                  : `**Risk:** ${emoji} Requires approval`,
+              `**Command:** \`${subjectPreview}\``,
+              result.policy  ? `**Policy:** ${truncateForApprovalDescription(result.policy, 64)}` : null,
+              result.message ? `**Risk:** ${truncateForApprovalDescription(result.message, 96)}` : `**Risk:** ${emoji} Requires approval`,
             ].filter(Boolean).join("\n"),
             severity,
             timeoutMs: pluginConfig.approvalTimeoutMs ?? 120_000,
             timeoutBehavior: "deny",
             onResolution: async (resolution) => {
-              api.logger.info(`[rampart] approval resolved: ${toolName} → ${resolution}`);
+              api.logger.info(`[rampart] plugin approval resolved: ${toolName} → ${resolution}`);
 
               if (resolution === "allow-always") {
                 // Write a persistent allow rule via /v1/rules/learn.
@@ -307,7 +326,6 @@ export function register(api) {
               //
               // Allow-once and deny are fully handled by OpenClaw's approval outcome for this tool call.
               // Persisting an allow rule is the only side effect we need to send back to Rampart.
-            },
             },
           },
         };

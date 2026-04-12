@@ -175,6 +175,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 				"decision", decision.Action.String(),
 				"session", call.Session,
 			)
+			s.writeAudit(req, toolName, decision)
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}

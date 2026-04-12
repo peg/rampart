@@ -667,6 +667,10 @@ policies:
 	_, hasApprovalID := got["approval_id"]
 	assert.False(t, hasApprovalID, "OpenClaw-hosted evaluation should not create Rampart approval_id")
 	assert.Len(t, srv.approvals.List(), 0, "OpenClaw-hosted evaluation should not enqueue Rampart approvals")
+	require.GreaterOrEqual(t, srv.sink.(*mockSink).count(), 1, "OpenClaw-hosted evaluation should still write an audit event")
+	ev := srv.sink.(*mockSink).lastEvent()
+	assert.Equal(t, "ask", ev.Decision.Action)
+	assert.Equal(t, "exec", ev.Tool)
 }
 
 func TestResolveApproval_AuditTrail(t *testing.T) {

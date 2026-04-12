@@ -8,9 +8,10 @@ description: "Native Rampart integration for OpenClaw — policy enforcement via
 Rampart integrates natively with OpenClaw via the `before_tool_call` plugin API. Every tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
 
 !!! info "Version requirements"
-    - **OpenClaw >= 2026.3.28**: Native plugin (recommended) — full tool coverage via `before_tool_call` hook
+    - **OpenClaw >= 2026.4.11**: Recommended and supported for native Discord exec approvals plus full native plugin coverage
+    - **OpenClaw 2026.3.28 - 2026.4.10**: Native plugin works for tool enforcement, but Rampart's polished Discord exec approval path is supported on newer OpenClaw builds
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades
-    - **Tested on**: OpenClaw 2026.4.1, 2026.4.2
+    - **Verified on**: OpenClaw 2026.4.11
 
     `rampart setup openclaw` auto-detects your version and uses the right method.
 
@@ -58,8 +59,8 @@ Agent wants to run a tool (exec, read, write, web_fetch, ...)
             └─ Rampart evaluates openclaw.yaml policy
                  ├─ allow  → tool runs
                  ├─ deny   → tool blocked, agent gets error message
-                 └─ ask    → Rampart creates approval, notifies you
-                              tool waits until you approve or deny
+                 └─ ask    → OpenClaw owns the visible approval UI/state
+                              Rampart writes audit, evaluates policy, and persists allow-always rules
 ```
 
 ## Coverage

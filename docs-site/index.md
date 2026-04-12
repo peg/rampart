@@ -207,7 +207,7 @@ verify -> outcomes.approval
 
 ## What's New in v0.9.14
 
-- **OpenClaw 2026.4.1+ compat** — Fixed plugin install breakage introduced by OpenClaw's new hook-pack validator. Plugin installs cleanly on all OpenClaw versions. [Details →](integrations/openclaw.md)
+- **OpenClaw 2026.4.11+ native approval path** — Native Discord exec approvals are the supported path for Rampart's OpenClaw integration. OpenClaw owns approval UI/state, Rampart owns policy, audit, and allow-always persistence. [Details →](integrations/openclaw.md)
 - **`rampart status` shows `OpenClaw (plugin)`** — Status summary now correctly reflects when the native plugin (not legacy bridge) is active.
 - **Setup explains scanner warning** — `rampart setup openclaw --plugin` now clarifies that OpenClaw's security scanner false positive is safe to ignore.
 
