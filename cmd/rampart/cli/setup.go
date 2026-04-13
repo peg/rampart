@@ -579,7 +579,7 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			}
 				fmt.Fprintln(out, "")
 				fmt.Fprintln(out, "Restart the OpenClaw gateway to activate:")
-				fmt.Fprintln(out, "  systemctl --user restart openclaw-gateway")
+				fmt.Fprintln(out, "  systemctl --user restart openclaw-gateway.service")
 			} else {
 				fmt.Fprintln(out, "Next steps:")
 				fmt.Fprintf(out, "  1. Set SHELL=%s in your OpenClaw gateway config\n", shimPath)

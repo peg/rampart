@@ -449,6 +449,10 @@ func doctorHookBinary(emit emitFn) int {
 				}
 				checked[bin] = true
 				if _, statErr := os.Stat(bin); statErr != nil {
+					if pluginActiveForDoctor() && isEphemeralRampartHookPath(bin) {
+						emit("Hook binary", "warn", fmt.Sprintf("ignoring stale legacy hook path %s (native OpenClaw plugin is active)", bin))
+						continue
+					}
 					emit("Hook binary", "fail", fmt.Sprintf("%s not found", bin))
 					issues++
 				} else {
@@ -458,6 +462,21 @@ func doctorHookBinary(emit emitFn) int {
 		}
 	}
 	return issues
+}
+
+func pluginActiveForDoctor() bool {
+	return isOpenClawPluginInstalled()
+}
+
+func isEphemeralRampartHookPath(bin string) bool {
+	base := filepath.Base(bin)
+	if !strings.HasPrefix(base, "rampart-") {
+		return false
+	}
+	if !strings.Contains(bin, string(filepath.Separator)+"tmp"+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 func doctorPolicies(emit emitFn) int {

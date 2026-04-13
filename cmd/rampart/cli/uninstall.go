@@ -167,7 +167,7 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 			removed = append(removed, "OpenClaw gateway drop-in (rampart.conf)")
 			// Reload systemd so the removed drop-in takes effect
 			_ = runSilent("systemctl", "--user", "daemon-reload")
-			_ = runSilent("systemctl", "--user", "restart", "openclaw-gateway")
+			_ = runSilent("systemctl", "--user", "restart", "openclaw-gateway.service")
 		} else {
 			failed = append(failed, fmt.Sprintf("OpenClaw gateway drop-in (%s)", dropIn))
 		}

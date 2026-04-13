@@ -94,6 +94,10 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 	}
 	fmt.Fprintf(w, "Installing bundled plugin (v%s)...\n", ocplugin.Version())
 
+	if err := removeExistingOpenClawRampartInstall(errW); err != nil {
+		return err
+	}
+
 	installCmd := osexec.Command(openclawBin, "plugins", "install", pluginDir)
 	installCmd.Stdout = w
 	installCmd.Stderr = errW
@@ -148,7 +152,7 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 	fmt.Fprintf(w, "  Policy engine:   %s\n", serveStatus)
 	fmt.Fprintln(w, "  Audit log:       ~/.rampart/audit/")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "  → Restart the gateway:  systemctl --user restart openclaw-gateway")
+	fmt.Fprintln(w, "  → Restart the gateway:  systemctl --user restart openclaw-gateway.service")
 	fmt.Fprintln(w, "  → Run `rampart watch` to see policy decisions in real time")
 	fmt.Fprintln(w, "  → Run `rampart doctor` to verify your setup")
 
@@ -164,6 +168,27 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 //  3. Remove ask: on-miss if it exists.
 //  4. Install the plugin (calls runSetupOpenClawPlugin).
 //  5. Print migration summary.
+func removeExistingOpenClawRampartInstall(errW io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home for OpenClaw plugin cleanup: %w", err)
+	}
+
+	paths := []string{
+		filepath.Join(home, ".openclaw", openclawPluginDir),
+		filepath.Join(home, ".openclaw", "hooks", "rampart"),
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			if rmErr := os.RemoveAll(path); rmErr != nil {
+				return fmt.Errorf("remove existing OpenClaw Rampart install %s: %w", path, rmErr)
+			}
+			fmt.Fprintf(errW, "ℹ Removed existing OpenClaw Rampart install: %s\n", path)
+		}
+	}
+	return nil
+}
+
 func runSetupOpenClawMigrate(w io.Writer, errW io.Writer) error {
 	fmt.Fprintln(w, "Migrating from legacy OpenClaw integration to native plugin...")
 	fmt.Fprintln(w, "")
