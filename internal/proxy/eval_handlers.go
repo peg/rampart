@@ -142,6 +142,35 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		resp["suggestions"] = []string{}
 	}
 
+	// Explicit durable human carve-outs should bypass normal deny/ask precedence.
+	// They are not ordinary policy rules, they are operator-approved overrides.
+	if s.mode == "enforce" {
+		policyName := ""
+		message := ""
+		if engine.MatchesAutoAllowFile(engine.DefaultAutoAllowedPath(), call) {
+			policyName = "auto-allowed"
+			message = "auto-allowed by user rule"
+		} else if engine.MatchesAutoAllowFile(engine.DefaultUserOverridesPath(), call) {
+			policyName = "user-overrides"
+			message = "allowed by durable user override"
+		}
+		if policyName != "" {
+			s.logger.Debug("proxy: user override matched, bypassing normal policy decision", "tool", toolName, "policy", policyName)
+			decision.Action = engine.ActionAllow
+			decision.Message = message
+			decision.MatchedPolicies = []string{policyName}
+			decision.Suggestions = nil
+			resp["allowed"] = true
+			resp["decision"] = decision.Action.String()
+			resp["message"] = decision.Message
+			resp["policy"] = policyName
+			resp["suggestions"] = []string{}
+			s.writeAudit(req, toolName, decision)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+	}
+
 	if s.mode == "enforce" && decision.Action == engine.ActionDeny {
 		writeJSON(w, http.StatusForbidden, resp)
 		return
@@ -199,27 +228,6 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			resp["decision"] = decision.Action.String()
 			resp["message"] = decision.Message
 			resp["policy"] = "auto-approved"
-			s.writeAudit(req, toolName, decision)
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
-
-		// Check if the user has previously created an explicit durable allow override.
-		// These human carve-outs should bypass broader deny/approval policies.
-		if engine.MatchesAutoAllowFile(engine.DefaultAutoAllowedPath(), call) || engine.MatchesAutoAllowFile(engine.DefaultUserOverridesPath(), call) {
-			policyName := "auto-allowed"
-			message := "auto-allowed by user rule"
-			if engine.MatchesAutoAllowFile(engine.DefaultUserOverridesPath(), call) {
-				policyName = "user-overrides"
-				message = "allowed by durable user override"
-			}
-			s.logger.Debug("proxy: user override matched, bypassing approval queue", "tool", toolName, "policy", policyName)
-			decision.Action = engine.ActionAllow
-			decision.Message = message
-			decision.MatchedPolicies = []string{policyName}
-			resp["decision"] = decision.Action.String()
-			resp["message"] = decision.Message
-			resp["policy"] = policyName
 			s.writeAudit(req, toolName, decision)
 			writeJSON(w, http.StatusOK, resp)
 			return
