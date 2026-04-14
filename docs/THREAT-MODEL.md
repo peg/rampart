@@ -101,19 +101,22 @@ An agent could encode commands to bypass pattern matching:
 
 **Coverage:** The two-layer approach (pattern matching + LLM classification) significantly reduces the obfuscation surface. Pattern matching catches known encodings; the LLM layer catches intent regardless of how the command is formatted. v0.6.9 closed 10 specific bypass vectors identified in a security audit.
 
-### 5. Framework-Specific Patching
+### 5. OpenClaw Integration Boundaries
 
-Some agent frameworks (e.g., OpenClaw) don't expose hook points for file operations. Rampart's `--patch-tools` option modifies framework source files to add policy checks before read/write/edit operations. These patches don't survive framework upgrades — they modify files in `node_modules` that get replaced on update.
+OpenClaw now has a native plugin path, which is the preferred integration. Rampart keeps global `tools.exec.ask` off by default, evaluates exec calls first, and only sets `ask: "always"` on exec calls that matched a Rampart `ask` rule. That gives you native OpenClaw approval cards without prompting on every routine command.
 
-**Mitigations:**
-- `rampart setup openclaw --patch-tools` must be re-run immediately after OpenClaw upgrades to restore protection
-- Native hook integrations (Claude Code, Cline) don't have this limitation — they use the framework's own hook system
+**What this means in practice:**
+- **Allow** rules pass through normally, with no approval prompt
+- **Deny** rules short-circuit before native approval
+- **Ask** rules surface OpenClaw's native approval UI only for the matched exec call
 
-**Security implications:**
-- **Timing window:** Between framework upgrade and re-patch, file tools bypass all policies (exec shim remains active)
-- **Silent degradation:** If the target code changes in a new version, patches fail to apply and file tools fail-open without warning. The patch script exits with an error, but if run unattended this could go unnoticed.
+`--patch-tools` still exists as a compatibility path for older OpenClaw setups and broader file-tool interception, but it remains fragile because it modifies installed framework files.
 
-**Trade-off:** Monkey-patching is fragile but functional. It closes a real security gap today while proper upstream hook support is developed. The patches fail-open — if the patched code changes in an upgrade, the worst case is that file tools bypass Rampart (reverting to the pre-patch state), not that they break.
+**Security implications of the legacy patch path:**
+- **Timing window:** Between framework upgrade and re-patch, patched file tools can bypass Rampart
+- **Silent degradation:** If a new OpenClaw version changes the patched integration points, the patch can fail-open until setup is checked and re-applied
+
+**Trade-off:** The native plugin path is cleaner and more durable. The legacy patch path still closes real gaps on older setups, but it should be treated as compatibility machinery, not the long-term design.
 
 ### 6. Fail-Open Behavior
 
@@ -183,7 +186,8 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
-| `rampart setup openclaw --patch-tools` | ✅ (bridge+shim) | ✅ (patched) | ✅ (bridge) | ❌ |
+| `rampart setup openclaw --plugin` | ✅ (selective native approvals) | ⚠️ Partial, depends on setup path | ✅ | ❌ |
+| `rampart setup openclaw --patch-tools` | ✅ (legacy bridge+shim) | ✅ (patched) | ✅ (bridge) | ❌ |
 | `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |
 | MCP proxy | ✅ | ✅ | ✅ | ❌ |

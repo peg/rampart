@@ -51,7 +51,7 @@ Pick your agent and run one command:
 rampart setup claude-code
 
 # OpenClaw
-rampart setup openclaw --patch-tools
+rampart setup openclaw --plugin
 
 # Cline
 rampart setup cline
@@ -98,7 +98,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | Agent | Setup command | Integration |
 |-------|--------------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
-| **OpenClaw** | `rampart setup openclaw --patch-tools` | Native bridge + shell shim + tool patches |
+| **OpenClaw** | `rampart setup openclaw --plugin` | Native plugin + selective native approvals |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex CLI** | `rampart setup codex` | Shell wrapper (v0.4.5+); LD_PRELOAD fallback for older versions |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
@@ -147,30 +147,37 @@ rampart setup claude-code --remove
 
 ## OpenClaw
 
-Full native integration — one command covers everything:
+Native plugin integration is now the preferred setup:
 
 ```bash
-sudo rampart setup openclaw --patch-tools
+rampart setup openclaw --plugin
 ```
 
-This installs three layers of protection:
+This keeps OpenClaw's native approval UI while letting Rampart decide which commands actually need approval.
 
-**1. Native bridge** — Rampart connects to the OpenClaw gateway and intercepts exec approval events. Hard deny rules resolve before the Discord UI shows. When you click "Always Allow", the rule is written to `~/.rampart/policies/user-overrides.yaml` — a file that survives upgrades and is never overwritten by `rampart setup`.
+### How exec approvals work
 
-**2. Shell shim** — intercepts exec calls from Claude Code and other agents running under OpenClaw.
+Rampart leaves global `tools.exec.ask` set to `"off"`, so routine shell commands do not spam you with approval prompts. When a Rampart policy returns `ask` for a specific exec call, the plugin reissues only that command with `ask: "always"`, which sends it through OpenClaw's native approval card.
 
-**3. Tool patches** — patches web_fetch, browser, message, and exec tools in OpenClaw's dist files so URL fetches, browser navigation, and outbound messages are all policy-checked.
+In practice, that means:
 
-Requires write access to the OpenClaw dist directory (typically needs `sudo` for global npm installs).
+- safe commands run normally, with no prompt
+- denied commands are blocked immediately
+- only commands that match a Rampart `ask` rule show an OpenClaw approval card
 
-**After each OpenClaw upgrade**, re-run the tool patches:
-```bash
-sudo rampart setup openclaw --patch-tools --force
-```
+### What the plugin protects
 
-The native bridge survives upgrades automatically — exec approval interception never stops. Between upgrade and re-patch, web_fetch/browser/message tools bypass Rampart; exec enforcement via the bridge remains active throughout.
+**1. Native plugin** — evaluates tool calls in `before_tool_call`, blocks deny decisions immediately, and routes selective exec approvals through OpenClaw's native approval UI.
 
-Run `rampart doctor` at any time to see exactly which patches are applied. Use `rampart doctor --fix` to re-apply missing patches automatically.
+**2. Selective native approvals** — Rampart decides when an exec should require approval, and OpenClaw shows the approval card only for those matched commands.
+
+**3. Bundled policy profile** — installs the OpenClaw-focused policy profile used by the plugin setup.
+
+### Legacy compatibility path
+
+`rampart setup openclaw --patch-tools` still exists as a compatibility option for older setups, but it is no longer the recommended path. It modifies OpenClaw dist files and must be re-applied after upgrades.
+
+Run `rampart doctor` at any time to verify the current OpenClaw integration state.
 
 ---
 
@@ -354,7 +361,7 @@ How approval reaches you depends on your environment:
 | Environment | How you approve |
 |-------------|----------------|
 | Claude Code | Native approval prompt in the terminal |
-| OpenClaw | Discord/Telegram message with buttons |
+| OpenClaw | Native approval card in your connected chat surface |
 | Any | `rampart approve <id>` via CLI, dashboard, or signed URL |
 
 ```bash
@@ -501,7 +508,7 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 rampart quickstart                           # Auto-detect, install, configure, health check
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
-rampart setup openclaw --patch-tools         # OpenClaw full integration
+rampart setup openclaw --plugin              # OpenClaw native plugin integration
 rampart setup codex                          # Codex CLI shell wrapper (Linux, macOS)
 rampart setup <agent> --remove               # Clean uninstall
 
@@ -566,7 +573,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Agent | Method | Platforms |
 |-------|--------|-----------|
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
-| OpenClaw | `rampart setup openclaw --patch-tools` | Linux, macOS |
+| OpenClaw | `rampart setup openclaw --plugin` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS, Windows |
 | Codex CLI | `rampart setup codex` | Linux, macOS (shell wrapper v0.4.5+; LD_PRELOAD fallback) |
 | Claude Desktop | `rampart mcp` | All |

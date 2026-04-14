@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenClaw plugin now routes Rampart `ask` decisions for `exec` through native OpenClaw approval cards by reissuing only matched commands with `ask: "always"`, while keeping global `tools.exec.ask` off.
+
 ## [0.9.15] - 2026-04-06
 
 ### Added

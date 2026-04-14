@@ -64,7 +64,7 @@ HTTP server that accepts tool calls, evaluates them, and returns decisions. Bear
 
 ### Approval Store (`internal/approval/`)
 
-Thread-safe store for `require_approval` decisions. ULID-keyed, configurable timeouts. The proxy blocks the request until a human resolves it or it times out.
+Thread-safe store for human approval decisions. ULID-keyed, configurable timeouts. The proxy blocks the request until a human resolves it or it times out.
 
 ### Wrap Command (`cmd/rampart/cli/wrap.go`)
 
@@ -72,7 +72,7 @@ Thread-safe store for `require_approval` decisions. ULID-keyed, configurable tim
 
 ### Daemon (`internal/daemon/`)
 
-WebSocket client that connects to an OpenClaw gateway. Receives `exec.approval.requested` events, evaluates them against policies, and sends `allow-once` or `deny` resolutions. Useful when OpenClaw's approval system is the enforcement point.
+WebSocket client that connects to an OpenClaw gateway. This is the older bridge-style integration path that listens for approval events and resolves them. It still exists, but it is no longer the preferred OpenClaw integration.
 
 ## Integration Patterns
 
@@ -80,7 +80,9 @@ WebSocket client that connects to an OpenClaw gateway. Receives `exec.approval.r
 
 **HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.
 
-**OpenClaw Daemon** — Connects via WebSocket, auto-resolves exec approvals. Best for: OpenClaw deployments where the approval system is already in use.
+**OpenClaw Plugin** — Rampart evaluates the tool call first. Allow decisions pass through, deny decisions are blocked immediately, and matched exec `ask` decisions are routed into OpenClaw's native approval flow without turning on prompts for every exec. Best for: OpenClaw deployments that want native approval UX with selective policy-driven exec approvals.
+
+**OpenClaw Daemon** — Legacy bridge-style path for setups that still rely on approval-event interception. Useful for older deployments, but no longer the preferred integration.
 
 **SDK** (`pkg/sdk/`) — Embed the engine directly in Go code. Zero network overhead, nanosecond evaluation. Best for: Go agents, performance-critical paths.
 
