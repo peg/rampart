@@ -204,16 +204,22 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check if the user has previously "Always Allowed" this pattern.
-		// Auto-allow decisions override require_approval from global policies.
-		if engine.MatchesAutoAllowFile(engine.DefaultAutoAllowedPath(), call) {
-			s.logger.Debug("proxy: auto-allow matched, bypassing approval queue", "tool", toolName)
+		// Check if the user has previously created an explicit durable allow override.
+		// These human carve-outs should bypass broader deny/approval policies.
+		if engine.MatchesAutoAllowFile(engine.DefaultAutoAllowedPath(), call) || engine.MatchesAutoAllowFile(engine.DefaultUserOverridesPath(), call) {
+			policyName := "auto-allowed"
+			message := "auto-allowed by user rule"
+			if engine.MatchesAutoAllowFile(engine.DefaultUserOverridesPath(), call) {
+				policyName = "user-overrides"
+				message = "allowed by durable user override"
+			}
+			s.logger.Debug("proxy: user override matched, bypassing approval queue", "tool", toolName, "policy", policyName)
 			decision.Action = engine.ActionAllow
-			decision.Message = "auto-allowed by user rule"
-			decision.MatchedPolicies = []string{"auto-allowed"}
+			decision.Message = message
+			decision.MatchedPolicies = []string{policyName}
 			resp["decision"] = decision.Action.String()
 			resp["message"] = decision.Message
-			resp["policy"] = "auto-allowed"
+			resp["policy"] = policyName
 			s.writeAudit(req, toolName, decision)
 			writeJSON(w, http.StatusOK, resp)
 			return
