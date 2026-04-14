@@ -33,6 +33,7 @@ import (
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/signing"
+	"github.com/peg/rampart/internal/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -628,6 +629,94 @@ policies: []`
 	if getResult["agent"] != "claude-code" {
 		t.Fatalf("expected agent=claude-code, got %v", getResult["agent"])
 	}
+}
+
+func TestOpenClawHostedAskSkipsPendingApprovalCreationForAdmin(t *testing.T) {
+	configYAML := `version: "1"
+default_action: deny
+policies:
+  - name: require-human
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "sudo *"
+        message: "needs approval"
+`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"main","session":"discord/direct/test","openclaw_hosted":true,"skip_pending_approval":true,"params":{"command":"sudo true"}}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "ask", got["decision"])
+	assert.Equal(t, "needs approval", got["message"])
+	_, hasApprovalID := got["approval_id"]
+	assert.False(t, hasApprovalID, "trusted OpenClaw-hosted evaluation should not create Rampart approval_id")
+	assert.Len(t, srv.approvals.List(), 0, "trusted OpenClaw-hosted evaluation should not enqueue Rampart approvals")
+	require.GreaterOrEqual(t, srv.sink.(*mockSink).count(), 1, "trusted OpenClaw-hosted evaluation should still write an audit event")
+	ev := srv.sink.(*mockSink).lastEvent()
+	assert.Equal(t, "ask", ev.Decision.Action)
+	assert.Equal(t, "exec", ev.Tool)
+}
+
+func TestOpenClawHostedAskDoesNotSkipPendingApprovalCreationForAgentToken(t *testing.T) {
+	configYAML := `version: "1"
+default_action: deny
+policies:
+  - name: require-human
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "sudo *"
+        message: "needs approval"
+`
+
+	srv, _, _ := setupTestServer(t, configYAML, "enforce")
+	dir := t.TempDir()
+	tokenStore, err := token.NewStore(filepath.Join(dir, "tokens.json"))
+	require.NoError(t, err)
+	plaintext, _, err := tokenStore.Create("claude-code", "", "", []string{token.ScopeEval}, nil)
+	require.NoError(t, err)
+	srv.tokenStore = tokenStore
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"main","session":"discord/direct/test","openclaw_hosted":true,"skip_pending_approval":true,"params":{"command":"sudo true"}}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "ask", got["decision"])
+	assert.Equal(t, "needs approval", got["message"])
+	_, hasApprovalID := got["approval_id"]
+	assert.True(t, hasApprovalID, "agent token must still receive Rampart approval_id")
+	assert.Len(t, srv.approvals.List(), 1, "agent token must still enqueue Rampart approvals")
 }
 
 func TestResolveApproval_AuditTrail(t *testing.T) {

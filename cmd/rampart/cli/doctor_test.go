@@ -19,6 +19,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -218,6 +219,96 @@ func TestDoctorPolicies_EmptyCustomPlaceholderIsNotWarn(t *testing.T) {
 	}
 	if strings.Contains(results[0].Message, "lint warning") {
 		t.Fatalf("expected lint warning to be suppressed, got %q", results[0].Message)
+	}
+}
+
+// TestDoctorHooks_ClaudeBinaryNoDir verifies that doctorHooks flags a missing hook
+// when the claude binary is in PATH but ~/.claude/ has never been created.
+func TestDoctorHooks_ClaudeBinaryNoDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH shim binaries in this test are Unix-only")
+	}
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	// ~/.claude/ intentionally absent — simulate fresh claude install
+	binDir := t.TempDir()
+	writeTestExecutable(t, filepath.Join(binDir, "claude"))
+	t.Setenv("PATH", binDir)
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	issues := doctorHooks(emit)
+	if issues != 1 {
+		t.Fatalf("expected 1 issue (missing Claude Code hook), got %d (%+v)", issues, results)
+	}
+	if results[0].Status != "fail" {
+		t.Fatalf("expected fail status, got %q", results[0].Status)
+	}
+	if !strings.Contains(results[0].Message, ".claude") {
+		t.Fatalf("expected .claude path in message, got: %s", results[0].Message)
+	}
+}
+
+// TestDoctorCoverage_OpenClawOnlyWithClaudeBinary verifies that a contextual warning
+// is emitted when OpenClaw protection is configured but claude binary has no native hooks.
+func TestDoctorCoverage_OpenClawOnlyWithClaudeBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH shim binaries in this test are Unix-only")
+	}
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	binDir := t.TempDir()
+	writeTestExecutable(t, filepath.Join(binDir, "claude"))
+	t.Setenv("PATH", binDir)
+
+	protected := []string{"OpenClaw (plugin)"}
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorCoverage(emit, protected)
+	if warnings != 1 {
+		t.Fatalf("expected 1 warning, got %d (%+v)", warnings, results)
+	}
+	if results[0].Status != "warn" {
+		t.Fatalf("expected warn status, got %q", results[0].Status)
+	}
+	if !strings.Contains(results[0].Message, "OpenClaw") {
+		t.Fatalf("expected OpenClaw mentioned in message, got: %s", results[0].Message)
+	}
+}
+
+// TestDoctorCoverage_NativeHooksPresent verifies no warning when Claude Code hooks are configured.
+func TestDoctorCoverage_NativeHooksPresent(t *testing.T) {
+	protected := []string{"Claude Code (hooks)", "OpenClaw (plugin)"}
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorCoverage(emit, protected)
+	if warnings != 0 {
+		t.Fatalf("expected no warnings when Claude Code hooks configured, got %d (%+v)", warnings, results)
+	}
+}
+
+// TestDoctorCoverage_OpenClawOnlyNoClaude verifies no warning when claude binary absent.
+func TestDoctorCoverage_OpenClawOnlyNoClaude(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir()) // empty bin dir, no claude binary
+
+	protected := []string{"OpenClaw (plugin)"}
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorCoverage(emit, protected)
+	if warnings != 0 {
+		t.Fatalf("expected no warnings when claude not in PATH, got %d (%+v)", warnings, results)
 	}
 }
 

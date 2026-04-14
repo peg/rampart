@@ -169,6 +169,27 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk) {
+		if req.OpenClawHosted || req.SkipPendingApproval {
+			if identity.IsAdmin && req.OpenClawHosted && req.SkipPendingApproval {
+				s.logger.Info("proxy: trusted OpenClaw-hosted approval evaluation requested, skipping Rampart pending approval creation",
+					"tool", toolName,
+					"decision", decision.Action.String(),
+					"session", call.Session,
+				)
+				s.writeAudit(req, toolName, decision)
+				writeJSON(w, http.StatusOK, resp)
+				return
+			}
+			s.logger.Warn("proxy: ignoring caller-supplied hosted approval bypass flags for untrusted or incomplete request",
+				"tool", toolName,
+				"decision", decision.Action.String(),
+				"session", call.Session,
+				"is_admin", identity.IsAdmin,
+				"openclaw_hosted", req.OpenClawHosted,
+				"skip_pending_approval", req.SkipPendingApproval,
+			)
+		}
+
 		// Check if this run has been bulk-approved (auto-approve cache).
 		if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
 			s.logger.Debug("proxy: run auto-approved, bypassing approval queue", "tool", toolName, "run_id", call.RunID)

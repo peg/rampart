@@ -117,12 +117,27 @@ func (mg *mockGateway) sendApprovalRequest(id, command, agent string) {
 		},
 	})
 
-	// Type-frame event format.
+	mg.sendEvent("exec.approval.requested", json.RawMessage(payload), 1)
+}
+
+func (mg *mockGateway) sendApprovalResolved(id, decision string) {
+	<-mg.ready
+	payload, _ := json.Marshal(struct {
+		ID       string `json:"id"`
+		Decision string `json:"decision"`
+	}{
+		ID:       id,
+		Decision: decision,
+	})
+	mg.sendEvent("exec.approval.resolved", json.RawMessage(payload), 2)
+}
+
+func (mg *mockGateway) sendEvent(event string, payload json.RawMessage, seq int) {
 	msg := map[string]any{
 		"type":    "event",
-		"event":   "exec.approval.requested",
-		"payload": json.RawMessage(payload),
-		"seq":     1,
+		"event":   event,
+		"payload": payload,
+		"seq":     seq,
 	}
 	data, _ := json.Marshal(msg)
 	mg.writeMu.Lock()
@@ -423,7 +438,7 @@ func TestWriteAllowAlwaysRule(t *testing.T) {
 // TestHandleApprovalRequestedAsk is a regression test for the bug where
 // ActionAsk commands were not stored in pendingCommands, breaking allow-always
 // writeback when the user clicked "Always Allow" in the Discord approval UI.
-func TestHandleApprovalRequestedAsk(t *testing.T) {
+func TestHandleApprovalRequestedAskStoresPendingCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Write a policy that returns ActionAsk for the sudo command.
@@ -483,6 +498,120 @@ policies:
 	}
 
 	cancel()
+}
+
+func TestHandleApprovalRequestedAskLeavesApprovalPending(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	askPolicy := `version: "1"
+default_action: deny
+policies:
+  - name: ask-sudo
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "sudo *"
+        message: "sudo command — approve or deny?"
+`
+	policyPath := filepath.Join(tmpDir, "ask-policy.yaml")
+	if err := os.WriteFile(policyPath, []byte(askPolicy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mg := newMockGateway(t)
+	defer mg.close()
+
+	eng := newTestEngine(t, policyPath)
+	b := NewOpenClawBridge(eng, Config{
+		GatewayURL:        mg.url(),
+		GatewayToken:      "test-token",
+		ReconnectInterval: 100 * time.Millisecond,
+	})
+	defer b.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { b.Start(ctx) }() //nolint:errcheck
+
+	time.Sleep(500 * time.Millisecond)
+
+	const approvalID = "ask-approval-pending-001"
+	mg.sendApprovalRequest(approvalID, "sudo true", "claude-code")
+	time.Sleep(300 * time.Millisecond)
+
+	b.pendingMu.Lock()
+	_, stillStored := b.pendingCommands[approvalID]
+	b.pendingMu.Unlock()
+	if !stillStored {
+		t.Fatalf("expected ask approval command to remain stored until human resolution")
+	}
+}
+
+func TestResolvedAllowAlwaysWritesRuleAndCleansPendingCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
+
+	askPolicy := `version: "1"
+default_action: deny
+policies:
+  - name: ask-sudo
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "sudo *"
+        message: "sudo command — approve or deny?"
+`
+	policyPath := filepath.Join(tmpDir, "ask-policy.yaml")
+	if err := os.WriteFile(policyPath, []byte(askPolicy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mg := newMockGateway(t)
+	defer mg.close()
+
+	eng := newTestEngine(t, policyPath)
+	b := NewOpenClawBridge(eng, Config{
+		GatewayURL:        mg.url(),
+		GatewayToken:      "test-token",
+		ReconnectInterval: 100 * time.Millisecond,
+	})
+	defer b.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { b.Start(ctx) }() //nolint:errcheck
+
+	time.Sleep(500 * time.Millisecond)
+
+	const approvalID = "ask-approval-resolved-001"
+	const testCmd = "sudo systemctl restart nginx"
+	mg.sendApprovalRequest(approvalID, testCmd, "claude-code")
+	time.Sleep(300 * time.Millisecond)
+	mg.sendApprovalResolved(approvalID, "allow-always")
+	time.Sleep(300 * time.Millisecond)
+
+	overridesPath := filepath.Join(tmpDir, ".rampart", "policies", "user-overrides.yaml")
+	data, err := os.ReadFile(overridesPath)
+	if err != nil {
+		t.Fatalf("user-overrides.yaml not written after allow-always resolution: %v", err)
+	}
+	if !strings.Contains(string(data), testCmd) {
+		t.Fatalf("expected allow-always writeback for %q, got:\n%s", testCmd, string(data))
+	}
+
+	b.pendingMu.Lock()
+	_, stillStored := b.pendingCommands[approvalID]
+	b.pendingMu.Unlock()
+	if stillStored {
+		t.Fatalf("expected pending command to be cleaned after resolved event")
+	}
 }
 
 // TestBridgeAuditSinkWrite verifies that bridge-evaluated approvals are written

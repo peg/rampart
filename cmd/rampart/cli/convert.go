@@ -33,7 +33,9 @@ func newConvertCmd() *cobra.Command {
 		Long: `Import permission rules from a Claude Code settings.json file and generate
 an equivalent Rampart policy YAML.
 
-Supports rules from permissions.allow, permissions.deny, and permissions.ask.
+Supports both the legacy permissions format and the newer top-level arrays:
+  permissions.allow / permissions.deny / permissions.ask
+  allowedTools / disabledTools / disallowedTools
 
 Examples:
   rampart convert ~/.claude/settings.json
@@ -57,7 +59,11 @@ type claudePermissions struct {
 }
 
 type claudeSettingsFile struct {
-	Permissions claudePermissions `json:"permissions"`
+	Permissions     claudePermissions `json:"permissions"`
+	// Newer flat-array format written by --allowedTools / --disabledTools flags.
+	AllowedTools    []string `json:"allowedTools"`
+	DisabledTools   []string `json:"disabledTools"`
+	DisallowedTools []string `json:"disallowedTools"` // alias used by some versions
 }
 
 // convertedRule holds a single converted policy rule.
@@ -89,19 +95,37 @@ func runConvert(w io.Writer, inputPath, outputFile string) error {
 		return fmt.Errorf("parse settings: %w", err)
 	}
 
+	// Merge both formats. permissions.* takes precedence; flat arrays supplement.
 	perms := settings.Permissions
-	totalRules := len(perms.Allow) + len(perms.Deny) + len(perms.Ask)
+
+	// Flat deny: disabledTools and disallowedTools are both deny semantics.
+	flatDeny := append(settings.DisabledTools, settings.DisallowedTools...)
+
+	totalRules := len(perms.Allow) + len(perms.Deny) + len(perms.Ask) +
+		len(settings.AllowedTools) + len(flatDeny)
 	if totalRules == 0 {
-		return fmt.Errorf("no permission rules found in %s", inputPath)
+		return fmt.Errorf("no permission rules found in %s — expected permissions.allow/deny/ask or allowedTools/disabledTools fields", inputPath)
 	}
 
 	var rules []convertedRule
 
-	// Deny rules first (highest priority in Rampart too)
+	// Deny rules first (highest priority in Rampart too).
+	// Merge permissions.deny + disabledTools/disallowedTools, deduplicating.
+	seen := make(map[string]bool)
 	for _, rule := range perms.Deny {
-		r := convertClaudeRule(rule, "deny")
-		if r != nil {
-			rules = append(rules, *r)
+		if !seen[rule] {
+			seen[rule] = true
+			if r := convertClaudeRule(rule, "deny"); r != nil {
+				rules = append(rules, *r)
+			}
+		}
+	}
+	for _, rule := range flatDeny {
+		if !seen[rule] {
+			seen[rule] = true
+			if r := convertClaudeRule(rule, "deny"); r != nil {
+				rules = append(rules, *r)
+			}
 		}
 	}
 
@@ -113,11 +137,22 @@ func runConvert(w io.Writer, inputPath, outputFile string) error {
 		}
 	}
 
-	// Allow rules
+	// Allow rules: merge permissions.allow + allowedTools, deduplicating.
+	seenAllow := make(map[string]bool)
 	for _, rule := range perms.Allow {
-		r := convertClaudeRule(rule, "allow")
-		if r != nil {
-			rules = append(rules, *r)
+		if !seenAllow[rule] {
+			seenAllow[rule] = true
+			if r := convertClaudeRule(rule, "allow"); r != nil {
+				rules = append(rules, *r)
+			}
+		}
+	}
+	for _, rule := range settings.AllowedTools {
+		if !seenAllow[rule] {
+			seenAllow[rule] = true
+			if r := convertClaudeRule(rule, "allow"); r != nil {
+				rules = append(rules, *r)
+			}
 		}
 	}
 

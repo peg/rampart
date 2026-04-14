@@ -46,8 +46,9 @@ const openclawMinVersion = "2026.3.28"
 //  1. Locate the openclaw binary.
 //  2. Verify the OpenClaw version is >= openclawMinVersion (requires before_tool_call hook).
 //  3. Run: openclaw plugins install <plugin-path>
-//  4. Set tools.exec.ask to "off" in ~/.openclaw/openclaw.json
-//     (Rampart handles all decisions now — no need for OpenClaw's own ask prompt).
+//  4. Set tools.exec.ask to "off" in ~/.openclaw/openclaw.json.
+//     Native OpenClaw approvals remain the visible approval owner while
+//     Rampart evaluates policy and persists allow-always behavior.
 //  5. Copy the openclaw.yaml policy profile to ~/.rampart/policies/openclaw.yaml.
 //  6. Run rampart doctor for a health summary.
 //  7. Print success and next steps.
@@ -93,6 +94,10 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 	}
 	fmt.Fprintf(w, "Installing bundled plugin (v%s)...\n", ocplugin.Version())
 
+	if err := removeExistingOpenClawRampartInstall(errW); err != nil {
+		return err
+	}
+
 	installCmd := osexec.Command(openclawBin, "plugins", "install", pluginDir)
 	installCmd.Stdout = w
 	installCmd.Stderr = errW
@@ -108,7 +113,7 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		fmt.Fprintf(errW, "⚠ Could not update tools.exec.ask in openclaw.json: %v\n", err)
 		fmt.Fprintln(errW, "  Add manually: set tools.exec.ask to \"off\" in ~/.openclaw/openclaw.json")
 	} else {
-		fmt.Fprintln(w, "✓ Set tools.exec.ask = \"off\" (Rampart now handles all decisions)")
+		fmt.Fprintln(w, "✓ Set tools.exec.ask = \"off\" (OpenClaw keeps native approval ownership; Rampart evaluates policy behind it)")
 	}
 
 	// 4b. Add rampart to plugins.allow. Existing plugins are preserved — we only append.
@@ -147,7 +152,7 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 	fmt.Fprintf(w, "  Policy engine:   %s\n", serveStatus)
 	fmt.Fprintln(w, "  Audit log:       ~/.rampart/audit/")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "  → Restart the gateway:  systemctl --user restart openclaw-gateway")
+	fmt.Fprintln(w, "  → Restart the gateway:  systemctl --user restart openclaw-gateway.service")
 	fmt.Fprintln(w, "  → Run `rampart watch` to see policy decisions in real time")
 	fmt.Fprintln(w, "  → Run `rampart doctor` to verify your setup")
 
@@ -163,6 +168,108 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 //  3. Remove ask: on-miss if it exists.
 //  4. Install the plugin (calls runSetupOpenClawPlugin).
 //  5. Print migration summary.
+func removeExistingOpenClawRampartInstall(errW io.Writer) error {
+	openclawBin, err := findOpenClawBinary()
+	if err != nil {
+		return fmt.Errorf("find openclaw for plugin cleanup: %w", err)
+	}
+
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return fmt.Errorf("resolve home for OpenClaw plugin cleanup: %w", homeErr)
+	}
+	cfgPath := filepath.Join(home, ".openclaw", "openclaw.json")
+
+	cleanupRemainingInstallPaths := func() error {
+		paths := []string{
+			filepath.Join(home, ".openclaw", openclawPluginDir),
+			filepath.Join(home, ".openclaw", "hooks", "rampart"),
+		}
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				if rmErr := os.RemoveAll(path); rmErr != nil {
+					return fmt.Errorf("remove existing OpenClaw Rampart install %s: %w", path, rmErr)
+				}
+				fmt.Fprintf(errW, "ℹ Removed existing OpenClaw Rampart install: %s\n", path)
+			}
+		}
+		return nil
+	}
+
+	uninstallCmd := osexec.Command(openclawBin, "plugins", "uninstall", "rampart", "--force")
+	uninstallCmd.Stdout = errW
+	uninstallCmd.Stderr = errW
+	if err := uninstallCmd.Run(); err == nil {
+		fmt.Fprintln(errW, "ℹ Uninstalled existing OpenClaw Rampart plugin via managed OpenClaw uninstall")
+		return cleanupRemainingInstallPaths()
+	}
+
+	if healErr := healOpenClawRampartPluginConfig(cfgPath, home); healErr == nil {
+		retryCmd := osexec.Command(openclawBin, "plugins", "uninstall", "rampart", "--force")
+		retryCmd.Stdout = errW
+		retryCmd.Stderr = errW
+		if retryErr := retryCmd.Run(); retryErr == nil {
+			fmt.Fprintln(errW, "ℹ Healed OpenClaw Rampart install records and uninstalled via managed OpenClaw uninstall")
+			return cleanupRemainingInstallPaths()
+		}
+	}
+
+	return cleanupRemainingInstallPaths()
+}
+
+func healOpenClawRampartPluginConfig(cfgPath, home string) error {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	plugins, _ := cfg["plugins"].(map[string]any)
+	if plugins == nil {
+		plugins = map[string]any{}
+		cfg["plugins"] = plugins
+	}
+	entries, _ := plugins["entries"].(map[string]any)
+	if entries == nil {
+		entries = map[string]any{}
+		plugins["entries"] = entries
+	}
+	if _, ok := entries["rampart"]; !ok {
+		entries["rampart"] = map[string]any{"enabled": true}
+	}
+	installs, _ := plugins["installs"].(map[string]any)
+	if installs == nil {
+		installs = map[string]any{}
+		plugins["installs"] = installs
+	}
+	if _, ok := installs["rampart"]; !ok {
+		installs["rampart"] = map[string]any{
+			"installPath": filepath.Join(home, ".openclaw", openclawPluginDir),
+			"source":      "path",
+			"sourcePath":  filepath.Join(home, ".openclaw", openclawPluginDir),
+		}
+	}
+	allow, _ := plugins["allow"].([]any)
+	found := false
+	for _, v := range allow {
+		if s, ok := v.(string); ok && s == "rampart" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		plugins["allow"] = append(allow, "rampart")
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	return os.WriteFile(cfgPath, out, 0o600)
+}
+
 func runSetupOpenClawMigrate(w io.Writer, errW io.Writer) error {
 	fmt.Fprintln(w, "Migrating from legacy OpenClaw integration to native plugin...")
 	fmt.Fprintln(w, "")

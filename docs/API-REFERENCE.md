@@ -143,7 +143,7 @@ Denied:
 }
 ```
 
-Approval required:
+Approval required (Rampart-native approval flow):
 
 ```json
 {
@@ -157,9 +157,10 @@ Approval required:
 }
 ```
 
+
 ### Status Codes
-- `200 OK` evaluated (allow/watch, monitor-mode deny, or response-side deny with redaction)
-- `202 Accepted` approval required; request queued
+- `200 OK` evaluated (allow/watch, monitor-mode deny, response-side deny with redaction)
+- `202 Accepted` approval required; request queued in Rampart approval flow
 - `400 Bad Request` invalid JSON body
 - `401 Unauthorized` missing/invalid bearer token
 - `403 Forbidden` denied in enforce mode

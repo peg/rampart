@@ -68,29 +68,46 @@ func newDoctorCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
-	cmd.Flags().BoolVar(&fix, "fix", false, "Automatically apply fixes for detected issues (re-runs patch-tools if needed)")
+	cmd.Flags().BoolVar(&fix, "fix", false, "Automatically apply fixes for detected issues (prefers native plugin repair on modern OpenClaw)")
 	return cmd
 }
 
-// runDoctorFix checks for missing patches and applies them automatically.
+// runDoctorFix checks for missing protection and applies the least-fragile fix first.
 func runDoctorFix(cmd *cobra.Command) error {
-	needsPatch := !openclawWebFetchPatched() || !openclawBrowserPatched() ||
-		!openclawMessagePatched() || !openclawExecPatched() || !openclawDistPatched()
+	pluginInstalled := isOpenClawPluginInstalled()
+	pluginHealthy := doctorOpenClawPlugin(func(_, status, _ string) {
+		if status == "ok" {
+			pluginInstalled = true
+		}
+	}) == 0
+	needsLegacyPatch := !openclawWebFetchPatched() || !openclawBrowserPatched() ||
+		!openclawMessagePatched() || !openclawDistPatched() ||
+		(!pluginInstalled && !openclawExecPatched())
 
-	if !needsPatch {
-		fmt.Fprintln(cmd.OutOrStdout(), "✓ All patches already applied — nothing to fix.")
+	if pluginHealthy && !needsLegacyPatch {
+		fmt.Fprintln(cmd.OutOrStdout(), "✓ OpenClaw protection already looks healthy — nothing to fix.")
 		return nil
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Applying missing patches...")
+	if isOpenClawInstalled() {
+		fmt.Fprintln(cmd.OutOrStdout(), "Repairing native OpenClaw plugin path first...")
+		if err := runSetupOpenClawPlugin(cmd.OutOrStdout(), cmd.ErrOrStderr()); err == nil {
+			fmt.Fprintln(cmd.OutOrStdout(), "✓ Native plugin path repaired. Restart OpenClaw for changes to take effect.")
+			return nil
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Native plugin repair failed: %v\n", err)
+		}
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "Falling back to legacy dist patch repair...")
 	_, err := patchOpenClawDistTools(cmd, fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "")
 	if err != nil {
-		// May need sudo — tell the user
 		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Auto-fix failed (may need sudo): %v\n", err)
-		fmt.Fprintf(cmd.ErrOrStderr(), "  Run manually: sudo rampart setup openclaw --patch-tools --force\n")
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Run manually: rampart setup openclaw --plugin\n")
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Legacy fallback: sudo rampart setup openclaw --patch-tools --force\n")
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "✓ Patches applied. Restart OpenClaw for changes to take effect.")
+	fmt.Fprintln(cmd.OutOrStdout(), "✓ Legacy dist patches applied. Restart OpenClaw for changes to take effect.")
 	return nil
 }
 
@@ -243,6 +260,13 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		if n := doctorOpenClawAskMode(emit); n > 0 {
 			warnings += n
 		}
+	}
+
+	// 17a. Coverage cross-check — warn if OpenClaw is configured but claude
+	// binary is present with no native hooks (OpenClaw only covers sessions
+	// run through it; direct `claude` invocations would be unprotected).
+	if n := doctorCoverage(emit, protected); n > 0 {
+		warnings += n
 	}
 
 	// 18. Proactive policy suggestions (informational only)
@@ -425,6 +449,10 @@ func doctorHookBinary(emit emitFn) int {
 				}
 				checked[bin] = true
 				if _, statErr := os.Stat(bin); statErr != nil {
+					if pluginActiveForDoctor() && isEphemeralRampartHookPath(bin) {
+						emit("Hook binary", "warn", fmt.Sprintf("ignoring stale legacy hook path %s (native OpenClaw plugin is active)", bin))
+						continue
+					}
 					emit("Hook binary", "fail", fmt.Sprintf("%s not found", bin))
 					issues++
 				} else {
@@ -434,6 +462,21 @@ func doctorHookBinary(emit emitFn) int {
 		}
 	}
 	return issues
+}
+
+func pluginActiveForDoctor() bool {
+	return isOpenClawPluginInstalled()
+}
+
+func isEphemeralRampartHookPath(bin string) bool {
+	base := filepath.Base(bin)
+	if !strings.HasPrefix(base, "rampart-") {
+		return false
+	}
+	if !strings.Contains(bin, string(filepath.Separator)+"tmp"+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 func doctorPolicies(emit emitFn) int {
@@ -716,7 +759,9 @@ func doctorHooks(emit emitFn) int {
 		return 0
 	}
 	claudeDir := filepath.Join(home, ".claude")
-	if _, err := os.Stat(claudeDir); err == nil {
+	_, claudeDirErr := os.Stat(claudeDir)
+	claudeBinary, _ := exec.LookPath("claude")
+	if claudeDirErr == nil || claudeBinary != "" {
 		claudeSettingsPath := filepath.Join(claudeDir, "settings.json")
 		data, err := os.ReadFile(claudeSettingsPath)
 		if err == nil {
@@ -773,6 +818,35 @@ func doctorHooks(emit emitFn) int {
 	}
 
 	return issues
+}
+
+// doctorCoverage cross-checks whether a user with OpenClaw protection but no
+// Claude Code native hooks is running the claude binary directly unprotected.
+// OpenClaw plugin only intercepts tool calls made through OpenClaw — direct
+// `claude` invocations bypass it entirely.
+func doctorCoverage(emit emitFn, protected []string) int {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return 0 // claude binary not present — no gap
+	}
+	hasClaudeHooks := false
+	hasOpenClaw := false
+	for _, p := range protected {
+		if strings.Contains(p, "Claude Code") {
+			hasClaudeHooks = true
+		}
+		if strings.Contains(p, "OpenClaw") {
+			hasOpenClaw = true
+		}
+	}
+	if hasClaudeHooks || !hasOpenClaw {
+		return 0 // native hooks active, or no OpenClaw to cause false confidence
+	}
+	emit("Coverage", "warn",
+		"Claude Code binary detected but native hooks not configured — "+
+			"direct `claude` invocations are not covered by Rampart "+
+			"(OpenClaw plugin only protects sessions run through OpenClaw)"+
+			hintSep+"rampart setup claude-code")
+	return 1
 }
 
 // countClaudeHookMatchers counts Rampart-related hook matchers in Claude settings.
@@ -902,11 +976,16 @@ func doctorFileToolPatches(emit emitFn) (warnings int) {
 		webFetchPatched := openclawWebFetchPatched() || pluginInstalled
 		browserPatched := openclawBrowserPatched() || pluginInstalled
 		messagePatched := openclawMessagePatched() || pluginInstalled
-		execPatched := openclawExecPatched() || pluginInstalled
+		legacyExecPatched := openclawExecPatched()
+		execPatched := legacyExecPatched || pluginInstalled
 
 		if distPatched && webFetchPatched && browserPatched && messagePatched && execPatched {
 			if pluginInstalled {
-				emit("Tool patches", "ok", "All OpenClaw tools covered (native plugin: read/write/edit + web_fetch + browser + message + exec)")
+				msg := "All OpenClaw tools covered (native plugin: read/write/edit + web_fetch + browser + message + exec)"
+				if !legacyExecPatched {
+					msg += ""
+				}
+				emit("Tool patches", "ok", msg)
 			} else {
 				emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")
 			}
@@ -942,8 +1021,8 @@ func doctorFileToolPatches(emit emitFn) (warnings int) {
 		}
 		if !execPatched {
 			emit("exec patch", "warn",
-				"OpenClaw exec tool not patched — human-initiated execs bypass pre-check"+
-					hintSep+"sudo rampart setup openclaw --patch-tools --force")
+				"OpenClaw exec dist patch not present — native bridge/plugin exec ownership should cover approvals; only legacy patched installs need this"+
+					hintSep+"If native exec approvals are working, this is expected. If not, rerun rampart setup openclaw and restart the gateway.")
 			warnings++
 		}
 		if warnings > 0 {
@@ -1262,15 +1341,59 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 		return 0
 	}
 
-	if isOpenClawPluginInstalled() {
+	if !isOpenClawPluginInstalled() {
+		emit("OpenClaw plugin", "warn",
+			"not installed — native hook interception disabled"+hintSep+
+				"rampart setup openclaw --plugin")
+		return 1
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
 		emit("OpenClaw plugin", "ok", "installed (before_tool_call hook active)")
 		return 0
 	}
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		emit("OpenClaw plugin", "ok", "installed (before_tool_call hook active)")
+		return 0
+	}
+	var cfg struct {
+		Plugins struct {
+			Allow   []string `json:"allow"`
+			Entries map[string]struct {
+				Enabled *bool `json:"enabled"`
+			} `json:"entries"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		emit("OpenClaw plugin", "warn", fmt.Sprintf("installed, but failed to parse %s: %v", configPath, err))
+		return 1
+	}
+	allowed := false
+	for _, id := range cfg.Plugins.Allow {
+		if id == "rampart" {
+			allowed = true
+			break
+		}
+	}
+	entry, hasEntry := cfg.Plugins.Entries["rampart"]
+	if hasEntry && entry.Enabled != nil && !*entry.Enabled {
+		emit("OpenClaw plugin", "warn",
+			"installed, but plugins.entries.rampart.enabled=false disables the native hook"+hintSep+
+				"Enable plugins.entries.rampart in ~/.openclaw/openclaw.json and restart OpenClaw")
+		return 1
+	}
+	if !allowed {
+		emit("OpenClaw plugin", "warn",
+			"installed, but plugins.allow is missing rampart so OpenClaw may not load it consistently"+hintSep+
+				"Add \"rampart\" to plugins.allow or rerun: rampart setup openclaw --plugin")
+		return 1
+	}
 
-	emit("OpenClaw plugin", "warn",
-		"not installed — native hook interception disabled"+hintSep+
-			"rampart setup openclaw --plugin")
-	return 1
+	emit("OpenClaw plugin", "ok", "installed and enabled (before_tool_call hook active)")
+	return 0
 }
 
 // doctorOpenClawAskMode checks if ~/.openclaw/openclaw.json has ask set to
@@ -1308,15 +1431,21 @@ func doctorOpenClawAskMode(emit emitFn) (warnings int) {
 		askVal = cfg.Tools.Exec.Ask
 	}
 
+	pluginInstalled := isOpenClawPluginInstalled()
 	switch askVal {
+	case "off":
+		if pluginInstalled {
+			emit("OpenClaw ask mode", "ok", "off (native OpenClaw approvals stay visible; Rampart plugin/bridge evaluate behind them)")
+			return 0
+		}
+		fallthrough
 	case "on-miss", "always":
 		emit("OpenClaw ask mode", "ok", fmt.Sprintf("%s (exec approvals will reach Rampart bridge)", askVal))
 		return 0
 	default:
 		emit("OpenClaw ask mode", "warn",
 			"not configured for exec interception"+hintSep+
-				"Add \"ask\": \"on-miss\" to ~/.openclaw/openclaw.json, then restart OpenClaw\n"+
-				"       Without this, exec approval events are never sent to Rampart's bridge")
+				"Set tools.exec.ask to \"off\" for native plugin mode or \"on-miss\" for bridge-first exec mode, then restart OpenClaw")
 		return 1
 	}
 }

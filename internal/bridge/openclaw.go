@@ -16,8 +16,8 @@
 // The OpenClaw bridge connects to the OpenClaw gateway WebSocket and routes
 // exec approval requests through Rampart's policy engine. Approvals that
 // the engine auto-resolves (allow/deny) are sent back immediately. Approvals
-// that require human review are forwarded to a running Rampart serve instance
-// via its HTTP API.
+// that require human review remain pending in OpenClaw's native approval
+// system so the operator sees exactly one approval object.
 //
 // Wire protocol: OpenClaw gateway uses a custom type-discriminated frame format,
 // NOT JSON-RPC 2.0:
@@ -32,13 +32,11 @@
 package bridge
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -64,13 +62,13 @@ type OpenClawBridge struct {
 
 	reconnectInterval time.Duration
 
-	mu      sync.Mutex   // guards conn
-	writeMu sync.Mutex   // guards WebSocket writes
+	mu      sync.Mutex // guards conn
+	writeMu sync.Mutex // guards WebSocket writes
 	conn    *websocket.Conn
 
 	pendingMu       sync.Mutex
 	pending         map[string]chan struct{} // approval ID → close to signal resolution
-	pendingCommands map[string]string       // approval ID → command (for allow-always writeback)
+	pendingCommands map[string]string        // approval ID → command (for allow-always writeback)
 }
 
 // Config holds bridge configuration.
@@ -114,8 +112,8 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		sink:              cfg.AuditSink,
 		logger:            cfg.Logger,
 		reconnectInterval: cfg.ReconnectInterval,
-		pending:         make(map[string]chan struct{}),
-		pendingCommands: make(map[string]string),
+		pending:           make(map[string]chan struct{}),
+		pendingCommands:   make(map[string]string),
 	}
 }
 
@@ -416,8 +414,7 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		b.cleanPendingCommand(req.ID)
 
 	case engine.ActionRequireApproval, engine.ActionAsk:
-		// Escalate to Rampart serve for human review.
-		b.escalateToServe(ctx, conn, req, decision)
+		b.leavePendingForHumanReview(req, decision)
 
 	case engine.ActionWebhook:
 		// Webhook actions delegate to an external system.
@@ -479,115 +476,15 @@ func (b *OpenClawBridge) sendResolve(conn *websocket.Conn, approvalID, decision 
 	return err
 }
 
-// escalateToServe forwards the approval to Rampart serve for human review.
-func (b *OpenClawBridge) escalateToServe(ctx context.Context, conn *websocket.Conn, req approvalRequestParams, decision engine.Decision) {
-	b.logger.Warn("bridge: approval requires human review — escalating to serve",
-		"id", req.ID, "command", req.command(), "serve_url", b.serveURL)
-
-	// Register cancellation channel. Command already stored in pendingCommands
-	// at exec.approval.requested time so allow-always writeback works for all flows.
-	cancelCh := make(chan struct{})
-	b.pendingMu.Lock()
-	b.pending[req.ID] = cancelCh
-	b.pendingMu.Unlock()
-
-	defer func() {
-		b.pendingMu.Lock()
-		delete(b.pending, req.ID)
-		// pendingCommands is cleaned up by the resolved event handler
-		// so allow-always writeback works even after escalation completes.
-		b.pendingMu.Unlock()
-	}()
-
-	body, _ := json.Marshal(map[string]any{
-		"tool":    "exec",
-		"command": req.command(),
-		"agent":   req.agentID(),
-		"session": req.sessionKey(),
-		"message": decision.Message,
-	})
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.serveURL+"/v1/approvals", bytes.NewReader(body))
-	if err != nil {
-		b.logger.Error("bridge: failed to create escalation request, denying (fail-closed)", "error", err)
-		b.resolveApproval(conn, req.ID, "deny")
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if token := os.Getenv("RAMPART_TOKEN"); token != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		b.logger.Warn("bridge: serve escalation failed, denying (fail-closed)", "error", err)
-		b.resolveApproval(conn, req.ID, "deny")
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b.logger.Warn("bridge: serve escalation returned non-2xx, denying (fail-closed)", "status", resp.StatusCode)
-		b.resolveApproval(conn, req.ID, "deny")
-		return
-	}
-
-	var result struct {
-		ID string `json:"id"`
-	}
-	json.NewDecoder(resp.Body).Decode(&result)
-
-	if result.ID == "" {
-		b.logger.Warn("bridge: serve escalation returned empty approval ID, denying (fail-closed)")
-		b.resolveApproval(conn, req.ID, "deny")
-		return
-	}
-
-	// Poll for the Rampart approval decision.
-	const pollInterval = 2 * time.Second
-	const pollTimeout = 5 * time.Minute
-	deadline := time.Now().Add(pollTimeout)
-
-	for {
-		select {
-		case <-ctx.Done():
-			b.resolveApproval(conn, req.ID, "deny")
-			return
-		case <-cancelCh:
-			// Resolved by another client.
-			return
-		case <-time.After(pollInterval):
-		}
-
-		if time.Now().After(deadline) {
-			b.logger.Warn("bridge: escalation timed out", "id", req.ID)
-			b.resolveApproval(conn, req.ID, "deny")
-			return
-		}
-
-		pollReq, _ := http.NewRequestWithContext(ctx, "GET", b.serveURL+"/v1/approvals/"+result.ID, nil)
-		if token := os.Getenv("RAMPART_TOKEN"); token != "" {
-			pollReq.Header.Set("Authorization", "Bearer "+token)
-		}
-		pollResp, err := http.DefaultClient.Do(pollReq)
-		if err != nil {
-			continue
-		}
-
-		var status struct {
-			Status string `json:"status"`
-		}
-		json.NewDecoder(pollResp.Body).Decode(&status)
-		pollResp.Body.Close()
-
-		switch status.Status {
-		case "approved":
-			b.resolveApproval(conn, req.ID, "allow-once")
-			return
-		case "denied", "expired":
-			b.resolveApproval(conn, req.ID, "deny")
-			return
-		}
-	}
+// leavePendingForHumanReview keeps the native OpenClaw approval pending so the
+// operator sees exactly one approval object for the command.
+func (b *OpenClawBridge) leavePendingForHumanReview(req approvalRequestParams, decision engine.Decision) {
+	b.logger.Info("bridge: approval requires human review, leaving native OpenClaw approval pending",
+		"id", req.ID,
+		"command", req.command(),
+		"agent", req.agentID(),
+		"message", decision.Message,
+	)
 }
 
 // cleanPendingCommand removes a command from pendingCommands after auto-resolution.

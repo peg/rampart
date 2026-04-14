@@ -387,11 +387,13 @@ func (s *Server) handler() http.Handler {
 }
 
 type toolRequest struct {
-	Agent   string         `json:"agent"`
-	Session string         `json:"session"`
-	RunID   string         `json:"run_id,omitempty"`
-	Params  map[string]any `json:"params"`
-	Input   map[string]any `json:"input,omitempty"`
+	Agent               string         `json:"agent"`
+	Session             string         `json:"session"`
+	RunID               string         `json:"run_id,omitempty"`
+	Params              map[string]any `json:"params"`
+	Input               map[string]any `json:"input,omitempty"`
+	OpenClawHosted      bool           `json:"openclaw_hosted,omitempty"`
+	SkipPendingApproval bool           `json:"skip_pending_approval,omitempty"`
 
 	// Convenience fields: callers can pass "command" or "path" at the top level
 	// instead of nesting inside "params". These are promoted into Params by

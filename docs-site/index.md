@@ -199,18 +199,30 @@ verify -> outcomes.approval
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
 | **Codex CLI** | LD_PRELOAD | `rampart setup codex` |
-| **OpenClaw** | Multi-layer | `rampart setup openclaw` |
+| **OpenClaw** | Native plugin | `rampart setup openclaw` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
 | **Python agents** | HTTP API / SDK | `localhost:9090` |
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.9.12
+## What's New in v0.9.14
+
+- **OpenClaw 2026.4.11+ native approval path** — Native Discord exec approvals are the supported path for Rampart's OpenClaw integration. OpenClaw owns approval UI/state, Rampart owns policy, audit, and allow-always persistence. [Details →](integrations/openclaw.md)
+- **`rampart status` shows `OpenClaw (plugin)`** — Status summary now correctly reflects when the native plugin (not legacy bridge) is active.
+- **Setup explains scanner warning** — `rampart setup openclaw --plugin` now clarifies that OpenClaw's security scanner false positive is safe to ignore.
+
+### v0.9.13
+
+- **`plugins.allow` set automatically** — Setup now adds `rampart` to OpenClaw's `plugins.allow` config. Existing plugins are preserved — only appends, never overwrites. No more "plugins.allow is empty" warning in `openclaw doctor`.
+- **Plugin version corrected** — Plugin now reports the actual Rampart version instead of `0.1.0`.
+- **`rampart doctor` false positives fixed** — Dist-patch and ask-mode warnings are now suppressed when the native plugin is active (both are irrelevant with plugin integration).
+- **Enforcement verified** — Confirmed `before_tool_call` is properly awaited and blocking in OpenClaw 2026.3.28+. Deny decisions are enforced end-to-end, not just logged.
+
+### v0.9.12
 
 - **Plugin bundled in binary** — The OpenClaw plugin is now embedded directly in the `rampart` binary. `rampart setup openclaw --plugin` works on any machine — no external checkout or npm install required. [Learn more →](integrations/openclaw.md)
-- **Bridge hardened** — Errors during require_approval escalations now fail closed (deny) instead of silently allowing. `writeAllowAlwaysRule` uses atomic writes.
-- **Learn endpoint secured** — `POST /v1/rules/learn` now rate-limited and restricted to `allow` decisions only. Deny rules belong in policy YAML.
-- **`openclaw.yaml` message policy** — `message` tool actions distinguished: reads always allowed, sends to unknown channels require approval.
+- **Bridge hardened** — Errors during require_approval escalations now fail closed (deny) instead of silently allowing.
+- **Learn endpoint secured** — `POST /v1/rules/learn` now rate-limited and restricted to `allow` decisions only.
 
 ### v0.9.11
 
@@ -224,4 +236,3 @@ verify -> outcomes.approval
 - **Always Allow writeback** — Click "Always Allow" in the OpenClaw approval UI and Rampart writes a permanent smart-glob rule to `~/.rampart/policies/user-overrides.yaml`.
 - **Approval store persistence** — Pending approvals survive `rampart serve` restarts via JSONL journal.
 - **`rampart doctor` plugin check** — Shows `✓ OpenClaw plugin: installed` when the native hook is active.
-- **Smart Always Allow globs** — `sudo apt-get install nmap` writes `sudo apt-get install *`, not an exact match. High-risk prefixes (`docker run`, `kubectl apply`, external `curl`) kept exact.

@@ -579,7 +579,7 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 			}
 				fmt.Fprintln(out, "")
 				fmt.Fprintln(out, "Restart the OpenClaw gateway to activate:")
-				fmt.Fprintln(out, "  systemctl --user restart openclaw-gateway")
+				fmt.Fprintln(out, "  systemctl --user restart openclaw-gateway.service")
 			} else {
 				fmt.Fprintln(out, "Next steps:")
 				fmt.Fprintf(out, "  1. Set SHELL=%s in your OpenClaw gateway config\n", shimPath)
@@ -1753,6 +1753,44 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 				}
 			} catch (__mae) { /* fail-open */ } return await runMessageAction({`, url, tokenExpr),
 			},
+			{
+				orig: `const sendResult = await runMessageAction({`,
+				replacement: fmt.Sprintf(`/* RAMPART_DIST_CHECK_MESSAGE */ try {
+				const __maa = typeof params.action === "string" ? params.action : "send";
+				const __mat = typeof params.target === "string" ? params.target : (typeof params.to === "string" ? params.to : (typeof params.channelId === "string" ? params.channelId : ""));
+				const __mac = typeof params.message === "string" ? params.message : (typeof params.text === "string" ? params.text : (typeof params.content === "string" ? params.content : ""));
+				const __mar = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/message", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+					body: JSON.stringify({ agent: "openclaw", session: "main", params: { action: __maa, target: __mat, message: __mac } }),
+					signal: AbortSignal.timeout(3000)
+				});
+				if (__mar.status === 403) {
+					const __mad = await __mar.json().catch(() => ({}));
+					return { content: [{ type: "text", text: "rampart: " + (__mad.message || "policy denied") }] };
+				}
+			} catch (__mae) { /* fail-open */ }
+			const sendResult = await runMessageAction({`, url, tokenExpr),
+			},
+			{
+				orig: "const { runMessageAction } = await loadMessageActionRuntime();\n\t\t\tawait runMessageAction({",
+				replacement: "const { runMessageAction } = await loadMessageActionRuntime();\n\t\t\t" + fmt.Sprintf(`/* RAMPART_DIST_CHECK_MESSAGE */ try {
+				const __maa = typeof params.action === "string" ? params.action : "send";
+				const __mat = typeof params.target === "string" ? params.target : (typeof params.to === "string" ? params.to : (typeof params.channelId === "string" ? params.channelId : ""));
+				const __mac = typeof params.message === "string" ? params.message : (typeof params.text === "string" ? params.text : (typeof params.content === "string" ? params.content : ""));
+				const __mar = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/message", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
+					body: JSON.stringify({ agent: "openclaw", session: "main", params: { action: __maa, target: __mat, message: __mac } }),
+					signal: AbortSignal.timeout(3000)
+				});
+				if (__mar.status === 403) {
+					const __mad = await __mar.json().catch(() => ({}));
+					return { content: [{ type: "text", text: "rampart: " + (__mad.message || "policy denied") }] };
+				}
+			} catch (__mae) { /* fail-open */ }
+			await runMessageAction({`, url, tokenExpr),
+			},
 		}
 
 		modified := text
@@ -1789,113 +1827,25 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 	return patched
 }
 
-// patchExecInDist patches OpenClaw's exec approval flow to check Rampart policy
-// before OpenClaw's own allowlist evaluation. This ensures all exec calls from
-// the OpenClaw agent go through Rampart — not just Claude Code via the shim.
+// patchExecInDist previously short-circuited OpenClaw's native exec approval
+// manager by calling Rampart's /v1/tool/exec directly from processGatewayAllowlist.
 //
-// The patch fires inside processGatewayAllowlist(), before OpenClaw decides
-// whether to create a gateway approval. This means:
-//   - If Rampart says DENY: an error is thrown, the command never runs, and
-//     no exec.approval.requested event is fired (no bridge race).
-//   - If Rampart says ALLOW: the function returns normally, the command runs,
-//     and no exec.approval.requested event is fired (no bridge race).
-//   - If Rampart says ASK: the patch blocks polling for approval. Once resolved,
-//     the function returns normally — again no gateway approval event.
+// That design worked before native Discord approvals became the primary UX, but
+// it breaks modern OpenClaw approval delivery because no exec.approval.requested
+// event is ever created and the Discord runtime sees an empty approval queue.
 //
-// The Rampart bridge only intercepts exec.approval.requested events, which are
-// only fired AFTER processGatewayAllowlist returns with requiresAsk=true. Since
-// our patch intercepts before that point, the bridge and exec patch never race.
+// The correct integration path is now:
+//   OpenClaw exec ask -> exec.approval.requested -> Rampart bridge evaluates ->
+//   Rampart auto-resolves allow/deny or escalates human review -> Discord sees
+//   the native OpenClaw approval request.
 //
-// Note: this patch fires for human-initiated execs via the OpenClaw agent
-// runtime. AI agent tool calls (from my own sessions) go through the gateway's
-// server-side handler and are intercepted by the bridge instead.
-//
-// Closes #239.
+// So we intentionally no-op this dist patch for exec and rely on the bridge.
 func patchExecInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {
-	allJS, _ := filepath.Glob(filepath.Join(distDir, "*.js"))
-	patched := false
-
-	for _, file := range allJS {
-		content, err := os.ReadFile(file)
-		if err != nil {
-			continue
-		}
-		text := string(content)
-
-		// Anchor: entry point of the gateway exec approval flow
-		if !strings.Contains(text, "async function processGatewayAllowlist(params) {") {
-			continue
-		}
-		if strings.Contains(text, "RAMPART_DIST_CHECK_EXEC") {
-			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s exec already patched\n", filepath.Base(file))
-			patched = true
-			continue
-		}
-
-		execOrig := `async function processGatewayAllowlist(params) {`
-		execCheck := fmt.Sprintf(`async function processGatewayAllowlist(params) {
-	/* RAMPART_DIST_CHECK_EXEC */ try {
-		const __exc = typeof params.command === "string" ? params.command : "";
-		const __exr = await fetch((process.env.RAMPART_URL || "%s") + "/v1/tool/exec", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (%s) },
-			body: JSON.stringify({ agent: "openclaw", session: "main", params: { command: __exc } }),
-			signal: AbortSignal.timeout(3000)
-		});
-		if (__exr.status === 403) {
-			const __exd = await __exr.json().catch(() => ({}));
-			throw new Error("rampart: " + (__exd.message || "policy denied"));
-		}
-		if (__exr.status === 202) {
-			const __exa = await __exr.json().catch(() => ({}));
-			const __exid = __exa.approval_id;
-			if (__exid) {
-				// Poll for approval decision
-				const __ext = Date.now() + 300000;
-				while (Date.now() < __ext) {
-					await new Promise(r => setTimeout(r, 3000));
-					const __epp = await fetch((process.env.RAMPART_URL || "%s") + "/v1/approvals/" + __exid, {
-						headers: { "Authorization": "Bearer " + (%s) },
-						signal: AbortSignal.timeout(3000)
-					}).catch(() => null);
-					if (!__epp) continue;
-					const __eps = await __epp.json().catch(() => ({}));
-					if (__eps.status === "approved") break;
-					if (__eps.status === "denied" || __eps.status === "expired") {
-						throw new Error("rampart: " + (__eps.status === "denied" ? "policy denied" : "approval timed out"));
-					}
-				}
-			}
-		}
-	} catch (__exe) {
-		if (__exe.message?.startsWith("rampart:")) throw __exe;
-		/* fail-open for network errors */
-	}`, url, tokenExpr, url, tokenExpr)
-
-		modified := strings.Replace(text, execOrig, execCheck, 1)
-		if modified == text {
-			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: exec injection point not found (skipping)\n", filepath.Base(file))
-			continue
-		}
-
-		backupPath := file + ".rampart-backup"
-		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-			if err := os.WriteFile(backupPath, content, 0o644); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: backup failed: %v\n", filepath.Base(file), err)
-				continue
-			}
-		}
-
-		if err := os.WriteFile(file, []byte(modified), 0o644); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ %s: write failed: %v\n", filepath.Base(file), err)
-			continue
-		}
-
-		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ %s patched (exec)\n", filepath.Base(file))
-		patched = true
-	}
-
-	return patched
+	_ = distDir
+	_ = url
+	_ = tokenExpr
+	fmt.Fprintln(cmd.OutOrStdout(), "  ✓ exec dist patch skipped (use native OpenClaw approval flow via Rampart bridge)")
+	return true
 }
 
 func hasRampartInMatcher(matcher map[string]any) bool {
