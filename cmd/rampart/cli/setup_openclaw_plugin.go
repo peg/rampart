@@ -169,24 +169,105 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 //  4. Install the plugin (calls runSetupOpenClawPlugin).
 //  5. Print migration summary.
 func removeExistingOpenClawRampartInstall(errW io.Writer) error {
-	home, err := os.UserHomeDir()
+	openclawBin, err := findOpenClawBinary()
 	if err != nil {
-		return fmt.Errorf("resolve home for OpenClaw plugin cleanup: %w", err)
+		return fmt.Errorf("find openclaw for plugin cleanup: %w", err)
 	}
 
-	paths := []string{
-		filepath.Join(home, ".openclaw", openclawPluginDir),
-		filepath.Join(home, ".openclaw", "hooks", "rampart"),
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return fmt.Errorf("resolve home for OpenClaw plugin cleanup: %w", homeErr)
 	}
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			if rmErr := os.RemoveAll(path); rmErr != nil {
-				return fmt.Errorf("remove existing OpenClaw Rampart install %s: %w", path, rmErr)
+	cfgPath := filepath.Join(home, ".openclaw", "openclaw.json")
+
+	cleanupRemainingInstallPaths := func() error {
+		paths := []string{
+			filepath.Join(home, ".openclaw", openclawPluginDir),
+			filepath.Join(home, ".openclaw", "hooks", "rampart"),
+		}
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				if rmErr := os.RemoveAll(path); rmErr != nil {
+					return fmt.Errorf("remove existing OpenClaw Rampart install %s: %w", path, rmErr)
+				}
+				fmt.Fprintf(errW, "ℹ Removed existing OpenClaw Rampart install: %s\n", path)
 			}
-			fmt.Fprintf(errW, "ℹ Removed existing OpenClaw Rampart install: %s\n", path)
+		}
+		return nil
+	}
+
+	uninstallCmd := osexec.Command(openclawBin, "plugins", "uninstall", "rampart", "--force")
+	uninstallCmd.Stdout = errW
+	uninstallCmd.Stderr = errW
+	if err := uninstallCmd.Run(); err == nil {
+		fmt.Fprintln(errW, "ℹ Uninstalled existing OpenClaw Rampart plugin via managed OpenClaw uninstall")
+		return cleanupRemainingInstallPaths()
+	}
+
+	if healErr := healOpenClawRampartPluginConfig(cfgPath, home); healErr == nil {
+		retryCmd := osexec.Command(openclawBin, "plugins", "uninstall", "rampart", "--force")
+		retryCmd.Stdout = errW
+		retryCmd.Stderr = errW
+		if retryErr := retryCmd.Run(); retryErr == nil {
+			fmt.Fprintln(errW, "ℹ Healed OpenClaw Rampart install records and uninstalled via managed OpenClaw uninstall")
+			return cleanupRemainingInstallPaths()
 		}
 	}
-	return nil
+
+	return cleanupRemainingInstallPaths()
+}
+
+func healOpenClawRampartPluginConfig(cfgPath, home string) error {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	plugins, _ := cfg["plugins"].(map[string]any)
+	if plugins == nil {
+		plugins = map[string]any{}
+		cfg["plugins"] = plugins
+	}
+	entries, _ := plugins["entries"].(map[string]any)
+	if entries == nil {
+		entries = map[string]any{}
+		plugins["entries"] = entries
+	}
+	if _, ok := entries["rampart"]; !ok {
+		entries["rampart"] = map[string]any{"enabled": true}
+	}
+	installs, _ := plugins["installs"].(map[string]any)
+	if installs == nil {
+		installs = map[string]any{}
+		plugins["installs"] = installs
+	}
+	if _, ok := installs["rampart"]; !ok {
+		installs["rampart"] = map[string]any{
+			"installPath": filepath.Join(home, ".openclaw", openclawPluginDir),
+			"source":      "path",
+			"sourcePath":  filepath.Join(home, ".openclaw", openclawPluginDir),
+		}
+	}
+	allow, _ := plugins["allow"].([]any)
+	found := false
+	for _, v := range allow {
+		if s, ok := v.(string); ok && s == "rampart" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		plugins["allow"] = append(allow, "rampart")
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	return os.WriteFile(cfgPath, out, 0o600)
 }
 
 func runSetupOpenClawMigrate(w io.Writer, errW io.Writer) error {

@@ -278,8 +278,13 @@ export function register(api) {
         const emoji = severityEmoji[severity] ?? "⚠️";
 
         if (toolName === "exec") {
-          api.logger.info(`[rampart] exec requires approval via native OpenClaw exec flow, not plugin approval (subject: ${subjectPreview})`);
-          return;
+          api.logger.info(`[rampart] exec requires approval via native OpenClaw exec flow (subject: ${subjectPreview})`);
+          return {
+            params: {
+              ...params,
+              ask: "always",
+            },
+          };
         }
 
         api.logger.info(`[rampart] returning requireApproval for ${toolName} (subject: ${subjectPreview})`);
