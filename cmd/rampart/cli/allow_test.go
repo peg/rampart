@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/policy"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -293,7 +294,7 @@ func TestAllowCmd_Basic(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, ".rampart", "policies"), 0o755)
 
 	// The global policy path is derived from HOME.
-	policyPath := filepath.Join(dir, ".rampart", "policies", "custom.yaml")
+	policyPath := filepath.Join(dir, ".rampart", "policies", "user-overrides.yaml")
 
 	outBuf := &bytes.Buffer{}
 	cmd := NewRootCmd(context.Background(), outBuf, &bytes.Buffer{})
@@ -307,13 +308,42 @@ func TestAllowCmd_Basic(t *testing.T) {
 
 	_ = cmd.Execute()
 
-	// Verify the policy file was created with at least one rule.
+	// Verify the override file was created with at least one rule.
+	overrides, err := policy.LoadUserOverridesPolicy(policyPath)
+	if err != nil {
+		t.Fatalf("load overrides: %v", err)
+	}
+	if len(overrides.Policies) == 0 {
+		t.Fatal("expected at least one override rule to be written")
+	}
+}
+
+func TestAllowCmd_ProjectStillUsesProjectPolicy(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+	require.NoError(t, os.Chdir(dir))
+
+	policyPath := filepath.Join(dir, ".rampart", "policy.yaml")
+
+	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"allow",
+		"npm install *",
+		"--project",
+		"--yes",
+		"--api", "http://127.0.0.1:0",
+	})
+
+	_ = cmd.Execute()
+
 	p, err := policy.LoadCustomPolicy(policyPath)
 	if err != nil {
-		t.Fatalf("load policy: %v", err)
+		t.Fatalf("load project policy: %v", err)
 	}
 	if p.TotalRules() == 0 {
-		t.Fatal("expected at least one rule to be written")
+		t.Fatal("expected project allow rule in project policy")
 	}
 }
 
