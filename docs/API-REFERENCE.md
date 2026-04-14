@@ -112,9 +112,7 @@ Evaluates a tool call against active policy. In `enforce` mode, deny decisions a
     "approval_id": { "type": "string" },
     "approval_status": { "type": "string" },
     "expires_at": { "type": "string", "format": "date-time" },
-    "response": { "type": "string" },
-    "openclaw_hosted": { "type": "boolean" },
-    "skip_pending_approval": { "type": "boolean" }
+    "response": { "type": "string" }
   }
 }
 ```
@@ -159,20 +157,10 @@ Approval required (Rampart-native approval flow):
 }
 ```
 
-Approval required (OpenClaw-hosted evaluation-only flow):
-
-```json
-{
-  "decision": "ask",
-  "message": "needs approval",
-  "eval_duration_us": 15,
-  "policy": "require-human"
-}
-```
 
 ### Status Codes
-- `200 OK` evaluated (allow/watch, monitor-mode deny, response-side deny with redaction, or OpenClaw-hosted approval evaluation without queue creation)
-- `202 Accepted` approval required; request queued in Rampart-native approval flow
+- `200 OK` evaluated (allow/watch, monitor-mode deny, response-side deny with redaction)
+- `202 Accepted` approval required; request queued in Rampart approval flow
 - `400 Bad Request` invalid JSON body
 - `401 Unauthorized` missing/invalid bearer token
 - `403 Forbidden` denied in enforce mode
@@ -180,8 +168,6 @@ Approval required (OpenClaw-hosted evaluation-only flow):
 
 ### curl
 ```bash
-OpenClaw-hosted callers may also set `openclaw_hosted=true` and `skip_pending_approval=true` in the request body to request evaluation without creating a Rampart approval queue. That mode is intended for native OpenClaw approval UX, where OpenClaw owns the only operator-facing pending approval object.
-
 curl -X POST "http://127.0.0.1:9090/v1/tool/exec" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
