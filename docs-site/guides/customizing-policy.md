@@ -7,7 +7,12 @@ description: "Add allow and deny rules without editing YAML using rampart allow,
 
 Rampart ships with `standard.yaml` — a policy that blocks dangerous commands and watches suspicious ones. When you need to adjust what's allowed or blocked, you don't have to edit YAML by hand.
 
-`rampart allow` and `rampart block` add rules from the command line. They write to a separate `custom.yaml` file (or a project-local equivalent), hot-reload the daemon, and stay out of the way of future policy upgrades.
+`rampart allow` and `rampart block` add rules from the command line. They write to separate override files, hot-reload the daemon, and stay out of the way of future policy upgrades.
+
+There are two important buckets to keep in mind:
+
+- **Policy rules** in `standard.yaml`, product profiles like `openclaw.yaml`, and project policy files describe the default security model
+- **Durable human overrides** created by commands like `rampart allow --global ...` are personal carve-outs and are stored separately from the built-in policy profiles
 
 ## Allow a blocked command
 
@@ -20,7 +25,7 @@ rampart allow "npm install *"
 Output:
 
 ```
-  Adding rule to global policy (~/.rampart/policies/custom.yaml):
+  Adding rule to global policy (~/.rampart/policies/user-overrides.yaml):
 
     Action:  allow
     Pattern: npm install *
@@ -28,7 +33,7 @@ Output:
 
   Add this rule? [y/N] y
 
-  ✓ Rule added to custom.yaml
+  ✓ Rule added to user-overrides.yaml
 
     Action:  allow
     Pattern: npm install *
@@ -119,7 +124,7 @@ Rules live in one of two files:
 | Scope | Path | When |
 |-------|------|------|
 | **Project** | `.rampart/policy.yaml` | Inside a git repo (automatic) |
-| **Global** | `~/.rampart/policies/custom.yaml` | Outside a git repo (automatic) |
+| **Global** | `~/.rampart/policies/user-overrides.yaml` | Outside a git repo (automatic) |
 
 Rampart auto-detects your scope by looking for a `.git` directory. Force it explicitly:
 
@@ -151,7 +156,7 @@ rampart allow "gh pr create *" --global
 rampart allow "brew install *" --global
 ```
 
-## List your custom rules
+## List your override rules
 
 ```bash
 rampart rules
@@ -161,7 +166,7 @@ rampart rules
   Custom Rules
   ──────────────────────────────────────────────────────────────
 
-  Global  (~/.rampart/policies/custom.yaml)
+  Global  (~/.rampart/policies/user-overrides.yaml)
 
   #     ACTION   TOOL      PATTERN                              ADDED
      1  allow    exec      npm install *                        2 hours ago
@@ -174,7 +179,7 @@ rampart rules
      4  allow    exec      make build                           1 week ago
 
   ──────────────────────────────────────────────────────────────
-  Total: 30 rules (26 standard + 4 custom)
+  Total: 30 rules (26 standard + 4 overrides)
   Manage: rampart rules remove <#>
 ```
 
@@ -216,7 +221,7 @@ Use `--force` to skip the confirmation prompt:
 rampart rules remove 3 --force
 ```
 
-## Reset all custom rules
+## Reset all override rules
 
 ```bash
 rampart rules reset
@@ -239,13 +244,13 @@ rampart block "npm publish *" --message "Publishing to npm requires manual revie
 
 Messages appear in `rampart watch` and the audit log.
 
-## Manually editing custom.yaml
+## Manually editing override files
 
 Both scope files are plain Rampart policy YAML. Open them in an editor to batch-add rules or fine-tune conditions:
 
 ```yaml
-# ~/.rampart/policies/custom.yaml
-# Rampart custom policy — managed by `rampart allow` / `rampart block`.
+# ~/.rampart/policies/user-overrides.yaml
+# Rampart user overrides — managed by `rampart allow` / `rampart block`.
 # You can edit this file manually. Changes take effect on reload.
 
 version: "1"
@@ -342,7 +347,7 @@ This keeps the security boundary intact. Agents can request permission by surfac
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--global` | — | Write to global policy (`~/.rampart/policies/custom.yaml`) |
+| `--global` | — | Write to global overrides (`~/.rampart/policies/user-overrides.yaml`) |
 | `--project` | — | Write to project policy (`.rampart/policy.yaml`) |
 | `--tool` | auto | Tool type: `exec`, `read`, `write`, `edit` |
 | `--message` | auto | Reason displayed when the rule fires |

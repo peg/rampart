@@ -32,6 +32,15 @@ func DefaultAutoAllowedPath() string {
 	return filepath.Join(home, ".rampart", "policies", "auto-allowed.yaml")
 }
 
+// DefaultUserOverridesPath returns the default path for durable user override rules.
+func DefaultUserOverridesPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
+}
+
 // dangerousCommandPrefixes lists command prefixes that should NEVER be
 // generalized. These commands are kept exact to prevent accidental
 // auto-allow of destructive operations.

@@ -32,7 +32,7 @@ The token is printed on startup (`rampart serve`) and stored in `~/.rampart/toke
 
 ### POST /v1/tool/{toolName}
 
-Evaluate a tool call against loaded policies. The agent calls this before executing a tool. Rampart returns a decision: `allow`, `deny`, `require_approval`, `watch`, or `webhook`.
+Evaluate a tool call against loaded policies. The agent calls this before executing a tool. Rampart returns a decision: `allow`, `deny`, `ask`, `watch`, or `webhook`.
 
 **Auth:** Bearer
 
@@ -71,11 +71,11 @@ Evaluate a tool call against loaded policies. The agent calls this before execut
 }
 ```
 
-**Response — 202 Require Approval:**
+**Response — 202 Ask:**
 
 ```json
 {
-  "decision": "require_approval",
+  "decision": "ask",
   "message": "destructive command requires approval",
   "eval_duration_us": 290,
   "approval_id": "apr_01j8k...",

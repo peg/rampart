@@ -394,6 +394,38 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 			wantAction: "ask",
 		},
 		{
+			name:       "read: ~/.claude/history.jsonl → ask",
+			tool:       "read",
+			params:     map[string]any{"path": "/home/user/.claude/history.jsonl"},
+			wantStatus: http.StatusAccepted,
+			wantAction: "ask",
+			note:       "Claude conversation history may contain sensitive prompts, secrets, and workflow context",
+		},
+		{
+			name:       "write: ~/.claude/settings.json → ask",
+			tool:       "write",
+			params:     map[string]any{"path": "/home/user/.claude/settings.json"},
+			wantStatus: http.StatusAccepted,
+			wantAction: "ask",
+			note:       "Claude settings can weaken hooks and security posture",
+		},
+		{
+			name:       "read: ~/.codex/auth.json → denied",
+			tool:       "read",
+			params:     map[string]any{"path": "/home/user/.codex/auth.json"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+			note:       "Codex auth state is a credential file and should be blocked by default",
+		},
+		{
+			name:       "read: ~/.openclaw/credentials/token.json → denied",
+			tool:       "read",
+			params:     map[string]any{"path": "/home/user/.openclaw/credentials/token.json"},
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+			note:       "OpenClaw credentials should be blocked by default",
+		},
+		{
 			// read of ~/.aws/credentials should be blocked.
 			name:       "read: ~/.aws/credentials → denied",
 			tool:       "read",

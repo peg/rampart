@@ -32,9 +32,9 @@ When Cline wants to execute a tool:
 2. Rampart evaluates the call against your YAML policies (<10μs)
 3. If **allowed**: Rampart returns `{"cancel":false}`, Cline proceeds
 4. If **denied**: Rampart returns `{"cancel":true,"errorMessage":"Blocked by Rampart: reason"}`, Cline never executes the command
-5. If **require_approval**: Rampart returns `{"cancel":true}` immediately (no waiting), blocking execution
+5. If **ask**: Rampart returns `{"cancel":true}` immediately (no waiting), blocking execution
 
-**require_approval behavior:** Unlike other integrations that wait for human approval, Cline gets an immediate `cancel:true` response for `require_approval` policies. This prevents Cline from hanging while waiting for approval.
+**Ask behavior:** Unlike integrations with native approval UI, Cline gets an immediate `cancel:true` response for `ask` policies. This prevents Cline from hanging while waiting for approval.
 
 This happens transparently — you use Cline exactly as before.
 

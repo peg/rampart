@@ -30,10 +30,10 @@ Codex CLI
             └─ HTTP POST to rampart /v1/preflight/exec
                  ├─ allow → real execve() runs
                  ├─ deny  → returns EPERM
-                 └─ require_approval → blocks until resolved, then allow/deny
+                 └─ ask   → blocks until resolved, then allow/deny
 ```
 
-**require_approval behavior**: The preload library blocks the exec call and polls the approval API until resolved by a human via `rampart approve <id>`. The process appears "hung" until approved or denied.
+**Ask behavior**: The preload library blocks the exec call and polls the approval API until resolved by a human via `rampart approve <id>`. The process appears "hung" until approved or denied.
 
 The preload library intercepts:
 

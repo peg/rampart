@@ -89,7 +89,7 @@ rampart test "rm -rf /"
 # → deny (block-destructive)
 
 rampart test "git push origin main"
-# → allow (or require_approval if you've configured it)
+# → allow (or ask if you've configured it)
 ```
 
 You can also write test suites to verify your policies in CI. See the [Testing Policies](../guides/testing-policies.md) guide.
@@ -106,7 +106,7 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 
 ## Approve Risky Commands
 
-When a command hits a `require_approval` rule, Rampart pauses the agent and waits. Approve or deny it from the dashboard:
+When a command hits an `ask` rule, Rampart pauses the agent and waits. Approve or deny it from the dashboard:
 
 ```bash
 open http://localhost:9090/dashboard/
@@ -131,7 +131,7 @@ rampart init --profile standard
 ```
 
 !!! tip "See all profiles"
-    Run `rampart policy list` to see every available built-in profile and any custom ones you've added.
+    Run `rampart policy list` to see every available built-in profile and any policy files you've added.
 
 ## Customize Your Rules
 
@@ -143,7 +143,7 @@ When Rampart blocks something it shouldn't, unblock it in one command — no YAM
 rampart allow "npm install *"
 ```
 
-Adds an allow rule for `npm install <anything>` to your custom policy and hot-reloads the daemon immediately.
+Adds an allow rule for `npm install <anything>` to your overrides and hot-reloads the daemon immediately.
 
 For file-based overrides, use `--tool`:
 
@@ -159,17 +159,17 @@ rampart block "curl * | bash"
 rampart block "npm publish *"
 ```
 
-### See your custom rules
+### See your override rules
 
 ```bash
 rampart rules
 ```
 
 ```
-  Custom Rules
+  Override Rules
   ──────────────────────────────────────────────────────────────
 
-  Global  (~/.rampart/policies/custom.yaml)
+  Global  (~/.rampart/policies/user-overrides.yaml)
 
   #     ACTION   TOOL      PATTERN                ADDED
      1  allow    exec      npm install *          just now
@@ -182,7 +182,7 @@ rampart rules
 rampart rules remove 2    # removes curl * | bash
 ```
 
-### Reset all custom rules
+### Reset all override rules
 
 ```bash
 rampart rules reset

@@ -48,7 +48,15 @@ rampart doctor
 
 ## Understanding the Standard Policy
 
-Rampart's standard policy lives at `~/.rampart/policies/standard.yaml`. It includes high-signal deny rules for destructive commands and credential access, with monitoring rules for suspicious content patterns.
+Rampart's standard policy lives at `~/.rampart/policies/standard.yaml`.
+
+The default model is:
+
+- **Deny** credential stores and high-confidence secret paths
+- **Ask** for sensitive agent-state artifacts such as session history, shell snapshots, durable memory, and security-relevant config
+- **Keep product-specific mechanics separate** in product profiles like `openclaw.yaml`
+
+That split matters. A credential file should not be silently exposed. But some agent artifacts, like Claude Code history or settings, are sensitive in a different way: a human may still intentionally inspect or modify them. Those are better handled with `ask` instead of a blanket deny.
 
 Policies are evaluated quickly and consistently on every tool call. You can inspect why a command was allowed or denied with:
 
