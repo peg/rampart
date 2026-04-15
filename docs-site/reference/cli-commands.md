@@ -408,13 +408,13 @@ rampart audit replay --speed 0        # Replay instantly (no delays)
 
 ### `rampart allow`
 
-Add an allow rule to your custom policy without editing YAML.
+Add an allow rule to your override policy without editing YAML.
 
 ```bash
 rampart allow "npm install *"                  # Auto-detect tool type
 rampart allow "go test ./..."                  # Commands with ./ detected as exec
 rampart allow "/tmp/**" --tool read            # Explicit tool type
-rampart allow "docker build *" --global        # Write to global policy
+rampart allow "docker build *" --global        # Write to global overrides
 rampart allow "pytest *" --project             # Write to project policy
 rampart allow "git push *" --yes               # Skip confirmation
 rampart allow "docker *" --for 1h              # Expires after 1 hour
@@ -425,7 +425,7 @@ rampart allow "npm publish" --once             # Single-use — consumed after f
 
 ### `rampart block`
 
-Add a deny rule to your custom policy.
+Add a deny rule to your override policy.
 
 ```bash
 rampart block "rm -rf /*"                      # Block dangerous command
@@ -435,15 +435,15 @@ rampart block "**/.env" --tool read            # Block reading .env files
 
 ### `rampart rules`
 
-List, remove, and reset custom rules added via `allow`/`block`.
+List, remove, and reset override rules added via `allow`/`block`.
 
 ```bash
-rampart rules                                  # List all custom rules
+rampart rules                                  # List all override rules
 rampart rules --global                         # List only global rules
 rampart rules --project                        # List only project rules
 rampart rules --json                           # JSON output for scripting
 rampart rules remove 1                         # Remove rule by index
-rampart rules reset                            # Remove all custom rules
+rampart rules reset                            # Remove all override rules
 rampart rules reset --global                   # Reset only global rules
 ```
 
@@ -504,7 +504,7 @@ Lint a policy YAML file for errors, warnings, and suggestions. Checks for invali
 
 ```bash
 rampart policy lint policy.yaml
-rampart policy lint ~/.rampart/policies/custom.yaml
+rampart policy lint ~/.rampart/policies/user-overrides.yaml
 ```
 
 Exit code `1` if errors are found; `0` if only warnings or info.

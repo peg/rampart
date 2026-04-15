@@ -107,7 +107,7 @@ No. Rampart runs entirely on your machine. Policy evaluation, audit logging, and
 Policy checks are pure in-memory pattern matching — no network calls, no disk I/O, no measurable impact on your agent's workflow.
 
 **What if I need to allow a command that's blocked?**  
-Run `rampart allow "your command pattern"` and it's done — no YAML editing required. The rule takes effect immediately. For one-time exceptions, use `require_approval` in your policy so you can approve each instance. [Full guide →](guides/customizing-policy.md)
+Run `rampart allow "your command pattern"` and it's done — no YAML editing required. The rule takes effect immediately. For one-time exceptions, use `action: ask` in your policy so you can approve each instance. [Full guide →](guides/customizing-policy.md)
 
 ## How It Works
 

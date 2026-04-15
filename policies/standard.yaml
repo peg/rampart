@@ -484,6 +484,7 @@ policies:
             - "**/.npmrc"
             - "**/.pypirc"
             - "**/.terraform.d/credentials.tfrc.json"
+            - "**/.codex/auth.json"
             # GPG / keyring
             - "**/.gnupg/**"
             # Generic secrets dirs
@@ -1102,6 +1103,34 @@ policies:
             - "cp **/.config/chromium/**"
             - "cp **/.mozilla/firefox/**"
         message: "Browser profile access blocked (contains saved passwords and session tokens)"
+
+  - name: require-agent-state-artifact-approval
+    description: "Require approval for sensitive agent session, history, runtime, and security config artifacts"
+    match:
+      tool: ["read", "write", "edit"]
+    rules:
+      - action: ask
+        when:
+          path_matches:
+            # Claude Code sensitive state
+            - "**/.claude/history.jsonl"
+            - "**/.claude/sessions/**"
+            - "**/.claude/session-env/**"
+            - "**/.claude/shell-snapshots/**"
+            - "**/.claude/settings.json"
+            - "**/.claude/settings.local.json"
+            # Codex sensitive non-credential state
+            - "**/.codex/config.toml"
+            - "**/.codex/history.jsonl"
+            - "**/.codex/sessions/**"
+            - "**/.codex/shell_snapshots/**"
+            - "**/.codex/memories/**"
+            - "**/.codex/state_*.sqlite*"
+            - "**/.codex/logs_*.sqlite*"
+            # OpenClaw sensitive non-credential state
+            - "**/.openclaw/openclaw.json"
+            - "**/.openclaw/memory/**"
+        message: "Sensitive agent-state artifact access requires approval"
 
   - name: block-exfil-domains
     match:
