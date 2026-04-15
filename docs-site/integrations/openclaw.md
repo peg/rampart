@@ -5,7 +5,9 @@ description: "Native Rampart integration for OpenClaw — policy enforcement via
 
 # OpenClaw
 
-Rampart integrates natively with OpenClaw via the `before_tool_call` plugin API. Every tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
+Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. This is the primary supported path. OpenClaw owns the visible approval UX, while Rampart owns policy evaluation, audit logging, and durable allow-always writeback.
+
+Every tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
 
 !!! info "Version requirements"
     - **OpenClaw >= 2026.4.11**: Recommended and supported for native Discord exec approvals plus full native plugin coverage
@@ -129,14 +131,14 @@ Expected output when fully configured:
 ✓ rampart serve: running (pid 12345)
 ✓ OpenClaw plugin: installed (before_tool_call hook active)
 ✓ Policy: openclaw.yaml loaded (N rules, default: ask)
-✓ Approval store: persistent (N pending)
+✓ Approval path: native OpenClaw UI active
 ```
 
 Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v0.9.14  active
+# rampart  v0.9.16  active
 ```
 
 ## Troubleshooting

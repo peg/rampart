@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.16] - 2026-04-15
+
 ### Fixed
 
-- OpenClaw plugin now routes Rampart `ask` decisions for `exec` through native OpenClaw approval cards by reissuing only matched commands with `ask: "always"`, while keeping global `tools.exec.ask` off.
+- **Durable global exec overrides now work correctly** — `rampart allow --global --tool exec ...` writes to `~/.rampart/policies/user-overrides.yaml`, and the proxy now honors those durable user carve-outs before broad deny resolution.
+- **Sensitive agent-state defaults polished** — `standard.yaml` now denies real credential stores by default and uses `ask` for sensitive agent session/history/runtime/config artifacts across Claude Code, Codex, and OpenClaw.
+- **OpenClaw plugin approval path kept native** — Rampart `ask` decisions for `exec` continue through native OpenClaw approval cards by reissuing only matched commands with `ask: "always"`, while keeping global `tools.exec.ask` off.
+- **Docs aligned with current behavior** — user-facing docs now reflect `action: ask`, durable `user-overrides.yaml` behavior, and the current standard-vs-product-profile split.
 
 ## [0.9.15] - 2026-04-06
 
@@ -1008,7 +1013,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rampart watch` TUI
 - Standard policy (`policies/standard.yaml`)
 
-[Unreleased]: https://github.com/peg/rampart/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/peg/rampart/compare/v0.9.16...HEAD
 [0.9.5]: https://github.com/peg/rampart/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/peg/rampart/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/peg/rampart/compare/v0.9.2...v0.9.3

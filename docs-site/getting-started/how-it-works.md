@@ -65,7 +65,7 @@ Agent (Claude Code, Codex, etc.)
 Rampart daemon (localhost:9090)
   │
   ├─ Load policies from ~/.rampart/policies/
-  ├─ Evaluate: allow / deny / require_approval
+  ├─ Evaluate: allow / deny / ask
   ├─ Write audit event to ~/.rampart/audit/
   │
   ▼
