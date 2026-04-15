@@ -88,23 +88,19 @@ policies:
 
 This lets you write one policy that works both locally (with prompts) and in CI (with denies). See [CI/Headless Agents](ci-headless.md) for more details.
 
-### `require_approval` Alias
+### `require_approval` Migration Note
 
-`action: require_approval` is a deprecated alias for `action: ask` with `audit: true`:
+Older Rampart docs and policies may still reference `action: require_approval`, but current Rampart releases require `action: ask` explicitly.
+
+Use this form instead:
 
 ```yaml
-# These are equivalent:
-- action: require_approval
-  message: "Needs approval"
-
 - action: ask
-  ask:
-    audit: true
   message: "Needs approval"
 ```
 
-!!! warning "Deprecated in v0.9.9"
-    `action: require_approval` is now a hard error in v0.9.9+. Update your policies to use `action: ask` explicitly.
+!!! warning "Removed in current releases"
+    `action: require_approval` is no longer accepted by the policy engine. Update old examples and local policies to use `action: ask`.
 
 > ⚠️ Common mistake: putting `action: ask` directly inside the policy (as a sibling of `name` or `rules`). `rampart policy lint` will catch this and explain the correct structure.
 

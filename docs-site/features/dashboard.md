@@ -5,7 +5,7 @@ description: "Use Rampart's approval dashboard to review and decide risky AI age
 
 # Approval Dashboard
 
-Rampart includes an embedded web dashboard for managing `require_approval` decisions. View pending approvals, approve or deny them, and review decision history — all from your browser.
+Rampart includes an embedded web dashboard for managing approval-gated decisions. View pending approvals, approve or deny them, and review decision history — all from your browser.
 
 ## Accessing the Dashboard
 
@@ -42,7 +42,7 @@ Both token types can authenticate to the dashboard and the `/v1/approvals` API. 
 
 ## Features
 
-- **Pending approvals**: See all `require_approval` decisions waiting for human input
+- **Pending approvals**: See all approval-gated decisions waiting for human input
 - **Approve / Deny**: Click to resolve approvals directly from the browser
 - **History**: View past decisions with timestamps, agents, commands, and who resolved them
 - **Auto-refresh**: Dashboard polls for new approvals automatically
@@ -55,7 +55,7 @@ Both token types can authenticate to the dashboard and the `/v1/approvals` API. 
 | `GET /v1/approvals` | Yes (Bearer token) | Lists pending and resolved approvals |
 | `POST /v1/approvals/{id}/resolve` | Yes (Bearer OR signed URL) | Resolves a pending approval |
 
-**Signed URLs**: When webhooks fire for `require_approval`, the notification includes a self-authenticating signed URL. Recipients can approve/deny by clicking the link without needing the Bearer token.
+**Signed URLs**: When webhooks fire for approval-gated decisions, the notification includes a self-authenticating signed URL. Recipients can approve/deny by clicking the link without needing the Bearer token.
 
 ## Network Access
 
@@ -92,7 +92,7 @@ curl -X POST http://localhost:9090/v1/approvals/APPROVAL_ID/resolve \
 
 ## Integration with Hooks
 
-When Claude Code triggers a `require_approval` policy, the flow is:
+When Claude Code triggers an `ask` policy, the flow is:
 
 1. Hook returns `permissionDecision: "ask"` — Claude Code shows native approval prompt
 2. Approval is also created in the server's approval store
