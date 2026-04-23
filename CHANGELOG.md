@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **OpenClaw native approval path now has a proven end-to-end acceptance bar** — validated live with native Discord approval UI across the three critical states: learned allow (`sudo true`), fresh ask (`sudo id`), and hard deny (`rm -rf /tmp`).
+- **`Allow Always` writeback path verified on true plugin-originated approvals** — Rampart's native OpenClaw plugin now proves `onResolution("allow-always")` triggers `/v1/rules/learn` and persists durable rules to `~/.rampart/policies/user-overrides.yaml`.
+- **Sensitive-tool degraded mode hardened** — when Rampart serve is unavailable, sensitive OpenClaw tools now fail explicitly instead of silently failing open. Lower-risk tools can remain configured fail-open.
+- **OpenClaw docs/checklists corrected** — verification guidance now points at `user-overrides.yaml`, includes `rampart-serve.service` health checks, and documents the recommended learned-allow / ask / deny validation set.
+
 ## [0.9.16] - 2026-04-15
 
 ### Fixed
