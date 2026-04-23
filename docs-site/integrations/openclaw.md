@@ -5,7 +5,11 @@ description: "Native Rampart integration for OpenClaw — policy enforcement via
 
 # OpenClaw
 
-Rampart integrates natively with OpenClaw via the `before_tool_call` plugin API. Every tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
+Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. This is the primary supported path. OpenClaw owns the visible approval UX, while Rampart owns policy evaluation, audit logging, and durable allow-always writeback.
+
+Every tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
+
+For sensitive tools, the recommended operating assumption is simple: if Rampart policy service is unavailable, treat that as a broken state and fix it before trusting approval-path tests.
 
 !!! info "Version requirements"
     - **OpenClaw >= 2026.4.11**: Recommended and supported for native Discord exec approvals plus full native plugin coverage
@@ -29,6 +33,15 @@ That's it. Rampart:
 4. Configures OpenClaw to route decisions through Rampart (`tools.exec.ask: off`)
 5. Copies the `openclaw.yaml` policy profile to `~/.rampart/policies/openclaw.yaml`
 6. Starts `rampart serve` as a boot service (if not already running)
+
+After setup, verify both services are healthy:
+
+```bash
+systemctl --user is-active openclaw-gateway.service
+systemctl --user is-active rampart-serve.service
+```
+
+Both should return `active`.
 
 No external downloads, no npm install — the plugin is bundled inside the `rampart` binary.
 
@@ -104,7 +117,9 @@ rampart init --profile openclaw
 
 ## Always Allow writeback
 
-When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a permanent smart-glob rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
+When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a durable rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
+
+For example, approving `sudo true` writes an exact rule, while broader commands may be generalized into a smart glob when appropriate.
 
 For example, approving `sudo apt-get install nmap` always writes:
 ```yaml
@@ -129,14 +144,19 @@ Expected output when fully configured:
 ✓ rampart serve: running (pid 12345)
 ✓ OpenClaw plugin: installed (before_tool_call hook active)
 ✓ Policy: openclaw.yaml loaded (N rules, default: ask)
-✓ Approval store: persistent (N pending)
+✓ Approval path: native OpenClaw UI active
 ```
+
+For end-to-end confidence, validate one case in each state:
+- learned allow, for example `sudo true`
+- fresh ask, for example `sudo id`
+- hard deny, for example `rm -rf /tmp`
 
 Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v0.9.14  active
+# rampart  v0.9.16  active
 ```
 
 ## Troubleshooting

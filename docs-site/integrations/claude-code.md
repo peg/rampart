@@ -18,18 +18,17 @@ Claude Code in `--dangerously-skip-permissions` mode gives the agent unrestricte
 
 Rampart sits between Claude Code and your system. Every command is evaluated against your policy before it runs. Dangerous commands are blocked in microseconds. Everything is logged.
 
-## What Gets Blocked by Default
+## What Gets Protected by Default
 
-The standard policy (`~/.rampart/policies/standard.yaml`) blocks:
+The standard policy (`~/.rampart/policies/standard.yaml`) uses three different defaults depending on the risk:
 
-| Command | Why |
-|---------|-----|
-| `rm -rf /`, `rm -rf ~` | Destructive filesystem wipe |
-| `curl ... \| bash` | Remote code execution |
-| `cat ~/.ssh/id_rsa` | SSH private key exfiltration |
-| `cat .env`, `cat .env.local`, `cat .env.production` | API key / secret exposure |
-| `dd if=/dev/urandom of=/dev/sda` | Disk destruction |
-| Credential patterns in responses | Data exfiltration detection |
+| Category | Example | Default |
+|---------|---------|---------|
+| Destructive commands | `rm -rf /`, `dd if=/dev/urandom of=/dev/sda` | `deny` |
+| Credential stores / secret files | `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials`, `cat ~/.codex/auth.json` | `deny` |
+| Sensitive agent-state artifacts | `cat ~/.claude/history.jsonl`, reading Claude sessions, editing `~/.claude/settings.json` | `ask` |
+
+This split is deliberate. Secret stores are too dangerous to expose silently. But agent history, shell snapshots, durable memory, and security-relevant settings are often legitimate to inspect, so Rampart requires human approval instead of hard-blocking them.
 
 ## Setup
 
@@ -65,7 +64,7 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Rampart: Manual approval required"}}
 ```
 
-**require_approval behavior:** When a policy action is `require_approval`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt — the user approves or denies directly in the Claude Code UI. No external approval store needed.
+**Ask behavior:** When a policy action is `ask`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt, so the user approves or denies directly in the Claude Code UI.
 
 Denied commands never execute. Claude Code receives the denial reason and can explain it to the user.
 

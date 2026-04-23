@@ -719,6 +719,61 @@ policies:
 	assert.Len(t, srv.approvals.List(), 1, "agent token must still enqueue Rampart approvals")
 }
 
+func TestUserOverridesBypassApprovalQueue(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	overridesDir := filepath.Join(tmpHome, ".rampart", "policies")
+	require.NoError(t, os.MkdirAll(overridesDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(overridesDir, "user-overrides.yaml"), []byte(`# Rampart user override policies
+policies:
+  - name: user-allow-local-api
+    match:
+      tool:
+        - exec
+    rules:
+      - when:
+          command_matches: ['curl -fsS http://100.94.29.8:8989/api/v3/system/status']
+        action: allow
+        message: User allowed (always)
+`), 0o644))
+
+	configYAML := `version: "1"
+default_action: deny
+policies:
+  - name: require-human
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "curl *"
+        message: "needs approval"
+`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"main","session":"discord/direct/test","params":{"command":"curl -fsS http://100.94.29.8:8989/api/v3/system/status"}}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "allow", got["decision"])
+	assert.Equal(t, "user-overrides", got["policy"])
+	assert.Len(t, srv.approvals.List(), 0, "durable user overrides should bypass approval queue")
+}
+
 func TestResolveApproval_AuditTrail(t *testing.T) {
 	tests := []struct {
 		name           string

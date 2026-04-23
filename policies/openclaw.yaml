@@ -189,6 +189,14 @@ policies:
             - "git rebase*"
             - "git reset*"
             - "git revert*"
+            # Safe GitHub CLI workflow
+            - "gh pr create*"
+            - "gh pr view*"
+            - "gh pr checks*"
+            - "gh pr comment*"
+            - "gh pr status*"
+            - "gh issue view*"
+            - "gh issue comment*"
             # Node/npm/yarn
             - "node *"
             - "npm *"

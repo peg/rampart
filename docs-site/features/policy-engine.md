@@ -372,7 +372,7 @@ Rules are written to one of two files:
 | Scope | Path | When used |
 |-------|------|-----------|
 | Project | `.rampart/policy.yaml` | Current directory is inside a git repo (default) |
-| Global | `~/.rampart/policies/custom.yaml` | Outside a git repo (default) |
+| Global | `~/.rampart/policies/user-overrides.yaml` | Outside a git repo (default) |
 
 Force a scope:
 
@@ -386,22 +386,22 @@ Project rules travel with the repo (commit `.rampart/policy.yaml`). Global rules
 ### Listing and managing rules
 
 ```bash
-rampart rules                  # list all custom rules
+rampart rules                  # list all override rules
 rampart rules --global         # global rules only
 rampart rules --project        # project rules only
 rampart rules --json           # JSON output for scripting
 rampart rules remove 3         # remove rule #3 (shown by 'rampart rules')
-rampart rules reset            # remove all custom rules (prompts for confirmation)
+rampart rules reset            # remove all override rules (prompts for confirmation)
 rampart rules reset --force    # skip confirmation
 ```
 
-### The custom.yaml file
+### The override files
 
 Both scope files are standard Rampart policy YAML. You can edit them by hand:
 
 ```yaml
-# ~/.rampart/policies/custom.yaml
-# Rampart custom policy — managed by `rampart allow` / `rampart block`.
+# ~/.rampart/policies/user-overrides.yaml
+# Rampart user overrides — managed by `rampart allow` / `rampart block`.
 # You can edit this file manually. Changes take effect on reload.
 
 version: "1"
@@ -428,7 +428,7 @@ policies:
 ```
 
 !!! tip "Priority"
-    Custom rules are standard policy documents and participate in the normal evaluation order: **deny always wins**. A deny rule in `custom.yaml` overrides any allow rule in `standard.yaml`, and vice versa.
+    Project policy files are standard policy documents and participate in the normal evaluation order: **deny always wins**. Durable human overrides in `user-overrides.yaml` are treated separately so explicit user carve-outs can persist without being swallowed by unrelated broad denies.
 
 ### Denial suggestions
 

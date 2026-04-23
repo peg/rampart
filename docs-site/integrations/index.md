@@ -19,9 +19,9 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | **Shim + Service** | Shell shim + file tool patching + LD_PRELOAD for sub-agents | OpenClaw |
 | **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (alternative) |
 
-## require_approval Behavior
+## Ask Behavior
 
-When a policy action is `require_approval`, behavior varies by integration:
+When a policy action is `ask`, behavior varies by integration:
 
 | Integration | Behavior |
 |-------------|----------|
@@ -31,7 +31,7 @@ When a policy action is `require_approval`, behavior varies by integration:
 | **OpenClaw** | Shim blocks, daemon sends webhook notifications |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
 | **LD_PRELOAD** | Library blocks exec call, process appears "hung" |
-| **HTTP API** | Returns `"decision":"require_approval"` with `approval_id` |
+| **HTTP API** | Returns `"decision":"ask"` with approval metadata when interactive review is required |
 
 ## Agent Compatibility
 

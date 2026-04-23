@@ -176,56 +176,80 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		}
 	}
 
-	// Load (or create) the custom policy file.
-	p, err := policy.LoadCustomPolicy(policyPath)
-	if err != nil {
-		return fmt.Errorf("load policy: %w", err)
-	}
-
-	// Check for duplicate pattern.
-	if exists, existingAction, existingTool := p.HasPattern(pattern); exists {
-		fmt.Fprintf(out, "\n  ⚠️  Pattern already exists: %s %s %q\n", existingAction, existingTool, pattern)
-		fmt.Fprintln(out, "  Use 'rampart rules' to view existing rules.")
-		return nil
-	}
-
 	// Build the message.
 	msg := opts.message
 	if msg == "" {
 		msg = defaultMessage(action, pattern, detectedTool)
 	}
 
-	// Add the rule with optional temporal constraints.
-	temporal := policy.TemporalOpts{Once: opts.once}
-	if opts.forDur != "" {
-		dur, err := time.ParseDuration(opts.forDur)
+	usedUserOverride := false
+	ruleCount := 0
+
+	// Global exec allow rules are durable human carve-outs, so write them to the
+	// explicit user override tier instead of generic custom policy. That makes
+	// their behavior match user expectations even when broad deny policies exist.
+	if action == "allow" && opts.global && detectedTool == "exec" && opts.forDur == "" && !opts.once {
+		home, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("invalid --for duration %q: %w", opts.forDur, err)
+			return fmt.Errorf("resolve home: %w", err)
 		}
-		if dur <= 0 {
-			return fmt.Errorf("--for duration must be positive")
+		overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
+		if _, err := policy.AddUserOverrideAllow(overridesPath, "exec", pattern, msg); err != nil {
+			return fmt.Errorf("save user override: %w", err)
 		}
-		exp := time.Now().UTC().Add(dur)
-		temporal.ExpiresAt = &exp
-	}
-
-	if temporal.ExpiresAt != nil || temporal.Once {
-		if err := p.AddRuleTemporal(action, pattern, msg, opts.tool, temporal); err != nil {
-			return fmt.Errorf("add rule: %w", err)
+		overrides, err := policy.LoadUserOverridesPolicy(overridesPath)
+		if err != nil {
+			return fmt.Errorf("reload user override count: %w", err)
 		}
+		ruleCount = len(overrides.Policies)
+		policyPath = overridesPath
+		usedUserOverride = true
 	} else {
-		if err := p.AddRule(action, pattern, msg, opts.tool); err != nil {
-			return fmt.Errorf("add rule: %w", err)
+		// Load (or create) the custom policy file.
+		p, err := policy.LoadCustomPolicy(policyPath)
+		if err != nil {
+			return fmt.Errorf("load policy: %w", err)
 		}
-	}
 
-	// Save.
-	if err := policy.SaveCustomPolicy(policyPath, p); err != nil {
-		return fmt.Errorf("save policy: %w", err)
+		// Check for duplicate pattern.
+		if exists, existingAction, existingTool := p.HasPattern(pattern); exists {
+			fmt.Fprintf(out, "\n  ⚠️  Pattern already exists: %s %s %q\n", existingAction, existingTool, pattern)
+			fmt.Fprintln(out, "  Use 'rampart rules' to view existing rules.")
+			return nil
+		}
+
+		// Add the rule with optional temporal constraints.
+		temporal := policy.TemporalOpts{Once: opts.once}
+		if opts.forDur != "" {
+			dur, err := time.ParseDuration(opts.forDur)
+			if err != nil {
+				return fmt.Errorf("invalid --for duration %q: %w", opts.forDur, err)
+			}
+			if dur <= 0 {
+				return fmt.Errorf("--for duration must be positive")
+			}
+			exp := time.Now().UTC().Add(dur)
+			temporal.ExpiresAt = &exp
+		}
+
+		if temporal.ExpiresAt != nil || temporal.Once {
+			if err := p.AddRuleTemporal(action, pattern, msg, opts.tool, temporal); err != nil {
+				return fmt.Errorf("add rule: %w", err)
+			}
+		} else {
+			if err := p.AddRule(action, pattern, msg, opts.tool); err != nil {
+				return fmt.Errorf("add rule: %w", err)
+			}
+		}
+
+		// Save.
+		if err := policy.SaveCustomPolicy(policyPath, p); err != nil {
+			return fmt.Errorf("save policy: %w", err)
+		}
+		ruleCount = p.TotalRules()
 	}
 
 	// Print success (brief - details already shown in printRuleSummary).
-	ruleCount := p.TotalRules()
 	suffix := ""
 	if opts.forDur != "" {
 		suffix = fmt.Sprintf(" (expires in %s)", opts.forDur)
@@ -236,6 +260,9 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		fmt.Fprintf(out, "\n  %s✓%s Rule added to %s%s\n", colorGreen, colorReset, filepath.Base(policyPath), suffix)
 	} else {
 		fmt.Fprintf(out, "\n  ✓ Rule added to %s%s\n", filepath.Base(policyPath), suffix)
+	}
+	if usedUserOverride {
+		fmt.Fprintln(out, "  Stored as a durable user override so it can carve out a narrow exception to broader deny policies")
 	}
 
 	// Try to reload the daemon.

@@ -63,7 +63,7 @@ match:
 
 ```yaml
 rules:
-  - action: string         # Required. deny | allow | log | require_approval | webhook
+  - action: string         # Required. deny | allow | log/watch | ask | webhook
     when:                   # Optional. Conditions (omit for unconditional).
       command_matches: list
       command_not_matches: list
@@ -96,7 +96,7 @@ rules:
 | `deny` | Block the tool call. **Deny always wins.** |
 | `allow` | Permit the tool call. |
 | `log` | Permit but flag for review. |
-| `require_approval` | Block until human approves/denies. |
+| `ask` | Pause and require human approval or denial. |
 | `webhook` | Delegate decision to external HTTP endpoint. |
 
 ### Conditions (`when`)
