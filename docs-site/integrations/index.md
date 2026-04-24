@@ -41,10 +41,12 @@ When a policy action is `ask`, behavior varies by integration:
 | [Cline](cline.md) | Native hooks | `rampart setup cline` | All |
 | [Cursor](cursor.md) | MCP proxy | `rampart mcp --` | All |
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
-| [Codex CLI](codex-cli.md) | LD_PRELOAD | `rampart setup codex` | Linux, macOS |
-| [OpenClaw](openclaw.md) | Shim + service | `rampart setup openclaw` | Linux, macOS |
+| [Codex CLI](codex-cli.md) | Wrapper + preload | `rampart setup codex` | Linux, macOS* |
+| [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw --plugin` | Linux, macOS |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
+
+\* macOS preload coverage is best for Homebrew/user-installed binaries; SIP-protected system binaries cannot be interposed.
 
 ## Choosing an Integration
 

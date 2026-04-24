@@ -109,6 +109,6 @@ rampart setup codex --remove
 
 Rampart verifies the file is its own wrapper before removing it. The real Codex binary is restored automatically (it was never moved).
 
-## Linux only
+## Platform support
 
-`rampart setup codex` requires Linux — LD_PRELOAD syscall interception is not available on macOS or Windows. On macOS, use `rampart wrap -- codex` (shell-level wrapping) or the MCP proxy mode instead. Run `rampart setup --help` for alternatives.
+`rampart setup codex` supports Linux and macOS by installing a wrapper at `~/.local/bin/codex` that invokes Codex through `rampart preload`. Linux provides full LD_PRELOAD coverage. macOS works for dynamically linked/Homebrew-style binaries, but SIP prevents preload interception for protected system binaries. Windows is not supported; use the HTTP API or MCP proxy mode instead. Run `rampart setup --help` for alternatives.

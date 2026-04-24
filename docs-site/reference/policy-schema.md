@@ -303,11 +303,11 @@ policies:
           command_matches: ["curl *", "wget *"]
         message: "Network command logged"
 
-  - name: approve-deploys
+  - name: ask-deploys
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches: ["kubectl apply *"]
         message: "Deployment requires approval"
