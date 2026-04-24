@@ -189,7 +189,7 @@ rampart setup openclaw  # auto-detects and installs plugin
 
 **Rampart serve not running:**
 
-The plugin calls `localhost:9090` on every tool call. If serve isn't running, all calls fail-open (allowed silently).
+The plugin calls `localhost:9090` on every tool call. If serve isn't running, sensitive tools such as `exec` and `write` block instead of silently bypassing policy. Lower-risk tools listed in the plugin's `failOpenTools` config can still fail open.
 
 ```bash
 rampart status          # check if serve is running

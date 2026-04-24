@@ -100,7 +100,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart setup openclaw --plugin` | Native plugin + selective native approvals |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Codex CLI** | `rampart setup codex` | Shell wrapper (v0.4.5+); LD_PRELOAD fallback for older versions |
+| **Codex CLI** | `rampart setup codex` | Wrapper that runs Codex through `rampart preload` |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -575,7 +575,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
 | OpenClaw | `rampart setup openclaw --plugin` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS, Windows |
-| Codex CLI | `rampart setup codex` | Linux, macOS (shell wrapper v0.4.5+; LD_PRELOAD fallback) |
+| Codex CLI | `rampart setup codex` | Linux, macOS (requires `librampart.so`/`.dylib`) |
 | Claude Desktop | `rampart mcp` | All |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |

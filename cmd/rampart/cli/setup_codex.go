@@ -38,18 +38,6 @@ Run 'rampart setup codex --remove' to uninstall.`,
 
 			out := cmd.OutOrStdout()
 
-			// Find the real codex binary.
-			realCodex, err := exec.LookPath("codex")
-			if err != nil {
-				return fmt.Errorf("setup codex: codex not found in PATH — install it first")
-			}
-
-			// Resolve symlinks so the wrapper doesn't point to itself.
-			realCodex, err = filepath.EvalSymlinks(realCodex)
-			if err != nil {
-				return fmt.Errorf("setup codex: resolve codex path: %w", err)
-			}
-
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return fmt.Errorf("setup codex: resolve home: %w", err)
@@ -60,6 +48,17 @@ Run 'rampart setup codex --remove' to uninstall.`,
 
 			if remove {
 				return removeCodexWrapper(out, wrapperPath)
+			}
+
+			// Verify the preload library before installing a wrapper. A wrapper without
+			// librampart would replace a working codex binary with a broken command.
+			if _, _, err := resolvePreloadLibrary(); err != nil {
+				return fmt.Errorf("setup codex: preload library unavailable: %w", err)
+			}
+
+			realCodex, err := resolveRealCodexBinary(wrapperPath)
+			if err != nil {
+				return err
 			}
 
 			// Safety: don't overwrite if it's already pointing somewhere else.
@@ -132,6 +131,77 @@ exec %s preload -- %s "$@"
 	cmd.Flags().BoolVar(&remove, "remove", false, "Remove the Codex wrapper")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing wrapper")
 	return cmd
+}
+
+func resolveRealCodexBinary(wrapperPath string) (string, error) {
+	candidates := filepath.SplitList(os.Getenv("PATH"))
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, "codex")
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		if sameCodexPath(resolved, wrapperPath) || sameCodexPath(candidate, wrapperPath) {
+			if realFromWrapper := realCodexFromExistingWrapper(wrapperPath); realFromWrapper != "" {
+				return realFromWrapper, nil
+			}
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		if data, readErr := os.ReadFile(resolved); readErr == nil && containsRampartPreload(string(data)) {
+			continue
+		}
+		return resolved, nil
+	}
+
+	return "", fmt.Errorf("setup codex: codex not found in PATH — install it first")
+}
+
+func realCodexFromExistingWrapper(wrapperPath string) string {
+	data, err := os.ReadFile(wrapperPath)
+	if err != nil || !containsRampartPreload(string(data)) {
+		return ""
+	}
+	realBin := extractRealBinFromWrapper(string(data))
+	if realBin == "" {
+		return ""
+	}
+	info, err := os.Stat(realBin)
+	if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		return ""
+	}
+	return realBin
+}
+
+func sameCodexPath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	cleanA := filepath.Clean(a)
+	cleanB := filepath.Clean(b)
+	if cleanA == cleanB {
+		return true
+	}
+	canonA := canonicalCodexPath(cleanA)
+	canonB := canonicalCodexPath(cleanB)
+	return canonA != "" && canonA == canonB
+}
+
+func canonicalCodexPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(abs)
 }
 
 func removeCodexWrapper(out io.Writer, wrapperPath string) error {

@@ -5,19 +5,29 @@ description: Protect OpenAI Codex CLI with Rampart using a shell wrapper. Every 
 
 # Securing Codex CLI with Rampart
 
-Protect OpenAI Codex CLI tool calls using Rampart's shell wrapper. Every shell command Codex makes passes through your policy before execution.
+Protect OpenAI Codex CLI subprocesses using Rampart's shell wrapper plus preload enforcement. Every shell command Codex spawns through libc exec-family calls passes through your policy before execution.
 
 ## How it works
 
-Unlike Claude Code and Cline — which expose hook APIs — Codex CLI v0.4.5+ uses a shell wrapper for integration. Rampart installs a `codex` wrapper script that transparently routes all Codex commands through policy evaluation.
+Unlike Claude Code and Cline — which expose hook APIs — Codex CLI does not expose a native hook system. Rampart installs a `codex` wrapper script that transparently runs the real Codex binary through `rampart preload`.
 
 ```
-Codex CLI → shell wrapper → Rampart policy check → allow / deny
+Codex CLI → shell wrapper → librampart preload → Rampart policy check → allow / deny
 ```
 
-For older Codex versions (< 0.4.5), Rampart falls back to LD_PRELOAD interception.
+## Setup
 
-## Setup (one command)
+`rampart setup codex` requires the preload library (`librampart.so` on Linux, `librampart.dylib` on macOS). If your install does not include it — common for source builds — build and place it first:
+
+```bash
+mkdir -p ~/.rampart/lib
+# Linux
+cc -shared -fPIC -o ~/.rampart/lib/librampart.so preload/librampart.c -ldl -lcurl -lpthread
+# macOS
+cc -dynamiclib -fPIC -o ~/.rampart/lib/librampart.dylib preload/librampart.c -lcurl
+```
+
+Then install the persistent wrapper:
 
 ```bash
 rampart setup codex
@@ -28,7 +38,7 @@ This creates `~/.local/bin/codex` — a wrapper script that runs the real Codex 
 ```
 ✓ Wrapper installed at /home/user/.local/bin/codex
   Wraps: /usr/local/bin/codex
-  Via:   /usr/local/bin/rampart
+  Via:   /usr/local/bin/rampart preload
 
 ✓ Run 'codex' normally — all tool calls are now enforced by Rampart.
   Uninstall: rampart setup codex --remove
@@ -55,7 +65,7 @@ which codex
 If you don't want the wrapper, you can invoke Rampart inline for any command:
 
 ```bash
-rampart wrap -- codex exec --full-auto 'fix the bug in auth.py'
+rampart preload -- codex exec --full-auto 'fix the bug in auth.py'
 ```
 
 ## Interactive setup wizard
@@ -118,8 +128,8 @@ Rampart verifies the file is its own wrapper before removing it. The real Codex 
 
 ## Platform Notes
 
-- **Linux:** Full support via shell wrapper. Older Codex versions (< 0.4.5) use LD_PRELOAD fallback.
-- **macOS:** Shell wrapper works for all versions. LD_PRELOAD fallback also available.
-- **Windows:** Not supported — use the HTTP API instead.
+- **Linux:** Wrapper + `LD_PRELOAD` coverage for dynamically linked binaries.
+- **macOS:** Wrapper + `DYLD_INSERT_LIBRARIES` coverage for Homebrew/user-installed binaries; SIP-protected system binaries cannot be interposed.
+- **Windows:** `rampart setup codex` is not supported. Use the HTTP API or MCP proxy mode instead.
 
 Run `rampart setup --help` for alternatives on unsupported platforms.

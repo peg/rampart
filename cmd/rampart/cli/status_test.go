@@ -15,6 +15,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,6 +37,48 @@ func TestRunStatus(t *testing.T) {
 	// Verify the status line is present.
 	if !strings.Contains(out, "Status") {
 		t.Error("missing Status row in status output")
+	}
+}
+
+func TestDetectProtectedAgents_CodexWrapper(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	wrapperPath := filepath.Join(home, ".local", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapperPath, []byte("#!/bin/sh\nexec rampart preload -- /usr/bin/codex \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	agents := detectProtectedAgents()
+	found := false
+	for _, agent := range agents {
+		if agent == "Codex (wrapper)" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Codex wrapper detection, got %v", agents)
+	}
+}
+
+func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	wrapperPath := filepath.Join(home, ".local", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapperPath, []byte("#!/bin/sh\nexec /usr/bin/codex \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, agent := range detectProtectedAgents() {
+		if agent == "Codex (wrapper)" {
+			t.Fatalf("plain codex binary should not be reported as protected: %v", agent)
+		}
 	}
 }
 

@@ -263,8 +263,8 @@ func TestOutputHookResult_ClaudeCode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("deny outputHookResult error: %v", err)
 		}
-		if !strings.Contains(stderr, "Rampart blocked: rm -rf /") {
-			t.Fatalf("stderr missing deny message: %q", stderr)
+		if stderr != "" {
+			t.Fatalf("stderr should be empty for Claude Code deny (Claude treats stderr as hook error), got: %q", stderr)
 		}
 
 		var deny hookOutput

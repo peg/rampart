@@ -66,6 +66,62 @@ func runHookWithStdin(t *testing.T, opts *rootOptions, stdinJSON string, args ..
 	return stdout.String(), stderr.String(), err
 }
 
+// TestHookPreToolUse_InvalidPolicyDoesNotLeakStderr verifies stale policies fail closed
+// through Claude Code's hook protocol without stderr or non-zero hook errors.
+func TestHookPreToolUse_InvalidPolicyDoesNotLeakStderr(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(`version: "1"
+default_action: allow
+policies:
+  - name: stale-approval-rule
+    match:
+      tool: exec
+    rules:
+      - action: require_approval
+        message: stale policy should not leak stderr
+        when:
+          command_matches: ["sudo *"]
+`), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	payload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "sess-invalid-policy",
+		"tool_use_id":     "toolu_invalid_policy",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo true"},
+	}
+	stdinJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	stdout, stderr, hookErr := runHookWithStdin(t, &rootOptions{configPath: configPath}, string(stdinJSON), "--mode", "enforce")
+	if hookErr != nil {
+		t.Fatalf("hook RunE error: %v", hookErr)
+	}
+	if stderr != "" {
+		t.Fatalf("PreToolUse hook must not leak stderr; got %q", stderr)
+	}
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil {
+		t.Fatal("expected hookSpecificOutput")
+	}
+	if out.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("PermissionDecision = %q, want deny", out.HookSpecificOutput.PermissionDecision)
+	}
+	if !strings.Contains(out.HookSpecificOutput.PermissionDecisionReason, "Rampart policy configuration error") {
+		t.Fatalf("PermissionDecisionReason = %q, want policy configuration error", out.HookSpecificOutput.PermissionDecisionReason)
+	}
+}
+
 // TestParseClaudeCodeInput_SessionAndToolUseID verifies that session_id and
 // tool_use_id from the Claude Code hook payload are propagated into the parse result.
 func TestParseClaudeCodeInput_SessionAndToolUseID(t *testing.T) {

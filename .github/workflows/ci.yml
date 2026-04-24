@@ -37,6 +37,13 @@ jobs:
       - name: Build
         run: go build -v ./cmd/rampart
 
+      - name: OpenClaw plugin regression tests
+        if: runner.os != 'Windows'
+        run: |
+          node internal/plugin/openclaw/smoke-test.mjs
+          node internal/plugin/openclaw/approval-regression.mjs
+          node internal/plugin/openclaw/degraded-mode-test.mjs
+
       - name: Policy check (standard)
         run: go run ./cmd/rampart policy check --config policies/standard.yaml
 
