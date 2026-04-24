@@ -161,10 +161,11 @@ func TestSetupCodexIsIdempotentWhenWrapperFirstOnPath(t *testing.T) {
 		t.Fatalf("read wrapper: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "# Real codex: "+realCodex) {
-		t.Fatalf("wrapper should keep real codex path %q, got:\n%s", realCodex, content)
+	recordedReal := extractRealBinFromWrapper(content)
+	if !sameCodexPath(recordedReal, realCodex) {
+		t.Fatalf("wrapper should keep real codex path %q, got %q in:\n%s", realCodex, recordedReal, content)
 	}
-	if strings.Contains(content, "# Real codex: "+wrapperPath) || strings.Contains(content, "preload -- "+wrapperPath) {
+	if sameCodexPath(recordedReal, wrapperPath) || strings.Contains(content, "preload -- "+wrapperPath) {
 		t.Fatalf("wrapper became self-recursive:\n%s", content)
 	}
 }
