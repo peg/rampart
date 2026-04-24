@@ -198,18 +198,30 @@ verify -> outcomes.approval
 | **Cline** | Native hooks | `rampart setup cline` |
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
-| **Codex CLI** | LD_PRELOAD | `rampart setup codex` |
+| **Codex CLI** | Wrapper + preload | `rampart setup codex` |
 | **OpenClaw** | Native plugin | `rampart setup openclaw` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
 | **Python agents** | HTTP API / SDK | `localhost:9090` |
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.9.14
+## What's New in v0.9.19
 
-- **OpenClaw 2026.4.11+ native approval path** — Native Discord exec approvals are the supported path for Rampart's OpenClaw integration. OpenClaw owns approval UI/state, Rampart owns policy, audit, and allow-always persistence. [Details →](integrations/openclaw.md)
-- **`rampart status` shows `OpenClaw (plugin)`** — Status summary now correctly reflects when the native plugin (not legacy bridge) is active.
-- **Setup explains scanner warning** — `rampart setup openclaw --plugin` now clarifies that OpenClaw's security scanner false positive is safe to ignore.
+- **Integration hardening runway** — Codex wrapper setup is idempotent, uninstall is safer, and source builds now fail clearly when the preload library is missing. [Details →](integrations/codex-cli.md)
+- **OpenClaw degraded mode clarified** — Sensitive tools block when Rampart serve is unavailable; explicitly configured lower-risk tools can still fail open. [Details →](integrations/openclaw.md)
+- **Claude Code hook errors cleaned up** — Invalid or stale policies fail closed through structured hook responses instead of noisy shell-hook stderr.
+
+### v0.9.18
+
+- **Policy explain ergonomics** — `rampart policy explain` shows winning rules, source files, durable overrides, and session/tool context.
+- **OpenClaw readiness checks** — `rampart doctor` reports native plugin readiness and approval-path state more clearly.
+- **Release hygiene** — Changelog and plugin metadata now track release state more explicitly.
+
+### v0.9.17
+
+- **OpenClaw approval trust** — Native Discord exec approvals are the supported path for Rampart's OpenClaw integration. OpenClaw owns approval UI/state, Rampart owns policy, audit, and allow-always persistence. [Details →](integrations/openclaw.md)
+- **Durable Allow Always** — OpenClaw approvals can persist safe learned rules to `user-overrides.yaml`.
+- **Sensitive degraded-mode behavior** — High-risk OpenClaw tools stop silently bypassing policy when the service is unavailable.
 
 ### v0.9.13
 
@@ -221,7 +233,7 @@ verify -> outcomes.approval
 ### v0.9.12
 
 - **Plugin bundled in binary** — The OpenClaw plugin is now embedded directly in the `rampart` binary. `rampart setup openclaw --plugin` works on any machine — no external checkout or npm install required. [Learn more →](integrations/openclaw.md)
-- **Bridge hardened** — Errors during require_approval escalations now fail closed (deny) instead of silently allowing.
+- **Bridge hardened** — Errors during approval escalations now fail closed (deny) instead of silently allowing.
 - **Learn endpoint secured** — `POST /v1/rules/learn` now rate-limited and restricted to `allow` decisions only.
 
 ### v0.9.11

@@ -148,7 +148,7 @@ rampart bench --policy policies/community/my-policy.yaml --min-coverage 60
 ### Writing Good Community Policies
 
 1. **Start permissive** — block the dangerous stuff, allow everything else
-2. **Use `require_approval`** for risky-but-legitimate operations
+2. **Use `ask`** for risky-but-legitimate operations
 3. **Include `log` rules** for audit trail on read-only operations
 4. **Add clear comments** explaining what each rule does and why
 5. **Don't assume a specific setup** — work across cloud providers, cluster configs, etc.

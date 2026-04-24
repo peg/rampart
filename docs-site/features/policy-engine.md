@@ -66,7 +66,7 @@ match -> default: "no match"
 
 rules -> deny: "deny rule"
 rules -> webhook: "webhook rule"
-rules -> approval: "require_approval"
+rules -> approval: "ask"
 rules -> watch: "watch rule"
 rules -> allow: "allow rule"
 

@@ -88,22 +88,20 @@ policies:
 
 This lets you write one policy that works both locally (with prompts) and in CI (with denies). See [CI/Headless Agents](./ci-headless.md) for more details.
 
-### `require_approval` Alias
+### `require_approval` Migration Note
 
-`action: require_approval` is now an alias for `action: ask` with `audit: true`:
+Older Rampart docs and policies may still reference `action: require_approval`, but current Rampart releases require `action: ask` explicitly.
+
+Use this form instead:
 
 ```yaml
-# These are equivalent:
-- action: require_approval
-  message: "Needs approval"
-
 - action: ask
   ask:
     audit: true
   message: "Needs approval"
 ```
 
-The alias exists for backwards compatibility. New policies should prefer the explicit `action: ask` syntax for clarity.
+`action: require_approval` is no longer accepted by the policy engine. Update old examples and local policies to use `action: ask`.
 
 > ⚠️ Common mistake: putting `action: ask` directly inside the policy (as a sibling of `name` or `rules`). `rampart policy lint` will catch this and explain the correct structure.
 
@@ -140,16 +138,9 @@ policies:
             - curl
 ```
 
-## Difference from `require_approval`
+## Difference from the old approval flow
 
-| | `action: ask` | `action: require_approval` |
-|---|---|---|
-| UI | Inline in Claude Code session | Rampart dashboard / `rampart watch` |
-| Requires `rampart serve` | No | Yes |
-| User stays in session | Yes | No (must switch terminal) |
-| Best for | Interactive development | Automated agents / CI |
-
-When `rampart serve` is not running and a `require_approval` rule fires, Rampart automatically falls back to the native ask prompt.
+`action: ask` is the current human-approval action. Depending on the integration, it can surface as Claude Code's inline prompt, OpenClaw's native approval UI, or Rampart's dashboard/CLI approval queue.
 
 ## Limitations
 

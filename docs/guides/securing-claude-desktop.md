@@ -158,7 +158,7 @@ policies:
             - "*curl*requestbin*"
         message: "Blocked: potential data exfiltration"
 
-  - name: require-approval-for-writes
+  - name: ask-for-writes
     match:
       tool: ["write"]
     rules:
