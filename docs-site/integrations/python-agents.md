@@ -39,7 +39,7 @@ def safe_exec(command: str) -> dict:
 
     if result["decision"] == "deny":
         return {"blocked": True, "reason": result["message"]}
-    elif result["decision"] == "require_approval":
+    elif result["decision"] == "ask":
         # Poll for approval resolution
         approval_id = result["approval_id"]
         while True:

@@ -137,7 +137,7 @@ sudo systemctl restart wazuh-manager
 |---------------|-------------|-------------|
 | allow | 3 | Informational |
 | log | 5 | Notable |
-| require_approval | 8 | Needs human review |
+| ask | 8 | Needs human review |
 | deny | 10 | Blocked by policy |
 | deny (credentials) | 12 | Credential access attempt |
 | deny (exfiltration) | 13 | Data exfiltration attempt |

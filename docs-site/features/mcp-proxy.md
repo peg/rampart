@@ -62,7 +62,7 @@ client -> rampart: "tools/call"
 rampart -> engine: "evaluate"
 engine -> server: "allow"
 engine -> error: "deny"
-engine -> pending: "require_approval"
+engine -> pending: "ask"
 pending -> server: "approved"
 pending -> error: "denied / timeout"
 server -> rampart: "response"
@@ -185,7 +185,7 @@ policies:
     match:
       tool: ["mcp-dangerous"]
     rules:
-      - action: require_approval
+      - action: ask
         message: "Risky MCP operation — approve?"
 
   - name: block-file-deletion

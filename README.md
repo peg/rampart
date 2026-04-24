@@ -82,7 +82,7 @@ Once running, every tool call goes through Rampart's policy engine first:
 ✅ 14:23:03  read  ~/project/src/main.go                [default]
 🔴 14:23:05  exec  "rm -rf /tmp/*"                      [block-destructive]
 🟡 14:23:08  exec  "curl https://api.example.com"       [log-network]
-👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [require-approval]
+👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [ask]
 🔴 14:23:12  resp  read .env                            [block-credential-leak]
                     → blocked: response contained AWS_SECRET_ACCESS_KEY
 ```

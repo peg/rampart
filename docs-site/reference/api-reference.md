@@ -560,8 +560,8 @@ Returns a transparency-oriented list of active rules — useful for agents to un
       "summary": "Blocks rm -rf, curl | bash, and other dangerous patterns"
     },
     {
-      "name": "require-approval-network",
-      "action": "require_approval",
+      "name": "ask-network",
+      "action": "ask",
       "summary": "Network egress requires human approval"
     }
   ],

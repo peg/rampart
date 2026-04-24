@@ -17,7 +17,7 @@ default_action: allow
 
 notify:
   url: "https://discord.com/api/webhooks/your/webhook"
-  on: ["deny", "require_approval"]  # Notify on blocked and pending approval
+  on: ["deny", "ask"]  # Notify on blocked and pending approval
 
 policies:
   # ... your policies
@@ -29,7 +29,7 @@ policies:
 |-------|------|
 | `deny` | A tool call was blocked |
 | `log` | A tool call was flagged for review |
-| `require_approval` | A tool call needs human approval |
+| `ask` | A tool call needs human approval |
 
 ## Payload Format
 
