@@ -1,6 +1,6 @@
 # Securing Codex CLI with Rampart
 
-Protect OpenAI Codex CLI tool calls using Rampart's LD_PRELOAD syscall interception. Every shell command, file read, and network request Codex makes passes through your policy before execution.
+Protect OpenAI Codex CLI subprocesses using Rampart's LD_PRELOAD/DYLD interception. Every shell command Codex spawns through libc exec-family calls passes through your policy before execution.
 
 ## How it works
 
@@ -10,7 +10,19 @@ Unlike Claude Code and Cline — which expose hook APIs — Codex CLI doesn't ha
 Codex CLI → tool call → librampart.so intercept → Rampart policy → allow / deny
 ```
 
-## Setup (one command)
+## Setup
+
+`rampart setup codex` requires the preload library (`librampart.so` on Linux, `librampart.dylib` on macOS). If your install does not include it — common for source builds — build and place it first:
+
+```bash
+mkdir -p ~/.rampart/lib
+# Linux
+cc -shared -fPIC -o ~/.rampart/lib/librampart.so preload/librampart.c -ldl -lcurl -lpthread
+# macOS
+cc -dynamiclib -fPIC -o ~/.rampart/lib/librampart.dylib preload/librampart.c -lcurl
+```
+
+Then install the persistent Codex wrapper:
 
 ```bash
 rampart setup codex

@@ -5,12 +5,23 @@ description: "Secure Codex CLI with Rampart using LD_PRELOAD syscall interceptio
 
 # Codex CLI
 
-Codex CLI v0.4.5+ is protected via a **shell wrapper** installed by `rampart setup codex`. For older versions, Rampart falls back to **LD_PRELOAD** syscall interception.
+Codex CLI is protected via a **shell wrapper** installed by `rampart setup codex`. The wrapper runs Codex through Rampart's preload library so spawned shell commands are checked before execution.
 
 ## Setup
 
+`rampart setup codex` requires the preload library (`librampart.so` on Linux, `librampart.dylib` on macOS). If your install does not include it — common for source builds — build and place it first:
+
 ```bash
-# Recommended: install persistent wrapper
+mkdir -p ~/.rampart/lib
+# Linux
+cc -shared -fPIC -o ~/.rampart/lib/librampart.so preload/librampart.c -ldl -lcurl -lpthread
+# macOS
+cc -dynamiclib -fPIC -o ~/.rampart/lib/librampart.dylib preload/librampart.c -lcurl
+```
+
+Then install the persistent wrapper:
+
+```bash
 rampart setup codex
 
 # Alternative: wrap a single session
@@ -61,7 +72,7 @@ rampart preload --mode monitor -- codex
 
 ## Requirements
 
-The preload library (`librampart.so` or `librampart.dylib`) must be installed. It's included in Homebrew installs and release tarballs, or build from `preload/` in the source tree.
+The preload library (`librampart.so` or `librampart.dylib`) must be installed before `rampart setup codex` will create a wrapper. This prevents Rampart from replacing a working `codex` command with a wrapper that cannot start. If you built Rampart from source, build the library from `preload/librampart.c` as shown above.
 
 ## Performance
 
