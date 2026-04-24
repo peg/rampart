@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.18] - 2026-04-24
+
+### Added
+
+- **`rampart policy explain` now shows why decisions won** — matching policies include source files, agent/session/tool scope, explicit `[WINNER]` marking, winning-rule rationale, and clearer messaging when a policy matched scope but no rule matched the command. New `--session` support makes session-scoped policy debugging faithful to engine behavior; docs now show the upgraded examples.
+- **Durable overrides are visible in explain output** — learned `Allow Always` rules from `user-overrides.yaml` are labeled as durable user overrides in both matching-policy details and the final decision summary.
+- **`rampart doctor` now includes OpenClaw readiness** — a concise readiness signal confirms the native plugin is active, `rampart serve` is reachable, and approval-learning prerequisites are present.
+
+### Fixed
+
+- **Release hygiene tightened** — OpenClaw plugin metadata is bumped with the release, and the changelog now has explicit `0.9.17` and `0.9.18` sections instead of leaving shipped changes under `Unreleased`.
+
+## [0.9.17] - 2026-04-23
+
 ### Fixed
 
 - **OpenClaw native approval path now has a proven end-to-end acceptance bar** — validated live with native Discord approval UI across the three critical states: learned allow (`sudo true`), fresh ask (`sudo id`), and hard deny (`rm -rf /tmp`).

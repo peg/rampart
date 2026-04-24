@@ -61,8 +61,10 @@ That split matters. A credential file should not be silently exposed. But some a
 Policies are evaluated quickly and consistently on every tool call. You can inspect why a command was allowed or denied with:
 
 ```bash
-rampart policy explain --tool exec --input 'rm -rf /'
+rampart policy explain --tool exec 'rm -rf /'
 ```
+
+The explain output marks the winning policy, shows where it came from, and calls out durable user overrides from `user-overrides.yaml` so you can tell whether an `Allow Always` decision is coming from learned local policy.
 
 Use `default_action` and explicit rule ordering to control strictness. In higher-security environments, set `default_action: deny` and add narrow allow rules.
 

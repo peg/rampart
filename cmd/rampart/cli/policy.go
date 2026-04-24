@@ -35,13 +35,21 @@ type policyTestCall struct {
 }
 
 type explanation struct {
-	PolicyName  string
-	Priority    int
-	RuleIndex   int
-	Action      engine.Action
-	Message     string
-	MatchDetail string
-	RuleMatched bool
+	PolicyName      string
+	Priority        int
+	RuleIndex       int
+	Action          engine.Action
+	Message         string
+	MatchDetail     string
+	RuleMatched     bool
+	SourceFile      string
+	AgentScope      string
+	SessionScope    string
+	ToolScope       string
+	IsWinner        bool
+	WinnerReason    string
+	OverrideSummary string
+	IsUserOverride  bool
 }
 
 func newPolicyCmd(opts *rootOptions) *cobra.Command {
@@ -171,6 +179,7 @@ func newPolicyTestCmd(opts *rootOptions) *cobra.Command {
 func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 	var tool string
 	var agent string
+	var session string
 
 	cmd := &cobra.Command{
 		Use:   "explain <command>",
@@ -206,6 +215,7 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 			}
 			call := engine.ToolCall{
 				Agent:     normalizeAgent(agent),
+				Session:   normalizeSession(session),
 				Tool:      tool,
 				Params:    params,
 				Timestamp: time.Now().UTC(),
@@ -216,8 +226,20 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Evaluating: %s %q\n", tool, command); err != nil {
 				return fmt.Errorf("policy: write explain output: %w", err)
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Agent: %s | Tool: %s\n\n", normalizeAgent(agent), tool); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Agent: %s | Session: %s | Tool: %s\n\n", call.Agent, call.Session, tool); err != nil {
 				return fmt.Errorf("policy: write explain output: %w", err)
+			}
+
+			winnerName := ""
+			if len(decision.MatchedPolicies) > 0 {
+				winnerName = decision.MatchedPolicies[0]
+			}
+			for i := range explanations {
+				if explanations[i].PolicyName == winnerName {
+					explanations[i].IsWinner = true
+					explanations[i].WinnerReason = winnerReason(decision.Action)
+					break
+				}
 			}
 
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Matching policies:"); err != nil {
@@ -230,11 +252,28 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			for i, item := range explanations {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %d. %s (priority %d)\n", i+1, item.PolicyName, item.Priority); err != nil {
+				header := fmt.Sprintf("  %d. %s (priority %d)", i+1, item.PolicyName, item.Priority)
+				if item.IsWinner {
+					header += "  [WINNER]"
+				}
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), header); err != nil {
+					return fmt.Errorf("policy: write explain output: %w", err)
+				}
+				if item.SourceFile != "" {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "     Source: %s\n", item.SourceFile); err != nil {
+						return fmt.Errorf("policy: write explain output: %w", err)
+					}
+				}
+				if item.OverrideSummary != "" {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "     Override: %s\n", item.OverrideSummary); err != nil {
+						return fmt.Errorf("policy: write explain output: %w", err)
+					}
+				}
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "     Scope: agent=%s session=%s tool=%s\n", item.AgentScope, item.SessionScope, item.ToolScope); err != nil {
 					return fmt.Errorf("policy: write explain output: %w", err)
 				}
 				if !item.RuleMatched {
-					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "     -> No rule matched"); err != nil {
+					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "     -> Policy matched scope, but no rule matched this call"); err != nil {
 						return fmt.Errorf("policy: write explain output: %w", err)
 					}
 					continue
@@ -247,17 +286,23 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 						return fmt.Errorf("policy: write explain output: %w", err)
 					}
 				}
+				if item.IsWinner && item.WinnerReason != "" {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "        Why it won: %s\n", item.WinnerReason); err != nil {
+						return fmt.Errorf("policy: write explain output: %w", err)
+					}
+				}
 			}
 
-			policyName := ""
-			if len(decision.MatchedPolicies) > 0 {
-				policyName = decision.MatchedPolicies[0]
-			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nFinal decision: %s\n", strings.ToUpper(decision.Action.String())); err != nil {
 				return fmt.Errorf("policy: write explain output: %w", err)
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Policy: %s\n", policyName); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Winning policy: %s\n", winnerName); err != nil {
 				return fmt.Errorf("policy: write explain output: %w", err)
+			}
+			if winner := winningExplanation(explanations); winner != nil && winner.IsUserOverride {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Override source: %s\n", winner.OverrideSummary); err != nil {
+					return fmt.Errorf("policy: write explain output: %w", err)
+				}
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Message: %s\n", decision.Message); err != nil {
 				return fmt.Errorf("policy: write explain output: %w", err)
@@ -269,6 +314,7 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 
 	cmd.Flags().StringVar(&tool, "tool", "exec", "Tool type to evaluate")
 	cmd.Flags().StringVar(&agent, "agent", "*", "Agent identity to evaluate")
+	cmd.Flags().StringVar(&session, "session", "*", "Session identity to evaluate")
 
 	return cmd
 }
@@ -333,8 +379,14 @@ func collectExplanations(cfg *engine.Config, call engine.ToolCall) []explanation
 		}
 
 		item := explanation{
-			PolicyName: policy.Name,
-			Priority:   policy.EffectivePriority(),
+			PolicyName:      policy.Name,
+			Priority:        policy.EffectivePriority(),
+			SourceFile:      shortenHomePath(policy.FilePath),
+			AgentScope:      policy.Match.EffectiveAgent(),
+			SessionScope:    policy.Match.EffectiveSession(),
+			ToolScope:       renderToolScope(policy.Match.Tool),
+			IsUserOverride:  isUserOverridePolicy(policy),
+			OverrideSummary: summarizeOverrideSource(policy),
 		}
 		for i, rule := range policy.Rules {
 			matched, detail := engine.ExplainCondition(rule.When, call)
@@ -364,6 +416,9 @@ func collectExplanations(cfg *engine.Config, call engine.ToolCall) []explanation
 
 func matchPolicyScope(match engine.Match, call engine.ToolCall) bool {
 	if !engine.MatchGlob(match.EffectiveAgent(), call.Agent) {
+		return false
+	}
+	if !engine.MatchGlob(match.EffectiveSession(), call.Session) {
 		return false
 	}
 	if len(match.Tool) == 0 {
@@ -404,6 +459,13 @@ func normalizeAgent(agent string) string {
 		return "*"
 	}
 	return agent
+}
+
+func normalizeSession(session string) string {
+	if strings.TrimSpace(session) == "" {
+		return "*"
+	}
+	return session
 }
 
 // newPolicyRulesCmd implements `rampart policy rules` — shows all currently
@@ -522,4 +584,67 @@ func renderCommand(params map[string]any) string {
 		return url
 	}
 	return ""
+}
+
+func renderToolScope(tools engine.StringOrSlice) string {
+	if len(tools) == 0 {
+		return "*"
+	}
+	return strings.Join(tools, ",")
+}
+
+func shortenHomePath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		if rel, relErr := filepath.Rel(home, path); relErr == nil && !strings.HasPrefix(rel, "..") {
+			return "~/" + rel
+		}
+	}
+	return path
+}
+
+func winnerReason(action engine.Action) string {
+	switch action {
+	case engine.ActionDeny:
+		return "deny wins immediately over all other matching policies"
+	case engine.ActionAsk:
+		return "ask beat allow/watch after no deny matched"
+	case engine.ActionRequireApproval:
+		return "require_approval beat allow/watch after no deny matched"
+	case engine.ActionWebhook:
+		return "webhook beat allow/watch after no deny matched"
+	case engine.ActionWatch:
+		return "watch beat allow after no deny or ask matched"
+	case engine.ActionAllow:
+		return "allow won because no higher-impact action matched"
+	default:
+		return ""
+	}
+}
+
+func isUserOverridePolicy(policy engine.Policy) bool {
+	path := strings.ToLower(policy.FilePath)
+	return strings.Contains(path, "user-overrides.yaml") || strings.HasPrefix(policy.Name, "user-allow-")
+}
+
+func summarizeOverrideSource(policy engine.Policy) string {
+	if !isUserOverridePolicy(policy) {
+		return ""
+	}
+	if policy.FilePath != "" {
+		return fmt.Sprintf("durable user override from %s", shortenHomePath(policy.FilePath))
+	}
+	return "durable user override"
+}
+
+func winningExplanation(items []explanation) *explanation {
+	for i := range items {
+		if items[i].IsWinner {
+			return &items[i]
+		}
+	}
+	return nil
 }
