@@ -1403,7 +1403,7 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 // native OpenClaw approval path trustworthy: plugin installed, serve reachable,
 // and a token available for authenticated policy/learning calls.
 func doctorOpenClawReadiness(emit emitFn, pluginActive bool, serveURL, token string) (warnings int) {
-	if !pluginActive || !isOpenClawInstalled() {
+	if !pluginActive {
 		return 0
 	}
 	if serveURL == "" {
