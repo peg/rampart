@@ -12,6 +12,8 @@ From the repo root:
 
 ```bash
 node internal/plugin/openclaw/smoke-test.mjs
+node internal/plugin/openclaw/approval-regression.mjs
+node internal/plugin/openclaw/degraded-mode-test.mjs
 ```
 
 Default behavior simulates:
@@ -44,6 +46,8 @@ Arguments:
 - `allow-always` calls `/v1/rules/learn`
 - `allow` returns nothing or param adjustment only when explicitly requested by Rampart
 - there is no legacy `params.ask = "always"` mutation path
+- degraded mode blocks sensitive tools (`exec`, `write`) when serve is unreachable or returns 5xx
+- configured fail-open tools (`read`, `web_fetch`, `web_search`, `image` by default) remain explicit and test-covered
 
 This is a deterministic harness for the highest-leverage regression: approval-path behavior without depending on model tool selection.
 
@@ -58,5 +62,5 @@ Recommended live checks:
 
 Important:
 - make sure `rampart-serve.service` is running before drawing conclusions
-- if Rampart serve is down, sensitive tools should now block instead of silently failing open
+- if Rampart serve is down, sensitive tools should now block instead of silently failing open; lower-risk tools listed in `failOpenTools` remain fail-open by configuration
 - durable learned rules from the OpenClaw plugin are written to `~/.rampart/policies/user-overrides.yaml`

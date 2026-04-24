@@ -9,7 +9,7 @@ Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. T
 
 Every tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
 
-For sensitive tools, the recommended operating assumption is simple: if Rampart policy service is unavailable, treat that as a broken state and fix it before trusting approval-path tests.
+For sensitive tools, the recommended operating assumption is simple: if Rampart policy service is unavailable, treat that as a broken state and fix it before trusting approval-path tests. By default the plugin blocks sensitive tools such as `exec` and `write` when `rampart serve` is unavailable; lower-risk tools (`read`, `web_fetch`, `web_search`, `image`) are explicitly configured fail-open and can be tightened with `plugins.entries.rampart.config.failOpenTools`.
 
 !!! info "Version requirements"
     - **OpenClaw >= 2026.4.11**: Recommended and supported for native Discord exec approvals plus full native plugin coverage
@@ -156,7 +156,7 @@ Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v0.9.16  active
+# rampart  v0.9.18  active
 ```
 
 ## Troubleshooting

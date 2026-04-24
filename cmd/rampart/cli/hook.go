@@ -272,12 +272,16 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return fmt.Errorf("hook: create audit dir: %w", err)
 			}
 
-			// Logger goes to stderr — stdout is for the hook response
+			// Stdout is the hook protocol response. Stderr is also treated as a hook
+			// failure by some agents, so keep routine hook execution stderr-clean.
+			// Verbose mode is intentionally opt-in for manual debugging.
 			logLevel := slog.LevelWarn
+			logWriter := io.Discard
 			if opts.verbose {
 				logLevel = slog.LevelDebug
+				logWriter = cmd.ErrOrStderr()
 			}
-			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+			logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel}))
 
 			// Cleanup stale session state files in the background (best-effort).
 			// This runs once per hook invocation; typically fires every few seconds
@@ -326,6 +330,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 			eng, err := engine.New(store, logger)
 			if err != nil {
+				// Agent hook runners often treat any stderr output or non-zero exit as a
+				// scary hook failure. In enforce mode, fail closed through the hook
+				// protocol instead: the agent sees a normal policy block, not a broken
+				// Bash/PreToolUse hook.
+				if mode == "enforce" {
+					logger.Warn("hook: create engine", "error", err)
+					return outputHookResult(cmd, format, hookDeny, false, "Rampart policy configuration error; refusing tool call until policy is fixed", "")
+				}
 				return fmt.Errorf("hook: create engine: %w", err)
 			}
 
@@ -927,12 +939,12 @@ func validateToolUseID(id string) error {
 // (Cline has no native ask equivalent).
 // suggestions contains ready-to-run "rampart allow ..." commands shown on deny.
 func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, isPostToolUse bool, reason string, command string, suggestions ...string) error {
-	if decision == hookDeny || decision == hookBlock {
+	// NOTE: Do NOT print to stderr for Claude Code hook decisions — Claude Code
+	// can interpret stderr as a hook failure. The structured JSON response carries
+	// deny/ask reasons. Keep Cline's historical stderr deny output for now.
+	if format == "cline" && (decision == hookDeny || decision == hookBlock) {
 		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason, suggestions))
 	}
-	// NOTE: Do NOT print to stderr for hookAsk — Claude Code interprets any
-	// stderr output as a hook error. The native prompt shows the reason via
-	// PermissionDecisionReason in the JSON response.
 	switch format {
 	case "cline":
 		// Cline has no "ask" — cancel on deny, block, and ask.

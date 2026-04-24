@@ -82,7 +82,7 @@ Once running, every tool call goes through Rampart's policy engine first:
 ✅ 14:23:03  read  ~/project/src/main.go                [default]
 🔴 14:23:05  exec  "rm -rf /tmp/*"                      [block-destructive]
 🟡 14:23:08  exec  "curl https://api.example.com"       [log-network]
-👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [require-approval]
+👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [ask]
 🔴 14:23:12  resp  read .env                            [block-credential-leak]
                     → blocked: response contained AWS_SECRET_ACCESS_KEY
 ```
@@ -100,7 +100,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart setup openclaw --plugin` | Native plugin + selective native approvals |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Codex CLI** | `rampart setup codex` | Shell wrapper (v0.4.5+); LD_PRELOAD fallback for older versions |
+| **Codex CLI** | `rampart setup codex` | Wrapper that runs Codex through `rampart preload` |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -575,7 +575,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
 | OpenClaw | `rampart setup openclaw --plugin` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS, Windows |
-| Codex CLI | `rampart setup codex` | Linux, macOS (shell wrapper v0.4.5+; LD_PRELOAD fallback) |
+| Codex CLI | `rampart setup codex` | Linux, macOS (requires `librampart.so`/`.dylib`) |
 | Claude Desktop | `rampart mcp` | All |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |

@@ -58,10 +58,10 @@ func runStatus(w io.Writer) error {
 
 // Box dimensions.
 const (
-	statusBoxTotal   = 65 // total visual width including │ borders
-	statusBoxFrame   = 63 // dashes between corner chars (= statusBoxTotal - 2)
-	statusContentW   = 61 // visual content width between "│ " and " │"
-	statusLabelCol   = 14 // visual chars from start of content to value column
+	statusBoxTotal = 65 // total visual width including │ borders
+	statusBoxFrame = 63 // dashes between corner chars (= statusBoxTotal - 2)
+	statusContentW = 61 // visual content width between "│ " and " │"
+	statusLabelCol = 14 // visual chars from start of content to value column
 )
 
 // renderProgressBar renders a progress bar like "███████░░░" (0–100 pct, `width` segments).
@@ -103,11 +103,11 @@ func buildStatusBox(
 	useColor bool,
 ) string {
 	// Lipgloss styles – only applied when useColor is true.
-	accentSt  := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6392")).Bold(true)
+	accentSt := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6392")).Bold(true)
 	successSt := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
-	dangerSt  := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
-	warnSt    := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
-	faintSt   := lipgloss.NewStyle().Faint(true)
+	dangerSt := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+	warnSt := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
+	faintSt := lipgloss.NewStyle().Faint(true)
 	_ = warnSt
 
 	styled := func(s string, st lipgloss.Style) string {
@@ -278,9 +278,9 @@ func detectProtectedAgents() []string {
 		}
 	}
 
-	// Codex wrapper
-	codexWrapper := filepath.Join(home, ".rampart", "bin", "codex")
-	if _, err := os.Stat(codexWrapper); err == nil {
+	// Codex wrapper installed by `rampart setup codex`.
+	codexWrapper := filepath.Join(home, ".local", "bin", "codex")
+	if data, err := os.ReadFile(codexWrapper); err == nil && containsRampartPreload(string(data)) {
 		agents = append(agents, "Codex (wrapper)")
 	}
 

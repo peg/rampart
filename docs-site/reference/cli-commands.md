@@ -61,7 +61,7 @@ rampart setup openclaw --remove  # Remove integration
 
 ### `rampart setup codex`
 
-Install a wrapper script that intercepts all Codex CLI tool calls via LD_PRELOAD.
+Install a wrapper script that runs Codex through `rampart preload`.
 
 ```bash
 rampart setup codex                   # Install wrapper
@@ -69,7 +69,7 @@ rampart setup codex --force           # Overwrite existing wrapper
 rampart setup codex --remove          # Remove wrapper
 ```
 
-The wrapper is installed at `~/.local/bin/codex` and transparently wraps the real Codex binary. Every command Codex executes — and every child process it spawns — goes through Rampart's policy engine via LD_PRELOAD inheritance.
+The wrapper is installed at `~/.local/bin/codex` and transparently wraps the real Codex binary. `rampart setup codex` requires `librampart.so` on Linux or `librampart.dylib` on macOS; source builds should place it in `~/.rampart/lib/` or `/usr/local/lib/` first. Codex subprocesses spawned through libc exec-family calls go through Rampart policy via preload inheritance.
 
 ### `rampart setup` (interactive)
 

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.19] - 2026-04-24
+
+### Fixed
+
+- **Codex setup is safer and idempotent** — `rampart setup codex` now refuses to install a wrapper when the preload library is missing, preserves the real Codex binary when `~/.local/bin` is first in `PATH`, and avoids self-recursive wrappers on repeated setup. `rampart setup codex --remove` no longer depends on Codex or the preload library being present.
+- **Claude Code hook failures are stderr-clean** — invalid or stale policy configurations now fail closed through Claude Code's hook protocol instead of surfacing scary shell-hook stderr noise.
+- **OpenClaw degraded-mode behavior is regression-tested** — sensitive tools block when `rampart serve` is unavailable or errors, while explicitly configured lower-risk `failOpenTools` remain fail-open.
+- **Integration docs now match platform behavior** — Codex, OpenClaw, Windows, source-build preload-library requirements, and current `action: ask` terminology are aligned across README and docs.
+
 ## [0.9.18] - 2026-04-24
 
 ### Added

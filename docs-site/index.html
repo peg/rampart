@@ -569,7 +569,7 @@
         <div class="feature-card reveal reveal-d3">
           <div class="feature-num">04</div>
           <div class="feature-title">Approval gates</div>
-          <div class="feature-desc">Some commands you want a human to approve before they run. Set <code>action: require-approval</code> on any rule and Rampart holds the command until you say yes or no.</div>
+          <div class="feature-desc">Some commands you want a human to approve before they run. Set <code>action: ask</code> on any rule and Rampart holds the command until you say yes or no.</div>
         </div>
         <div class="feature-card reveal reveal-d4">
           <div class="feature-num">05</div>
@@ -635,7 +635,7 @@
         <div class="agent-card">
           <div class="agent-card-info">
             <div class="agent-card-name">Claude Code</div>
-            <div class="agent-card-method">hooks + bridge &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+            <div class="agent-card-method">native hooks &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
           </div>
           <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup claude-code">
             <span class="agent-cmd-prompt">$ </span>rampart setup claude-code
@@ -646,7 +646,7 @@
         <div class="agent-card">
           <div class="agent-card-info">
             <div class="agent-card-name">Codex CLI</div>
-            <div class="agent-card-method">hooks + bridge &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+            <div class="agent-card-method">wrapper + preload</div>
           </div>
           <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup codex">
             <span class="agent-cmd-prompt">$ </span>rampart setup codex
@@ -657,7 +657,7 @@
         <div class="agent-card">
           <div class="agent-card-info">
             <div class="agent-card-name">Cline</div>
-            <div class="agent-card-method">LD_PRELOAD &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+            <div class="agent-card-method">native hooks &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
           </div>
           <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup cline">
             <span class="agent-cmd-prompt">$ </span>rampart setup cline
@@ -668,7 +668,7 @@
         <div class="agent-card">
           <div class="agent-card-info">
             <div class="agent-card-name">OpenClaw</div>
-            <div class="agent-card-method">shim + bridge &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
+            <div class="agent-card-method">native plugin &nbsp;·&nbsp; <span class="badge-native">✓ native</span></div>
           </div>
           <div class="agent-setup-cmd" onclick="copySetup(this)" title="Click to copy" data-cmd="rampart setup openclaw">
             <span class="agent-cmd-prompt">$ </span>rampart setup openclaw
@@ -679,7 +679,7 @@
         <div class="agent-card agent-card-universal">
           <div class="agent-card-info">
             <div class="agent-card-name">Any agent</div>
-            <div class="agent-card-method">shim &nbsp;·&nbsp; <span class="badge-native">✓ universal</span></div>
+            <div class="agent-card-method">shell wrapper &nbsp;·&nbsp; <span class="badge-native">✓ universal</span></div>
           </div>
           <div class="agent-setup-cmd agent-setup-cmd-dim">
             <span class="agent-cmd-prompt">$ </span>rampart wrap -- &lt;cmd&gt;
@@ -715,13 +715,13 @@
         <span class="yd">action: deny</span>
         <span class="yk">message</span>: <span class="ys">"Credential access blocked"</span>
 
-  - <span class="yk">name</span>: <span class="ys">require-approval-outbound</span>
+  - <span class="yk">name</span>: <span class="ys">ask-outbound</span>
     <span class="yk">match</span>:
       <span class="yk">tool</span>: http
     <span class="yk">rules</span>:
       - <span class="yk">when</span>:
           <span class="yk">url_not_in_allowlist</span>: <span class="ys">true</span>
-        <span class="yk">action</span>: <span class="ys">require-approval</span></code></pre>
+        <span class="yk">action</span>: <span class="ys">ask</span></code></pre>
       </div>
     </div>
   </section>
