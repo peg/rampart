@@ -12,7 +12,7 @@ rampart serve
 
 You don't usually run this directly. `rampart quickstart` and `rampart setup` handle it for you by installing a system service (systemd on Linux, launchd on macOS).
 
-**What happens if it's not running?** Rampart is fail-open by design. If the daemon is down, agent tool calls proceed without policy checks. No hangs, no crashes. You lose enforcement and audit logging until it's back.
+**What happens if it's not running?** Behavior depends on the integration. Shell/preload integrations are fail-open by default so they do not lock you out of your own machine. The OpenClaw native plugin is stricter: sensitive tools such as `exec` and `write` block when `rampart serve` is unavailable, while explicitly configured lower-risk `failOpenTools` can still proceed.
 
 ## Agent setup (`rampart setup`)
 
@@ -21,7 +21,7 @@ This wires an agent to use the daemon. What it does depends on the agent:
 | Agent | What `setup` does |
 |-------|-------------------|
 | **Claude Code** | Writes `PreToolUse` hook in `~/.claude/settings.json` |
-| **Codex** | Writes hook config in `~/.codex/config.json` |
+| **Codex** | Installs `~/.local/bin/codex` wrapper that runs the real Codex binary through `rampart preload` |
 | **Cline** | Writes hook config in `~/.cline/settings.json` |
 | **OpenClaw** | Installs native `before_tool_call` plugin (all tools) on >= 2026.3.28; legacy shim on older versions |
 | **MCP servers** | Use `rampart mcp --` prefix instead of setup |

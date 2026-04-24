@@ -188,9 +188,20 @@ func sameCodexPath(a, b string) bool {
 	if cleanA == cleanB {
 		return true
 	}
-	absA, errA := filepath.Abs(cleanA)
-	absB, errB := filepath.Abs(cleanB)
-	return errA == nil && errB == nil && absA == absB
+	canonA := canonicalCodexPath(cleanA)
+	canonB := canonicalCodexPath(cleanB)
+	return canonA != "" && canonA == canonB
+}
+
+func canonicalCodexPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(abs)
 }
 
 func removeCodexWrapper(out io.Writer, wrapperPath string) error {
