@@ -38,6 +38,12 @@ Run 'rampart setup codex --remove' to uninstall.`,
 
 			out := cmd.OutOrStdout()
 
+			// Verify the preload library before installing a wrapper. A wrapper without
+			// librampart would replace a working codex binary with a broken command.
+			if _, _, err := resolvePreloadLibrary(); err != nil {
+				return fmt.Errorf("setup codex: preload library unavailable: %w", err)
+			}
+
 			// Find the real codex binary.
 			realCodex, err := exec.LookPath("codex")
 			if err != nil {
