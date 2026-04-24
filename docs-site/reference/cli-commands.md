@@ -479,11 +479,12 @@ rampart policy check
 
 ### `rampart policy explain`
 
-Trace how a command would be evaluated.
+Trace how a command would be evaluated, including matching policy source files, scope, winning rule, and why the final decision won. Durable user overrides from `user-overrides.yaml` are labeled explicitly.
 
 ```bash
 rampart policy explain "rm -rf /"
-rampart policy explain "git status"
+rampart policy explain --tool exec --agent openclaw --session discord/direct/main "git status"
+rampart policy explain --config ~/.rampart/policies/user-overrides.yaml "sudo true"
 ```
 
 ### `rampart policy test`

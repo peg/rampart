@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`rampart policy explain` now shows why decisions won** — matching policies include source files, agent/session/tool scope, explicit `[WINNER]` marking, winning-rule rationale, and clearer messaging when a policy matched scope but no rule matched the command. New `--session` support makes session-scoped policy debugging faithful to engine behavior.
+- **`rampart policy explain` now shows why decisions won** — matching policies include source files, agent/session/tool scope, explicit `[WINNER]` marking, winning-rule rationale, and clearer messaging when a policy matched scope but no rule matched the command. New `--session` support makes session-scoped policy debugging faithful to engine behavior; docs now show the upgraded examples.
 - **Durable overrides are visible in explain output** — learned `Allow Always` rules from `user-overrides.yaml` are labeled as durable user overrides in both matching-policy details and the final decision summary.
 - **`rampart doctor` now includes OpenClaw readiness** — a concise readiness signal confirms the native plugin is active, `rampart serve` is reachable, and approval-learning prerequisites are present.
 
