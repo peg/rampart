@@ -252,6 +252,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	if n := doctorOpenClawPlugin(emit); n > 0 {
 		warnings += n
 	}
+	if n := doctorOpenClawReadiness(emit, pluginActive, serveURL, token); n > 0 {
+		warnings += n
+	}
 
 	// 17. OpenClaw ask mode — only needed for legacy bridge users.
 	// With the native plugin active, before_tool_call covers all tool calls
@@ -1393,6 +1396,30 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 	}
 
 	emit("OpenClaw plugin", "ok", "installed and enabled (before_tool_call hook active)")
+	return 0
+}
+
+// doctorOpenClawReadiness summarizes the runtime prerequisites that make the
+// native OpenClaw approval path trustworthy: plugin installed, serve reachable,
+// and a token available for authenticated policy/learning calls.
+func doctorOpenClawReadiness(emit emitFn, pluginActive bool, serveURL, token string) (warnings int) {
+	if !pluginActive {
+		return 0
+	}
+	if serveURL == "" {
+		emit("OpenClaw readiness", "warn",
+			"plugin installed, but rampart serve is unreachable — sensitive tools use degraded-mode blocking and approval learning is unavailable"+hintSep+
+				"rampart serve --background")
+		return 1
+	}
+	if strings.TrimSpace(token) == "" {
+		emit("OpenClaw readiness", "warn",
+			"plugin installed and serve reachable, but no token was found for approval/audit calls"+hintSep+
+				"rampart setup openclaw --plugin")
+		return 1
+	}
+
+	emit("OpenClaw readiness", "ok", fmt.Sprintf("plugin active; serve reachable at %s; approval learning prerequisites present", serveURL))
 	return 0
 }
 

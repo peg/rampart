@@ -33,6 +33,19 @@ func TestNormalizeAgent(t *testing.T) {
 	}
 }
 
+func TestNormalizeSession(t *testing.T) {
+	tests := []struct{ input, want string }{
+		{"", "*"},
+		{"  ", "*"},
+		{"discord/direct/test", "discord/direct/test"},
+	}
+	for _, tt := range tests {
+		if got := normalizeSession(tt.input); got != tt.want {
+			t.Errorf("normalizeSession(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestRenderCommand(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -109,11 +122,62 @@ policies:
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out.String(), "DENY") {
-		t.Errorf("expected DENY in output: %s", out.String())
+	got := out.String()
+	for _, want := range []string{
+		"DENY",
+		"block-rm",
+		"[WINNER]",
+		"Source:",
+		"Agent: * | Session: * | Tool: exec",
+		"Scope: agent=* session=* tool=exec",
+		"Why it won: deny wins immediately",
+		"Winning policy: block-rm",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output: %s", want, got)
+		}
 	}
-	if !strings.Contains(out.String(), "block-rm") {
-		t.Errorf("expected policy name: %s", out.String())
+}
+
+func TestPolicyExplainUserOverride(t *testing.T) {
+	dir := t.TempDir()
+	policyFile := filepath.Join(dir, "user-overrides.yaml")
+	os.WriteFile(policyFile, []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: user-allow-echo
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: allow
+        message: learned allow
+        when:
+          command_matches:
+            - "echo *"
+`), 0o644)
+
+	opts := &rootOptions{configPath: policyFile}
+	cmd := newPolicyExplainCmd(opts)
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"echo hi"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		"ALLOW",
+		"Override: durable user override",
+		"Override source: durable user override",
+		"user-overrides.yaml",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output: %s", want, got)
+		}
 	}
 }
 

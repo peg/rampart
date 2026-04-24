@@ -312,6 +312,53 @@ func TestDoctorCoverage_OpenClawOnlyNoClaude(t *testing.T) {
 	}
 }
 
+func TestDoctorOpenClawReadiness(t *testing.T) {
+	t.Run("skips when plugin inactive", func(t *testing.T) {
+		var results []checkResult
+		emit := func(name, status, msg string) {
+			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+		}
+		warnings := doctorOpenClawReadiness(emit, false, "", "")
+		if warnings != 0 || len(results) != 0 {
+			t.Fatalf("expected skip, got warnings=%d results=%+v", warnings, results)
+		}
+	})
+
+	t.Run("warns when serve unreachable", func(t *testing.T) {
+		home := t.TempDir()
+		testSetHome(t, home)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+		var results []checkResult
+		emit := func(name, status, msg string) {
+			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+		}
+		warnings := doctorOpenClawReadiness(emit, true, "", "token")
+		if warnings != 1 || len(results) != 1 || results[0].Status != "warn" {
+			t.Fatalf("expected one warning, got warnings=%d results=%+v", warnings, results)
+		}
+		if !strings.Contains(results[0].Message, "approval learning is unavailable") {
+			t.Fatalf("expected approval learning warning, got %s", results[0].Message)
+		}
+	})
+
+	t.Run("ok when prerequisites present", func(t *testing.T) {
+		home := t.TempDir()
+		testSetHome(t, home)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+		var results []checkResult
+		emit := func(name, status, msg string) {
+			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+		}
+		warnings := doctorOpenClawReadiness(emit, true, "http://localhost:9090", "token")
+		if warnings != 0 || len(results) != 1 || results[0].Status != "ok" {
+			t.Fatalf("expected ok, got warnings=%d results=%+v", warnings, results)
+		}
+		if !strings.Contains(results[0].Message, "approval learning prerequisites present") {
+			t.Fatalf("expected readiness summary, got %s", results[0].Message)
+		}
+	})
+}
+
 func requireNoErr(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
