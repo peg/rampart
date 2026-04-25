@@ -254,8 +254,16 @@ func TestInstallPolicy(t *testing.T) {
 	}
 
 	policyPath := filepath.Join(dir, ".rampart", "policies", "standard.yaml")
-	if _, err := os.Stat(policyPath); err != nil {
+	content, err := os.ReadFile(policyPath)
+	if err != nil {
 		t.Fatal("policy file not created")
+	}
+	if !strings.HasPrefix(string(content), "# rampart-policy-version: ") {
+		snippet := string(content)
+		if len(snippet) > 40 {
+			snippet = snippet[:40]
+		}
+		t.Fatalf("expected installed policy to be version stamped, got: %q", snippet)
 	}
 
 	// Run again - should say already exists

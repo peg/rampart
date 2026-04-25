@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
@@ -337,7 +338,9 @@ func installPolicy(out io.Writer, home, profile string) error {
 		return fmt.Errorf("setup: read embedded profile %s: %w", profile, err)
 	}
 
-	if err := os.WriteFile(policyPath, content, 0o600); err != nil {
+	stamped := []byte(fmt.Sprintf("# rampart-policy-version: %s\n", build.Version))
+	stamped = append(stamped, content...)
+	if err := os.WriteFile(policyPath, stamped, 0o600); err != nil {
 		return fmt.Errorf("setup: write policy: %w", err)
 	}
 	fmt.Fprintf(out, "✓ Policy written to %s\n", policyPath)

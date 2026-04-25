@@ -995,22 +995,11 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		return fmt.Errorf("read policy dir: %w", err)
 	}
 
-	// Built-in profile names — only these are ever auto-updated.
-	builtIn := map[string]bool{
-		"standard.yaml":               true,
-		"paranoid.yaml":               true,
-		"yolo.yaml":                   true,
-		"demo.yaml":                   true,
-		"block-prompt-injection.yaml": true,
-		"research-agent.yaml":         true,
-		"mcp-server.yaml":             true,
-		"openclaw.yaml":               true,
-	}
-
 	updated := 0
+	preserved := make([]string, 0)
 	updatedNames := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !builtIn[e.Name()] {
+		if e.IsDir() || !builtInProfiles[e.Name()] {
 			continue
 		}
 		profileName := strings.TrimSuffix(e.Name(), ".yaml")
@@ -1020,6 +1009,19 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 			continue
 		}
 		destPath := filepath.Join(policyDir, e.Name())
+		modified, err := isModifiedBuiltInPolicy(destPath)
+		if err != nil {
+			fmt.Fprintf(out, "  ⚠ skip %s: %v\n", e.Name(), err)
+			continue
+		}
+		if modified {
+			fmt.Fprintf(out, "  preserved modified policy: %s\n", destPath)
+			preserved = append(preserved, e.Name())
+			continue
+		}
+		if policyHasVersionStamp(destPath) && checkPolicyVersionStamp(destPath) == "" {
+			continue
+		}
 		if dryRun {
 			fmt.Fprintf(out, "  would update policy: %s\n", destPath)
 			updated++
@@ -1032,7 +1034,6 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 			return fmt.Errorf("create temp file: %w", err)
 		}
 		tmpPath := tmp.Name()
-		// Stamp with the current binary version so doctor can detect stale policies.
 		versionStamp := fmt.Sprintf("# rampart-policy-version: %s\n", build.Version)
 		if _, err := tmp.WriteString(versionStamp); err != nil {
 			tmp.Close()
@@ -1057,16 +1058,21 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		updatedNames = append(updatedNames, e.Name())
 	}
 
-	if updated == 0 {
-		// No standard policy files found — user may be using a custom config path.
-		fmt.Fprintf(out, "  (no built-in policy files found in %s — skipped)\n", policyDir)
+	if updated == 0 && len(preserved) == 0 {
+		fmt.Fprintf(out, "  (built-in policy files already current in %s — skipped)\n", policyDir)
 		return nil
 	}
 	sort.Strings(updatedNames)
+	sort.Strings(preserved)
 	if dryRun {
-		fmt.Fprintf(out, "  Would update: %s\n", strings.Join(updatedNames, ", "))
-	} else {
+		if len(updatedNames) > 0 {
+			fmt.Fprintf(out, "  Would update: %s\n", strings.Join(updatedNames, ", "))
+		}
+	} else if len(updatedNames) > 0 {
 		fmt.Fprintf(out, "Updated: %s\n", strings.Join(updatedNames, ", "))
+	}
+	if len(preserved) > 0 {
+		fmt.Fprintf(out, "Preserved modified: %s\n", strings.Join(preserved, ", "))
 	}
 	return nil
 }

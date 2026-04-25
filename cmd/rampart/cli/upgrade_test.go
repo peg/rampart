@@ -126,9 +126,9 @@ func TestNewUpgradeCmdAlreadyLatest(t *testing.T) {
 	}
 }
 
-func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
+func TestNewUpgradeCmdAlreadyLatestStillRefreshesStockPolicy(t *testing.T) {
 	// Regression test: when already on latest, upgrade should still refresh
-	// installed policy files from the embedded binary.
+	// a stock installed policy so it picks up version stamping and embedded changes.
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
@@ -137,8 +137,12 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	standardPath := filepath.Join(policyDir, "standard.yaml")
-	if err := os.WriteFile(standardPath, []byte("old-stale-policy"), 0o644); err != nil {
-		t.Fatalf("write stale policy: %v", err)
+	standard, err := policies.Profile("standard")
+	if err != nil {
+		t.Fatalf("embedded standard profile: %v", err)
+	}
+	if err := os.WriteFile(standardPath, standard, 0o644); err != nil {
+		t.Fatalf("write stock policy: %v", err)
 	}
 
 	deps := &upgradeDeps{
@@ -163,8 +167,59 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read policy: %v", err)
 	}
-	if string(got) == "old-stale-policy" {
-		t.Fatal("policy was not refreshed even though already on latest version")
+	if bytes.Equal(got, standard) {
+		t.Fatal("expected stock policy to be rewritten with a version stamp")
+	}
+	if !bytes.HasPrefix(got, []byte("# rampart-policy-version: ")) {
+		snippet := string(got)
+		if len(snippet) > 40 {
+			snippet = snippet[:40]
+		}
+		t.Fatalf("expected version stamp after refresh, got %q", snippet)
+	}
+}
+
+func TestNewUpgradeCmdPreservesModifiedBuiltInPolicy(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	standardPath := filepath.Join(policyDir, "standard.yaml")
+	modified := []byte("# rampart-policy-version: 0.9.19\nversion: \"1\"\npolicies:\n  - name: local-rule\n")
+	if err := os.WriteFile(standardPath, modified, 0o644); err != nil {
+		t.Fatalf("write modified policy: %v", err)
+	}
+
+	deps := &upgradeDeps{
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.2.3", nil
+		},
+		latestRelease: func(context.Context, *http.Client, string) (string, error) {
+			return "v1.2.3", nil
+		},
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	got, err := os.ReadFile(standardPath)
+	if err != nil {
+		t.Fatalf("read policy: %v", err)
+	}
+	if !bytes.Equal(got, modified) {
+		t.Fatal("expected modified built-in policy to be preserved")
+	}
+	if !strings.Contains(out.String(), "Preserved modified: standard.yaml") {
+		t.Fatalf("expected preserved-modified output, got %q", out.String())
 	}
 }
 
@@ -427,10 +482,18 @@ func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
 
 	standardPath := filepath.Join(policyDir, "standard.yaml")
 	blockPath := filepath.Join(policyDir, "block-prompt-injection.yaml")
-	if err := os.WriteFile(standardPath, []byte("old-standard"), 0o644); err != nil {
+	stockStandard, err := policies.Profile("standard")
+	if err != nil {
+		t.Fatalf("load standard profile: %v", err)
+	}
+	stockBlock, err := policies.Profile("block-prompt-injection")
+	if err != nil {
+		t.Fatalf("load block-prompt-injection profile: %v", err)
+	}
+	if err := os.WriteFile(standardPath, stockStandard, 0o644); err != nil {
 		t.Fatalf("write standard: %v", err)
 	}
-	if err := os.WriteFile(blockPath, []byte("old-block"), 0o644); err != nil {
+	if err := os.WriteFile(blockPath, stockBlock, 0o644); err != nil {
 		t.Fatalf("write block-prompt-injection: %v", err)
 	}
 
@@ -594,8 +657,8 @@ func TestExtractRampartBinaryFromZip_GoreleaserLayout(t *testing.T) {
 	// Goreleaser produces: rampart_0.7.1_windows_amd64/rampart.exe
 	archive := makeZipArchive(t, map[string][]byte{
 		"rampart_0.7.1_windows_amd64/rampart.exe": []byte("real-windows-binary"),
-		"rampart_0.7.1_windows_amd64/LICENSE":      []byte("Apache 2.0"),
-		"rampart_0.7.1_windows_amd64/README.md":    []byte("# Rampart"),
+		"rampart_0.7.1_windows_amd64/LICENSE":     []byte("Apache 2.0"),
+		"rampart_0.7.1_windows_amd64/README.md":   []byte("# Rampart"),
 	})
 	got, err := extractRampartBinaryFromZip(archive)
 	if err != nil {

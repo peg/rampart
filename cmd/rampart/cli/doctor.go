@@ -530,13 +530,27 @@ func doctorPolicies(emit emitFn) int {
 			emit("Policy", "ok",
 				fmt.Sprintf("~/%s (%d policies, %d lint warning(s) — policy works, run lint for details)", rel, count, lintResult.Warnings))
 		default:
-			// Check for stale built-in policies.
 			if builtInProfiles[filepath.Base(path)] {
+				modified, modErr := isModifiedBuiltInPolicy(path)
+				if modErr != nil {
+					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
+					continue
+				}
 				if staleMsg := checkPolicyVersionStamp(path); staleMsg != "" {
-					emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, %s)", rel, count, staleMsg)+
+					if modified {
+						emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, customized built-in profile, %s)", rel, count, staleMsg)+
+							hintSep+"review changes, then run: rampart upgrade --no-binary --dry-run")
+					} else {
+						emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, stock profile, %s)", rel, count, staleMsg)+
+							hintSep+"rampart upgrade --no-binary")
+					}
+				} else if modified {
+					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid, customized built-in profile)", rel, count))
+				} else if !policyHasVersionStamp(path) {
+					emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, stock profile without version stamp)", rel, count)+
 						hintSep+"rampart upgrade --no-binary")
 				} else {
-					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
+					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid, stock profile current)", rel, count))
 				}
 			} else {
 				emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
@@ -554,17 +568,6 @@ func doctorPolicies(emit emitFn) int {
 
 // doctorServer checks if rampart serve is running on defaultServePort.
 // Returns (issue count, serve URL for subsequent API checks).
-// builtInProfiles lists policy files that are managed by rampart and can be auto-updated.
-var builtInProfiles = map[string]bool{
-	"standard.yaml":               true,
-	"paranoid.yaml":               true,
-	"yolo.yaml":                   true,
-	"demo.yaml":                   true,
-	"block-prompt-injection.yaml": true,
-	"research-agent.yaml":         true,
-	"mcp-server.yaml":             true,
-	"openclaw.yaml":               true,
-}
 
 // checkPolicyVersionStamp reads the first line of a policy file looking for
 // "# rampart-policy-version: X.Y.Z". Returns a warning message if the stamp
