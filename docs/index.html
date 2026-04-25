@@ -25,6 +25,12 @@
       "url": "https://rampart.sh",
       "applicationCategory": "SecurityApplication",
       "operatingSystem": "Linux, macOS, Windows",
+      "softwareVersion": "0.9.19",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
       "license": "https://opensource.org/licenses/Apache-2.0",
       "codeRepository": "https://github.com/peg/rampart",
       "author": {
@@ -469,6 +475,29 @@
             border-radius: 4px;
             margin-top: 8px;
         }
+        .feature-grid--five { grid-template-columns: repeat(6, 1fr); }
+        .feature-grid--five .feature-card:nth-child(1),
+        .feature-grid--five .feature-card:nth-child(2),
+        .feature-grid--five .feature-card:nth-child(3) { grid-column: span 2; }
+        .feature-grid--five .feature-card:nth-child(4),
+        .feature-grid--five .feature-card:nth-child(5) { grid-column: span 3; }
+
+        .stats-band { padding: 34px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+        .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        .stat-card { background: var(--surface); padding: 22px 18px; text-align: center; }
+        .stat-num { display:block; color: var(--heading); font-size: clamp(1.8rem, 4vw, 2.5rem); line-height: 1; font-weight: 800; letter-spacing: -0.03em; }
+        .stat-card:first-child .stat-num { color: var(--accent); }
+        .stat-label { display:block; color: var(--text-dim); font-family: var(--mono); font-size: 0.76rem; margin-top: 8px; }
+
+        .yaml-section { padding: 80px 0; border-top: 1px solid var(--border); }
+        .yaml-layout { display:grid; grid-template-columns: 0.85fr 1.15fr; gap: 32px; align-items:start; }
+        .yaml-block { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow:hidden; box-shadow: 0 24px 80px rgba(0,0,0,0.25); }
+        .yaml-bar { display:flex; align-items:center; gap:8px; padding: 10px 14px; background: var(--surface-2); border-bottom:1px solid var(--border); }
+        .yaml-dot { width:10px; height:10px; border-radius:50%; background: var(--border-light); }
+        .yaml-dot:nth-child(1) { background:#ff5f57; } .yaml-dot:nth-child(2) { background:#febc2e; } .yaml-dot:nth-child(3) { background:#28c840; }
+        .yaml-title { margin-left:6px; color: var(--text-dim); font-family: var(--mono); font-size:0.76rem; }
+        .yaml-block pre { margin:0; padding: 18px 20px; overflow:auto; background: var(--surface); border:0; color: var(--text); font-size:0.82rem; line-height:1.65; }
+        .yaml-k { color: var(--cyan); } .yaml-s { color: var(--green); } .yaml-a { color: var(--accent); } .yaml-c { color: var(--text-dim); }
 
         /* ── Compatibility ── */
         .compat {
@@ -560,15 +589,17 @@
         @media (max-width: 768px) {
             .hero { padding: 60px 0 48px; }
             .pos-grid { grid-template-columns: 1fr; }
-            .threat-grid, .platform-grid { grid-template-columns: 1fr; }
+            .threat-grid, .platform-grid, .yaml-layout { grid-template-columns: 1fr; }
+            .stats-row { grid-template-columns: repeat(2, 1fr); }
             .feature-grid { grid-template-columns: 1fr 1fr; }
+            .feature-grid--five .feature-card:nth-child(n) { grid-column: span 1; }
             nav .links a.hide-mobile { display: none; }
             .watch-row { grid-template-columns: 20px 60px 36px 1fr; }
             .watch-policy { display: none; }
             .section-title { font-size: 1.6rem; }
         }
         @media (max-width: 480px) {
-            .feature-grid { grid-template-columns: 1fr; }
+            .feature-grid, .stats-row { grid-template-columns: 1fr; }
             .hero h1 { font-size: 1.8rem; }
             .hero-buttons { flex-direction: column; align-items: stretch; gap: 10px; }
             .hero-buttons .btn { justify-content: center; }
@@ -710,6 +741,18 @@
     </div>
 </section>
 
+<section class="stats-band" aria-label="Rampart by the numbers">
+    <div class="container">
+        <div class="stats-row">
+            <div class="stat-card"><span class="stat-num">8µs</span><span class="stat-label">policy eval</span></div>
+            <div class="stat-card"><span class="stat-num">40+</span><span class="stat-label">built-in rules</span></div>
+            <div class="stat-card"><span class="stat-num">95%</span><span class="stat-label">pattern matched</span></div>
+            <div class="stat-card"><span class="stat-num">0</span><span class="stat-label">cloud deps</span></div>
+            <div class="stat-card"><span class="stat-num">4</span><span class="stat-label">native agents</span></div>
+        </div>
+    </div>
+</section>
+
 <!-- Positioning: Sandbox vs Rampart -->
 <section class="positioning" style="padding: 100px 0;">
     <div class="container">
@@ -745,12 +788,18 @@
         <div class="section-label">How it works</div>
         <h2 class="section-title">A seatbelt, not a cage</h2>
         <p class="section-desc">You set the rules, or use ours. 40+ built-in rules. Every decision is local, fast, and visible.</p>
-        <div class="feature-grid">
+        <div class="feature-grid feature-grid--five">
             <div class="feature-card">
                 <div class="feature-icon">🔍</div>
                 <h3>Watch before you block</h3>
                 <p>Run in monitor mode first. See exactly what your agent does, then generate rules from the audit log. You don't have to write a single policy by hand.</p>
                 <pre>$ rampart watch</pre>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🧬</div>
+                <h3>Response scanning</h3>
+                <p>If your agent reads a file containing credentials, Rampart can block the response before those secrets enter the agent's context window.</p>
+                <pre>response: credential pattern blocked</pre>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🛡️</div>
@@ -766,12 +815,58 @@ action: deny
                 <p>Mark any rule as <code>ask</code>. Rampart holds the command and pings you. Nothing runs until you say so.</p>
                 <pre>action: ask</pre>
             </div>
-        </div>
-        <div style="text-align:center; margin-top:40px;">
-            <div style="display:inline-block; border:1px solid var(--border); border-radius:8px; padding:14px 28px; font-size:0.9rem; color:var(--text);">
-                Works with <code style="color:var(--text-bright);">rampart setup</code>:
-                Claude Code &middot; Codex CLI &middot; Cline &middot; OpenClaw &middot; MCP servers &middot; any wrapped agent
+            <div class="feature-card">
+                <div class="feature-icon">⛓️</div>
+                <h3>Tamper-evident audit</h3>
+                <p>Every allow, deny, and ask decision lands in hash-chained JSONL. Edit the history and the chain breaks.</p>
+                <pre>$ rampart audit verify</pre>
             </div>
+        </div>
+        <div class="agent-grid" style="margin-top:40px; max-width:960px;">
+            <div class="agent-chip agent-chip--native"><span class="dot"></span>Claude Code <small style="color:var(--text-dim); margin-left:auto;">hooks + bridge</small></div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span>Codex CLI <small style="color:var(--text-dim); margin-left:auto;">wrapper + preload</small></div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span>Cline <small style="color:var(--text-dim); margin-left:auto;">native hooks</small></div>
+            <div class="agent-chip agent-chip--native"><span class="dot"></span>OpenClaw <small style="color:var(--text-dim); margin-left:auto;">native plugin</small></div>
+            <div class="agent-chip"><span class="dot"></span>MCP servers <small style="color:var(--text-dim); margin-left:auto;">proxy</small></div>
+            <div class="agent-chip"><span class="dot"></span>Any agent <small style="color:var(--text-dim); margin-left:auto;">wrap</small></div>
+        </div>
+    </div>
+</section>
+
+<!-- YAML -->
+<section class="yaml-section">
+    <div class="container yaml-layout">
+        <div>
+            <div class="section-label">Policy as code</div>
+            <h2 class="section-title">It's just YAML.</h2>
+            <p class="section-desc">No SDK, no cloud console, no proprietary rule builder. Use the built-in profile, or write the exact rule you want reviewed before a tool call runs.</p>
+        </div>
+        <div class="yaml-block">
+            <div class="yaml-bar">
+                <span class="yaml-dot"></span><span class="yaml-dot"></span><span class="yaml-dot"></span>
+                <span class="yaml-title">~/.rampart/policies/standard.yaml</span>
+            </div>
+            <pre><code><span class="yaml-k">version</span>: <span class="yaml-s">"1"</span>
+<span class="yaml-k">policies</span>:
+  - <span class="yaml-k">name</span>: <span class="yaml-s">block-credential-leak</span>
+    <span class="yaml-k">match</span>:
+      <span class="yaml-k">tool</span>: file.read
+    <span class="yaml-k">rules</span>:
+      - <span class="yaml-k">when</span>:
+          <span class="yaml-k">path_matches</span>:
+            - <span class="yaml-s">"**/.env"</span>
+            - <span class="yaml-s">"**/.ssh/*"</span>
+            - <span class="yaml-s">"**/id_rsa"</span>
+        <span class="yaml-a">action</span>: deny
+        <span class="yaml-k">message</span>: <span class="yaml-s">"Credential access blocked"</span>
+
+  - <span class="yaml-k">name</span>: <span class="yaml-s">ask-before-production</span>
+    <span class="yaml-k">match</span>:
+      <span class="yaml-k">tool</span>: exec
+    <span class="yaml-k">rules</span>:
+      - <span class="yaml-k">when</span>:
+          <span class="yaml-k">command_matches</span>: [<span class="yaml-s">"kubectl apply *"</span>]
+        <span class="yaml-a">action</span>: ask</code></pre>
         </div>
     </div>
 </section>
