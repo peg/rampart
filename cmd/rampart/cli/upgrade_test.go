@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/policies"
 )
 
@@ -188,7 +189,12 @@ func TestNewUpgradeCmdPreservesModifiedBuiltInPolicy(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	standardPath := filepath.Join(policyDir, "standard.yaml")
-	modified := []byte("# rampart-policy-version: 0.9.19\nversion: \"1\"\npolicies:\n  - name: local-rule\n")
+	standard, err := policies.Profile("standard")
+	if err != nil {
+		t.Fatalf("embedded standard profile: %v", err)
+	}
+	modified := append([]byte("# rampart-policy-version: "+build.Version+"\n"), standard...)
+	modified = append(modified, []byte("\n# local customization\n")...)
 	if err := os.WriteFile(standardPath, modified, 0o644); err != nil {
 		t.Fatalf("write modified policy: %v", err)
 	}
@@ -220,6 +226,57 @@ func TestNewUpgradeCmdPreservesModifiedBuiltInPolicy(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Preserved modified: standard.yaml") {
 		t.Fatalf("expected preserved-modified output, got %q", out.String())
+	}
+}
+
+func TestNewUpgradeCmdFlagsStaleBuiltInForReview(t *testing.T) {
+	if build.Version == "dev" {
+		t.Skip("stale-version detection disabled for dev builds")
+	}
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	standardPath := filepath.Join(policyDir, "standard.yaml")
+	standard, err := policies.Profile("standard")
+	if err != nil {
+		t.Fatalf("embedded standard profile: %v", err)
+	}
+	stale := append([]byte("# rampart-policy-version: 0.0.1\n"), standard...)
+	if err := os.WriteFile(standardPath, stale, 0o644); err != nil {
+		t.Fatalf("write stale policy: %v", err)
+	}
+
+	deps := &upgradeDeps{
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.2.3", nil
+		},
+		latestRelease: func(context.Context, *http.Client, string) (string, error) {
+			return "v1.2.3", nil
+		},
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	got, err := os.ReadFile(standardPath)
+	if err != nil {
+		t.Fatalf("read policy: %v", err)
+	}
+	if !bytes.Equal(got, stale) {
+		t.Fatal("expected stale built-in policy to be left unchanged pending review")
+	}
+	if !strings.Contains(out.String(), "Review stale built-ins: standard.yaml") {
+		t.Fatalf("expected stale review output, got %q", out.String())
 	}
 }
 
@@ -530,6 +587,27 @@ func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
 
 	if !strings.Contains(out.String(), "Updated: block-prompt-injection.yaml, standard.yaml") {
 		t.Fatalf("missing updated summary line: %q", out.String())
+	}
+}
+
+func TestUpgradeStandardPoliciesNoBuiltInsFound(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "custom.yaml"), []byte("version: \"1\"\n"), 0o644); err != nil {
+		t.Fatalf("write custom policy: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := upgradeStandardPolicies(&out, false); err != nil {
+		t.Fatalf("upgradeStandardPolicies: %v", err)
+	}
+	if !strings.Contains(out.String(), "no built-in policy files found") {
+		t.Fatalf("expected no-built-ins message, got %q", out.String())
 	}
 }
 

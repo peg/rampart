@@ -531,26 +531,22 @@ func doctorPolicies(emit emitFn) int {
 				fmt.Sprintf("~/%s (%d policies, %d lint warning(s) — policy works, run lint for details)", rel, count, lintResult.Warnings))
 		default:
 			if builtInProfiles[filepath.Base(path)] {
-				modified, modErr := isModifiedBuiltInPolicy(path)
-				if modErr != nil {
+				state, stateErr := builtInPolicyState(path)
+				if stateErr != nil {
 					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))
 					continue
 				}
-				if staleMsg := checkPolicyVersionStamp(path); staleMsg != "" {
-					if modified {
-						emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, customized built-in profile, %s)", rel, count, staleMsg)+
-							hintSep+"review changes, then run: rampart upgrade --no-binary --dry-run")
-					} else {
-						emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, stock profile, %s)", rel, count, staleMsg)+
-							hintSep+"rampart upgrade --no-binary")
-					}
-				} else if modified {
-					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid, customized built-in profile)", rel, count))
-				} else if !policyHasVersionStamp(path) {
+				switch {
+				case state.StaleMessage != "":
+					emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, built-in profile from older Rampart release, %s)", rel, count, state.StaleMessage)+
+						hintSep+"review changes, then run: rampart upgrade --no-binary --dry-run")
+				case state.MatchesCurrent && !state.HasVersionStamp:
 					emit("Policy", "warn", fmt.Sprintf("~/%s (%d policies, valid, stock profile without version stamp)", rel, count)+
 						hintSep+"rampart upgrade --no-binary")
-				} else {
+				case state.MatchesCurrent:
 					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid, stock profile current)", rel, count))
+				default:
+					emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid, customized built-in profile)", rel, count))
 				}
 			} else {
 				emit("Policy", "ok", fmt.Sprintf("~/%s (%d policies, valid)", rel, count))

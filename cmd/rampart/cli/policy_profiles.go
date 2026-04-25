@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/policies"
 )
 
@@ -21,6 +22,12 @@ var builtInProfiles = map[string]bool{
 	"openclaw.yaml":               true,
 }
 
+type managedPolicyState struct {
+	HasVersionStamp bool
+	MatchesCurrent  bool
+	StaleMessage    string
+}
+
 func normalizeManagedPolicyContent(data []byte) []byte {
 	const prefix = "# rampart-policy-version: "
 	if bytes.HasPrefix(data, []byte(prefix)) {
@@ -33,6 +40,11 @@ func normalizeManagedPolicyContent(data []byte) []byte {
 	return data
 }
 
+func versionStampedPolicyContent(content []byte) []byte {
+	stamped := []byte(fmt.Sprintf("# rampart-policy-version: %s\n", build.Version))
+	return append(stamped, content...)
+}
+
 func policyHasVersionStamp(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -41,19 +53,24 @@ func policyHasVersionStamp(path string) bool {
 	return bytes.HasPrefix(data, []byte("# rampart-policy-version: "))
 }
 
-func isModifiedBuiltInPolicy(path string) (bool, error) {
+func builtInPolicyState(path string) (managedPolicyState, error) {
 	base := filepath.Base(path)
 	if !builtInProfiles[base] {
-		return false, nil
+		return managedPolicyState{}, nil
 	}
 	profileName := strings.TrimSuffix(base, filepath.Ext(base))
 	embedded, err := policies.Profile(profileName)
 	if err != nil {
-		return false, fmt.Errorf("load embedded profile %s: %w", profileName, err)
+		return managedPolicyState{}, fmt.Errorf("load embedded profile %s: %w", profileName, err)
 	}
 	installed, err := os.ReadFile(path)
 	if err != nil {
-		return false, fmt.Errorf("read installed profile %s: %w", path, err)
+		return managedPolicyState{}, fmt.Errorf("read installed profile %s: %w", path, err)
 	}
-	return !bytes.Equal(normalizeManagedPolicyContent(installed), embedded), nil
+	state := managedPolicyState{
+		HasVersionStamp: bytes.HasPrefix(installed, []byte("# rampart-policy-version: ")),
+		MatchesCurrent:  bytes.Equal(normalizeManagedPolicyContent(installed), embedded),
+		StaleMessage:    checkPolicyVersionStamp(path),
+	}
+	return state, nil
 }

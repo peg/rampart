@@ -996,12 +996,15 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 	}
 
 	updated := 0
+	seenBuiltIn := 0
 	preserved := make([]string, 0)
+	reviewNeeded := make([]string, 0)
 	updatedNames := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !builtInProfiles[e.Name()] {
 			continue
 		}
+		seenBuiltIn++
 		profileName := strings.TrimSuffix(e.Name(), ".yaml")
 		content, err := policies.Profile(profileName)
 		if err != nil {
@@ -1009,17 +1012,22 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 			continue
 		}
 		destPath := filepath.Join(policyDir, e.Name())
-		modified, err := isModifiedBuiltInPolicy(destPath)
+		state, err := builtInPolicyState(destPath)
 		if err != nil {
 			fmt.Fprintf(out, "  ⚠ skip %s: %v\n", e.Name(), err)
 			continue
 		}
-		if modified {
+		if state.StaleMessage != "" {
+			fmt.Fprintf(out, "  review stale built-in policy before refreshing: %s\n", destPath)
+			reviewNeeded = append(reviewNeeded, e.Name())
+			continue
+		}
+		if !state.MatchesCurrent {
 			fmt.Fprintf(out, "  preserved modified policy: %s\n", destPath)
 			preserved = append(preserved, e.Name())
 			continue
 		}
-		if policyHasVersionStamp(destPath) && checkPolicyVersionStamp(destPath) == "" {
+		if state.HasVersionStamp {
 			continue
 		}
 		if dryRun {
@@ -1058,12 +1066,17 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		updatedNames = append(updatedNames, e.Name())
 	}
 
-	if updated == 0 && len(preserved) == 0 {
+	if seenBuiltIn == 0 {
+		fmt.Fprintf(out, "  (no built-in policy files found in %s — skipped)\n", policyDir)
+		return nil
+	}
+	if updated == 0 && len(preserved) == 0 && len(reviewNeeded) == 0 {
 		fmt.Fprintf(out, "  (built-in policy files already current in %s — skipped)\n", policyDir)
 		return nil
 	}
 	sort.Strings(updatedNames)
 	sort.Strings(preserved)
+	sort.Strings(reviewNeeded)
 	if dryRun {
 		if len(updatedNames) > 0 {
 			fmt.Fprintf(out, "  Would update: %s\n", strings.Join(updatedNames, ", "))
@@ -1073,6 +1086,9 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 	}
 	if len(preserved) > 0 {
 		fmt.Fprintf(out, "Preserved modified: %s\n", strings.Join(preserved, ", "))
+	}
+	if len(reviewNeeded) > 0 {
+		fmt.Fprintf(out, "Review stale built-ins: %s\n", strings.Join(reviewNeeded, ", "))
 	}
 	return nil
 }

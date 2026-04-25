@@ -518,7 +518,7 @@ func installOpenClawPolicy(w io.Writer, errW io.Writer) error {
 	}
 
 	destPath := filepath.Join(policyDir, "openclaw.yaml")
-	if err := os.WriteFile(destPath, policyData, 0o600); err != nil {
+	if err := os.WriteFile(destPath, versionStampedPolicyContent(policyData), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", destPath, err)
 	}
 

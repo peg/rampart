@@ -275,3 +275,26 @@ func TestInstallPolicy(t *testing.T) {
 		t.Errorf("expected already exists, got: %s", buf.String())
 	}
 }
+
+func TestInstallOpenClawPolicyVersionStamped(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+	var out bytes.Buffer
+
+	if err := installOpenClawPolicy(&out, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	policyPath := filepath.Join(dir, ".rampart", "policies", "openclaw.yaml")
+	content, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal("openclaw policy file not created")
+	}
+	if !strings.HasPrefix(string(content), "# rampart-policy-version: ") {
+		snippet := string(content)
+		if len(snippet) > 40 {
+			snippet = snippet[:40]
+		}
+		t.Fatalf("expected installed OpenClaw policy to be version stamped, got: %q", snippet)
+	}
+}
