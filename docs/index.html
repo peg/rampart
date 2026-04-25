@@ -606,14 +606,11 @@
         .yaml-block pre { margin:0; padding: 18px 20px; overflow:auto; background: var(--surface); border:0; color: var(--text); font-size:0.82rem; line-height:1.65; }
         .yaml-k { color: var(--cyan); } .yaml-s { color: var(--green); } .yaml-a { color: var(--accent); } .yaml-c { color: var(--text-dim); }
 
-        .story-section { padding: 80px 0; border-top: 1px solid var(--border); }
-        .story-card { max-width: 900px; background: linear-gradient(135deg, rgba(255,99,146,0.09), rgba(24,24,27,0.92) 36%, rgba(24,24,27,0.98)); border: 1px solid var(--accent-border); border-radius: 18px; padding: clamp(28px, 5vw, 48px); }
-        .story-quote { color: var(--heading); font-size: clamp(1.45rem, 3vw, 2.35rem); line-height: 1.18; font-weight: 800; letter-spacing: -0.025em; max-width: 760px; }
-        .story-meta { color: var(--text-dim); margin-top: 18px; font-size: 0.92rem; }
-        .story-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 28px; }
-        .story-mini { border: 1px solid var(--border); background: rgba(9,9,11,0.34); border-radius: 12px; padding: 18px; }
-        .story-mini strong { display:block; color: var(--text-bright); margin-bottom: 6px; }
-        .story-mini span { color: var(--text); font-size: 0.9rem; }
+        .principles-section { padding: 58px 0; border-top: 1px solid var(--border); }
+        .principles-card { max-width: 900px; border: 1px solid var(--border); border-radius: 14px; padding: 22px 24px; background: rgba(24,24,27,0.58); }
+        .principles-line { color: var(--text-bright); font-size: 1.02rem; line-height: 1.65; }
+        .principles-line strong { color: var(--heading); }
+        .principles-meta { color: var(--text-dim); margin-top: 10px; font-size: 0.84rem; }
 
         /* ── Compatibility ── */
         .compat {
@@ -712,7 +709,6 @@
             .integration-row.header { display:none; }
             .example-grid { grid-template-columns: 1fr; }
             .stats-row { grid-template-columns: repeat(2, 1fr); }
-            .story-grid { grid-template-columns: 1fr; }
             .feature-grid { grid-template-columns: 1fr 1fr; }
             .feature-grid--five .feature-card:nth-child(n) { grid-column: span 1; }
             nav .links a.hide-mobile { display: none; }
@@ -1040,17 +1036,13 @@
     </div>
 </section>
 
-<!-- Story -->
-<section class="story-section">
+<!-- Principles -->
+<section class="principles-section">
     <div class="container">
-        <div class="story-card">
-            <div class="section-label">Why it exists</div>
-            <div class="story-quote">I built Rampart after my own agent nearly nuked a directory on my homelab.</div>
-            <div class="story-meta">Trevor · <a href="https://github.com/peg">@peg</a> · creator of Rampart</div>
-            <div class="story-grid">
-                <div class="story-mini"><strong>Developer-first by default</strong><span>Fail open for normal work. Block credentials, exfiltration, destructive commands, and policy tampering.</span></div>
-                <div class="story-mini"><strong>Local because it should be</strong><span>No account, no SaaS control plane, no cloud round-trip in your agent loop.</span></div>
-            </div>
+        <div class="principles-card">
+            <div class="section-label">Design principle</div>
+            <div class="principles-line"><strong>Built for people who actually run agents.</strong> Normal development should stay fast. Credentials, exfiltration, destructive commands, and policy tampering should not get a free pass.</div>
+            <div class="principles-meta">Local-first. Fail open for routine work. Human-owned policy changes.</div>
         </div>
     </div>
 </section>
