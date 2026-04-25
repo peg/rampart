@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ Rampart
+# Rampart
 
 **A firewall for AI coding agents.**
 
@@ -78,13 +78,13 @@ rampart watch
 Once running, every tool call goes through Rampart's policy engine first:
 
 ```
-✅ 14:23:01  exec  "npm test"                          [allow-dev]
-✅ 14:23:03  read  ~/project/src/main.go                [default]
-🔴 14:23:05  exec  "rm -rf /tmp/*"                      [block-destructive]
-🟡 14:23:08  exec  "curl https://api.example.com"       [log-network]
-👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [ask]
-🔴 14:23:12  resp  read .env                            [block-credential-leak]
-                    → blocked: response contained AWS_SECRET_ACCESS_KEY
+ALLOW 14:23:01  exec  "npm test"                      [allow-dev]
+ALLOW 14:23:03  read  ~/project/src/main.go            [default]
+DENY  14:23:05  exec  "rm -rf /tmp/*"                  [block-destructive]
+LOG   14:23:08  exec  "curl https://api.example.com"   [log-network]
+ASK   14:23:10  exec  "kubectl apply -f prod.yaml"     [ask]
+DENY  14:23:12  resp  read .env                        [block-credential-leak]
+                  -> blocked: response contained AWS_SECRET_ACCESS_KEY
 ```
 
 ---
@@ -312,9 +312,9 @@ Use `action: ask` to trigger an approval prompt:
 
 ```bash
 # When "npm install lodash" gets denied:
-#   💡 To allow this: rampart allow "npm install *"
+#   To allow this: rampart allow "npm install *"
 rampart allow "npm install *"
-#  ✓ Rule added — policy reloaded (12 rules active)
+#  Rule added — policy reloaded (12 rules active)
 ```
 
 **Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `ask`, `watch`, `allow`.
@@ -493,9 +493,9 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 | **ASI08: Data Exfiltration** | ✅ Domain blocking, credential response scanning |
 | **ASI09: Human-Agent Trust** | ✅ `ask` actions enforce human-in-the-loop |
 | **ASI10: Rogue Agents** | ✅ Hash-chained audit trail, response scanning |
-| **ASI01: Goal Hijack** | 🟡 Policy limits blast radius even if goals are altered |
-| **ASI06: Context Poisoning** | 🟡 Response scanning blocks credentials from context window |
-| **ASI07: Inter-Agent Communication** | ❌ Not addressed |
+| **ASI01: Goal Hijack** | Partial — policy limits blast radius even if goals are altered |
+| **ASI06: Context Poisoning** | Partial — response scanning blocks credentials from context window |
+| **ASI07: Inter-Agent Communication** | No — not addressed |
 
 [Full OWASP mapping →](https://docs.rampart.sh/reference/owasp-mapping/)
 
