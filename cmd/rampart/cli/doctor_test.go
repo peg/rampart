@@ -23,6 +23,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/peg/rampart/internal/build"
+	"github.com/peg/rampart/policies"
 )
 
 func TestRunDoctor(t *testing.T) {
@@ -219,6 +222,102 @@ func TestDoctorPolicies_EmptyCustomPlaceholderIsNotWarn(t *testing.T) {
 	}
 	if strings.Contains(results[0].Message, "lint warning") {
 		t.Fatalf("expected lint warning to be suppressed, got %q", results[0].Message)
+	}
+}
+
+func TestDoctorPolicies_BuiltInWithoutVersionStampWarnsAsStock(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	requireNoErr(t, os.MkdirAll(policyDir, 0o755))
+	standard, err := policies.Profile("standard")
+	requireNoErr(t, err)
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "standard.yaml"), standard, 0o644))
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+
+	issues := doctorPolicies(emit)
+	if issues != 0 {
+		t.Fatalf("expected no hard issues, got %d", issues)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Status != "warn" {
+		t.Fatalf("expected warn status, got %q (%s)", results[0].Status, results[0].Message)
+	}
+	if !strings.Contains(results[0].Message, "stock profile without version stamp") {
+		t.Fatalf("expected stock-profile warning, got %q", results[0].Message)
+	}
+}
+
+func TestDoctorPolicies_StaleBuiltInDoesNotPretendItsCustomized(t *testing.T) {
+	if build.Version == "dev" {
+		t.Skip("stale-version detection disabled for dev builds")
+	}
+	home := t.TempDir()
+	testSetHome(t, home)
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	requireNoErr(t, os.MkdirAll(policyDir, 0o755))
+	standard, err := policies.Profile("standard")
+	requireNoErr(t, err)
+	stale := append([]byte("# rampart-policy-version: 0.0.1\n"), standard...)
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "standard.yaml"), stale, 0o644))
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+
+	issues := doctorPolicies(emit)
+	if issues != 0 {
+		t.Fatalf("expected no hard issues, got %d", issues)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Status != "warn" {
+		t.Fatalf("expected warn status, got %q (%s)", results[0].Status, results[0].Message)
+	}
+	if !strings.Contains(results[0].Message, "older Rampart release") {
+		t.Fatalf("expected older-release note, got %q", results[0].Message)
+	}
+	if strings.Contains(results[0].Message, "customized built-in profile") {
+		t.Fatalf("did not expect stale stock profile to be labeled customized: %q", results[0].Message)
+	}
+}
+
+func TestDoctorPolicies_CustomizedBuiltInIsReportedClearly(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	requireNoErr(t, os.MkdirAll(policyDir, 0o755))
+	standard, err := policies.Profile("standard")
+	requireNoErr(t, err)
+	customized := append([]byte("# rampart-policy-version: "+build.Version+"\n"), standard...)
+	customized = append(customized, []byte("\n# local customization\n")...)
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "standard.yaml"), customized, 0o644))
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+
+	issues := doctorPolicies(emit)
+	if issues != 0 {
+		t.Fatalf("expected no hard issues, got %d", issues)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Status != "ok" {
+		t.Fatalf("expected ok status, got %q (%s)", results[0].Status, results[0].Message)
+	}
+	if !strings.Contains(results[0].Message, "customized built-in profile") {
+		t.Fatalf("expected customization note, got %q", results[0].Message)
 	}
 }
 
