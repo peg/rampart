@@ -31,6 +31,7 @@ import (
 	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/internal/engine"
+	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
 	"github.com/spf13/cobra"
 )
 
@@ -83,10 +84,20 @@ func runDoctorFix(cmd *cobra.Command) error {
 	needsLegacyPatch := !openclawWebFetchPatched() || !openclawBrowserPatched() ||
 		!openclawMessagePatched() || !openclawDistPatched() ||
 		(!pluginInstalled && !openclawExecPatched())
+	hardeningHealthy := openclawApprovalHardeningHealthy()
 
-	if pluginHealthy && !needsLegacyPatch {
+	if pluginHealthy && !needsLegacyPatch && hardeningHealthy {
 		fmt.Fprintln(cmd.OutOrStdout(), "✓ OpenClaw protection already looks healthy — nothing to fix.")
 		return nil
+	}
+	if pluginHealthy && !needsLegacyPatch && !hardeningHealthy {
+		fmt.Fprintln(cmd.OutOrStdout(), "Repairing OpenClaw approval hardening...")
+		if err := ensureOpenClawApprovalHardening(cmd.OutOrStdout(), cmd.ErrOrStderr()); err == nil {
+			fmt.Fprintln(cmd.OutOrStdout(), "✓ OpenClaw approval hardening repaired.")
+			return nil
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Approval hardening repair failed: %v\n", err)
+		}
 	}
 
 	if isOpenClawInstalled() {
@@ -253,6 +264,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		warnings += n
 	}
 	if n := doctorOpenClawReadiness(emit, pluginActive, serveURL, token); n > 0 {
+		warnings += n
+	}
+	if n := doctorOpenClawApprovalHardening(emit); n > 0 {
 		warnings += n
 	}
 
@@ -1420,6 +1434,59 @@ func doctorOpenClawReadiness(emit emitFn, pluginActive bool, serveURL, token str
 
 	emit("OpenClaw readiness", "ok", fmt.Sprintf("plugin active; serve reachable at %s; approval learning prerequisites present", serveURL))
 	return 0
+}
+
+func doctorOpenClawApprovalHardening(emit emitFn) (warnings int) {
+	if !isOpenClawInstalled() {
+		return 0
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	if err != nil {
+		emit("OpenClaw approvals", "warn", fmt.Sprintf("failed to inspect approval hardening: %v", err)+hintSep+
+			"rampart doctor --fix")
+		return 1
+	}
+	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
+		emit("OpenClaw approvals", "warn", "approval bundles not found in supported dist paths"+hintSep+
+			"rampart doctor --fix")
+		return 1
+	}
+	if !state.Supported {
+		emit("OpenClaw approvals", "warn", "unsupported OpenClaw build shape; refusing blind approval patching"+hintSep+
+			"update Rampart or inspect the installed OpenClaw dist before patching")
+		return 1
+	}
+	if !state.FallbackSafe || !state.CompletionAttributionSafe {
+		emit("OpenClaw approvals", "warn", "approval fallback is not fail-closed or completion attribution is misleading"+hintSep+
+			"rampart doctor --fix")
+		warnings++
+	} else {
+		emit("OpenClaw approvals", "ok", "approval fallback is fail-closed and completion attribution is truthful")
+	}
+	if !state.ApprovalTimeoutAligned || !state.PluginApprovalTimeoutAligned {
+		emit("OpenClaw approval timeout", "warn", fmt.Sprintf("not aligned to %dms", ochardening.DesiredApprovalTimeoutMs)+hintSep+
+			"rampart doctor --fix")
+		warnings++
+	} else {
+		emit("OpenClaw approval timeout", "ok", fmt.Sprintf("aligned at %dms", ochardening.DesiredApprovalTimeoutMs))
+	}
+	return warnings
+}
+
+func openclawApprovalHardeningHealthy() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	if err != nil {
+		return false
+	}
+	return state.Supported && state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned
 }
 
 // doctorOpenClawAskMode checks if ~/.openclaw/openclaw.json has ask set to

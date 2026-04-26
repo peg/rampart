@@ -123,8 +123,16 @@ func (m *mockSink) lastEvent() audit.Event {
 
 func setupTestServer(t *testing.T, configYAML, mode string) (*Server, string, *mockSink) {
 	t.Helper()
+	homeDir := t.TempDir()
+	return setupTestServerWithHome(t, configYAML, mode, homeDir)
+}
+
+func setupTestServerWithHome(t *testing.T, configYAML, mode, homeDir string) (*Server, string, *mockSink) {
+	t.Helper()
 
 	dir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	policyPath := filepath.Join(dir, "policy.yaml")
 	require.NoError(t, os.WriteFile(policyPath, []byte(configYAML), 0o644))
 
@@ -752,7 +760,7 @@ policies:
         message: "needs approval"
 `
 
-	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	srv, token, _ := setupTestServerWithHome(t, configYAML, "enforce", tmpHome)
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 

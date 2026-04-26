@@ -458,6 +458,51 @@ func TestDoctorOpenClawReadiness(t *testing.T) {
 	})
 }
 
+func TestDoctorOpenClawApprovalHardening(t *testing.T) {
+	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
+	home := t.TempDir()
+	testSetHome(t, home)
+	binDir := t.TempDir()
+	openclawBin := filepath.Join(binDir, "openclaw")
+	requireNoErr(t, os.WriteFile(openclawBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
+	requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw", "extensions", "rampart"), 0o755))
+	requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+	requireNoErr(t, os.MkdirAll(filepath.Join(home, ".local", "lib", "node_modules", "openclaw", "dist"), 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(home, ".local", "lib", "node_modules", "openclaw", "dist", "exec-approvals-test.js"), []byte(`const DEFAULT_EXEC_APPROVAL_TIMEOUT_MS = 18e5;
+const DEFAULT_EXEC_APPROVAL_ASK_FALLBACK = "full";
+const fallbackAskFallback = params.overrides?.askFallback ?? "full";
+`), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(home, ".local", "lib", "node_modules", "openclaw", "dist", "bash-tools-test.js"), []byte(`return ["An async command the user already approved has completed."].join("\n");
+if (!params.decision) {
+		if (params.askFallback === "full") return {
+			approvedByAsk: true,
+			deniedReason: null,
+			timedOut: true
+		};
+		if (params.askFallback === "deny") return {
+			approvedByAsk: false,
+			deniedReason: "approval-timeout",
+			timedOut: true
+		};
+}
+`), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(`{"plugins":{"entries":{"rampart":{"config":{"approvalTimeoutMs":300000}}}}}
+`), 0o644))
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorOpenClawApprovalHardening(emit)
+	if warnings != 2 {
+		t.Fatalf("expected two warnings, got %d (%+v)", warnings, results)
+	}
+	if len(results) != 2 || results[0].Status != "warn" || results[1].Status != "warn" {
+		t.Fatalf("expected warn results, got %+v", results)
+	}
+}
+
 func requireNoErr(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
