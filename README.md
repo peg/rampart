@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ Rampart
+# Rampart
 
 **A firewall for AI coding agents.**
 
@@ -14,7 +14,7 @@
 
 ---
 
-Claude Code's `--dangerously-skip-permissions` mode — and similar autonomous modes in Cline and Codex — give agents unrestricted shell access. Your agent can read your SSH keys, exfiltrate your `.env`, or `rm -rf /` with no guardrails.
+Claude Code's `--dangerously-skip-permissions` mode, and similar autonomous modes in Cline and Codex, give agents unrestricted shell access. Your agent can read your SSH keys, exfiltrate your `.env`, or `rm -rf /` with no guardrails.
 
 Rampart sits between the agent and your system. Every command, file access, and network request is evaluated against your policy before it executes. Dangerous commands never run.
 
@@ -23,7 +23,7 @@ Rampart sits between the agent and your system. Every command, file access, and 
 ## Install
 
 ```bash
-# Homebrew (macOS and Linux) — recommended
+# Homebrew (macOS and Linux, recommended)
 brew install peg/tap/rampart
 
 # One-line install (no sudo required)
@@ -78,13 +78,13 @@ rampart watch
 Once running, every tool call goes through Rampart's policy engine first:
 
 ```
-✅ 14:23:01  exec  "npm test"                          [allow-dev]
-✅ 14:23:03  read  ~/project/src/main.go                [default]
-🔴 14:23:05  exec  "rm -rf /tmp/*"                      [block-destructive]
-🟡 14:23:08  exec  "curl https://api.example.com"       [log-network]
-👤 14:23:10  exec  "kubectl apply -f prod.yaml"         [ask]
-🔴 14:23:12  resp  read .env                            [block-credential-leak]
-                    → blocked: response contained AWS_SECRET_ACCESS_KEY
+ALLOW 14:23:01  exec  "npm test"                      [allow-dev]
+ALLOW 14:23:03  read  ~/project/src/main.go            [default]
+DENY  14:23:05  exec  "rm -rf /tmp/*"                  [block-destructive]
+LOG   14:23:08  exec  "curl https://api.example.com"   [log-network]
+ASK   14:23:10  exec  "kubectl apply -f prod.yaml"     [ask]
+DENY  14:23:12  resp  read .env                        [block-credential-leak]
+                  -> blocked: response contained AWS_SECRET_ACCESS_KEY
 ```
 
 ---
@@ -106,7 +106,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
 
 <div align="center">
-<img src="docs/watch.png" alt="rampart watch — live audit dashboard" width="700">
+<img src="docs/watch.png" alt="rampart watch live audit dashboard" width="700">
 </div>
 
 <details>
@@ -126,7 +126,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 
 ## Claude Code
 
-Native integration through Claude Code's hook system — every Bash command, file read, and write goes through Rampart before execution:
+Native integration through Claude Code's hook system. Every Bash command, file read, and write goes through Rampart before execution:
 
 ```bash
 # Install background service
@@ -167,11 +167,11 @@ In practice, that means:
 
 ### What the plugin protects
 
-**1. Native plugin** — evaluates tool calls in `before_tool_call`, blocks deny decisions immediately, and routes selective exec approvals through OpenClaw's native approval UI.
+**1. Native plugin**: evaluates tool calls in `before_tool_call`, blocks deny decisions immediately, and routes selective exec approvals through OpenClaw's native approval UI.
 
-**2. Selective native approvals** — Rampart decides when an exec should require approval, and OpenClaw shows the approval card only for those matched commands.
+**2. Selective native approvals**: Rampart decides when an exec should require approval, and OpenClaw shows the approval card only for those matched commands.
 
-**3. Bundled policy profile** — installs the OpenClaw-focused policy profile used by the plugin setup.
+**3. Bundled policy profile**: installs the OpenClaw-focused policy profile used by the plugin setup.
 
 ### Legacy compatibility path
 
@@ -202,7 +202,7 @@ rampart preload -- codex
 rampart preload -- python my_agent.py
 rampart preload -- node agent.js
 
-# Monitor mode — log only, no blocking
+# Monitor mode: log only, no blocking
 rampart preload --mode monitor -- risky-tool
 ```
 
@@ -314,7 +314,7 @@ Use `action: ask` to trigger an approval prompt:
 # When "npm install lodash" gets denied:
 #   💡 To allow this: rampart allow "npm install *"
 rampart allow "npm install *"
-#  ✓ Rule added — policy reloaded (12 rules active)
+#  Rule added; policy reloaded (12 rules active)
 ```
 
 **Evaluation:** Deny always wins. Lower priority number = evaluated first. Four actions: `deny`, `ask`, `watch`, `allow`.
@@ -334,7 +334,7 @@ rampart init --project
 ```bash
 rampart init --profile standard    # allow-by-default, blocks dangerous commands
 rampart init --profile paranoid    # deny-by-default, explicit allowlist
-rampart init --profile ci          # strict — all approvals become hard denies
+rampart init --profile ci          # strict; all approvals become hard denies
 rampart init --profile yolo        # log-only, no blocking
 ```
 
@@ -376,7 +376,7 @@ Pending approvals expire after 2 minutes by default (`--approval-timeout` to cha
 
 ## Audit trail
 
-Every tool call logged to hash-chained JSONL — tamper with any record and the chain breaks:
+Every tool call is logged to hash-chained JSONL. Tamper with any record and the chain breaks:
 
 ```bash
 rampart audit tail --follow    # Stream events
@@ -390,7 +390,7 @@ rampart audit search           # Query by tool, agent, decision, time range
 ## Live dashboard
 
 ```bash
-rampart watch           # TUI — live colored event stream
+rampart watch           # TUI: live colored event stream
 ```
 
 Web dashboard at **http://localhost:9090/dashboard/** when `rampart serve` is running. Three tabs: live stream, history, and a policy REPL to test commands before they run.
@@ -439,7 +439,7 @@ rules:
       fail_open: true
 ```
 
-See [rampart-verify](https://github.com/peg/rampart-verify) — an optional LLM sidecar for ambiguous commands (~$0.0001/call).
+See [rampart-verify](https://github.com/peg/rampart-verify), an optional LLM sidecar for ambiguous commands (~$0.0001/call).
 
 ---
 
@@ -472,7 +472,7 @@ Policy evaluation in single-digit microseconds:
 
 ## Security recommendations
 
-**Self-modification protection.** Agents cannot bypass their own policy by running `rampart allow` or `rampart block` — these are blocked when executed by an agent. Policy modifications must be made by a human.
+**Self-modification protection.** Agents cannot bypass their own policy by running `rampart allow` or `rampart block`. Those commands are blocked when executed by an agent. Policy modifications must be made by a human.
 
 **Don't run your AI agent as root.** Root access defeats user separation. Run agent frameworks as an unprivileged user.
 
@@ -488,13 +488,13 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 
 | Risk | Coverage |
 |------|----------|
-| **ASI02: Tool Misuse** | ✅ Every tool call evaluated before execution |
-| **ASI05: Unexpected Code Execution** | ✅ Pattern matching + optional LLM verification |
-| **ASI08: Data Exfiltration** | ✅ Domain blocking, credential response scanning |
-| **ASI09: Human-Agent Trust** | ✅ `ask` actions enforce human-in-the-loop |
-| **ASI10: Rogue Agents** | ✅ Hash-chained audit trail, response scanning |
-| **ASI01: Goal Hijack** | 🟡 Policy limits blast radius even if goals are altered |
-| **ASI06: Context Poisoning** | 🟡 Response scanning blocks credentials from context window |
+| **ASI02: Tool Misuse** | Yes: every tool call is evaluated before execution |
+| **ASI05: Unexpected Code Execution** | Yes: pattern matching plus optional LLM verification |
+| **ASI08: Data Exfiltration** | Yes: domain blocking and credential response scanning |
+| **ASI09: Human-Agent Trust** | Yes: `ask` actions enforce human-in-the-loop |
+| **ASI10: Rogue Agents** | Yes: hash-chained audit trail and response scanning |
+| **ASI01: Goal Hijack** | Partial: policy limits blast radius even if goals are altered |
+| **ASI06: Context Poisoning** | Partial: response scanning blocks credentials from context window |
 | **ASI07: Inter-Agent Communication** | ❌ Not addressed |
 
 [Full OWASP mapping →](https://docs.rampart.sh/reference/owasp-mapping/)
@@ -528,7 +528,7 @@ rampart serve stop                           # Stop background server
 rampart doctor                               # Health check (colored output)
 rampart doctor --fix                         # Auto-apply missing patches
 rampart doctor --json                        # Machine-readable (exit 1 on issues)
-rampart status                               # Quick dashboard — what's protected
+rampart status                               # Quick dashboard: what's protected
 rampart watch                                # Live TUI event stream
 
 # Policy
@@ -635,7 +635,7 @@ Use `GET /v1/status` for server health or `GET /v1/policies` to list active poli
 
 Rampart blocks. [Snare](https://snare.sh) catches.
 
-Snare plants canary tokens in your AI agent's environment — API keys, cloud credentials, file paths. If your agent (or something that compromised it) uses those tokens, you get an instant alert.
+Snare plants canary tokens in your AI agent's environment - API keys, cloud credentials, file paths. If your agent, or something that compromised it, uses those tokens, you get an instant alert.
 
 **Rampart + Snare = preventive + detective controls.** Use both.
 
