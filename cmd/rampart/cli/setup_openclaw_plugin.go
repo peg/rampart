@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
 )
@@ -125,6 +126,14 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		fmt.Fprintln(w, "✓ rampart already in plugins.allow (no changes to other plugins)")
 	}
 
+	// 4c. Harden OpenClaw approval semantics and align approval timeouts.
+	if err := ensureOpenClawApprovalHardening(w, errW); err != nil {
+		fmt.Fprintf(errW, "⚠ Could not harden OpenClaw approvals: %v\n", err)
+		fmt.Fprintln(errW, "  Run `rampart doctor --fix` after reviewing the detected OpenClaw build shape.")
+	} else {
+		fmt.Fprintf(w, "✓ OpenClaw approval handling hardened (fail-closed fallback, truthful completion text, %dms timeout)\n", ochardening.DesiredApprovalTimeoutMs)
+	}
+
 	// 5. Copy openclaw.yaml policy profile.
 	if err := installOpenClawPolicy(w, errW); err != nil {
 		fmt.Fprintf(errW, "⚠ Could not install openclaw.yaml policy: %v\n", err)
@@ -152,10 +161,74 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 	fmt.Fprintf(w, "  Policy engine:   %s\n", serveStatus)
 	fmt.Fprintln(w, "  Audit log:       ~/.rampart/audit/")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "  → Restart the gateway:  systemctl --user restart openclaw-gateway.service")
+	fmt.Fprintln(w, "  → Restart the gateway if it was not restarted automatically:  systemctl --user restart openclaw-gateway.service")
 	fmt.Fprintln(w, "  → Run `rampart watch` to see policy decisions in real time")
 	fmt.Fprintln(w, "  → Run `rampart doctor` to verify your setup")
 
+	return nil
+}
+
+func ensureOpenClawApprovalHardening(w io.Writer, errW io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home: %w", err)
+	}
+	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	if err != nil {
+		return fmt.Errorf("inspect current hardening state: %w", err)
+	}
+	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
+		return fmt.Errorf("openclaw approval bundles not found under supported dist paths")
+	}
+	if !state.Supported {
+		return fmt.Errorf("unsupported OpenClaw approval bundle shape; refusing blind patch")
+	}
+	if state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned {
+		fmt.Fprintln(w, "✓ OpenClaw approval semantics already hardened and timeout-aligned")
+		return nil
+	}
+	result, err := ochardening.Apply(home, openclawDistCandidates())
+	if err != nil {
+		return fmt.Errorf("apply approval hardening: %w", err)
+	}
+	for _, path := range result.PatchedFiles {
+		fmt.Fprintf(w, "  Hardened %s\n", filepath.Base(path))
+	}
+	if result.ConfigUpdated {
+		fmt.Fprintf(w, "  Set plugins.entries.rampart.config.approvalTimeoutMs = %d\n", ochardening.DesiredApprovalTimeoutMs)
+	}
+	if result.RestartSuggested {
+		if err := restartOpenClawGateway(); err != nil {
+			fmt.Fprintf(errW, "⚠ Approval hardening applied, but automatic gateway restart failed: %v\n", err)
+			fmt.Fprintln(errW, "  Restart manually: systemctl --user restart openclaw-gateway.service")
+		} else {
+			fmt.Fprintln(w, "  Restarted OpenClaw gateway to activate approval hardening")
+		}
+	}
+	return nil
+}
+
+func restartOpenClawGateway() error {
+	openclawBin, err := findOpenClawBinary()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := osexec.CommandContext(ctx, openclawBin, "gateway", "restart")
+		if out, runErr := cmd.CombinedOutput(); runErr == nil {
+			return nil
+		} else if len(out) > 0 {
+			return fmt.Errorf("openclaw gateway restart: %w: %s", runErr, strings.TrimSpace(string(out)))
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, "systemctl", "--user", "restart", "openclaw-gateway.service")
+	if out, runErr := cmd.CombinedOutput(); runErr != nil {
+		if len(out) > 0 {
+			return fmt.Errorf("systemctl restart: %w: %s", runErr, strings.TrimSpace(string(out)))
+		}
+		return fmt.Errorf("systemctl restart: %w", runErr)
+	}
 	return nil
 }
 
@@ -518,7 +591,7 @@ func installOpenClawPolicy(w io.Writer, errW io.Writer) error {
 	}
 
 	destPath := filepath.Join(policyDir, "openclaw.yaml")
-	if err := os.WriteFile(destPath, policyData, 0o600); err != nil {
+	if err := os.WriteFile(destPath, versionStampedPolicyContent(policyData), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", destPath, err)
 	}
 

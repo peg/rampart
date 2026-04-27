@@ -552,7 +552,7 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 		b.logger.Error("bridge: allow-always: close temp file", "error", cerr)
 		return
 	}
-	if rerr := os.Rename(tmpPath, overridesPath); rerr != nil {
+	if rerr := replaceFileWithRetries(tmpPath, overridesPath); rerr != nil {
 		os.Remove(tmpPath)
 		b.logger.Error("bridge: allow-always: rename to final path", "error", rerr)
 		return
@@ -564,6 +564,24 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	if err := b.engine.Reload(); err != nil {
 		b.logger.Warn("bridge: allow-always: engine reload failed", "error", err)
 	}
+}
+
+func replaceFileWithRetries(tmpPath, destPath string) error {
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		if err := os.Rename(tmpPath, destPath); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if runtime.GOOS == "windows" {
+				if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) {
+					lastErr = fmt.Errorf("rename %s -> %s: %w (remove existing: %v)", tmpPath, destPath, err, removeErr)
+				}
+			}
+			time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+		}
+	}
+	return lastErr
 }
 
 // commandHash returns the first 8 hex characters of the SHA-256 hash of s.

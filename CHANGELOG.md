@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.20] - 2026-04-26
+
+### Fixed
+
+- **Built-in policy upgrades are safer** — `rampart doctor` now distinguishes stock built-in profiles from customized ones, warns clearly on stale or unstamped stock profiles, stamps policies written by setup for future drift detection, and preserves modified built-in profiles during upgrade instead of clobbering them.
+- **OpenClaw approval fallback is fail-closed and more truthful** — approval timeout/fallback behavior is hardened, async completion wording no longer implies prior user approval, Rampart aligns the plugin approval timeout to `120000ms`, and `rampart doctor` / `rampart doctor --fix` can detect and repair approval-hardening drift on supported OpenClaw bundle shapes.
+- **Approval-path tests are more reliable across hosts** — proxy tests isolate HOME state by default, and durable allow-always writeback is more robust on Windows.
+
+### Docs
+
+- **README and landing-page voice tightened** — public copy is cleaner, more consistent, and keeps the deployed landing page aligned with the current product story.
+
 ## [0.9.19] - 2026-04-24
 
 ### Fixed
