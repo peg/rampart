@@ -60,7 +60,7 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 
 **Remaining surface:** LD_PRELOAD cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
 
-**Multi-step sequences:** With file tool coverage enabled (native hooks or `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
+**Multi-step sequences:** With file tool coverage enabled (native hooks, OpenClaw native plugin, or legacy `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
 
 ### 2. Audit Log Rewrite
 
@@ -103,10 +103,11 @@ An agent could encode commands to bypass pattern matching:
 
 ### 5. Framework-Specific Patching
 
-Some agent frameworks (e.g., OpenClaw) don't expose hook points for file operations. Rampart's `--patch-tools` option modifies framework source files to add policy checks before read/write/edit operations. These patches don't survive framework upgrades — they modify files in `node_modules` that get replaced on update.
+Older OpenClaw builds did not expose a native file-tool hook, so Rampart added `--patch-tools` as a compatibility path that modifies framework source files before read/write/edit operations. These patches don't survive framework upgrades — they modify files in `node_modules` that get replaced on update.
 
 **Mitigations:**
-- `rampart setup openclaw --patch-tools` must be re-run immediately after OpenClaw upgrades to restore protection
+- Prefer the native OpenClaw plugin on current builds (`rampart setup openclaw`) — it covers tool calls without dist patching
+- `rampart setup openclaw --patch-tools` must be re-run immediately after OpenClaw upgrades to restore protection on legacy setups
 - Native hook integrations (Claude Code, Cline) don't have this limitation — they use the framework's own hook system
 
 **Security implications:**
@@ -183,6 +184,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
+| `rampart setup openclaw` | ✅ | ✅ | ❌ | ❌ |
 | `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
 | `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |

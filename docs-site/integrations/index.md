@@ -16,8 +16,9 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Codex CLI, any process |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
-| **Shim + Service** | Shell shim + file tool patching + LD_PRELOAD for sub-agents | OpenClaw |
-| **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (alternative) |
+| **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw |
+| **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
+| **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (legacy / alternative) |
 
 ## Ask Behavior
 
@@ -28,7 +29,7 @@ When a policy action is `ask`, behavior varies by integration:
 | **Claude Code** | Hook returns `"permissionDecision":"ask"` — Claude Code shows native prompt |
 | **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
 | **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
-| **OpenClaw** | Shim blocks, daemon sends webhook notifications |
+| **OpenClaw** | OpenClaw owns the visible approval UI; Rampart plugin supplies policy decisions |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
 | **LD_PRELOAD** | Library blocks exec call, process appears "hung" |
 | **HTTP API** | Returns `"decision":"ask"` with approval metadata when interactive review is required |
@@ -42,7 +43,7 @@ When a policy action is `ask`, behavior varies by integration:
 | [Cursor](cursor.md) | MCP proxy | `rampart mcp --` | All |
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI](codex-cli.md) | Wrapper + preload | `rampart setup codex` | Linux, macOS* |
-| [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw --plugin` | Linux, macOS |
+| [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw` | Linux, macOS |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
 
@@ -62,7 +63,7 @@ rampart setup cline" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 shim: "rampart setup openclaw
---patch-tools for full coverage" {
+native plugin on current builds" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 mcp: "rampart mcp --" {
@@ -84,7 +85,7 @@ start -> q
 q -> hooks: "Claude Code or Cline
 (native hooks, lowest overhead)"
 q -> shim: "OpenClaw
-(shell shim + file patching)"
+(native plugin on supported builds)"
 q -> mcp: "Cursor, Claude Desktop
 or any MCP-compatible client"
 q -> wrap: "Any CLI agent
@@ -96,4 +97,4 @@ or CI pipeline"
 ```
 
 !!! tip "Start with the simplest method"
-    Native hooks > wrap > MCP proxy > preload > HTTP API. Use the first one that works for your agent.
+    Preferred order is: native hooks/plugin > wrap > MCP proxy > preload > HTTP API. Use the first one your agent supports cleanly.

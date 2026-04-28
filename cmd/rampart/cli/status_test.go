@@ -82,6 +82,47 @@ func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
 	}
 }
 
+func TestDetectProtectedAgents_OpenClawPluginRequiresAllowedAndEnabled(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+
+	mustWrite := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contains := func(want string) bool {
+		t.Helper()
+		for _, agent := range detectProtectedAgents() {
+			if agent == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	mustWrite(`{"plugins":{"allow":[]}}`)
+	if contains("OpenClaw (plugin)") {
+		t.Fatal("plugin should not be reported when plugins.allow is missing rampart")
+	}
+
+	mustWrite(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":false}}}}`)
+	if contains("OpenClaw (plugin)") {
+		t.Fatal("plugin should not be reported when plugins.entries.rampart.enabled=false")
+	}
+
+	mustWrite(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}}}`)
+	if !contains("OpenClaw (plugin)") {
+		t.Fatal("expected plugin to be reported when installed, allowed, and enabled")
+	}
+}
+
 func TestExtractEventCommand(t *testing.T) {
 	ev := &audit.Event{
 		Tool:    "exec",

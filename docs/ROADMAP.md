@@ -45,24 +45,17 @@ What's coming next for Rampart. Priorities shift based on feedback — [open an 
 
 ## Current Focus
 
-### v0.9.9 (in progress)
-- Deprecation cleanup: `--serve-token`, `--env`, `GET /v1/policy` removed
-- `action: require_approval` removed — hard error at parse time, use `action: ask` instead
-- `rampart watch` warns when serve is unreachable (interactive approvals unavailable)
-- HMAC signing fixes for approval resolve URLs
+### v0.9.21 (clarity / coherence release)
+- Make the docs, CLI hints, quickstart flow, and status/doctor output tell the same story
+- Ship a canonical integration support matrix that explains hooks vs plugin vs preload vs MCP clearly
+- Remove stale OpenClaw wording (`--plugin`/`--patch-tools` confusion, serve over-generalization, legacy shim bleed-through)
+- Tighten first-run trust: users should be able to answer "am I protected, how, and what breaks if serve is down?" without digging through source
 
-### v0.9.10 (reliability)
-- Shell-aware parsing for `$(...)` and process substitution
-- Improved audit log rotation and size management
-- Better error messages for common policy mistakes
-- CI/CD integration examples (GitHub Actions, GitLab CI)
-
-### v1.0 (launch)
-- Stable API guarantee — no breaking changes after 1.0
-- Tutorial docs ("Protect your first agent in 5 minutes")
-- Starter policy library for common stacks (web dev, infra, data science)
-- Dashboard improvements — better filtering, historical views
-- Homebrew formula and package manager support
+### Next after that: `1.0.0-rc1`
+- One boring cross-platform validation pass on the cleaned-up install/setup/status story
+- Stable API / behavior review for the currently supported integration surfaces
+- Final docs polish on approvals, degraded behavior, and coverage boundaries
+- Release-candidate packaging once the product story feels coherent, not just feature-complete
 
 ## Future / v2.x
 

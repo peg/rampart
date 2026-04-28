@@ -174,7 +174,7 @@ rampart doctor
 **Plugin missing — reinstall:**
 
 ```bash
-rampart setup openclaw --plugin --force
+rampart setup openclaw --force
 # Then restart the OpenClaw gateway
 ```
 

@@ -24,7 +24,7 @@ agents: {
 intercept: {
   label: "Interception"
   hooks: "Native Hooks"
-  shim: "Shell Shim"
+  plugin: "Native Plugin"
   preload: "LD_PRELOAD"
   mcp: "MCP Proxy"
 }
@@ -69,12 +69,12 @@ outcomes: {
 
 agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
-agents.openclaw -> intercept.shim
+agents.openclaw -> intercept.plugin
 agents.codex -> intercept.preload
 agents.other -> intercept.mcp
 
 intercept.hooks -> engine
-intercept.shim -> engine
+intercept.plugin -> engine
 intercept.preload -> engine
 intercept.mcp -> engine
 
@@ -187,6 +187,7 @@ preload/             C library for LD_PRELOAD
 | Pattern | How | Best For |
 |---------|-----|----------|
 | **Native hooks** | Agent's hook system calls `rampart hook` | Claude Code, Cline |
+| **Native plugin** | Agent plugin forwards tool calls to Rampart before execution | OpenClaw |
 | **Wrap** | `$SHELL` shim intercepts commands | Aider, OpenCode |
 | **MCP Proxy** | Transparent MCP protocol proxy | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Syscall interception | Codex CLI, any process |

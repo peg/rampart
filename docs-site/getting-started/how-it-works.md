@@ -4,15 +4,19 @@ Rampart has four main pieces. Here's what each one does and how they fit togethe
 
 ## The daemon (`rampart serve`)
 
-This is the core. It loads your policies, evaluates every tool call against them, and writes audit events. It runs as an HTTP server on `localhost:9090` (by default).
+This is the shared local policy service. It loads your policies, evaluates tool calls for service-backed integrations, and writes audit events. It runs as an HTTP server on `localhost:9090` (by default).
 
 ```
 rampart serve
 ```
 
-You don't usually run this directly. `rampart quickstart` and `rampart setup` handle it for you by installing a system service (systemd on Linux, launchd on macOS).
+You don't usually run this directly. `rampart quickstart` and the service-backed setup flows handle it for you by installing a system service (systemd on Linux, launchd on macOS).
 
-**What happens if it's not running?** Behavior depends on the integration. Shell/preload integrations are fail-open by default so they do not lock you out of your own machine. The OpenClaw native plugin is stricter: sensitive tools such as `exec` and `write` block when `rampart serve` is unavailable, while explicitly configured lower-risk `failOpenTools` can still proceed.
+**What happens if it's not running?** Behavior depends on the integration:
+
+- **Claude Code / Cline native hooks** can still evaluate policy locally for direct hook decisions.
+- **OpenClaw native plugin** depends on `rampart serve`; sensitive tools such as `exec` and `write` block when the service is unavailable, while explicitly configured lower-risk `failOpenTools` can still proceed.
+- **Wrapper / preload / API integrations** typically need the service path and may fail open or fail closed depending on configuration.
 
 ## Agent setup (`rampart setup`)
 
@@ -20,13 +24,13 @@ This wires an agent to use the daemon. What it does depends on the agent:
 
 | Agent | What `setup` does |
 |-------|-------------------|
-| **Claude Code** | Writes `PreToolUse` hook in `~/.claude/settings.json` |
+| **Claude Code** | Writes native hooks in `~/.claude/settings.json` |
 | **Codex** | Installs `~/.local/bin/codex` wrapper that runs the real Codex binary through `rampart preload` |
-| **Cline** | Writes hook config in `~/.cline/settings.json` |
-| **OpenClaw** | Installs native `before_tool_call` plugin (all tools) on >= 2026.3.28; legacy shim on older versions |
+| **Cline** | Installs hook scripts under `~/Documents/Cline/Hooks/` |
+| **OpenClaw** | Installs native `before_tool_call` plugin on >= 2026.3.28; uses legacy shim/bridge only on older versions |
 | **MCP servers** | Use `rampart mcp --` prefix instead of setup |
 
-After setup, every tool call the agent makes goes through the daemon for policy evaluation before execution.
+After setup, every tool call goes through the integration's enforcement path before execution. Some paths call into `rampart serve`; Claude/Cline native hooks can also evaluate locally.
 
 ```
 rampart setup claude-code   # one-time, survives agent updates
@@ -54,7 +58,23 @@ rampart report             # HTML summary of recent activity
 rampart report --days 7    # last 7 days
 ```
 
-## The flow
+## The flows
+
+### Claude Code / Cline native hooks
+
+```
+Agent tool call
+  │
+  ▼
+Rampart hook (`rampart hook`)
+  │
+  ├─ local policy evaluation
+  ├─ optional serve-backed audit / external approval state
+  │
+  └─ allow / deny / ask returned to the agent's native hook UX
+```
+
+### Service-backed integrations (OpenClaw plugin, preload/wrapper, API)
 
 ```
 Agent (Claude Code, Codex, etc.)
@@ -71,13 +91,13 @@ Rampart daemon (localhost:9090)
   ▼
 Allow → command runs
 Deny  → agent gets error message
-Ask   → held until human approves/denies
+Ask   → native agent prompt or external approval flow, depending on integration
 ```
 
 ## Common questions
 
 **Do I need to run `rampart serve` manually?**
-No. `rampart quickstart` installs it as a system service that starts on boot.
+Not usually. `rampart quickstart` installs it as a system service when the chosen integration needs it. Direct Claude Code and Cline hook protection can still work locally without it.
 
 **What if I installed with `nohup rampart serve &`?**
 That works but won't survive reboots. Run `rampart serve install` to create a persistent service, or use `rampart quickstart` which handles this.
