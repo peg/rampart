@@ -106,20 +106,59 @@ func TestDetectProtectedAgents_OpenClawPluginRequiresAllowedAndEnabled(t *testin
 		}
 		return false
 	}
+	containsOpenClaw := func() bool {
+		t.Helper()
+		for _, agent := range detectProtectedAgents() {
+			if strings.HasPrefix(agent, "OpenClaw (") {
+				return true
+			}
+		}
+		return false
+	}
 
 	mustWrite(`{"plugins":{"allow":[]}}`)
-	if contains("OpenClaw (plugin)") {
-		t.Fatal("plugin should not be reported when plugins.allow is missing rampart")
+	if containsOpenClaw() {
+		t.Fatal("OpenClaw should not be reported when plugins.allow is missing rampart")
 	}
 
 	mustWrite(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":false}}}}`)
-	if contains("OpenClaw (plugin)") {
-		t.Fatal("plugin should not be reported when plugins.entries.rampart.enabled=false")
+	if containsOpenClaw() {
+		t.Fatal("OpenClaw should not be reported when plugins.entries.rampart.enabled=false")
 	}
 
 	mustWrite(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}}}`)
 	if !contains("OpenClaw (plugin)") {
 		t.Fatal("expected plugin to be reported when installed, allowed, and enabled")
+	}
+}
+
+func TestDetectProtectedAgents_OpenClawLegacyBridgeRequiresTopLevelBridgeConfig(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range detectProtectedAgents() {
+		if strings.HasPrefix(agent, "OpenClaw (") {
+			t.Fatalf("plugin metadata alone should not be reported as legacy bridge: %v", agent)
+		}
+	}
+
+	if err := os.WriteFile(configPath, []byte(`{"rampart":{"url":"http://127.0.0.1:9090"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, agent := range detectProtectedAgents() {
+		if agent == "OpenClaw (bridge)" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected legacy bridge config to be reported")
 	}
 }
 

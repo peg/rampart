@@ -276,7 +276,7 @@ func detectProtectedAgents() []string {
 	} else if _, err := os.Stat(openclawShim); err == nil {
 		agents = append(agents, "OpenClaw (shim+bridge)")
 	} else if data, err := os.ReadFile(openclawConfig); err == nil {
-		if strings.Contains(string(data), "rampart") {
+		if hasLegacyOpenClawBridgeConfig(data) {
 			agents = append(agents, "OpenClaw (bridge)")
 		}
 	}
@@ -288,6 +288,19 @@ func detectProtectedAgents() []string {
 	}
 
 	return agents
+}
+
+func hasLegacyOpenClawBridgeConfig(data []byte) bool {
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	for _, key := range []string{"rampart", "rampartBridge", "rampart_bridge", "rampartUrl", "rampart_url"} {
+		if _, ok := cfg[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func detectMode() (string, string) {

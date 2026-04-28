@@ -87,8 +87,13 @@ func TestOpenClawPolicyDecisions(t *testing.T) {
 		{name: "allow: main session can spawn", tool: "sessions_spawn", session: "agent:default:main", expected: engine.ActionAllow},
 		{name: "deny: subagent cannot spawn", tool: "sessions_spawn", session: "subagent:abc123", expected: engine.ActionDeny},
 
-		// ── self-modification: still hard deny ─────────────────────────
+		// ── self-modification: still hard deny without PR/body false positives ───
+		{name: "allow: gh pr body mentioning rampart setup", tool: "exec", command: "gh pr create --base staging --head branch --title test --body 'mentions rampart setup openclaw in documentation'", expected: engine.ActionAllow},
+		{name: "allow: echo mentioning rampart setup", tool: "exec", command: "echo 'rampart setup openclaw'", expected: engine.ActionAllow},
 		{name: "deny: rampart allow", tool: "exec", command: "rampart allow 'curl *'", expected: engine.ActionDeny},
+		{name: "deny: rampart setup", tool: "exec", command: "rampart setup openclaw", expected: engine.ActionDeny},
+		{name: "deny: wrapped rampart setup", tool: "exec", command: "bash -c 'rampart setup openclaw'", expected: engine.ActionDeny},
+		{name: "deny: absolute path rampart setup", tool: "exec", command: "/usr/local/bin/rampart setup openclaw", expected: engine.ActionDeny},
 		{name: "deny: rampart policy", tool: "exec", command: "rampart policy generate", expected: engine.ActionDeny},
 
 		// ── catch-all: unrecognized tools use default_action: ask ──────

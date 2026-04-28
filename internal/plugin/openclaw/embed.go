@@ -13,7 +13,7 @@
 
 // Package openclaw provides the bundled Rampart OpenClaw plugin.
 // The plugin is embedded into the Rampart binary at build time and
-// extracted to a temp directory during `rampart setup openclaw --plugin`.
+// extracted to a temp directory during `rampart setup openclaw`.
 package openclaw
 
 import (

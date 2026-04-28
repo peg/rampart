@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Quickstart OpenClaw detection matches the native plugin story** — quickstart and related tests now recognize the native OpenClaw plugin as an installed protected path instead of only checking legacy shim artifacts.
 - **CLI/docs wording drift removed** — stale claims that `rampart quickstart --yes` auto-enables OpenClaw `--patch-tools` have been removed, and doctor/help hints now point users at the canonical OpenClaw command.
 - **Doctor version output cleaned up** — service version reporting no longer renders malformed strings like `serve vv0.9.20`.
+- **Self-modification policy false positives reduced** — built-in policies now block actual Rampart mutation/setup invocations without denying harmless PR bodies or docs text that merely mention commands like `rampart setup openclaw`.
 
 ### Docs
 
