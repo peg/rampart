@@ -482,14 +482,9 @@ file each policy came from (standard.yaml, user-overrides.yaml, auto-allowed.yam
 
 Requires rampart serve to be running.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			serveURL := os.Getenv("RAMPART_SERVE_URL")
-			if serveURL == "" {
-				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
-			}
-			token := os.Getenv("RAMPART_TOKEN")
-			if token == "" {
-				token, _ = readPersistedToken()
-			}
+			serveURL := resolveServeURL("")
+			cfg, _ := loadUserConfig()
+			token := cfg.Token
 
 			req, _ := http.NewRequestWithContext(cmd.Context(), "GET", serveURL+"/v1/policies", nil)
 			req.Header.Set("Authorization", "Bearer "+token)

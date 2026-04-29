@@ -49,7 +49,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", "", "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -69,7 +69,7 @@ func newDenyCmd(_ *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", "", "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -91,7 +91,7 @@ are blocked until someone approves or denies them (or they expire).`,
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", "", "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -101,24 +101,26 @@ func resolveToken(token string) string {
 	if token != "" {
 		return token
 	}
-	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
-		return env
-	}
-	// Check persisted token file (~/.rampart/token)
-	if persisted, err := readPersistedToken(); err == nil && persisted != "" {
-		return persisted
+	if cfg, err := loadUserConfig(); err == nil && cfg.Token != "" {
+		return cfg.Token
 	}
 	return ""
 }
 
 func resolveAddr(addr string) string {
-	if env := os.Getenv("RAMPART_API"); env != "" && addr == fmt.Sprintf("http://127.0.0.1:%d", defaultServePort) {
-		return env
+	if addr == "" {
+		if env := strings.TrimSpace(os.Getenv("RAMPART_API")); env != "" {
+			return strings.TrimRight(env, "/")
+		}
+		if cfg, err := loadUserConfig(); err == nil && cfg.APIAddr != "" {
+			return cfg.APIAddr
+		}
 	}
-	return addr
+	return resolveServeURL(addr)
 }
 
 func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) error {
+	addr = resolveAddr(addr)
 	token = resolveToken(token)
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
@@ -158,6 +160,7 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 }
 
 func listPending(cmd *cobra.Command, addr, token string) error {
+	addr = resolveAddr(addr)
 	token = resolveToken(token)
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")

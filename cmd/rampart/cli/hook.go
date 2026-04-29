@@ -234,24 +234,11 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			gitCtx := deriveGitContext()
 			hookSession := gitCtx.session
 
-			// Resolve serve-url and serve-token from env if not set via flags.
-			serveAutoDiscovered := false
-			if serveURL == "" {
-				serveURL = os.Getenv("RAMPART_SERVE_URL")
-			}
-			if serveURL == "" {
-				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
-				serveAutoDiscovered = true
-			}
-			// Resolve token from RAMPART_TOKEN env var or ~/.rampart/token file.
-			// This means settings.json never needs to contain credentials —
-			// the hook discovers both the URL and the token from standard locations.
-			var serveToken string
-			if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
-				serveToken = envToken
-			} else if tok, err := readPersistedToken(); err == nil && tok != "" {
-				serveToken = tok
-			}
+			// Resolve serve-url and serve-token from standard config/env locations.
+			serveAutoDiscovered := serveURL == ""
+			serveURL = resolveServeURL(serveURL)
+			cfg, _ := loadUserConfig()
+			serveToken := cfg.Token
 
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
@@ -406,26 +393,41 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookOutcome, false, fmt.Sprintf("parse failure: %v", err), "")
 			}
 
-			// Short-circuit for PostToolUseFailure: the previous PreToolUse was denied by
-			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
-			// burning 3-5 turns on workarounds.
+			// PostToolUseFailure: only inject policy guidance when the failure appears to
+			// be Rampart-mediated (a deny or a stored ask-flow decision). Ordinary tool
+			// failures should not be mislabeled as security blocks.
 			if parsed.HookEventName == "PostToolUseFailure" {
-				// If this failure corresponds to an ask+audit prompt denial, best-effort
-				// resolve the mirrored serve approval as denied for dashboard/watch sync.
-				if parsed.ToolUseID != "" && parsed.SessionID != "" && serveURL != "" && isServeRunning(serveURL) {
+				failedCall := engine.ToolCall{
+					Tool:   parsed.Tool,
+					Params: parsed.Params,
+				}
+				decision := eng.Evaluate(failedCall)
+
+				var pendingAsk *session.PendingAsk
+				// If this failure corresponds to a stored ask decision, recover that state
+				// even when serve is unavailable so we can distinguish real Rampart blocks
+				// from ordinary tool failures.
+				if parsed.ToolUseID != "" && parsed.SessionID != "" {
 					sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
-					if ask, dismissErr := sessionMgr.DismissAsk(parsed.ToolUseID); dismissErr == nil && ask != nil && ask.Audit && ask.AuditApprovalID != "" {
-						approvalClient := &hookApprovalClient{
-							serveURL:       strings.TrimRight(serveURL, "/"),
-							token:          serveToken,
-							logger:         logger,
-							autoDiscovered: serveAutoDiscovered,
-							errWriter:      cmd.ErrOrStderr(),
+					if ask, dismissErr := sessionMgr.DismissAsk(parsed.ToolUseID); dismissErr == nil && ask != nil {
+						pendingAsk = ask
+						if ask.Audit && ask.AuditApprovalID != "" && serveURL != "" && isServeRunning(serveURL) {
+							approvalClient := &hookApprovalClient{
+								serveURL:       strings.TrimRight(serveURL, "/"),
+								token:          serveToken,
+								logger:         logger,
+								autoDiscovered: serveAutoDiscovered,
+								errWriter:      cmd.ErrOrStderr(),
+							}
+							resolveCtx, cancelResolve := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
+							_ = approvalClient.resolveAskAuditCtx(resolveCtx, ask.AuditApprovalID, false, "hook-posttoolusefailure")
+							cancelResolve()
 						}
-						resolveCtx, cancelResolve := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-						_ = approvalClient.resolveAskAuditCtx(resolveCtx, ask.AuditApprovalID, false, "hook-posttoolusefailure")
-						cancelResolve()
 					}
+				}
+
+				if pendingAsk == nil && decision.Action != engine.ActionDeny {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(hookOutput{})
 				}
 
 				postToolUseFailureEvent := audit.Event{
@@ -446,15 +448,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					_, _ = auditFile.Write(line)
 				}
 
-				// Re-evaluate the failed call to surface the specific deny reason and
-				// matched policy name. This is a fast local operation (< 10µs) and gives
-				// the agent the exact information it needs without storing state.
-				failedCall := engine.ToolCall{
-					Tool:   parsed.Tool,
-					Params: parsed.Params,
-				}
-				denyDecision := eng.Evaluate(failedCall)
-
 				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
@@ -466,15 +459,21 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 				// Prepend the specific deny reason if available — gives the agent
 				// (and user) immediate context on why the call was blocked.
-				if denyDecision.Action == engine.ActionDeny && denyDecision.Message != "" {
+				if decision.Action == engine.ActionDeny && decision.Message != "" {
 					policyHint := ""
-					if len(denyDecision.MatchedPolicies) > 0 {
-						policyHint = " [" + denyDecision.MatchedPolicies[0] + "]"
+					if len(decision.MatchedPolicies) > 0 {
+						policyHint = " [" + decision.MatchedPolicies[0] + "]"
 					}
-					if denyDecision.FromProjectPolicy {
+					if decision.FromProjectPolicy {
 						policyHint += " [Project Policy]"
 					}
-					msg = "⛔ Blocked" + policyHint + ": " + denyDecision.Message + "\n\n" + msg
+					msg = "⛔ Blocked" + policyHint + ": " + decision.Message + "\n\n" + msg
+				} else if pendingAsk != nil && pendingAsk.DecisionMessage != "" {
+					policyHint := ""
+					if pendingAsk.PolicyName != "" {
+						policyHint = " [" + pendingAsk.PolicyName + "]"
+					}
+					msg = "⛔ Approval denied" + policyHint + ": " + pendingAsk.DecisionMessage + "\n\n" + msg
 				}
 				suggestions := engine.GenerateSuggestions(failedCall)
 				if len(suggestions) > 0 {

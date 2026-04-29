@@ -49,8 +49,8 @@ func removeServeState(dir string) {
 
 // resolveServeURL determines the serve URL using this priority:
 //  1. Explicit flag value (if non-empty)
-//  2. RAMPART_URL env var
-//  3. RAMPART_SERVE_URL env var
+//  2. RAMPART_URL / config url
+//  3. RAMPART_SERVE_URL / config serve_url
 //  4. serve.state file in ~/.rampart/
 //  5. Default port (9090)
 func resolveServeURL(flagValue string) string {
@@ -58,18 +58,18 @@ func resolveServeURL(flagValue string) string {
 		return strings.TrimRight(flagValue, "/")
 	}
 
-	if u := strings.TrimSpace(os.Getenv("RAMPART_URL")); u != "" {
-		return strings.TrimRight(u, "/")
-	}
-
-	if u := strings.TrimSpace(os.Getenv("RAMPART_SERVE_URL")); u != "" {
-		return strings.TrimRight(u, "/")
+	if cfg, err := loadUserConfig(); err == nil {
+		if cfg.URL != "" {
+			return cfg.URL
+		}
+		if cfg.ServeURL != "" {
+			return cfg.ServeURL
+		}
 	}
 
 	// Try state file.
-	home, err := os.UserHomeDir()
-	if err == nil {
-		statePath := filepath.Join(home, ".rampart", serveStateFile)
+	if dir, err := rampartDir(); err == nil {
+		statePath := filepath.Join(dir, serveStateFile)
 		if data, err := os.ReadFile(statePath); err == nil {
 			var state serveState
 			if json.Unmarshal(data, &state) == nil && state.URL != "" {
@@ -80,5 +80,3 @@ func resolveServeURL(flagValue string) string {
 
 	return fmt.Sprintf("http://localhost:%d", defaultServePort)
 }
-
-

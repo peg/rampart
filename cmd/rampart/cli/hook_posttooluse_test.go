@@ -98,15 +98,13 @@ func TestPostToolUseFailure_DenyReasonSurfaced(t *testing.T) {
 	}
 }
 
-// TestPostToolUseFailure_NoReasonForUnknownCommand verifies that when the
-// PostToolUseFailure event is for a command that doesn't match any deny rule
-// (e.g. the policy was updated between PreToolUse and PostToolUseFailure),
-// the fallback guidance is still returned without crashing.
-func TestPostToolUseFailure_NoReasonForUnknownCommand(t *testing.T) {
+// TestPostToolUseFailure_NoContextForOrdinaryFailure verifies that ordinary
+// tool failures are not mislabeled as policy blocks.
+func TestPostToolUseFailure_NoContextForOrdinaryFailure(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
-	// Policy that allows everything — simulates policy change between events.
+	// Policy that allows everything — simulates an ordinary tool failure.
 	allowAll := `version: "1"
 default_action: allow
 policies: []
@@ -137,16 +135,66 @@ policies: []
 	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
 		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
 	}
-	if out.HookSpecificOutput == nil {
-		t.Fatal("expected non-nil HookSpecificOutput")
-	}
-	// Should still have guidance even without a matching deny rule.
-	if out.HookSpecificOutput.AdditionalContext == "" {
-		t.Fatal("additionalContext must not be empty even when no deny rule matches")
-	}
-	// Should NOT have the ⛔ prefix since re-evaluation returned allow.
-	if strings.Contains(out.HookSpecificOutput.AdditionalContext, "⛔ Blocked") {
-		t.Errorf("additionalContext should not contain ⛔ Blocked when re-evaluation returns allow; got:\n%s",
+	if out.HookSpecificOutput != nil && out.HookSpecificOutput.AdditionalContext != "" {
+		t.Errorf("expected no additionalContext for ordinary tool failure; got:\n%s",
 			out.HookSpecificOutput.AdditionalContext)
+	}
+}
+
+func TestPostToolUseFailure_AskFlowStillReturnsContext(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(askPolicy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	const sessionID = "sess-posttooluse-ask-001"
+	const toolUseID = "toolu_posttooluse_ask_001"
+
+	prePayload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      sessionID,
+		"tool_use_id":     toolUseID,
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	preJSON, _ := json.Marshal(prePayload)
+	opts := &rootOptions{configPath: configPath}
+	stdout, _, hookErr := runHookWithStdin(t, opts, string(preJSON), "--mode", "enforce")
+	if hookErr != nil {
+		t.Fatalf("pre hook RunE error: %v", hookErr)
+	}
+	var preOut hookOutput
+	if err := json.Unmarshal([]byte(stdout), &preOut); err != nil {
+		t.Fatalf("unmarshal pre hook output: %v", err)
+	}
+	if preOut.HookSpecificOutput == nil || preOut.HookSpecificOutput.PermissionDecision != "ask" {
+		t.Fatalf("expected permissionDecision=ask, got %+v", preOut.HookSpecificOutput)
+	}
+
+	postPayload := map[string]any{
+		"hook_event_name": "PostToolUseFailure",
+		"session_id":      sessionID,
+		"tool_use_id":     toolUseID,
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	postJSON, _ := json.Marshal(postPayload)
+	stdout, _, hookErr = runHookWithStdin(t, opts, string(postJSON), "--mode", "enforce")
+	if hookErr != nil {
+		t.Fatalf("post hook RunE error: %v", hookErr)
+	}
+
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil || out.HookSpecificOutput.AdditionalContext == "" {
+		t.Fatalf("expected additionalContext for ask-mediated denial, got %+v", out.HookSpecificOutput)
+	}
+	if !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Approval denied") {
+		t.Fatalf("expected ask denial context, got:\n%s", out.HookSpecificOutput.AdditionalContext)
 	}
 }
