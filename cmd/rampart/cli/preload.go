@@ -56,9 +56,10 @@ func newPreloadCmd(_ *rootOptions) *cobra.Command {
 				return err
 			}
 
+			cfg, _ := loadUserConfig()
 			baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-			if envURL := strings.TrimSpace(os.Getenv("RAMPART_URL")); envURL != "" {
-				baseURL = strings.TrimRight(envURL, "/")
+			if cfg.URL != "" {
+				baseURL = cfg.URL
 			}
 			if !isPreloadRuntimeReady(cmd.Context(), baseURL) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "preload: warning: rampart serve is not reachable at %s/healthz; continuing\n", baseURL)
@@ -66,7 +67,7 @@ func newPreloadCmd(_ *rootOptions) *cobra.Command {
 
 			resolvedToken := token
 			if resolvedToken == "" {
-				resolvedToken = os.Getenv("RAMPART_TOKEN")
+				resolvedToken = cfg.Token
 			}
 
 			sessionID := strings.TrimSpace(session)

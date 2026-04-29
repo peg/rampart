@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -101,14 +100,8 @@ func resolveToken(token string) string {
 	if token != "" {
 		return token
 	}
-	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
-		return env
-	}
-	// Check persisted token file (~/.rampart/token)
-	if persisted, err := readPersistedToken(); err == nil && persisted != "" {
-		return persisted
-	}
-	return ""
+	cfg, _ := loadUserConfig()
+	return cfg.Token
 }
 
 func resolveAddr(addr string) string {

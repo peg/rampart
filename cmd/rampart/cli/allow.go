@@ -490,11 +490,15 @@ func defaultMessage(action, pattern, tool string) string {
 // resolveAddrAllow returns the effective API address.
 // Respects the RAMPART_API environment variable when the addr is the default.
 func resolveAddrAllow(addr string) string {
-	if env := os.Getenv("RAMPART_API"); env != "" && addr == "http://127.0.0.1:9090" {
-		return env
+	defaultAddr := fmt.Sprintf("http://127.0.0.1:%d", defaultServePort)
+	if addr == defaultAddr {
+		cfg, _ := loadUserConfig()
+		if cfg.APIAddr != "" {
+			return cfg.APIAddr
+		}
 	}
 	if addr == "" {
-		return "http://127.0.0.1:9090"
+		return defaultAddr
 	}
 	return addr
 }

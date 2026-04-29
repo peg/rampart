@@ -117,12 +117,8 @@ func resolveServiceToken(tokenFlag string) (string, bool, error) {
 	if tokenFlag != "" {
 		return tokenFlag, false, nil
 	}
-	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
-		return env, false, nil
-	}
-	// Check persisted token file written by a previous serve install.
-	if tok, err := readPersistedToken(); err == nil && tok != "" {
-		return tok, false, nil
+	if cfg, err := loadUserConfig(); err == nil && cfg.Token != "" {
+		return cfg.Token, false, nil
 	}
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
