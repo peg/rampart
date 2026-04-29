@@ -75,6 +75,23 @@ Then watch your agent in real time:
 rampart watch
 ```
 
+### Optional persistent local config
+
+If you do not want to keep exporting environment variables, Rampart also supports
+`~/.rampart/config.yaml` for local defaults:
+
+```yaml
+url: http://127.0.0.1:9090
+# serve_url: http://127.0.0.1:9090   # compatibility alias for url
+# api: http://127.0.0.1:9091         # optional advanced override for approval/control API flows
+```
+
+- `url` is the primary Rampart endpoint setting
+- `serve_url` is a compatibility alias for `url`
+- `api` is an advanced override and is usually unnecessary
+
+Resolution order is: flag → environment → config file → auto-discovered state → default.
+
 Once running, every tool call goes through Rampart's policy engine first:
 
 ```

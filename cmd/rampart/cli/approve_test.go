@@ -90,6 +90,24 @@ func TestResolveAddr(t *testing.T) {
 		}
 	})
 
+	t.Run("explicit serve-url alias resolves when url unset", func(t *testing.T) {
+		home := t.TempDir()
+		testSetHome(t, home)
+		os.Unsetenv("RAMPART_API")
+		os.Unsetenv("RAMPART_URL")
+		os.Unsetenv("RAMPART_SERVE_URL")
+		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(home, ".rampart", "config.yaml")
+		if err := os.WriteFile(cfgPath, []byte("serve_url: http://compat-serve:8124\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := resolveAddr(""); got != "http://compat-serve:8124" {
+			t.Errorf("got %q", got)
+		}
+	})
+
 	t.Run("explicit addr wins", func(t *testing.T) {
 		t.Setenv("RAMPART_API", "http://custom:1234")
 		if got := resolveAddr("http://other:5678"); got != "http://other:5678" {

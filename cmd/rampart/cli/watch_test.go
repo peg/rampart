@@ -135,3 +135,31 @@ func TestResolveWatchServeConfig_ExplicitURLNoToken(t *testing.T) {
 	}
 	_ = token // token resolved from env/file (empty in test)
 }
+
+func TestResolveWatchServeConfig_UsesConfigURL(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("RAMPART_URL", "")
+	t.Setenv("RAMPART_SERVE_URL", "")
+	t.Setenv("RAMPART_TOKEN", "")
+
+	if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".rampart", "config.yaml"), []byte("url: http://config-primary:9095\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errBuf)
+	cmd.Flags().String("serve-url", "", "")
+
+	url, _, err := resolveWatchServeConfig(cmd, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if url != "http://config-primary:9095" {
+		t.Fatalf("unexpected URL: %s", url)
+	}
+}

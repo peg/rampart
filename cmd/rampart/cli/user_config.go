@@ -19,9 +19,9 @@ import (
 type UserConfig struct {
 	// URL is the primary base URL for Rampart runtime traffic. Env: RAMPART_URL.
 	URL string `yaml:"url,omitempty"`
-	// ServeURL is the explicit serve/dashboard URL. Env: RAMPART_SERVE_URL.
+	// ServeURL is a backward-compatible alias for URL. Env: RAMPART_SERVE_URL.
 	ServeURL string `yaml:"serve_url,omitempty"`
-	// APIAddr is the approval API URL for approve/deny/pending flows. Env: RAMPART_API.
+	// APIAddr is an advanced override for approval/control API flows. Env: RAMPART_API.
 	APIAddr string `yaml:"api,omitempty"`
 }
 

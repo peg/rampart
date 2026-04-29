@@ -50,7 +50,7 @@ func removeServeState(dir string) {
 // resolveServeURL determines the serve URL using this priority:
 //  1. Explicit flag value (if non-empty)
 //  2. RAMPART_URL / config url
-//  3. RAMPART_SERVE_URL / config serve_url
+//  3. RAMPART_SERVE_URL / config serve_url (compatibility alias)
 //  4. serve.state file in ~/.rampart/
 //  5. Default port (9090)
 func resolveServeURL(flagValue string) string {

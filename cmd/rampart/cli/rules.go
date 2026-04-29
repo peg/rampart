@@ -334,7 +334,7 @@ First run 'rampart rules' to see rule numbers, then:
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
-	cmd.Flags().StringVar(&apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&apiAddr, "api", "", "Rampart API address override for reload (default: auto-discover via url/config/state)")
 	cmd.Flags().StringVar(&token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 
 	// Custom error handler to catch negative numbers being parsed as flags
@@ -491,7 +491,7 @@ func newRulesResetCmd(opts *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
-	cmd.Flags().StringVar(&apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&apiAddr, "api", "", "Rampart API address override for reload (default: auto-discover via url/config/state)")
 	cmd.Flags().StringVar(&token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 	return cmd
 }

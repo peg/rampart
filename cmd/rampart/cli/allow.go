@@ -109,7 +109,7 @@ func addAllowBlockFlags(cmd *cobra.Command, opts *allowBlockOptions) {
 	cmd.Flags().StringVar(&opts.tool, "tool", "", "Tool type: exec, read, write, edit (default: auto-detect)")
 	cmd.Flags().StringVar(&opts.message, "message", "", "Optional reason displayed when the rule matches")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip confirmation prompt")
-	cmd.Flags().StringVar(&opts.apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&opts.apiAddr, "api", "", "Rampart API address override for reload (default: auto-discover via url/config/state)")
 	cmd.Flags().StringVar(&opts.token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 	cmd.Flags().StringVar(&opts.forDur, "for", "", "Rule expires after duration (e.g. 1h, 30m, 24h)")
 	cmd.Flags().BoolVar(&opts.once, "once", false, "Single-use rule — removed after first match")
