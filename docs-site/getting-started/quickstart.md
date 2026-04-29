@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: "Get Rampart protecting your AI coding agent in minutes. Install, connect Claude Code or Cline, and start blocking dangerous commands with policy checks."
+description: "Get Rampart protecting Claude Code, Codex, Cline, or OpenClaw in minutes. Install, pick your integration path, and verify coverage clearly."
 ---
 
 # Quick Start
@@ -10,8 +10,10 @@ description: "Get Rampart protecting your AI coding agent in minutes. Install, c
 
 Get Rampart protecting your AI agent in one command.
 
+Before you dive in, skim the [integration support matrix](support-matrix.md) if you want the exact truth about serve requirements, approval UX, and support tiers for each surface.
+
 !!! tip "Zero risk to try"
-    Rampart **fails open** — if the service is unreachable or the policy engine crashes, your tools keep working. You'll never get locked out of your own machine.
+    Protection behavior depends on the integration. Claude Code and Cline native hooks can evaluate policy locally without `rampart serve`. `rampart serve` is still useful for dashboard views, audit APIs, and external approval workflows. OpenClaw's native plugin depends on `rampart serve` for policy evaluation.
 
 ## Install
 
@@ -39,7 +41,7 @@ Get Rampart protecting your AI agent in one command.
 rampart quickstart
 ```
 
-This detects your agent (Claude Code, Codex, Cline), installs the service, wires up hooks, and verifies everything is working. Done.
+This detects your agent (Claude Code, Codex, Cline, OpenClaw), installs the service, wires up the right integration path, and verifies everything is working. Done.
 
 Then use your agent normally. Rampart is invisible until something needs to be blocked or approved.
 
@@ -65,6 +67,14 @@ Then use your agent normally. Rampart is invisible until something needs to be b
     rampart preload -- node agent.js
     ```
 
+=== "OpenClaw"
+
+    ```bash
+    rampart setup openclaw
+    ```
+
+    Native plugin path on current OpenClaw builds. `rampart serve` is required for policy evaluation here.
+
 === "MCP Servers"
 
     ```bash
@@ -78,7 +88,7 @@ Then use your agent normally. Rampart is invisible until something needs to be b
 rampart doctor
 ```
 
-Green across the board means you're fully protected. If something's off, doctor tells you exactly what to fix.
+Doctor should tell you which integration path is active, whether `serve` is optional or required for that path, and what coverage gaps remain. If something's off, it should tell you exactly what to fix.
 
 ## Test the Policy Engine
 
@@ -104,15 +114,25 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 {"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"Rampart: Destructive command blocked"}}
 ```
 
-## Approve Risky Commands
+## Approval UX by Integration
 
-When a command hits an `ask` rule, Rampart pauses the agent and waits. Approve or deny it from the dashboard:
+When a command hits an `ask` rule, the approval UX depends on the integration:
+
+- **Claude Code native hooks**: Claude shows its native approval prompt
+- **Cline hooks**: command is canceled with an approval-required message (no native ask UI)
+- **OpenClaw plugin**: OpenClaw owns the visible approval UI
+- **Headless / external approval flows**: use `rampart serve` + dashboard/watch
+
+To use the dashboard-based approval flow, run:
 
 ```bash
 open http://localhost:9090/dashboard/
 ```
 
 The dashboard shows pending approvals, audit history, and your loaded policy. For agent team runs (multiple sub-agents in one session), approvals are grouped — one click to approve the whole run.
+
+!!! info "Serve is not universal"
+    For direct Claude Code hooks, `rampart serve` is optional for local protection. It becomes important when you want dashboard visibility, approval APIs, headless-only approval flows, or integrations like OpenClaw that delegate policy evaluation through the local service.
 
 ## Built-in Profiles
 

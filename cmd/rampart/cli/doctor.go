@@ -114,7 +114,7 @@ func runDoctorFix(cmd *cobra.Command) error {
 	_, err := patchOpenClawDistTools(cmd, fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "")
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Auto-fix failed (may need sudo): %v\n", err)
-		fmt.Fprintf(cmd.ErrOrStderr(), "  Run manually: rampart setup openclaw --plugin\n")
+		fmt.Fprintf(cmd.ErrOrStderr(), "  Run manually: rampart setup openclaw\n")
 		fmt.Fprintf(cmd.ErrOrStderr(), "  Legacy fallback: sudo rampart setup openclaw --patch-tools --force\n")
 		return err
 	}
@@ -665,7 +665,11 @@ func doctorServer(emit emitFn, protected []string) (int, string) {
 	servePort := 0
 	if decErr := json.NewDecoder(resp.Body).Decode(&health); decErr == nil {
 		if v, ok := health["version"].(string); ok {
-			versionStr = " v" + v
+			if strings.HasPrefix(v, "v") {
+				versionStr = " " + v
+			} else {
+				versionStr = " v" + v
+			}
 		}
 	}
 
@@ -1360,20 +1364,22 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 	if !isOpenClawPluginInstalled() {
 		emit("OpenClaw plugin", "warn",
 			"not installed — native hook interception disabled"+hintSep+
-				"rampart setup openclaw --plugin")
+				"rampart setup openclaw")
 		return 1
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		emit("OpenClaw plugin", "ok", "installed (before_tool_call hook active)")
-		return 0
+		emit("OpenClaw plugin", "warn", "installed, but could not verify whether OpenClaw is configured to load it")
+		return 1
 	}
 	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		emit("OpenClaw plugin", "ok", "installed (before_tool_call hook active)")
-		return 0
+		emit("OpenClaw plugin", "warn",
+			"installed, but could not verify plugins.allow / enabled state"+hintSep+
+				"Check ~/.openclaw/openclaw.json or rerun: rampart setup openclaw")
+		return 1
 	}
 	var cfg struct {
 		Plugins struct {
@@ -1387,24 +1393,17 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 		emit("OpenClaw plugin", "warn", fmt.Sprintf("installed, but failed to parse %s: %v", configPath, err))
 		return 1
 	}
-	allowed := false
-	for _, id := range cfg.Plugins.Allow {
-		if id == "rampart" {
-			allowed = true
-			break
-		}
-	}
-	entry, hasEntry := cfg.Plugins.Entries["rampart"]
-	if hasEntry && entry.Enabled != nil && !*entry.Enabled {
+	state := getOpenClawPluginState()
+	if !state.Enabled {
 		emit("OpenClaw plugin", "warn",
 			"installed, but plugins.entries.rampart.enabled=false disables the native hook"+hintSep+
 				"Enable plugins.entries.rampart in ~/.openclaw/openclaw.json and restart OpenClaw")
 		return 1
 	}
-	if !allowed {
+	if !state.Allowed {
 		emit("OpenClaw plugin", "warn",
 			"installed, but plugins.allow is missing rampart so OpenClaw may not load it consistently"+hintSep+
-				"Add \"rampart\" to plugins.allow or rerun: rampart setup openclaw --plugin")
+				"Add \"rampart\" to plugins.allow or rerun: rampart setup openclaw")
 		return 1
 	}
 
@@ -1428,7 +1427,7 @@ func doctorOpenClawReadiness(emit emitFn, pluginActive bool, serveURL, token str
 	if strings.TrimSpace(token) == "" {
 		emit("OpenClaw readiness", "warn",
 			"plugin installed and serve reachable, but no token was found for approval/audit calls"+hintSep+
-				"rampart setup openclaw --plugin")
+				"rampart setup openclaw")
 		return 1
 	}
 

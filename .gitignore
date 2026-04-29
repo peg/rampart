@@ -23,6 +23,7 @@ coverage.out
 # Runtime audit logs (top-level only, not internal/audit/)
 /audit/
 .cache/
+.wrangler/
 site/
 reddit-post.md
 .home/

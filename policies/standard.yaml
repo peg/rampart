@@ -49,22 +49,74 @@ policies:
             - "rampart watch"
             - "rampart convert"
         message: "Operational rampart commands are allowed"
-      # Substring matching catches ALL shell wrapper bypasses (bash -c, sh -c, etc.)
-      # This is the primary defense - simple but robust.
+      # Block actual Rampart mutation/setup invocations. Avoid bare substring
+      # matching here: docs, PR bodies, and quoted text can legitimately mention
+      # commands like `rampart setup openclaw` without trying to execute them.
       # SECURITY: "rampart serve" denied because an agent could restart with
       # --mode disabled or altered flags. "rampart upgrade" denied because
       # an agent could replace the binary. Safe serve subcommands are allowed above.
       - action: deny
         when:
-          command_contains:
+          command_matches:
+            # Direct invocation
             - "rampart allow"
+            - "rampart allow *"
             - "rampart block"
+            - "rampart block *"
             - "rampart rules"
-            - "rampart policy generate"
+            - "rampart rules *"
+            - "rampart policy generate*"
+            - "rampart policy fetch*"
+            - "rampart policy install*"
+            - "rampart policy remove*"
+            - "rampart policy sync*"
             - "rampart init"
+            - "rampart init *"
             - "rampart setup"
+            - "rampart setup *"
             - "rampart serve"
+            - "rampart serve *"
             - "rampart upgrade"
+            - "rampart upgrade *"
+            # Absolute/relative invocation
+            - "/**/rampart allow"
+            - "/**/rampart allow *"
+            - "/**/rampart block"
+            - "/**/rampart block *"
+            - "/**/rampart rules"
+            - "/**/rampart rules *"
+            - "/**/rampart policy generate*"
+            - "/**/rampart policy fetch*"
+            - "/**/rampart policy install*"
+            - "/**/rampart policy remove*"
+            - "/**/rampart policy sync*"
+            - "/**/rampart init"
+            - "/**/rampart init *"
+            - "/**/rampart setup"
+            - "/**/rampart setup *"
+            - "/**/rampart serve"
+            - "/**/rampart serve *"
+            - "/**/rampart upgrade"
+            - "/**/rampart upgrade *"
+            - "./rampart allow"
+            - "./rampart allow *"
+            - "./rampart block"
+            - "./rampart block *"
+            - "./rampart rules"
+            - "./rampart rules *"
+            - "./rampart policy generate*"
+            - "./rampart policy fetch*"
+            - "./rampart policy install*"
+            - "./rampart policy remove*"
+            - "./rampart policy sync*"
+            - "./rampart init"
+            - "./rampart init *"
+            - "./rampart setup"
+            - "./rampart setup *"
+            - "./rampart serve"
+            - "./rampart serve *"
+            - "./rampart upgrade"
+            - "./rampart upgrade *"
         message: "Policy modification commands must be run by a human, not an agent"
       # Block shell redirects writing to .rampart directory (config/policy tampering)
       - action: deny
@@ -82,42 +134,22 @@ policies:
             - ">> $HOME/.rampart/"
             - "| tee $HOME/.rampart/"
         message: "Writing to Rampart config directory via shell redirect blocked"
-      # Glob patterns for direct invocations (kept for compatibility and explicitness)
+      # Global flags before subcommand (e.g., rampart --config ... allow)
       - action: deny
         when:
           command_matches:
-            # Standard invocation
-            - "rampart allow *"
-            - "rampart block *"
-            - "rampart rules *"
-            - "rampart policy generate*"
-            - "rampart init *"
-            - "rampart setup *"
-            - "rampart serve *"
-            # Absolute path invocation (e.g., /usr/local/bin/rampart)
-            - "*/rampart allow *"
-            - "*/rampart block *"
-            - "*/rampart rules *"
-            - "*/rampart policy generate*"
-            - "*/rampart init *"
-            - "*/rampart setup *"
-            - "*/rampart serve *"
-            # Relative path invocation (e.g., ./rampart)
-            - "./rampart allow *"
-            - "./rampart block *"
-            - "./rampart rules *"
-            - "./rampart policy generate*"
-            - "./rampart init *"
-            - "./rampart setup *"
-            - "./rampart serve *"
-            # Global flags before subcommand (e.g., rampart --config ... allow)
             - "rampart --* allow *"
             - "rampart --* block *"
             - "rampart --* rules *"
             - "rampart --* policy generate*"
+            - "rampart --* policy fetch*"
+            - "rampart --* policy install*"
+            - "rampart --* policy remove*"
+            - "rampart --* policy sync*"
             - "rampart --* init *"
             - "rampart --* setup *"
             - "rampart --* serve *"
+            - "rampart --* upgrade*"
         message: "Policy modification commands must be run by a human, not an agent"
       # Block process-kill commands targeting rampart (prevents agents from
       # disabling their own enforcement by killing the serve process).

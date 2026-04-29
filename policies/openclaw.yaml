@@ -10,7 +10,7 @@
 # Designed to be layered with standard.yaml for comprehensive protection.
 #
 # Prerequisites:
-#   rampart setup openclaw --plugin   (native hook interception, recommended)
+#   rampart setup openclaw          (native hook interception on current builds)
 #   rampart setup openclaw --patch-tools  (legacy dist patching)
 
 version: "1"
@@ -37,17 +37,71 @@ policies:
             - "rampart watch"
             - "rampart convert"
         message: "Read-only Rampart commands allowed"
+      # Block actual Rampart mutation/setup invocations. Avoid bare substring
+      # matching here: docs, PR bodies, and quoted text can legitimately mention
+      # commands like `rampart setup openclaw` without trying to execute them.
       - action: deny
         when:
-          command_contains:
+          command_matches:
+            # Direct invocation
             - "rampart allow"
+            - "rampart allow *"
             - "rampart block"
+            - "rampart block *"
             - "rampart rules"
-            - "rampart policy"
+            - "rampart rules *"
+            - "rampart policy generate*"
+            - "rampart policy fetch*"
+            - "rampart policy install*"
+            - "rampart policy remove*"
+            - "rampart policy sync*"
             - "rampart init"
+            - "rampart init *"
             - "rampart setup"
+            - "rampart setup *"
             - "rampart serve"
+            - "rampart serve *"
             - "rampart upgrade"
+            - "rampart upgrade *"
+            # Absolute/relative invocation
+            - "/**/rampart allow"
+            - "/**/rampart allow *"
+            - "/**/rampart block"
+            - "/**/rampart block *"
+            - "/**/rampart rules"
+            - "/**/rampart rules *"
+            - "/**/rampart policy generate*"
+            - "/**/rampart policy fetch*"
+            - "/**/rampart policy install*"
+            - "/**/rampart policy remove*"
+            - "/**/rampart policy sync*"
+            - "/**/rampart init"
+            - "/**/rampart init *"
+            - "/**/rampart setup"
+            - "/**/rampart setup *"
+            - "/**/rampart serve"
+            - "/**/rampart serve *"
+            - "/**/rampart upgrade"
+            - "/**/rampart upgrade *"
+            - "./rampart allow"
+            - "./rampart allow *"
+            - "./rampart block"
+            - "./rampart block *"
+            - "./rampart rules"
+            - "./rampart rules *"
+            - "./rampart policy generate*"
+            - "./rampart policy fetch*"
+            - "./rampart policy install*"
+            - "./rampart policy remove*"
+            - "./rampart policy sync*"
+            - "./rampart init"
+            - "./rampart init *"
+            - "./rampart setup"
+            - "./rampart setup *"
+            - "./rampart serve"
+            - "./rampart serve *"
+            - "./rampart upgrade"
+            - "./rampart upgrade *"
         message: "Policy modification must be run by a human, not an agent"
       - action: deny
         when:

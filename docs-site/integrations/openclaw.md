@@ -172,7 +172,7 @@ openclaw doctor               # check for plugin warnings
 If missing, re-run setup:
 
 ```bash
-rampart setup openclaw --plugin
+rampart setup openclaw
 systemctl --user restart openclaw-gateway
 ```
 

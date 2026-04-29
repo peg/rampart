@@ -349,20 +349,18 @@ func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "openclaw",
 		Short: "Set up Rampart to protect an OpenClaw agent",
-		Long: `Wraps the OpenClaw gateway with LD_PRELOAD syscall interception so that
-every command — including sub-agents (Codex, Claude Code, etc.) — goes
-through Rampart's policy engine.
+		Long: `Protects OpenClaw with Rampart.
 
-Creates:
-  - A systemd user service running "rampart serve"
-  - A systemd drop-in that wraps OpenClaw with LD_PRELOAD enforcement
-  - Default policy at ~/.rampart/policies/standard.yaml (if missing)
+Default behavior on current OpenClaw builds (>= 2026.3.28):
+  - Installs the native Rampart plugin via "openclaw plugins install"
+  - Ensures rampart serve is available for policy evaluation and approvals
+  - Adds rampart to plugins.allow and installs the OpenClaw policy profile
+  - Preserves OpenClaw's native approval UI while Rampart evaluates policy
 
-File tools (read/write/edit/grep) are automatically re-patched on every
-OpenClaw restart via ExecStartPre, so patches survive upgrades.
+Legacy compatibility options still exist for older OpenClaw setups:
+  - --shim-only uses the legacy shell shim path
+  - --no-preload / --patch-tools keep the older bridge and dist-patching flow
 
-Use --shim-only to skip LD_PRELOAD and use the legacy shell shim approach.
-Use --no-preload to skip the LD_PRELOAD drop-in (still patches file tools).
 Use --remove to uninstall (preserves policies and audit logs).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if plugin {

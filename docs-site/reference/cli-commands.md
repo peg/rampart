@@ -19,7 +19,7 @@ rampart quickstart --yes            # Non-interactive mode
 rampart quickstart -y               # Short form of --yes
 ```
 
-`--yes` / `-y` skips prompts. For OpenClaw it also auto-enables `--patch-tools` for full file read/write/edit coverage. For all other agents it is a safe no-op.
+`--yes` / `-y` skips prompts so setup can run unattended in CI, scripts, or agent-driven installs.
 
 ### `rampart setup claude-code`
 
@@ -57,7 +57,7 @@ rampart setup openclaw --remove  # Remove integration
 
 **Native plugin (OpenClaw >= 2026.3.28):** Installs the bundled `before_tool_call` hook plugin. Covers all tool calls (exec, read, write, web_fetch, browser, message). Plugin is embedded in the `rampart` binary — no external download required.
 
-**Legacy shim (OpenClaw < 2026.3.28):** Installs shell shim + optionally patches file tools via `--patch-tools`. Requires re-running after OpenClaw upgrades.
+**Legacy shim (OpenClaw < 2026.3.28):** Installs shell shim + optionally patches file tools via `--patch-tools`. This is a compatibility path and requires re-running after OpenClaw upgrades.
 
 ### `rampart setup codex`
 
@@ -253,7 +253,7 @@ When the OpenClaw native plugin is installed, doctor shows:
 If the plugin is missing or the OpenClaw version is too old:
 ```
 ✗ OpenClaw plugin: not installed
-  → Run: rampart setup openclaw --plugin
+  → Run: rampart setup openclaw
 ```
 
 ### `rampart status`

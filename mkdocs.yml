@@ -114,6 +114,7 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+    - Support Matrix: getting-started/support-matrix.md
     - How It Works: getting-started/how-it-works.md
     - "Tutorial: 5 Minutes to Protected": getting-started/tutorial.md
     - Configuration: getting-started/configuration.md

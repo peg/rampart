@@ -189,7 +189,30 @@ func TestQuickstartHooksConfigured_OpenClaw(t *testing.T) {
 	testSetHome(t, home)
 
 	if quickstartHooksConfigured("openclaw") {
-		t.Fatal("expected openclaw hooks to be false without shim")
+		t.Fatal("expected openclaw hooks to be false without plugin or legacy bridge")
+	}
+
+	pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if !quickstartHooksConfigured("openclaw") {
+		t.Fatal("expected openclaw hooks to be true with native plugin")
+	}
+	if err := os.WriteFile(configPath, []byte(`{"plugins":{"allow":[]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if quickstartHooksConfigured("openclaw") {
+		t.Fatal("expected openclaw hooks to be false when plugin is not allowed to load")
+	}
+
+	if err := os.RemoveAll(filepath.Join(home, ".openclaw")); err != nil {
+		t.Fatal(err)
 	}
 
 	shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")

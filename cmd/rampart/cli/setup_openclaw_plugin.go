@@ -675,16 +675,68 @@ func isOpenClawInstalled() bool {
 	return err == nil
 }
 
+type openClawPluginState struct {
+	Installed bool
+	Allowed   bool
+	Enabled   bool
+}
+
+func getOpenClawPluginState() openClawPluginState {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return openClawPluginState{}
+	}
+
+	pluginDir := filepath.Join(home, ".openclaw", openclawPluginDir)
+	info, err := os.Stat(pluginDir)
+	if err != nil || !info.IsDir() {
+		return openClawPluginState{}
+	}
+
+	state := openClawPluginState{Installed: true, Enabled: true}
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return state
+	}
+
+	var cfg struct {
+		Plugins struct {
+			Allow   []string `json:"allow"`
+			Entries map[string]struct {
+				Enabled *bool `json:"enabled"`
+			} `json:"entries"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return state
+	}
+
+	state.Allowed = false
+	for _, id := range cfg.Plugins.Allow {
+		if id == "rampart" {
+			state.Allowed = true
+			break
+		}
+	}
+	if entry, ok := cfg.Plugins.Entries["rampart"]; ok && entry.Enabled != nil {
+		state.Enabled = *entry.Enabled
+	}
+	return state
+}
+
 // isOpenClawPluginInstalled returns true if the Rampart plugin directory
 // exists under ~/.openclaw/extensions/rampart/.
 func isOpenClawPluginInstalled() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	return getOpenClawPluginState().Installed
+}
+
+func isOpenClawPluginConfigured() bool {
+	state := getOpenClawPluginState()
+	if !state.Installed {
 		return false
 	}
-	pluginDir := filepath.Join(home, ".openclaw", openclawPluginDir)
-	info, err := os.Stat(pluginDir)
-	return err == nil && info.IsDir()
+	return state.Allowed && state.Enabled
 }
 
 // detectOpenClawVersion finds the OpenClaw binary and returns its version string.

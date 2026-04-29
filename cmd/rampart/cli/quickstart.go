@@ -65,8 +65,7 @@ AI agents, installs a policy profile, and runs a health summary.
 Supported setup agents: claude-code, codex, cline, openclaw
 Detected unsupported agents receive wrap guidance.
 
-Use --yes to run non-interactively (AI agents, CI, automated setup).
-For OpenClaw, --yes also enables --patch-tools for full file-operation coverage.`,
+Use --yes to run non-interactively (AI agents, CI, automated setup).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runQuickstart(cmd, agentsFlag, profile, skipDoctor, yes)
 		},
@@ -75,7 +74,7 @@ For OpenClaw, --yes also enables --patch-tools for full file-operation coverage.
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agents to configure (claude-code,codex,cline,openclaw,cursor,aider,windsurf,copilot,none)")
 	cmd.Flags().StringVar(&profile, "profile", "", "Policy profile for initialization (default: standard)")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "skip final health check summary")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive mode: for OpenClaw, also enables --patch-tools (full file coverage); safe to pass for any agent")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "non-interactive mode for CI, scripts, and unattended setup")
 	return cmd
 }
 
@@ -119,9 +118,6 @@ func runQuickstart(cmd *cobra.Command, agentsFlag, profile string, skipDoctor, y
 		if agent.HasSetup {
 			hooksAlreadyConfigured := quickstartHooksConfigured(agent.SetupCmd)
 			setupArgs := []string{"setup", agent.SetupCmd}
-			if yes && agent.SetupCmd == "openclaw" {
-				setupArgs = append(setupArgs, "--patch-tools")
-			}
 			if err := runSubcmd(setupArgs...); err != nil {
 				fmt.Fprintf(w, "  ⚠ %s: setup failed (%v)\n", agent.Name, err)
 				fmt.Fprintf(w, "    → Retry with: rampart setup %s\n", agent.SetupCmd)
@@ -520,6 +516,9 @@ func quickstartHooksConfigured(env string) bool {
 	}
 	switch env {
 	case "openclaw":
+		if isOpenClawPluginConfigured() {
+			return true
+		}
 		_, err := os.Stat(filepath.Join(home, ".local", "bin", "rampart-shim"))
 		return err == nil
 	case "claude-code":
