@@ -98,15 +98,16 @@ func TestPostToolUseFailure_DenyReasonSurfaced(t *testing.T) {
 	}
 }
 
-// TestPostToolUseFailure_NoReasonForUnknownCommand verifies that when the
-// PostToolUseFailure event is for a command that doesn't match any deny rule
-// (e.g. the policy was updated between PreToolUse and PostToolUseFailure),
-// the fallback guidance is still returned without crashing.
-func TestPostToolUseFailure_NoReasonForUnknownCommand(t *testing.T) {
+// TestPostToolUseFailure_NoContextForAllowedCommand verifies that when the
+// PostToolUseFailure event is for a command that wouldn't be denied by Rampart
+// (e.g. tool failed for an unrelated reason like grep exit 1), no additionalContext
+// is injected — injecting "blocked by security policy" guidance for non-Rampart
+// failures misleads the agent into thinking it was blocked when it wasn't.
+func TestPostToolUseFailure_NoContextForAllowedCommand(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
-	// Policy that allows everything — simulates policy change between events.
+	// Policy that allows everything — simulates an ordinary tool failure.
 	allowAll := `version: "1"
 default_action: allow
 policies: []
@@ -137,16 +138,9 @@ policies: []
 	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
 		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
 	}
-	if out.HookSpecificOutput == nil {
-		t.Fatal("expected non-nil HookSpecificOutput")
-	}
-	// Should still have guidance even without a matching deny rule.
-	if out.HookSpecificOutput.AdditionalContext == "" {
-		t.Fatal("additionalContext must not be empty even when no deny rule matches")
-	}
-	// Should NOT have the ⛔ prefix since re-evaluation returned allow.
-	if strings.Contains(out.HookSpecificOutput.AdditionalContext, "⛔ Blocked") {
-		t.Errorf("additionalContext should not contain ⛔ Blocked when re-evaluation returns allow; got:\n%s",
+	// When re-evaluation returns allow, no additionalContext should be injected.
+	if out.HookSpecificOutput != nil && out.HookSpecificOutput.AdditionalContext != "" {
+		t.Errorf("expected no additionalContext for non-Rampart failure; got:\n%s",
 			out.HookSpecificOutput.AdditionalContext)
 	}
 }

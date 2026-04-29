@@ -406,10 +406,27 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookOutcome, false, fmt.Sprintf("parse failure: %v", err), "")
 			}
 
-			// Short-circuit for PostToolUseFailure: the previous PreToolUse was denied by
-			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
-			// burning 3-5 turns on workarounds.
+			// PostToolUseFailure: if the previous PreToolUse was denied by Rampart,
+			// inject additionalContext telling Claude to stop retrying rather than
+			// burning 3-5 turns on workarounds. If the call would be allowed by the
+			// current policy, the failure was unrelated to Rampart — return no context
+			// to avoid misleading the agent.
 			if parsed.HookEventName == "PostToolUseFailure" {
+				// Re-evaluate first: only act if Rampart would actually deny this call.
+				// This avoids injecting "blocked by security policy" noise for ordinary
+				// tool failures (e.g. grep exit 1, command not found, network errors).
+				failedCall := engine.ToolCall{
+					Tool:   parsed.Tool,
+					Params: parsed.Params,
+				}
+				denyDecision := eng.Evaluate(failedCall)
+
+				if denyDecision.Action != engine.ActionDeny {
+					// Not a Rampart denial — emit an empty response and let the agent
+					// handle the failure on its own.
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(hookOutput{})
+				}
+
 				// If this failure corresponds to an ask+audit prompt denial, best-effort
 				// resolve the mirrored serve approval as denied for dashboard/watch sync.
 				if parsed.ToolUseID != "" && parsed.SessionID != "" && serveURL != "" && isServeRunning(serveURL) {
@@ -446,15 +463,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					_, _ = auditFile.Write(line)
 				}
 
-				// Re-evaluate the failed call to surface the specific deny reason and
-				// matched policy name. This is a fast local operation (< 10µs) and gives
-				// the agent the exact information it needs without storing state.
-				failedCall := engine.ToolCall{
-					Tool:   parsed.Tool,
-					Params: parsed.Params,
-				}
-				denyDecision := eng.Evaluate(failedCall)
-
 				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
@@ -464,9 +472,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
 					"see https://rampart.sh/docs/exceptions for guidance."
 
-				// Prepend the specific deny reason if available — gives the agent
-				// (and user) immediate context on why the call was blocked.
-				if denyDecision.Action == engine.ActionDeny && denyDecision.Message != "" {
+				if denyDecision.Message != "" {
 					policyHint := ""
 					if len(denyDecision.MatchedPolicies) > 0 {
 						policyHint = " [" + denyDecision.MatchedPolicies[0] + "]"
