@@ -112,8 +112,9 @@ func resolveToken(token string) string {
 }
 
 func resolveAddr(addr string) string {
-	if env := os.Getenv("RAMPART_API"); env != "" && addr == fmt.Sprintf("http://127.0.0.1:%d", defaultServePort) {
-		return env
+	cfg, _ := loadUserConfig()
+	if cfg.APIAddr != "" && addr == fmt.Sprintf("http://127.0.0.1:%d", defaultServePort) {
+		return cfg.APIAddr
 	}
 	return addr
 }

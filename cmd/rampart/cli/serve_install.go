@@ -133,11 +133,11 @@ func resolveServiceToken(tokenFlag string) (string, bool, error) {
 
 // tokenFilePath returns the path to the persisted token file.
 func tokenFilePath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := rampartDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".rampart", "token"), nil
+	return filepath.Join(dir, "token"), nil
 }
 
 // persistToken writes the token to ~/.rampart/token with owner-only permissions.

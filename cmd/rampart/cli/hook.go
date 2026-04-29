@@ -234,24 +234,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			gitCtx := deriveGitContext()
 			hookSession := gitCtx.session
 
-			// Resolve serve-url and serve-token from env if not set via flags.
-			serveAutoDiscovered := false
-			if serveURL == "" {
-				serveURL = os.Getenv("RAMPART_SERVE_URL")
-			}
-			if serveURL == "" {
-				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
-				serveAutoDiscovered = true
-			}
-			// Resolve token from RAMPART_TOKEN env var or ~/.rampart/token file.
-			// This means settings.json never needs to contain credentials —
-			// the hook discovers both the URL and the token from standard locations.
-			var serveToken string
-			if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
-				serveToken = envToken
-			} else if tok, err := readPersistedToken(); err == nil && tok != "" {
-				serveToken = tok
-			}
+			serveAutoDiscovered := serveURL == ""
+			serveURL = resolveServeURL(serveURL)
+			cfg, _ := loadUserConfig()
+			serveToken := cfg.Token
 
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
