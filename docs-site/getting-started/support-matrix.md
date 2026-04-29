@@ -10,10 +10,10 @@ Use this page as the canonical support contract for Rampart's main integration s
 | Surface | Integration method | `rampart serve` required? | Approval UX | Coverage summary | Support tier |
 |---------|--------------------|---------------------------|-------------|------------------|--------------|
 | Claude Code | Native hooks (`rampart setup claude-code`) | No for local hook enforcement; yes for dashboard/headless approval flows | Claude native approval prompt | Direct tool calls protected through `PreToolUse`; local policy evaluation works without serve | **Recommended** |
-| Claude Code + serve | Native hooks + local service | Yes | Claude native prompt + Rampart dashboard/audit APIs | Same hook coverage, plus dashboard visibility and external approval state | **Recommended** |
 | Cline | Native hooks (`rampart setup cline`) | No for local hook enforcement | No native ask UI; approval-required actions cancel with context | Native hook coverage for supported tool lifecycle events | **Supported** |
 | Codex CLI | Wrapper + preload (`rampart setup codex`) | Typically yes for service-backed evaluation path | Wrapper/preload approval semantics | Strong CLI coverage; depends on preload/wrapper path | **Recommended** |
-| OpenClaw >= 2026.3.28 | Native plugin (`rampart setup openclaw`) | Yes | OpenClaw native approval UI | Full plugin-based tool interception on supported builds | **Recommended** |
+| OpenClaw >= 2026.4.11 | Native plugin (`rampart setup openclaw`) | Yes | OpenClaw native approval UI | Full plugin-based tool interception plus current native exec approval behavior | **Recommended** |
+| OpenClaw 2026.3.28 - 2026.4.10 | Native plugin (`rampart setup openclaw`) | Yes | Native tool enforcement; approval UX is less polished than current builds | Full plugin-based tool interception on supported builds | **Supported** |
 | OpenClaw < 2026.3.28 | Legacy shim + bridge + optional patching | Yes | Legacy bridge/shim approval behavior | Compatibility path only; more fragile and upgrade-sensitive | **Legacy compatibility** |
 | Cursor / Claude Desktop | MCP proxy (`rampart mcp --`) | Yes | MCP error / proxy-mediated behavior | MCP tool coverage only | **Supported** |
 | Custom / Python / CI | HTTP API | Yes | Caller-defined | Whatever the caller routes through Rampart | **Supported** |
