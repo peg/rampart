@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.21] - 2026-04-29
+
 ### Changed
 
 - **Phase 1 docs/UX coherence pass** — Rampart now presents a cleaner, more truthful integration story across README, quickstart, CLI help, status/doctor messaging, and docs-site reference pages. The goal is simple: users should not have to reverse-engineer which integration path they are actually on.
