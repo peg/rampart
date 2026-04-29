@@ -294,19 +294,18 @@ policies:
 	if err != nil {
 		t.Fatalf("post hook error: %v", err)
 	}
-	if resolveCount.Load() != 1 {
-		t.Fatalf("expected one resolve call, got %d", resolveCount.Load())
+	if resolveCount.Load() != 0 {
+		t.Fatalf("expected no resolve call for ambiguous ask failure, got %d", resolveCount.Load())
 	}
-	want := map[string]any{"approved": false, "resolved_by": "hook-posttoolusefailure"}
-	if !reflect.DeepEqual(lastResolveBody, want) {
-		t.Fatalf("resolve body = %#v, want %#v", lastResolveBody, want)
+	if lastResolveBody != nil {
+		t.Fatalf("expected no resolve body, got %#v", lastResolveBody)
 	}
 
 	var out hookOutput
 	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
 		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
 	}
-	if out.HookSpecificOutput == nil || !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Approval denied") {
-		t.Fatalf("expected approval-denied context, got %+v", out.HookSpecificOutput)
+	if out.HookSpecificOutput != nil && out.HookSpecificOutput.AdditionalContext != "" {
+		t.Fatalf("expected no inferred approval-denied context, got %+v", out.HookSpecificOutput)
 	}
 }

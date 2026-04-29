@@ -52,23 +52,23 @@ func TestResolveAddr(t *testing.T) {
 		os.Unsetenv("RAMPART_API")
 		os.Unsetenv("RAMPART_URL")
 		os.Unsetenv("RAMPART_SERVE_URL")
-		if got := resolveAddr(""); got != defaultAddr {
-			t.Errorf("got %q", got)
+		if got, err := resolveAddr(""); err != nil || got != defaultAddr {
+			t.Fatalf("got %q err=%v", got, err)
 		}
 	})
 
 	t.Run("empty addr uses RAMPART_API override", func(t *testing.T) {
 		t.Setenv("RAMPART_API", "http://custom:1234/")
-		if got := resolveAddr(""); got != "http://custom:1234" {
-			t.Errorf("got %q", got)
+		if got, err := resolveAddr(""); err != nil || got != "http://custom:1234" {
+			t.Fatalf("got %q err=%v", got, err)
 		}
 	})
 
 	t.Run("empty addr uses serve url resolution chain", func(t *testing.T) {
 		os.Unsetenv("RAMPART_API")
 		t.Setenv("RAMPART_URL", "http://proxy:7777/")
-		if got := resolveAddr(""); got != "http://proxy:7777" {
-			t.Errorf("got %q", got)
+		if got, err := resolveAddr(""); err != nil || got != "http://proxy:7777" {
+			t.Fatalf("got %q err=%v", got, err)
 		}
 	})
 
@@ -85,8 +85,8 @@ func TestResolveAddr(t *testing.T) {
 		if err := os.WriteFile(cfgPath, []byte("api: http://config-api:8123\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := resolveAddr(""); got != "http://config-api:8123" {
-			t.Errorf("got %q", got)
+		if got, err := resolveAddr(""); err != nil || got != "http://config-api:8123" {
+			t.Fatalf("got %q err=%v", got, err)
 		}
 	})
 
@@ -103,15 +103,33 @@ func TestResolveAddr(t *testing.T) {
 		if err := os.WriteFile(cfgPath, []byte("serve_url: http://compat-serve:8124\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := resolveAddr(""); got != "http://compat-serve:8124" {
-			t.Errorf("got %q", got)
+		if got, err := resolveAddr(""); err != nil || got != "http://compat-serve:8124" {
+			t.Fatalf("got %q err=%v", got, err)
 		}
 	})
 
 	t.Run("explicit addr wins", func(t *testing.T) {
 		t.Setenv("RAMPART_API", "http://custom:1234")
-		if got := resolveAddr("http://other:5678"); got != "http://other:5678" {
-			t.Errorf("got %q", got)
+		if got, err := resolveAddr("http://other:5678"); err != nil || got != "http://other:5678" {
+			t.Fatalf("got %q err=%v", got, err)
+		}
+	})
+
+	t.Run("invalid config surfaces error", func(t *testing.T) {
+		home := t.TempDir()
+		testSetHome(t, home)
+		os.Unsetenv("RAMPART_API")
+		os.Unsetenv("RAMPART_URL")
+		os.Unsetenv("RAMPART_SERVE_URL")
+		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(home, ".rampart", "config.yaml")
+		if err := os.WriteFile(cfgPath, []byte("serveUrl: http://typo\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := resolveAddr(""); err == nil {
+			t.Fatal("expected config parse error")
 		}
 	})
 }

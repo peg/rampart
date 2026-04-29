@@ -78,3 +78,19 @@ func TestLoadUserConfig_RejectsUnknownFields(t *testing.T) {
 		t.Fatal("expected unknown-field error, got nil")
 	}
 }
+
+func TestResolveServeURLStrict_RejectsUnknownConfigFields(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	dir := filepath.Join(home, ".rampart")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("serveUrl: http://typo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := resolveServeURLStrict("", "http://localhost:9090"); err == nil {
+		t.Fatal("expected resolveServeURLStrict to return config parse error")
+	}
+}

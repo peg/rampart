@@ -234,17 +234,24 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			gitCtx := deriveGitContext()
 			hookSession := gitCtx.session
 
-			// Resolve serve-url and serve-token from standard config/env locations.
-			serveAutoDiscovered := serveURL == ""
-			serveURL = resolveServeURL(serveURL)
-			serveToken, _ := resolveTokenValue()
-
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
 			if format != "claude-code" && format != "cline" {
 				return fmt.Errorf("hook: invalid format %q (must be claude-code or cline)", format)
 			}
+
+			// Resolve serve-url and serve-token from standard config/env locations.
+			serveAutoDiscovered := serveURL == ""
+			resolvedServeURL, resolveErr := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+			if resolveErr != nil {
+				if mode == "enforce" {
+					return outputHookResult(cmd, format, hookDeny, false, "Rampart config error; refusing tool call until configuration is fixed", "")
+				}
+				return fmt.Errorf("hook: resolve serve URL: %w", resolveErr)
+			}
+			serveURL = resolvedServeURL
+			serveToken, _ := resolveTokenValue()
 
 			// Resolve audit directory
 			if auditDir == "" {
@@ -402,30 +409,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 				decision := eng.Evaluate(failedCall)
 
-				var pendingAsk *session.PendingAsk
-				// If this failure corresponds to a stored ask decision, recover that state
-				// even when serve is unavailable so we can distinguish real Rampart blocks
-				// from ordinary tool failures.
-				if parsed.ToolUseID != "" && parsed.SessionID != "" {
-					sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
-					if ask, dismissErr := sessionMgr.DismissAsk(parsed.ToolUseID); dismissErr == nil && ask != nil {
-						pendingAsk = ask
-						if ask.Audit && ask.AuditApprovalID != "" && serveURL != "" && isServeRunning(serveURL) {
-							approvalClient := &hookApprovalClient{
-								serveURL:       strings.TrimRight(serveURL, "/"),
-								token:          serveToken,
-								logger:         logger,
-								autoDiscovered: serveAutoDiscovered,
-								errWriter:      cmd.ErrOrStderr(),
-							}
-							resolveCtx, cancelResolve := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-							_ = approvalClient.resolveAskAuditCtx(resolveCtx, ask.AuditApprovalID, false, "hook-posttoolusefailure")
-							cancelResolve()
-						}
-					}
-				}
-
-				if pendingAsk == nil && decision.Action != engine.ActionDeny {
+				// A pending ask alone is not evidence of a denial: the user may have
+				// approved the native prompt and the tool may have failed afterward.
+				// So PostToolUseFailure must not dismiss ask state or mark mirrored serve
+				// approvals denied based solely on this hook event.
+				if decision.Action != engine.ActionDeny {
+					// For ask-mediated flows, PostToolUseFailure is ambiguous: it can mean
+					// either native-prompt denial or an approved tool that later failed.
+					// Do not inject denial guidance or mutate state based on an ambiguous event.
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(hookOutput{})
 				}
 
@@ -467,12 +458,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						policyHint += " [Project Policy]"
 					}
 					msg = "⛔ Blocked" + policyHint + ": " + decision.Message + "\n\n" + msg
-				} else if pendingAsk != nil && pendingAsk.DecisionMessage != "" {
-					policyHint := ""
-					if pendingAsk.PolicyName != "" {
-						policyHint = " [" + pendingAsk.PolicyName + "]"
-					}
-					msg = "⛔ Approval denied" + policyHint + ": " + pendingAsk.DecisionMessage + "\n\n" + msg
 				}
 				suggestions := engine.GenerateSuggestions(failedCall)
 				if len(suggestions) > 0 {

@@ -92,7 +92,11 @@ func resolveWatchServeConfig(cmd *cobra.Command, serveURL string) (string, strin
 	errW := cmd.ErrOrStderr()
 
 	if !cmd.Flags().Changed("serve-url") && resolvedURL == "" {
-		resolvedURL = resolveServeURL("")
+		strictURL, err := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
+		if err != nil {
+			return "", "", fmt.Errorf("watch: resolve serve URL: %w", err)
+		}
+		resolvedURL = strictURL
 		fmt.Fprintf(errW, "Note: using serve URL %s\n", resolvedURL)
 	}
 

@@ -141,7 +141,7 @@ policies: []
 	}
 }
 
-func TestPostToolUseFailure_AskFlowStillReturnsContext(t *testing.T) {
+func TestPostToolUseFailure_AskFlowDoesNotInferDenial(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
@@ -191,10 +191,22 @@ func TestPostToolUseFailure_AskFlowStillReturnsContext(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
 		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
 	}
-	if out.HookSpecificOutput == nil || out.HookSpecificOutput.AdditionalContext == "" {
-		t.Fatalf("expected additionalContext for ask-mediated denial, got %+v", out.HookSpecificOutput)
+	if out.HookSpecificOutput != nil && out.HookSpecificOutput.AdditionalContext != "" {
+		t.Fatalf("expected no inferred denial context for ambiguous ask failure, got %+v", out.HookSpecificOutput)
 	}
-	if !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Approval denied") {
-		t.Fatalf("expected ask denial context, got:\n%s", out.HookSpecificOutput.AdditionalContext)
+
+	statePath := filepath.Join(dir, ".rampart", "session-state", sessionID+".json")
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read session state: %v", err)
+	}
+	var state struct {
+		PendingAsks map[string]any `json:"pending_asks"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("unmarshal session state: %v", err)
+	}
+	if _, ok := state.PendingAsks[toolUseID]; !ok {
+		t.Fatalf("expected pending ask %q to remain until an explicit resolution arrives", toolUseID)
 	}
 }

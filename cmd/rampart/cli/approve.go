@@ -105,20 +105,25 @@ func resolveToken(token string) string {
 	return resolved
 }
 
-func resolveAddr(addr string) string {
+func resolveAddr(addr string) (string, error) {
 	if addr == "" {
 		if env := strings.TrimSpace(os.Getenv("RAMPART_API")); env != "" {
-			return strings.TrimRight(env, "/")
+			return strings.TrimRight(env, "/"), nil
 		}
 		if cfg, err := loadUserConfig(); err == nil && cfg.APIAddr != "" {
-			return cfg.APIAddr
+			return cfg.APIAddr, nil
+		} else if err != nil {
+			return "", err
 		}
 	}
-	return resolveServeURL(addr)
+	return resolveServeURLStrict(addr, fmt.Sprintf("http://localhost:%d", defaultServePort))
 }
 
 func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) error {
-	addr = resolveAddr(addr)
+	resolvedAddr, err := resolveAddr(addr)
+	if err != nil {
+		return fmt.Errorf("resolve approval API address: %w", err)
+	}
 	token = resolveToken(token)
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
@@ -129,7 +134,7 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 		"resolved_by": "cli",
 	})
 
-	url := fmt.Sprintf("%s/v1/approvals/%s/resolve", strings.TrimRight(addr, "/"), id)
+	url := fmt.Sprintf("%s/v1/approvals/%s/resolve", strings.TrimRight(resolvedAddr, "/"), id)
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -139,7 +144,7 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 
 	resp, err := rampartHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to connect to proxy at %s: %w", addr, err)
+		return fmt.Errorf("failed to connect to proxy at %s: %w", resolvedAddr, err)
 	}
 	defer resp.Body.Close()
 
@@ -158,13 +163,16 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 }
 
 func listPending(cmd *cobra.Command, addr, token string) error {
-	addr = resolveAddr(addr)
+	resolvedAddr, err := resolveAddr(addr)
+	if err != nil {
+		return fmt.Errorf("resolve approval API address: %w", err)
+	}
 	token = resolveToken(token)
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
 	}
 
-	url := fmt.Sprintf("%s/v1/approvals", strings.TrimRight(addr, "/"))
+	url := fmt.Sprintf("%s/v1/approvals", strings.TrimRight(resolvedAddr, "/"))
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -173,7 +181,7 @@ func listPending(cmd *cobra.Command, addr, token string) error {
 
 	resp, err := rampartHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to connect to proxy at %s: %w", addr, err)
+		return fmt.Errorf("failed to connect to proxy at %s: %w", resolvedAddr, err)
 	}
 	defer resp.Body.Close()
 

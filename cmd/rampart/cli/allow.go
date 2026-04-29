@@ -267,7 +267,10 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 
 	// Try to reload the daemon.
 	token := resolveToken(opts.token)
-	addr := resolveAddrAllow(opts.apiAddr)
+	addr, err := resolveAddrAllow(opts.apiAddr)
+	if err != nil {
+		return fmt.Errorf("resolve reload API address: %w", err)
+	}
 	reloaded, reloadErr := reloadPolicy(cmd, addr, token)
 	if reloaded {
 		fmt.Fprintf(out, "\n  Policy reloaded (%d rules active)\n", ruleCount)
@@ -489,12 +492,14 @@ func defaultMessage(action, pattern, tool string) string {
 
 // resolveAddrAllow returns the effective API address.
 // Respects the user API override and otherwise falls back to serve URL resolution.
-func resolveAddrAllow(addr string) string {
+func resolveAddrAllow(addr string) (string, error) {
 	if addr == "" {
 		if cfg, err := loadUserConfig(); err == nil && cfg.APIAddr != "" {
-			return cfg.APIAddr
+			return cfg.APIAddr, nil
+		} else if err != nil {
+			return "", err
 		}
-		return resolveServeURL("")
+		return resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
 	}
-	return addr
+	return addr, nil
 }

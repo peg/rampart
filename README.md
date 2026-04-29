@@ -83,12 +83,19 @@ If you do not want to keep exporting environment variables, Rampart also support
 ```yaml
 url: http://127.0.0.1:9090
 # serve_url: http://127.0.0.1:9090   # compatibility alias for url
-# api: http://127.0.0.1:9091         # optional advanced override for approval/control API flows
+# api: http://127.0.0.1:9091         # optional advanced override for daemon/split-topology API setups
 ```
 
-- `url` is the primary Rampart endpoint setting
-- `serve_url` is a compatibility alias for `url`
-- `api` is an advanced override and is usually unnecessary
+| Setting | Use it for | Notes |
+| --- | --- | --- |
+| `url` | Primary Rampart base URL | Canonical setting for hook/watch/plugin/service-backed flows |
+| `serve_url` | Backwards-compatible alias for `url` | Kept for compatibility; prefer `url` in new configs |
+| `api` | Optional API base URL override for approval/control commands | Advanced only; usually unnecessary unless you split the API away from the main serve endpoint |
+
+Notes:
+- `url` is the main knob; use this unless you have a specific reason not to.
+- `api` is **not** the normal setting for `rampart serve`; it is for advanced daemon/split-topology setups.
+- Client-side `--api` flags expect an **API base URL** (`http://127.0.0.1:9091`), while daemon/server `--api` flags refer to an **API listen address** (`127.0.0.1:9091`).
 
 Resolution order is: flag → environment → config file → auto-discovered state → default.
 
