@@ -117,8 +117,8 @@ func resolveServiceToken(tokenFlag string) (string, bool, error) {
 	if tokenFlag != "" {
 		return tokenFlag, false, nil
 	}
-	if cfg, err := loadUserConfig(); err == nil && cfg.Token != "" {
-		return cfg.Token, false, nil
+	if tok, _ := resolveTokenValue(); tok != "" {
+		return tok, false, nil
 	}
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

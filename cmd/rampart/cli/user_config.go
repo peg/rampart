@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -22,8 +23,6 @@ type UserConfig struct {
 	ServeURL string `yaml:"serve_url,omitempty"`
 	// APIAddr is the approval API URL for approve/deny/pending flows. Env: RAMPART_API.
 	APIAddr string `yaml:"api,omitempty"`
-	// Token is loaded from env or ~/.rampart/token and is never read from YAML.
-	Token string `yaml:"-"`
 }
 
 func userConfigPath() (string, error) {
@@ -42,7 +41,9 @@ func loadUserConfig() (UserConfig, error) {
 		return cfg, err
 	}
 	if data, err := os.ReadFile(p); err == nil {
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		if err := dec.Decode(&cfg); err != nil {
 			return cfg, err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -63,11 +64,15 @@ func loadUserConfig() (UserConfig, error) {
 	cfg.ServeURL = strings.TrimRight(strings.TrimSpace(cfg.ServeURL), "/")
 	cfg.APIAddr = strings.TrimRight(strings.TrimSpace(cfg.APIAddr), "/")
 
-	if v := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); v != "" {
-		cfg.Token = v
-	} else if tok, err := readPersistedToken(); err == nil && tok != "" {
-		cfg.Token = tok
-	}
-
 	return cfg, nil
+}
+
+func resolveTokenValue() (string, string) {
+	if v := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); v != "" {
+		return v, "env"
+	}
+	if tok, err := readPersistedToken(); err == nil && tok != "" {
+		return tok, "file"
+	}
+	return "", ""
 }

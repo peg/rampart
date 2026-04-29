@@ -237,8 +237,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Resolve serve-url and serve-token from standard config/env locations.
 			serveAutoDiscovered := serveURL == ""
 			serveURL = resolveServeURL(serveURL)
-			cfg, _ := loadUserConfig()
-			serveToken := cfg.Token
+			serveToken, _ := resolveTokenValue()
 
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)

@@ -39,8 +39,8 @@ func TestLoadUserConfig_FileAndEnvPrecedence(t *testing.T) {
 	if cfg.APIAddr != "http://env-api:9101" {
 		t.Fatalf("cfg.APIAddr = %q", cfg.APIAddr)
 	}
-	if cfg.Token != "tok-file" {
-		t.Fatalf("cfg.Token = %q", cfg.Token)
+	if tok, source := resolveTokenValue(); tok != "tok-file" || source != "file" {
+		t.Fatalf("resolveTokenValue() = %q/%q", tok, source)
 	}
 }
 
@@ -60,5 +60,21 @@ func TestResolveServeURL_UsesConfigServeURL(t *testing.T) {
 
 	if got := resolveServeURL(""); got != "http://config-serve:9999" {
 		t.Fatalf("resolveServeURL() = %q", got)
+	}
+}
+
+func TestLoadUserConfig_RejectsUnknownFields(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	dir := filepath.Join(home, ".rampart")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("serveUrl: http://typo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadUserConfig(); err == nil {
+		t.Fatal("expected unknown-field error, got nil")
 	}
 }

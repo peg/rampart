@@ -345,8 +345,8 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				// Resolve token: flag > env > persisted file > generate new.
 				// Mirrors serve install behaviour so the token survives restarts.
 				{
-					if cfg, err := loadUserConfig(); err == nil && cfg.Token != "" {
-						proxyOpts = append(proxyOpts, proxy.WithToken(cfg.Token))
+					if tok, _ := resolveTokenValue(); tok != "" {
+						proxyOpts = append(proxyOpts, proxy.WithToken(tok))
 					}
 				}
 				if resolveBaseURL != "" {

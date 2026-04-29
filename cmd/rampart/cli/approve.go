@@ -101,10 +101,8 @@ func resolveToken(token string) string {
 	if token != "" {
 		return token
 	}
-	if cfg, err := loadUserConfig(); err == nil && cfg.Token != "" {
-		return cfg.Token
-	}
-	return ""
+	resolved, _ := resolveTokenValue()
+	return resolved
 }
 
 func resolveAddr(addr string) string {

@@ -96,9 +96,9 @@ func resolveWatchServeConfig(cmd *cobra.Command, serveURL string) (string, strin
 		fmt.Fprintf(errW, "Note: using serve URL %s\n", resolvedURL)
 	}
 
-	if cfg, err := loadUserConfig(); err == nil && cfg.Token != "" {
-		resolvedToken = cfg.Token
-		if strings.TrimSpace(os.Getenv("RAMPART_TOKEN")) == "" {
+	if tok, source := resolveTokenValue(); tok != "" {
+		resolvedToken = tok
+		if source == "file" {
 			fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")
 		}
 	}

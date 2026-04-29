@@ -223,3 +223,90 @@ policies:
 		t.Fatalf("resolve body = %#v, want %#v", lastResolveBody, want)
 	}
 }
+
+func TestHookActionAskAudit_PostToolUseFailure_ResolvesDenied(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	const policy = `version: "1"
+policies:
+  - name: test-ask-audit-deny
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        ask:
+          audit: true
+        message: "approve this command?"
+`
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(policy), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	var createCount atomic.Int32
+	var resolveCount atomic.Int32
+	var lastResolveBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
+			createCount.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-audit-denied-1", "status": "pending"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals/ap-audit-denied-1/resolve":
+			resolveCount.Add(1)
+			_ = json.NewDecoder(r.Body).Decode(&lastResolveBody)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-audit-denied-1", "status": "denied"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	opts := &rootOptions{configPath: configPath}
+	prePayload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "sess-audit-deny-001",
+		"tool_use_id":     "toolu_audit_deny_001",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	preJSON, _ := json.Marshal(prePayload)
+	if _, _, err := runHookWithStdin(t, opts, string(preJSON), "--mode", "enforce", "--serve-url", srv.URL); err != nil {
+		t.Fatalf("pre hook error: %v", err)
+	}
+	if createCount.Load() != 1 {
+		t.Fatalf("expected one create call, got %d", createCount.Load())
+	}
+
+	postPayload := map[string]any{
+		"hook_event_name": "PostToolUseFailure",
+		"session_id":      "sess-audit-deny-001",
+		"tool_use_id":     "toolu_audit_deny_001",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "sudo apt install git"},
+	}
+	postJSON, _ := json.Marshal(postPayload)
+	stdout, _, err := runHookWithStdin(t, opts, string(postJSON), "--mode", "enforce", "--serve-url", srv.URL)
+	if err != nil {
+		t.Fatalf("post hook error: %v", err)
+	}
+	if resolveCount.Load() != 1 {
+		t.Fatalf("expected one resolve call, got %d", resolveCount.Load())
+	}
+	want := map[string]any{"approved": false, "resolved_by": "hook-posttoolusefailure"}
+	if !reflect.DeepEqual(lastResolveBody, want) {
+		t.Fatalf("resolve body = %#v, want %#v", lastResolveBody, want)
+	}
+
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil || !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Approval denied") {
+		t.Fatalf("expected approval-denied context, got %+v", out.HookSpecificOutput)
+	}
+}

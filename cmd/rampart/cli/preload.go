@@ -67,7 +67,7 @@ func newPreloadCmd(_ *rootOptions) *cobra.Command {
 
 			resolvedToken := token
 			if resolvedToken == "" {
-				resolvedToken = cfg.Token
+				resolvedToken, _ = resolveTokenValue()
 			}
 
 			sessionID := strings.TrimSpace(session)
