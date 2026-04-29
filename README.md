@@ -51,7 +51,7 @@ Pick your agent and run one command:
 rampart setup claude-code
 
 # OpenClaw
-rampart setup openclaw --plugin
+rampart setup openclaw
 
 # Cline
 rampart setup cline
@@ -98,7 +98,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | Agent | Setup command | Integration |
 |-------|--------------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
-| **OpenClaw** | `rampart setup openclaw --plugin` | Native plugin + selective native approvals |
+| **OpenClaw** | `rampart setup openclaw` | Native plugin + selective native approvals |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex CLI** | `rampart setup codex` | Wrapper that runs Codex through `rampart preload` |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
@@ -147,13 +147,15 @@ rampart setup claude-code --remove
 
 ## OpenClaw
 
-Native plugin integration is now the preferred setup:
+Native plugin integration is now the preferred setup on current OpenClaw builds:
 
 ```bash
-rampart setup openclaw --plugin
+rampart setup openclaw
 ```
 
 This keeps OpenClaw's native approval UI while letting Rampart decide which commands actually need approval.
+
+`rampart serve` is part of this path. The plugin calls the local Rampart service for policy evaluation, approvals, and audit flow.
 
 ### How exec approvals work
 
@@ -508,7 +510,7 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 rampart quickstart                           # Auto-detect, install, configure, health check
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
-rampart setup openclaw --plugin              # OpenClaw native plugin integration
+rampart setup openclaw                       # OpenClaw native plugin integration
 rampart setup codex                          # Codex CLI shell wrapper (Linux, macOS)
 rampart setup <agent> --remove               # Clean uninstall
 
@@ -573,7 +575,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Agent | Method | Platforms |
 |-------|--------|-----------|
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
-| OpenClaw | `rampart setup openclaw --plugin` | Linux, macOS |
+| OpenClaw | `rampart setup openclaw` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS, Windows |
 | Codex CLI | `rampart setup codex` | Linux, macOS (requires `librampart.so`/`.dylib`) |
 | Claude Desktop | `rampart mcp` | All |

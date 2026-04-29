@@ -411,6 +411,73 @@ func TestDoctorCoverage_OpenClawOnlyNoClaude(t *testing.T) {
 	}
 }
 
+func TestDoctorOpenClawPlugin(t *testing.T) {
+	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
+
+	setup := func(t *testing.T) string {
+		t.Helper()
+		home := t.TempDir()
+		testSetHome(t, home)
+		binDir := t.TempDir()
+		requireNoErr(t, os.WriteFile(filepath.Join(binDir, "openclaw"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+		t.Setenv("PATH", binDir)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw", "extensions", "rampart"), 0o755))
+		return home
+	}
+
+	run := func(t *testing.T) (int, []checkResult) {
+		t.Helper()
+		var results []checkResult
+		emit := func(name, status, msg string) {
+			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+		}
+		warnings := doctorOpenClawPlugin(emit)
+		return warnings, results
+	}
+
+	t.Run("warns when plugin missing from allow list", func(t *testing.T) {
+		home := setup(t)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+		requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(`{"plugins":{"allow":[]}}`), 0o600))
+
+		warnings, results := run(t)
+		if warnings != 1 || len(results) != 1 || results[0].Status != "warn" {
+			t.Fatalf("expected one warning, got warnings=%d results=%+v", warnings, results)
+		}
+		if !strings.Contains(results[0].Message, "plugins.allow is missing rampart") {
+			t.Fatalf("expected allow-list warning, got %s", results[0].Message)
+		}
+	})
+
+	t.Run("warns when plugin entry disabled", func(t *testing.T) {
+		home := setup(t)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+		requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":false}}}}`), 0o600))
+
+		warnings, results := run(t)
+		if warnings != 1 || len(results) != 1 || results[0].Status != "warn" {
+			t.Fatalf("expected one warning, got warnings=%d results=%+v", warnings, results)
+		}
+		if !strings.Contains(results[0].Message, "enabled=false disables the native hook") {
+			t.Fatalf("expected disabled warning, got %s", results[0].Message)
+		}
+	})
+
+	t.Run("warns when config cannot be read", func(t *testing.T) {
+		home := setup(t)
+		configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+		requireNoErr(t, os.MkdirAll(configPath, 0o755))
+
+		warnings, results := run(t)
+		if warnings != 1 || len(results) != 1 || results[0].Status != "warn" {
+			t.Fatalf("expected one warning, got warnings=%d results=%+v", warnings, results)
+		}
+		if !strings.Contains(results[0].Message, "could not verify plugins.allow / enabled state") {
+			t.Fatalf("expected unreadable-config warning, got %s", results[0].Message)
+		}
+	})
+}
+
 func TestDoctorOpenClawReadiness(t *testing.T) {
 	t.Run("skips when plugin inactive", func(t *testing.T) {
 		var results []checkResult

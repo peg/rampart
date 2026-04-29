@@ -52,7 +52,7 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     ---
 
-    Native hooks, shell wrapping, MCP proxy, system-level interception, HTTP API. Works with every major AI agent.
+    Native hooks, native plugins, shell wrapping, MCP proxy, system-level interception, HTTP API. Works with every major AI agent.
 
     [:octicons-arrow-right-24: Integration guides](integrations/index.md)
 
@@ -80,14 +80,14 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 # Install
 brew tap peg/rampart && brew install rampart
 
-# Protect Claude Code (one command)
+# Claude Code
 rampart setup claude-code
 
-# Use Claude Code normally — Rampart is transparent
-claude
+# OpenClaw
+rampart setup openclaw
 ```
 
-That's it. Every tool call now goes through Rampart's policy engine. [Full setup guide →](getting-started/quickstart.md)
+That's it. Pick the integration that matches your agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
 
 ## Frequently Asked Questions
 
@@ -126,7 +126,7 @@ agents: {
 intercept: {
   label: "Interception"
   hooks: "Native Hooks"
-  shim: "Shell Shim"
+  plugin: "Native Plugin"
   preload: "LD_PRELOAD"
   mcp: "MCP Proxy"
 }
@@ -171,12 +171,12 @@ outcomes: {
 
 agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
-agents.openclaw -> intercept.shim
+agents.openclaw -> intercept.plugin
 agents.codex -> intercept.preload
 agents.other -> intercept.mcp
 
 intercept.hooks -> engine
-intercept.shim -> engine
+intercept.plugin -> engine
 intercept.preload -> engine
 intercept.mcp -> engine
 
@@ -196,10 +196,10 @@ verify -> outcomes.approval
 |-------|------------|-------|
 | **Claude Code** | Native hooks | `rampart setup claude-code` |
 | **Cline** | Native hooks | `rampart setup cline` |
+| **OpenClaw** | Native plugin | `rampart setup openclaw` |
+| **Codex CLI** | Wrapper + preload | `rampart setup codex` |
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
-| **Codex CLI** | Wrapper + preload | `rampart setup codex` |
-| **OpenClaw** | Native plugin | `rampart setup openclaw` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
 | **Python agents** | HTTP API / SDK | `localhost:9090` |
 
@@ -232,7 +232,7 @@ verify -> outcomes.approval
 
 ### v0.9.12
 
-- **Plugin bundled in binary** — The OpenClaw plugin is now embedded directly in the `rampart` binary. `rampart setup openclaw --plugin` works on any machine — no external checkout or npm install required. [Learn more →](integrations/openclaw.md)
+- **Plugin bundled in binary** — The OpenClaw plugin is now embedded directly in the `rampart` binary. `rampart setup openclaw` works on any machine — no external checkout or npm install required. [Learn more →](integrations/openclaw.md)
 - **Bridge hardened** — Errors during approval escalations now fail closed (deny) instead of silently allowing.
 - **Learn endpoint secured** — `POST /v1/rules/learn` now rate-limited and restricted to `allow` decisions only.
 

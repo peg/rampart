@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,10 +45,11 @@ func runStatus(w io.Writer) error {
 	mode, defaultAction := detectMode()
 	allow, deny, pending, lastDeny := todayEvents()
 	serverRunning := isServeRunningLocal()
+	hookOnly := isHookBasedOnly(protected)
 
 	useColor := !noColor() && isTerminal(os.Stdout)
 
-	box := buildStatusBox(protected, mode, defaultAction, allow, deny, pending, serverRunning, lastDeny, useColor)
+	box := buildStatusBox(protected, mode, defaultAction, allow, deny, pending, serverRunning, hookOnly, lastDeny, useColor)
 	fmt.Fprintln(w, box)
 
 	printStatusHints(w, serverRunning, protected, allow, deny, pending)
@@ -99,6 +99,7 @@ func buildStatusBox(
 	mode, defaultAction string,
 	allow, deny, pending int,
 	serverRunning bool,
+	hookOnly bool,
 	lastDeny *audit.Event,
 	useColor bool,
 ) string {
@@ -167,6 +168,9 @@ func buildStatusBox(
 	if serverRunning {
 		dotStr = styled("●", successSt)
 		statusVal = "Running"
+	} else if hookOnly {
+		dotStr = styled("◐", successSt)
+		statusVal = "Hooks active (serve optional)"
 	} else {
 		dotStr = styled("○", dangerSt)
 		statusVal = "Not running"
@@ -260,20 +264,18 @@ func detectProtectedAgents() []string {
 		agents = append(agents, "Cline (hooks)")
 	}
 
-	// OpenClaw: check for systemd drop-in, shell shim, or SHELL config
+	// OpenClaw: prefer the native plugin only when it's actually configured to load.
 	openclawDropIn := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
 	openclawShim := filepath.Join(home, ".local", "bin", "rampart-shim")
 	openclawConfig := filepath.Join(home, ".openclaw", "openclaw.json")
-	// Check for native plugin first (preferred path)
-	pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
-	if _, err := os.Stat(pluginDir); err == nil {
+	if isOpenClawPluginConfigured() {
 		agents = append(agents, "OpenClaw (plugin)")
 	} else if _, err := os.Stat(openclawDropIn); err == nil {
 		agents = append(agents, "OpenClaw (preload+bridge)")
 	} else if _, err := os.Stat(openclawShim); err == nil {
 		agents = append(agents, "OpenClaw (shim+bridge)")
 	} else if data, err := os.ReadFile(openclawConfig); err == nil {
-		if strings.Contains(string(data), "rampart") {
+		if hasLegacyOpenClawBridgeConfig(data) {
 			agents = append(agents, "OpenClaw (bridge)")
 		}
 	}
@@ -285,6 +287,19 @@ func detectProtectedAgents() []string {
 	}
 
 	return agents
+}
+
+func hasLegacyOpenClawBridgeConfig(data []byte) bool {
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	for _, key := range []string{"rampart", "rampartBridge", "rampart_bridge", "rampartUrl", "rampart_url"} {
+		if _, ok := cfg[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func detectMode() (string, string) {

@@ -103,16 +103,14 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 	}
 }
 
-// isHookBasedOnly returns true if all protected agents use hook-based integration
-// (Claude Code, Cline) which don't require rampart serve for basic policy enforcement.
+// isHookBasedOnly returns true only when all protected agents use local native
+// hook integration that can evaluate policy without rampart serve.
 func isHookBasedOnly(protected []string) bool {
 	if len(protected) == 0 {
 		return false
 	}
 	for _, p := range protected {
-		// LD_PRELOAD, shim, and wrapper modes require serve
-		if strings.Contains(p, "preload") || strings.Contains(p, "shim") ||
-			strings.Contains(p, "wrapper") || strings.Contains(p, "config") {
+		if !(strings.Contains(p, "Claude Code (hooks)") || strings.Contains(p, "Cline (hooks)")) {
 			return false
 		}
 	}

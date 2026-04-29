@@ -140,5 +140,5 @@ Remove-Item -Recurse ~\.rampart     # Delete files
 
 ## Next Steps
 
-- [Quick Start →](quickstart.md) — Set up Rampart with Claude Code in 60 seconds
+- [Quick Start →](quickstart.md) — Set up Rampart with Claude Code, Codex, Cline, or OpenClaw
 - [Configuration →](configuration.md) — Learn the YAML policy format

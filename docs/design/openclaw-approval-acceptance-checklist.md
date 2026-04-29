@@ -47,7 +47,7 @@ Pass criteria:
 
 ```bash
 go build -o ~/.local/bin/rampart ./cmd/rampart
-~/.local/bin/rampart setup openclaw --plugin
+~/.local/bin/rampart setup openclaw
 systemctl --user restart openclaw-gateway.service
 systemctl --user restart rampart-serve.service
 systemctl --user is-active openclaw-gateway.service

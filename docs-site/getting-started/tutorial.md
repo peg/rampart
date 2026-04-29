@@ -61,8 +61,8 @@ rampart quickstart
 That's it. This single command:
 
 1. Detects your AI agent (Claude Code, Codex, Cline, etc.)
-2. Installs the Rampart service with a secure token
-3. Wires up hooks so every tool call is evaluated before it runs
+2. Installs the right Rampart integration for that agent
+3. Starts or verifies `rampart serve` when that integration needs the local service
 4. Runs `rampart doctor` to verify everything is healthy
 
 ```
@@ -83,6 +83,9 @@ claude
 ```
 
 Every command Claude attempts runs through Rampart first. Most will pass through instantly — you'll never notice. The dangerous ones stop before they execute.
+
+!!! note "Different agents use different integration paths"
+    Claude Code and Cline use native hooks. OpenClaw uses a native plugin. Codex CLI uses a wrapper + preload path. The exact setup varies by agent, but `rampart quickstart` picks the right path automatically. See the [support matrix](support-matrix.md).
 
 ---
 

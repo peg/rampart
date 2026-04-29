@@ -24,10 +24,10 @@ For OpenClaw-hosted workflows, there should be exactly **one** human-facing appr
 Use the native plugin setup:
 
 ```bash
-rampart setup openclaw --plugin
+rampart setup openclaw
 ```
 
-Or, on supported OpenClaw versions, let setup auto-select the plugin path.
+Use `--plugin` only if you need to force the native plugin path explicitly.
 
 The plugin integrates via OpenClaw's native hook APIs and is the preferred path because it survives upgrades much better than direct `dist/` patching.
 

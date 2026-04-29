@@ -60,7 +60,7 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 
 **Remaining surface:** LD_PRELOAD cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
 
-**Multi-step sequences:** With file tool coverage enabled (native hooks or `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
+**Multi-step sequences:** With file tool coverage enabled (native hooks, OpenClaw native plugin, or legacy `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
 
 ### 2. Audit Log Rewrite
 
@@ -186,8 +186,8 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
-| `rampart setup openclaw --plugin` | ✅ (selective native approvals) | ⚠️ Partial, depends on setup path | ✅ | ❌ |
-| `rampart setup openclaw --patch-tools` | ✅ (legacy bridge+shim) | ✅ (patched) | ✅ (bridge) | ❌ |
+| `rampart setup openclaw` | ✅ | ✅ | ❌ | ❌ |
+| `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
 | `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |
 | MCP proxy | ✅ | ✅ | ✅ | ❌ |

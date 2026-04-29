@@ -53,9 +53,11 @@ This single command auto-detects the running AI environment, installs the backgr
 rampart quickstart --yes
 ```
 
-The `--yes` flag skips any prompts. For **OpenClaw** it also auto-enables `--patch-tools` (full coverage for file reads/writes/edits in addition to shell commands). For all other agents the flag is a safe no-op.
+The `--yes` flag skips any prompts so setup can run unattended in CI, remote shells, or agent-driven installs.
 
 **OpenClaw note:** protection applies to future tool calls, not the current session. Restart the OpenClaw gateway after this step for hooks to take effect.
+
+**Serve note:** direct Claude Code and Cline native hooks can evaluate policy locally without `rampart serve`, but dashboard views, approval APIs, and OpenClaw plugin evaluation rely on the local service.
 
 ---
 
@@ -77,7 +79,7 @@ Expected output (example):
 ```
 🛡️ Rampart Status
 
-Protected: openclaw
+Protected: OpenClaw (plugin)
 Mode: enforce (default_action: allow)
 Today: 0 allow · 0 deny · 0 log
 ```
@@ -145,9 +147,9 @@ policies:
 Re-run setup for your specific agent:
 
 ```bash
-rampart setup openclaw --patch-tools   # OpenClaw
-rampart setup claude-code              # Claude Code
-rampart setup cline                    # Cline
+rampart setup openclaw     # OpenClaw native plugin on current builds
+rampart setup claude-code  # Claude Code native hooks
+rampart setup cline        # Cline native hooks
 ```
 
 **Service not running**

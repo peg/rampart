@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.21] - 2026-04-29
+
+### Changed
+
+- **Phase 1 docs/UX coherence pass** — Rampart now presents a cleaner, more truthful integration story across README, quickstart, CLI help, status/doctor messaging, and docs-site reference pages. The goal is simple: users should not have to reverse-engineer which integration path they are actually on.
+- **OpenClaw setup is framed around the real default path** — `rampart setup openclaw` is now the canonical command in user-facing docs and hints, while explicit `--plugin` and `--patch-tools` references are reserved for advanced or legacy cases.
+- **Serve requirements are explained per integration** — Claude Code and Cline native hooks are now documented as capable of local policy evaluation without `rampart serve` for direct hook decisions, while OpenClaw plugin and other service-backed paths clearly call out their dependency on the local service.
+
+### Fixed
+
+- **`rampart status` no longer conflates hook-only and service-backed protection** — hook-only setups can report serve as optional, while OpenClaw plugin setups are no longer misclassified as hook-only when the service is down.
+- **Quickstart OpenClaw detection matches the native plugin story** — quickstart and related tests now recognize the native OpenClaw plugin as an installed protected path instead of only checking legacy shim artifacts.
+- **CLI/docs wording drift removed** — stale claims that `rampart quickstart --yes` auto-enables OpenClaw `--patch-tools` have been removed, and doctor/help hints now point users at the canonical OpenClaw command.
+- **Doctor version output cleaned up** — service version reporting no longer renders malformed strings like `serve vv0.9.20`.
+- **Self-modification policy false positives reduced** — built-in policies now block actual Rampart mutation/setup invocations without denying harmless PR bodies or docs text that merely mention commands like `rampart setup openclaw`.
+
+### Docs
+
+- **Added a canonical integration support matrix** — new docs spell out support tier, serve requirements, approval UX, and degraded behavior per surface so the product story has one source of truth.
+- **Architecture/tutorial/homepage language now distinguishes hooks, plugins, wrapper/preload, and MCP paths** — especially for OpenClaw, where earlier docs mixed the native plugin story with older shim-era language.
+
 ## [0.9.20] - 2026-04-26
 
 ### Fixed
