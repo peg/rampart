@@ -1,6 +1,6 @@
 ---
 title: Securing OpenClaw
-description: "Native Rampart integration for OpenClaw — policy enforcement via before_tool_call hook. One command, full coverage."
+description: "Native Rampart integration for OpenClaw — policy enforcement via before_tool_call hook, with explicit degraded-mode behavior per tool class."
 ---
 
 # OpenClaw
