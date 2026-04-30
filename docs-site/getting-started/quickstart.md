@@ -45,6 +45,15 @@ This detects your agent (Claude Code, Codex, Cline, OpenClaw), installs the serv
 
 Then use your agent normally. Rampart is invisible until something needs to be blocked or approved.
 
+If you want persistent local defaults instead of exporting env vars, add this:
+
+```yaml
+# ~/.rampart/config.yaml
+url: http://127.0.0.1:9090
+```
+
+See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` story.
+
 ## Other Agents
 
 === "Claude Code"
