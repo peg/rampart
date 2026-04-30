@@ -131,7 +131,7 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		fmt.Fprintf(errW, "⚠ Could not harden OpenClaw approvals: %v\n", err)
 		fmt.Fprintln(errW, "  Run `rampart doctor --fix` after reviewing the detected OpenClaw build shape.")
 	} else {
-		fmt.Fprintf(w, "✓ OpenClaw approval handling hardened (fail-closed fallback, truthful completion text, %dms timeout)\n", ochardening.DesiredApprovalTimeoutMs)
+		fmt.Fprintf(w, "✓ OpenClaw approval handling checked (plugin approvals aligned at %dms)\n", ochardening.DesiredApprovalTimeoutMs)
 	}
 
 	// 5. Copy openclaw.yaml policy profile.
@@ -181,7 +181,15 @@ func ensureOpenClawApprovalHardening(w io.Writer, errW io.Writer) error {
 		return fmt.Errorf("openclaw approval bundles not found under supported dist paths")
 	}
 	if !state.Supported {
-		return fmt.Errorf("unsupported OpenClaw approval bundle shape; refusing blind patch")
+		updated, timeoutErr := ochardening.EnsurePluginApprovalTimeout(home)
+		if timeoutErr != nil {
+			return fmt.Errorf("align plugin approval timeout: %w", timeoutErr)
+		}
+		if updated {
+			fmt.Fprintf(w, "  Set plugins.entries.rampart.config.approvalTimeoutMs = %d\n", ochardening.DesiredApprovalTimeoutMs)
+		}
+		fmt.Fprintln(w, "✓ Native OpenClaw plugin approvals available; skipped legacy exec approval bundle patching for this build shape")
+		return nil
 	}
 	if state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned {
 		fmt.Fprintln(w, "✓ OpenClaw approval semantics already hardened and timeout-aligned")

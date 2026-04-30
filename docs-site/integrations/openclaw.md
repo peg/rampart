@@ -12,10 +12,11 @@ Every tool call — exec, read, write, web_fetch, browser, message, and more —
 For sensitive tools, the recommended operating assumption is simple: if Rampart policy service is unavailable, treat that as a broken state and fix it before trusting approval-path tests. By default the plugin blocks sensitive tools such as `exec` and `write` when `rampart serve` is unavailable; lower-risk tools (`read`, `web_fetch`, `web_search`, `image`) are explicitly configured fail-open and can be tightened with `plugins.entries.rampart.config.failOpenTools`.
 
 !!! info "Version requirements"
-    - **OpenClaw >= 2026.4.11**: Recommended and supported for native Discord exec approvals plus full native plugin coverage
-    - **OpenClaw 2026.3.28 - 2026.4.10**: Native plugin works for tool enforcement, but Rampart's polished Discord exec approval path is supported on newer OpenClaw builds
-    - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades
-    - **Verified on**: OpenClaw 2026.4.11
+    - **OpenClaw >= 2026.4.29**: Preferred RC baseline. Supports explicit plugin startup activation plus first-class plugin approvals on the shared `/approve` / native approval path.
+    - **OpenClaw 2026.4.11 - 2026.4.28**: Recommended and supported for native Discord exec approvals plus native plugin interception.
+    - **OpenClaw 2026.3.28 - 2026.4.10**: Native plugin works for tool enforcement, but Rampart's polished Discord exec approval path is supported on newer OpenClaw builds.
+    - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades.
+    - **Verified on**: OpenClaw 2026.4.29
 
     `rampart setup openclaw` auto-detects your version and uses the right method.
 
@@ -28,7 +29,7 @@ rampart setup openclaw
 That's it. Rampart:
 
 1. Detects your OpenClaw version
-2. **If >= 2026.3.28**: Extracts the bundled plugin and installs it via `openclaw plugins install`
+2. **If >= 2026.3.28**: Extracts the bundled plugin and installs it via `openclaw plugins install`; current plugins declare `activation.onStartup: true` so startup protection does not rely on deprecated implicit loading
 3. Adds `rampart` to `plugins.allow` — existing plugins (discord, browser, etc.) are preserved
 4. Configures OpenClaw to route decisions through Rampart (`tools.exec.ask: off`)
 5. Copies the `openclaw.yaml` policy profile to `~/.rampart/policies/openclaw.yaml`

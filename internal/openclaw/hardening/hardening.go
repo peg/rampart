@@ -89,6 +89,12 @@ func Inspect(home string, distCandidates []string) (State, error) {
 	return state, nil
 }
 
+// EnsurePluginApprovalTimeout aligns the Rampart plugin approval timeout in
+// OpenClaw config without modifying OpenClaw's bundled exec approval code.
+func EnsurePluginApprovalTimeout(home string) (bool, error) {
+	return ensurePluginApprovalTimeout(filepath.Join(home, ".openclaw", "openclaw.json"), DesiredApprovalTimeoutMs)
+}
+
 func Apply(home string, distCandidates []string) (ApplyResult, error) {
 	state, err := Inspect(home, distCandidates)
 	if err != nil {

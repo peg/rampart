@@ -244,7 +244,7 @@ verify -> outcomes.approval
 
 ### v0.9.10
 
-- **Native OpenClaw plugin** — `rampart setup openclaw` auto-detects your OpenClaw version and installs a native `before_tool_call` hook. Covers every tool call (exec, read, write, web_fetch, browser, message) without fragile dist patching. Requires OpenClaw >= 2026.3.28. [Learn more →](integrations/openclaw.md)
+- **Native OpenClaw plugin** — `rampart setup openclaw` auto-detects your OpenClaw version and installs a native `before_tool_call` hook. Intercepts every tool call (exec, read, write, web_fetch, browser, message) without fragile dist patching; degraded behavior still depends on tool class and configuration. Requires OpenClaw >= 2026.3.28. [Learn more →](integrations/openclaw.md)
 - **Always Allow writeback** — Click "Always Allow" in the OpenClaw approval UI and Rampart writes a permanent smart-glob rule to `~/.rampart/policies/user-overrides.yaml`.
 - **Approval store persistence** — Pending approvals survive `rampart serve` restarts via JSONL journal.
 - **`rampart doctor` plugin check** — Shows `✓ OpenClaw plugin: installed` when the native hook is active.

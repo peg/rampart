@@ -212,7 +212,7 @@ async function auditLog(toolName, params, ctx, outcome, config) {
 export const id = "rampart";
 export const name = "Rampart";
 export const description = "AI agent firewall — YAML policy-as-code for every tool call";
-export const version = "0.9.19";
+export const version = "0.9.22";
 
 export function register(api) {
   const pluginConfig = api.pluginConfig ?? {};

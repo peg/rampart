@@ -1453,6 +1453,16 @@ func doctorOpenClawApprovalHardening(emit emitFn) (warnings int) {
 		return 1
 	}
 	if !state.Supported {
+		if isOpenClawPluginInstalled() {
+			emit("OpenClaw approvals", "ok", "native plugin approvals available; legacy exec approval bundle patching not required for plugin mode")
+			if !state.PluginApprovalTimeoutAligned {
+				emit("OpenClaw approval timeout", "warn", fmt.Sprintf("plugin approval timeout is not aligned to %dms", ochardening.DesiredApprovalTimeoutMs)+hintSep+
+					"rampart doctor --fix")
+				return 1
+			}
+			emit("OpenClaw approval timeout", "ok", fmt.Sprintf("plugin approval timeout aligned at %dms", ochardening.DesiredApprovalTimeoutMs))
+			return 0
+		}
 		emit("OpenClaw approvals", "warn", "unsupported OpenClaw build shape; refusing blind approval patching"+hintSep+
 			"update Rampart or inspect the installed OpenClaw dist before patching")
 		return 1

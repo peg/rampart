@@ -2,6 +2,9 @@
   "id": "rampart",
   "name": "Rampart",
   "description": "AI agent firewall — YAML policy-as-code for every tool call",
+  "activation": {
+    "onStartup": true
+  },
   "version": "0.9.22",
   "author": "peg",
   "homepage": "https://rampart.sh",
