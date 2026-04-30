@@ -109,7 +109,7 @@ func addAllowBlockFlags(cmd *cobra.Command, opts *allowBlockOptions) {
 	cmd.Flags().StringVar(&opts.tool, "tool", "", "Tool type: exec, read, write, edit (default: auto-detect)")
 	cmd.Flags().StringVar(&opts.message, "message", "", "Optional reason displayed when the rule matches")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip confirmation prompt")
-	cmd.Flags().StringVar(&opts.apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&opts.apiAddr, "api", "", "Rampart API address override for reload (default: auto-discover via url/config/state)")
 	cmd.Flags().StringVar(&opts.token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 	cmd.Flags().StringVar(&opts.forDur, "for", "", "Rule expires after duration (e.g. 1h, 30m, 24h)")
 	cmd.Flags().BoolVar(&opts.once, "once", false, "Single-use rule — removed after first match")
@@ -267,7 +267,10 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 
 	// Try to reload the daemon.
 	token := resolveToken(opts.token)
-	addr := resolveAddrAllow(opts.apiAddr)
+	addr, err := resolveAddrAllow(opts.apiAddr)
+	if err != nil {
+		return fmt.Errorf("resolve reload API address: %w", err)
+	}
 	reloaded, reloadErr := reloadPolicy(cmd, addr, token)
 	if reloaded {
 		fmt.Fprintf(out, "\n  Policy reloaded (%d rules active)\n", ruleCount)
@@ -488,13 +491,15 @@ func defaultMessage(action, pattern, tool string) string {
 }
 
 // resolveAddrAllow returns the effective API address.
-// Respects the RAMPART_API environment variable when the addr is the default.
-func resolveAddrAllow(addr string) string {
-	if env := os.Getenv("RAMPART_API"); env != "" && addr == "http://127.0.0.1:9090" {
-		return env
-	}
+// Respects the user API override and otherwise falls back to serve URL resolution.
+func resolveAddrAllow(addr string) (string, error) {
 	if addr == "" {
-		return "http://127.0.0.1:9090"
+		if cfg, err := loadUserConfig(); err == nil && cfg.APIAddr != "" {
+			return cfg.APIAddr, nil
+		} else if err != nil {
+			return "", err
+		}
+		return resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
 	}
-	return addr
+	return addr, nil
 }

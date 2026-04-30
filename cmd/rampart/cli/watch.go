@@ -80,7 +80,7 @@ func newWatchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "all", "Filter to a single agent in view")
 	cmd.Flags().StringVar(&decision, "decision", "", "Filter by decision (allow, deny, log, webhook)")
 	cmd.Flags().StringVar(&tool, "tool", "", "Filter by tool name (e.g., exec, read, write)")
-	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Serve API URL for interactive approvals")
+	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override for interactive approvals (default: auto-discover via url/config/state)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress noisy system commands (ip neigh, systemd, etc.)")
 
 	return cmd
@@ -92,15 +92,19 @@ func resolveWatchServeConfig(cmd *cobra.Command, serveURL string) (string, strin
 	errW := cmd.ErrOrStderr()
 
 	if !cmd.Flags().Changed("serve-url") && resolvedURL == "" {
-		resolvedURL = resolveServeURL("")
+		strictURL, err := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
+		if err != nil {
+			return "", "", fmt.Errorf("watch: resolve serve URL: %w", err)
+		}
+		resolvedURL = strictURL
 		fmt.Fprintf(errW, "Note: using serve URL %s\n", resolvedURL)
 	}
 
-	if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
-		resolvedToken = envToken
-	} else if tok, err := readPersistedToken(); err == nil && tok != "" {
+	if tok, source := resolveTokenValue(); tok != "" {
 		resolvedToken = tok
-		fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")
+		if source == "file" {
+			fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")
+		}
 	}
 
 	return resolvedURL, resolvedToken, nil

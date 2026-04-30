@@ -47,38 +47,48 @@ func removeServeState(dir string) {
 	os.Remove(filepath.Join(dir, serveStateFile))
 }
 
-// resolveServeURL determines the serve URL using this priority:
+// resolveServeURLStrict determines the serve URL using this priority:
 //  1. Explicit flag value (if non-empty)
-//  2. RAMPART_URL env var
-//  3. RAMPART_SERVE_URL env var
+//  2. RAMPART_URL / config url
+//  3. RAMPART_SERVE_URL / config serve_url (compatibility alias)
 //  4. serve.state file in ~/.rampart/
-//  5. Default port (9090)
-func resolveServeURL(flagValue string) string {
+//  5. Provided fallback URL
+func resolveServeURLStrict(flagValue, fallback string) (string, error) {
 	if flagValue != "" {
-		return strings.TrimRight(flagValue, "/")
+		return strings.TrimRight(flagValue, "/"), nil
 	}
 
-	if u := strings.TrimSpace(os.Getenv("RAMPART_URL")); u != "" {
-		return strings.TrimRight(u, "/")
-	}
-
-	if u := strings.TrimSpace(os.Getenv("RAMPART_SERVE_URL")); u != "" {
-		return strings.TrimRight(u, "/")
+	if cfg, err := loadUserConfig(); err == nil {
+		if cfg.URL != "" {
+			return cfg.URL, nil
+		}
+		if cfg.ServeURL != "" {
+			return cfg.ServeURL, nil
+		}
+	} else {
+		return "", err
 	}
 
 	// Try state file.
-	home, err := os.UserHomeDir()
-	if err == nil {
-		statePath := filepath.Join(home, ".rampart", serveStateFile)
+	if dir, err := rampartDir(); err == nil {
+		statePath := filepath.Join(dir, serveStateFile)
 		if data, err := os.ReadFile(statePath); err == nil {
 			var state serveState
 			if json.Unmarshal(data, &state) == nil && state.URL != "" {
-				return state.URL
+				return state.URL, nil
 			}
 		}
 	}
 
-	return fmt.Sprintf("http://localhost:%d", defaultServePort)
+	return fallback, nil
 }
 
-
+// resolveServeURL is a best-effort helper for legacy/internal call sites that
+// prefer fallback behavior over surfacing configuration errors.
+func resolveServeURL(flagValue string) string {
+	resolved, err := resolveServeURLStrict(flagValue, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Sprintf("http://localhost:%d", defaultServePort)
+	}
+	return resolved
+}

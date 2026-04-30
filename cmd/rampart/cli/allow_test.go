@@ -483,6 +483,40 @@ func TestReloadPolicy_Success(t *testing.T) {
 	}
 }
 
+func TestReloadPolicy_UsesConfigAPIOverride(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/policy/reload" {
+			called = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		} else {
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	testSetHome(t, dir)
+	_ = os.MkdirAll(filepath.Join(dir, ".rampart", "policies"), 0o755)
+	if err := os.WriteFile(filepath.Join(dir, ".rampart", "config.yaml"), []byte("api: "+srv.URL+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RAMPART_TOKEN", "test-token")
+
+	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	outBuf := &bytes.Buffer{}
+	cmd.SetOut(outBuf)
+	cmd.SetArgs([]string{"allow", "npm install *", "--global", "--yes"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected reload endpoint to be called via config api override")
+	}
+}
+
 func TestReloadPolicy_DaemonUnreachable(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)

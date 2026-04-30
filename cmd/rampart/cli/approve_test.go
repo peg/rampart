@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -45,22 +46,90 @@ func TestResolveToken(t *testing.T) {
 }
 
 func TestResolveAddr(t *testing.T) {
-	defaultAddr := fmt.Sprintf("http://127.0.0.1:%d", defaultServePort)
+	defaultAddr := fmt.Sprintf("http://localhost:%d", defaultServePort)
 
-	// Default addr, no env
-	os.Unsetenv("RAMPART_API")
-	if got := resolveAddr(defaultAddr); got != defaultAddr {
-		t.Errorf("got %q", got)
-	}
+	t.Run("empty addr falls back to default", func(t *testing.T) {
+		os.Unsetenv("RAMPART_API")
+		os.Unsetenv("RAMPART_URL")
+		os.Unsetenv("RAMPART_SERVE_URL")
+		if got, err := resolveAddr(""); err != nil || got != defaultAddr {
+			t.Fatalf("got %q err=%v", got, err)
+		}
+	})
 
-	// Default addr, with env override
-	t.Setenv("RAMPART_API", "http://custom:1234")
-	if got := resolveAddr(defaultAddr); got != "http://custom:1234" {
-		t.Errorf("got %q", got)
-	}
+	t.Run("empty addr uses RAMPART_API override", func(t *testing.T) {
+		t.Setenv("RAMPART_API", "http://custom:1234/")
+		if got, err := resolveAddr(""); err != nil || got != "http://custom:1234" {
+			t.Fatalf("got %q err=%v", got, err)
+		}
+	})
 
-	// Non-default addr, env should not override
-	if got := resolveAddr("http://other:5678"); got != "http://other:5678" {
-		t.Errorf("got %q", got)
-	}
+	t.Run("empty addr uses serve url resolution chain", func(t *testing.T) {
+		os.Unsetenv("RAMPART_API")
+		t.Setenv("RAMPART_URL", "http://proxy:7777/")
+		if got, err := resolveAddr(""); err != nil || got != "http://proxy:7777" {
+			t.Fatalf("got %q err=%v", got, err)
+		}
+	})
+
+	t.Run("empty addr uses config API override", func(t *testing.T) {
+		home := t.TempDir()
+		testSetHome(t, home)
+		os.Unsetenv("RAMPART_API")
+		os.Unsetenv("RAMPART_URL")
+		os.Unsetenv("RAMPART_SERVE_URL")
+		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(home, ".rampart", "config.yaml")
+		if err := os.WriteFile(cfgPath, []byte("api: http://config-api:8123\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := resolveAddr(""); err != nil || got != "http://config-api:8123" {
+			t.Fatalf("got %q err=%v", got, err)
+		}
+	})
+
+	t.Run("explicit serve-url alias resolves when url unset", func(t *testing.T) {
+		home := t.TempDir()
+		testSetHome(t, home)
+		os.Unsetenv("RAMPART_API")
+		os.Unsetenv("RAMPART_URL")
+		os.Unsetenv("RAMPART_SERVE_URL")
+		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(home, ".rampart", "config.yaml")
+		if err := os.WriteFile(cfgPath, []byte("serve_url: http://compat-serve:8124\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := resolveAddr(""); err != nil || got != "http://compat-serve:8124" {
+			t.Fatalf("got %q err=%v", got, err)
+		}
+	})
+
+	t.Run("explicit addr wins", func(t *testing.T) {
+		t.Setenv("RAMPART_API", "http://custom:1234")
+		if got, err := resolveAddr("http://other:5678"); err != nil || got != "http://other:5678" {
+			t.Fatalf("got %q err=%v", got, err)
+		}
+	})
+
+	t.Run("invalid config surfaces error", func(t *testing.T) {
+		home := t.TempDir()
+		testSetHome(t, home)
+		os.Unsetenv("RAMPART_API")
+		os.Unsetenv("RAMPART_URL")
+		os.Unsetenv("RAMPART_SERVE_URL")
+		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(home, ".rampart", "config.yaml")
+		if err := os.WriteFile(cfgPath, []byte("serveUrl: http://typo\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := resolveAddr(""); err == nil {
+			t.Fatal("expected config parse error")
+		}
+	})
 }
