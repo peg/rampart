@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Agent Firewall for Claude Code and Codex | Rampart</title>
-    <meta name="description" content="Open-source AI agent firewall for Claude Code, Codex, Cline, OpenClaw, and MCP. Enforce YAML policies before commands run. No cloud dependency.">
+    <title>Rampart — A Firewall for AI Coding Agents</title>
+    <meta name="description" content="Block dangerous commands before they run. Rampart enforces local YAML policies for Claude Code, Codex, Cline, OpenClaw, and MCP — no cloud, no account required.">
     <link rel="canonical" href="https://rampart.sh/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="AI Agent Firewall for Claude Code and Codex | Rampart">
-    <meta property="og:description" content="Your agent has root. Rampart blocks dangerous commands, file reads, and network calls before they run, without sandboxing away the work.">
+    <meta property="og:title" content="Rampart — A Firewall for AI Coding Agents">
+    <meta property="og:description" content="Your agent has root. Rampart blocks the dangerous stuff at the OS layer — without sandboxing away the work it actually needs to do.">
     <meta property="og:image" content="https://rampart.sh/og.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:url" content="https://rampart.sh">
+    <meta property="og:url" content="https://rampart.sh/">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:site" content="@rampart_sh">
-    <meta name="twitter:title" content="AI Agent Firewall for Claude Code and Codex | Rampart">
-    <meta name="twitter:description" content="Your agent has root. Rampart blocks dangerous commands, file reads, and network calls before they run, without sandboxing away the work.">
+    <meta name="twitter:title" content="Rampart — A Firewall for AI Coding Agents">
+    <meta name="twitter:description" content="Your agent has root. Rampart blocks the dangerous stuff at the OS layer — without sandboxing away the work it actually needs to do.">
     <meta name="twitter:image" content="https://rampart.sh/og.png">
     <script type="application/ld+json">
     {
@@ -27,7 +27,7 @@
       "url": "https://rampart.sh",
       "applicationCategory": "SecurityApplication",
       "operatingSystem": "Linux, macOS, Windows",
-      "softwareVersion": "0.9.19",
+      "softwareVersion": "0.9.22",
       "offers": {
         "@type": "Offer",
         "price": "0",
@@ -852,6 +852,8 @@
         .setup-box pre {
             margin: 0;
             overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
             font-family: var(--mono);
             font-size: 0.8rem;
             color: var(--text-bright);
@@ -914,6 +916,9 @@
         }
         @media (max-width: 760px) {
             .nav-links a.hide-mobile { display: none; }
+            nav .inner {
+                gap: 10px;
+            }
             .nav-links { gap: 10px; }
             .nav-btn { padding: 8px 12px; }
             .logo {
@@ -997,6 +1002,9 @@
             }
             .hero-actions { flex-direction: column; align-items: flex-start; }
             .btn { width: 100%; justify-content: center; }
+            .hero-actions .btn {
+                min-height: 48px;
+            }
             .story-panel-wrap { min-height: auto; }
             .story-panel {
                 position: relative;
@@ -1019,6 +1027,11 @@
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 10px;
+            }
+            .install-inline > span:first-child {
+                width: 100%;
+                white-space: normal;
+                word-break: break-word;
             }
             .watch-shell { padding: 18px; }
             .watch-title {
@@ -1099,9 +1112,9 @@
 <section class="hero">
     <div class="container hero-grid">
         <div>
-            <div class="eyebrow"><span class="eyebrow-dot"></span>v0.9.19 · open source</div>
+            <div class="eyebrow"><span class="eyebrow-dot"></span>v0.9.22 · open source</div>
             <h1>Your agent has root.<br><span class="accent">That’s the problem.</span></h1>
-            <p class="hero-sub">Rampart sits between your agent and your system. It evaluates commands, file access, and network requests against your YAML policy before they run. Local-first. No cloud dependency.</p>
+            <p class="hero-sub">Rampart sits in the execution path. Install it, run <code>rampart quickstart</code>, and it wires the right protection path for Claude Code, Codex, Cline, or OpenClaw before risky tool calls run.</p>
             <div class="install-cluster">
                 <div class="install-inline" onclick="copyCode(this)" title="Click to copy">
                     <span class="prompt">$</span>
@@ -1110,11 +1123,11 @@
                 </div>
                 <div class="hero-meta">
                     <span>Installs to <code>~/.local/bin</code> by default on macOS/Linux. Usually no sudo required.</span>
-                    <span>Claude Code · Codex CLI · OpenClaw · MCP</span>
+                    <span>Claude Code · Codex CLI · Cline · OpenClaw · MCP</span>
                 </div>
                 <div class="hero-actions">
-                    <a href="#install" class="btn btn-primary">Install Rampart</a>
-                    <a href="#watch" class="btn btn-ghost">See it work</a>
+                    <a href="#install" class="btn btn-primary">Quickstart</a>
+                    <a href="https://docs.rampart.sh/getting-started/support-matrix/" class="btn btn-ghost">Support matrix</a>
                 </div>
             </div>
         </div>
@@ -1241,16 +1254,17 @@
     <div class="container reveal">
         <div class="section-label">Works with your agent</div>
         <h2 class="section-title">Claude Code, Codex CLI, Cline, OpenClaw, MCP.</h2>
-        <p class="section-desc">Use the native setup where Rampart knows the agent. Use wrapping or the MCP proxy everywhere else.</p>
+        <p class="section-desc">Use the native path where Rampart knows the agent. Use preload, wrapping, MCP proxy, or the HTTP API everywhere else. For exact support tiers, approval UX, and whether <code>rampart serve</code> is required, check the support matrix.</p>
         <div class="integrations-grid">
             <div class="integration-row header"><span>Agent</span><span>Setup</span><span>Enforcement path</span><span>Status</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Claude Code</span><span class="integration-code">rampart setup claude-code</span><span class="integration-path">hooks + bridge</span><span class="integration-status">native</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Codex CLI</span><span class="integration-code">rampart setup codex</span><span class="integration-path">wrapper + preload</span><span class="integration-status">native</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Cline</span><span class="integration-code">rampart setup cline</span><span class="integration-path">hooks</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Claude Code</span><span class="integration-code">rampart setup claude-code</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Codex CLI</span><span class="integration-code">rampart setup codex</span><span class="integration-path">preload + wrapper</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Cline</span><span class="integration-code">rampart setup cline</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">OpenClaw</span><span class="integration-code">rampart setup openclaw</span><span class="integration-path">native plugin</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Any agent</span><span class="integration-code">rampart wrap -- &lt;cmd&gt;</span><span class="integration-path">shim</span><span class="integration-status">universal</span></div>
             <div class="integration-row interactive"><span class="integration-agent">MCP servers</span><span class="integration-code">rampart mcp -- &lt;server&gt;</span><span class="integration-path">proxy</span><span class="integration-status">universal</span></div>
         </div>
+        <p style="margin-top:16px;color:var(--text-dim);font-size:0.9rem;">OpenClaw’s native plugin path depends on <code>rampart serve</code>. Claude Code and Cline can still enforce locally without it. <a href="https://docs.rampart.sh/getting-started/support-matrix/" style="color:var(--accent);text-decoration:none;">Read the canonical support matrix →</a></p>
     </div>
 </section>
 
@@ -1309,8 +1323,8 @@
 <section class="section install-section" id="install">
     <div class="container reveal">
         <div class="section-label">Quickstart</div>
-        <h2 class="section-title">Start protecting your agents.</h2>
-        <p class="section-desc" style="margin:0 auto;">Install locally. No account, no API key, no cloud dependency.</p>
+        <h2 class="section-title">Install, then run <code>rampart quickstart</code>.</h2>
+        <p class="section-desc" style="margin:0 auto;">That is the default path now. It detects your agent, installs what it needs, wires the right integration path, and verifies the setup without making you memorize the matrix first.</p>
 
         <div class="install-tabs">
             <button id="tab-unix" class="install-tab active" onclick="switchTab('unix')">macOS / Linux</button>
@@ -1349,9 +1363,27 @@
         </div>
 
         <div class="setup-box panel">
-            <p style="color:var(--heading);font-weight:700;margin-bottom:12px;text-align:center;">Then connect your agent:</p>
-            <pre><span style="color:var(--accent)">$</span> rampart setup          <span style="color:var(--text-dim)"># auto-detects all your agents</span>
-<span style="color:var(--text-dim)"># or target one: rampart setup claude-code / codex / cline / openclaw</span></pre>
+            <p style="color:var(--heading);font-weight:700;margin-bottom:12px;text-align:center;">Then do the part that actually wires protection:</p>
+            <pre><span style="color:var(--accent)">$</span> rampart quickstart     <span style="color:var(--text-dim)"># detect agent, install service, wire integration, verify setup</span>
+
+<span style="color:var(--text-dim)"># Want the manual path instead?</span>
+<span style="color:var(--accent)">$</span> rampart setup claude-code
+<span style="color:var(--accent)">$</span> rampart setup codex
+<span style="color:var(--accent)">$</span> rampart setup cline
+<span style="color:var(--accent)">$</span> rampart setup openclaw</pre>
+        </div>
+
+        <div class="setup-box panel" style="margin-top:16px;">
+            <p style="color:var(--heading);font-weight:700;margin-bottom:12px;text-align:center;">Persistent local defaults live here:</p>
+            <pre># ~/.rampart/config.yaml
+url: http://127.0.0.1:9090</pre>
+            <p style="margin-top:12px;color:var(--text-dim);font-size:0.86rem;text-align:center;">Use <code>url</code> for the normal local service address. <code>serve_url</code> is legacy compatibility. <code>api</code> is advanced. <a href="https://docs.rampart.sh/getting-started/configuration/" style="color:var(--accent);text-decoration:none;">Configuration docs →</a></p>
+        </div>
+
+        <div class="install-links" style="margin-top:18px;">
+            <a href="https://docs.rampart.sh/getting-started/quickstart/">Quick Start guide</a>
+            <a href="https://docs.rampart.sh/getting-started/support-matrix/">Support matrix</a>
+            <a href="https://docs.rampart.sh/integrations/openclaw/">OpenClaw guide</a>
         </div>
     </div>
 </section>

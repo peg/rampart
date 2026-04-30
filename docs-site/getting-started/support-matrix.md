@@ -7,16 +7,84 @@ description: "Supported Rampart integration modes, coverage, approval UX, serve 
 
 Use this page as the canonical support contract for Rampart's main integration surfaces.
 
-| Surface | Integration method | `rampart serve` required? | Approval UX | Coverage summary | Support tier |
-|---------|--------------------|---------------------------|-------------|------------------|--------------|
-| Claude Code | Native hooks (`rampart setup claude-code`) | No for local hook enforcement; yes for dashboard/headless approval flows | Claude native approval prompt | Direct tool calls protected through `PreToolUse`; local policy evaluation works without serve | **Recommended** |
-| Cline | Native hooks (`rampart setup cline`) | No for local hook enforcement | No native ask UI; approval-required actions cancel with context | Native hook coverage for supported tool lifecycle events | **Supported** |
-| Codex CLI | Wrapper + preload (`rampart setup codex`) | Typically yes for service-backed evaluation path | Wrapper/preload approval semantics | Strong CLI coverage; depends on preload/wrapper path | **Recommended** |
-| OpenClaw >= 2026.4.11 | Native plugin (`rampart setup openclaw`) | Yes | OpenClaw native approval UI | Full plugin-based tool interception plus current native exec approval behavior | **Recommended** |
-| OpenClaw 2026.3.28 - 2026.4.10 | Native plugin (`rampart setup openclaw`) | Yes | Native tool enforcement; approval UX is less polished than current builds | Full plugin-based tool interception on supported builds | **Supported** |
-| OpenClaw < 2026.3.28 | Legacy shim + bridge + optional patching | Yes | Legacy bridge/shim approval behavior | Compatibility path only; more fragile and upgrade-sensitive | **Legacy compatibility** |
-| Cursor / Claude Desktop | MCP proxy (`rampart mcp --`) | Yes | MCP error / proxy-mediated behavior | MCP tool coverage only | **Supported** |
-| Custom / Python / CI | HTTP API | Yes | Caller-defined | Whatever the caller routes through Rampart | **Supported** |
+## At a glance
+
+<table class="support-matrix-table">
+  <thead>
+    <tr>
+      <th>Surface</th>
+      <th>Best path</th>
+      <th><code>rampart serve</code></th>
+      <th>Approval UX</th>
+      <th>Support tier</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr class="tier-recommended">
+      <td data-label="Surface"><strong>Claude Code</strong></td>
+      <td data-label="Best path">Native hooks<br><code>rampart setup claude-code</code></td>
+      <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
+      <td data-label="Approval UX">Claude native approval prompt</td>
+      <td data-label="Support tier"><strong>Recommended</strong></td>
+    </tr>
+    <tr class="tier-recommended">
+      <td data-label="Surface"><strong>Codex CLI</strong></td>
+      <td data-label="Best path">Preload + wrapper<br><code>rampart setup codex</code></td>
+      <td data-label="rampart serve">Typically yes</td>
+      <td data-label="Approval UX">Wrapper/preload approval semantics</td>
+      <td data-label="Support tier"><strong>Recommended</strong></td>
+    </tr>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>Cline</strong></td>
+      <td data-label="Best path">Native hooks<br><code>rampart setup cline</code></td>
+      <td data-label="rampart serve">Not required for local enforcement</td>
+      <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
+      <td data-label="Support tier">Supported</td>
+    </tr>
+    <tr class="tier-recommended">
+      <td data-label="Surface"><strong>OpenClaw &gt;= 2026.4.11</strong></td>
+      <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX">OpenClaw native approval UI</td>
+      <td data-label="Support tier"><strong>Recommended</strong></td>
+    </tr>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>OpenClaw 2026.3.28 - 2026.4.10</strong></td>
+      <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX">Native enforcement; approval UX less polished than current builds</td>
+      <td data-label="Support tier">Supported</td>
+    </tr>
+    <tr class="tier-legacy">
+      <td data-label="Surface"><strong>OpenClaw &lt; 2026.3.28</strong></td>
+      <td data-label="Best path">Legacy shim + bridge + patching</td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX">Legacy bridge/shim behavior</td>
+      <td data-label="Support tier">Legacy compatibility</td>
+    </tr>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>Cursor / Claude Desktop</strong></td>
+      <td data-label="Best path">MCP proxy<br><code>rampart mcp --</code></td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX">MCP error / proxy-mediated behavior</td>
+      <td data-label="Support tier">Supported</td>
+    </tr>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>Custom / Python / CI</strong></td>
+      <td data-label="Best path">HTTP API</td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX">Caller-defined</td>
+      <td data-label="Support tier">Supported</td>
+    </tr>
+  </tbody>
+</table>
+
+### Best default choices
+
+- **Claude Code** → best overall native path
+- **Codex CLI** → best CLI path when you want strong coverage
+- **OpenClaw >= 2026.4.11** → best OpenClaw path; plugin + native approval UI
+- **Cline** → good supported path, but less polished approval UX than Claude Code
 
 ## Degraded behavior notes
 
