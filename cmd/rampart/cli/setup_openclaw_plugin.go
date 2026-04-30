@@ -392,7 +392,8 @@ func runSetupOpenClawMigrate(w io.Writer, errW io.Writer) error {
 	}
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "The legacy dist patches and bridge are no longer needed.")
-	fmt.Fprintln(w, "The native before_tool_call hook provides full coverage.")
+	fmt.Fprintln(w, "The native before_tool_call hook intercepts all OpenClaw tool calls.")
+	fmt.Fprintln(w, "Sensitive-vs-fail-open behavior still depends on tool class and plugin configuration.")
 
 	return nil
 }

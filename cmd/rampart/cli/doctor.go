@@ -1001,10 +1001,8 @@ func doctorFileToolPatches(emit emitFn) (warnings int) {
 
 		if distPatched && webFetchPatched && browserPatched && messagePatched && execPatched {
 			if pluginInstalled {
-				msg := "All OpenClaw tools covered (native plugin: read/write/edit + web_fetch + browser + message + exec)"
-				if !legacyExecPatched {
-					msg += ""
-				}
+				msg := "OpenClaw tool interception active for read/write/edit + web_fetch + browser + message + exec"
+				msg += hintSep + "Degraded behavior still depends on tool class and plugin failOpenTools settings"
 				emit("Tool patches", "ok", msg)
 			} else {
 				emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")

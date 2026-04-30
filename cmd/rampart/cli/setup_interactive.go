@@ -252,8 +252,8 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 	patchFileTools := false
 	for _, a := range selectedAgents {
 		if a.SetupCmd == "openclaw" && !force {
-			fmt.Fprintln(out, "OpenClaw: also patch file tools (read/write/edit) for full coverage?")
-			fmt.Fprintln(out, "  This modifies node_modules and needs re-running after OpenClaw upgrades.")
+			fmt.Fprintln(out, "OpenClaw: also patch legacy file tools (read/write/edit) on older builds?")
+			fmt.Fprintln(out, "  This modifies node_modules, is upgrade-fragile, and is only for compatibility when native coverage is unavailable.")
 			fmt.Fprint(out, "  Patch file tools? [y/N]: ")
 			ans := readLine(scanner)
 			if ans == "\x00" {
