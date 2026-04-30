@@ -305,6 +305,25 @@ func (m *Manager) ObserveApprovalWithAsk(toolUseID string) (*PendingAsk, *Approv
 	return &askCopy, &record, nil
 }
 
+// PeekAsk returns a pending ask without mutating session state.
+func (m *Manager) PeekAsk(toolUseID string) (*PendingAsk, error) {
+	path, err := m.statePath()
+	if err != nil {
+		return nil, err
+	}
+	s, err := m.load(path)
+	if err != nil {
+		return nil, err
+	}
+
+	ask, ok := s.PendingAsks[toolUseID]
+	if !ok {
+		return nil, fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
+	}
+	askCopy := ask
+	return &askCopy, nil
+}
+
 // DismissAsk removes a pending ask without recording an approval outcome.
 // This is used when a user denies the native ask prompt (PostToolUseFailure).
 func (m *Manager) DismissAsk(toolUseID string) (*PendingAsk, error) {

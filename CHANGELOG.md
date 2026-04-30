@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.22] - 2026-04-29
+
+### Fixed
+
+- **Config resolution is stricter and more trustworthy** — CLI flows that depend on Rampart control-plane endpoints now surface malformed `~/.rampart/config.yaml` instead of silently falling back to defaults, reducing the chance of acting against the wrong endpoint during approval, reload, watch, preload, and hook-driven operations.
+- **Ask-flow failure handling preserves approval integrity** — `PostToolUseFailure` no longer infers a denial or resolves mirrored approvals as denied based only on an ambiguous hook failure event, preventing approved tool calls that later fail from being mislabeled as user denials.
+- **Endpoint resolution is more consistent across commands** — `preload` and related CLI paths now honor the same `url` / `serve_url` / `api` precedence model as the rest of Rampart, including compatibility alias support and auto-discovered state fallback.
+
+### Changed
+
+- **Workflow and release hardening for current GitHub Actions runtimes** — CI/docs/release workflows now use Node 24-safe action versions, and Docker prerelease tagging avoids publishing prereleases as `latest`.
+
+### Docs
+
+- **Config semantics are clearer for users and contributors** — README and help text now spell out the intended roles of `url`, `serve_url`, and `api`, including the distinction between API base URLs used by client commands and API listen addresses used by daemon/server commands.
+
 ## [0.9.21] - 2026-04-29
 
 ### Changed

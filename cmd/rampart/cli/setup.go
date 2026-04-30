@@ -97,7 +97,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				return nil
 			}
 
-			// Build the hook config — no --serve-url needed, hook auto-discovers on localhost:9090.
+			// Build the hook config — no --serve-url needed; the hook resolves its
+			// endpoint via flag/env/config/state with localhost:9090 as the final fallback.
 			// Use absolute path so the hook works regardless of Claude Code's PATH.
 			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
 			// settings.json never needs to contain credentials.
@@ -561,20 +562,20 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 					fmt.Fprintln(out, "  [ ] File operations (read/write/edit/grep)       — use --patch-tools")
 				}
 				if openclawWebFetchPatched() {
-				fmt.Fprintln(out, "  [P] Network fetch (web_fetch)                    — dist patched")
-			} else {
-				fmt.Fprintln(out, "  [ ] Network fetch (web_fetch tool)               — use --patch-tools")
-			}
-			if openclawBrowserPatched() {
-				fmt.Fprintln(out, "  [P] Browser automation (browser)                 — dist patched")
-			} else {
-				fmt.Fprintln(out, "  [ ] Browser automation (browser tool)            — use --patch-tools")
-			}
-			if openclawMessagePatched() {
-				fmt.Fprintln(out, "  [P] Outbound messaging (message)                 — dist patched")
-			} else {
-				fmt.Fprintln(out, "  [ ] Outbound messaging (message tool)            — use --patch-tools")
-			}
+					fmt.Fprintln(out, "  [P] Network fetch (web_fetch)                    — dist patched")
+				} else {
+					fmt.Fprintln(out, "  [ ] Network fetch (web_fetch tool)               — use --patch-tools")
+				}
+				if openclawBrowserPatched() {
+					fmt.Fprintln(out, "  [P] Browser automation (browser)                 — dist patched")
+				} else {
+					fmt.Fprintln(out, "  [ ] Browser automation (browser tool)            — use --patch-tools")
+				}
+				if openclawMessagePatched() {
+					fmt.Fprintln(out, "  [P] Outbound messaging (message)                 — dist patched")
+				} else {
+					fmt.Fprintln(out, "  [ ] Outbound messaging (message tool)            — use --patch-tools")
+				}
 				fmt.Fprintln(out, "")
 				fmt.Fprintln(out, "Restart the OpenClaw gateway to activate:")
 				fmt.Fprintln(out, "  systemctl --user restart openclaw-gateway.service")
@@ -1833,9 +1834,10 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 // event is ever created and the Discord runtime sees an empty approval queue.
 //
 // The correct integration path is now:
-//   OpenClaw exec ask -> exec.approval.requested -> Rampart bridge evaluates ->
-//   Rampart auto-resolves allow/deny or escalates human review -> Discord sees
-//   the native OpenClaw approval request.
+//
+//	OpenClaw exec ask -> exec.approval.requested -> Rampart bridge evaluates ->
+//	Rampart auto-resolves allow/deny or escalates human review -> Discord sees
+//	the native OpenClaw approval request.
 //
 // So we intentionally no-op this dist patch for exec and rely on the bridge.
 func patchExecInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {

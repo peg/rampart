@@ -49,7 +49,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", "", "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -69,7 +69,7 @@ func newDenyCmd(_ *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", "", "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -91,7 +91,7 @@ are blocked until someone approves or denies them (or they expire).`,
 		},
 	}
 
-	cmd.Flags().StringVar(&proxyAddr, "api", fmt.Sprintf("http://127.0.0.1:%d", defaultServePort), "Rampart API address (proxy or daemon)")
+	cmd.Flags().StringVar(&proxyAddr, "api", "", "Rampart API address (proxy or daemon)")
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
@@ -101,24 +101,29 @@ func resolveToken(token string) string {
 	if token != "" {
 		return token
 	}
-	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
-		return env
-	}
-	// Check persisted token file (~/.rampart/token)
-	if persisted, err := readPersistedToken(); err == nil && persisted != "" {
-		return persisted
-	}
-	return ""
+	resolved, _ := resolveTokenValue()
+	return resolved
 }
 
-func resolveAddr(addr string) string {
-	if env := os.Getenv("RAMPART_API"); env != "" && addr == fmt.Sprintf("http://127.0.0.1:%d", defaultServePort) {
-		return env
+func resolveAddr(addr string) (string, error) {
+	if addr == "" {
+		if env := strings.TrimSpace(os.Getenv("RAMPART_API")); env != "" {
+			return strings.TrimRight(env, "/"), nil
+		}
+		if cfg, err := loadUserConfig(); err == nil && cfg.APIAddr != "" {
+			return cfg.APIAddr, nil
+		} else if err != nil {
+			return "", err
+		}
 	}
-	return addr
+	return resolveServeURLStrict(addr, fmt.Sprintf("http://localhost:%d", defaultServePort))
 }
 
 func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) error {
+	resolvedAddr, err := resolveAddr(addr)
+	if err != nil {
+		return fmt.Errorf("resolve approval API address: %w", err)
+	}
 	token = resolveToken(token)
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
@@ -129,7 +134,7 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 		"resolved_by": "cli",
 	})
 
-	url := fmt.Sprintf("%s/v1/approvals/%s/resolve", strings.TrimRight(addr, "/"), id)
+	url := fmt.Sprintf("%s/v1/approvals/%s/resolve", strings.TrimRight(resolvedAddr, "/"), id)
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -139,7 +144,7 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 
 	resp, err := rampartHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to connect to proxy at %s: %w", addr, err)
+		return fmt.Errorf("failed to connect to proxy at %s: %w", resolvedAddr, err)
 	}
 	defer resp.Body.Close()
 
@@ -158,12 +163,16 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 }
 
 func listPending(cmd *cobra.Command, addr, token string) error {
+	resolvedAddr, err := resolveAddr(addr)
+	if err != nil {
+		return fmt.Errorf("resolve approval API address: %w", err)
+	}
 	token = resolveToken(token)
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
 	}
 
-	url := fmt.Sprintf("%s/v1/approvals", strings.TrimRight(addr, "/"))
+	url := fmt.Sprintf("%s/v1/approvals", strings.TrimRight(resolvedAddr, "/"))
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -172,7 +181,7 @@ func listPending(cmd *cobra.Command, addr, token string) error {
 
 	resp, err := rampartHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to connect to proxy at %s: %w", addr, err)
+		return fmt.Errorf("failed to connect to proxy at %s: %w", resolvedAddr, err)
 	}
 	defer resp.Body.Close()
 

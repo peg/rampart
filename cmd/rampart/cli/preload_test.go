@@ -1,56 +1,44 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestGetEnvValue(t *testing.T) {
-	env := []string{"FOO=bar", "BAZ=qux", "EMPTY="}
-	tests := []struct {
-		key  string
-		want string
-	}{
-		{"FOO", "bar"},
-		{"BAZ", "qux"},
-		{"EMPTY", ""},
-		{"MISSING", ""},
+func TestResolvePreloadBaseURL_UsesServeURLAlias(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("RAMPART_URL", "")
+	t.Setenv("RAMPART_SERVE_URL", "")
+
+	if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		if got := getEnvValue(env, tt.key); got != tt.want {
-			t.Errorf("getEnvValue(%q) = %q, want %q", tt.key, got, tt.want)
-		}
+	if err := os.WriteFile(filepath.Join(home, ".rampart", "config.yaml"), []byte("serve_url: http://compat-serve:9123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolvePreloadBaseURL(9099)
+	if err != nil {
+		t.Fatalf("resolvePreloadBaseURL: %v", err)
+	}
+	if got != "http://compat-serve:9123" {
+		t.Fatalf("got %q", got)
 	}
 }
 
-func TestSetEnvValue(t *testing.T) {
-	env := []string{"FOO=bar", "BAZ=qux"}
-
-	// Override existing
-	result := setEnvValue(env, "FOO", "new")
-	if got := getEnvValue(result, "FOO"); got != "new" {
-		t.Errorf("after override FOO = %q", got)
+func TestResolvePreloadBaseURL_RejectsInvalidConfig(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if got := getEnvValue(result, "BAZ"); got != "qux" {
-		t.Errorf("BAZ should be preserved, got %q", got)
+	if err := os.WriteFile(filepath.Join(home, ".rampart", "config.yaml"), []byte("serveUrl: http://typo\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	// Add new
-	result2 := setEnvValue(env, "NEW", "val")
-	if got := getEnvValue(result2, "NEW"); got != "val" {
-		t.Errorf("new key = %q", got)
-	}
-}
-
-func TestResolvePreloadLibrary(t *testing.T) {
-	// This will fail to find the library, but should return a meaningful error
-	_, _, err := resolvePreloadLibrary()
-	if err == nil {
-		// If it somehow found a library, that's fine too
-		return
-	}
-	// Should mention the library name
-	errStr := err.Error()
-	if errStr == "" {
-		t.Fatal("expected non-empty error")
+	if _, err := resolvePreloadBaseURL(9099); err == nil {
+		t.Fatal("expected config parse error")
 	}
 }

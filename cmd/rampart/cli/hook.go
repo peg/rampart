@@ -234,31 +234,24 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			gitCtx := deriveGitContext()
 			hookSession := gitCtx.session
 
-			// Resolve serve-url and serve-token from env if not set via flags.
-			serveAutoDiscovered := false
-			if serveURL == "" {
-				serveURL = os.Getenv("RAMPART_SERVE_URL")
-			}
-			if serveURL == "" {
-				serveURL = fmt.Sprintf("http://localhost:%d", defaultServePort)
-				serveAutoDiscovered = true
-			}
-			// Resolve token from RAMPART_TOKEN env var or ~/.rampart/token file.
-			// This means settings.json never needs to contain credentials —
-			// the hook discovers both the URL and the token from standard locations.
-			var serveToken string
-			if envToken := strings.TrimSpace(os.Getenv("RAMPART_TOKEN")); envToken != "" {
-				serveToken = envToken
-			} else if tok, err := readPersistedToken(); err == nil && tok != "" {
-				serveToken = tok
-			}
-
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
 			if format != "claude-code" && format != "cline" {
 				return fmt.Errorf("hook: invalid format %q (must be claude-code or cline)", format)
 			}
+
+			// Resolve serve-url and serve-token from standard config/env locations.
+			serveAutoDiscovered := serveURL == ""
+			resolvedServeURL, resolveErr := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+			if resolveErr != nil {
+				if mode == "enforce" {
+					return outputHookResult(cmd, format, hookDeny, false, "Rampart config error; refusing tool call until configuration is fixed", "")
+				}
+				return fmt.Errorf("hook: resolve serve URL: %w", resolveErr)
+			}
+			serveURL = resolvedServeURL
+			serveToken, _ := resolveTokenValue()
 
 			// Resolve audit directory
 			if auditDir == "" {
@@ -406,26 +399,25 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookOutcome, false, fmt.Sprintf("parse failure: %v", err), "")
 			}
 
-			// Short-circuit for PostToolUseFailure: the previous PreToolUse was denied by
-			// Rampart. Inject additionalContext telling Claude to stop retrying rather than
-			// burning 3-5 turns on workarounds.
+			// PostToolUseFailure: only inject policy guidance when the failure appears to
+			// be Rampart-mediated (a deny or a stored ask-flow decision). Ordinary tool
+			// failures should not be mislabeled as security blocks.
 			if parsed.HookEventName == "PostToolUseFailure" {
-				// If this failure corresponds to an ask+audit prompt denial, best-effort
-				// resolve the mirrored serve approval as denied for dashboard/watch sync.
-				if parsed.ToolUseID != "" && parsed.SessionID != "" && serveURL != "" && isServeRunning(serveURL) {
-					sessionMgr := session.NewManager(sessionStateDir(), parsed.SessionID, logger)
-					if ask, dismissErr := sessionMgr.DismissAsk(parsed.ToolUseID); dismissErr == nil && ask != nil && ask.Audit && ask.AuditApprovalID != "" {
-						approvalClient := &hookApprovalClient{
-							serveURL:       strings.TrimRight(serveURL, "/"),
-							token:          serveToken,
-							logger:         logger,
-							autoDiscovered: serveAutoDiscovered,
-							errWriter:      cmd.ErrOrStderr(),
-						}
-						resolveCtx, cancelResolve := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-						_ = approvalClient.resolveAskAuditCtx(resolveCtx, ask.AuditApprovalID, false, "hook-posttoolusefailure")
-						cancelResolve()
-					}
+				failedCall := engine.ToolCall{
+					Tool:   parsed.Tool,
+					Params: parsed.Params,
+				}
+				decision := eng.Evaluate(failedCall)
+
+				// A pending ask alone is not evidence of a denial: the user may have
+				// approved the native prompt and the tool may have failed afterward.
+				// So PostToolUseFailure must not dismiss ask state or mark mirrored serve
+				// approvals denied based solely on this hook event.
+				if decision.Action != engine.ActionDeny {
+					// For ask-mediated flows, PostToolUseFailure is ambiguous: it can mean
+					// either native-prompt denial or an approved tool that later failed.
+					// Do not inject denial guidance or mutate state based on an ambiguous event.
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(hookOutput{})
 				}
 
 				postToolUseFailureEvent := audit.Event{
@@ -446,15 +438,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					_, _ = auditFile.Write(line)
 				}
 
-				// Re-evaluate the failed call to surface the specific deny reason and
-				// matched policy name. This is a fast local operation (< 10µs) and gives
-				// the agent the exact information it needs without storing state.
-				failedCall := engine.ToolCall{
-					Tool:   parsed.Tool,
-					Params: parsed.Params,
-				}
-				denyDecision := eng.Evaluate(failedCall)
-
 				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
 				msg := "This tool call failed or was blocked by a security policy. " +
 					"Do not attempt alternative approaches or workarounds — " +
@@ -466,15 +449,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 
 				// Prepend the specific deny reason if available — gives the agent
 				// (and user) immediate context on why the call was blocked.
-				if denyDecision.Action == engine.ActionDeny && denyDecision.Message != "" {
+				if decision.Action == engine.ActionDeny && decision.Message != "" {
 					policyHint := ""
-					if len(denyDecision.MatchedPolicies) > 0 {
-						policyHint = " [" + denyDecision.MatchedPolicies[0] + "]"
+					if len(decision.MatchedPolicies) > 0 {
+						policyHint = " [" + decision.MatchedPolicies[0] + "]"
 					}
-					if denyDecision.FromProjectPolicy {
+					if decision.FromProjectPolicy {
 						policyHint += " [Project Policy]"
 					}
-					msg = "⛔ Blocked" + policyHint + ": " + denyDecision.Message + "\n\n" + msg
+					msg = "⛔ Blocked" + policyHint + ": " + decision.Message + "\n\n" + msg
 				}
 				suggestions := engine.GenerateSuggestions(failedCall)
 				if len(suggestions) > 0 {
@@ -736,7 +719,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
 	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
-	cmd.Flags().StringVar(&serveURL, "serve-url", "", "URL of rampart serve instance (default: auto-discover on localhost:9090, env: RAMPART_SERVE_URL)")
+	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover via url/config/state; env: RAMPART_URL or RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 
 	return cmd

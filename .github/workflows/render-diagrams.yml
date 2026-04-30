@@ -1,5 +1,8 @@
 name: Render Diagrams
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main, staging]
@@ -13,7 +16,7 @@ jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@v5
 
       - name: Install D2
         run: curl -fsSL https://d2lang.com/install.sh | sh -s --

@@ -17,13 +17,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"html/template"
 
 	"github.com/spf13/cobra"
 )
@@ -117,11 +117,7 @@ func resolveServiceToken(tokenFlag string) (string, bool, error) {
 	if tokenFlag != "" {
 		return tokenFlag, false, nil
 	}
-	if env := os.Getenv("RAMPART_TOKEN"); env != "" {
-		return env, false, nil
-	}
-	// Check persisted token file written by a previous serve install.
-	if tok, err := readPersistedToken(); err == nil && tok != "" {
+	if tok, _ := resolveTokenValue(); tok != "" {
 		return tok, false, nil
 	}
 	b := make([]byte, 16)
@@ -133,11 +129,11 @@ func resolveServiceToken(tokenFlag string) (string, bool, error) {
 
 // tokenFilePath returns the path to the persisted token file.
 func tokenFilePath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := rampartDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".rampart", "token"), nil
+	return filepath.Join(dir, "token"), nil
 }
 
 // persistToken writes the token to ~/.rampart/token with owner-only permissions.

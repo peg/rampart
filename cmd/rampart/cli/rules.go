@@ -334,7 +334,7 @@ First run 'rampart rules' to see rule numbers, then:
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
-	cmd.Flags().StringVar(&apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&apiAddr, "api", "", "Rampart API address override for reload (default: auto-discover via url/config/state)")
 	cmd.Flags().StringVar(&token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 
 	// Custom error handler to catch negative numbers being parsed as flags
@@ -437,7 +437,10 @@ func runRulesRemove(cmd *cobra.Command, opts *rootOptions, indexStr string, forc
 
 	// Try to reload the daemon.
 	resolvedToken := resolveToken(token)
-	resolvedAddr := resolveAddrAllow(apiAddr)
+	resolvedAddr, err := resolveAddrAllow(apiAddr)
+	if err != nil {
+		return fmt.Errorf("rules: resolve reload API address: %w", err)
+	}
 	reloaded, _ := reloadPolicy(cmd, resolvedAddr, resolvedToken)
 	if reloaded {
 		fmt.Fprintf(out, "  %s\n\n", rulesOkStyle.Render(
@@ -491,7 +494,7 @@ func newRulesResetCmd(opts *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
-	cmd.Flags().StringVar(&apiAddr, "api", "http://127.0.0.1:9090", "Rampart serve API address for reload")
+	cmd.Flags().StringVar(&apiAddr, "api", "", "Rampart API address override for reload (default: auto-discover via url/config/state)")
 	cmd.Flags().StringVar(&token, "token", "", "API auth token (or set RAMPART_TOKEN)")
 	return cmd
 }
@@ -561,7 +564,10 @@ func runRulesReset(cmd *cobra.Command, opts *rootOptions, force bool, apiAddr, t
 
 	// Try to reload the daemon.
 	resolvedToken := resolveToken(token)
-	resolvedAddr := resolveAddrAllow(apiAddr)
+	resolvedAddr, err := resolveAddrAllow(apiAddr)
+	if err != nil {
+		return fmt.Errorf("rules: resolve reload API address: %w", err)
+	}
 	reloaded, _ := reloadPolicy(cmd, resolvedAddr, resolvedToken)
 	if reloaded {
 		fmt.Fprintf(out, "  %s\n\n", rulesOkStyle.Render(
