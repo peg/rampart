@@ -52,11 +52,11 @@ type openClawConfig struct {
 
 func Inspect(home string, distCandidates []string) (State, error) {
 	state := State{ConfigPath: filepath.Join(home, ".openclaw", "openclaw.json")}
-	if path, ok := findDistFile(distCandidates, "exec-approvals-*.js"); ok {
+	if path, ok := findDistFileByShape(distCandidates, "exec-approvals-*.js", supportsExecApprovalsShape); ok {
 		state.ExecApprovalsPath = path
 		state.DistDir = filepath.Dir(path)
 	}
-	if path, ok := findDistFile(distCandidates, "bash-tools-*.js"); ok {
+	if path, ok := findDistFileByShape(distCandidates, "bash-tools-*.js", supportsBashToolsShape); ok {
 		state.BashToolsPath = path
 		if state.DistDir == "" {
 			state.DistDir = filepath.Dir(path)
@@ -148,6 +148,24 @@ func findDistFile(candidates []string, pattern string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func findDistFileByShape(candidates []string, pattern string, supports func(string) bool) (string, bool) {
+	fallback, fallbackOK := findDistFile(candidates, pattern)
+	for _, dir := range candidates {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		sort.Strings(matches)
+		for _, path := range matches {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			if supports(string(data)) {
+				return path, true
+			}
+		}
+	}
+	return fallback, fallbackOK
 }
 
 func supportsExecApprovalsShape(text string) bool {
