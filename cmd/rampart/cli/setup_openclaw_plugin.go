@@ -67,6 +67,11 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		return fmt.Errorf("openclaw not found — is it installed?\n  Install: npm install -g openclaw\n  Error: %w", err)
 	}
 	fmt.Fprintf(w, "✓ Found OpenClaw: %s\n", openclawBin)
+	if stateDir, configPath, err := resolveOpenClawStateDir(openclawBin); err == nil {
+		fmt.Fprintf(w, "✓ Target OpenClaw state: %s (config: %s)\n", stateDir, configPath)
+	} else {
+		fmt.Fprintf(errW, "⚠ Could not resolve active OpenClaw state dir: %v\n", err)
+	}
 
 	// 2. Check version.
 	version, err := getOpenClawVersion(openclawBin)
@@ -255,16 +260,15 @@ func removeExistingOpenClawRampartInstall(errW io.Writer) error {
 		return fmt.Errorf("find openclaw for plugin cleanup: %w", err)
 	}
 
-	home, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		return fmt.Errorf("resolve home for OpenClaw plugin cleanup: %w", homeErr)
+	stateDir, cfgPath, stateErr := resolveOpenClawStateDir(openclawBin)
+	if stateErr != nil {
+		return fmt.Errorf("resolve OpenClaw state for plugin cleanup: %w", stateErr)
 	}
-	cfgPath := filepath.Join(home, ".openclaw", "openclaw.json")
 
 	cleanupRemainingInstallPaths := func() error {
 		paths := []string{
-			filepath.Join(home, ".openclaw", openclawPluginDir),
-			filepath.Join(home, ".openclaw", "hooks", "rampart"),
+			filepath.Join(stateDir, openclawPluginDir),
+			filepath.Join(stateDir, "hooks", "rampart"),
 		}
 		for _, path := range paths {
 			if _, err := os.Stat(path); err == nil {
@@ -285,7 +289,7 @@ func removeExistingOpenClawRampartInstall(errW io.Writer) error {
 		return cleanupRemainingInstallPaths()
 	}
 
-	if healErr := healOpenClawRampartPluginConfig(cfgPath, home); healErr == nil {
+	if healErr := healOpenClawRampartPluginConfig(cfgPath, stateDir); healErr == nil {
 		retryCmd := osexec.Command(openclawBin, "plugins", "uninstall", "rampart", "--force")
 		retryCmd.Stdout = errW
 		retryCmd.Stderr = errW
@@ -298,7 +302,7 @@ func removeExistingOpenClawRampartInstall(errW io.Writer) error {
 	return cleanupRemainingInstallPaths()
 }
 
-func healOpenClawRampartPluginConfig(cfgPath, home string) error {
+func healOpenClawRampartPluginConfig(cfgPath, stateDir string) error {
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
@@ -327,9 +331,9 @@ func healOpenClawRampartPluginConfig(cfgPath, home string) error {
 	}
 	if _, ok := installs["rampart"]; !ok {
 		installs["rampart"] = map[string]any{
-			"installPath": filepath.Join(home, ".openclaw", openclawPluginDir),
+			"installPath": filepath.Join(stateDir, openclawPluginDir),
 			"source":      "path",
-			"sourcePath":  filepath.Join(home, ".openclaw", openclawPluginDir),
+			"sourcePath":  filepath.Join(stateDir, openclawPluginDir),
 		}
 	}
 	allow, _ := plugins["allow"].([]any)
@@ -408,8 +412,15 @@ func runSetupOpenClawMigrate(w io.Writer, errW io.Writer) error {
 
 // findOpenClawBinary returns the path to the openclaw binary.
 func findOpenClawBinary() (string, error) {
-	// Try PATH first.
-	if p, err := osexec.LookPath("openclaw"); err == nil {
+	if override := strings.TrimSpace(os.Getenv("RAMPART_OPENCLAW_BIN")); override != "" {
+		if err := validateExecutableFile(override); err != nil {
+			return "", fmt.Errorf("RAMPART_OPENCLAW_BIN=%q is not usable: %w", override, err)
+		}
+		return override, nil
+	}
+
+	// Try PATH first. This usually matches the OpenClaw install the human uses.
+	if p, err := execLookPath("openclaw"); err == nil {
 		return p, nil
 	}
 	// Try common install paths.
@@ -422,11 +433,70 @@ func findOpenClawBinary() (string, error) {
 		"/opt/homebrew/bin/openclaw",
 	}
 	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
+		if err := validateExecutableFile(p); err == nil {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("openclaw binary not found in PATH or common locations")
+	return "", fmt.Errorf("openclaw binary not found in PATH or common locations; set RAMPART_OPENCLAW_BIN=/path/to/openclaw if you use a custom install")
+}
+
+func validateExecutableFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("is a directory")
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("not executable")
+	}
+	return nil
+}
+
+func resolveOpenClawStateDir(openclawBin string) (stateDir string, configPath string, err error) {
+	if override := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")); override != "" {
+		stateDir = expandHomePath(override)
+		return stateDir, filepath.Join(stateDir, "openclaw.json"), nil
+	}
+	if override := strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")); override != "" {
+		configPath = expandHomePath(override)
+		return filepath.Dir(configPath), configPath, nil
+	}
+	if strings.TrimSpace(openclawBin) != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := osexec.CommandContext(ctx, openclawBin, "config", "file")
+		cmd.Env = append(os.Environ(), "OPENCLAW_HIDE_BANNER=1", "OPENCLAW_SUPPRESS_NOTES=1")
+		out, runErr := cmd.Output()
+		if runErr == nil {
+			configPath = expandHomePath(strings.TrimSpace(string(out)))
+			if configPath != "" {
+				return filepath.Dir(configPath), configPath, nil
+			}
+		}
+	}
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return "", "", homeErr
+	}
+	stateDir = filepath.Join(home, ".openclaw")
+	return stateDir, filepath.Join(stateDir, "openclaw.json"), nil
+}
+
+func expandHomePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	return path
 }
 
 // getOpenClawVersion runs `openclaw --version` and returns the version string.
@@ -491,16 +561,19 @@ func parseCalVer(v string) []int {
 	return result
 }
 
-// setOpenClawExecAsk sets tools.exec.ask in ~/.openclaw/openclaw.json.
+// setOpenClawExecAsk sets tools.exec.ask in the active OpenClaw config.
 // addToOpenClawPluginsAllow adds pluginID to the plugins.allow list in openclaw.json
 // if it is not already present. Returns (added, existingIDs, error).
 // NEVER removes or overwrites existing entries — only appends.
 func addToOpenClawPluginsAllow(pluginID string) (added bool, existing []string, err error) {
-	home, herr := os.UserHomeDir()
-	if herr != nil {
-		return false, nil, herr
+	bin, berr := findOpenClawBinary()
+	if berr != nil {
+		return false, nil, berr
 	}
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, serr := resolveOpenClawStateDir(bin)
+	if serr != nil {
+		return false, nil, serr
+	}
 	data, rerr := os.ReadFile(configPath)
 	if rerr != nil {
 		return false, nil, rerr
@@ -534,12 +607,14 @@ func addToOpenClawPluginsAllow(pluginID string) (added bool, existing []string, 
 }
 
 func setOpenClawExecAsk(value string) error {
-	home, err := os.UserHomeDir()
+	bin, err := findOpenClawBinary()
 	if err != nil {
-		return fmt.Errorf("resolve home: %w", err)
+		return fmt.Errorf("find openclaw: %w", err)
 	}
-
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return fmt.Errorf("resolve OpenClaw config: %w", err)
+	}
 
 	// Load existing config or start fresh.
 	var cfg map[string]any
@@ -610,12 +685,14 @@ func installOpenClawPolicy(w io.Writer, errW io.Writer) error {
 
 // cleanOpenClawConfig removes legacy bridge config and ask: on-miss from openclaw.json.
 func cleanOpenClawConfig(w io.Writer, errW io.Writer) error {
-	home, err := os.UserHomeDir()
+	bin, err := findOpenClawBinary()
 	if err != nil {
-		return fmt.Errorf("resolve home: %w", err)
+		return fmt.Errorf("find openclaw: %w", err)
 	}
-
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return fmt.Errorf("resolve OpenClaw config: %w", err)
+	}
 	data, err := os.ReadFile(configPath)
 	if os.IsNotExist(err) {
 		fmt.Fprintln(w, "  No openclaw.json found — nothing to clean")
@@ -685,25 +762,33 @@ func isOpenClawInstalled() bool {
 }
 
 type openClawPluginState struct {
-	Installed bool
-	Allowed   bool
-	Enabled   bool
+	Installed       bool
+	Allowed         bool
+	Enabled         bool
+	Dir             string
+	ManifestVersion string
+	RuntimeVersion  string
+	StartupExplicit bool
 }
 
 func getOpenClawPluginState() openClawPluginState {
-	home, err := os.UserHomeDir()
+	bin, err := findOpenClawBinary()
+	if err != nil {
+		return openClawPluginState{}
+	}
+	stateDir, configPath, err := resolveOpenClawStateDir(bin)
 	if err != nil {
 		return openClawPluginState{}
 	}
 
-	pluginDir := filepath.Join(home, ".openclaw", openclawPluginDir)
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
 	info, err := os.Stat(pluginDir)
 	if err != nil || !info.IsDir() {
 		return openClawPluginState{}
 	}
 
-	state := openClawPluginState{Installed: true, Enabled: true}
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	state := openClawPluginState{Installed: true, Enabled: true, Dir: pluginDir}
+	state.readInstalledPluginMetadata()
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return state
@@ -734,8 +819,44 @@ func getOpenClawPluginState() openClawPluginState {
 	return state
 }
 
+func (s *openClawPluginState) readInstalledPluginMetadata() {
+	manifestPath := filepath.Join(s.Dir, "openclaw.plugin.json")
+	data, err := os.ReadFile(manifestPath)
+	if err == nil {
+		var manifest struct {
+			Version    string `json:"version"`
+			Activation struct {
+				OnStartup *bool `json:"onStartup"`
+			} `json:"activation"`
+		}
+		if json.Unmarshal(data, &manifest) == nil {
+			s.ManifestVersion = strings.TrimSpace(manifest.Version)
+			s.StartupExplicit = manifest.Activation.OnStartup != nil && *manifest.Activation.OnStartup
+		}
+	}
+	indexData, err := os.ReadFile(filepath.Join(s.Dir, "index.js"))
+	if err != nil {
+		return
+	}
+	s.RuntimeVersion = extractOpenClawPluginRuntimeVersion(string(indexData))
+}
+
+func extractOpenClawPluginRuntimeVersion(js string) string {
+	marker := "export const version = \""
+	idx := strings.Index(js, marker)
+	if idx < 0 {
+		return ""
+	}
+	start := idx + len(marker)
+	end := strings.Index(js[start:], "\"")
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(js[start : start+end])
+}
+
 // isOpenClawPluginInstalled returns true if the Rampart plugin directory
-// exists under ~/.openclaw/extensions/rampart/.
+// exists under the active OpenClaw state directory.
 func isOpenClawPluginInstalled() bool {
 	return getOpenClawPluginState().Installed
 }

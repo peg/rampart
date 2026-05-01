@@ -2,6 +2,7 @@ package openclaw
 
 import (
 	"encoding/json"
+	"regexp"
 	"testing"
 )
 
@@ -24,5 +25,19 @@ func TestManifestDeclaresStartupActivation(t *testing.T) {
 	}
 	if got, want := manifest.Version, Version(); got != want {
 		t.Fatalf("manifest version = %q, want package version %q", got, want)
+	}
+}
+
+func TestEmbeddedPluginRuntimeVersionMatchesPackage(t *testing.T) {
+	data, err := PluginFS.ReadFile("index.js")
+	if err != nil {
+		t.Fatalf("read index.js: %v", err)
+	}
+	matches := regexp.MustCompile(`export const version = "([^"]+)"`).FindSubmatch(data)
+	if len(matches) != 2 {
+		t.Fatalf("index.js must export a plugin version")
+	}
+	if got, want := string(matches[1]), Version(); got != want {
+		t.Fatalf("index.js version = %q, want package version %q", got, want)
 	}
 }

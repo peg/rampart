@@ -570,6 +570,66 @@ if (!params.decision) {
 	}
 }
 
+func TestOpenClawDiscordNativeApprovalsConfigured(t *testing.T) {
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "openclaw")
+	requireNoErr(t, os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+
+	tests := []struct {
+		name string
+		cfg  string
+		want bool
+	}{
+		{
+			name: "enabled",
+			cfg:  `{"channels":{"discord":{"enabled":true,"execApprovals":{"enabled":true}}}}`,
+			want: true,
+		},
+		{
+			name: "exec approvals disabled",
+			cfg:  `{"channels":{"discord":{"enabled":true,"execApprovals":{"enabled":false}}}}`,
+			want: false,
+		},
+		{
+			name: "discord disabled",
+			cfg:  `{"channels":{"discord":{"enabled":false,"execApprovals":{"enabled":true}}}}`,
+			want: false,
+		},
+		{
+			name: "missing discord",
+			cfg:  `{"channels":{}}`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "openclaw.json")
+			requireNoErr(t, os.WriteFile(cfgPath, []byte(tt.cfg), 0o644))
+			t.Setenv("OPENCLAW_CONFIG_PATH", cfgPath)
+			if got := openClawDiscordNativeApprovalsConfigured(); got != tt.want {
+				t.Fatalf("configured = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNodePackageResolvableFrom(t *testing.T) {
+	tmp := t.TempDir()
+	start := filepath.Join(tmp, "dist", "extensions", "discord")
+	requireNoErr(t, os.MkdirAll(start, 0o755))
+	if nodePackageResolvableFrom(start, "discord-api-types") {
+		t.Fatal("package unexpectedly resolved before node_modules exists")
+	}
+	pkgDir := filepath.Join(tmp, "dist", "node_modules", "discord-api-types")
+	requireNoErr(t, os.MkdirAll(pkgDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{}`), 0o644))
+	if !nodePackageResolvableFrom(start, "discord-api-types") {
+		t.Fatal("package did not resolve from ancestor node_modules")
+	}
+}
+
 func requireNoErr(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
