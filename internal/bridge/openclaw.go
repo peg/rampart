@@ -53,12 +53,13 @@ import (
 // OpenClawBridge connects to the OpenClaw gateway and handles exec approval
 // routing through Rampart's policy engine.
 type OpenClawBridge struct {
-	engine     *engine.Engine
-	gatewayURL string
-	token      string
-	serveURL   string
-	sink       audit.AuditSink
-	logger     *slog.Logger
+	engine                    *engine.Engine
+	gatewayURL                string
+	token                     string
+	serveURL                  string
+	sink                      audit.AuditSink
+	logger                    *slog.Logger
+	autoResolveAllowDecisions bool
 
 	reconnectInterval time.Duration
 
@@ -90,6 +91,17 @@ type Config struct {
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
+
+	// AutoResolveAllowDecisions controls whether Rampart allow/watch decisions
+	// resolve an existing OpenClaw exec approval as allow-once.
+	//
+	// Legacy bridge-first installs use true: OpenClaw creates approval objects for
+	// unknown execs, then Rampart auto-resolves policy-safe commands.
+	// Native plugin installs use false: Rampart has already evaluated the tool
+	// call before execution, so any remaining OpenClaw approval belongs to
+	// OpenClaw's own/manual approval layer and must stay human-owned unless
+	// Rampart explicitly denies it.
+	AutoResolveAllowDecisions *bool
 }
 
 // NewOpenClawBridge creates a new bridge.
@@ -103,17 +115,22 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 	if cfg.ServeURL == "" {
 		cfg.ServeURL = discoverServeURL()
 	}
+	autoResolveAllowDecisions := true
+	if cfg.AutoResolveAllowDecisions != nil {
+		autoResolveAllowDecisions = *cfg.AutoResolveAllowDecisions
+	}
 
 	return &OpenClawBridge{
-		engine:            eng,
-		gatewayURL:        cfg.GatewayURL,
-		token:             cfg.GatewayToken,
-		serveURL:          cfg.ServeURL,
-		sink:              cfg.AuditSink,
-		logger:            cfg.Logger,
-		reconnectInterval: cfg.ReconnectInterval,
-		pending:           make(map[string]chan struct{}),
-		pendingCommands:   make(map[string]string),
+		engine:                    eng,
+		gatewayURL:                cfg.GatewayURL,
+		token:                     cfg.GatewayToken,
+		serveURL:                  cfg.ServeURL,
+		sink:                      cfg.AuditSink,
+		logger:                    cfg.Logger,
+		autoResolveAllowDecisions: autoResolveAllowDecisions,
+		reconnectInterval:         cfg.ReconnectInterval,
+		pending:                   make(map[string]chan struct{}),
+		pendingCommands:           make(map[string]string),
 	}
 }
 
@@ -406,6 +423,10 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 
 	switch decision.Action {
 	case engine.ActionAllow, engine.ActionWatch:
+		if !b.autoResolveAllowDecisions {
+			b.leavePendingForOpenClawReview(req, decision)
+			return
+		}
 		b.resolveApproval(conn, req.ID, "allow-once")
 		b.cleanPendingCommand(req.ID)
 
@@ -484,6 +505,19 @@ func (b *OpenClawBridge) leavePendingForHumanReview(req approvalRequestParams, d
 		"command", req.command(),
 		"agent", req.agentID(),
 		"message", decision.Message,
+	)
+}
+
+// leavePendingForOpenClawReview keeps an already-created OpenClaw approval
+// pending when Rampart is running in native plugin ownership mode. In that
+// mode a Rampart allow decision only means "Rampart does not object"; it must
+// not silently satisfy a manual or host-policy approval that OpenClaw created.
+func (b *OpenClawBridge) leavePendingForOpenClawReview(req approvalRequestParams, decision engine.Decision) {
+	b.logger.Info("bridge: Rampart allowed approval request; leaving native OpenClaw approval pending",
+		"id", req.ID,
+		"command", req.command(),
+		"agent", req.agentID(),
+		"action", decision.Action.String(),
 	)
 }
 
@@ -641,29 +675,94 @@ func DiscoverGatewayConfig() (string, string, error) {
 	return ReadGatewayConfig(configPath)
 }
 
+// DiscoverGatewayConfigForBridge reads the OpenClaw gateway connection details
+// and the approval-ownership mode Rampart should use for this install.
+func DiscoverGatewayConfigForBridge() (string, string, bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", false, fmt.Errorf("resolve home directory: %w", err)
+	}
+
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	return ReadGatewayConfigForBridge(configPath)
+}
+
 // ReadGatewayConfig reads gateway URL and token from the specified openclaw.json path.
 func ReadGatewayConfig(path string) (string, string, error) {
+	cfg, err := readOpenClawConfig(path)
+	if err != nil {
+		return "", "", err
+	}
+	token, err := cfg.gatewayToken(path)
+	if err != nil {
+		return "", "", err
+	}
+	return cfg.gatewayURL(), token, nil
+}
+
+// ReadGatewayConfigForBridge reads gateway URL/token plus whether the bridge
+// should auto-resolve Rampart allow/watch decisions. In native plugin mode we
+// leave existing OpenClaw approvals pending so explicit/manual approval intent
+// is preserved.
+func ReadGatewayConfigForBridge(path string) (string, string, bool, error) {
+	cfg, err := readOpenClawConfig(path)
+	if err != nil {
+		return "", "", false, err
+	}
+	url := cfg.gatewayURL()
+	token, err := cfg.gatewayToken(path)
+	if err != nil {
+		return "", "", false, err
+	}
+	return url, token, cfg.autoResolveAllowDecisions(), nil
+}
+
+func readOpenClawConfig(path string) (openclawConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", fmt.Errorf("read openclaw config: %w", err)
+		return openclawConfig{}, fmt.Errorf("read openclaw config: %w", err)
 	}
 
 	var cfg openclawConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return "", "", fmt.Errorf("parse openclaw config: %w", err)
+		return openclawConfig{}, fmt.Errorf("parse openclaw config: %w", err)
 	}
+	return cfg, nil
+}
 
+func (cfg openclawConfig) gatewayToken(path string) (string, error) {
 	token := cfg.Gateway.Auth.Token
 	if token == "" {
-		return "", "", fmt.Errorf("no gateway.auth.token in %s", path)
+		return "", fmt.Errorf("no gateway.auth.token in %s", path)
 	}
+	return token, nil
+}
 
+func (cfg openclawConfig) gatewayURL() string {
 	url := cfg.Gateway.URL
 	if url == "" {
 		url = "ws://127.0.0.1:18789/ws"
 	}
+	return url
+}
 
-	return url, token, nil
+func (cfg openclawConfig) autoResolveAllowDecisions() bool {
+	return !cfg.rampartPluginEnabled()
+}
+
+func (cfg openclawConfig) rampartPluginEnabled() bool {
+	if entry, ok := cfg.Plugins.Entries["rampart"]; ok {
+		return entry.Enabled == nil || *entry.Enabled
+	}
+	for _, id := range cfg.Plugins.Allow {
+		if id == "rampart" {
+			return true
+		}
+	}
+	if entry, ok := cfg.Hooks.Internal.Entries["rampart"]; ok {
+		return entry.Enabled == nil || *entry.Enabled
+	}
+	return false
 }
 
 // discoverServeURL finds the Rampart serve URL from serve.state or environment.
@@ -696,4 +795,17 @@ type openclawConfig struct {
 			Token string `json:"token"`
 		} `json:"auth"`
 	} `json:"gateway"`
+	Plugins struct {
+		Allow   []string                 `json:"allow"`
+		Entries map[string]openclawEntry `json:"entries"`
+	} `json:"plugins"`
+	Hooks struct {
+		Internal struct {
+			Entries map[string]openclawEntry `json:"entries"`
+		} `json:"internal"`
+	} `json:"hooks"`
+}
+
+type openclawEntry struct {
+	Enabled *bool `json:"enabled"`
 }
