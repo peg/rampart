@@ -63,6 +63,26 @@ func TestInspectPrePatch(t *testing.T) {
 	}
 }
 
+func TestInspectSkipsNonApprovalBundles(t *testing.T) {
+	home, dist := setupFixture(t, execApprovalsPre, bashToolsPre, "{}\n")
+	writeFile(t, filepath.Join(dist, "exec-approvals-allowlist-test.js"), `export const allowlist = true;`)
+	writeFile(t, filepath.Join(dist, "bash-tools-helper-test.js"), `export const helper = true;`)
+
+	state, err := Inspect(home, []string{dist})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Supported {
+		t.Fatal("expected supported build shape despite adjacent helper bundles")
+	}
+	if filepath.Base(state.ExecApprovalsPath) != "exec-approvals-test.js" {
+		t.Fatalf("expected approval runtime bundle, got %s", state.ExecApprovalsPath)
+	}
+	if filepath.Base(state.BashToolsPath) != "bash-tools-test.js" {
+		t.Fatalf("expected bash tools runtime bundle, got %s", state.BashToolsPath)
+	}
+}
+
 func TestApplyPatchesAndAlignsConfig(t *testing.T) {
 	home, dist := setupFixture(t, execApprovalsPre, bashToolsPre, "{\"plugins\":{\"entries\":{\"rampart\":{\"config\":{\"approvalTimeoutMs\":300000}}}}}\n")
 	result, err := Apply(home, []string{dist})
