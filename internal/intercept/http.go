@@ -15,6 +15,7 @@ package intercept
 
 import (
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/peg/rampart/internal/engine"
@@ -43,8 +44,8 @@ func (i *HTTPInterceptor) toolCall(agent, session, rawURL string) engine.ToolCal
 
 	parsed, err := url.Parse(rawURL)
 	if err == nil && parsed.Host != "" {
-		params["domain"] = parsed.Hostname()
-		params["scheme"] = parsed.Scheme
+		params["domain"] = strings.ToLower(parsed.Hostname())
+		params["scheme"] = strings.ToLower(parsed.Scheme)
 		params["path"] = parsed.Path
 	} else {
 		params["domain"] = ""

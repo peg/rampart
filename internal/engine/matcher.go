@@ -276,6 +276,28 @@ func matchAnyFold(patterns []string, name string) bool {
 	return false
 }
 
+func matchDomainAny(patterns []string, domain string) bool {
+	return matchDomainFirst(patterns, domain) != ""
+}
+
+func matchDomainFirst(patterns []string, domain string) string {
+	domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+	if domain == "" {
+		return ""
+	}
+	for _, p := range patterns {
+		pattern := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(p)), ".")
+		if pattern == "" {
+			continue
+		}
+		matched, err := filepath.Match(pattern, domain)
+		if err == nil && matched {
+			return p
+		}
+	}
+	return ""
+}
+
 // matchCondition evaluates whether a tool call satisfies a rule's condition.
 //
 // Matching logic:
@@ -318,6 +340,11 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 				if matched := matchFirst(cond.CommandMatches, norm); matched != "" {
 					if !matchAny(cond.CommandNotMatches, cmd) && !matchAny(cond.CommandNotMatches, norm) {
 						return true, fmt.Sprintf("command_matches [%q] (normalized)", matched)
+					}
+				}
+				for _, seg := range SplitCompoundCommand(norm) {
+					if matched := matchFirst(cond.CommandMatches, seg); matched != "" {
+						return true, fmt.Sprintf("command_matches [%q] (normalized compound segment)", matched)
 					}
 				}
 			}
@@ -391,7 +418,7 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 
 	if len(cond.DomainMatches) > 0 {
 		domain := call.Param("domain")
-		matched := matchFirst(cond.DomainMatches, domain)
+		matched := matchDomainFirst(cond.DomainMatches, domain)
 		if matched == "" {
 			return false, ""
 		}
@@ -477,6 +504,14 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 				norm := NormalizeCommand(cmd)
 				if norm != cmd {
 					cmdMatch = matchAny(cond.CommandMatches, norm)
+					if !cmdMatch {
+						for _, seg := range SplitCompoundCommand(norm) {
+							if matchAny(cond.CommandMatches, seg) {
+								cmdMatch = true
+								break
+							}
+						}
+					}
 				}
 				// Try each segment of compound commands.
 				if !cmdMatch {
@@ -579,7 +614,7 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 	// Domain matching.
 	if len(cond.DomainMatches) > 0 {
 		domain := call.Param("domain")
-		if domain == "" || !matchAny(cond.DomainMatches, domain) {
+		if domain == "" || !matchDomainAny(cond.DomainMatches, domain) {
 			return false
 		}
 		matched = true
