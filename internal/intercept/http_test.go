@@ -175,6 +175,47 @@ func TestHTTPInterceptor_URLMetadata(t *testing.T) {
 	assert.Equal(t, "https://api.github.com:443/repos/test", call.Params["url"])
 }
 
+func TestHTTPInterceptor_URLAdversarialReleaseMatrix(t *testing.T) {
+	policy := `
+version: "1"
+default_action: allow
+policies:
+  - name: block-fetch-exfil
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          domain_matches:
+            - "*.webhook.site"
+            - "*.ngrok-free.app"
+      - action: deny
+        when:
+          url_matches:
+            - "https://hooks.slack.com/services/*"
+`
+
+	tests := []struct {
+		name string
+		url  string
+		want engine.Action
+	}{
+		{"mixed-case exfil host", "https://ABC.WebHook.Site/path", engine.ActionDeny},
+		{"exfil host with port", "https://abc.webhook.site:8443/path", engine.ActionDeny},
+		{"lookalike suffix not blocked", "https://abc.webhook.site.evil.com/path", engine.ActionAllow},
+		{"known webhook URL pattern", "https://hooks.slack.com/services/T000/B000/XXX", engine.ActionDeny},
+		{"malformed URL falls through", "https://%zz", engine.ActionAllow},
+	}
+
+	interceptor := setupHTTPInterceptor(t, policy)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := interceptor.EvaluateFetch("main", "s1", tt.url)
+			assert.Equal(t, tt.want, got.Action, "url: %s", tt.url)
+		})
+	}
+}
+
 func TestHTTPInterceptor_InvalidURL(t *testing.T) {
 	interceptor := &HTTPInterceptor{}
 	call := interceptor.toolCall("main", "s1", "not-a-url")
