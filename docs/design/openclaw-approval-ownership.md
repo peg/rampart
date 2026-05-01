@@ -27,10 +27,13 @@ For **OpenClaw-hosted workflows**, OpenClaw owns the operator-facing pending app
 Rampart owns:
 
 - policy evaluation
-- auto-resolution for allow/deny
+- deny enforcement
+- approval creation when Rampart itself returns `ask`
 - persistent rule writeback for `allow-always`
 - audit trail
 - diagnostics
+
+In legacy bridge-first mode, Rampart may also auto-resolve policy-allowed OpenClaw exec approvals as `allow-once`. In native OpenClaw plugin mode, Rampart must not auto-resolve allow/watch decisions for an approval OpenClaw already created; `allow` only means “Rampart does not object.”
 
 Rampart does **not** create a second human-facing approval object for the same OpenClaw-hosted tool call.
 
@@ -45,9 +48,9 @@ For **non-OpenClaw workflows**, Rampart's native approval store remains canonica
 3. Discord/native approval surfaces read that native record.
 4. Rampart bridge/plugin evaluates the request.
 5. Rampart may:
-   - auto-resolve allow
    - auto-resolve deny
    - leave the native approval pending for human review
+   - auto-resolve allow only in legacy bridge-first mode
 6. If a human resolves it:
    - `allow-once` resolves the native approval only
    - `allow-always` resolves the native approval and writes a persistent Rampart rule
@@ -90,8 +93,9 @@ Supporting metadata, audit events, and persistence helpers are fine. A second hu
 
 - receive `exec.approval.requested`
 - evaluate with Rampart engine
-- auto-resolve allow/deny where possible
-- leave native approval pending for human review
+- auto-resolve deny where possible
+- auto-resolve allow only in legacy bridge-first mode
+- leave native approval pending for human review in native plugin mode
 - persist allow-always after human resolution
 
 ### 2. Remove legacy exec short-circuiting
