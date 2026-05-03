@@ -933,7 +933,28 @@ func ensureServeRunning(w io.Writer, errW io.Writer) error {
 		}
 	}
 
-	return fmt.Errorf("rampart serve installed but not reachable after 3s")
+	fmt.Fprintln(errW, "⚠ rampart serve service install did not become reachable; trying background fallback")
+	if err := startServeBackgroundFallback(rampartBin, w, errW); err != nil {
+		return fmt.Errorf("rampart serve installed but not reachable after 3s; background fallback failed: %w", err)
+	}
+	return nil
+}
+
+func startServeBackgroundFallback(rampartBin string, w io.Writer, errW io.Writer) error {
+	cmd := osexec.Command(rampartBin, "serve", "--background")
+	cmd.Stdout = w
+	cmd.Stderr = errW
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rampart serve --background: %w", err)
+	}
+	for i := 0; i < 10; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if isSetupServeReachable() {
+			fmt.Fprintln(w, "✓ Rampart serve started (background fallback)")
+			return nil
+		}
+	}
+	return fmt.Errorf("rampart serve --background did not become reachable after 5s")
 }
 
 // isSetupServeReachable does a quick healthz check against the default serve port.
