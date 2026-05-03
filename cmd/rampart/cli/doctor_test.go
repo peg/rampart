@@ -603,6 +603,8 @@ func TestPluginVersionMatchesBuildVersion(t *testing.T) {
 		{"0.9.22", "v0.9.22", true},
 		{"0.9.22", "0.9.22", true},
 		{"0.9.22", "v0.9.23", false},
+		{"1.0.0-rc.1", "v1.0.0-rc.1", true},
+		{"0.9.22", "v1.0.0-rc.1", false},
 		{"0.9.22", "v0.9.22-staging-47fa0cf", true},
 		{"0.9.22", "v0.9.22-33-g47fa0cf", true},
 		{"0.9.22", "v0.9.22-0.20260503052103-a72c3452fe38", true},

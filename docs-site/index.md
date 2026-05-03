@@ -205,7 +205,14 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.9.22
+## What's New in v1.0.0-rc.1
+
+- **OpenClaw 2026.5.2 is the RC baseline** — Rampart now uses OpenClaw's first-class plugin approval path as the single human-approval owner, with Rampart handling policy, audit, and durable allow-always persistence. [Details →](integrations/openclaw.md)
+- **Degraded mode is explicit** — sensitive OpenClaw tools block when `rampart serve` is unavailable, while only configured lower-risk `failOpenTools` may proceed.
+- **Setup and doctor are release-candidate strict** — `rampart setup openclaw` installs the native plugin cleanly, repairs approval-hardening drift, and `rampart doctor` checks plugin state, serve reachability, approval timeout alignment, and version coherence.
+- **Matching and bypass regressions are tighter** — shell-wrapper normalization, URL/domain handling, path matching, and OpenClaw plugin approval/degraded-mode tests now cover the hard edges found during the RC pass.
+
+### v0.9.22
 
 - **Runtime config is finally less weird** — Rampart now has a documented persistent local config file at `~/.rampart/config.yaml`, with a clear `url` / `serve_url` / `api` precedence model for hooks, approvals, reloads, and service-backed flows. [Details →](getting-started/configuration.md)
 - **Config resolution is stricter and more trustworthy** — malformed local config no longer silently falls back to the wrong endpoint during approval, hook, preload, watch, or reload paths.

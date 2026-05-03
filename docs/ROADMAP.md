@@ -45,17 +45,15 @@ What's coming next for Rampart. Priorities shift based on feedback — [open an 
 
 ## Current Focus
 
-### v0.9.21 (clarity / coherence release)
-- Make the docs, CLI hints, quickstart flow, and status/doctor output tell the same story
-- Ship a canonical integration support matrix that explains hooks vs plugin vs preload vs MCP clearly
-- Remove stale OpenClaw wording (`--plugin`/`--patch-tools` confusion, serve over-generalization, legacy shim bleed-through)
-- Tighten first-run trust: users should be able to answer "am I protected, how, and what breaks if serve is down?" without digging through source
+### `v1.0.0-rc.1`
+- Keep the integration support story boring and evidence-backed: hooks, plugins, preload/wrapper, MCP, and HTTP API should each say what is protected and what happens when policy evaluation is unavailable.
+- Treat OpenClaw `2026.5.2+` as the recommended RC baseline for native plugin approvals.
+- Keep `rampart doctor`, setup output, and docs aligned so users can answer "am I protected, how, and what breaks if serve is down?" without reading source.
 
-### Next after that: `1.0.0-rc1`
-- One boring cross-platform validation pass on the cleaned-up install/setup/status story
-- Stable API / behavior review for the currently supported integration surfaces
-- Final docs polish on approvals, degraded behavior, and coverage boundaries
-- Release-candidate packaging once the product story feels coherent, not just feature-complete
+### After the RC
+- Collect feedback from real OpenClaw, Claude Code, Cline, Codex, and MCP users.
+- Fix any RC integration bugs without widening the public API unless the tradeoff is explicit.
+- Promote to `v1.0.0` only when the support matrix and threat model still match real-world behavior.
 
 ## Future / v2.x
 

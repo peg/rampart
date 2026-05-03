@@ -8,7 +8,7 @@
       "hook"
     ]
   },
-  "version": "0.9.22",
+  "version": "1.0.0-rc.1",
   "author": "peg",
   "homepage": "https://rampart.sh",
   "repository": "https://github.com/peg/rampart",
