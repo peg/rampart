@@ -34,6 +34,8 @@ func TestFindOpenClawBinaryHonorsOverride(t *testing.T) {
 }
 
 func TestFindOpenClawBinaryRejectsBadOverride(t *testing.T) {
+	skipOnWindows(t, "POSIX executable bits are not meaningful on Windows")
+
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "not-executable")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o644); err != nil {

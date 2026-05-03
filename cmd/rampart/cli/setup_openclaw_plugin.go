@@ -22,6 +22,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -458,6 +459,9 @@ func validateExecutableFile(path string) error {
 	if info.IsDir() {
 		return fmt.Errorf("is a directory")
 	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	if info.Mode()&0o111 == 0 {
 		return fmt.Errorf("not executable")
 	}
@@ -783,12 +787,22 @@ type openClawPluginState struct {
 
 func getOpenClawPluginState() openClawPluginState {
 	bin, err := findOpenClawBinary()
-	if err != nil {
-		return openClawPluginState{}
-	}
-	stateDir, configPath, err := resolveOpenClawStateDir(bin)
-	if err != nil {
-		return openClawPluginState{}
+	var stateDir, configPath string
+	if err == nil {
+		stateDir, configPath, err = resolveOpenClawStateDir(bin)
+		if err != nil {
+			return openClawPluginState{}
+		}
+	} else {
+		if strings.TrimSpace(os.Getenv("RAMPART_OPENCLAW_BIN")) != "" {
+			return openClawPluginState{}
+		}
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return openClawPluginState{}
+		}
+		stateDir = filepath.Join(home, ".openclaw")
+		configPath = filepath.Join(stateDir, "openclaw.json")
 	}
 
 	pluginDir := filepath.Join(stateDir, openclawPluginDir)
