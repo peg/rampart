@@ -562,11 +562,116 @@ if (!params.decision) {
 		results = append(results, checkResult{Name: name, Status: status, Message: msg})
 	}
 	warnings := doctorOpenClawApprovalHardening(emit)
-	if warnings != 2 {
-		t.Fatalf("expected two warnings, got %d (%+v)", warnings, results)
+	if warnings != 1 {
+		t.Fatalf("expected plugin timeout warning only, got %d (%+v)", warnings, results)
 	}
-	if len(results) != 2 || results[0].Status != "warn" || results[1].Status != "warn" {
-		t.Fatalf("expected warn results, got %+v", results)
+	if len(results) != 2 || results[0].Status != "ok" || results[1].Status != "warn" {
+		t.Fatalf("expected plugin ok plus timeout warn, got %+v", results)
+	}
+}
+
+func TestIsReleaseVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"v0.9.22", true},
+		{"0.9.22", true},
+		{"v0.9.22-rc.1", true},
+		{"v0.9.22-0.20260503052103-a72c3452fe38", false},
+		{"v1.0.0-rc.1.0.20260503052103-a72c3452fe38", false},
+		{"v0.9.22-staging-47fa0cf", false},
+		{"v0.9.22-33-g47fa0cf", false},
+		{"dev", false},
+		{"unknown", false},
+		{"v0.0.0-20260406041825-7384556ab7f6+dirty", false},
+		{"v0.0.0-20260406041825-7384556ab7f6", false},
+	}
+	for _, tt := range tests {
+		if got := isReleaseVersion(tt.version); got != tt.want {
+			t.Fatalf("isReleaseVersion(%q) = %v, want %v", tt.version, got, tt.want)
+		}
+	}
+}
+
+func TestPluginVersionMatchesBuildVersion(t *testing.T) {
+	tests := []struct {
+		manifest string
+		build    string
+		want     bool
+	}{
+		{"0.9.22", "v0.9.22", true},
+		{"0.9.22", "0.9.22", true},
+		{"0.9.22", "v0.9.23", false},
+		{"0.9.22", "v0.9.22-staging-47fa0cf", true},
+		{"0.9.22", "v0.9.22-33-g47fa0cf", true},
+		{"0.9.22", "v0.9.22-0.20260503052103-a72c3452fe38", true},
+		{"0.9.22", "dev", true},
+	}
+	for _, tt := range tests {
+		if got := pluginVersionMatchesBuildVersion(tt.manifest, tt.build); got != tt.want {
+			t.Fatalf("pluginVersionMatchesBuildVersion(%q, %q) = %v, want %v", tt.manifest, tt.build, got, tt.want)
+		}
+	}
+}
+
+func TestOpenClawDiscordNativeApprovalsConfigured(t *testing.T) {
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "openclaw")
+	requireNoErr(t, os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+
+	tests := []struct {
+		name string
+		cfg  string
+		want bool
+	}{
+		{
+			name: "enabled",
+			cfg:  `{"channels":{"discord":{"enabled":true,"execApprovals":{"enabled":true}}}}`,
+			want: true,
+		},
+		{
+			name: "exec approvals disabled",
+			cfg:  `{"channels":{"discord":{"enabled":true,"execApprovals":{"enabled":false}}}}`,
+			want: false,
+		},
+		{
+			name: "discord disabled",
+			cfg:  `{"channels":{"discord":{"enabled":false,"execApprovals":{"enabled":true}}}}`,
+			want: false,
+		},
+		{
+			name: "missing discord",
+			cfg:  `{"channels":{}}`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "openclaw.json")
+			requireNoErr(t, os.WriteFile(cfgPath, []byte(tt.cfg), 0o644))
+			t.Setenv("OPENCLAW_CONFIG_PATH", cfgPath)
+			if got := openClawDiscordNativeApprovalsConfigured(); got != tt.want {
+				t.Fatalf("configured = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNodePackageResolvableFrom(t *testing.T) {
+	tmp := t.TempDir()
+	start := filepath.Join(tmp, "dist", "extensions", "discord")
+	requireNoErr(t, os.MkdirAll(start, 0o755))
+	if nodePackageResolvableFrom(start, "discord-api-types") {
+		t.Fatal("package unexpectedly resolved before node_modules exists")
+	}
+	pkgDir := filepath.Join(tmp, "dist", "node_modules", "discord-api-types")
+	requireNoErr(t, os.MkdirAll(pkgDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{}`), 0o644))
+	if !nodePackageResolvableFrom(start, "discord-api-types") {
+		t.Fatal("package did not resolve from ancestor node_modules")
 	}
 }
 

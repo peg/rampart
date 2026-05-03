@@ -22,6 +22,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -67,6 +68,11 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		return fmt.Errorf("openclaw not found — is it installed?\n  Install: npm install -g openclaw\n  Error: %w", err)
 	}
 	fmt.Fprintf(w, "✓ Found OpenClaw: %s\n", openclawBin)
+	if stateDir, configPath, err := resolveOpenClawStateDir(openclawBin); err == nil {
+		fmt.Fprintf(w, "✓ Target OpenClaw state: %s (config: %s)\n", stateDir, configPath)
+	} else {
+		fmt.Fprintf(errW, "⚠ Could not resolve active OpenClaw state dir: %v\n", err)
+	}
 
 	// 2. Check version.
 	version, err := getOpenClawVersion(openclawBin)
@@ -131,7 +137,7 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		fmt.Fprintf(errW, "⚠ Could not harden OpenClaw approvals: %v\n", err)
 		fmt.Fprintln(errW, "  Run `rampart doctor --fix` after reviewing the detected OpenClaw build shape.")
 	} else {
-		fmt.Fprintf(w, "✓ OpenClaw approval handling hardened (fail-closed fallback, truthful completion text, %dms timeout)\n", ochardening.DesiredApprovalTimeoutMs)
+		fmt.Fprintf(w, "✓ OpenClaw approval handling checked (plugin approvals aligned at %dms)\n", ochardening.DesiredApprovalTimeoutMs)
 	}
 
 	// 5. Copy openclaw.yaml policy profile.
@@ -173,15 +179,33 @@ func ensureOpenClawApprovalHardening(w io.Writer, errW io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve home: %w", err)
 	}
-	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if openclawBin, binErr := findOpenClawBinary(); binErr == nil {
+		if _, resolvedConfigPath, stateErr := resolveOpenClawStateDir(openclawBin); stateErr == nil {
+			configPath = resolvedConfigPath
+		}
+	}
+
+	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
 	if err != nil {
 		return fmt.Errorf("inspect current hardening state: %w", err)
+	}
+	if isOpenClawPluginInstalled() {
+		updated, timeoutErr := ochardening.EnsurePluginApprovalTimeoutConfig(configPath)
+		if timeoutErr != nil {
+			return fmt.Errorf("align plugin approval timeout: %w", timeoutErr)
+		}
+		if updated {
+			fmt.Fprintf(w, "  Set plugins.entries.rampart.config.approvalTimeoutMs = %d\n", ochardening.DesiredApprovalTimeoutMs)
+		}
+		fmt.Fprintln(w, "✓ Native OpenClaw plugin approvals configured; skipped legacy exec approval bundle patching")
+		return nil
 	}
 	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
 		return fmt.Errorf("openclaw approval bundles not found under supported dist paths")
 	}
 	if !state.Supported {
-		return fmt.Errorf("unsupported OpenClaw approval bundle shape; refusing blind patch")
+		return fmt.Errorf("unsupported OpenClaw approval bundle shape; refusing blind legacy exec approval patch")
 	}
 	if state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned {
 		fmt.Fprintln(w, "✓ OpenClaw approval semantics already hardened and timeout-aligned")
@@ -247,16 +271,15 @@ func removeExistingOpenClawRampartInstall(errW io.Writer) error {
 		return fmt.Errorf("find openclaw for plugin cleanup: %w", err)
 	}
 
-	home, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		return fmt.Errorf("resolve home for OpenClaw plugin cleanup: %w", homeErr)
+	stateDir, cfgPath, stateErr := resolveOpenClawStateDir(openclawBin)
+	if stateErr != nil {
+		return fmt.Errorf("resolve OpenClaw state for plugin cleanup: %w", stateErr)
 	}
-	cfgPath := filepath.Join(home, ".openclaw", "openclaw.json")
 
 	cleanupRemainingInstallPaths := func() error {
 		paths := []string{
-			filepath.Join(home, ".openclaw", openclawPluginDir),
-			filepath.Join(home, ".openclaw", "hooks", "rampart"),
+			filepath.Join(stateDir, openclawPluginDir),
+			filepath.Join(stateDir, "hooks", "rampart"),
 		}
 		for _, path := range paths {
 			if _, err := os.Stat(path); err == nil {
@@ -277,7 +300,7 @@ func removeExistingOpenClawRampartInstall(errW io.Writer) error {
 		return cleanupRemainingInstallPaths()
 	}
 
-	if healErr := healOpenClawRampartPluginConfig(cfgPath, home); healErr == nil {
+	if healErr := healOpenClawRampartPluginConfig(cfgPath, stateDir); healErr == nil {
 		retryCmd := osexec.Command(openclawBin, "plugins", "uninstall", "rampart", "--force")
 		retryCmd.Stdout = errW
 		retryCmd.Stderr = errW
@@ -290,7 +313,7 @@ func removeExistingOpenClawRampartInstall(errW io.Writer) error {
 	return cleanupRemainingInstallPaths()
 }
 
-func healOpenClawRampartPluginConfig(cfgPath, home string) error {
+func healOpenClawRampartPluginConfig(cfgPath, stateDir string) error {
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
@@ -319,9 +342,9 @@ func healOpenClawRampartPluginConfig(cfgPath, home string) error {
 	}
 	if _, ok := installs["rampart"]; !ok {
 		installs["rampart"] = map[string]any{
-			"installPath": filepath.Join(home, ".openclaw", openclawPluginDir),
+			"installPath": filepath.Join(stateDir, openclawPluginDir),
 			"source":      "path",
-			"sourcePath":  filepath.Join(home, ".openclaw", openclawPluginDir),
+			"sourcePath":  filepath.Join(stateDir, openclawPluginDir),
 		}
 	}
 	allow, _ := plugins["allow"].([]any)
@@ -392,15 +415,23 @@ func runSetupOpenClawMigrate(w io.Writer, errW io.Writer) error {
 	}
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "The legacy dist patches and bridge are no longer needed.")
-	fmt.Fprintln(w, "The native before_tool_call hook provides full coverage.")
+	fmt.Fprintln(w, "The native before_tool_call hook intercepts all OpenClaw tool calls.")
+	fmt.Fprintln(w, "Sensitive-vs-fail-open behavior still depends on tool class and plugin configuration.")
 
 	return nil
 }
 
 // findOpenClawBinary returns the path to the openclaw binary.
 func findOpenClawBinary() (string, error) {
-	// Try PATH first.
-	if p, err := osexec.LookPath("openclaw"); err == nil {
+	if override := strings.TrimSpace(os.Getenv("RAMPART_OPENCLAW_BIN")); override != "" {
+		if err := validateExecutableFile(override); err != nil {
+			return "", fmt.Errorf("RAMPART_OPENCLAW_BIN=%q is not usable: %w", override, err)
+		}
+		return override, nil
+	}
+
+	// Try PATH first. This usually matches the OpenClaw install the human uses.
+	if p, err := execLookPath("openclaw"); err == nil {
 		return p, nil
 	}
 	// Try common install paths.
@@ -413,11 +444,73 @@ func findOpenClawBinary() (string, error) {
 		"/opt/homebrew/bin/openclaw",
 	}
 	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
+		if err := validateExecutableFile(p); err == nil {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("openclaw binary not found in PATH or common locations")
+	return "", fmt.Errorf("openclaw binary not found in PATH or common locations; set RAMPART_OPENCLAW_BIN=/path/to/openclaw if you use a custom install")
+}
+
+func validateExecutableFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("is a directory")
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("not executable")
+	}
+	return nil
+}
+
+func resolveOpenClawStateDir(openclawBin string) (stateDir string, configPath string, err error) {
+	if override := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")); override != "" {
+		stateDir = expandHomePath(override)
+		return stateDir, filepath.Join(stateDir, "openclaw.json"), nil
+	}
+	if override := strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")); override != "" {
+		configPath = expandHomePath(override)
+		return filepath.Dir(configPath), configPath, nil
+	}
+	if strings.TrimSpace(openclawBin) != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := osexec.CommandContext(ctx, openclawBin, "config", "file")
+		cmd.Env = append(os.Environ(), "OPENCLAW_HIDE_BANNER=1", "OPENCLAW_SUPPRESS_NOTES=1")
+		out, runErr := cmd.Output()
+		if runErr == nil {
+			configPath = expandHomePath(strings.TrimSpace(string(out)))
+			if configPath != "" {
+				return filepath.Dir(configPath), configPath, nil
+			}
+		}
+	}
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return "", "", homeErr
+	}
+	stateDir = filepath.Join(home, ".openclaw")
+	return stateDir, filepath.Join(stateDir, "openclaw.json"), nil
+}
+
+func expandHomePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	return path
 }
 
 // getOpenClawVersion runs `openclaw --version` and returns the version string.
@@ -482,16 +575,19 @@ func parseCalVer(v string) []int {
 	return result
 }
 
-// setOpenClawExecAsk sets tools.exec.ask in ~/.openclaw/openclaw.json.
+// setOpenClawExecAsk sets tools.exec.ask in the active OpenClaw config.
 // addToOpenClawPluginsAllow adds pluginID to the plugins.allow list in openclaw.json
 // if it is not already present. Returns (added, existingIDs, error).
 // NEVER removes or overwrites existing entries — only appends.
 func addToOpenClawPluginsAllow(pluginID string) (added bool, existing []string, err error) {
-	home, herr := os.UserHomeDir()
-	if herr != nil {
-		return false, nil, herr
+	bin, berr := findOpenClawBinary()
+	if berr != nil {
+		return false, nil, berr
 	}
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, serr := resolveOpenClawStateDir(bin)
+	if serr != nil {
+		return false, nil, serr
+	}
 	data, rerr := os.ReadFile(configPath)
 	if rerr != nil {
 		return false, nil, rerr
@@ -525,12 +621,14 @@ func addToOpenClawPluginsAllow(pluginID string) (added bool, existing []string, 
 }
 
 func setOpenClawExecAsk(value string) error {
-	home, err := os.UserHomeDir()
+	bin, err := findOpenClawBinary()
 	if err != nil {
-		return fmt.Errorf("resolve home: %w", err)
+		return fmt.Errorf("find openclaw: %w", err)
 	}
-
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return fmt.Errorf("resolve OpenClaw config: %w", err)
+	}
 
 	// Load existing config or start fresh.
 	var cfg map[string]any
@@ -601,12 +699,14 @@ func installOpenClawPolicy(w io.Writer, errW io.Writer) error {
 
 // cleanOpenClawConfig removes legacy bridge config and ask: on-miss from openclaw.json.
 func cleanOpenClawConfig(w io.Writer, errW io.Writer) error {
-	home, err := os.UserHomeDir()
+	bin, err := findOpenClawBinary()
 	if err != nil {
-		return fmt.Errorf("resolve home: %w", err)
+		return fmt.Errorf("find openclaw: %w", err)
 	}
-
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return fmt.Errorf("resolve OpenClaw config: %w", err)
+	}
 	data, err := os.ReadFile(configPath)
 	if os.IsNotExist(err) {
 		fmt.Fprintln(w, "  No openclaw.json found — nothing to clean")
@@ -676,25 +776,43 @@ func isOpenClawInstalled() bool {
 }
 
 type openClawPluginState struct {
-	Installed bool
-	Allowed   bool
-	Enabled   bool
+	Installed       bool
+	Allowed         bool
+	Enabled         bool
+	Dir             string
+	ManifestVersion string
+	RuntimeVersion  string
+	StartupExplicit bool
 }
 
 func getOpenClawPluginState() openClawPluginState {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return openClawPluginState{}
+	bin, err := findOpenClawBinary()
+	var stateDir, configPath string
+	if err == nil {
+		stateDir, configPath, err = resolveOpenClawStateDir(bin)
+		if err != nil {
+			return openClawPluginState{}
+		}
+	} else {
+		if strings.TrimSpace(os.Getenv("RAMPART_OPENCLAW_BIN")) != "" {
+			return openClawPluginState{}
+		}
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return openClawPluginState{}
+		}
+		stateDir = filepath.Join(home, ".openclaw")
+		configPath = filepath.Join(stateDir, "openclaw.json")
 	}
 
-	pluginDir := filepath.Join(home, ".openclaw", openclawPluginDir)
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
 	info, err := os.Stat(pluginDir)
 	if err != nil || !info.IsDir() {
 		return openClawPluginState{}
 	}
 
-	state := openClawPluginState{Installed: true, Enabled: true}
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	state := openClawPluginState{Installed: true, Enabled: true, Dir: pluginDir}
+	state.readInstalledPluginMetadata()
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return state
@@ -725,8 +843,44 @@ func getOpenClawPluginState() openClawPluginState {
 	return state
 }
 
+func (s *openClawPluginState) readInstalledPluginMetadata() {
+	manifestPath := filepath.Join(s.Dir, "openclaw.plugin.json")
+	data, err := os.ReadFile(manifestPath)
+	if err == nil {
+		var manifest struct {
+			Version    string `json:"version"`
+			Activation struct {
+				OnStartup *bool `json:"onStartup"`
+			} `json:"activation"`
+		}
+		if json.Unmarshal(data, &manifest) == nil {
+			s.ManifestVersion = strings.TrimSpace(manifest.Version)
+			s.StartupExplicit = manifest.Activation.OnStartup != nil && *manifest.Activation.OnStartup
+		}
+	}
+	indexData, err := os.ReadFile(filepath.Join(s.Dir, "index.js"))
+	if err != nil {
+		return
+	}
+	s.RuntimeVersion = extractOpenClawPluginRuntimeVersion(string(indexData))
+}
+
+func extractOpenClawPluginRuntimeVersion(js string) string {
+	marker := "export const version = \""
+	idx := strings.Index(js, marker)
+	if idx < 0 {
+		return ""
+	}
+	start := idx + len(marker)
+	end := strings.Index(js[start:], "\"")
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(js[start : start+end])
+}
+
 // isOpenClawPluginInstalled returns true if the Rampart plugin directory
-// exists under ~/.openclaw/extensions/rampart/.
+// exists under the active OpenClaw state directory.
 func isOpenClawPluginInstalled() bool {
 	return getOpenClawPluginState().Installed
 }
@@ -779,7 +933,28 @@ func ensureServeRunning(w io.Writer, errW io.Writer) error {
 		}
 	}
 
-	return fmt.Errorf("rampart serve installed but not reachable after 3s")
+	fmt.Fprintln(errW, "⚠ rampart serve service install did not become reachable; trying background fallback")
+	if err := startServeBackgroundFallback(rampartBin, w, errW); err != nil {
+		return fmt.Errorf("rampart serve installed but not reachable after 3s; background fallback failed: %w", err)
+	}
+	return nil
+}
+
+func startServeBackgroundFallback(rampartBin string, w io.Writer, errW io.Writer) error {
+	cmd := osexec.Command(rampartBin, "serve", "--background")
+	cmd.Stdout = w
+	cmd.Stderr = errW
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rampart serve --background: %w", err)
+	}
+	for i := 0; i < 10; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if isSetupServeReachable() {
+			fmt.Fprintln(w, "✓ Rampart serve started (background fallback)")
+			return nil
+		}
+	}
+	return fmt.Errorf("rampart serve --background did not become reachable after 5s")
 }
 
 // isSetupServeReachable does a quick healthz check against the default serve port.

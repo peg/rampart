@@ -70,6 +70,9 @@ Pass criteria:
 - approval object is created
 - native Discord approval box appears
 - approval is clearly associated with the current DM/session
+- the same approval id can be resolved from the native UI or its documented fallback
+
+Do not count this as passed if only `exec.approval.list` or `plugin.approval.list` shows a pending record. Queue creation proves the backend path. It does not prove the user-facing approval path.
 
 ### 6. Decision outcomes
 
@@ -100,6 +103,7 @@ Do not ship until all of the following are true:
 - one real native Discord approval box appears on the cleaned path
 - allow/deny/allow-always semantics are confirmed
 - durable writeback is verified in `~/.rampart/policies/user-overrides.yaml`
+- current OpenClaw version has been tested; approval delivery regressions are blockers, not warnings
 - documentation reflects that plain chat text is not itself a tool call
 - documentation reflects that `rampart serve` must be healthy for approval-path validation
 

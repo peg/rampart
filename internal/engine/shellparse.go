@@ -349,31 +349,28 @@ func normalizeSegment(seg string) string {
 		return ""
 	}
 
-	// Strip leading env var assignments (VAR=value patterns before the command).
-	start := 0
-	for start < len(tokens) {
-		if isEnvAssignment(tokens[start]) {
-			start++
-		} else {
-			break
-		}
-	}
-	tokens = tokens[start:]
-
-	if len(tokens) == 0 {
-		return ""
-	}
-
-	// Strip shell wrapper prefix: /bin/bash -c, /bin/sh -c, bash -c, sh -c.
-	// Agent runtimes (OpenClaw, etc.) wrap commands in `/bin/bash -c <cmd>`,
-	// which hides the real command from glob patterns (#208).
-	tokens = stripShellWrapper(tokens)
-
+	tokens = unwrapCommandTokens(tokens)
 	if len(tokens) == 0 {
 		return ""
 	}
 
 	return strings.Join(tokens, " ")
+}
+
+// unwrapCommandTokens repeatedly strips leading env assignments and shell -c
+// wrappers until the token stream stops changing. This catches nested forms
+// like `bash -c 'FOO=bar sh -c whoami'` where an env prefix hides a second
+// shell wrapper inside the first quoted command.
+func unwrapCommandTokens(tokens []string) []string {
+	for depth := 0; depth < 4; depth++ {
+		next := stripLeadingEnvAssignments(tokens)
+		next = stripShellWrapperOnce(next)
+		if strSlicesEqual(next, tokens) {
+			return next
+		}
+		tokens = next
+	}
+	return tokens
 }
 
 // shellBasenames lists shell binary names that commonly wrap commands via -c.
@@ -400,14 +397,26 @@ func hasCFlag(token string) bool {
 	return strings.ContainsRune(token[1:], 'c')
 }
 
-// stripShellWrapper strips a leading shell -c wrapper (e.g. ["/bin/bash", "-c", ...])
-// and returns the inner command tokens. Handles combined flags (-lc), extra flags
-// before -c (--norc -c), and nested wrappers (up to 3 levels).
+func stripLeadingEnvAssignments(tokens []string) []string {
+	start := 0
+	for start < len(tokens) {
+		if isEnvAssignment(tokens[start]) {
+			start++
+			continue
+		}
+		break
+	}
+	return tokens[start:]
+}
+
+// stripShellWrapper strips nested shell -c wrappers without touching env
+// assignments. It is kept as a focused helper for tests and callers that only
+// want wrapper removal semantics.
 func stripShellWrapper(tokens []string) []string {
 	for depth := 0; depth < 3; depth++ {
 		stripped := stripShellWrapperOnce(tokens)
 		if strSlicesEqual(stripped, tokens) {
-			break
+			return stripped
 		}
 		tokens = stripped
 	}
