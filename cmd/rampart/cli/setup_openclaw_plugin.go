@@ -178,23 +178,33 @@ func ensureOpenClawApprovalHardening(w io.Writer, errW io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve home: %w", err)
 	}
-	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if openclawBin, binErr := findOpenClawBinary(); binErr == nil {
+		if _, resolvedConfigPath, stateErr := resolveOpenClawStateDir(openclawBin); stateErr == nil {
+			configPath = resolvedConfigPath
+		}
+	}
+
+	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
 	if err != nil {
 		return fmt.Errorf("inspect current hardening state: %w", err)
 	}
-	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
-		return fmt.Errorf("openclaw approval bundles not found under supported dist paths")
-	}
-	if !state.Supported {
-		updated, timeoutErr := ochardening.EnsurePluginApprovalTimeout(home)
+	if isOpenClawPluginInstalled() {
+		updated, timeoutErr := ochardening.EnsurePluginApprovalTimeoutConfig(configPath)
 		if timeoutErr != nil {
 			return fmt.Errorf("align plugin approval timeout: %w", timeoutErr)
 		}
 		if updated {
 			fmt.Fprintf(w, "  Set plugins.entries.rampart.config.approvalTimeoutMs = %d\n", ochardening.DesiredApprovalTimeoutMs)
 		}
-		fmt.Fprintln(w, "✓ Native OpenClaw plugin approvals available; skipped legacy exec approval bundle patching for this build shape")
+		fmt.Fprintln(w, "✓ Native OpenClaw plugin approvals configured; skipped legacy exec approval bundle patching")
 		return nil
+	}
+	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
+		return fmt.Errorf("openclaw approval bundles not found under supported dist paths")
+	}
+	if !state.Supported {
+		return fmt.Errorf("unsupported OpenClaw approval bundle shape; refusing blind legacy exec approval patch")
 	}
 	if state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned {
 		fmt.Fprintln(w, "✓ OpenClaw approval semantics already hardened and timeout-aligned")

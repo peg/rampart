@@ -1440,7 +1440,27 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 
 func isReleaseVersion(version string) bool {
 	version = strings.TrimSpace(version)
-	return version != "" && version != "dev" && version != "unknown"
+	if version == "" || version == "dev" || version == "unknown" || strings.Contains(version, "dirty") || strings.HasPrefix(version, "v0.0.0-") {
+		return false
+	}
+	version = strings.TrimPrefix(version, "v")
+	version = strings.SplitN(version, "-", 2)[0]
+	version = strings.SplitN(version, "+", 2)[0]
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // doctorOpenClawReadiness summarizes the runtime prerequisites that make the
@@ -1475,11 +1495,27 @@ func doctorOpenClawApprovalHardening(emit emitFn) (warnings int) {
 	if err != nil {
 		return 0
 	}
-	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if bin, binErr := findOpenClawBinary(); binErr == nil {
+		if _, resolvedConfigPath, stateErr := resolveOpenClawStateDir(bin); stateErr == nil {
+			configPath = resolvedConfigPath
+		}
+	}
+	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
 	if err != nil {
 		emit("OpenClaw approvals", "warn", fmt.Sprintf("failed to inspect approval hardening: %v", err)+hintSep+
 			"rampart doctor --fix")
 		return 1
+	}
+	if isOpenClawPluginInstalled() {
+		emit("OpenClaw approvals", "ok", "native plugin approval path configured; legacy exec approval bundle patching not required for plugin mode")
+		if !state.PluginApprovalTimeoutAligned {
+			emit("OpenClaw approval timeout", "warn", fmt.Sprintf("plugin approval timeout is not aligned to %dms", ochardening.DesiredApprovalTimeoutMs)+hintSep+
+				"rampart doctor --fix")
+			return 1
+		}
+		emit("OpenClaw approval timeout", "ok", fmt.Sprintf("plugin approval timeout aligned at %dms", ochardening.DesiredApprovalTimeoutMs))
+		return 0
 	}
 	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
 		emit("OpenClaw approvals", "warn", "approval bundles not found in supported dist paths"+hintSep+
@@ -1487,16 +1523,6 @@ func doctorOpenClawApprovalHardening(emit emitFn) (warnings int) {
 		return 1
 	}
 	if !state.Supported {
-		if isOpenClawPluginInstalled() {
-			emit("OpenClaw approvals", "ok", "native plugin approval path configured; legacy exec approval bundle patching not required for plugin mode")
-			if !state.PluginApprovalTimeoutAligned {
-				emit("OpenClaw approval timeout", "warn", fmt.Sprintf("plugin approval timeout is not aligned to %dms", ochardening.DesiredApprovalTimeoutMs)+hintSep+
-					"rampart doctor --fix")
-				return 1
-			}
-			emit("OpenClaw approval timeout", "ok", fmt.Sprintf("plugin approval timeout aligned at %dms", ochardening.DesiredApprovalTimeoutMs))
-			return 0
-		}
 		emit("OpenClaw approvals", "warn", "unsupported OpenClaw build shape; refusing blind approval patching"+hintSep+
 			"update Rampart or inspect the installed OpenClaw dist before patching")
 		return 1
@@ -1585,14 +1611,20 @@ func configFalse(value any) bool {
 
 func findMissingOpenClawDiscordApprovalDependency() (handlerPath string, pkg string) {
 	for _, distDir := range openclawDistCandidates() {
-		matches, _ := filepath.Glob(filepath.Join(distDir, "extensions", "discord", "approval-handler.runtime-*.js"))
-		for _, match := range matches {
-			data, err := os.ReadFile(match)
-			if err != nil || !strings.Contains(string(data), "discord-api-types/v10") {
-				continue
-			}
-			if !nodePackageResolvableFrom(filepath.Dir(match), "discord-api-types") {
-				return match, "discord-api-types/v10"
+		patterns := []string{
+			filepath.Join(distDir, "approval-handler.runtime-*.js"),
+			filepath.Join(distDir, "extensions", "discord", "approval-handler.runtime-*.js"),
+		}
+		for _, pattern := range patterns {
+			matches, _ := filepath.Glob(pattern)
+			for _, match := range matches {
+				data, err := os.ReadFile(match)
+				if err != nil || !strings.Contains(string(data), "discord-api-types/v10") {
+					continue
+				}
+				if !nodePackageResolvableFrom(filepath.Dir(match), "discord-api-types") {
+					return match, "discord-api-types/v10"
+				}
 			}
 		}
 	}
@@ -1618,9 +1650,18 @@ func openclawApprovalHardeningHealthy() bool {
 	if err != nil {
 		return false
 	}
-	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if bin, binErr := findOpenClawBinary(); binErr == nil {
+		if _, resolvedConfigPath, stateErr := resolveOpenClawStateDir(bin); stateErr == nil {
+			configPath = resolvedConfigPath
+		}
+	}
+	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
 	if err != nil {
 		return false
+	}
+	if isOpenClawPluginInstalled() {
+		return state.PluginApprovalTimeoutAligned
 	}
 	return state.Supported && state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned
 }

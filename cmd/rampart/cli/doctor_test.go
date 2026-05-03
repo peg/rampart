@@ -562,11 +562,31 @@ if (!params.decision) {
 		results = append(results, checkResult{Name: name, Status: status, Message: msg})
 	}
 	warnings := doctorOpenClawApprovalHardening(emit)
-	if warnings != 2 {
-		t.Fatalf("expected two warnings, got %d (%+v)", warnings, results)
+	if warnings != 1 {
+		t.Fatalf("expected plugin timeout warning only, got %d (%+v)", warnings, results)
 	}
-	if len(results) != 2 || results[0].Status != "warn" || results[1].Status != "warn" {
-		t.Fatalf("expected warn results, got %+v", results)
+	if len(results) != 2 || results[0].Status != "ok" || results[1].Status != "warn" {
+		t.Fatalf("expected plugin ok plus timeout warn, got %+v", results)
+	}
+}
+
+func TestIsReleaseVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"v0.9.22", true},
+		{"0.9.22", true},
+		{"v0.9.22-rc.1", true},
+		{"dev", false},
+		{"unknown", false},
+		{"v0.0.0-20260406041825-7384556ab7f6+dirty", false},
+		{"v0.0.0-20260406041825-7384556ab7f6", false},
+	}
+	for _, tt := range tests {
+		if got := isReleaseVersion(tt.version); got != tt.want {
+			t.Fatalf("isReleaseVersion(%q) = %v, want %v", tt.version, got, tt.want)
+		}
 	}
 }
 
