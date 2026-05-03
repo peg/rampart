@@ -1,13 +1,67 @@
 ---
 title: Configuration
-description: "Configure Rampart YAML policies to control what AI agents can execute, read, write, and fetch. Tune rules, defaults, and approvals for your workflow."
+description: "Configure Rampart runtime defaults and YAML policies. Set service URLs cleanly, then tune what AI agents can execute, read, write, and fetch."
 ---
 
 # Configuration
 
-Rampart policies are YAML files that define what your AI agent can and can't do. Policies are evaluated in microseconds and hot-reload when you edit them.
+Rampart has **two kinds of configuration**:
+
+1. **Runtime/client config** — where Rampart should find its local service
+2. **Policy config** — what agents are allowed to do once Rampart evaluates a tool call
+
+Most users only need one runtime setting:
+
+```yaml
+# ~/.rampart/config.yaml
+url: http://127.0.0.1:9090
+```
+
+## Runtime Config (`~/.rampart/config.yaml`)
+
+If you do not want to keep exporting environment variables, Rampart can load persistent local defaults from `~/.rampart/config.yaml`.
+
+```yaml
+url: http://127.0.0.1:9090
+# serve_url: http://127.0.0.1:9090   # compatibility alias for url
+# api: http://127.0.0.1:9091         # optional advanced override for daemon/split-topology API setups
+```
+
+| Setting | Use it for | Notes |
+|--------|-------------|-------|
+| `url` | Primary Rampart base URL | Canonical setting for hook, watch, plugin, and service-backed flows |
+| `serve_url` | Backwards-compatible alias for `url` | Kept for compatibility; prefer `url` in new configs |
+| `api` | Optional API base URL override for approval/control commands | Advanced only; usually unnecessary unless you split the API away from the main serve endpoint |
+
+### Resolution order
+
+Rampart resolves service addresses in this order:
+
+**flag → environment → config file → auto-discovered state → default**
+
+That means:
+
+- `--api` or `--serve-url` wins when you pass it explicitly
+- environment variables such as `RAMPART_URL`, `RAMPART_SERVE_URL`, and `RAMPART_API` override file values
+- `~/.rampart/config.yaml` is the persistent local default
+- if nothing is configured, Rampart falls back to discovered local state and then localhost defaults
+
+### Which setting should I use?
+
+Use **`url`** unless you have a specific reason not to.
+
+- `url` is the normal setting for local Rampart service discovery
+- `serve_url` exists for compatibility with older setups
+- `api` is **not** the normal `rampart serve` setting — it is an advanced client-side override for approval/control flows
+
+!!! info "Two different meanings of `--api`"
+    Client-side `--api` flags expect an **API base URL** such as `http://127.0.0.1:9091`.
+
+    Daemon/server `--api` flags refer to an **API listen address** such as `127.0.0.1:9091`.
 
 ## Policy File Location
+
+Rampart policies are YAML files that define what your AI agent can and can't do. Policies are evaluated in microseconds and hot-reload when you edit them.
 
 By default, Rampart looks for policies in `~/.rampart/policies/`. You can specify a custom location:
 

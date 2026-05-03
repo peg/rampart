@@ -205,19 +205,20 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v0.9.19
+## What's New in v0.9.22
 
-- **Integration hardening runway** — Codex wrapper setup is idempotent, uninstall is safer, and source builds now fail clearly when the preload library is missing. [Details →](integrations/codex-cli.md)
-- **OpenClaw degraded mode clarified** — Sensitive tools block when Rampart serve is unavailable; explicitly configured lower-risk tools can still fail open. [Details →](integrations/openclaw.md)
-- **Claude Code hook errors cleaned up** — Invalid or stale policies fail closed through structured hook responses instead of noisy shell-hook stderr.
+- **Runtime config is finally less weird** — Rampart now has a documented persistent local config file at `~/.rampart/config.yaml`, with a clear `url` / `serve_url` / `api` precedence model for hooks, approvals, reloads, and service-backed flows. [Details →](getting-started/configuration.md)
+- **Config resolution is stricter and more trustworthy** — malformed local config no longer silently falls back to the wrong endpoint during approval, hook, preload, watch, or reload paths.
+- **OpenClaw approval integrity is tighter** — ambiguous `PostToolUseFailure` events no longer get mislabeled as Rampart denials, which keeps native approval history and audit state more honest. [Details →](guides/openclaw-approval.md)
+- **OpenClaw docs are now aligned with reality** — native plugin first, single approval owner, legacy dist patching treated as compatibility-only. [Details →](integrations/openclaw.md)
 
-### v0.9.18
+### v0.9.21
 
-- **Policy explain ergonomics** — `rampart policy explain` shows winning rules, source files, durable overrides, and session/tool context.
-- **OpenClaw readiness checks** — `rampart doctor` reports native plugin readiness and approval-path state more clearly.
-- **Release hygiene** — Changelog and plugin metadata now track release state more explicitly.
+- **OpenClaw trust signals tightened** — `rampart status` is more careful about when it claims OpenClaw bridge/plugin state.
+- **Built-in self-modification policy tuned** — human-readable docs and PR text can mention Rampart commands without tripping the policy, while real self-modifying command invocations remain protected.
+- **Support contract clarified** — the published support matrix now clearly splits recommended, supported, and legacy OpenClaw integration tiers.
 
-### v0.9.17
+### v0.9.20
 
 - **OpenClaw approval trust** — Native Discord exec approvals are the supported path for Rampart's OpenClaw integration. OpenClaw owns approval UI/state, Rampart owns policy, audit, and allow-always persistence. [Details →](integrations/openclaw.md)
 - **Durable Allow Always** — OpenClaw approvals can persist safe learned rules to `user-overrides.yaml`.
