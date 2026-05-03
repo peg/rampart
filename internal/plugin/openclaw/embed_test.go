@@ -57,6 +57,41 @@ func TestPackageDeclaresInstallHostFloor(t *testing.T) {
 	}
 }
 
+func TestManifestDeclaresDegradedModeConfig(t *testing.T) {
+	data, err := PluginFS.ReadFile("openclaw.plugin.json")
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest struct {
+		ConfigSchema struct {
+			AdditionalProperties bool `json:"additionalProperties"`
+			Properties           map[string]struct {
+				Type    string          `json:"type"`
+				Default json.RawMessage `json:"default"`
+			} `json:"properties"`
+		} `json:"configSchema"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	failOpenTools, ok := manifest.ConfigSchema.Properties["failOpenTools"]
+	if !ok {
+		t.Fatalf("manifest configSchema must declare failOpenTools because plugin runtime reads it")
+	}
+	if got, want := failOpenTools.Type, "array"; got != want {
+		t.Fatalf("failOpenTools type = %q, want %q", got, want)
+	}
+	var defaults []string
+	if err := json.Unmarshal(failOpenTools.Default, &defaults); err != nil {
+		t.Fatalf("failOpenTools default must be a string array: %v", err)
+	}
+	for _, tool := range []string{"read", "web_fetch", "web_search", "image"} {
+		if !contains(defaults, tool) {
+			t.Fatalf("failOpenTools default missing %q: %v", tool, defaults)
+		}
+	}
+}
+
 func TestEmbeddedPluginRuntimeVersionMatchesPackage(t *testing.T) {
 	data, err := PluginFS.ReadFile("index.js")
 	if err != nil {

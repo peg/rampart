@@ -111,7 +111,7 @@ function truncateForApprovalDescription(text, max = 220) {
  *   { allowed: true, decision: "allow" }              → allow (pass through)
  *   { allowed: false, decision: "deny", message }     → block
  *   { decision: "ask", message }                     → require OpenClaw approval
- *   null                                              → Rampart unreachable (fail-open)
+ *   null                                              → degraded handling in hook (fail-open only for configured tools)
  */
 async function checkWithRampart(toolName, params, ctx, config) {
   const serveUrl = config?.serveUrl ?? "http://localhost:9090";
@@ -147,12 +147,12 @@ async function checkWithRampart(toolName, params, ctx, config) {
     clearTimeout(timer);
 
     if (!resp.ok) {
-      // 4xx from Rampart: treat 403/401 as deny, fail-open on everything else
+      // 4xx from Rampart: treat 403/401 as deny, defer other errors to degraded handling
       if (resp.status === 403 || resp.status === 401) {
         const text = await resp.text().catch(() => "");
         return { allowed: false, decision: "deny", message: `Rampart: HTTP ${resp.status}${text ? ` — ${text}` : ""}` };
       }
-      // 5xx or unexpected — fail-open (warn, not debug, since serve is reachable but broken)
+      // 5xx or unexpected — defer to degraded handling in the hook
       return { _serveError: true, _status: resp.status };
     }
 
@@ -160,7 +160,7 @@ async function checkWithRampart(toolName, params, ctx, config) {
   } catch (err) {
     clearTimeout(timer);
     if (err?.name === "AbortError") {
-      // Timeout — fail-open silently (serve may be slow or overloaded)
+      // Timeout — defer to degraded handling in the hook
       return null;
     }
     if (
@@ -170,10 +170,10 @@ async function checkWithRampart(toolName, params, ctx, config) {
       err?.message?.includes("ECONNREFUSED") ||
       err?.message?.includes("fetch failed")
     ) {
-      // Rampart serve is not running — fail-open (debug only, not warn)
+      // Rampart serve is not running — defer to degraded handling in the hook
       return { _unreachable: true };
     }
-    // Unknown fetch error — fail-open
+    // Unknown fetch error — defer to degraded handling in the hook
     return null;
   }
 }
@@ -235,7 +235,12 @@ export function register(api) {
 
     const result = await checkWithRampart(toolName, params, ctx, pluginConfig);
 
-    const failOpenTools = new Set(pluginConfig.failOpenTools ?? ["read", "web_fetch", "web_search", "image"]);
+    const configuredFailOpenTools = Array.isArray(pluginConfig.failOpenTools)
+      ? pluginConfig.failOpenTools
+      : pluginConfig.failOpen === false
+        ? []
+        : ["read", "web_fetch", "web_search", "image"];
+    const failOpenTools = new Set(configuredFailOpenTools);
     const shouldFailOpen = failOpenTools.has(toolName);
     const unreachableReason = `[rampart] serve unavailable for ${toolName} at ${serveUrl}`;
 

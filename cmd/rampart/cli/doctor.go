@@ -1411,7 +1411,7 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 				"Add \"rampart\" to plugins.allow or rerun: rampart setup openclaw")
 		return 1
 	}
-	if state.ManifestVersion != "" && isReleaseVersion(build.Version) && state.ManifestVersion != build.Version {
+	if state.ManifestVersion != "" && !pluginVersionMatchesBuildVersion(state.ManifestVersion, build.Version) {
 		emit("OpenClaw plugin", "warn",
 			fmt.Sprintf("installed manifest version %s does not match rampart binary %s", state.ManifestVersion, build.Version)+hintSep+
 				"Rerun `rampart setup openclaw` using the same OpenClaw profile/state dir, then restart OpenClaw")
@@ -1439,31 +1439,51 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 }
 
 func isReleaseVersion(version string) bool {
+	_, ok := normalizedReleaseVersion(version)
+	return ok
+}
+
+func pluginVersionMatchesBuildVersion(manifestVersion, buildVersion string) bool {
+	buildRelease, ok := normalizedReleaseVersion(buildVersion)
+	if !ok {
+		return true
+	}
+	manifestRelease, ok := normalizedReleaseVersion(manifestVersion)
+	if !ok {
+		manifestRelease = strings.TrimPrefix(strings.TrimSpace(manifestVersion), "v")
+	}
+	return manifestRelease == buildRelease
+}
+
+func normalizedReleaseVersion(version string) (string, bool) {
 	version = strings.TrimSpace(version)
-	if version == "" || version == "dev" || version == "unknown" || strings.Contains(version, "dirty") || strings.HasPrefix(version, "v0.0.0-") {
-		return false
+	if version == "" || version == "dev" || version == "unknown" || strings.Contains(version, "dirty") || strings.Contains(version, "staging") || strings.HasPrefix(version, "v0.0.0-") {
+		return "", false
 	}
 	version = strings.TrimPrefix(version, "v")
 	if isGoPseudoVersion(version) {
-		return false
+		return "", false
 	}
-	version = strings.SplitN(version, "-", 2)[0]
-	version = strings.SplitN(version, "+", 2)[0]
+	if strings.Contains(version, "-g") {
+		return "", false
+	}
+	base := strings.SplitN(version, "+", 2)[0]
+	version = strings.SplitN(base, "-", 2)[0]
 	parts := strings.Split(version, ".")
 	if len(parts) != 3 {
-		return false
+		return "", false
 	}
 	for _, part := range parts {
 		if part == "" {
-			return false
+			return "", false
 		}
 		for _, r := range part {
 			if r < '0' || r > '9' {
-				return false
+				return "", false
 			}
 		}
 	}
-	return true
+	return version, true
 }
 
 func isGoPseudoVersion(version string) bool {

@@ -37,7 +37,22 @@
       },
       "failOpen": {
         "type": "boolean",
+        "description": "Deprecated coarse degraded-mode switch. Set false to block every tool when Rampart serve is unavailable. Prefer failOpenTools for per-tool control.",
         "default": true
+      },
+      "failOpenTools": {
+        "type": "array",
+        "description": "Tool names that may proceed when Rampart serve is unavailable or returns an evaluation error. Sensitive tools should normally be omitted.",
+        "default": [
+          "read",
+          "web_fetch",
+          "web_search",
+          "image"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
       },
       "approvalTimeoutMs": {
         "type": "number",
