@@ -2,7 +2,13 @@
   "id": "rampart",
   "name": "Rampart",
   "description": "AI agent firewall — YAML policy-as-code for every tool call",
-  "version": "0.9.22",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": [
+      "hook"
+    ]
+  },
+  "version": "1.0.0-rc.1",
   "author": "peg",
   "homepage": "https://rampart.sh",
   "repository": "https://github.com/peg/rampart",
@@ -31,7 +37,22 @@
       },
       "failOpen": {
         "type": "boolean",
+        "description": "Deprecated coarse degraded-mode switch. Set false to block every tool when Rampart serve is unavailable. Prefer failOpenTools for per-tool control.",
         "default": true
+      },
+      "failOpenTools": {
+        "type": "array",
+        "description": "Tool names that may proceed when Rampart serve is unavailable or returns an evaluation error. Sensitive tools should normally be omitted.",
+        "default": [
+          "read",
+          "web_fetch",
+          "web_search",
+          "image"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
       },
       "approvalTimeoutMs": {
         "type": "number",

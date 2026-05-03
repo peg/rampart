@@ -51,8 +51,9 @@ Rampart also supports OpenClaw native exec approval events as a **secondary seam
 This is useful for host-exec/native approval flows that already produce OpenClaw approval events. In that mode:
 
 - OpenClaw still owns the pending approval UI/state
-- Rampart may auto-resolve allow/deny
-- if human review is needed, the approval remains pending in OpenClaw
+- Rampart may auto-resolve deny decisions
+- in native plugin mode, Rampart leaves allow/watch decisions pending because they mean “Rampart does not object,” not “the human approved”
+- in legacy bridge-first mode, Rampart may still auto-resolve allow/watch decisions for compatibility
 - Rampart writes `allow-always` persistence after native resolution
 
 This native exec approval path is supported and remains the reference UX for exec approval behavior. The plugin path should match its single-queue ownership model and, where possible, its native approval UX.

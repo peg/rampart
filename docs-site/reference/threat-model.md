@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-03-07 | Applies to: v0.9.x
+> Last reviewed: 2026-04-30 | Applies to: v1.0.0-rc.1+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -116,16 +116,22 @@ Older OpenClaw builds did not expose a native file-tool hook, so Rampart added `
 
 **Trade-off:** Monkey-patching is fragile but functional. It closes a real security gap today while proper upstream hook support is developed. The patches fail-open — if the patched code changes in an upgrade, the worst case is that file tools bypass Rampart (reverting to the pre-patch state), not that they break.
 
-### 6. Fail-Open Behavior
+### 6. Degraded-Mode Behavior
 
-When `rampart serve` is unreachable (crashed, network issue), the shim defaults to **fail-open** — commands execute without policy checks. This is a deliberate design choice: fail-closed would lock you out of your own machine.
+Rampart does **not** behave identically across every integration when policy evaluation becomes unavailable. That difference is a real security boundary and has to be understood clearly.
+
+**Current behavior:**
+- `rampart wrap` and `rampart preload` default to **fail-open** — if `rampart serve` is unreachable, commands continue without policy checks unless you configure fail-closed behavior.
+- The native OpenClaw plugin is stricter: sensitive tools such as `exec`, `write`, `edit`, `browser`, and `message` block when `rampart serve` is unavailable, while explicitly configured lower-risk tools (`read`, `web_fetch`, `web_search`, `image` by default) remain fail-open.
+- Native hook integrations (Claude Code, Cline) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path.
 
 **Mitigations:**
 - Monitor the Rampart service and alert on downtime
 - Use systemd/launchd to auto-restart on failure (`rampart serve install` does this)
-- Webhook notifications confirm the service is actively evaluating commands
+- Prefer native hooks or the native OpenClaw plugin when you want less reliance on a long-running local service
+- For OpenClaw, tighten `failOpenTools` if your environment prefers a stricter degraded-mode posture
 
-**Trade-off:** Fail-open means a brief security gap during outages. Fail-closed means a crashed Rampart bricks your agent (and potentially your system). We chose availability over strict enforcement. This is configurable for environments where fail-closed is preferred.
+**Trade-off:** Fail-open improves availability but creates a temporary security gap during outages. Fail-closed reduces bypass risk but can break agent workflows when the policy service is sick. Rampart makes that trade-off explicit per integration rather than pretending one answer fits everything.
 
 ### 7. Regex Complexity Limits
 
@@ -144,19 +150,24 @@ These limits protect against both accidental performance degradation and malicio
 As of v0.7.4, `rampart serve` supports TLS via `--tls-auto` (self-signed ECDSA P-256) or `--tls-cert`/`--tls-key` (bring your own). On localhost, plaintext is still acceptable; for remote or team deployments, enable TLS.
 
 **Notes:**
-- Default bind is all interfaces (`--addr` defaults to `""`). Use `--addr 127.0.0.1` to restrict to localhost
+- Default bind is `127.0.0.1` (localhost only). Use `--addr 0.0.0.0` or another explicit interface only when you intend remote access.
 - `--tls-auto` generates a self-signed cert stored in `~/.rampart/tls/` (1-year validity)
 - The SHA-256 fingerprint is printed on startup for manual verification
 - For production, use proper certs via `--tls-cert`/`--tls-key` or a reverse proxy
 
-### 9. In-Memory Approval Store
+### 9. Approval Persistence Limits
 
-Pending approvals are stored in memory and lost on service restart. If `rampart serve` restarts while an approval is pending, the requesting agent receives a timeout/denial.
+Pending approvals are now persisted to a local JSONL journal in normal `rampart serve` setups, so a routine service restart no longer necessarily wipes the queue. That said, approvals are still a live runtime workflow, not a durable transaction system.
+
+**Remaining limits:**
+- Older or custom setups that disable persistence can still lose pending approvals on restart
+- A corrupted or deleted persistence file can drop pending approval state
+- An approval request that times out or restarts mid-flow can still surface to the agent as a denial/timeout
 
 **Mitigations:**
-- Approvals typically resolve within seconds (human clicks approve/deny)
-- Service restarts are rare during active sessions
-- Persistent approval storage is planned for a future release
+- Keep the default approval persistence path intact
+- Avoid unnecessary restarts during active approval flows
+- Treat approvals as short-lived human decisions, not long-running queued work
 
 ### 10. Project Policy Trust
 
@@ -228,14 +239,21 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
 ### 12. API Self-Approval
 
-The HTTP API uses a single bearer token for both tool call evaluation and administrative actions (approving requests, deleting rules, reloading policy). In same-user deployments, the agent can read `~/.rampart/token` and approve its own denied requests by hitting `POST /v1/approvals/{id}/resolve` directly.
+Rampart now supports **per-agent tokens** with explicit scopes. Eval-only tokens can submit tool calls but cannot approve requests, reload policy, or mutate rules. That closes one big part of the old self-approval story.
+
+The remaining risk is narrower but still real: in same-user deployments, any integration that exposes a readable **admin-capable token** to the agent process can still let that agent approve or mutate its own policy state by calling administrative endpoints directly.
+
+**Where this still matters most:**
+- `rampart wrap`
+- `rampart preload`
+- ad hoc HTTP clients using the shared admin token from `~/.rampart/token`
 
 **Mitigations:**
-- User separation prevents the agent from reading the token file
-- The standard policy blocks reads of `**/.rampart/**` via write/edit tools
-- Splitting eval and admin tokens is tracked in [#180](https://github.com/peg/rampart/issues/180)
+- Use user separation so the agent cannot read the admin token
+- Use per-agent eval-only tokens for HTTP/MCP clients whenever possible
+- Prefer native hook/plugin integrations where the agent is not handed a general-purpose admin bearer token
 
-**Current status:** This is a known gap in same-user deployments. The fix (separate eval and admin tokens) is designed and will ship in a future release with zero user friction — both tokens auto-generate and the shim only receives the eval token.
+**Current status:** Better than before, not magically solved. Scoped per-agent tokens reduce the blast radius, but same-user deployments with readable admin tokens are still not a hard security boundary.
 
 ### 13. Temporal Allow Expiry
 
@@ -243,8 +261,9 @@ v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipp
 
 **Security implications:**
 - Expired rules exist in the YAML but are inert — the engine checks `expires_at` before matching
-- `--once` rules record consumption in decision metadata after their first match, but the proxy does not call `RemoveRule` — the rule continues to match on subsequent evaluations. This is a known gap; true single-use enforcement requires wiring `Decision.ConsumedOnce` to `persist.RemoveRule` in the proxy layer
-- Automatic cleanup is not yet implemented — use `rampart rules remove` to manually clean up expired or consumed rules
+- `--once` rules are now consumed after their first successful match and removed from the backing policy file by the proxy layer
+- That removal is operationally best-effort rather than transactional: a crash at the wrong moment could leave a consumed `once` rule behind until cleanup or the next evaluation path removes it
+- Automatic cleanup of expired rules is still not universal — use `rampart rules remove` or explicit cleanup flows to keep policy files tidy
 - Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
 ## Self-Modification Protection
 

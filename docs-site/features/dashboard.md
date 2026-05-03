@@ -81,13 +81,13 @@ curl http://localhost:9090/v1/approvals \
 curl -X POST http://localhost:9090/v1/approvals/APPROVAL_ID/resolve \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"approved": true, "resolved_by": "trevor"}'
+  -d '{"approved": true, "resolved_by": "security-team"}'
 
 # Deny
 curl -X POST http://localhost:9090/v1/approvals/APPROVAL_ID/resolve \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"approved": false, "resolved_by": "trevor", "reason": "not authorized"}'
+  -d '{"approved": false, "resolved_by": "security-team", "reason": "not authorized"}'
 ```
 
 ## Integration with Hooks

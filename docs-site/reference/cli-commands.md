@@ -55,7 +55,7 @@ rampart setup openclaw --force   # Overwrite existing config
 rampart setup openclaw --remove  # Remove integration
 ```
 
-**Native plugin (OpenClaw >= 2026.3.28):** Installs the bundled `before_tool_call` hook plugin. Covers all tool calls (exec, read, write, web_fetch, browser, message). Plugin is embedded in the `rampart` binary — no external download required.
+**Native plugin (OpenClaw >= 2026.3.28):** Installs the bundled `before_tool_call` hook plugin. Intercepts supported OpenClaw tool calls (exec, read, write, web_fetch, browser, message); degraded behavior depends on tool class and configuration. Plugin is embedded in the `rampart` binary — no external download required.
 
 **Legacy shim (OpenClaw < 2026.3.28):** Installs shell shim + optionally patches file tools via `--patch-tools`. This is a compatibility path and requires re-running after OpenClaw upgrades.
 

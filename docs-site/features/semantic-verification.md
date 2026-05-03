@@ -68,7 +68,7 @@ pip install -r requirements.txt
 ```bash
 export VERIFY_PROVIDER=openai
 export VERIFY_MODEL=gpt-4o-mini
-export OPENAI_API_KEY=sk-...
+export OPENAI_API_KEY=***
 ```
 
 **Fully offline with Ollama:**
@@ -84,7 +84,7 @@ export VERIFY_MODEL=qwen2.5-coder:1.5b
 ```bash
 export VERIFY_PROVIDER=anthropic
 export VERIFY_MODEL=claude-3-haiku-20240307
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=***
 ```
 
 ### Start the Sidecar
@@ -255,7 +255,7 @@ Store your API key in `~/.rampart-verify.env`:
 
 ```
 VERIFY_MODEL=gpt-4o-mini
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=***
 ```
 
 !!! warning "Permissions"

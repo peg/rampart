@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-05-03
+
+### Added
+
+- **OpenClaw 2026.5.2 release-candidate baseline** — Native OpenClaw plugin approvals are now the supported RC path: OpenClaw owns visible approval UI/state, while Rampart owns policy evaluation, audit, and durable allow-always persistence.
+- **OpenClaw plugin contract regression coverage** — The embedded plugin now has tests for manifest activation metadata, package install metadata, gateway status response shape, approval behavior, degraded-mode behavior, and version coherence.
+- **RC readiness documentation for public support boundaries** — The support matrix and OpenClaw integration docs now distinguish recommended, supported, and legacy OpenClaw versions without overclaiming approval delivery on older builds.
+
+### Changed
+
+- **Degraded-mode behavior is explicit and configurable** — Sensitive OpenClaw tools fail closed when `rampart serve` is unavailable or errors; only configured lower-risk `failOpenTools` fail open by default.
+- **`rampart setup openclaw` is more resilient** — Setup can fall back to a background `rampart serve` start when service installation does not become reachable quickly, improving headless/fresh-install flows.
+- **`rampart doctor` is stricter but less noisy** — Doctor now recognizes native plugin approval health, validates OpenClaw hardening state more accurately, and avoids false plugin-version mismatch warnings on development, staging, git-describe, and Go pseudo-version builds.
+
+### Fixed
+
+- **OpenClaw plugin metadata now matches the RC release** — The embedded plugin manifest, runtime export, and package metadata are versioned as `1.0.0-rc.1`, avoiding post-tag doctor mismatch warnings.
+- **OpenClaw plugin gateway status uses the current response contract** — `rampart.status` now resolves through OpenClaw's current `respond(true, payload)` gateway method shape.
+- **Policy matching hardening** — Shell-wrapper, path-normalization, and URL/domain matching regressions found during the RC pass now have explicit coverage.
+
 ## [0.9.22] - 2026-04-29
 
 ### Fixed

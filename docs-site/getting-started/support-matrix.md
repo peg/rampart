@@ -42,14 +42,21 @@ Use this page as the canonical support contract for Rampart's main integration s
       <td data-label="Support tier">Supported</td>
     </tr>
     <tr class="tier-recommended">
-      <td data-label="Surface"><strong>OpenClaw &gt;= 2026.4.11</strong></td>
+      <td data-label="Surface"><strong>OpenClaw &gt;= 2026.5.2</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
       <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX">OpenClaw native approval UI</td>
-      <td data-label="Support tier"><strong>Recommended</strong></td>
+      <td data-label="Approval UX">First-class plugin approvals / native approval UI</td>
+      <td data-label="Support tier"><strong>Recommended RC baseline</strong></td>
     </tr>
     <tr class="tier-supported">
-      <td data-label="Surface"><strong>OpenClaw 2026.3.28 - 2026.4.10</strong></td>
+      <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
+      <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX">Native plugin startup/interception; approval delivery was not the RC baseline</td>
+      <td data-label="Support tier">Supported</td>
+    </tr>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>OpenClaw 2026.3.28 - 2026.4.28</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">Native enforcement; approval UX less polished than current builds</td>
@@ -83,7 +90,7 @@ Use this page as the canonical support contract for Rampart's main integration s
 
 - **Claude Code** → best overall native path
 - **Codex CLI** → best CLI path when you want strong coverage
-- **OpenClaw >= 2026.4.11** → best OpenClaw path; plugin + native approval UI
+- **OpenClaw >= 2026.5.2** → best OpenClaw path for the 1.0 RC baseline; plugin + native approval UI
 - **Cline** → good supported path, but less polished approval UX than Claude Code
 
 ## Degraded behavior notes

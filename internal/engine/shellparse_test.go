@@ -309,6 +309,9 @@ func TestNormalizeCommand_ShellWrapper(t *testing.T) {
 		// Nested wrappers
 		{`bash -c 'sh -c rm -rf /'`, "rm -rf /"},
 		{"/bin/bash -c /bin/sh -c cat /etc/shadow", "cat /etc/shadow"},
+		{`bash -c 'FOO=bar sh -c echo hello'`, "echo hello"},
+		{`FOO=bar /bin/bash -c 'BAR=baz sh -c cat /etc/passwd'`, "cat /etc/passwd"},
+		{`/bin/bash -c 'PATH=/tmp /usr/bin/zsh -c whoami'`, "whoami"},
 
 		// Non-standard paths
 		{"/usr/local/bin/bash -c whoami", "whoami"},
@@ -332,6 +335,39 @@ func TestNormalizeCommand_ShellWrapper(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("NormalizeCommand(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestNormalizeCommand_AdversarialWrapperMatrix(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "env hides nested shell wrapper",
+			input: `bash -c 'FOO=bar sh -c echo hello'`,
+			want:  "echo hello",
+		},
+		{
+			name:  "multiple env prefixes across wrapper layers",
+			input: `FOO=bar /bin/bash -c 'BAR=baz /bin/sh -c cat /etc/passwd'`,
+			want:  "cat /etc/passwd",
+		},
+		{
+			name:  "quoted inner shell survives retokenization",
+			input: `bash -c 'PATH=/tmp /usr/bin/zsh -c "whoami"'`,
+			want:  "whoami",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeCommand(tt.input)
+			if got != tt.want {
+				t.Errorf("NormalizeCommand(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 

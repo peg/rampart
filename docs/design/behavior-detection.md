@@ -1,7 +1,7 @@
 # RFC: Behavior Detection (Multi-Step Sequence Rules)
 
 **Status:** Draft  
-**Author:** Trevor / Clap  
+**Author:** Rampart maintainers
 **Target:** v0.3.0  
 **Branch:** `feature/behavior-detection`
 

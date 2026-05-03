@@ -269,6 +269,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	if n := doctorOpenClawApprovalHardening(emit); n > 0 {
 		warnings += n
 	}
+	if n := doctorOpenClawDiscordApprovalRuntime(emit); n > 0 {
+		warnings += n
+	}
 
 	// 17. OpenClaw ask mode — only needed for legacy bridge users.
 	// With the native plugin active, before_tool_call covers all tool calls
@@ -1001,10 +1004,8 @@ func doctorFileToolPatches(emit emitFn) (warnings int) {
 
 		if distPatched && webFetchPatched && browserPatched && messagePatched && execPatched {
 			if pluginInstalled {
-				msg := "All OpenClaw tools covered (native plugin: read/write/edit + web_fetch + browser + message + exec)"
-				if !legacyExecPatched {
-					msg += ""
-				}
+				msg := "OpenClaw tool interception active for read/write/edit + web_fetch + browser + message + exec"
+				msg += hintSep + "Degraded behavior still depends on tool class and plugin failOpenTools settings"
 				emit("Tool patches", "ok", msg)
 			} else {
 				emit("Tool patches", "ok", "All OpenClaw tools patched (read/write/edit + web_fetch + browser + message + exec)")
@@ -1368,17 +1369,21 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 		return 1
 	}
 
-	home, err := os.UserHomeDir()
+	bin, err := findOpenClawBinary()
 	if err != nil {
 		emit("OpenClaw plugin", "warn", "installed, but could not verify whether OpenClaw is configured to load it")
 		return 1
 	}
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		emit("OpenClaw plugin", "warn", fmt.Sprintf("installed, but could not resolve active OpenClaw config: %v", err))
+		return 1
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		emit("OpenClaw plugin", "warn",
 			"installed, but could not verify plugins.allow / enabled state"+hintSep+
-				"Check ~/.openclaw/openclaw.json or rerun: rampart setup openclaw")
+				fmt.Sprintf("Check %s or rerun: rampart setup openclaw", configPath))
 		return 1
 	}
 	var cfg struct {
@@ -1397,7 +1402,7 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 	if !state.Enabled {
 		emit("OpenClaw plugin", "warn",
 			"installed, but plugins.entries.rampart.enabled=false disables the native hook"+hintSep+
-				"Enable plugins.entries.rampart in ~/.openclaw/openclaw.json and restart OpenClaw")
+				fmt.Sprintf("Enable plugins.entries.rampart in %s and restart OpenClaw", configPath))
 		return 1
 	}
 	if !state.Allowed {
@@ -1406,9 +1411,108 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 				"Add \"rampart\" to plugins.allow or rerun: rampart setup openclaw")
 		return 1
 	}
+	if state.ManifestVersion != "" && !pluginVersionMatchesBuildVersion(state.ManifestVersion, build.Version) {
+		emit("OpenClaw plugin", "warn",
+			fmt.Sprintf("installed manifest version %s does not match rampart binary %s", state.ManifestVersion, build.Version)+hintSep+
+				"Rerun `rampart setup openclaw` using the same OpenClaw profile/state dir, then restart OpenClaw")
+		return 1
+	}
+	if state.RuntimeVersion != "" && state.ManifestVersion != "" && state.RuntimeVersion != state.ManifestVersion {
+		emit("OpenClaw plugin", "warn",
+			fmt.Sprintf("installed plugin manifest is %s but runtime JS is %s", state.ManifestVersion, state.RuntimeVersion)+hintSep+
+				"Reinstall the plugin from a fixed Rampart build: rampart setup openclaw")
+		return 1
+	}
+	if !state.StartupExplicit {
+		emit("OpenClaw plugin", "warn",
+			"installed plugin does not declare activation.onStartup=true; future OpenClaw versions may not load startup hooks"+hintSep+
+				"Upgrade/reinstall Rampart's OpenClaw plugin and restart OpenClaw")
+		return 1
+	}
 
-	emit("OpenClaw plugin", "ok", "installed and enabled (before_tool_call hook active)")
+	detail := "installed and enabled (before_tool_call hook active)"
+	if state.ManifestVersion != "" {
+		detail = fmt.Sprintf("installed and enabled (v%s, before_tool_call hook active)", state.ManifestVersion)
+	}
+	emit("OpenClaw plugin", "ok", detail)
 	return 0
+}
+
+func isReleaseVersion(version string) bool {
+	_, ok := normalizedReleaseVersion(version)
+	return ok
+}
+
+func pluginVersionMatchesBuildVersion(manifestVersion, buildVersion string) bool {
+	buildRelease, ok := normalizedReleaseVersion(buildVersion)
+	if !ok {
+		return true
+	}
+	manifestRelease, ok := normalizedReleaseVersion(manifestVersion)
+	if !ok {
+		manifestRelease = strings.TrimPrefix(strings.TrimSpace(manifestVersion), "v")
+	}
+	return manifestRelease == buildRelease
+}
+
+func normalizedReleaseVersion(version string) (string, bool) {
+	version = strings.TrimSpace(version)
+	if version == "" || version == "dev" || version == "unknown" || strings.Contains(version, "dirty") || strings.Contains(version, "staging") || strings.HasPrefix(version, "v0.0.0-") {
+		return "", false
+	}
+	version = strings.TrimPrefix(version, "v")
+	if isGoPseudoVersion(version) {
+		return "", false
+	}
+	if strings.Contains(version, "-g") {
+		return "", false
+	}
+	base := strings.SplitN(version, "+", 2)[0]
+	version = strings.SplitN(base, "-", 2)[0]
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return "", false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return "", false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return "", false
+			}
+		}
+	}
+	return version, true
+}
+
+func isGoPseudoVersion(version string) bool {
+	parts := strings.Split(version, "-")
+	if len(parts) < 3 {
+		return false
+	}
+	timestamp := parts[len(parts)-2]
+	if idx := strings.LastIndex(timestamp, "."); idx >= 0 {
+		timestamp = timestamp[idx+1:]
+	}
+	if len(timestamp) != len("20060102150405") {
+		return false
+	}
+	for _, r := range timestamp {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	commit := parts[len(parts)-1]
+	if len(commit) < 7 {
+		return false
+	}
+	for _, r := range commit {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // doctorOpenClawReadiness summarizes the runtime prerequisites that make the
@@ -1443,11 +1547,27 @@ func doctorOpenClawApprovalHardening(emit emitFn) (warnings int) {
 	if err != nil {
 		return 0
 	}
-	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if bin, binErr := findOpenClawBinary(); binErr == nil {
+		if _, resolvedConfigPath, stateErr := resolveOpenClawStateDir(bin); stateErr == nil {
+			configPath = resolvedConfigPath
+		}
+	}
+	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
 	if err != nil {
 		emit("OpenClaw approvals", "warn", fmt.Sprintf("failed to inspect approval hardening: %v", err)+hintSep+
 			"rampart doctor --fix")
 		return 1
+	}
+	if isOpenClawPluginInstalled() {
+		emit("OpenClaw approvals", "ok", "native plugin approval path configured; legacy exec approval bundle patching not required for plugin mode")
+		if !state.PluginApprovalTimeoutAligned {
+			emit("OpenClaw approval timeout", "warn", fmt.Sprintf("plugin approval timeout is not aligned to %dms", ochardening.DesiredApprovalTimeoutMs)+hintSep+
+				"rampart doctor --fix")
+			return 1
+		}
+		emit("OpenClaw approval timeout", "ok", fmt.Sprintf("plugin approval timeout aligned at %dms", ochardening.DesiredApprovalTimeoutMs))
+		return 0
 	}
 	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
 		emit("OpenClaw approvals", "warn", "approval bundles not found in supported dist paths"+hintSep+
@@ -1476,28 +1596,140 @@ func doctorOpenClawApprovalHardening(emit emitFn) (warnings int) {
 	return warnings
 }
 
+func doctorOpenClawDiscordApprovalRuntime(emit emitFn) (warnings int) {
+	if !openClawDiscordNativeApprovalsConfigured() {
+		return 0
+	}
+	handlerPath, pkg := findMissingOpenClawDiscordApprovalDependency()
+	if handlerPath == "" {
+		return 0
+	}
+	emit("OpenClaw Discord approvals", "warn",
+		fmt.Sprintf("native Discord approval handler imports %s, but the package is not installed next to OpenClaw", pkg)+hintSep+
+			fmt.Sprintf("Reinstall/upgrade OpenClaw or install the missing dependency, then restart OpenClaw. Handler: %s", handlerPath))
+	return 1
+}
+
+func openClawDiscordNativeApprovalsConfigured() bool {
+	bin, err := findOpenClawBinary()
+	if err != nil {
+		return false
+	}
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		Channels map[string]json.RawMessage `json:"channels"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	raw, ok := cfg.Channels["discord"]
+	if !ok || len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return false
+	}
+	var discord struct {
+		Enabled       any `json:"enabled"`
+		ExecApprovals struct {
+			Enabled any `json:"enabled"`
+		} `json:"execApprovals"`
+	}
+	if err := json.Unmarshal(raw, &discord); err != nil {
+		return true
+	}
+	if configFalse(discord.Enabled) || configFalse(discord.ExecApprovals.Enabled) {
+		return false
+	}
+	return true
+}
+
+func configFalse(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return !v
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "false", "off", "disabled", "disable", "no", "0":
+			return true
+		}
+	}
+	return false
+}
+
+func findMissingOpenClawDiscordApprovalDependency() (handlerPath string, pkg string) {
+	for _, distDir := range openclawDistCandidates() {
+		patterns := []string{
+			filepath.Join(distDir, "approval-handler.runtime-*.js"),
+			filepath.Join(distDir, "extensions", "discord", "approval-handler.runtime-*.js"),
+		}
+		for _, pattern := range patterns {
+			matches, _ := filepath.Glob(pattern)
+			for _, match := range matches {
+				data, err := os.ReadFile(match)
+				if err != nil || !strings.Contains(string(data), "discord-api-types/v10") {
+					continue
+				}
+				if !nodePackageResolvableFrom(filepath.Dir(match), "discord-api-types") {
+					return match, "discord-api-types/v10"
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+func nodePackageResolvableFrom(startDir, pkg string) bool {
+	dir := startDir
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "node_modules", pkg, "package.json")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
+
 func openclawApprovalHardeningHealthy() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false
 	}
-	state, err := ochardening.Inspect(home, openclawDistCandidates())
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	if bin, binErr := findOpenClawBinary(); binErr == nil {
+		if _, resolvedConfigPath, stateErr := resolveOpenClawStateDir(bin); stateErr == nil {
+			configPath = resolvedConfigPath
+		}
+	}
+	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
 	if err != nil {
 		return false
+	}
+	if isOpenClawPluginInstalled() {
+		return state.PluginApprovalTimeoutAligned
 	}
 	return state.Supported && state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned
 }
 
-// doctorOpenClawAskMode checks if ~/.openclaw/openclaw.json has ask set to
+// doctorOpenClawAskMode checks if the active OpenClaw config has ask set to
 // "on-miss" or "always", which is required for exec approval events to reach
 // Rampart's bridge. If the file doesn't exist, the check is skipped silently.
 func doctorOpenClawAskMode(emit emitFn) (warnings int) {
-	home, err := os.UserHomeDir()
+	bin, err := findOpenClawBinary()
 	if err != nil {
 		return 0
 	}
-
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return 0
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		// File doesn't exist — not everyone uses OpenClaw, skip silently.
@@ -1527,7 +1759,7 @@ func doctorOpenClawAskMode(emit emitFn) (warnings int) {
 	switch askVal {
 	case "off":
 		if pluginInstalled {
-			emit("OpenClaw ask mode", "ok", "off (native OpenClaw approvals stay visible; Rampart plugin/bridge evaluate behind them)")
+			emit("OpenClaw ask mode", "ok", "off (expected for Rampart plugin mode; plugin approvals own prompts instead of the legacy exec bridge)")
 			return 0
 		}
 		fallthrough

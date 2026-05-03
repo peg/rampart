@@ -16,6 +16,8 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -155,6 +157,24 @@ func (mg *mockGateway) readResponse() map[string]any {
 	return frame
 }
 
+func (mg *mockGateway) readResponseWithin(timeout time.Duration) (map[string]any, bool) {
+	require.NoError(mg.t, mg.conn.SetReadDeadline(time.Now().Add(timeout)))
+	defer mg.conn.SetReadDeadline(time.Time{}) //nolint:errcheck
+
+	_, msg, err := mg.conn.ReadMessage()
+	if err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return nil, false
+		}
+		require.NoError(mg.t, err)
+	}
+
+	var frame map[string]any
+	json.Unmarshal(msg, &frame)
+	return frame, true
+}
+
 func (mg *mockGateway) close() {
 	mg.writeMu.Lock()
 	conn := mg.conn
@@ -271,6 +291,79 @@ func TestBridgeAutoResolveDeny(t *testing.T) {
 	cancel()
 }
 
+func TestBridgeNativePluginModeLeavesAllowApprovalPending(t *testing.T) {
+	mg := newMockGateway(t)
+	defer mg.close()
+
+	tmpDir := t.TempDir()
+	policyPath := writeTestPolicy(t, tmpDir)
+	eng := newTestEngine(t, policyPath)
+	autoResolve := false
+
+	bridge := NewOpenClawBridge(eng, Config{
+		GatewayURL:                mg.url(),
+		GatewayToken:              "test-token",
+		ReconnectInterval:         100 * time.Millisecond,
+		AutoResolveAllowDecisions: &autoResolve,
+	})
+	defer bridge.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { bridge.Start(ctx) }() //nolint:errcheck
+
+	time.Sleep(500 * time.Millisecond)
+
+	mg.sendApprovalRequest("approval-safe-native", "git status", "openclaw")
+	if resp, ok := mg.readResponseWithin(300 * time.Millisecond); ok {
+		t.Fatalf("expected safe approval to remain pending in native plugin mode, got response: %#v", resp)
+	}
+
+	bridge.pendingMu.Lock()
+	_, stillStored := bridge.pendingCommands["approval-safe-native"]
+	bridge.pendingMu.Unlock()
+	if !stillStored {
+		t.Fatalf("expected pending command to stay stored for later human allow-always writeback")
+	}
+
+	cancel()
+}
+
+func TestBridgeNativePluginModeStillAutoResolvesDeny(t *testing.T) {
+	mg := newMockGateway(t)
+	defer mg.close()
+
+	tmpDir := t.TempDir()
+	policyPath := writeTestPolicy(t, tmpDir)
+	eng := newTestEngine(t, policyPath)
+	autoResolve := false
+
+	bridge := NewOpenClawBridge(eng, Config{
+		GatewayURL:                mg.url(),
+		GatewayToken:              "test-token",
+		ReconnectInterval:         100 * time.Millisecond,
+		AutoResolveAllowDecisions: &autoResolve,
+	})
+	defer bridge.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { bridge.Start(ctx) }() //nolint:errcheck
+
+	time.Sleep(500 * time.Millisecond)
+
+	mg.sendApprovalRequest("approval-danger-native", "rm -rf /", "openclaw")
+	time.Sleep(200 * time.Millisecond)
+
+	resp := mg.readResponse()
+	params, ok := resp["params"].(map[string]any)
+	require.True(t, ok, "expected params in response")
+	assert.Equal(t, "approval-danger-native", params["id"])
+	assert.Equal(t, "deny", params["decision"])
+
+	cancel()
+}
+
 func TestBridgeReconnect(t *testing.T) {
 	mg := newMockGateway(t)
 
@@ -360,6 +453,68 @@ func TestDiscoverGatewayConfigDefaultURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ws://127.0.0.1:18789/ws", url)
 	assert.Equal(t, "tok", token)
+}
+
+func TestReadGatewayConfigForBridgeDetectsNativePluginOwnership(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name string
+		ask  any
+	}{
+		{name: "explicit ask off", ask: "off"},
+		{name: "forced openclaw approvals", ask: "always"},
+		{name: "openclaw on miss approvals", ask: "on-miss"},
+		{name: "omitted ask defaults to off", ask: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(tmpDir, tt.name+".json")
+			config := map[string]any{
+				"gateway": map[string]any{
+					"auth": map[string]any{"token": "tok"},
+				},
+				"plugins": map[string]any{
+					"entries": map[string]any{
+						"rampart": map[string]any{"enabled": true},
+					},
+				},
+			}
+			if tt.ask != nil {
+				config["tools"] = map[string]any{
+					"exec": map[string]any{"ask": tt.ask},
+				}
+			}
+			data, err := json.Marshal(config)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+			_, _, autoResolve, err := ReadGatewayConfigForBridge(configPath)
+			require.NoError(t, err)
+			assert.False(t, autoResolve, "native plugin mode must not auto-consume OpenClaw approvals")
+		})
+	}
+}
+
+func TestReadGatewayConfigForBridgeKeepsLegacyBridgeAutoResolve(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "openclaw.json")
+
+	config := map[string]any{
+		"gateway": map[string]any{
+			"auth": map[string]any{"token": "tok"},
+		},
+		"tools": map[string]any{
+			"exec": map[string]any{"ask": "on-miss"},
+		},
+	}
+	data, err := json.Marshal(config)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	_, _, autoResolve, err := ReadGatewayConfigForBridge(configPath)
+	require.NoError(t, err)
+	assert.True(t, autoResolve, "legacy bridge-first mode should still auto-resolve Rampart-allowed approvals")
 }
 
 func TestDiscoverGatewayConfigMissingToken(t *testing.T) {
