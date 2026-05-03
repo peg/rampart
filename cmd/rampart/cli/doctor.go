@@ -1444,6 +1444,9 @@ func isReleaseVersion(version string) bool {
 		return false
 	}
 	version = strings.TrimPrefix(version, "v")
+	if isGoPseudoVersion(version) {
+		return false
+	}
 	version = strings.SplitN(version, "-", 2)[0]
 	version = strings.SplitN(version, "+", 2)[0]
 	parts := strings.Split(version, ".")
@@ -1458,6 +1461,35 @@ func isReleaseVersion(version string) bool {
 			if r < '0' || r > '9' {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func isGoPseudoVersion(version string) bool {
+	parts := strings.Split(version, "-")
+	if len(parts) < 3 {
+		return false
+	}
+	timestamp := parts[len(parts)-2]
+	if idx := strings.LastIndex(timestamp, "."); idx >= 0 {
+		timestamp = timestamp[idx+1:]
+	}
+	if len(timestamp) != len("20060102150405") {
+		return false
+	}
+	for _, r := range timestamp {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	commit := parts[len(parts)-1]
+	if len(commit) < 7 {
+		return false
+	}
+	for _, r := range commit {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
 		}
 	}
 	return true

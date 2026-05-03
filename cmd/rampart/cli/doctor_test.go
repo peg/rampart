@@ -578,6 +578,8 @@ func TestIsReleaseVersion(t *testing.T) {
 		{"v0.9.22", true},
 		{"0.9.22", true},
 		{"v0.9.22-rc.1", true},
+		{"v0.9.22-0.20260503052103-a72c3452fe38", false},
+		{"v1.0.0-rc.1.0.20260503052103-a72c3452fe38", false},
 		{"dev", false},
 		{"unknown", false},
 		{"v0.0.0-20260406041825-7384556ab7f6+dirty", false},
