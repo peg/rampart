@@ -91,7 +91,7 @@ Rampart automatically normalizes Windows paths for policy matching:
       message: "SSH key access blocked"
 ```
 
-`C:\Users\Trevor\.ssh\id_rsa` will match `**/.ssh/id_*` correctly.
+`C:\Users\dev\.ssh\id_rsa` will match `**/.ssh/id_*` correctly.
 
 ## Uninstall
 
