@@ -368,14 +368,14 @@ export function register(api) {
   // Register a gateway method so OpenClaw classifies this as a "hybrid-capability"
   // plugin rather than "hook-only". The rampart.status endpoint proxies Rampart
   // serve status through the OpenClaw gateway for dashboard integrations.
-  api.registerGatewayMethod("rampart.status", async () => {
+  api.registerGatewayMethod("rampart.status", async ({ respond }) => {
     try {
       const token = await loadToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const resp = await fetch(`${serveUrl}/v1/status`, { headers, signal: AbortSignal.timeout(3000) });
-      return resp.ok ? await resp.json() : { error: `serve returned ${resp.status}` };
+      respond(true, resp.ok ? await resp.json() : { error: `serve returned ${resp.status}` });
     } catch {
-      return { error: "rampart serve unreachable" };
+      respond(true, { error: "rampart serve unreachable" });
     }
   });
 
