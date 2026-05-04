@@ -617,6 +617,35 @@ func TestPluginVersionMatchesBuildVersion(t *testing.T) {
 	}
 }
 
+func TestIsNewerReleaseVersion(t *testing.T) {
+	tests := []struct {
+		current string
+		latest  string
+		want    bool
+	}{
+		{"v0.9.21", "v0.9.22", true},
+		{"v0.9.22", "v0.9.22", false},
+		{"0.9.22", "v0.9.22", false},
+		{"v0.9.23", "v0.9.22", false},
+		{"v1.0.0-rc.1", "v0.9.22", false},
+		{"1.0.0-rc.1", "v0.9.22", false},
+		{"v0.9.22", "v1.0.0-rc.1", true},
+		{"v1.0.0-rc.1", "v1.0.0-rc.2", true},
+		{"v1.0.0-rc.2", "v1.0.0-rc.1", false},
+		{"v1.0.0-rc.1", "v1.0.0", true},
+		{"v1.0.0", "v1.0.0-rc.1", false},
+		{"v1.0.0-rc.10", "v1.0.0-rc.2", false},
+		{"v1.0.0-alpha", "v1.0.0-beta", true},
+		{"v0.9.22-staging-47fa0cf", "v0.9.22", false},
+		{"v0.9.22-0.20260503052103-a72c3452fe38", "v0.9.22", false},
+	}
+	for _, tt := range tests {
+		if got := isNewerReleaseVersion(tt.current, tt.latest); got != tt.want {
+			t.Fatalf("isNewerReleaseVersion(%q, %q) = %v, want %v", tt.current, tt.latest, got, tt.want)
+		}
+	}
+}
+
 func TestOpenClawDiscordNativeApprovalsConfigured(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "openclaw")

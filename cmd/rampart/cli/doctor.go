@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1297,10 +1298,7 @@ func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {
 		return 0
 	}
 
-	latest := strings.TrimPrefix(release.TagName, "v")
-	currentClean := strings.TrimPrefix(current, "v")
-
-	if latest == currentClean {
+	if !isNewerReleaseVersion(current, release.TagName) {
 		return 0
 	}
 
@@ -1319,6 +1317,130 @@ func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {
 		fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n%s\n", current, release.TagName, hint)
 	}
 	return 0 // informational, not an issue
+}
+
+type releaseVersion struct {
+	major      int
+	minor      int
+	patch      int
+	prerelease []string
+}
+
+func isNewerReleaseVersion(current, latest string) bool {
+	cmp, ok := compareReleaseVersions(current, latest)
+	if !ok {
+		return false
+	}
+	return cmp < 0
+}
+
+func compareReleaseVersions(a, b string) (int, bool) {
+	av, okA := parseReleaseVersion(a)
+	bv, okB := parseReleaseVersion(b)
+	if !okA || !okB {
+		return 0, false
+	}
+	for _, pair := range [][2]int{{av.major, bv.major}, {av.minor, bv.minor}, {av.patch, bv.patch}} {
+		if pair[0] < pair[1] {
+			return -1, true
+		}
+		if pair[0] > pair[1] {
+			return 1, true
+		}
+	}
+	return comparePrerelease(av.prerelease, bv.prerelease), true
+}
+
+func parseReleaseVersion(v string) (releaseVersion, bool) {
+	var out releaseVersion
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if v == "" || v == "dev" || v == "unknown" || strings.Contains(v, "dirty") || strings.Contains(v, "staging") || strings.HasPrefix(v, "0.0.0-") || isGoPseudoVersion(v) {
+		return out, false
+	}
+	v = strings.SplitN(v, "+", 2)[0]
+	base, prerelease, hasPrerelease := strings.Cut(v, "-")
+	parts := strings.Split(base, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	parsed := []*int{&out.major, &out.minor, &out.patch}
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		*parsed[i] = n
+	}
+	if hasPrerelease {
+		if prerelease == "" {
+			return out, false
+		}
+		out.prerelease = strings.Split(prerelease, ".")
+		for _, id := range out.prerelease {
+			if id == "" {
+				return out, false
+			}
+		}
+	}
+	return out, true
+}
+
+func comparePrerelease(a, b []string) int {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	if len(a) == 0 {
+		return 1
+	}
+	if len(b) == 0 {
+		return -1
+	}
+	for i := 0; i < len(a) && i < len(b); i++ {
+		cmp := comparePrereleaseIdentifier(a[i], b[i])
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return 0
+}
+
+func comparePrereleaseIdentifier(a, b string) int {
+	ai, aNum := parseNumericPrereleaseIdentifier(a)
+	bi, bNum := parseNumericPrereleaseIdentifier(b)
+	switch {
+	case aNum && bNum:
+		if ai < bi {
+			return -1
+		}
+		if ai > bi {
+			return 1
+		}
+		return 0
+	case aNum:
+		return -1
+	case bNum:
+		return 1
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func parseNumericPrereleaseIdentifier(v string) (int, bool) {
+	if v == "" || (len(v) > 1 && v[0] == '0') {
+		return 0, false
+	}
+	n, err := strconv.Atoi(v)
+	return n, err == nil
 }
 
 // doctorProjectPolicy checks if the current git repo has a .rampart/policy.yaml project policy.

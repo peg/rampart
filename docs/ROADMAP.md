@@ -45,7 +45,7 @@ What's coming next for Rampart. Priorities shift based on feedback — [open an 
 
 ## Current Focus
 
-### `v1.0.0-rc.1`
+### `v1.0.0-rc.2`
 - Keep the integration support story boring and evidence-backed: hooks, plugins, preload/wrapper, MCP, and HTTP API should each say what is protected and what happens when policy evaluation is unavailable.
 - Treat OpenClaw `2026.5.2+` as the recommended RC baseline for native plugin approvals.
 - Keep `rampart doctor`, setup output, and docs aligned so users can answer "am I protected, how, and what breaks if serve is down?" without reading source.
