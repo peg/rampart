@@ -133,6 +133,77 @@ policies:
 	}
 }
 
+func TestEvaluate_DurableUserOverrideWinsBeforeAsk(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "standard.yaml"), []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: block-destructive
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm -rf *"]
+        message: "Destructive command blocked"
+      - action: ask
+        when:
+          command_matches: ["shred **"]
+        message: "Secure delete requires approval"
+  - name: user-allow-name-alone-is-not-durable
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["shred --version"]
+        message: "ordinary allow"
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "user-overrides.yaml"), []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: user-allow-shred-help
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["shred --help"]
+        message: "User allow (always) via openclaw-approval"
+  - name: user-allow-rm-root
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["rm -rf /"]
+        message: "User allow (always) via openclaw-approval"
+`), 0o644))
+
+	eng, err := New(NewDirStore(dir, nil), nil)
+	require.NoError(t, err)
+
+	got := eng.Evaluate(execCall("main", "shred --help"))
+	require.Equal(t, ActionAllow, got.Action)
+	assert.Equal(t, []string{"user-allow-shred-help"}, got.MatchedPolicies)
+	assert.Equal(t, "User allow (always) via openclaw-approval", got.Message)
+
+	stillAsk := eng.Evaluate(execCall("main", "shred --help | head -n 1"))
+	require.Equal(t, ActionAsk, stillAsk.Action)
+	assert.Contains(t, stillAsk.MatchedPolicies, "block-destructive")
+
+	nameAloneIsNotDurable := eng.Evaluate(execCall("main", "shred --version"))
+	require.Equal(t, ActionAsk, nameAloneIsNotDurable.Action)
+	assert.Contains(t, nameAloneIsNotDurable.MatchedPolicies, "user-allow-name-alone-is-not-durable")
+	assert.Contains(t, nameAloneIsNotDurable.MatchedPolicies, "block-destructive")
+
+	denyStillWins := eng.Evaluate(execCall("main", "rm -rf /"))
+	require.Equal(t, ActionDeny, denyStillWins.Action)
+	assert.Contains(t, denyStillWins.MatchedPolicies, "block-destructive")
+}
+
 func TestEvaluate_DefaultDeny(t *testing.T) {
 	e := setupEngine(t, `
 version: "1"

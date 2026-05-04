@@ -15,6 +15,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +73,66 @@ policies:
 	}
 	if !strings.Contains(output, "block-destructive") {
 		t.Errorf("expected policy name in output, got: %s", output)
+	}
+}
+
+func TestRunTestIncludesDurableUserOverrides(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	policyDir := filepath.Join(tmpHome, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "standard.yaml"), []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: block-destructive
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        message: Secure delete requires approval
+        when:
+          command_matches: ["shred **"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "user-overrides.yaml"), []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: user-allow-shred-help
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        message: User allow (always) via openclaw-approval
+        when:
+          command_matches: ["shred --help"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := &rootOptions{configPath: "rampart.yaml"}
+
+	runErr := runTest(&out, &errOut, opts, "shred --help", "exec", true, true)
+	if runErr != nil {
+		t.Fatalf("expected no error for durable override, got: %v", runErr)
+	}
+
+	var got bareCmdJSONResult
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("parse json output: %v\n%s", err, out.String())
+	}
+	if got.Action != "allow" {
+		t.Fatalf("expected durable override to make rampart test return allow, got %#v", got)
+	}
+	if len(got.MatchedPolicies) != 1 || got.MatchedPolicies[0] != "user-allow-shred-help" {
+		t.Fatalf("expected only durable override policy, got %#v", got.MatchedPolicies)
 	}
 }
 
