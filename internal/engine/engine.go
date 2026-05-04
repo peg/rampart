@@ -158,7 +158,7 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	var finalWebhookConfig *WebhookActionConfig
 
 	for _, p := range matching {
-		res := e.evaluatePolicy(p, call)
+		res := e.evaluateMatchingPolicy(p, call)
 		if !res.matched {
 			continue // no rule matched within this policy
 		}
@@ -262,6 +262,13 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		ConsumedRulePolicy: consumedPolicy,
 		ConsumedRuleIndex:  consumedRuleIdx,
 	}
+}
+
+func (e *Engine) evaluateMatchingPolicy(p Policy, call ToolCall) evaluatePolicyResult {
+	if isDurableAllowPolicy(p) {
+		return e.evaluateDurableAllowPolicy(p, call)
+	}
+	return e.evaluatePolicy(p, call)
 }
 
 func (e *Engine) evaluateDurableAllowOverride(matching []Policy, call ToolCall, start time.Time) (Decision, bool) {
