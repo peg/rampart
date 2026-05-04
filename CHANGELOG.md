@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-05-04
+
+### Fixed
+
+- **Doctor no longer suggests downgrading prerelease builds** — `rampart doctor` now uses SemVer-aware prerelease comparison for update hints, so `v1.0.0-rc.1`/`v1.0.0-rc.2` do not report stable `v0.9.22` as an available upgrade.
+
+### Changed
+
+- **OpenClaw plugin metadata now matches the RC.2 release** — The embedded plugin manifest, runtime export, and package metadata are versioned as `1.0.0-rc.2`.
+
 ## [1.0.0-rc.1] - 2026-05-03
 
 ### Added

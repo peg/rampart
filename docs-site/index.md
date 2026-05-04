@@ -205,8 +205,9 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v1.0.0-rc.1
+## What's New in v1.0.0-rc.2
 
+- **Prerelease update checks are sane** — `rampart doctor` no longer suggests downgrading from the 1.0 RC line to the older stable `v0.9.22` release.
 - **OpenClaw 2026.5.2 is the RC baseline** — Rampart now uses OpenClaw's first-class plugin approval path as the single human-approval owner, with Rampart handling policy, audit, and durable allow-always persistence. [Details →](integrations/openclaw.md)
 - **Degraded mode is explicit** — sensitive OpenClaw tools block when `rampart serve` is unavailable, while only configured lower-risk `failOpenTools` may proceed.
 - **Setup and doctor are release-candidate strict** — `rampart setup openclaw` installs the native plugin cleanly, repairs approval-hardening drift, and `rampart doctor` checks plugin state, serve reachability, approval timeout alignment, and version coherence.
