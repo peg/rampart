@@ -290,7 +290,8 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	store := engine.NewFileStore(policyPath)
+	includeHomePolicyDir := opts.configPath == "" || opts.configPath == "rampart.yaml"
+	store := newTestPolicyStore(policyPath, includeHomePolicyDir, nil)
 	eng, err := engine.New(store, nil)
 	if err != nil {
 		return fmt.Errorf("test: create engine: %w", err)
@@ -334,6 +335,19 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 		return exitCodeError{code: 1}
 	}
 	return nil
+}
+
+func newTestPolicyStore(policyPath string, includeHomePolicyDir bool, logger *slog.Logger) engine.PolicyStore {
+	if !includeHomePolicyDir {
+		return engine.NewFileStore(policyPath)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		policyDir := filepath.Join(home, ".rampart", "policies")
+		if _, statErr := os.Stat(policyDir); statErr == nil {
+			return engine.NewMultiStore(policyPath, policyDir, logger)
+		}
+	}
+	return engine.NewFileStore(policyPath)
 }
 
 func resolveTestPolicyPath(path string) (string, func(), error) {
