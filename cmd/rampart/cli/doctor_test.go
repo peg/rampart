@@ -321,6 +321,84 @@ func TestDoctorPolicies_CustomizedBuiltInIsReportedClearly(t *testing.T) {
 	}
 }
 
+func TestDoctorOpenClawPolicyLayeringWarnsOnStandardAllowUnmatched(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	requireNoErr(t, os.MkdirAll(policyDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "openclaw.yaml"), []byte(`version: "1"
+default_action: ask
+policies:
+  - name: openclaw-safe
+    match:
+      tool: [exec]
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo *"]
+`), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "standard.yaml"), []byte(`version: "1"
+default_action: deny
+policies:
+  - name: allow-unmatched
+    priority: 10000
+    rules:
+      - action: allow
+        when:
+          default: true
+        message: "No matching standard policy rule"
+`), 0o644))
+
+	var results []checkResult
+	warnings := doctorOpenClawPolicyLayering(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	})
+
+	if warnings != 1 {
+		t.Fatalf("expected one warning, got %d (%+v)", warnings, results)
+	}
+	if len(results) != 1 || results[0].Status != "warn" {
+		t.Fatalf("expected warn result, got %+v", results)
+	}
+	if !strings.Contains(results[0].Message, "allow-unmatched") {
+		t.Fatalf("expected allow-unmatched warning, got %q", results[0].Message)
+	}
+}
+
+func TestDoctorOpenClawPolicyLayeringSkipsStrictStandard(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	requireNoErr(t, os.MkdirAll(policyDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "openclaw.yaml"), []byte(`version: "1"
+default_action: ask
+policies:
+  - name: openclaw-safe
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo *"]
+`), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(policyDir, "standard.yaml"), []byte(`version: "1"
+default_action: deny
+policies:
+  - name: ask-unmatched
+    rules:
+      - action: ask
+        when:
+          default: true
+`), 0o644))
+
+	var results []checkResult
+	warnings := doctorOpenClawPolicyLayering(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	})
+
+	if warnings != 0 || len(results) != 0 {
+		t.Fatalf("expected no warning, got warnings=%d results=%+v", warnings, results)
+	}
+}
+
 // TestDoctorHooks_ClaudeBinaryNoDir verifies that doctorHooks flags a missing hook
 // when the claude binary is in PATH but ~/.claude/ has never been created.
 func TestDoctorHooks_ClaudeBinaryNoDir(t *testing.T) {
