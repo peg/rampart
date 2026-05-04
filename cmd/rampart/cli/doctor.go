@@ -203,6 +203,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 
 	// 4. Policy files
 	issues += doctorPolicies(emit)
+	if n := doctorOpenClawPolicyLayering(emit); n > 0 {
+		warnings += n
+	}
 
 	// 5. Hook binary path
 	issues += doctorHookBinary(emit)
@@ -578,6 +581,49 @@ func doctorPolicies(emit emitFn) int {
 		issues++
 	}
 	return issues
+}
+
+func doctorOpenClawPolicyLayering(emit emitFn) (warnings int) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	openclawPath := filepath.Join(policyDir, "openclaw.yaml")
+	standardPath := filepath.Join(policyDir, "standard.yaml")
+	openclawCfg, err := engine.NewFileStore(openclawPath).Load()
+	if err != nil || strings.ToLower(strings.TrimSpace(openclawCfg.DefaultAction)) != "ask" {
+		return 0
+	}
+	standardCfg, err := engine.NewFileStore(standardPath).Load()
+	if err != nil || !hasPermissiveAllowUnmatched(standardCfg) {
+		return 0
+	}
+	emit("OpenClaw policy layering", "warn",
+		"standard.yaml allow-unmatched can silently allow OpenClaw tool calls that openclaw.yaml intended to send to approval"+
+			hintSep+"remove standard.yaml for strict OpenClaw dogfood, or add explicit ask/deny rules for unmatched OpenClaw tools")
+	return 1
+}
+
+func hasPermissiveAllowUnmatched(cfg *engine.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, p := range cfg.Policies {
+		if p.Name != "allow-unmatched" || !p.IsEnabled() {
+			continue
+		}
+		for _, r := range p.Rules {
+			action, err := r.ParseAction()
+			if err != nil || action != engine.ActionAllow || r.IsExpired() {
+				continue
+			}
+			if r.When.Default || r.When.IsEmpty() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // doctorServer checks if rampart serve is running on defaultServePort.
