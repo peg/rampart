@@ -193,6 +193,7 @@ policies:
 	stillAsk := eng.Evaluate(execCall("main", "shred --help | head -n 1"))
 	require.Equal(t, ActionAsk, stillAsk.Action)
 	assert.Contains(t, stillAsk.MatchedPolicies, "block-destructive")
+	assert.NotContains(t, stillAsk.MatchedPolicies, "user-allow-shred-help")
 
 	nameAloneIsNotDurable := eng.Evaluate(execCall("main", "shred --version"))
 	require.Equal(t, ActionAsk, nameAloneIsNotDurable.Action)
