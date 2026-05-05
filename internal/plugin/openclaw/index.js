@@ -214,6 +214,12 @@ export const name = "Rampart";
 export const description = "AI agent firewall — YAML policy-as-code for every tool call";
 export const version = "1.0.0-rc.2";
 
+// OpenClaw runs higher-priority before_tool_call hooks first. Rampart should
+// act as the final normal plugin gate so it evaluates the params that will
+// actually execute, rather than letting another plugin mutate them after the
+// policy check.
+const RAMPART_TOOL_HOOK_PRIORITY = -1000;
+
 export function register(api) {
   const pluginConfig = api.pluginConfig ?? {};
 
@@ -367,12 +373,11 @@ export function register(api) {
         }
         return; // void = allow as-is
     }
-  });
+  }, { priority: RAMPART_TOOL_HOOK_PRIORITY });
 
   // ── after_tool_call (audit trail) ──────────────────────────────────────────
-  // Register a gateway method so OpenClaw classifies this as a "hybrid-capability"
-  // plugin rather than "hook-only". The rampart.status endpoint proxies Rampart
-  // serve status through the OpenClaw gateway for dashboard integrations.
+  // Expose a small status endpoint for dashboard integrations. Tool enforcement
+  // still lives entirely in the typed before_tool_call / after_tool_call hooks.
   api.registerGatewayMethod("rampart.status", async ({ respond }) => {
     try {
       const token = await loadToken();
