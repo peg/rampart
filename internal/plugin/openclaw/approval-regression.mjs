@@ -2,9 +2,11 @@ import plugin from './index.js';
 
 function createApi() {
   const handlers = {};
+  const hookOpts = {};
   const logs = [];
   return {
     handlers,
+    hookOpts,
     logs,
     api: {
       pluginConfig: {},
@@ -13,7 +15,7 @@ function createApi() {
         warn: (...a) => logs.push(['warn', a.join(' ')]),
         debug: (...a) => logs.push(['debug', a.join(' ')]),
       },
-      on: (name, fn) => { handlers[name] = fn; },
+      on: (name, fn, opts) => { handlers[name] = fn; hookOpts[name] = opts; },
       registerGatewayMethod: () => {},
     },
   };
@@ -24,7 +26,7 @@ function assert(condition, message) {
 }
 
 async function runScenario({ name, toolResult, toolName = 'exec', params = { command: 'sudo true' }, resolution }) {
-  const { api, handlers } = createApi();
+  const { api, handlers, hookOpts } = createApi();
   const fetchCalls = [];
   const originalFetch = global.fetch;
   global.fetch = async (url, opts = {}) => {
@@ -51,7 +53,7 @@ async function runScenario({ name, toolResult, toolName = 'exec', params = { com
     if (resolution && result?.requireApproval?.onResolution) {
       await result.requireApproval.onResolution(resolution);
     }
-    return { name, result, fetchCalls };
+    return { name, result, fetchCalls, hookOpts };
   } finally {
     global.fetch = originalFetch;
   }
@@ -64,6 +66,7 @@ const ask = await runScenario({
 assert(ask.result?.requireApproval, 'ask-exec: requireApproval missing');
 assert(!ask.result?.params?.ask, 'ask-exec: legacy ask param mutation still present');
 assert(ask.result.requireApproval.title.includes('exec approval required'), 'ask-exec: wrong title');
+assert(ask.hookOpts.before_tool_call?.priority < 0, 'ask-exec: Rampart should run as a late before_tool_call hook');
 
 const deny = await runScenario({
   name: 'deny-exec',
