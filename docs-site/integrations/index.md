@@ -58,12 +58,10 @@ start: "Your agent" {shape: oval}
 
 q: "Integration method?" {shape: diamond}
 
-hooks: "rampart setup claude-code
-rampart setup cline" {
+hooks: "rampart setup claude-code\\nrampart setup cline" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
-shim: "rampart setup openclaw
-native plugin on current builds" {
+shim: "rampart setup openclaw\\nnative plugin on current builds" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 mcp: "rampart mcp --" {
@@ -75,25 +73,18 @@ wrap: "rampart wrap --" {
 preload: "rampart preload --" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
-api: "HTTP API / SDK
-localhost:9090" {
+api: "HTTP API / SDK\\nlocalhost:9090" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 
 start -> q
 
-q -> hooks: "Claude Code or Cline
-(native hooks, lowest overhead)"
-q -> shim: "OpenClaw
-(native plugin on supported builds)"
-q -> mcp: "Cursor, Claude Desktop
-or any MCP-compatible client"
-q -> wrap: "Any CLI agent
-with \$SHELL support"
-q -> preload: "Any CLI agent
-without \$SHELL or native hooks"
-q -> api: "Custom / Python agent
-or CI pipeline"
+q -> hooks: "Claude Code or Cline\\n(native hooks, lowest overhead)"
+q -> shim: "OpenClaw\\n(native plugin on supported builds)"
+q -> mcp: "Cursor, Claude Desktop\\nor any MCP-compatible client"
+q -> wrap: "Any CLI agent\\nwith \$SHELL support"
+q -> preload: "Any CLI agent\\nwithout \$SHELL or native hooks"
+q -> api: "Custom / Python agent\\nor CI pipeline"
 ```
 
 !!! tip "Start with the simplest method"

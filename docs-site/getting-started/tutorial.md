@@ -38,7 +38,7 @@ Let's set it up.
 === "Homebrew"
 
     ```bash
-    brew tap peg/rampart && brew install rampart
+    brew install peg/tap/rampart
     ```
 
 Verify:

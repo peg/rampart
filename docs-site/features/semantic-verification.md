@@ -129,8 +129,7 @@ policies:
 direction: right
 
 agent: "AI Agent" {shape: oval}
-rampart: "Rampart
-Policy Engine" {
+rampart: "Rampart\\nPolicy Engine" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 8
 }
 
@@ -146,10 +145,8 @@ verify: {
   style.stroke-dash: 4
   style.border-radius: 8
 
-  redact: "Redact secrets
-from command" {style.border-radius: 6}
-  llm: "LLM
-(gpt-4o-mini / Haiku / Ollama)" {style.border-radius: 6}
+  redact: "Redact secrets\\nfrom command" {style.border-radius: 6}
+  llm: "LLM\\n(gpt-4o-mini / Haiku / Ollama)" {style.border-radius: 6}
 
   redact -> llm: "sanitized command"
 }

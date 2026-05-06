@@ -43,8 +43,7 @@ In your agent's MCP config (Claude Desktop, Cursor, etc.):
 ```d2
 direction: right
 
-client: "MCP Client
-(Claude Desktop, Cursor…)" {shape: oval}
+client: "MCP Client\\n(Claude Desktop, Cursor…)" {shape: oval}
 rampart: "rampart mcp" {style.border-radius: 8}
 engine: "Policy Engine" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 8
@@ -128,7 +127,7 @@ rampart mcp -- npx -y @modelcontextprotocol/server-postgres postgres://localhost
 ### 1. Install Rampart
 
 ```bash
-brew tap peg/rampart && brew install rampart
+brew install peg/tap/rampart
 ```
 
 ### 2. Create a Policy

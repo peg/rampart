@@ -33,15 +33,58 @@ jobs:
           images: ghcr.io/peg/rampart
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - name: Compute build metadata
+        id: build
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build.outputs.version }}
+            COMMIT=${{ steps.build.outputs.commit }}
+            DATE=${{ steps.build.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test Docker image
+        env:
+          IMAGE: ghcr.io/peg/rampart:${{ steps.build.outputs.version }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          docker run --rm "$IMAGE" version | tee /tmp/rampart-docker-version.txt
+          grep -F "rampart ${VERSION}" /tmp/rampart-docker-version.txt
+
+          cid="$(docker run -d -p 19090:9090 "$IMAGE")"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:19090/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs "$cid"
+          exit 1
+
+      - name: Verify multi-arch manifest
+        env:
+          IMAGE: ghcr.io/peg/rampart:${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE" | tee /tmp/rampart-docker-manifest.txt
+          grep -F 'linux/amd64' /tmp/rampart-docker-manifest.txt
+          grep -F 'linux/arm64' /tmp/rampart-docker-manifest.txt

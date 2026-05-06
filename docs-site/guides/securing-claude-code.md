@@ -22,7 +22,7 @@ The goal is not to disable Claude Code automation. The goal is to add guardrails
 1. Install Rampart.
 
 ```bash
-brew tap peg/rampart && brew install rampart
+brew install peg/tap/rampart
 ```
 
 2. Wire Rampart into Claude Code.

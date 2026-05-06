@@ -78,7 +78,7 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
 ```bash
 # Install
-brew tap peg/rampart && brew install rampart
+brew install peg/tap/rampart
 
 # Claude Code
 rampart setup claude-code
@@ -131,19 +131,19 @@ intercept: {
   mcp: "MCP Proxy"
 }
 
-engine: "YAML Policy Engine\n<10μs" {
+engine: "YAML Policy Engine\\n<10μs" {
   style.fill: "#1d3320"
   style.stroke: "#2ea043"
   style.font-color: "#3fb950"
   style.border-radius: 8
 }
 
-verify: "rampart-verify\n(optional sidecar)" {
+verify: "rampart-verify\\n(optional sidecar)" {
   style.stroke-dash: 4
   style.border-radius: 8
 }
 
-audit: "Audit Trail\nhash-chained" {
+audit: "Audit Trail\\nhash-chained" {
   style.border-radius: 8
 }
 
@@ -205,13 +205,13 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v1.0.0-rc.2
+## What's New in v1.0
 
-- **Prerelease update checks are sane** — `rampart doctor` no longer suggests downgrading from the 1.0 RC line to the older stable `v0.9.22` release.
-- **OpenClaw 2026.5.2 is the RC baseline** — Rampart now uses OpenClaw's first-class plugin approval path as the single human-approval owner, with Rampart handling policy, audit, and durable allow-always persistence. [Details →](integrations/openclaw.md)
+- **Update checks are sane** — `rampart doctor` understands the 1.0 release line and no longer suggests downgrading release candidates to the older stable `v0.9.22` release.
+- **OpenClaw 2026.5.4 verified for launch** — Rampart uses OpenClaw's first-class plugin approval path as the single human-approval owner, with Rampart handling policy, audit, and durable allow-always persistence. [Details →](integrations/openclaw.md)
 - **Degraded mode is explicit** — sensitive OpenClaw tools block when `rampart serve` is unavailable, while only configured lower-risk `failOpenTools` may proceed.
-- **Setup and doctor are release-candidate strict** — `rampart setup openclaw` installs the native plugin cleanly, repairs approval-hardening drift, and `rampart doctor` checks plugin state, serve reachability, approval timeout alignment, and version coherence.
-- **Matching and bypass regressions are tighter** — shell-wrapper normalization, URL/domain handling, path matching, and OpenClaw plugin approval/degraded-mode tests now cover the hard edges found during the RC pass.
+- **Setup and doctor are launch-strict** — `rampart setup openclaw` installs the native plugin cleanly, repairs approval-hardening drift, and `rampart doctor` checks plugin state, serve reachability, approval timeout alignment, and version coherence.
+- **Matching and bypass regressions are tighter** — shell-wrapper normalization, URL/domain handling, path matching, and OpenClaw plugin approval/degraded-mode tests now cover the hard edges found during the 1.0 RC pass.
 
 ### v0.9.22
 

@@ -32,7 +32,7 @@ Before you dive in, skim the [integration support matrix](support-matrix.md) if 
 === "Homebrew"
 
     ```bash
-    brew tap peg/rampart && brew install rampart
+    brew install peg/tap/rampart
     ```
 
 ## One-Command Setup
