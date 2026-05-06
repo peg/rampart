@@ -1635,23 +1635,15 @@ func normalizedReleaseVersion(version string) (string, bool) {
 	if strings.Contains(version, "-g") {
 		return "", false
 	}
-	base := strings.SplitN(version, "+", 2)[0]
-	version = strings.SplitN(base, "-", 2)[0]
-	parts := strings.Split(version, ".")
-	if len(parts) != 3 {
+	parsed, ok := parseReleaseVersion(version)
+	if !ok {
 		return "", false
 	}
-	for _, part := range parts {
-		if part == "" {
-			return "", false
-		}
-		for _, r := range part {
-			if r < '0' || r > '9' {
-				return "", false
-			}
-		}
+	normalized := fmt.Sprintf("%d.%d.%d", parsed.major, parsed.minor, parsed.patch)
+	if len(parsed.prerelease) > 0 {
+		normalized += "-" + strings.Join(parsed.prerelease, ".")
 	}
-	return version, true
+	return normalized, true
 }
 
 func isGoPseudoVersion(version string) bool {
