@@ -40,6 +40,17 @@ jobs:
       - name: Build
         run: go build -v ./cmd/rampart
 
+      - name: Installer scripts are synced
+        if: runner.os == 'Linux'
+        run: |
+          cmp -s install.sh docs/install
+          cmp -s install.sh docs/install.sh
+          cmp -s install.sh scripts/install.sh
+          sh -n install.sh
+          sh -n docs/install
+          sh -n docs/install.sh
+          sh -n scripts/install.sh
+
       - name: OpenClaw plugin regression tests
         if: runner.os != 'Windows'
         run: |

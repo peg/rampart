@@ -29,19 +29,19 @@ intercept: {
   mcp: "MCP Proxy"
 }
 
-engine: "YAML Policy Engine\n<10μs" {
+engine: "YAML Policy Engine\\n<10μs" {
   style.fill: "#1d3320"
   style.stroke: "#2ea043"
   style.font-color: "#3fb950"
   style.border-radius: 8
 }
 
-verify: "rampart-verify\n(optional sidecar)" {
+verify: "rampart-verify\\n(optional sidecar)" {
   style.stroke-dash: 4
   style.border-radius: 8
 }
 
-audit: "Audit Trail\nhash-chained" {
+audit: "Audit Trail\\nhash-chained" {
   style.border-radius: 8
 }
 

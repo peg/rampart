@@ -165,7 +165,7 @@ rampart test --tool read "/etc/shadow"
 
 ```bash
 openclaw plugins list
-# Should show: rampart  v0.9.12  ✓ active
+# Should show: rampart  1.0.0  ✓ active
 
 rampart doctor
 # Should show: ✓ OpenClaw plugin: installed (before_tool_call hook active)

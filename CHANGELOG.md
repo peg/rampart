@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker images now boot and report release metadata** — The Dockerfile uses the current `serve --addr/--port` flags, injects version/commit/date ldflags, aligns its Go toolchain with the release workflow, and sets a writable runtime home for the nonroot distroless container.
+- **Installer surfaces are canonical again** — `install.sh`, `docs/install`, `docs/install.sh`, and `scripts/install.sh` are byte-for-byte synced, with CI checks to prevent future drift.
+
+### Changed
+
+- **1.0 launch metadata is aligned** — The embedded OpenClaw plugin manifest, runtime export, package metadata, landing structured data, docs homepage, support matrix, and roadmap now use final `1.0.0` launch language instead of stale RC labels.
+- **Release docs point at the live package channels** — Homebrew examples use `peg/tap/rampart`, binary download docs describe the actual archive formats, and Docker docs describe stable/minor/prerelease tags accurately.
+
 ## [1.0.0-rc.2] - 2026-05-04
 
 ### Fixed

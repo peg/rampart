@@ -1,151 +1,263 @@
 #!/bin/sh
-# Rampart installer
-# Usage: curl -fsSL https://rampart.sh/install | bash
-#        curl -fsSL https://rampart.sh/install | RAMPART_VERSION=v0.3.0 bash
+# Rampart install script.
 #
-# Env vars:
-#   RAMPART_VERSION          — pin a version (default: latest)
-#   RAMPART_INSTALL_DIR      — install directory (default: ~/.local/bin)
-#   RAMPART_INSTALL_DRY_RUN  — set to 1 to print actions without running them
+# Canonical source for the website and legacy installer copies. Keep
+# docs/install, docs/install.sh, and scripts/install.sh byte-for-byte synced
+# with this file.
+# Usage: curl -fsSL https://rampart.sh/install | sh
+#        curl -fsSL https://rampart.sh/install | sh -s -- --version v0.1.0
+#        curl -fsSL https://rampart.sh/install | sh -s -- --auto-setup
+#        RAMPART_INSTALL_DRY_RUN=1 sh install.sh --version v1.0.0
+#        RAMPART_VERSION=v1.0.0 RAMPART_INSTALL_DIR=$HOME/.local/bin sh install.sh
 set -e
 
 REPO="peg/rampart"
-INSTALL_DIR="${RAMPART_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${RAMPART_INSTALL_DIR:-}"
+BINARY="rampart"
 VERSION="${RAMPART_VERSION:-}"
+AUTO_SETUP="${RAMPART_AUTO_SETUP:-0}"
 DRY_RUN="${RAMPART_INSTALL_DRY_RUN:-0}"
 
-# ── Colors ────────────────────────────────────────────────────────────────────
+# Colors (if terminal supports them).
 if [ -t 1 ]; then
-    BOLD="\033[1m"; GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
+    BOLD="\033[1m"
+    GREEN="\033[32m"
+    RED="\033[31m"
+    YELLOW="\033[33m"
+    RESET="\033[0m"
 else
-    BOLD=""; GREEN=""; YELLOW=""; RED=""; RESET=""
+    BOLD="" GREEN="" RED="" YELLOW="" RESET=""
 fi
 
 info()  { printf "${GREEN}▸${RESET} %s\n" "$1"; }
-warn()  { printf "${YELLOW}▸${RESET} %s\n" "$1" >&2; }
+warn()  { printf "${YELLOW}▸${RESET} %s\n" "$1"; }
 error() { printf "${RED}✗${RESET} %s\n" "$1" >&2; exit 1; }
-step()  { printf "\n${BOLD}%s${RESET}\n" "$1"; }
-dry()   { printf "${YELLOW}[dry-run]${RESET} %s\n" "$1"; }
 
-# ── Downloader ─────────────────────────────────────────────────────────────────
-fetch() {  # fetch <url> [dest]
-    URL="$1"; DEST="$2"
+fetch() { # fetch <url> [dest]
+    URL="$1"
+    DEST="${2:-}"
     if command -v curl >/dev/null 2>&1; then
-        if [ -n "$DEST" ]; then curl -fsSL -o "$DEST" "$URL"
-        else curl -fsSL "$URL"; fi
+        if [ -n "$DEST" ]; then
+            curl -fsSL -o "$DEST" "$URL"
+        else
+            curl -fsSL "$URL"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        if [ -n "$DEST" ]; then wget -qO "$DEST" "$URL"
-        else wget -qO- "$URL"; fi
+        if [ -n "$DEST" ]; then
+            wget -qO "$DEST" "$URL"
+        else
+            wget -qO- "$URL"
+        fi
     else
         error "Neither curl nor wget found. Install one and retry."
     fi
 }
 
-# ── OS / Arch ──────────────────────────────────────────────────────────────────
+# Parse args.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version) VERSION="$2"; shift 2 ;;
+        --version=*) VERSION="${1#--version=}"; shift ;;
+        --auto-setup) AUTO_SETUP=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        *) error "Unknown option: $1" ;;
+    esac
+done
+
+# Detect OS.
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$OS" in
-    linux)  OS="linux"  ;;
+    linux)  OS="linux" ;;
     darwin) OS="darwin" ;;
-    *)      error "Unsupported OS: $(uname -s). Only linux and darwin are supported." ;;
+    *)      error "Unsupported OS: $OS (need linux or darwin)" ;;
 esac
 
+# Detect architecture.
 ARCH="$(uname -m)"
 case "$ARCH" in
-    x86_64|amd64)  ARCH="amd64" ;;
-    aarch64|arm64) ARCH="arm64" ;;
-    *)             error "Unsupported architecture: $(uname -m). Only amd64 and arm64 are supported." ;;
+    x86_64|amd64)   ARCH="amd64" ;;
+    aarch64|arm64)   ARCH="arm64" ;;
+    *)               error "Unsupported architecture: $ARCH (need amd64 or arm64)" ;;
 esac
 
-info "Platform: ${BOLD}${OS}/${ARCH}${RESET}"
+info "Detected ${BOLD}${OS}/${ARCH}${RESET}"
 
-# ── Resolve version ────────────────────────────────────────────────────────────
+# Determine version.
 if [ -z "$VERSION" ]; then
-    info "Fetching latest release..."
-    VERSION="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
-        | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
-    [ -n "$VERSION" ] || error "Could not determine latest version. Set RAMPART_VERSION=vX.Y.Z and retry."
+    info "Fetching latest version..."
+    VERSION=$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
+        | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    if [ -z "$VERSION" ]; then
+        error "Could not determine latest version. Try: --version v0.1.0"
+    fi
 fi
 
-# Normalise: ensure leading 'v'
+# Normalise version: release tags include a leading "v".
 case "$VERSION" in
     v*) ;;
     *)  VERSION="v${VERSION}" ;;
 esac
 
-info "Version:  ${BOLD}${VERSION}${RESET}"
+info "Installing ${BOLD}rampart ${VERSION}${RESET}"
 
-# ── Build URLs ─────────────────────────────────────────────────────────────────
-TARBALL="rampart_${VERSION#v}_${OS}_${ARCH}.tar.gz"
+if [ -z "$INSTALL_DIR" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+        INSTALL_DIR="/usr/local/bin"
+    elif [ -d "$HOME/.local/bin" ]; then
+        INSTALL_DIR="$HOME/.local/bin"
+    elif [ "$DRY_RUN" = "1" ]; then
+        INSTALL_DIR="$HOME/.local/bin"
+    elif mkdir -p "$HOME/.local/bin" 2>/dev/null; then
+        INSTALL_DIR="$HOME/.local/bin"
+    else
+        INSTALL_DIR="/usr/local/bin"
+    fi
+fi
+
+# Build download URLs.
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+TARBALL="rampart_${VERSION#v}_${OS}_${ARCH}.tar.gz"
 TARBALL_URL="${BASE_URL}/${TARBALL}"
 CHECKSUM_URL="${BASE_URL}/checksums.txt"
 
 if [ "$DRY_RUN" = "1" ]; then
-    step "Dry-run — no changes will be made"
-    dry "Would download: ${TARBALL_URL}"
-    dry "Would install:  ${INSTALL_DIR}/rampart"
-    dry "Would run:      rampart quickstart"
-    if ! echo ":${PATH}:" | grep -q ":${INSTALL_DIR}:"; then
-        dry "Would hint to add ${INSTALL_DIR} to PATH"
-    fi
+    info "Dry-run — no changes will be made"
+    info "Would download: ${TARBALL_URL}"
+    info "Would verify:  ${CHECKSUM_URL}"
+    info "Would install: ${INSTALL_DIR}/${BINARY}"
     exit 0
 fi
 
-# ── Download & extract ─────────────────────────────────────────────────────────
-step "Downloading rampart ${VERSION}..."
-
+# Create temp directory.
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-fetch "$TARBALL_URL" "${TMP_DIR}/${TARBALL}" \
-    || error "Download failed.\nURL: ${TARBALL_URL}\nCheck that ${VERSION} exists: https://github.com/${REPO}/releases"
+# Download archive.
+info "Downloading archive..."
+if ! fetch "$TARBALL_URL" "${TMP_DIR}/${TARBALL}"; then
+    error "Download failed. Check that ${VERSION} exists at:\n  ${TARBALL_URL}"
+fi
 
-# Optional checksum verification
+# Download and verify checksum.
+info "Verifying checksum..."
 if fetch "$CHECKSUM_URL" "${TMP_DIR}/checksums.txt" 2>/dev/null; then
+    EXPECTED=$(grep "${TARBALL}" "${TMP_DIR}/checksums.txt" | awk '{print $1}')
     if command -v sha256sum >/dev/null 2>&1; then
-        HASH_CMD="sha256sum"
+        ACTUAL=$(sha256sum "${TMP_DIR}/${TARBALL}" | awk '{print $1}')
     elif command -v shasum >/dev/null 2>&1; then
-        HASH_CMD="shasum -a 256"
+        ACTUAL=$(shasum -a 256 "${TMP_DIR}/${TARBALL}" | awk '{print $1}')
     else
-        HASH_CMD=""
+        warn "No sha256sum or shasum found — skipping verification"
+        ACTUAL="$EXPECTED"
     fi
-    if [ -n "$HASH_CMD" ]; then
-        EXPECTED="$(grep "${TARBALL}" "${TMP_DIR}/checksums.txt" | awk '{print $1}')"
-        ACTUAL="$($HASH_CMD "${TMP_DIR}/${TARBALL}" | awk '{print $1}')"
-        if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-            error "Checksum mismatch!\n  Expected: ${EXPECTED}\n  Got:      ${ACTUAL}"
-        fi
+
+    if [ -z "$EXPECTED" ]; then
+        warn "No checksum entry found for ${TARBALL} — skipping verification"
+    elif [ "$EXPECTED" != "$ACTUAL" ]; then
+        error "Checksum mismatch!\n  Expected: ${EXPECTED}\n  Got:      ${ACTUAL}"
+    else
         info "Checksum verified ✓"
     fi
+else
+    warn "No checksums.txt found — skipping verification"
 fi
 
 tar -xzf "${TMP_DIR}/${TARBALL}" -C "$TMP_DIR"
 
-# ── Install ────────────────────────────────────────────────────────────────────
-step "Installing to ${INSTALL_DIR}..."
-
-mkdir -p "$INSTALL_DIR"
-mv "${TMP_DIR}/rampart" "${INSTALL_DIR}/rampart"
-chmod +x "${INSTALL_DIR}/rampart"
-
-info "Installed: ${BOLD}${INSTALL_DIR}/rampart${RESET}"
-
-# PATH hint
-if ! echo ":${PATH}:" | grep -q ":${INSTALL_DIR}:"; then
-    warn "${INSTALL_DIR} is not in your PATH."
-    warn "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-    printf "    ${BOLD}export PATH=\"\$HOME/.local/bin:\$PATH\"${RESET}\n" >&2
-    export PATH="${INSTALL_DIR}:${PATH}"
+if [ ! -f "${TMP_DIR}/${BINARY}" ]; then
+    error "Archive did not contain ${BINARY}"
 fi
 
-# ── Quickstart ─────────────────────────────────────────────────────────────────
-step "Running quickstart..."
+# Install.
+chmod +x "${TMP_DIR}/${BINARY}"
 
-if [ -t 0 ] && [ -t 1 ]; then
-    rampart quickstart
+if [ ! -d "$INSTALL_DIR" ]; then
+    if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+        info "Need sudo to create ${INSTALL_DIR}"
+        sudo mkdir -p "$INSTALL_DIR"
+    fi
+fi
+
+if [ -w "$INSTALL_DIR" ]; then
+    mv "${TMP_DIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
 else
-    rampart quickstart --env none 2>/dev/null || true
+    info "Need sudo to install to ${INSTALL_DIR}"
+    sudo mv "${TMP_DIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
 fi
 
-printf "\n${GREEN}${BOLD}Done!${RESET} rampart ${VERSION} is installed.\n"
-printf "Docs: ${BOLD}https://docs.rampart.sh${RESET}\n\n"
+info "Installed to ${BOLD}${INSTALL_DIR}/${BINARY}${RESET}"
+
+# Verify.
+RAMPART_BIN="${INSTALL_DIR}/${BINARY}"
+if [ -x "$RAMPART_BIN" ]; then
+    printf "\n"
+    "$RAMPART_BIN" version 2>/dev/null || true
+
+    if echo ":${PATH}:" | grep -q ":${INSTALL_DIR}:"; then
+        printf "\n${GREEN}${BOLD}Ready!${RESET} Run ${BOLD}rampart quickstart${RESET} to get started.\n"
+    else
+        printf "\n${YELLOW}Note:${RESET} ${INSTALL_DIR} may not be in your PATH.\n"
+        printf "Add it: ${BOLD}export PATH=\"${INSTALL_DIR}:\$PATH\"${RESET}\n"
+        printf "Then run: ${BOLD}rampart quickstart${RESET}\n"
+    fi
+else
+    warn "Could not verify installed binary at ${INSTALL_DIR}/${BINARY}"
+fi
+
+# Detect AI agents and suggest setup commands.
+detect_agents_and_suggest() {
+    printf "\n"
+
+    # Detect OpenClaw
+    OPENCLAW_FOUND=0
+    if command -v openclaw >/dev/null 2>&1; then
+        OPENCLAW_FOUND=1
+    elif [ -f "$HOME/.local/bin/openclaw" ] || [ -f "/usr/local/bin/openclaw" ] || [ -f "/usr/bin/openclaw" ]; then
+        OPENCLAW_FOUND=1
+    fi
+
+    # Detect Claude Code (claude CLI)
+    CLAUDE_FOUND=0
+    if command -v claude >/dev/null 2>&1; then
+        CLAUDE_FOUND=1
+    elif [ -f "$HOME/.claude/settings.json" ]; then
+        CLAUDE_FOUND=1
+    fi
+
+    if [ "$OPENCLAW_FOUND" -eq 1 ] || [ "$CLAUDE_FOUND" -eq 1 ]; then
+        printf "${GREEN}${BOLD}✓ AI agent(s) detected!${RESET}\n\n"
+    fi
+
+    if [ "$OPENCLAW_FOUND" -eq 1 ]; then
+        if [ "$AUTO_SETUP" = "1" ]; then
+            printf "${GREEN}▸${RESET} Auto-setup: protecting OpenClaw...\n"
+            "$RAMPART_BIN" setup openclaw 2>&1 || printf "${YELLOW}  ↳ Auto-setup failed — run manually: rampart setup openclaw${RESET}\n"
+        else
+            printf "  Run this to protect your OpenClaw agent:\n"
+            printf "    ${BOLD}rampart setup openclaw${RESET}\n"
+            printf "\n"
+        fi
+    fi
+
+    if [ "$CLAUDE_FOUND" -eq 1 ]; then
+        if [ "$AUTO_SETUP" = "1" ]; then
+            printf "${GREEN}▸${RESET} Auto-setup: protecting Claude Code...\n"
+            "$RAMPART_BIN" setup claude-code 2>&1 || printf "${YELLOW}  ↳ Auto-setup failed — run manually: rampart setup claude-code${RESET}\n"
+        else
+            printf "  Run this to protect Claude Code:\n"
+            printf "    ${BOLD}rampart setup claude-code${RESET}\n"
+            printf "\n"
+        fi
+    fi
+
+    if [ "$OPENCLAW_FOUND" -eq 0 ] && [ "$CLAUDE_FOUND" -eq 0 ]; then
+        printf "  To protect an AI agent, run:\n"
+        printf "    ${BOLD}rampart setup openclaw${RESET}      — for OpenClaw\n"
+        printf "    ${BOLD}rampart setup claude-code${RESET}   — for Claude Code\n"
+        printf "\n"
+    fi
+}
+
+if [ -x "$RAMPART_BIN" ]; then
+    detect_agents_and_suggest
+fi
