@@ -11,7 +11,7 @@
     "security",
     "plugin"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "openclaw": {
     "extensions": [
       "./index.js"
