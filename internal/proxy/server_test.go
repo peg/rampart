@@ -136,7 +136,11 @@ func setupTestServerWithHome(t *testing.T, configYAML, mode, homeDir string) (*S
 	policyPath := filepath.Join(dir, "policy.yaml")
 	require.NoError(t, os.WriteFile(policyPath, []byte(configYAML), 0o644))
 
-	store := engine.NewFileStore(policyPath)
+	store := engine.PolicyStore(engine.NewFileStore(policyPath))
+	policyDir := filepath.Join(homeDir, ".rampart", "policies")
+	if _, err := os.Stat(policyDir); err == nil {
+		store = engine.NewMultiStore(policyPath, policyDir, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	}
 	eng, err := engine.New(store, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
 	require.NoError(t, err)
 
@@ -676,7 +680,7 @@ policies:
 	_, hasApprovalID := got["approval_id"]
 	assert.False(t, hasApprovalID, "trusted OpenClaw-hosted evaluation should not create Rampart approval_id")
 	assert.Len(t, srv.approvals.List(), 0, "trusted OpenClaw-hosted evaluation should not enqueue Rampart approvals")
-	require.GreaterOrEqual(t, srv.sink.(*mockSink).count(), 1, "trusted OpenClaw-hosted evaluation should still write an audit event")
+	require.Equal(t, 1, srv.sink.(*mockSink).count(), "trusted OpenClaw-hosted evaluation should write one audit event")
 	ev := srv.sink.(*mockSink).lastEvent()
 	assert.Equal(t, "ask", ev.Decision.Action)
 	assert.Equal(t, "exec", ev.Tool)
@@ -760,7 +764,7 @@ policies:
         message: "needs approval"
 `
 
-	srv, token, _ := setupTestServerWithHome(t, configYAML, "enforce", tmpHome)
+	srv, token, sink := setupTestServerWithHome(t, configYAML, "enforce", tmpHome)
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
@@ -778,8 +782,10 @@ policies:
 	var got map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
 	assert.Equal(t, "allow", got["decision"])
-	assert.Equal(t, "user-overrides", got["policy"])
+	assert.Equal(t, "user-allow-local-api", got["policy"])
 	assert.Len(t, srv.approvals.List(), 0, "durable user overrides should bypass approval queue")
+	assert.Equal(t, 1, sink.count(), "durable user override should write exactly one audit event")
+	assert.Equal(t, "allow", sink.lastEvent().Decision.Action)
 }
 
 func TestResolveApproval_AuditTrail(t *testing.T) {

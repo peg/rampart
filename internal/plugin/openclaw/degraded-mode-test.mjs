@@ -65,6 +65,18 @@ const serverErrorWrite = await runScenario({
 assert(serverErrorWrite.result?.block === true, 'write on serve 5xx must block');
 assert(serverErrorWrite.result.blockReason.includes('service error 503'), 'write 5xx reason should include status');
 
+const timeoutEdit = await runScenario({
+  name: 'timeout-edit',
+  toolName: 'edit',
+  fetchImpl: async () => {
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    throw err;
+  },
+});
+assert(timeoutEdit.result?.block === true, 'edit on timeout must block');
+assert(timeoutEdit.result.blockReason.includes('timed out'), 'edit timeout reason should mention timeout');
+
 const serverErrorReadWithStrictConfig = await runScenario({
   name: 'server-error-read-strict',
   toolName: 'read',
@@ -73,4 +85,4 @@ const serverErrorReadWithStrictConfig = await runScenario({
 });
 assert(serverErrorReadWithStrictConfig.result?.block === true, 'read should block when failOpenTools is empty');
 
-console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read', 'server-error-write', 'server-error-read-strict'] }, null, 2));
+console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read', 'server-error-write', 'timeout-edit', 'server-error-read-strict'] }, null, 2));

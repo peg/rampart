@@ -116,12 +116,22 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	// Collect matching policies, sorted by priority.
 	matching := e.collectMatching(cfg, call)
 
-	// Apply policy filter if set (per-agent token scoping).
+	// Durable human allow rules are not ordinary policy allows. They are explicit
+	// operator carve-outs written by approval/allow workflows. They bypass broader
+	// ask/approval policies, but hard deny policies still win.
+	durableAllow, hasDurableAllow := e.evaluateDurableAllowOverride(matching, call, start)
+
+	// Apply policy filter if set (per-agent token scoping). Durable operator
+	// overrides are intentionally checked before this filter so human-approved
+	// carve-outs stay global rather than disappearing under token profile scoping.
 	if opts.PolicyFilter != "" {
 		matching = filterByProfile(matching, opts.PolicyFilter)
 	}
 
 	if len(matching) == 0 {
+		if hasDurableAllow {
+			return durableAllow
+		}
 		return Decision{
 			Action:       defaultAction,
 			Message:      "no matching policy; using default action",
@@ -133,22 +143,22 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	// Deny wins. Then log. Then allow.
 	// If policies match scope but no rules fire, fall through to default action.
 	var (
-		finalAction           = ActionAllow
-		finalMessage          string
-		finalAudit            bool
-		finalHeadlessOnly     bool
-		finalFromProject      bool
-		matched               []string
-		anyRuleFired          bool
-		consumedOnce          bool
-		consumedPolicy        string
-		consumedRuleIdx       int
+		finalAction       = ActionAllow
+		finalMessage      string
+		finalAudit        bool
+		finalHeadlessOnly bool
+		finalFromProject  bool
+		matched           []string
+		anyRuleFired      bool
+		consumedOnce      bool
+		consumedPolicy    string
+		consumedRuleIdx   int
 	)
 
 	var finalWebhookConfig *WebhookActionConfig
 
 	for _, p := range matching {
-		res := e.evaluatePolicy(p, call)
+		res := e.evaluateMatchingPolicy(p, call)
 		if !res.matched {
 			continue // no rule matched within this policy
 		}
@@ -225,6 +235,10 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		}
 	}
 
+	if hasDurableAllow {
+		return durableAllow
+	}
+
 	// If policies matched scope but no rules actually fired,
 	// fall through to the configured default action.
 	if !anyRuleFired {
@@ -248,6 +262,127 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		ConsumedRulePolicy: consumedPolicy,
 		ConsumedRuleIndex:  consumedRuleIdx,
 	}
+}
+
+func (e *Engine) evaluateMatchingPolicy(p Policy, call ToolCall) evaluatePolicyResult {
+	if isDurableAllowPolicy(p) {
+		return e.evaluateDurableAllowPolicy(p, call)
+	}
+	return e.evaluatePolicy(p, call)
+}
+
+func (e *Engine) evaluateDurableAllowOverride(matching []Policy, call ToolCall, start time.Time) (Decision, bool) {
+	for _, p := range matching {
+		if !isDurableAllowPolicy(p) {
+			continue
+		}
+
+		res := e.evaluateDurableAllowPolicy(p, call)
+		if !res.matched || res.action != ActionAllow {
+			continue
+		}
+
+		message := res.message
+		if message == "" {
+			message = durableAllowMessage(p)
+		}
+
+		decision := Decision{
+			Action:          ActionAllow,
+			MatchedPolicies: []string{p.Name},
+			Message:         message,
+			EvalDuration:    time.Since(start),
+		}
+		if res.rule != nil && res.rule.Once {
+			decision.ConsumedOnce = true
+			decision.ConsumedRulePolicy = p.Name
+			decision.ConsumedRuleIndex = res.ruleIndex
+		}
+		return decision, true
+	}
+
+	return Decision{}, false
+}
+
+func (e *Engine) evaluateDurableAllowPolicy(p Policy, call ToolCall) evaluatePolicyResult {
+	for i, rule := range p.Rules {
+		if rule.IsExpired() || !matchDurableAllowCondition(rule.When, call, e.callCounter) {
+			continue
+		}
+		action, err := rule.ParseAction()
+		if err != nil {
+			e.logger.Error("engine: invalid durable allow action", "policy", p.Name, "action", rule.Action, "error", err)
+			return evaluatePolicyResult{ActionDeny, "invalid rule action; failing closed", nil, i, true}
+		}
+		return evaluatePolicyResult{action, rule.Message, &p.Rules[i], i, true}
+	}
+	return evaluatePolicyResult{matched: false}
+}
+
+func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCounter) bool {
+	if cond.Default || cond.IsEmpty() {
+		return true
+	}
+	if len(cond.CommandMatches) == 0 && len(cond.CommandContains) == 0 {
+		return matchCondition(cond, call, counter)
+	}
+	if !matchStrictCommandCondition(cond, call) {
+		return false
+	}
+	cond.CommandMatches = nil
+	cond.CommandContains = nil
+	cond.CommandNotMatches = nil
+	if cond.IsEmpty() {
+		return true
+	}
+	return matchCondition(cond, call, counter)
+}
+
+func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
+	cmd := call.Command()
+	if cmd == "" {
+		return false
+	}
+	cmdMatch := false
+	if len(cond.CommandMatches) > 0 {
+		cmdMatch = matchAny(cond.CommandMatches, cmd)
+		if norm := NormalizeCommand(cmd); !cmdMatch && norm != cmd {
+			cmdMatch = matchAny(cond.CommandMatches, norm)
+		}
+	}
+	if !cmdMatch {
+		cmdLower := strings.ToLower(cmd)
+		for _, sub := range cond.CommandContains {
+			if strings.Contains(cmdLower, strings.ToLower(sub)) {
+				cmdMatch = true
+				break
+			}
+		}
+	}
+	if !cmdMatch {
+		return false
+	}
+	return !matchAny(cond.CommandNotMatches, cmd) && !matchAny(cond.CommandNotMatches, NormalizeCommand(cmd))
+}
+
+// isDurableAllowPolicy reports whether a policy came from Rampart's durable
+// human allow files. These are intentional operator carve-outs created by
+// `rampart allow`, approval persist/Always Allow, or legacy auto-allow flows.
+// Policy names alone are not trusted here: project or custom policy files must
+// not be able to self-declare high-precedence operator overrides.
+func isDurableAllowPolicy(p Policy) bool {
+	profile := strings.ToLower(profileNameFromPath(p.FilePath))
+	return profile == "user-overrides" || profile == "auto-allowed"
+}
+
+// durableAllowMessage returns the default audit/test message for a durable
+// human allow policy when the matching rule did not provide one.
+func durableAllowMessage(p Policy) string {
+	profile := strings.ToLower(profileNameFromPath(p.FilePath))
+	if profile == "auto-allowed" {
+		return "auto-allowed by user rule"
+	}
+	return "allowed by durable user override"
 }
 
 // EvaluateResponse runs response-side evaluation against matching policies.

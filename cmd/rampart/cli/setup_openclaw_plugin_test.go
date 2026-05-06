@@ -9,10 +9,10 @@ import (
 
 func TestExtractOpenClawPluginRuntimeVersion(t *testing.T) {
 	got := extractOpenClawPluginRuntimeVersion(`export const id = "rampart";
-export const version = "1.0.0-rc.1";
+export const version = "1.0.0-rc.2";
 `)
-	if got != "1.0.0-rc.1" {
-		t.Fatalf("runtime version = %q, want 1.0.0-rc.1", got)
+	if got != "1.0.0-rc.2" {
+		t.Fatalf("runtime version = %q, want 1.0.0-rc.2", got)
 	}
 }
 
