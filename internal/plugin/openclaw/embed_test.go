@@ -40,6 +40,7 @@ func TestPackageDeclaresInstallHostFloor(t *testing.T) {
 	}
 	var pkg struct {
 		Version  string `json:"version"`
+		License  string `json:"license"`
 		OpenClaw struct {
 			Install struct {
 				MinHostVersion string `json:"minHostVersion"`
@@ -54,6 +55,9 @@ func TestPackageDeclaresInstallHostFloor(t *testing.T) {
 	}
 	if got, want := pkg.Version, Version(); got != want {
 		t.Fatalf("package.json version = %q, want Version() %q", got, want)
+	}
+	if got, want := pkg.License, "Apache-2.0"; got != want {
+		t.Fatalf("package.json license = %q, want %q", got, want)
 	}
 }
 
