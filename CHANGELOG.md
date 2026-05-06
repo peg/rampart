@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-06
+
 ### Fixed
 
 - **Docker images now boot and report release metadata** — The Dockerfile uses the current `serve --addr/--port` flags, injects version/commit/date ldflags, aligns its Go toolchain with the release workflow, and sets a writable runtime home for the nonroot distroless container.
