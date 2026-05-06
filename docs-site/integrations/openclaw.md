@@ -16,7 +16,7 @@ For sensitive tools, the recommended operating assumption is simple: if Rampart 
     - **OpenClaw 2026.4.29 - 2026.5.1**: Supported for native plugin startup/interception; plugin approval delivery was not the launch baseline.
     - **OpenClaw 2026.3.28 - 2026.4.28**: Native plugin works for tool enforcement, but Rampart's polished approval path is supported on newer OpenClaw builds.
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades.
-    - **Verified 1.0 launch dogfood on**: OpenClaw 2026.5.4
+    - **Verified 1.0 launch dogfood on**: OpenClaw 2026.5.6
 
     `rampart setup openclaw` auto-detects your version and uses the right method.
 

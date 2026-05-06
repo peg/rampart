@@ -47,7 +47,7 @@ What's coming next for Rampart. Priorities shift based on feedback — [open an 
 
 ### `v1.0.0`
 - Keep the integration support story boring and evidence-backed: hooks, plugins, preload/wrapper, MCP, and HTTP API should each say what is protected and what happens when policy evaluation is unavailable.
-- Treat OpenClaw `2026.5.2+` as the recommended 1.0 path for native plugin approvals, with launch dogfood verified on OpenClaw `2026.5.4`.
+- Treat OpenClaw `2026.5.2+` as the recommended 1.0 path for native plugin approvals, with launch dogfood verified on OpenClaw `2026.5.6`.
 - Keep `rampart doctor`, setup output, plugin metadata, and docs aligned so users can answer "am I protected, how, and what breaks if serve is down?" without reading source.
 
 ### After 1.0
