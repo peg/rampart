@@ -32,7 +32,7 @@ Follow these steps in order. Each step is independently verifiable.
 === "Homebrew (macOS)"
 
     ```bash
-    brew tap peg/rampart && brew install rampart
+    brew install peg/tap/rampart
     ```
 
 Verify the install:

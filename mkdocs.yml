@@ -8,6 +8,12 @@ edit_uri: edit/main/docs-site/
 
 docs_dir: docs-site
 
+# docs-site/index.html is the standalone rampart.sh landing page source, not a
+# MkDocs page. Exclude it explicitly so docs builds don't warn about the
+# intentional index.md/index.html collision.
+exclude_docs: |
+  index.html
+
 theme:
   name: material
   custom_dir: docs-site/overrides

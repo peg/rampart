@@ -14,11 +14,9 @@ direction: down
 
 call: "Tool Call" {shape: oval}
 
-match: "Match policies
-by tool type" {shape: diamond}
+match: "Match policies\\nby tool type" {shape: diamond}
 
-rules: "Evaluate rules
-top-to-bottom" {shape: diamond}
+rules: "Evaluate rules\\ntop-to-bottom" {shape: diamond}
 
 deny: "Denied" {
   style.fill: "#2d1b1b"
@@ -52,8 +50,7 @@ allow: "Allowed" {
   style.border-radius: 6
 }
 
-default: "Default Action
-(allow or deny)" {
+default: "Default Action\\n(allow or deny)" {
   style.border-radius: 6
   style.stroke-dash: 4
 }

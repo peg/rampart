@@ -23,7 +23,7 @@ description: "Install Rampart on Windows, macOS, or Linux. Get the security laye
 
     **Homebrew (recommended):**
     ```bash
-    brew tap peg/rampart && brew install rampart
+    brew install peg/tap/rampart
     ```
 
     **One-liner:**
@@ -36,7 +36,7 @@ description: "Install Rampart on Windows, macOS, or Linux. Get the security laye
 The fastest way to install Rampart:
 
 ```bash
-brew tap peg/rampart && brew install rampart
+brew install peg/tap/rampart
 ```
 
 This installs the `rampart` binary.
@@ -60,15 +60,15 @@ go install github.com/peg/rampart/cmd/rampart@latest
 
 Download pre-built binaries from [GitHub Releases](https://github.com/peg/rampart/releases).
 
-Binaries are available for Linux (amd64/arm64) as `.tar.gz` and macOS (amd64/arm64) as `.zip`:
+Binaries are available for Linux and macOS (amd64/arm64) as `.tar.gz` archives. Windows builds are published as `.zip` archives:
 
 ```bash
 # Example: Linux amd64
 tar xzf rampart_*_linux_amd64.tar.gz
 sudo mv rampart /usr/local/bin/
 
-# Example: macOS (unzip, then move)
-unzip rampart_*_darwin_arm64.zip
+# Example: macOS arm64
+tar xzf rampart_*_darwin_arm64.tar.gz
 sudo mv rampart /usr/local/bin/
 ```
 
@@ -77,7 +77,7 @@ sudo mv rampart /usr/local/bin/
 Multi-arch container image (amd64 + arm64), built on distroless for minimal attack surface:
 
 ```bash
-docker run ghcr.io/peg/rampart:latest serve --addr 0.0.0.0 --port 9090
+docker run --rm -p 9090:9090 ghcr.io/peg/rampart:latest
 ```
 
 Or use with docker-compose. First, create a policy file (e.g. `mkdir policies && rampart init > policies/rampart.yaml`):
@@ -97,7 +97,7 @@ volumes:
   rampart-audit:
 ```
 
-Available tags: `latest`, `0.9.12`, `0.9`. `latest` always points to the current stable release. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+Available tags include full versions such as `1.0.0`, minor versions such as `1.0`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.0.0-rc.3`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
 
 ## Build from Source
 
