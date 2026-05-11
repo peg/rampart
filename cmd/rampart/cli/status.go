@@ -30,30 +30,144 @@ import (
 )
 
 func newStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show Rampart protection status",
 		Long:  "Display a quick dashboard of Rampart protection status, mode, and today's events.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runStatus(cmd.OutOrStdout())
+			return runStatus(cmd.OutOrStdout(), jsonOut)
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output status as JSON")
+	return cmd
 }
 
-func runStatus(w io.Writer) error {
-	protected := detectProtectedAgents()
-	mode, defaultAction := detectMode()
-	allow, deny, pending, lastDeny := todayEvents()
-	serverRunning := isServeRunningLocal()
-	hookOnly := isHookBasedOnly(protected)
+const statusSchemaVersion = "rampart.status.v1"
+
+type statusSnapshot struct {
+	generatedAt   time.Time
+	buildVersion  string
+	protected     []string
+	mode          string
+	defaultAction string
+	serverRunning bool
+	hookOnly      bool
+	allow         int
+	deny          int
+	pending       int
+	lastDeny      *audit.Event
+}
+
+type statusJSONOutput struct {
+	SchemaVersion string              `json:"schema_version"`
+	GeneratedAt   time.Time           `json:"generated_at"`
+	BuildVersion  string              `json:"build_version"`
+	Protected     []string            `json:"protected_agents"`
+	Mode          string              `json:"mode"`
+	DefaultAction string              `json:"default_action"`
+	ServerRunning bool                `json:"server_running"`
+	HookOnly      bool                `json:"hook_only"`
+	Today         statusTodayJSON     `json:"today"`
+	LastDeny      *statusLastDenyJSON `json:"last_deny,omitempty"`
+}
+
+type statusTodayJSON struct {
+	Allow   int `json:"allow"`
+	Deny    int `json:"deny"`
+	Pending int `json:"pending"`
+}
+
+type statusLastDenyJSON struct {
+	Timestamp time.Time `json:"timestamp"`
+	Tool      string    `json:"tool"`
+	Command   string    `json:"command,omitempty"`
+}
+
+func runStatus(w io.Writer, jsonOut bool) error {
+	snapshot := collectStatusSnapshot(time.Now().UTC())
+	if jsonOut {
+		return writeStatusJSON(w, snapshot)
+	}
 
 	useColor := !noColor() && isTerminal(os.Stdout)
 
-	box := buildStatusBox(protected, mode, defaultAction, allow, deny, pending, serverRunning, hookOnly, lastDeny, useColor)
+	box := buildStatusBox(
+		snapshot.protected,
+		snapshot.mode,
+		snapshot.defaultAction,
+		snapshot.allow,
+		snapshot.deny,
+		snapshot.pending,
+		snapshot.serverRunning,
+		snapshot.hookOnly,
+		snapshot.lastDeny,
+		useColor,
+	)
 	fmt.Fprintln(w, box)
 
-	printStatusHints(w, serverRunning, protected, allow, deny, pending)
+	printStatusHints(w, snapshot.serverRunning, snapshot.protected, snapshot.allow, snapshot.deny, snapshot.pending)
 	return nil
+}
+
+func collectStatusSnapshot(generatedAt time.Time) statusSnapshot {
+	if generatedAt.IsZero() {
+		generatedAt = time.Now().UTC()
+	}
+	protected := detectProtectedAgents()
+	mode, defaultAction := detectMode()
+	allow, deny, pending, lastDeny := todayEventsAt(generatedAt)
+	return statusSnapshot{
+		generatedAt:   generatedAt,
+		buildVersion:  build.Version,
+		protected:     protected,
+		mode:          mode,
+		defaultAction: defaultAction,
+		serverRunning: isServeRunningLocal(),
+		hookOnly:      isHookBasedOnly(protected),
+		allow:         allow,
+		deny:          deny,
+		pending:       pending,
+		lastDeny:      lastDeny,
+	}
+}
+
+func writeStatusJSON(w io.Writer, snapshot statusSnapshot) error {
+	protected := snapshot.protected
+	if protected == nil {
+		protected = []string{}
+	}
+
+	out := statusJSONOutput{
+		SchemaVersion: statusSchemaVersion,
+		GeneratedAt:   snapshot.generatedAt,
+		BuildVersion:  snapshot.buildVersion,
+		Protected:     protected,
+		Mode:          snapshot.mode,
+		DefaultAction: snapshot.defaultAction,
+		ServerRunning: snapshot.serverRunning,
+		HookOnly:      snapshot.hookOnly,
+		Today: statusTodayJSON{
+			Allow:   snapshot.allow,
+			Deny:    snapshot.deny,
+			Pending: snapshot.pending,
+		},
+	}
+
+	if snapshot.lastDeny != nil {
+		last := &statusLastDenyJSON{
+			Timestamp: snapshot.lastDeny.Timestamp,
+			Tool:      snapshot.lastDeny.Tool,
+		}
+		if command := extractEventCommand(snapshot.lastDeny); !isUnknownOrEmpty(command) {
+			last.Command = command
+		}
+		out.LastDeny = last
+	}
+
+	enc := json.NewEncoder(w)
+	return enc.Encode(out)
 }
 
 // Box dimensions.
@@ -339,13 +453,20 @@ func detectMode() (string, string) {
 // todayEvents returns today's allow/deny/pending counts and the most recent deny event.
 // "pending" counts require_approval and webhook actions.
 func todayEvents() (allow, deny, pending int, lastDeny *audit.Event) {
+	return todayEventsAt(time.Now().UTC())
+}
+
+func todayEventsAt(now time.Time) (allow, deny, pending int, lastDeny *audit.Event) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
 	auditDir := filepath.Join(home, ".rampart", "audit")
 
-	today := time.Now().UTC().Format("2006-01-02")
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	today := now.UTC().Format("2006-01-02")
 
 	seen := make(map[string]bool)
 	var candidates []string

@@ -18,9 +18,9 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"sort"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +61,69 @@ func TestJSONLSinkWrite_ValidJSONLine(t *testing.T) {
 			assert.Equal(t, "exec", parsed.Tool)
 		})
 	}
+}
+
+func TestJSONLSinkWrite_AppliesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sink.Close() })
+
+	event := sampleEvent("exec")
+	event.ID = ""
+	event.Timestamp = time.Time{}
+	event.SchemaVersion = ""
+	event.Host = nil
+
+	require.NoError(t, sink.Write(event))
+
+	lines := readJSONLLines(t, sink.filePath())
+	require.Len(t, lines, 1)
+
+	var parsed Event
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &parsed))
+	assert.NotEmpty(t, parsed.ID)
+	assert.False(t, parsed.Timestamp.IsZero())
+	assert.Equal(t, EventSchemaVersion, parsed.SchemaVersion)
+	require.NotNil(t, parsed.Host)
+	assert.NotEmpty(t, parsed.Host.Hostname)
+	assert.NotEmpty(t, parsed.Host.OS)
+	assert.NotEmpty(t, parsed.Host.Arch)
+}
+
+func TestJSONLSinkWrite_HashCoversDefaultedFields(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sink.Close() })
+
+	event := sampleEvent("exec")
+	event.ID = ""
+	event.Timestamp = time.Time{}
+	event.SchemaVersion = ""
+	event.Host = nil
+	require.NoError(t, sink.Write(event))
+
+	lines := readJSONLLines(t, sink.filePath())
+	require.Len(t, lines, 1)
+
+	var parsed Event
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &parsed))
+
+	mutated := parsed
+	mutated.SchemaVersion = "rampart.audit.v2"
+	ok, verifyErr := mutated.VerifyHash()
+	require.NoError(t, verifyErr)
+	assert.False(t, ok)
+
+	mutated = parsed
+	require.NotNil(t, mutated.Host)
+	mutatedHost := *mutated.Host
+	mutatedHost.Hostname = "tampered-host"
+	mutated.Host = &mutatedHost
+	ok, verifyErr = mutated.VerifyHash()
+	require.NoError(t, verifyErr)
+	assert.False(t, ok)
 }
 
 func TestJSONLSinkWrite_HashChainValid(t *testing.T) {

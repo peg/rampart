@@ -262,7 +262,10 @@ Quick dashboard showing protected agents, enforcement mode, and today's event co
 
 ```bash
 rampart status
+rampart status --json      # Machine-readable snapshot
 ```
+
+`--json` emits a stable status payload (`schema_version: "rampart.status.v1"`) with mode, protection state, server flags, today's counts, and optional last deny details.
 
 ### `rampart test`
 

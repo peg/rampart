@@ -144,6 +144,63 @@ func TestMultiSink_FanOut(t *testing.T) {
 	}
 }
 
+func TestMultiSink_FanOutUsesDefaultedEvent(t *testing.T) {
+	var primaryEvents []Event
+	primary := &mockSink{writeFn: func(e Event) error {
+		primaryEvents = append(primaryEvents, e)
+		return nil
+	}}
+	syslogSink := &mockSyslogSender{}
+
+	ms := NewMultiSink(primary, syslogSink, nil, nil)
+	e := Event{
+		Agent:   "test-agent",
+		Session: "sess-1",
+		Tool:    "exec",
+		Request: map[string]any{"command": "echo hello"},
+		Decision: EventDecision{
+			Action:     "allow",
+			EvalTimeUS: 42,
+		},
+	}
+
+	if err := ms.Write(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(primaryEvents) != 1 {
+		t.Fatalf("expected 1 primary write, got %d", len(primaryEvents))
+	}
+	if len(syslogSink.events) != 1 {
+		t.Fatalf("expected 1 secondary write, got %d", len(syslogSink.events))
+	}
+
+	primaryEvent := primaryEvents[0]
+	secondaryEvent := syslogSink.events[0]
+
+	if primaryEvent.SchemaVersion != EventSchemaVersion {
+		t.Fatalf("primary schema_version=%q, want %q", primaryEvent.SchemaVersion, EventSchemaVersion)
+	}
+	if secondaryEvent.SchemaVersion != EventSchemaVersion {
+		t.Fatalf("secondary schema_version=%q, want %q", secondaryEvent.SchemaVersion, EventSchemaVersion)
+	}
+	if primaryEvent.ID == "" || secondaryEvent.ID == "" {
+		t.Fatalf("expected defaulted id in both sinks")
+	}
+	if primaryEvent.Timestamp.IsZero() || secondaryEvent.Timestamp.IsZero() {
+		t.Fatalf("expected defaulted timestamp in both sinks")
+	}
+	if secondaryEvent.Host == nil {
+		t.Fatalf("expected defaulted host context in secondary sink")
+	}
+	if secondaryEvent.Host.Hostname == "" || secondaryEvent.Host.OS == "" || secondaryEvent.Host.Arch == "" {
+		t.Fatalf("expected defaulted host context in secondary sink: %+v", *secondaryEvent.Host)
+	}
+}
+
 func TestCEFFileSink_Write(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/cef.log"
@@ -170,6 +227,16 @@ type mockSink struct {
 func (m *mockSink) Write(e Event) error { return m.writeFn(e) }
 func (m *mockSink) Flush() error        { return nil }
 func (m *mockSink) Close() error        { return nil }
+
+type mockSyslogSender struct {
+	events []Event
+}
+
+func (m *mockSyslogSender) Send(e Event) {
+	m.events = append(m.events, e)
+}
+
+func (m *mockSyslogSender) Close() error { return nil }
 
 func readFileBytes(path string) ([]byte, error) {
 	return os.ReadFile(path)

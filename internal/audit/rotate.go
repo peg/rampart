@@ -25,7 +25,7 @@ import (
 const anchorFilename = "audit-anchor.json"
 
 func (s *JSONLSink) shouldRotateLocked(incoming int) bool {
-	if s.rotateSize <= 0 {
+	if s.rotateSize <= 0 || s.currentSize == 0 {
 		return false
 	}
 	return s.currentSize+int64(incoming) > s.rotateSize

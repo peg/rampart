@@ -31,12 +31,17 @@ import (
 	"time"
 )
 
+const EventSchemaVersion = "rampart.audit.v1"
+
 // Event represents a single audited tool call.
 //
 // Events are written to the audit trail in JSONL format, one per line.
 // The hash chain ensures integrity: modifying any event breaks the chain
 // for all subsequent events.
 type Event struct {
+	// SchemaVersion identifies the stable JSON event schema.
+	SchemaVersion string `json:"schema_version,omitempty"`
+
 	// ID is a ULID — time-ordered, lexicographically sortable, globally unique.
 	ID string `json:"id"`
 
@@ -48,6 +53,9 @@ type Event struct {
 
 	// Session identifies the agent's session (git repo/branch or RAMPART_SESSION).
 	Session string `json:"session"`
+
+	// Host records local, non-sensitive host context.
+	Host *HostContext `json:"host,omitempty"`
 
 	// RunID groups events from the same orchestration run.
 	// Sourced from Claude Code's session_id field, RAMPART_RUN env override,
@@ -74,6 +82,13 @@ type Event struct {
 	// Hash is the SHA-256 hash of this event (excluding the hash field itself).
 	// Computed by ComputeHash after all other fields are set.
 	Hash string `json:"hash"`
+}
+
+// HostContext contains non-sensitive local host identifiers.
+type HostContext struct {
+	Hostname string `json:"hostname"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
 }
 
 // EventDecision is the policy engine's verdict, recorded in the audit event.
