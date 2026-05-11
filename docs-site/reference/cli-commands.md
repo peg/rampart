@@ -245,6 +245,9 @@ Health check — verifies installation, policies, server, hooks, audit trail, an
 rampart doctor
 ```
 
+For automation, `rampart doctor --json` emits schema `rampart.doctor.v1` with top-level fields:
+`schema_version`, `generated_at`, `build_version`, `summary`, `checks`, numeric `warnings`/`issues`, and `warning_checks`/`issue_checks` arrays.
+
 When the OpenClaw native plugin is installed, doctor shows:
 ```
 ✓ OpenClaw plugin: installed (before_tool_call hook active)

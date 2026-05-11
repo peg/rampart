@@ -92,7 +92,7 @@ func TestCountClaudeHookMatchers(t *testing.T) {
 	}
 }
 
-func TestRunDoctor_JSON(t *testing.T) {
+func TestRunDoctor_JSONContract(t *testing.T) {
 	var buf bytes.Buffer
 	err := runDoctor(&buf, true)
 	// May return exitCodeError if issues found — that's expected in test env.
@@ -102,15 +102,55 @@ func TestRunDoctor_JSON(t *testing.T) {
 			t.Fatalf("unexpected error type: %v", err)
 		}
 	}
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+
+	var report doctorJSONReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
 		t.Fatalf("JSON output invalid: %v\noutput: %s", err, buf.String())
 	}
-	if _, ok := result["checks"]; !ok {
-		t.Error("JSON output missing 'checks' field")
+	if report.SchemaVersion != doctorJSONSchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", report.SchemaVersion, doctorJSONSchemaVersion)
 	}
-	if _, ok := result["issues"]; !ok {
-		t.Error("JSON output missing 'issues' field")
+	if report.BuildVersion != build.Version {
+		t.Fatalf("build_version = %q, want %q", report.BuildVersion, build.Version)
+	}
+	if _, err := time.Parse(time.RFC3339, report.GeneratedAt); err != nil {
+		t.Fatalf("generated_at is not RFC3339: %q (%v)", report.GeneratedAt, err)
+	}
+	if len(report.Checks) == 0 {
+		t.Fatal("expected at least one doctor check in JSON output")
+	}
+	if report.WarningChecks == nil {
+		t.Fatal("warning_checks must be an array, got nil")
+	}
+	if report.IssueChecks == nil {
+		t.Fatal("issue_checks must be an array, got nil")
+	}
+	if report.Summary.Checks != len(report.Checks) {
+		t.Fatalf("summary.checks = %d, want %d", report.Summary.Checks, len(report.Checks))
+	}
+	if report.Summary.Warnings != len(report.WarningChecks) {
+		t.Fatalf("summary.warnings = %d, want %d", report.Summary.Warnings, len(report.WarningChecks))
+	}
+	if report.Summary.Issues != len(report.IssueChecks) {
+		t.Fatalf("summary.issues = %d, want %d", report.Summary.Issues, len(report.IssueChecks))
+	}
+	if report.Warnings != len(report.WarningChecks) {
+		t.Fatalf("warnings = %d, want %d", report.Warnings, len(report.WarningChecks))
+	}
+	if report.Issues != len(report.IssueChecks) {
+		t.Fatalf("issues = %d, want %d", report.Issues, len(report.IssueChecks))
+	}
+
+	for i, check := range report.Checks {
+		if check.Name == "" {
+			t.Fatalf("checks[%d].name is empty", i)
+		}
+		if check.Status == "" {
+			t.Fatalf("checks[%d].status is empty", i)
+		}
+		if check.Message == "" {
+			t.Fatalf("checks[%d].message is empty", i)
+		}
 	}
 }
 
@@ -132,6 +172,117 @@ func TestRunDoctor_ExitCode(t *testing.T) {
 		if exitErr.code != 1 {
 			t.Errorf("expected exit code 1, got %d", exitErr.code)
 		}
+	}
+}
+
+func TestRunDoctor_DefaultOutputIsHumanReadable(t *testing.T) {
+	var buf bytes.Buffer
+	err := runDoctor(&buf, false)
+	if err != nil {
+		var exitErr exitCodeError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("expected exitCodeError, got %T %v", err, err)
+		}
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "🩺 Rampart Doctor") {
+		t.Fatal("missing doctor header in default output")
+	}
+
+	var asJSON map[string]any
+	if json.Unmarshal(buf.Bytes(), &asJSON) == nil {
+		t.Fatalf("expected human-readable default output, got valid JSON: %s", out)
+	}
+}
+
+func TestBuildDoctorJSONReport(t *testing.T) {
+	generatedAt := time.Date(2026, time.May, 11, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		results      []checkResult
+		wantSummary  doctorSummary
+		wantWarnings int
+		wantIssues   int
+	}{
+		{
+			name: "ok and info only",
+			results: []checkResult{
+				{Name: "Version", Status: "ok", Message: "v1"},
+				{Name: "Policy suggestions", Status: "info", Message: "none"},
+			},
+			wantSummary:  doctorSummary{Checks: 2, OK: 1, Info: 1, Warnings: 0, Issues: 0},
+			wantWarnings: 0,
+			wantIssues:   0,
+		},
+		{
+			name: "warn and fail included in dedicated arrays",
+			results: []checkResult{
+				{Name: "PATH", Status: "warn", Message: "warn"},
+				{Name: "Token", Status: "fail", Message: "fail"},
+				{Name: "System", Status: "ok", Message: "ok"},
+			},
+			wantSummary:  doctorSummary{Checks: 3, OK: 1, Info: 0, Warnings: 1, Issues: 1},
+			wantWarnings: 1,
+			wantIssues:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := buildDoctorJSONReport(tt.results, generatedAt)
+			if report.SchemaVersion != doctorJSONSchemaVersion {
+				t.Fatalf("schema_version = %q, want %q", report.SchemaVersion, doctorJSONSchemaVersion)
+			}
+			if report.GeneratedAt != generatedAt.Format(time.RFC3339) {
+				t.Fatalf("generated_at = %q, want %q", report.GeneratedAt, generatedAt.Format(time.RFC3339))
+			}
+			if report.BuildVersion != build.Version {
+				t.Fatalf("build_version = %q, want %q", report.BuildVersion, build.Version)
+			}
+			if report.Summary != tt.wantSummary {
+				t.Fatalf("summary = %+v, want %+v", report.Summary, tt.wantSummary)
+			}
+			if len(report.WarningChecks) != tt.wantWarnings {
+				t.Fatalf("len(warning_checks) = %d, want %d", len(report.WarningChecks), tt.wantWarnings)
+			}
+			if len(report.IssueChecks) != tt.wantIssues {
+				t.Fatalf("len(issue_checks) = %d, want %d", len(report.IssueChecks), tt.wantIssues)
+			}
+			if report.WarningChecks == nil {
+				t.Fatal("warning_checks must always encode as an array")
+			}
+			if report.IssueChecks == nil {
+				t.Fatal("issue_checks must always encode as an array")
+			}
+			if report.Warnings != tt.wantSummary.Warnings {
+				t.Fatalf("warnings = %d, want %d", report.Warnings, tt.wantSummary.Warnings)
+			}
+			if report.Issues != tt.wantSummary.Issues {
+				t.Fatalf("issues = %d, want %d", report.Issues, tt.wantSummary.Issues)
+			}
+
+			encoded, err := json.Marshal(report)
+			if err != nil {
+				t.Fatalf("marshal report: %v", err)
+			}
+			var raw map[string]any
+			if err := json.Unmarshal(encoded, &raw); err != nil {
+				t.Fatalf("unmarshal report: %v", err)
+			}
+			if _, ok := raw["warnings"].(float64); !ok {
+				t.Fatalf("warnings should preserve numeric count, got %T", raw["warnings"])
+			}
+			if _, ok := raw["issues"].(float64); !ok {
+				t.Fatalf("issues should preserve numeric count, got %T", raw["issues"])
+			}
+			if _, ok := raw["warning_checks"].([]any); !ok {
+				t.Fatalf("warning_checks should encode as JSON array, got %T", raw["warning_checks"])
+			}
+			if _, ok := raw["issue_checks"].([]any); !ok {
+				t.Fatalf("issue_checks should encode as JSON array, got %T", raw["issue_checks"])
+			}
+		})
 	}
 }
 
