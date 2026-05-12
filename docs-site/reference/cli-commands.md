@@ -270,6 +270,17 @@ rampart status --json      # Machine-readable snapshot
 
 `--json` emits a stable status payload (`schema_version: "rampart.status.v1"`) with mode, protection state, server flags, today's counts, and optional last deny details.
 
+### `rampart inventory`
+
+Local observability snapshot for automation and debugging.
+
+Use `--json` for a stable machine-readable contract (`rampart.inventory.v1`) that includes protected agents, policy file load status, audit footprint, and local `rampart serve` reachability.
+
+```bash
+rampart inventory
+rampart inventory --json
+```
+
 ### `rampart test`
 
 Dry-run commands against your policies or run a declarative test suite.
