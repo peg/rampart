@@ -36,6 +36,8 @@ import (
 	"github.com/peg/rampart/internal/engine"
 )
 
+const openClawGatewayProtocolVersion = 4
+
 // Config holds the daemon configuration.
 type Config struct {
 	// GatewayURL is the OpenClaw Gateway WebSocket URL (e.g., ws://127.0.0.1:18789).
@@ -214,8 +216,8 @@ type wsMessage struct {
 
 // approvalRequest is the payload of an exec.approval.requested event.
 type approvalRequest struct {
-	ID      string                `json:"id"`
-	Request approvalRequestInner  `json:"request"`
+	ID      string               `json:"id"`
+	Request approvalRequestInner `json:"request"`
 }
 
 // approvalRequestInner contains the nested request fields from OpenClaw.
@@ -249,8 +251,8 @@ func (d *Daemon) handshake(ctx context.Context) error {
 		"id":     d.nextID(),
 		"method": "connect",
 		"params": map[string]any{
-			"minProtocol": 3,
-			"maxProtocol": 3,
+			"minProtocol": openClawGatewayProtocolVersion,
+			"maxProtocol": openClawGatewayProtocolVersion,
 			"client": map[string]any{
 				"id":       "gateway-client",
 				"version":  "0.1.0",

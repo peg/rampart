@@ -88,6 +88,10 @@ func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
 
 	var connectReq map[string]any
 	json.Unmarshal(msg, &connectReq)
+	params, paramsOK := connectReq["params"].(map[string]any)
+	assert.True(mg.t, paramsOK)
+	assert.Equal(mg.t, float64(openClawGatewayProtocolVersion), params["minProtocol"])
+	assert.Equal(mg.t, float64(openClawGatewayProtocolVersion), params["maxProtocol"])
 	mg.received = append(mg.received, connectReq)
 
 	// Send hello-ok.
@@ -96,7 +100,7 @@ func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
 		Type:    "res",
 		ID:      connectReq["id"].(string),
 		OK:      &ok,
-		Payload: json.RawMessage(`{"type":"hello-ok","protocol":3}`),
+		Payload: json.RawMessage(`{"type":"hello-ok","protocol":4}`),
 	}
 	data, _ := json.Marshal(hello)
 	conn.WriteMessage(websocket.TextMessage, data)

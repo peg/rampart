@@ -86,6 +86,10 @@ func (mg *mockGateway) handleConnection(conn *websocket.Conn) {
 	}
 	var req gatewayRequest
 	json.Unmarshal(msg, &req)
+	params, ok := req.Params.(map[string]any)
+	assert.True(mg.t, ok)
+	assert.Equal(mg.t, float64(openClawGatewayProtocolVersion), params["minProtocol"])
+	assert.Equal(mg.t, float64(openClawGatewayProtocolVersion), params["maxProtocol"])
 
 	// Step 3: respond with hello-ok.
 	resp := map[string]any{
