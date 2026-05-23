@@ -98,6 +98,53 @@ function truncateForApprovalDescription(text, max = 220) {
   return `${normalized.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
+// OpenClaw has exposed command execution through more than one tool name over
+// time. Rampart policy is intentionally written against the stable "exec"
+// class, so command-style aliases must be normalized before policy evaluation.
+// Otherwise a host exposing a tool as "bash" can bypass exec policies and land
+// in allow-unmatched/default handling.
+const EXEC_TOOL_ALIASES = new Set(["bash", "shell", "terminal"]);
+
+function normalizeExecParams(params) {
+  if (!params || typeof params !== "object") return {};
+  const normalized = { ...params };
+  const command =
+    params.command ??
+    params.input?.command ??
+    params.script ??
+    params.cmd ??
+    params.args?.command;
+  if (typeof command === "string" && !normalized.command) {
+    normalized.command = command;
+  }
+  return normalized;
+}
+
+function normalizeToolCall(toolName, params) {
+  const originalToolName = typeof toolName === "string" && toolName ? toolName : "unknown";
+  const canonical = originalToolName.toLowerCase();
+  if (EXEC_TOOL_ALIASES.has(canonical)) {
+    return {
+      toolName: "exec",
+      params: normalizeExecParams(params),
+      originalToolName,
+      mapped: true,
+    };
+  }
+  return {
+    toolName: originalToolName,
+    params: params ?? {},
+    originalToolName,
+    mapped: false,
+  };
+}
+
+function toolDisplayName(toolName, originalToolName) {
+  return originalToolName && originalToolName !== toolName
+    ? `${originalToolName}→${toolName}`
+    : toolName;
+}
+
 // ─── Rampart API client ───────────────────────────────────────────────────────
 
 /**
@@ -237,7 +284,12 @@ export function register(api) {
 
   // ── before_tool_call ────────────────────────────────────────────────────────
   api.on("before_tool_call", async (event, ctx) => {
-    const { toolName, params } = event;
+    const normalized = normalizeToolCall(event?.toolName, event?.params);
+    const { toolName, params, originalToolName, mapped } = normalized;
+    const displayToolName = toolDisplayName(toolName, originalToolName);
+    if (mapped) {
+      api.logger.info(`[rampart] mapped OpenClaw tool ${originalToolName} to Rampart ${toolName}`);
+    }
 
     const result = await checkWithRampart(toolName, params, ctx, pluginConfig);
 
@@ -248,7 +300,7 @@ export function register(api) {
         : ["read", "web_fetch", "web_search", "image"];
     const failOpenTools = new Set(configuredFailOpenTools);
     const shouldFailOpen = failOpenTools.has(toolName);
-    const unreachableReason = `[rampart] serve unavailable for ${toolName} at ${serveUrl}`;
+    const unreachableReason = `[rampart] serve unavailable for ${displayToolName} at ${serveUrl}`;
 
     // Serve unreachable → explicit degraded-state handling
     if (result?._unreachable) {
@@ -256,42 +308,42 @@ export function register(api) {
       if (shouldFailOpen) return;
       return {
         block: true,
-        blockReason: `rampart: unavailable (${toolName}) — policy service down, refusing sensitive tool call`,
+        blockReason: `rampart: unavailable (${displayToolName}) — policy service down, refusing sensitive tool call`,
       };
     }
 
     // null (timeout/unknown error) → explicit degraded-state handling
     if (result === null) {
-      api.logger.warn(`[rampart] check timed out or failed for ${toolName} (${shouldFailOpen ? "configured fail-open" : "blocking tool call"})`);
+      api.logger.warn(`[rampart] check timed out or failed for ${displayToolName} (${shouldFailOpen ? "configured fail-open" : "blocking tool call"})`);
       if (shouldFailOpen) return;
       return {
         block: true,
-        blockReason: `rampart: unavailable (${toolName}) — policy check timed out, refusing sensitive tool call`,
+        blockReason: `rampart: unavailable (${displayToolName}) — policy check timed out, refusing sensitive tool call`,
       };
     }
 
     // Serve returned an error status → explicit degraded-state handling
     if (result?._serveError) {
-      api.logger.warn(`[rampart] serve returned HTTP ${result._status} for ${toolName} (${shouldFailOpen ? "configured fail-open" : "blocking tool call"})`);
+      api.logger.warn(`[rampart] serve returned HTTP ${result._status} for ${displayToolName} (${shouldFailOpen ? "configured fail-open" : "blocking tool call"})`);
       if (shouldFailOpen) return;
       return {
         block: true,
-        blockReason: `rampart: unavailable (${toolName}) — policy service error ${result._status}, refusing sensitive tool call`,
+        blockReason: `rampart: unavailable (${displayToolName}) — policy service error ${result._status}, refusing sensitive tool call`,
       };
     }
 
     const decision = result.decision ?? (result.allowed === false ? "deny" : "allow");
 
     // Debug log every decision (not just blocks/approvals)
-    api.logger.debug(`[rampart] ${toolName} → ${decision}${result.policy ? ` (policy: ${result.policy})` : ""}`);
+    api.logger.debug(`[rampart] ${displayToolName} → ${decision}${result.policy ? ` (policy: ${result.policy})` : ""}`);
     if (Object.prototype.hasOwnProperty.call(result, "approval_id")) {
-      api.logger.warn(`[rampart] unexpected approval_id from Rampart eval for OpenClaw-hosted ${toolName}; this would create dual-queue ownership`);
+      api.logger.warn(`[rampart] unexpected approval_id from Rampart eval for OpenClaw-hosted ${displayToolName}; this would create dual-queue ownership`);
     }
 
     switch (decision) {
       case "deny": {
         const reason = result.message ?? result.reason ?? "policy violation";
-        api.logger.warn(`[rampart] BLOCKED ${toolName}: ${reason}${result.policy ? ` [${result.policy}]` : ""}`);
+        api.logger.warn(`[rampart] BLOCKED ${displayToolName}: ${reason}${result.policy ? ` [${result.policy}]` : ""}`);
         return {
           block: true,
           blockReason: `rampart: ${reason}`,
@@ -304,10 +356,10 @@ export function register(api) {
         const severity = result.severity ?? "warning";
         const emoji = severityEmoji[severity] ?? "⚠️";
 
-        api.logger.info(`[rampart] returning requireApproval for ${toolName} (subject: ${subjectPreview})`);
+        api.logger.info(`[rampart] returning requireApproval for ${displayToolName} (subject: ${subjectPreview})`);
         return {
           requireApproval: {
-            title: `🛡️ Rampart — ${toolName} approval required`,
+            title: `🛡️ Rampart — ${displayToolName} approval required`,
             description: [
               `**Command:** \`${subjectPreview}\``,
               result.policy  ? `**Policy:** ${truncateForApprovalDescription(result.policy, 64)}` : null,
@@ -317,7 +369,7 @@ export function register(api) {
             timeoutMs: pluginConfig.approvalTimeoutMs ?? 120_000,
             timeoutBehavior: "deny",
             onResolution: async (resolution) => {
-              api.logger.info(`[rampart] plugin approval resolved: ${toolName} → ${resolution} (toolCallId: ${ctx.toolCallId ?? "none"}, session: ${ctx.sessionKey ?? "none"})`);
+              api.logger.info(`[rampart] plugin approval resolved: ${displayToolName} → ${resolution} (toolCallId: ${ctx.toolCallId ?? "none"}, session: ${ctx.sessionKey ?? "none"})`);
 
               if (resolution === "allow-always") {
                 const learnPayload = {
@@ -326,7 +378,7 @@ export function register(api) {
                   decision: "allow",
                   source: "openclaw-approval",
                 };
-                api.logger.info(`[rampart] attempting always-allow persistence via /v1/rules/learn: ${JSON.stringify({ ...learnPayload, session: ctx.sessionKey ?? null, toolCallId: ctx.toolCallId ?? null })}`);
+                api.logger.info(`[rampart] attempting always-allow persistence via /v1/rules/learn: ${JSON.stringify({ ...learnPayload, originalToolName: mapped ? originalToolName : undefined, session: ctx.sessionKey ?? null, toolCallId: ctx.toolCallId ?? null })}`);
 
                 // Write a persistent allow rule via /v1/rules/learn.
                 // This works regardless of whether an approval_id exists.
@@ -390,12 +442,14 @@ export function register(api) {
   });
 
   api.on("after_tool_call", async (event, ctx) => {
-    const { toolName, params, error, durationMs } = event;
+    const normalized = normalizeToolCall(event?.toolName, event?.params);
+    const { toolName, params, originalToolName } = normalized;
+    const { error, durationMs } = event;
 
     // Fire-and-forget — do not block the tool result
     Promise.resolve().then(async () => {
       try {
-        api.logger.debug(`[rampart] tool completed: ${toolName} (${durationMs ?? "?"}ms)`);
+        api.logger.debug(`[rampart] tool completed: ${toolDisplayName(toolName, originalToolName)} (${durationMs ?? "?"}ms)`);
 
         // Best-effort audit POST — Rampart serve already logs via before_tool_call path
         await auditLog(
