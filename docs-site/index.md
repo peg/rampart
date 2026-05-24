@@ -205,7 +205,14 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v1.0
+## What's New in v1.1
+
+- **Machine-readable diagnostics** — `rampart status --json`, `rampart doctor --json`, and `rampart inventory --json` expose structured runtime and integration state for automation.
+- **OpenClaw gateway v4 support** — the bundled plugin speaks the current gateway/status response contract while preserving native approval and audit ownership.
+- **Codex native shell audit coverage** — the release gate now proves Codex app-server native shell calls correlate with canonical Rampart `exec` audit events.
+- **Patched release toolchain** — CI, release, and Docker builds now use Go 1.25.10.
+
+### v1.0
 
 - **Update checks are sane** — `rampart doctor` understands the 1.0 release line and no longer suggests downgrading release candidates to the older stable `v0.9.22` release.
 - **OpenClaw 2026.5.6 verified for launch** — Rampart uses OpenClaw's first-class plugin approval path as the single human-approval owner, with Rampart handling policy, audit, and durable allow-always persistence. [Details →](integrations/openclaw.md)

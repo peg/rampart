@@ -97,7 +97,7 @@ volumes:
   rampart-audit:
 ```
 
-Available tags include full versions such as `1.0.0`, minor versions such as `1.0`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.0.0-rc.3`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+Available tags include full versions such as `1.1.0`, minor versions such as `1.1`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.1.0-rc.1`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
 
 ## Build from Source
 

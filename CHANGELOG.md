@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-24
+
+### Added
+
+- **Machine-readable diagnostics for automation** — `rampart status --json`, `rampart doctor --json`, and `rampart inventory --json` expose structured runtime, policy, and integration state for scripts and CI systems.
+- **Enterprise observability foundation** — Runtime status now includes schema-versioned health and integration details that downstream dashboards can consume without parsing human output.
+- **OpenClaw/Codex native audit regression coverage** — The release gate now includes an opt-in live regression that verifies Codex native shell calls are correlated with Rampart audit events.
+
+### Changed
+
+- **OpenClaw gateway protocol v4 is the bundled baseline** — The embedded plugin now speaks the current gateway/status response contract while preserving Rampart's native approval and audit ownership.
+- **Bundled OpenClaw plugin metadata is aligned for v1.1.0** — The plugin package manifest, OpenClaw manifest, runtime export, and user-facing examples now report `1.1.0`.
+- **Release builds use Go 1.25.10** — CI, release, and Docker builds now use the patched Go toolchain that resolves the called standard-library vulnerabilities reported against Go 1.25.9.
+
+### Fixed
+
+- **Codex native shell calls stay visible in Rampart audit** — OpenClaw tool-alias handling now preserves canonical `exec` audit correlation for Codex app-server native shell sessions.
+
 ## [1.0.0] - 2026-05-06
 
 ### Fixed

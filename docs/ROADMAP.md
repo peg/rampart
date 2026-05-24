@@ -45,12 +45,12 @@ What's coming next for Rampart. Priorities shift based on feedback — [open an 
 
 ## Current Focus
 
-### `v1.0.0`
-- Keep the integration support story boring and evidence-backed: hooks, plugins, preload/wrapper, MCP, and HTTP API should each say what is protected and what happens when policy evaluation is unavailable.
-- Treat OpenClaw `2026.5.2+` as the recommended 1.0 path for native plugin approvals, with launch dogfood verified on OpenClaw `2026.5.6`.
-- Keep `rampart doctor`, setup output, plugin metadata, and docs aligned so users can answer "am I protected, how, and what breaks if serve is down?" without reading source.
+### `v1.1.0`
+- Keep structured diagnostics boring and automation-friendly: `status --json`, `doctor --json`, and `inventory --json` should remain stable enough for scripts without replacing human-readable output.
+- Treat current OpenClaw gateway protocol support and Codex native shell audit correlation as release-gated integrations, with live regression proof before tagging.
+- Keep the release toolchain, plugin metadata, setup output, and docs aligned so users can answer "am I protected, how, and what version is active?" without reading source.
 
-### After 1.0
+### After 1.1
 - Collect feedback from real OpenClaw, Claude Code, Cline, Codex, and MCP users.
 - Fix integration bugs without widening the public API unless the tradeoff is explicit.
 - Keep the support matrix and threat model honest as agent runtimes evolve.
