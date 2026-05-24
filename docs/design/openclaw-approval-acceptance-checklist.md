@@ -41,9 +41,23 @@ go build ./cmd/rampart
 Pass criteria:
 - build completes successfully
 
+### 4. Live Codex app-server shell-audit regression
+
+```bash
+RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+```
+
+Pass criteria:
+- test creates a real OpenClaw Codex app-server session metadata file (`*.jsonl.codex-app-server.json`)
+- trajectory contains a native Codex `bash` tool call for the test marker
+- Rampart audit contains a correlated canonical `exec` event for the same marker/session
+- OpenClaw config and Rampart token file are restored after the test
+
+Do not count a successful OpenClaw command or trajectory as sufficient by itself. The audit event is the proof that the native shell path crossed Rampart policy evaluation.
+
 ## Installed integration checks
 
-### 4. Reinstall plugin
+### 5. Reinstall plugin
 
 ```bash
 go build -o ~/.local/bin/rampart ./cmd/rampart
@@ -62,7 +76,7 @@ Pass criteria:
 
 ## Real product validation
 
-### 5. Native Discord approval card
+### 6. Native Discord approval card
 
 Validate with one real Discord DM case that becomes a real tool invocation.
 
@@ -74,7 +88,7 @@ Pass criteria:
 
 Do not count this as passed if only `exec.approval.list` or `plugin.approval.list` shows a pending record. Queue creation proves the backend path. It does not prove the user-facing approval path.
 
-### 6. Decision outcomes
+### 7. Decision outcomes
 
 Pass criteria:
 - allow once succeeds
@@ -82,7 +96,7 @@ Pass criteria:
 - allow always writes durable learned rule to `~/.rampart/policies/user-overrides.yaml`
 - no hidden second approval queue is created by Rampart
 
-### 7. Live three-state proof
+### 8. Live three-state proof
 
 Validate one case for each state:
 - allow: a previously learned command like `sudo true`

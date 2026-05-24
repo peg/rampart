@@ -51,7 +51,26 @@ Arguments:
 - configured fail-open tools (`read`, `web_fetch`, `web_search`, `image` by default) remain explicit and test-covered
 - command-execution aliases such as OpenClaw `bash` map to Rampart `exec` for policy checks, learning, and audit events
 
-This is a deterministic harness for the highest-leverage regression: approval-path behavior without depending on model tool selection.
+This is a deterministic harness for the highest-leverage plugin regression: approval-path behavior without depending on model tool selection.
+
+It still does **not** prove that the currently installed OpenClaw + Codex app-server runtime is firing the hook for native shell calls. Use the live runtime regression below for that.
+
+## Live Codex app-server shell-audit regression
+
+Run this only when you intentionally want a real local OpenClaw runtime check:
+
+```bash
+RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+```
+
+The live regression temporarily enables the Rampart OpenClaw plugin, points it at an ephemeral local `rampart serve`, restarts the OpenClaw user services, runs one real OpenClaw Codex app-server turn, and restores the prior OpenClaw config/token state before exit.
+
+Pass criteria:
+- a `*.jsonl.codex-app-server.json` metadata file exists for the test session
+- the OpenClaw trajectory contains a native Codex `bash` tool call for the marker command
+- the temporary Rampart audit log contains a correlated canonical `exec` event for that marker command
+
+A successful assistant response or OpenClaw trajectory alone is not enough; this test fails unless Rampart audit proves the native shell call crossed the policy path.
 
 ## Live validation notes
 
