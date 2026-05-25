@@ -245,6 +245,9 @@ Health check — verifies installation, policies, server, hooks, audit trail, an
 rampart doctor
 ```
 
+For automation, `rampart doctor --json` emits schema `rampart.doctor.v1` with top-level fields:
+`schema_version`, `generated_at`, `build_version`, `summary`, `checks`, numeric `warnings`/`issues`, and `warning_checks`/`issue_checks` arrays.
+
 When the OpenClaw native plugin is installed, doctor shows:
 ```
 ✓ OpenClaw plugin: installed (before_tool_call hook active)
@@ -262,6 +265,20 @@ Quick dashboard showing protected agents, enforcement mode, and today's event co
 
 ```bash
 rampart status
+rampart status --json      # Machine-readable snapshot
+```
+
+`--json` emits a stable status payload (`schema_version: "rampart.status.v1"`) with mode, protection state, server flags, today's counts, and optional last deny details.
+
+### `rampart inventory`
+
+Local observability snapshot for automation and debugging.
+
+Use `--json` for a stable machine-readable contract (`rampart.inventory.v1`) that includes protected agents, policy file load status, audit footprint, and local `rampart serve` reachability.
+
+```bash
+rampart inventory
+rampart inventory --json
 ```
 
 ### `rampart test`

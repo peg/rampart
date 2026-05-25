@@ -123,6 +123,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	setupCmd := newSetupCmd(opts)
 	doctorCmd := newDoctorCmd()
 	statusCmd := newStatusCmd()
+	inventoryCmd := newInventoryCmd(opts)
 	tokenCmd := newTokenShowCmd()
 	testCmd := newTestCmd(opts)
 	// benchCmd removed in v0.9 cleanup — use `go test -bench` instead
@@ -152,6 +153,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	serveCmd.GroupID = groupRuntime
 	tokenCmd.GroupID = groupRuntime
 	statusCmd.GroupID = groupRuntime
+	inventoryCmd.GroupID = groupRuntime
 	logCmd.GroupID = groupRuntime
 
 	approveCmd.GroupID = groupApprovals
@@ -190,6 +192,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(setupCmd)
 	cmd.AddCommand(doctorCmd)
 	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(inventoryCmd)
 	cmd.AddCommand(tokenCmd)
 	cmd.AddCommand(testCmd)
 	// cmd.AddCommand(benchCmd)

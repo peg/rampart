@@ -177,6 +177,7 @@ func (m *MultiSink) drain() {
 
 // Write writes to the primary sink and enqueues to secondary sinks (non-blocking).
 func (m *MultiSink) Write(event Event) error {
+	event = applyEventDefaults(event)
 	err := m.primary.Write(event)
 	// Non-blocking send to secondary sinks.
 	select {

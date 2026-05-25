@@ -49,6 +49,33 @@ type checkResult struct {
 	Hint    string `json:"hint,omitempty"` // actionable suggestion on failure/warn
 }
 
+const doctorJSONSchemaVersion = "rampart.doctor.v1"
+
+// doctorSummary carries stable machine-readable counts for doctor checks.
+type doctorSummary struct {
+	Checks   int `json:"checks"`
+	OK       int `json:"ok"`
+	Info     int `json:"info"`
+	Warnings int `json:"warnings"`
+	Issues   int `json:"issues"`
+}
+
+// doctorJSONReport is the machine-readable contract for `rampart doctor --json`.
+type doctorJSONReport struct {
+	SchemaVersion string        `json:"schema_version"`
+	GeneratedAt   string        `json:"generated_at"`
+	BuildVersion  string        `json:"build_version"`
+	Summary       doctorSummary `json:"summary"`
+	Checks        []checkResult `json:"checks"`
+
+	// warnings and issues preserve the pre-v1 JSON count fields.
+	Warnings int `json:"warnings"`
+	Issues   int `json:"issues"`
+
+	WarningChecks []checkResult `json:"warning_checks"`
+	IssueChecks   []checkResult `json:"issue_checks"`
+}
+
 // hintSep is the separator embedded in doctor messages to carry a hint.
 // Format: "<msg>\n" + hintSep + "<hint>"
 const hintSep = "\n  💡 "
@@ -306,26 +333,13 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	}
 
 	if collect {
-		// JSON output
-		issueCount := 0
-		warnCount := 0
-		for _, r := range results {
-			switch r.Status {
-			case "fail":
-				issueCount++
-			case "warn":
-				warnCount++
-			}
-		}
-		out := map[string]any{
-			"checks":   results,
-			"issues":   issueCount,
-			"warnings": warnCount,
-		}
+		out := buildDoctorJSONReport(results, time.Now())
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
-		if issueCount > 0 {
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("doctor: encode json output: %w", err)
+		}
+		if out.Summary.Issues > 0 {
 			return exitCodeError{code: 1}
 		}
 		return nil
@@ -353,6 +367,41 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 		return exitCodeError{code: 1}
 	}
 	return nil
+}
+
+func buildDoctorJSONReport(results []checkResult, generatedAt time.Time) doctorJSONReport {
+	report := doctorJSONReport{
+		SchemaVersion: doctorJSONSchemaVersion,
+		GeneratedAt:   generatedAt.UTC().Format(time.RFC3339),
+		BuildVersion:  build.Version,
+		Checks:        make([]checkResult, 0, len(results)),
+		WarningChecks: make([]checkResult, 0),
+		IssueChecks:   make([]checkResult, 0),
+	}
+
+	for _, result := range results {
+		report.Checks = append(report.Checks, result)
+		report.Summary.Checks++
+
+		switch result.Status {
+		case "ok":
+			report.Summary.OK++
+		case "warn":
+			report.Summary.Warnings++
+			report.WarningChecks = append(report.WarningChecks, result)
+		case "fail":
+			report.Summary.Issues++
+			report.IssueChecks = append(report.IssueChecks, result)
+		default:
+			// WHY: Unrecognized statuses should still be counted but must not
+			// affect issue/warning tallies used for exit behavior.
+			report.Summary.Info++
+		}
+	}
+
+	report.Warnings = report.Summary.Warnings
+	report.Issues = report.Summary.Issues
+	return report
 }
 
 // printDoctorSummary prints an encouraging all-clear summary with next steps.

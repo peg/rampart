@@ -15,17 +15,19 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/internal/audit"
 )
 
 func TestRunStatus(t *testing.T) {
 	var buf bytes.Buffer
-	err := runStatus(&buf)
+	err := runStatus(&buf, false)
 	if err != nil {
 		t.Fatalf("runStatus returned error: %v", err)
 	}
@@ -37,6 +39,111 @@ func TestRunStatus(t *testing.T) {
 	// Verify the status line is present.
 	if !strings.Contains(out, "Status") {
 		t.Error("missing Status row in status output")
+	}
+}
+
+func TestStatusCmdDefaultHumanOutput(t *testing.T) {
+	stdout, _, err := runCLI(t, "status")
+	if err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "RAMPART") {
+		t.Fatalf("expected human status box output, got: %s", stdout)
+	}
+	var payload map[string]any
+	if jsonErr := json.Unmarshal([]byte(stdout), &payload); jsonErr == nil {
+		t.Fatal("default status output should not be JSON")
+	}
+}
+
+func TestStatusCmdJSONOutput(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "status.yaml"), []byte("version: \"1\"\ndefault_action: allow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	auditDir := filepath.Join(home, ".rampart", "audit")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	allowEvent := audit.Event{
+		ID:        "01JTEST000000000000000001",
+		Timestamp: now.Add(-1 * time.Minute),
+		Agent:     "agent-1",
+		Session:   "session-1",
+		Tool:      "exec",
+		Request:   map[string]any{"command": "echo ok"},
+		Decision:  audit.EventDecision{Action: "allow", EvalTimeUS: 1},
+		Hash:      "sha256:allow",
+	}
+	denyEvent := audit.Event{
+		ID:        "01JTEST000000000000000002",
+		Timestamp: now,
+		Agent:     "agent-1",
+		Session:   "session-1",
+		Tool:      "exec",
+		Request:   map[string]any{"command": "rm -rf /tmp/demo"},
+		Decision:  audit.EventDecision{Action: "deny", EvalTimeUS: 1},
+		PrevHash:  allowEvent.Hash,
+		Hash:      "sha256:deny",
+	}
+	allowLine, err := json.Marshal(allowEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denyLine, err := json.Marshal(denyEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(auditDir, now.Format("2006-01-02")+".jsonl")
+	content := string(allowLine) + "\n" + string(denyLine) + "\n"
+	if err := os.WriteFile(logPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := runCLI(t, "status", "--json")
+	if err != nil {
+		t.Fatalf("status --json returned error: %v", err)
+	}
+
+	var got statusJSONOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("status --json output is not valid JSON: %v\noutput: %s", err, stdout)
+	}
+
+	if got.SchemaVersion != statusSchemaVersion {
+		t.Fatalf("schema_version=%q, want %q", got.SchemaVersion, statusSchemaVersion)
+	}
+	if got.GeneratedAt.IsZero() {
+		t.Fatal("generated_at should be set")
+	}
+	if got.BuildVersion == "" {
+		t.Fatal("build_version should be set")
+	}
+	if got.Mode != "monitor" {
+		t.Fatalf("mode=%q, want monitor", got.Mode)
+	}
+	if got.DefaultAction != "allow" {
+		t.Fatalf("default_action=%q, want allow", got.DefaultAction)
+	}
+	if got.Today.Allow != 1 || got.Today.Deny != 1 || got.Today.Pending != 0 {
+		t.Fatalf("today counts mismatch: %+v", got.Today)
+	}
+	if got.LastDeny == nil {
+		t.Fatal("last_deny should be present")
+	}
+	if got.LastDeny.Tool != "exec" {
+		t.Fatalf("last_deny.tool=%q, want exec", got.LastDeny.Tool)
+	}
+	if !strings.Contains(got.LastDeny.Command, "rm -rf") {
+		t.Fatalf("last_deny.command=%q, want command summary", got.LastDeny.Command)
 	}
 }
 

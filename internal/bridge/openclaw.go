@@ -50,6 +50,8 @@ import (
 	"github.com/peg/rampart/internal/engine"
 )
 
+const openClawGatewayProtocolVersion = 4
+
 // OpenClawBridge connects to the OpenClaw gateway and handles exec approval
 // routing through Rampart's policy engine.
 type OpenClawBridge struct {
@@ -264,8 +266,8 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 		ID:     reqID,
 		Method: "connect",
 		Params: map[string]any{
-			"minProtocol": 3,
-			"maxProtocol": 3,
+			"minProtocol": openClawGatewayProtocolVersion,
+			"maxProtocol": openClawGatewayProtocolVersion,
 			"client": map[string]any{
 				"id":          "gateway-client",
 				"displayName": "Rampart Bridge",
@@ -309,6 +311,9 @@ func (b *OpenClawBridge) sendConnect(conn *websocket.Conn) error {
 	}
 	if resFrame.Type != "res" {
 		return fmt.Errorf("unexpected connect response type: %s", resFrame.Type)
+	}
+	if resFrame.OK != nil && !*resFrame.OK {
+		return fmt.Errorf("connect rejected: %s", string(resFrame.Error))
 	}
 
 	return nil
@@ -642,6 +647,7 @@ type gatewayFrame struct {
 	Event   string          `json:"event,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
+	OK      *bool           `json:"ok,omitempty"`
 	Error   json.RawMessage `json:"error,omitempty"`
 	Seq     int             `json:"seq,omitempty"`
 }

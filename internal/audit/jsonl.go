@@ -190,12 +190,7 @@ func (s *JSONLSink) Write(event Event) error {
 	if s.closed {
 		return fmt.Errorf("audit: write on closed sink")
 	}
-	if event.ID == "" {
-		event.ID = NewEventID()
-	}
-	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
-	}
+	event = applyEventDefaults(event)
 
 	event.PrevHash = s.lastHash
 	if err := event.ComputeHash(); err != nil {
