@@ -152,6 +152,7 @@ nav:
     - Cursor: integrations/cursor.md
     - Codex CLI: integrations/codex-cli.md
     - OpenClaw: integrations/openclaw.md
+    - Hermes Agent: integrations/hermes.md
     - Python Agents: integrations/python-agents.md
     - Any CLI Agent: integrations/any-cli-agent.md
   - Features:
