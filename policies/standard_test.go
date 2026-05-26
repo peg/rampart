@@ -75,6 +75,7 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny env ld_preload override", tool: "exec", command: "env LD_PRELOAD=/tmp/evil.so ls", expected: engine.ActionDeny},
 		{name: "deny export ld_preload override", tool: "exec", command: "export LD_PRELOAD=/tmp/evil.so", expected: engine.ActionDeny},
 		{name: "deny rampart control env override", tool: "exec", command: "RAMPART_MODE=disabled true", expected: engine.ActionDeny},
+		{name: "deny rampart control env override case-insensitive", tool: "exec", command: "rampart_mode=disabled true", expected: engine.ActionDeny},
 
 		// Must allow
 		{name: "allow git status", tool: "exec", command: "git status", expected: engine.ActionAllow},
@@ -101,6 +102,8 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "allow printf env var inspection", tool: "exec", command: "printf 'SHELL=%s\\nLD_PRELOAD=%s\\nRAMPART_URL=%s\\n' \"$SHELL\" \"$LD_PRELOAD\" \"$RAMPART_URL\"", expected: engine.ActionAllow},
 		{name: "allow ls rampart shim inspection", tool: "exec", command: "ls -l ~/.local/bin/rampart-shim", expected: engine.ActionAllow},
 		{name: "allow readlink rampart shim inspection", tool: "exec", command: "readlink -f ~/.local/bin/rampart-shim", expected: engine.ActionAllow},
+		{name: "deny compound rampart shim mutation after inspection", tool: "exec", command: "ls ~/.local/bin/rampart-shim && chmod +x ~/.local/bin/rampart-shim", expected: engine.ActionDeny},
+		{name: "deny compound claude settings mutation after inspection", tool: "exec", command: "stat .claude/settings.json && echo bad > .claude/settings.json", expected: engine.ActionDeny},
 		{name: "deny chmod rampart shim mutation", tool: "exec", command: "chmod +x ~/.local/bin/rampart-shim", expected: engine.ActionDeny},
 
 		// New bypass patterns — must deny

@@ -488,8 +488,9 @@ func matchFirstFold(patterns []string, value string) string {
 
 func matchFirstCommandEnvAssignment(patterns []string, cmd string) string {
 	for _, name := range commandEnvAssignmentNames(cmd) {
+		nameFold := strings.ToLower(name)
 		for _, pattern := range patterns {
-			if MatchGlob(pattern, name) {
+			if MatchGlob(strings.ToLower(pattern), nameFold) {
 				return pattern
 			}
 		}
