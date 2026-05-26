@@ -7,12 +7,49 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/peg/rampart/policies"
 )
+
+func TestServeTokenOutputRedactsWhenNonInteractive(t *testing.T) {
+	const token = "secret-token-value"
+	var buf bytes.Buffer
+	printServeToken(&buf, token, false)
+	got := buf.String()
+	if strings.Contains(got, token) {
+		t.Fatalf("non-interactive output leaked full token: %q", got)
+	}
+	if !strings.Contains(got, "saved to ~/.rampart/token") {
+		t.Fatalf("non-interactive output should point to token file, got: %q", got)
+	}
+}
+
+func TestServeTokenOutputPrintsForInteractiveTerminal(t *testing.T) {
+	const token = "secret-token-value"
+	var buf bytes.Buffer
+	printServeToken(&buf, token, true)
+	got := buf.String()
+	if !strings.Contains(got, token) {
+		t.Fatalf("interactive output should include full token, got: %q", got)
+	}
+}
+
+func TestPersistTokenWarningRedactsFallbackWhenNonInteractive(t *testing.T) {
+	const token = "secret-token-value"
+	var buf bytes.Buffer
+	printPersistTokenWarning(&buf, os.ErrPermission, token, false)
+	got := buf.String()
+	if strings.Contains(got, token) {
+		t.Fatalf("non-interactive persist warning leaked full token: %q", got)
+	}
+	if !strings.Contains(got, "not printed") {
+		t.Fatalf("non-interactive persist warning should explain redaction, got: %q", got)
+	}
+}
 
 func TestIsWriteEvent(t *testing.T) {
 	tests := []struct {
