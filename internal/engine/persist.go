@@ -278,6 +278,9 @@ func sanitizeName(s string) string {
 // conditionsEqual checks if two Conditions match the same patterns.
 func conditionsEqual(a, b Condition) bool {
 	return slicesEqual(a.CommandMatches, b.CommandMatches) &&
+		slicesEqual(a.CommandNotMatches, b.CommandNotMatches) &&
+		slicesEqual(a.CommandContains, b.CommandContains) &&
+		slicesEqual(a.CommandEnvAssignments, b.CommandEnvAssignments) &&
 		slicesEqual(a.PathMatches, b.PathMatches) &&
 		a.Default == b.Default &&
 		callCountEqual(a.CallCount, b.CallCount)
@@ -313,9 +316,12 @@ type cleanRule struct {
 }
 
 type cleanWhen struct {
-	CommandMatches []string `yaml:"command_matches,omitempty"`
-	PathMatches    []string `yaml:"path_matches,omitempty"`
-	Default        bool     `yaml:"default,omitempty"`
+	CommandMatches        []string `yaml:"command_matches,omitempty"`
+	CommandNotMatches     []string `yaml:"command_not_matches,omitempty"`
+	CommandContains       []string `yaml:"command_contains,omitempty"`
+	CommandEnvAssignments []string `yaml:"command_env_assignments,omitempty"`
+	PathMatches           []string `yaml:"path_matches,omitempty"`
+	Default               bool     `yaml:"default,omitempty"`
 }
 
 type cleanPolicy struct {
@@ -349,9 +355,12 @@ func marshalCleanYAML(cfg *Config) ([]byte, error) {
 			cp.Rules = append(cp.Rules, cleanRule{
 				Action: r.Action,
 				When: cleanWhen{
-					CommandMatches: r.When.CommandMatches,
-					PathMatches:    r.When.PathMatches,
-					Default:        r.When.Default,
+					CommandMatches:        r.When.CommandMatches,
+					CommandNotMatches:     r.When.CommandNotMatches,
+					CommandContains:       r.When.CommandContains,
+					CommandEnvAssignments: r.When.CommandEnvAssignments,
+					PathMatches:           r.When.PathMatches,
+					Default:               r.When.Default,
 				},
 				ExpiresAt: r.ExpiresAt,
 				Once:      r.Once,

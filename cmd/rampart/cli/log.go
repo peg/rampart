@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -58,7 +59,7 @@ Examples:
 
 			disableColor := noColorF || noColor()
 
-			events, err := loadLogEvents(resolvedDir, today)
+			events, err := loadLogEvents(resolvedDir, today, denyOnly)
 			if err != nil {
 				return err
 			}
@@ -107,8 +108,10 @@ Examples:
 }
 
 // loadLogEvents reads events from audit files. If today is true, only
-// reads files matching today's date pattern.
-func loadLogEvents(auditDir string, todayOnly bool) ([]audit.Event, error) {
+// reads files matching today's date pattern. If allFiles is true, reads all
+// audit files instead of only the latest file so filtered views such as --deny
+// do not miss events when a sidecar file sorts after the primary audit log.
+func loadLogEvents(auditDir string, todayOnly bool, allFiles bool) ([]audit.Event, error) {
 	if todayOnly {
 		todayStr := time.Now().UTC().Format("2006-01-02")
 		matches, err := filepath.Glob(filepath.Join(auditDir, "*"+todayStr+"*.jsonl"))
@@ -126,6 +129,19 @@ func loadLogEvents(auditDir string, todayOnly bool) ([]audit.Event, error) {
 			}
 			events = append(events, fe...)
 		}
+		sortAuditEvents(events)
+		return events, nil
+	}
+
+	if allFiles {
+		events, err := readAllAuditEvents(auditDir)
+		if err != nil {
+			if os.IsNotExist(err) || strings.Contains(err.Error(), "no .jsonl files") {
+				return nil, nil
+			}
+			return nil, err
+		}
+		sortAuditEvents(events)
 		return events, nil
 	}
 
@@ -138,6 +154,12 @@ func loadLogEvents(auditDir string, todayOnly bool) ([]audit.Event, error) {
 		return nil, err
 	}
 	return readAuditEvents(latest)
+}
+
+func sortAuditEvents(events []audit.Event) {
+	sort.SliceStable(events, func(i, j int) bool {
+		return events[i].Timestamp.Before(events[j].Timestamp)
+	})
 }
 
 func writeJSONEvents(w io.Writer, events []audit.Event) error {
