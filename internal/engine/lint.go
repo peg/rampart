@@ -78,21 +78,22 @@ var validActions = map[string]bool{
 
 // validConditionFields are the known fields in a `when:` block.
 var validConditionFields = map[string]bool{
-	"command_matches":      true,
-	"command_not_matches":  true,
-	"command_contains":     true,
-	"path_matches":         true,
-	"path_not_matches":     true,
-	"url_matches":          true,
-	"domain_matches":       true,
-	"response_matches":     true,
-	"response_not_matches": true,
-	"session_matches":      true,
-	"session_not_matches":  true,
-	"agent_depth":          true,
-	"tool_param_matches":   true,
-	"call_count":           true,
-	"default":              true,
+	"command_matches":         true,
+	"command_not_matches":     true,
+	"command_contains":        true,
+	"command_env_assignments": true,
+	"path_matches":            true,
+	"path_not_matches":        true,
+	"url_matches":             true,
+	"domain_matches":          true,
+	"response_matches":        true,
+	"response_not_matches":    true,
+	"session_matches":         true,
+	"session_not_matches":     true,
+	"agent_depth":             true,
+	"tool_param_matches":      true,
+	"call_count":              true,
+	"default":                 true,
 }
 
 // commonFieldTypos maps common typos to their correct field names.

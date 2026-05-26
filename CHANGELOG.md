@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-26
+
+### Added
+
+- **Experimental Hermes Agent policy gate** — `rampart setup hermes` installs a user plugin that evaluates Hermes `pre_tool_call` events through Rampart without patching Hermes itself.
+
+### Changed
+
+- **Bundled OpenClaw plugin metadata is aligned for v1.1.1** — The package manifest, OpenClaw manifest, runtime export, and user-facing examples now report `1.1.1`.
+
+### Fixed
+
+- **Serve tokens stay out of non-interactive logs** — `rampart serve` redacts full tokens when output may be captured by service logs while preserving local token persistence.
+- **Policy polish for agent integration maintenance** — Standard policy now allows safe setup help and hook inspection forms while continuing to deny setup execution, hook mutation, compound inspection-plus-mutation commands, and high-risk environment assignments.
+- **Filtered audit views include sidecar files** — `rampart log --deny` searches all audit JSONL files before filtering so deny events are not hidden by later-sorting sidecar logs.
+
 ## [1.1.0] - 2026-05-24
 
 ### Added

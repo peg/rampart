@@ -280,6 +280,12 @@ type Condition struct {
 	// with URLs: bash <(curl ...) where the / in URLs breaks glob * matching.
 	CommandContains []string `yaml:"command_contains,omitempty"`
 
+	// CommandEnvAssignments is a list of env var name glob patterns for shell
+	// assignments in exec commands (for example, LD_PRELOAD=/x cmd,
+	// env LD_PRELOAD=/x cmd, or export LD_PRELOAD=/x). It intentionally does
+	// not match ordinary arguments such as printf 'LD_PRELOAD=%s'.
+	CommandEnvAssignments []string `yaml:"command_env_assignments,omitempty"`
+
 	// PathMatches is a list of glob patterns for file paths.
 	PathMatches []string `yaml:"path_matches,omitempty"`
 
@@ -352,6 +358,7 @@ func (c Condition) IsEmpty() bool {
 		len(c.CommandMatches) == 0 &&
 		len(c.CommandNotMatches) == 0 &&
 		len(c.CommandContains) == 0 &&
+		len(c.CommandEnvAssignments) == 0 &&
 		len(c.PathMatches) == 0 &&
 		len(c.PathNotMatches) == 0 &&
 		len(c.URLMatches) == 0 &&

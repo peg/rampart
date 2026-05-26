@@ -157,7 +157,7 @@ Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v1.1.0  active
+# rampart  v1.1.1  active
 ```
 
 ## Troubleshooting

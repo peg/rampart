@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -46,6 +47,23 @@ import (
 type serveDeps struct {
 	newWatcher    func() (*fsnotify.Watcher, error)
 	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
+}
+
+func printServeToken(w io.Writer, token string, interactive bool) {
+	if interactive {
+		fmt.Fprintf(w, "  🔑 Full token : %s\n", token)
+		return
+	}
+	fmt.Fprintln(w, "  🔑 Token      : saved to ~/.rampart/token")
+}
+
+func printPersistTokenWarning(w io.Writer, err error, token string, interactive bool) {
+	fmt.Fprintf(w, "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
+	if interactive {
+		fmt.Fprintf(w, "  Run: echo '%s' > ~/.rampart/token\n", token)
+		return
+	}
+	fmt.Fprintln(w, "  Token not printed because stderr is not an interactive terminal.")
 }
 
 func defaultServeDeps() serveDeps {
@@ -408,10 +426,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 
 				// Only print the full token to an interactive terminal, never to
-				// a log file (background mode redirects stderr to serve.log).
-				if !background {
-					fmt.Fprintf(cmd.ErrOrStderr(), "  🔑 Full token : %s\n", token)
-				}
+				// a log file or redirected stderr (background mode redirects stderr to serve.log).
+				interactiveStderr := isTerminal(os.Stderr)
+				printServeToken(cmd.ErrOrStderr(), token, interactiveStderr)
 				scheme := "http"
 				if tlsCfg != nil {
 					scheme = "https"
@@ -423,8 +440,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				// Persist the token so it survives restarts.
 				if err := persistToken(token); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
-					fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", token)
+					printPersistTokenWarning(cmd.ErrOrStderr(), err, token, interactiveStderr)
 				}
 
 				if metrics {

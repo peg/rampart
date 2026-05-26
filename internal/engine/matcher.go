@@ -386,6 +386,17 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		return false, ""
 	}
 
+	if len(cond.CommandEnvAssignments) > 0 {
+		cmd := call.Command()
+		if cmd == "" {
+			return false, ""
+		}
+		if matched := matchFirstCommandEnvAssignment(cond.CommandEnvAssignments, cmd); matched != "" {
+			return true, fmt.Sprintf("command_env_assignments [%q]", matched)
+		}
+		return false, ""
+	}
+
 	if len(cond.PathMatches) > 0 {
 		cleaned, resolved := cleanPaths(call.Path())
 		if cleaned == "" {
@@ -473,6 +484,107 @@ func matchFirstFold(patterns []string, value string) string {
 		}
 	}
 	return ""
+}
+
+func matchFirstCommandEnvAssignment(patterns []string, cmd string) string {
+	for _, name := range commandEnvAssignmentNames(cmd) {
+		nameFold := strings.ToLower(name)
+		for _, pattern := range patterns {
+			if MatchGlob(strings.ToLower(pattern), nameFold) {
+				return pattern
+			}
+		}
+	}
+	return ""
+}
+
+func commandEnvAssignmentNames(cmd string) []string {
+	seen := map[string]bool{}
+	names := make([]string, 0)
+
+	var collect func(string, int)
+	collect = func(raw string, depth int) {
+		if depth > 4 || strings.TrimSpace(raw) == "" {
+			return
+		}
+		segments := SplitCompoundCommand(raw)
+		if len(segments) == 0 {
+			segments = []string{raw}
+		}
+		for _, seg := range segments {
+			tokens := tokenize(seg)
+			collectEnvAssignmentNamesFromTokens(tokens, seen, &names)
+			if unwrapped := stripShellWrapperOnce(tokens); !strSlicesEqual(unwrapped, tokens) {
+				collect(strings.Join(unwrapped, " "), depth+1)
+			}
+		}
+		for _, sub := range ExtractSubcommands(raw) {
+			collect(sub, depth+1)
+		}
+	}
+
+	collect(cmd, 0)
+	return names
+}
+
+func collectEnvAssignmentNamesFromTokens(tokens []string, seen map[string]bool, names *[]string) {
+	if len(tokens) == 0 {
+		return
+	}
+	for i := 0; i < len(tokens); i++ {
+		name, ok := envAssignmentName(tokens[i])
+		if !ok {
+			break
+		}
+		appendEnvAssignmentName(name, seen, names)
+	}
+
+	switch filepath.Base(tokens[0]) {
+	case "env":
+		for i := 1; i < len(tokens); i++ {
+			tok := tokens[i]
+			if tok == "--" {
+				continue
+			}
+			if tok == "-u" || tok == "--unset" {
+				i++
+				continue
+			}
+			if strings.HasPrefix(tok, "--unset=") || strings.HasPrefix(tok, "-") {
+				continue
+			}
+			name, ok := envAssignmentName(tok)
+			if !ok {
+				break
+			}
+			appendEnvAssignmentName(name, seen, names)
+		}
+	case "export", "declare", "typeset":
+		for _, tok := range tokens[1:] {
+			if strings.HasPrefix(tok, "-") {
+				continue
+			}
+			if name, ok := envAssignmentName(tok); ok {
+				appendEnvAssignmentName(name, seen, names)
+			}
+		}
+	}
+}
+
+func envAssignmentName(token string) (string, bool) {
+	if !isEnvAssignment(token) {
+		return "", false
+	}
+	name := token[:strings.IndexByte(token, '=')]
+	return name, true
+}
+
+func appendEnvAssignmentName(name string, seen map[string]bool, names *[]string) {
+	if name == "" || seen[name] {
+		return
+	}
+	seen[name] = true
+	*names = append(*names, name)
 }
 
 func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
@@ -567,6 +679,23 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 		}
 		norm := NormalizeCommand(cmd)
 		if norm != cmd && matchAny(cond.CommandNotMatches, norm) {
+			return false
+		}
+		matched = true
+	}
+
+	if len(cond.CommandEnvAssignments) > 0 {
+		cmd := call.Command()
+		if cmd == "" {
+			return false
+		}
+		if matchFirstCommandEnvAssignment(cond.CommandEnvAssignments, cmd) == "" {
+			return false
+		}
+		if matchAny(cond.CommandNotMatches, cmd) {
+			return false
+		}
+		if norm := NormalizeCommand(cmd); norm != cmd && matchAny(cond.CommandNotMatches, norm) {
 			return false
 		}
 		matched = true

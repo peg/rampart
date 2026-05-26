@@ -286,9 +286,14 @@ func TestServeReadsAndPersistsToken(t *testing.T) {
 
 	logs := stderr.String()
 
-	// Serve must log the persisted token, not a fresh random one.
-	if !strings.Contains(logs, knownToken) {
-		t.Fatalf("serve did not use persisted token from ~/.rampart/token.\nlogs:\n%s", logs)
+	// Serve must use the persisted token without leaking the full secret into
+	// non-interactive logs. The ready line includes a short display prefix, which
+	// is enough to distinguish the persisted token from a fresh random one.
+	if strings.Contains(logs, knownToken) {
+		t.Fatalf("serve leaked full persisted token in logs.\nlogs:\n%s", logs)
+	}
+	if !strings.Contains(logs, "token=deadbeef...") {
+		t.Fatalf("serve did not appear to use persisted token prefix from ~/.rampart/token.\nlogs:\n%s", logs)
 	}
 
 	// Token file must still contain the same value after serve writes it back.
