@@ -55,6 +55,9 @@ jobs:
           node internal/plugin/openclaw/approval-regression.mjs
           node internal/plugin/openclaw/degraded-mode-test.mjs
 
+      - name: Hermes plugin regression tests
+        run: python -m unittest internal/plugin/hermes/test_hermes_plugin.py
+
       - name: Policy check (standard)
         run: go run ./cmd/rampart policy check --config policies/standard.yaml
 

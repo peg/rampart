@@ -49,6 +49,13 @@ Use this page as the canonical support contract for Rampart's main integration s
       <td data-label="Support tier"><strong>Recommended</strong></td>
     </tr>
     <tr class="tier-supported">
+      <td data-label="Surface"><strong>Hermes Agent</strong></td>
+      <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
+      <td data-label="Support tier">Experimental</td>
+    </tr>
+    <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
       <td data-label="rampart serve">Required</td>
@@ -91,12 +98,14 @@ Use this page as the canonical support contract for Rampart's main integration s
 - **Claude Code** → best overall native path
 - **Codex CLI** → best CLI path when you want strong coverage
 - **OpenClaw >= 2026.5.2** → best OpenClaw path for 1.0; plugin + native approval UI
+- **Hermes Agent** → experimental plugin path for early testing; `ask` decisions block rather than resume
 - **Cline** → good supported path, but less polished approval UX than Claude Code
 
 ## Degraded behavior notes
 
 - **Claude Code / Cline native hooks**: local policy evaluation still works when `rampart serve` is down, but dashboard features, approval APIs, and external approval state do not.
 - **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed.
+- **Hermes Agent plugin**: depends on `rampart serve`; mutating/high-risk tools fail closed when unavailable, while explicitly configured read-only tools may fail open.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.
 - **Wrapper / preload / API paths**: behavior depends on integration settings and fail-open/fail-closed configuration.
 
@@ -104,6 +113,7 @@ Use this page as the canonical support contract for Rampart's main integration s
 
 - Use **native hooks** when the agent supports them.
 - Use the **OpenClaw native plugin** on current OpenClaw builds.
+- Use the **Hermes Agent plugin** for conservative early Hermes testing.
 - Use **wrapper / preload** when the CLI agent has no hook system.
 - Use **MCP proxy** or **HTTP API** for clients that integrate through MCP or custom service calls.
 
@@ -112,4 +122,5 @@ Use this page as the canonical support contract for Rampart's main integration s
 - [Quick Start](quickstart.md)
 - [How Rampart Works](how-it-works.md)
 - [OpenClaw integration](../integrations/openclaw.md)
+- [Hermes Agent integration](../integrations/hermes.md)
 - [Integration guides](../integrations/index.md)

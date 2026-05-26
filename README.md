@@ -53,6 +53,9 @@ rampart setup claude-code
 # OpenClaw
 rampart setup openclaw
 
+# Hermes Agent (experimental)
+rampart setup hermes
+
 # Cline
 rampart setup cline
 
@@ -123,6 +126,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 |-------|--------------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart setup openclaw` | Native plugin + selective native approvals |
+| **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex CLI** | `rampart setup codex` | Wrapper that runs Codex through `rampart preload` |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
@@ -136,7 +140,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 <details>
 <summary><strong>Table of Contents</strong></summary>
 
-**Getting Started:** [Install](#install) · [Quick start](#quick-start) · [Claude Code](#claude-code) · [OpenClaw](#openclaw) · [Wrap any agent](#wrap-any-agent)
+**Getting Started:** [Install](#install) · [Quick start](#quick-start) · [Claude Code](#claude-code) · [OpenClaw](#openclaw) · [Hermes Agent](#hermes-agent-experimental) · [Wrap any agent](#wrap-any-agent)
 
 **Core Features:** [Policies](#writing-policies) · [Approval flow](#approval-flow) · [Audit trail](#audit-trail) · [Live dashboard](#live-dashboard) · [Webhook notifications](#webhook-notifications)
 
@@ -204,6 +208,19 @@ In practice, that means:
 `rampart setup openclaw --patch-tools` still exists as a compatibility option for older setups, but it is no longer the recommended path. It modifies OpenClaw dist files and must be re-applied after upgrades.
 
 Run `rampart doctor` at any time to verify the current OpenClaw integration state.
+
+---
+
+## Hermes Agent (experimental)
+
+Hermes Agent integration uses a user plugin installed into `~/.hermes/plugins/rampart`:
+
+```bash
+rampart setup hermes
+hermes plugins enable rampart
+```
+
+The plugin registers a Hermes `pre_tool_call` hook and sends sanitized tool metadata to Rampart before execution. It defaults to `/v1/preflight/{tool}` so early tests do not create hidden approvals that Hermes cannot resume. `ask` decisions block with an approval-required message until Hermes has a first-class plugin approval/resume flow.
 
 ---
 

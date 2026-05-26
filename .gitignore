@@ -6,6 +6,10 @@
 # Go build/test cache
 .cache/
 
+# Python cache
+__pycache__/
+*.py[cod]
+
 # IDE
 .idea/
 .vscode/

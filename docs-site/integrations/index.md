@@ -1,6 +1,6 @@
 ---
 title: Integration Guides
-description: "Find the right Rampart integration for Claude Code, Cline, Cursor, OpenClaw, Codex, and custom agents. Compare hooks, MCP proxy, wrapping, and preload."
+description: "Find the right Rampart integration for Claude Code, Cline, Cursor, OpenClaw, Hermes Agent, Codex, and custom agents. Compare hooks, plugins, MCP proxy, wrapping, and preload."
 ---
 
 # Integration Guides
@@ -16,7 +16,7 @@ Rampart works with every major AI agent through multiple integration methods. Ch
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Codex CLI, any process |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
-| **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw |
+| **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Hermes Agent (experimental) |
 | **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
 | **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (legacy / alternative) |
 
@@ -30,6 +30,7 @@ When a policy action is `ask`, behavior varies by integration:
 | **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
 | **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
 | **OpenClaw** | OpenClaw owns the visible approval UI; Rampart plugin supplies policy decisions |
+| **Hermes Agent** | Experimental plugin blocks `ask` with an approval-required message until Hermes owns a plugin approval/resume flow |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
 | **LD_PRELOAD** | Library blocks exec call, process appears "hung" |
 | **HTTP API** | Returns `"decision":"ask"` with approval metadata when interactive review is required |
@@ -44,6 +45,7 @@ When a policy action is `ask`, behavior varies by integration:
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI](codex-cli.md) | Wrapper + preload | `rampart setup codex` | Linux, macOS* |
 | [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw` | Linux, macOS |
+| [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | All |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
 
@@ -61,7 +63,7 @@ q: "Integration method?" {shape: diamond}
 hooks: "rampart setup claude-code\\nrampart setup cline" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
-shim: "rampart setup openclaw\\nnative plugin on current builds" {
+shim: "rampart setup openclaw\\nrampart setup hermes" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 mcp: "rampart mcp --" {
@@ -80,7 +82,7 @@ api: "HTTP API / SDK\\nlocalhost:9090" {
 start -> q
 
 q -> hooks: "Claude Code or Cline\\n(native hooks, lowest overhead)"
-q -> shim: "OpenClaw\\n(native plugin on supported builds)"
+q -> shim: "OpenClaw or Hermes Agent\\n(native plugin where supported)"
 q -> mcp: "Cursor, Claude Desktop\\nor any MCP-compatible client"
 q -> wrap: "Any CLI agent\\nwith \$SHELL support"
 q -> preload: "Any CLI agent\\nwithout \$SHELL or native hooks"

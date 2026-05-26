@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 
+	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
@@ -32,8 +33,9 @@ Run without a subcommand to launch the interactive setup wizard.
 
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
+  • Hermes Agent              - Experimental user plugin integration
   • Cline (VS Code)           - Native hook integration
-  • OpenClaw                  - Shell wrapper integration`,
+  • OpenClaw                  - Native plugin integration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInteractiveSetup(cmd, opts)
 		},
@@ -42,10 +44,88 @@ Supported AI Agents:
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmations during interactive setup")
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
+	cmd.AddCommand(newSetupHermesCmd())
 	cmd.AddCommand(newSetupClineCmd(opts))
 	cmd.AddCommand(newSetupOpenClawCmd(opts))
 	cmd.AddCommand(newSetupCodexCmd(opts))
 
+	return cmd
+}
+
+func newSetupHermesCmd() *cobra.Command {
+	var enable bool
+	var remove bool
+	var pluginDir string
+
+	cmd := &cobra.Command{
+		Use:   "hermes",
+		Short: "Install the experimental Rampart plugin for Hermes Agent",
+		Long: `Installs Rampart's experimental Hermes Agent user plugin into
+~/.hermes/plugins/rampart without patching Hermes itself.
+
+The plugin uses Hermes' pre_tool_call hook, calls Rampart's policy API before
+sensitive tool calls execute, defaults to /v1/preflight/{tool}, blocks ask
+responses instead of creating hidden approvals, and fails closed for mutating
+or high-risk tools when Rampart serve is unavailable.
+
+By default this command installs the plugin files only. Use --enable to run
+"hermes plugins enable rampart" after installation. Restart long-running Hermes
+gateways after enabling so plugin discovery reloads cleanly.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("setup hermes: resolve home: %w", err)
+			}
+			if strings.TrimSpace(pluginDir) == "" {
+				pluginDir = filepath.Join(home, ".hermes", "plugins", "rampart")
+			} else {
+				pluginDir = filepath.Clean(os.ExpandEnv(pluginDir))
+			}
+			if strings.HasPrefix(pluginDir, "~"+string(os.PathSeparator)) {
+				pluginDir = filepath.Join(home, strings.TrimPrefix(pluginDir, "~"+string(os.PathSeparator)))
+			}
+
+			if remove {
+				if err := os.Remove(filepath.Join(pluginDir, "__init__.py")); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("setup hermes: remove plugin runtime: %w", err)
+				}
+				if err := os.Remove(filepath.Join(pluginDir, "plugin.yaml")); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("setup hermes: remove plugin manifest: %w", err)
+				}
+				_ = os.Remove(pluginDir) // best-effort; succeeds only if the directory is empty
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed Rampart Hermes plugin files from %s\n", pluginDir)
+				fmt.Fprintln(cmd.OutOrStdout(), "Run `hermes plugins disable rampart` if it is still enabled in Hermes config.")
+				return nil
+			}
+
+			if err := hermesplugin.Extract(pluginDir); err != nil {
+				return fmt.Errorf("setup hermes: install plugin: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Installed experimental Rampart Hermes plugin v%s to %s\n", hermesplugin.Version(), pluginDir)
+
+			if enable {
+				hermesBin, err := execLookPath("hermes")
+				if err != nil {
+					return fmt.Errorf("setup hermes: plugin installed, but cannot enable automatically because hermes was not found in PATH: %w", err)
+				}
+				enableCmd := osexec.Command(hermesBin, "plugins", "enable", "rampart")
+				enableCmd.Stdout = cmd.OutOrStdout()
+				enableCmd.Stderr = cmd.ErrOrStderr()
+				if err := enableCmd.Run(); err != nil {
+					return fmt.Errorf("setup hermes: plugin installed, but `hermes plugins enable rampart` failed: %w", err)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "Restart long-running Hermes gateways so the enabled plugin is loaded.")
+				return nil
+			}
+
+			fmt.Fprintln(cmd.OutOrStdout(), "Enable it with: hermes plugins enable rampart")
+			fmt.Fprintln(cmd.OutOrStdout(), "Then restart any long-running Hermes gateway before testing.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&enable, "enable", false, "Enable the plugin via `hermes plugins enable rampart` after installing")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove the installed plugin files")
+	cmd.Flags().StringVar(&pluginDir, "plugin-dir", "", "Hermes plugin install directory (default ~/.hermes/plugins/rampart)")
 	return cmd
 }
 
