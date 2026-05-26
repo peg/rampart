@@ -323,7 +323,7 @@ func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCount
 	if cond.Default || cond.IsEmpty() {
 		return true
 	}
-	if len(cond.CommandMatches) == 0 && len(cond.CommandContains) == 0 {
+	if len(cond.CommandMatches) == 0 && len(cond.CommandContains) == 0 && len(cond.CommandEnvAssignments) == 0 {
 		return matchCondition(cond, call, counter)
 	}
 	if !matchStrictCommandCondition(cond, call) {
@@ -331,6 +331,7 @@ func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCount
 	}
 	cond.CommandMatches = nil
 	cond.CommandContains = nil
+	cond.CommandEnvAssignments = nil
 	cond.CommandNotMatches = nil
 	if cond.IsEmpty() {
 		return true
@@ -358,6 +359,9 @@ func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
 				break
 			}
 		}
+	}
+	if !cmdMatch {
+		cmdMatch = matchFirstCommandEnvAssignment(cond.CommandEnvAssignments, cmd) != ""
 	}
 	if !cmdMatch {
 		return false

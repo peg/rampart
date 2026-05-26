@@ -113,7 +113,7 @@ func TestIsLogNoise(t *testing.T) {
 	}
 
 	realEvent := audit.Event{
-		Tool: "exec",
+		Tool:    "exec",
 		Request: map[string]any{"command": "cat ~/.ssh/id_rsa"},
 		Decision: audit.EventDecision{
 			Action:          "deny",
@@ -180,7 +180,7 @@ func TestWriteJSONEvents(t *testing.T) {
 
 func TestLoadLogEvents_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	events, err := loadLogEvents(dir, false)
+	events, err := loadLogEvents(dir, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,11 +203,73 @@ func TestLoadLogEvents_WithFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, err := loadLogEvents(dir, false)
+	loaded, err := loadLogEvents(dir, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(loaded) != 3 {
 		t.Errorf("expected 3 events, got %d", len(loaded))
+	}
+}
+
+func TestLoadLogEvents_AllFilesForDenyView(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 2, 13, 14, 30, 0, 0, time.UTC)
+
+	primaryDeny := audit.Event{
+		ID:        "deny-older-file",
+		Timestamp: base,
+		Agent:     "test",
+		Tool:      "exec",
+		Request:   map[string]any{"command": "rm -rf /tmp/*"},
+		Decision: audit.EventDecision{
+			Action:          "deny",
+			MatchedPolicies: []string{"block-destructive"},
+		},
+	}
+	laterAllow := audit.Event{
+		ID:        "allow-sidecar",
+		Timestamp: base.Add(time.Second),
+		Agent:     "hook",
+		Tool:      "exec",
+		Request:   map[string]any{"command": "git status"},
+		Decision:  audit.EventDecision{Action: "allow"},
+	}
+
+	writeEvents := func(name string, events ...audit.Event) {
+		t.Helper()
+		var lines []string
+		for _, event := range events {
+			b, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines = append(lines, string(b))
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeEvents("2026-02-13.jsonl", primaryDeny)
+	writeEvents("audit-hook-2026-02-13.jsonl", laterAllow)
+
+	latestOnly, err := loadLogEvents(dir, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latestOnly) != 1 || latestOnly[0].ID != "allow-sidecar" {
+		t.Fatalf("expected default latest-file view to read sidecar allow, got %#v", latestOnly)
+	}
+
+	allEvents, err := loadLogEvents(dir, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allEvents) != 2 {
+		t.Fatalf("expected all-file view to read both files, got %d", len(allEvents))
+	}
+	if allEvents[0].ID != "deny-older-file" || allEvents[1].ID != "allow-sidecar" {
+		t.Fatalf("expected timestamp-sorted events from both files, got %#v", allEvents)
 	}
 }

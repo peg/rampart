@@ -117,6 +117,25 @@ policies:
             - "./rampart serve *"
             - "./rampart upgrade"
             - "./rampart upgrade *"
+          command_not_matches:
+            - "rampart setup --help"
+            - "rampart setup -h"
+            - "rampart setup openclaw --help"
+            - "rampart setup openclaw -h"
+            - "rampart setup hermes --help"
+            - "rampart setup hermes -h"
+            - "/**/rampart setup --help"
+            - "/**/rampart setup -h"
+            - "/**/rampart setup openclaw --help"
+            - "/**/rampart setup openclaw -h"
+            - "/**/rampart setup hermes --help"
+            - "/**/rampart setup hermes -h"
+            - "./rampart setup --help"
+            - "./rampart setup -h"
+            - "./rampart setup openclaw --help"
+            - "./rampart setup openclaw -h"
+            - "./rampart setup hermes --help"
+            - "./rampart setup hermes -h"
         message: "Policy modification commands must be run by a human, not an agent"
       # Block shell redirects writing to .rampart directory (config/policy tampering)
       - action: deny
@@ -187,6 +206,20 @@ policies:
             - ".local/bin/codex"
             - ".local/bin/rampart-shim"
             - ".claude/settings.local.json"
+          command_not_matches:
+            - "ls .claude/settings.json"
+            - "ls -l .claude/settings.json"
+            - "ls .claude/settings.local.json"
+            - "ls -l .claude/settings.local.json"
+            - "ls ~/.local/bin/rampart-shim"
+            - "ls -l ~/.local/bin/rampart-shim"
+            - "readlink ~/.local/bin/rampart-shim"
+            - "readlink -f ~/.local/bin/rampart-shim"
+            - "stat .claude/settings.json"
+            - "stat .claude/settings.local.json"
+            - "stat ~/.local/bin/rampart-shim"
+            - "file ~/.local/bin/rampart-shim"
+            - "sha256sum ~/.local/bin/rampart-shim"
         message: "Modifying Rampart integration hooks is not allowed"
 
   - name: block-destructive
@@ -393,44 +426,46 @@ policies:
         message: ".env file access logged — may contain secrets"
 
   - name: block-env-var-injection
-    description: "Block environment variable injection with no legitimate agent use — preloaders, startup hooks, shell init files"
+    description: "Block high-risk environment variable assignments; read-only inspection remains allowed"
     match:
       tool: ["exec"]
     rules:
       - action: deny
         when:
-          command_contains:
+          command_env_assignments:
             # Shared library / preloader injection — hijacks every syscall in the process
             # No legitimate reason for an AI agent to set these in a command string
-            - "LD_PRELOAD="
-            - "LD_LIBRARY_PATH="
-            - "DYLD_INSERT_LIBRARIES="
-            - "LD_AUDIT="
+            - "LD_PRELOAD"
+            - "LD_LIBRARY_PATH"
+            - "DYLD_INSERT_LIBRARIES"
+            - "LD_AUDIT"
             # Python startup file — executes arbitrary code before any script or REPL
-            - "PYTHONSTARTUP="
-            - "PYTHONHOME="       # replaces stdlib entirely; no legitimate inline use
+            - "PYTHONSTARTUP"
+            - "PYTHONHOME"       # replaces stdlib entirely; no legitimate inline use
             # .NET startup hooks — injects arbitrary assembly into every .NET process
-            - "DOTNET_STARTUP_HOOKS="
+            - "DOTNET_STARTUP_HOOKS"
             # Shell init file loaded in non-interactive bash/sh — classic persistence vector
-            - "BASH_ENV="
+            - "BASH_ENV"
             # JVM undocumented/hidden option — higher severity than JAVA_OPTS
-            - "_JAVA_OPTIONS="
+            - "_JAVA_OPTIONS"
             # Perl/Ruby option injection via env — rarely needed legitimately in agent context
-            - "PERL5OPT="
+            - "PERL5OPT"
             # Git binary replacement — redirects all git sub-process execution
-            - "GIT_EXEC_PATH="
-        message: "Dangerous environment variable injection blocked. These vars have no legitimate use in agent-issued commands."
+            - "GIT_EXEC_PATH"
+            # Rampart control-plane overrides must not be set by the agent itself.
+            - "RAMPART_*"
+        message: "Dangerous environment variable assignment blocked. These vars can alter enforcement or inject code into child processes."
 
   - name: watch-env-var-override
-    description: "Watch common dev environment overrides (high-risk vars handled by block-env-var-injection)"
+    description: "Watch common dev environment assignments (high-risk vars handled by block-env-var-injection)"
     match:
       tool: ["exec"]
     rules:
       - action: watch
         when:
-          command_contains:
-            - "NODE_OPTIONS="
-            - "PYTHONPATH="
+          command_env_assignments:
+            - "NODE_OPTIONS"
+            - "PYTHONPATH"
         message: "Environment variable override detected and logged"
 
   - name: require-privileged-approval

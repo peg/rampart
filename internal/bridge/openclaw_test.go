@@ -754,9 +754,12 @@ policies:
 	mg.sendApprovalRequest(approvalID, testCmd, "claude-code")
 	time.Sleep(300 * time.Millisecond)
 	mg.sendApprovalResolved(approvalID, "allow-always")
-	time.Sleep(300 * time.Millisecond)
 
 	overridesPath := filepath.Join(tmpDir, ".rampart", "policies", "user-overrides.yaml")
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(overridesPath)
+		return err == nil
+	}, 2*time.Second, 50*time.Millisecond, "user-overrides.yaml should be written after allow-always resolution")
 	data, err := os.ReadFile(overridesPath)
 	if err != nil {
 		t.Fatalf("user-overrides.yaml not written after allow-always resolution: %v", err)

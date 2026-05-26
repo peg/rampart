@@ -24,8 +24,8 @@ type exitCodeErr struct {
 	msg  string
 }
 
-func (e *exitCodeErr) Error() string    { return e.msg }
-func (e *exitCodeErr) ExitCode() int    { return e.code }
+func (e *exitCodeErr) Error() string { return e.msg }
+func (e *exitCodeErr) ExitCode() int { return e.code }
 
 func TestExitCode(t *testing.T) {
 	tests := []struct {
@@ -335,7 +335,7 @@ func (n *nopWriteCloser) Close() error { return nil }
 func TestLoadLogEvents(t *testing.T) {
 	t.Run("empty dir", func(t *testing.T) {
 		dir := t.TempDir()
-		events, err := loadLogEvents(dir, false)
+		events, err := loadLogEvents(dir, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -346,7 +346,7 @@ func TestLoadLogEvents(t *testing.T) {
 
 	t.Run("today only no files", func(t *testing.T) {
 		dir := t.TempDir()
-		events, err := loadLogEvents(dir, true)
+		events, err := loadLogEvents(dir, true, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -366,7 +366,7 @@ func TestLoadLogEvents(t *testing.T) {
 		data, _ := json.Marshal(event)
 		os.WriteFile(filepath.Join(dir, "audit-"+today+".jsonl"), append(data, '\n'), 0o644)
 
-		events, err := loadLogEvents(dir, true)
+		events, err := loadLogEvents(dir, true, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -385,7 +385,7 @@ func TestLoadLogEvents(t *testing.T) {
 		data, _ := json.Marshal(event)
 		os.WriteFile(filepath.Join(dir, "audit-2025-01-01.jsonl"), append(data, '\n'), 0o644)
 
-		events, err := loadLogEvents(dir, false)
+		events, err := loadLogEvents(dir, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
