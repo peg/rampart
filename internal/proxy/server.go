@@ -355,6 +355,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
 	mux.HandleFunc("POST /v1/approvals/bulk-resolve", s.handleBulkResolve)
+	mux.HandleFunc("POST /v1/hosted-approvals/{auditID}/resolve", s.handleResolveHostedApproval)
 	mux.HandleFunc("GET /v1/rules/auto-allowed", s.handleGetAutoAllowed)
 	mux.HandleFunc("DELETE /v1/rules/auto-allowed/{name}", s.handleDeleteAutoAllowed)
 	mux.HandleFunc("POST /v1/rules/learn", s.handleLearnRule)
@@ -390,8 +391,10 @@ type toolRequest struct {
 	Agent               string         `json:"agent"`
 	Session             string         `json:"session"`
 	RunID               string         `json:"run_id,omitempty"`
+	ToolCallID          string         `json:"tool_call_id,omitempty"`
 	Params              map[string]any `json:"params"`
 	Input               map[string]any `json:"input,omitempty"`
+	ApprovalOwner       *approvalOwner `json:"approval_owner,omitempty"`
 	OpenClawHosted      bool           `json:"openclaw_hosted,omitempty"`
 	SkipPendingApproval bool           `json:"skip_pending_approval,omitempty"`
 
@@ -408,6 +411,82 @@ type toolRequest struct {
 	Response string `json:"response,omitempty"`
 }
 
+// approvalOwner describes host-owned approval/resume capabilities for a tool
+// evaluation. approval_owner.mode=hosted means the caller owns the user-facing
+// approval object; Rampart records policy/audit data but must not create a
+// second Rampart-native pending approval for the same tool call.
+type approvalOwner struct {
+	Host                   string `json:"host,omitempty"`
+	Mode                   string `json:"mode,omitempty"`
+	Surface                string `json:"surface,omitempty"`
+	SupportsExactResume    bool   `json:"supports_exact_resume,omitempty"`
+	SupportsAllowAlways    bool   `json:"supports_allow_always,omitempty"`
+	SupportsResultCallback bool   `json:"supports_result_callback,omitempty"`
+}
+
+func (o *approvalOwner) isHosted() bool {
+	return o != nil && strings.EqualFold(strings.TrimSpace(o.Mode), "hosted")
+}
+
+func (o *approvalOwner) toMap() map[string]any {
+	if o == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if host := strings.TrimSpace(o.Host); host != "" {
+		out["host"] = host
+	}
+	if mode := strings.TrimSpace(o.Mode); mode != "" {
+		out["mode"] = mode
+	}
+	if surface := strings.TrimSpace(o.Surface); surface != "" {
+		out["surface"] = surface
+	}
+	if o.SupportsExactResume {
+		out["supports_exact_resume"] = true
+	}
+	if o.SupportsAllowAlways {
+		out["supports_allow_always"] = true
+	}
+	if o.SupportsResultCallback {
+		out["supports_result_callback"] = true
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (req toolRequest) requestsHostedApproval() bool {
+	return req.ApprovalOwner.isHosted() || req.OpenClawHosted || req.SkipPendingApproval
+}
+
+func (req toolRequest) hostedApprovalOwnerMap() map[string]any {
+	if owner := req.ApprovalOwner.toMap(); len(owner) > 0 {
+		return owner
+	}
+	if req.OpenClawHosted {
+		return map[string]any{"host": "openclaw", "mode": "hosted"}
+	}
+	return nil
+}
+
+func (req toolRequest) validateTrustedHostedApproval() error {
+	if req.ApprovalOwner.isHosted() {
+		if strings.TrimSpace(req.ApprovalOwner.Host) == "" {
+			return fmt.Errorf("approval_owner.host is required when approval_owner.mode=hosted")
+		}
+		if !req.ApprovalOwner.SupportsExactResume {
+			return fmt.Errorf("approval_owner.supports_exact_resume=true is required for hosted approvals")
+		}
+		return nil
+	}
+	if req.OpenClawHosted && req.SkipPendingApproval {
+		return nil
+	}
+	return fmt.Errorf("hosted approval requests require approval_owner.mode=hosted or both openclaw_hosted and skip_pending_approval")
+}
+
 // createApprovalRequest is the JSON body for POST /v1/approvals.
 type createApprovalRequest struct {
 	Tool    string `json:"tool"`
@@ -422,6 +501,21 @@ type resolveRequest struct {
 	Approved   bool   `json:"approved"`
 	ResolvedBy string `json:"resolved_by"`
 	Persist    bool   `json:"persist"`
+}
+
+type hostedApprovalResolveRequest struct {
+	Agent          string         `json:"agent,omitempty"`
+	Session        string         `json:"session,omitempty"`
+	RunID          string         `json:"run_id,omitempty"`
+	Tool           string         `json:"tool,omitempty"`
+	ToolCallID     string         `json:"tool_call_id,omitempty"`
+	HostApprovalID string         `json:"host_approval_id,omitempty"`
+	ApprovalOwner  *approvalOwner `json:"approval_owner,omitempty"`
+	Outcome        string         `json:"outcome"`
+	Scope          string         `json:"scope,omitempty"`
+	ResolvedBy     string         `json:"resolved_by,omitempty"`
+	ResolvedAt     string         `json:"resolved_at,omitempty"`
+	Message        string         `json:"message,omitempty"`
 }
 
 // bulkResolveRequest is the JSON body for POST /v1/approvals/bulk-resolve.

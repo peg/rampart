@@ -731,6 +731,131 @@ policies:
 	assert.Len(t, srv.approvals.List(), 1, "agent token must still enqueue Rampart approvals")
 }
 
+func TestGenericHostedAskSkipsPendingApprovalCreationForAdmin(t *testing.T) {
+	configYAML := `version: "1"
+default_action: deny
+policies:
+  - name: require-human
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "sudo *"
+        message: "needs approval"
+`
+
+	srv, token, sink := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"hermes","session":"discord/thread/test","run_id":"run-1","tool_call_id":"tool-call-1","approval_owner":{"host":"hermes","mode":"hosted","surface":"discord","supports_exact_resume":true,"supports_allow_always":true,"supports_result_callback":true},"params":{"command":"sudo true"}}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "ask", got["decision"])
+	assert.Equal(t, "hosted", got["approval_mode"])
+	assert.Equal(t, "tool-call-1", got["tool_call_id"])
+	require.NotEmpty(t, got["audit_id"])
+	_, hasApprovalID := got["approval_id"]
+	assert.False(t, hasApprovalID, "hosted evaluation must not create Rampart approval_id")
+	assert.Len(t, srv.approvals.List(), 0, "hosted evaluation must not enqueue Rampart approvals")
+
+	owner, ok := got["approval_owner"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "hermes", owner["host"])
+	assert.Equal(t, "hosted", owner["mode"])
+	approval, ok := got["approval"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "needs approval", approval["reason"])
+
+	require.Equal(t, 1, sink.count(), "hosted evaluation should write exactly one policy audit event")
+	ev := sink.lastEvent()
+	assert.Equal(t, got["audit_id"], ev.ID)
+	assert.Equal(t, "tool-call-1", ev.ToolCallID)
+	assert.Equal(t, "run-1", ev.RunID)
+	assert.Equal(t, "ask", ev.Decision.Action)
+	require.NotNil(t, ev.ApprovalOwner)
+	assert.Equal(t, "hermes", ev.ApprovalOwner["host"])
+}
+
+func TestHostedAskRequiresExactResumeForAdmin(t *testing.T) {
+	configYAML := `version: "1"
+default_action: deny
+policies:
+  - name: require-human
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "sudo *"
+        message: "needs approval"
+`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"hermes","session":"discord/thread/test","approval_owner":{"host":"hermes","mode":"hosted"},"params":{"command":"sudo true"}}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Len(t, srv.approvals.List(), 0, "invalid hosted request must not fall back to hidden Rampart approval queue")
+}
+
+func TestHostedApprovalResolveRecordsAuditWithoutPendingApproval(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"hermes","session":"discord/thread/test","run_id":"run-1","tool":"exec","tool_call_id":"tool-call-1","host_approval_id":"hermes-approval-1","approval_owner":{"host":"hermes","mode":"hosted","surface":"discord","supports_exact_resume":true},"outcome":"approved","scope":"once","resolved_by":"trevor","message":"approved in Hermes"}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/hosted-approvals/audit-1/resolve", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "audit-1", got["audit_id"])
+	assert.Equal(t, "recorded", got["status"])
+	assert.Equal(t, "approved", got["outcome"])
+	assert.Len(t, srv.approvals.List(), 0, "hosted resolution callback must not create Rampart pending approvals")
+
+	require.Equal(t, 1, sink.count())
+	ev := sink.lastEvent()
+	assert.Equal(t, "exec", ev.Tool)
+	assert.Equal(t, "tool-call-1", ev.ToolCallID)
+	assert.Equal(t, "run-1", ev.RunID)
+	assert.Equal(t, "approved", ev.Decision.Action)
+	assert.Equal(t, "approved in Hermes", ev.Decision.Message)
+	assert.Equal(t, "hosted_approval_resolved", ev.Request["action"])
+	assert.Equal(t, "audit-1", ev.Request["audit_id"])
+	assert.Equal(t, "hermes-approval-1", ev.Request["host_approval_id"])
+}
+
 func TestUserOverridesBypassApprovalQueue(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

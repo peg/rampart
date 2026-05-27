@@ -442,6 +442,128 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleResolveHostedApproval(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+
+	auditID := strings.TrimSpace(r.PathValue("auditID"))
+	if auditID == "" {
+		writeError(w, http.StatusBadRequest, "audit_id is required")
+		return
+	}
+
+	var req hostedApprovalResolveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	outcome := strings.ToLower(strings.TrimSpace(req.Outcome))
+	switch outcome {
+	case "approved", "denied", "timeout", "cancelled":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "outcome must be one of: approved, denied, timeout, cancelled")
+		return
+	}
+
+	scope := strings.ToLower(strings.TrimSpace(req.Scope))
+	if scope != "" {
+		switch scope {
+		case "once", "session", "always":
+			// valid
+		default:
+			writeError(w, http.StatusBadRequest, "scope must be one of: once, session, always")
+			return
+		}
+	}
+
+	resolvedBy := strings.TrimSpace(req.ResolvedBy)
+	if resolvedBy == "" {
+		resolvedBy = "api"
+	}
+
+	resolvedAt := time.Now().UTC()
+	if strings.TrimSpace(req.ResolvedAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(req.ResolvedAt))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "resolved_at must be RFC3339")
+			return
+		}
+		resolvedAt = parsed.UTC()
+	}
+
+	if s.sink == nil {
+		writeError(w, http.StatusServiceUnavailable, "audit sink is not initialized")
+		return
+	}
+
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "hosted_approval"
+	}
+
+	request := map[string]any{
+		"action":      "hosted_approval_resolved",
+		"audit_id":    auditID,
+		"outcome":     outcome,
+		"resolved_by": resolvedBy,
+		"resolved_at": resolvedAt.Format(time.RFC3339),
+	}
+	if req.ToolCallID != "" {
+		request["tool_call_id"] = req.ToolCallID
+	}
+	if req.HostApprovalID != "" {
+		request["host_approval_id"] = req.HostApprovalID
+	}
+	if scope != "" {
+		request["scope"] = scope
+	}
+	if req.Message != "" {
+		request["message"] = req.Message
+	}
+	if owner := req.ApprovalOwner.toMap(); len(owner) > 0 {
+		request["approval_owner"] = owner
+	}
+
+	message := req.Message
+	if message == "" {
+		message = fmt.Sprintf("hosted approval %s by %s", outcome, resolvedBy)
+	}
+
+	eventID := audit.NewEventID()
+	event := audit.Event{
+		ID:            eventID,
+		Timestamp:     resolvedAt,
+		Agent:         req.Agent,
+		Session:       req.Session,
+		RunID:         req.RunID,
+		ToolCallID:    req.ToolCallID,
+		ApprovalOwner: req.ApprovalOwner.toMap(),
+		Tool:          tool,
+		Request:       request,
+		Decision: audit.EventDecision{
+			Action:  outcome,
+			Message: message,
+		},
+	}
+	if err := s.sink.Write(event); err != nil {
+		s.logger.Error("proxy: audit write for hosted approval resolution failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "failed to write hosted approval audit event")
+		return
+	}
+	s.broadcastSSE(map[string]any{"type": "audit", "event": event})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"audit_id":    auditID,
+		"event_id":    eventID,
+		"status":      "recorded",
+		"outcome":     outcome,
+		"resolved_at": resolvedAt.Format(time.RFC3339),
+	})
+}
+
 func (s *Server) approvalResolveURL(id string, expiresAt time.Time) string {
 	base := s.resolveURLBase()
 	if base == "" {
