@@ -78,3 +78,66 @@ func TestResolveOpenClawStateDirHonorsConfigEnv(t *testing.T) {
 		t.Fatalf("stateDir/configPath = %q/%q, want %q/%q", stateDir, configPath, tmp, cfg)
 	}
 }
+
+func TestAddToOpenClawPluginsAllowPreservesAbsentAllowlist(t *testing.T) {
+	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
+	configPath := setupOpenClawConfigTest(t, `{"plugins":{"entries":{"rampart":{"enabled":true}}}}`)
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	added, existing, err := addToOpenClawPluginsAllow("rampart")
+	if err != nil {
+		t.Fatalf("addToOpenClawPluginsAllow returned error: %v", err)
+	}
+	if added || existing != nil {
+		t.Fatalf("expected no change with nil existing allowlist, got added=%v existing=%v", added, existing)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("config changed when plugins.allow was absent:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestAddToOpenClawPluginsAllowAppendsExistingAllowlist(t *testing.T) {
+	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
+	configPath := setupOpenClawConfigTest(t, `{"plugins":{"allow":["codex"]}}`)
+
+	added, existing, err := addToOpenClawPluginsAllow("rampart")
+	if err != nil {
+		t.Fatalf("addToOpenClawPluginsAllow returned error: %v", err)
+	}
+	if !added || len(existing) != 1 || existing[0] != "codex" {
+		t.Fatalf("expected append after existing codex allowlist, got added=%v existing=%v", added, existing)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"codex"`, `"rampart"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("updated config missing %s: %s", want, data)
+		}
+	}
+}
+
+func setupOpenClawConfigTest(t *testing.T, config string) string {
+	t.Helper()
+	stateDir := t.TempDir()
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return configPath
+}

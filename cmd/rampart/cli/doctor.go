@@ -294,6 +294,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	if n := doctorOpenClawPlugin(emit); n > 0 {
 		warnings += n
 	}
+	if n := doctorOpenClawProviderDiscovery(emit); n > 0 {
+		warnings += n
+	}
 	if n := doctorOpenClawReadiness(emit, pluginActive, serveURL, token); n > 0 {
 		warnings += n
 	}
@@ -1653,6 +1656,43 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 	}
 	emit("OpenClaw plugin", "ok", detail)
 	return 0
+}
+
+func doctorOpenClawProviderDiscovery(emit emitFn) (warnings int) {
+	if !isOpenClawInstalled() {
+		return 0
+	}
+	bin, err := findOpenClawBinary()
+	if err != nil {
+		return 0
+	}
+	_, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return 0
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return 0
+	}
+	var cfg struct {
+		Plugins struct {
+			Allow            *[]string `json:"allow"`
+			BundledDiscovery string    `json:"bundledDiscovery"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return 0
+	}
+	if cfg.Plugins.Allow == nil {
+		return 0
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Plugins.BundledDiscovery), "allowlist") {
+		return 0
+	}
+	emit("OpenClaw provider discovery", "warn",
+		"plugins.allow is restrictive, but bundled provider discovery is still in compatibility mode"+hintSep+
+			"After confirming plugins.allow includes every bundled provider you intend to keep, run: openclaw config set plugins.bundledDiscovery allowlist")
+	return 1
 }
 
 func isReleaseVersion(version string) bool {
