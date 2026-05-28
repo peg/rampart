@@ -7,8 +7,11 @@ The plugin is intentionally conservative:
 * It uses Hermes' ``pre_tool_call`` hook and only returns a block directive.
 * It defaults to ``/v1/preflight/{tool}`` so Rampart does not create a hidden
   approval queue while Hermes lacks a plugin-owned approval/resume primitive.
+* It passes Hermes' native ``tool_call_id`` as top-level Rampart metadata so
+  Rampart audit IDs can be correlated with the exact Hermes tool call.
 * ``ask`` / ``require_approval`` decisions block with a clear message instead
-  of polling or creating a second approval surface.
+  of polling or creating a second approval surface, and include Rampart's
+  ``audit_id`` when available.
 * If Rampart serve is unavailable, mutating/high-risk tools fail closed and only
   explicitly configured read-only tools fail open.
 """
@@ -26,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 DEFAULT_SERVE_URL = "http://127.0.0.1:9090"
 DEFAULT_TIMEOUT_MS = 3000
@@ -399,15 +402,15 @@ def _build_payload(
     task_id: str = "",
     tool_call_id: str = "",
 ) -> dict[str, Any]:
-    payload_params = dict(params)
-    if tool_call_id:
-        payload_params["hermes_tool_call_id"] = tool_call_id
-    return {
+    payload: dict[str, Any] = {
         "agent": config.agent_name,
         "session": session_id or "",
         "run_id": task_id or "",
-        "params": payload_params,
+        "params": dict(params),
     }
+    if tool_call_id:
+        payload["tool_call_id"] = tool_call_id
+    return payload
 
 
 def _endpoint_url(config: PluginConfig, rampart_tool: str) -> str:
@@ -471,6 +474,13 @@ def _decision_from_result(result: Mapping[str, Any]) -> str:
     return "allow"
 
 
+def _audit_suffix(result: Mapping[str, Any]) -> str:
+    audit_id = result.get("audit_id")
+    if isinstance(audit_id, str) and audit_id.strip():
+        return f" [audit_id: {audit_id.strip()}]"
+    return ""
+
+
 def evaluate_pre_tool_call(
     tool_name: str,
     args: Mapping[str, Any] | None,
@@ -510,6 +520,7 @@ def evaluate_pre_tool_call(
 
     reason = str(result.get("message") or result.get("reason") or "policy violation")
     policy = result.get("policy") or result.get("matched_policies")
+    audit_suffix = _audit_suffix(result)
     policy_suffix = ""
     if isinstance(policy, str) and policy:
         policy_suffix = f" [policy: {policy}]"
@@ -519,12 +530,12 @@ def evaluate_pre_tool_call(
     if decision in {"ask", "require_approval"}:
         return _block(
             "rampart: approval required"
-            f" for {tool_name}→{rampart_tool}{policy_suffix} — {reason}. "
+            f" for {tool_name}→{rampart_tool}{policy_suffix}{audit_suffix} — {reason}. "
             "Hermes Rampart integration is experimental and does not yet resume plugin-driven approvals; "
             "adjust policy or use a first-class Hermes approval flow before retrying."
         )
 
-    return _block(f"rampart: {reason}{policy_suffix}")
+    return _block(f"rampart: {reason}{policy_suffix}{audit_suffix}")
 
 
 def register(ctx: Any) -> None:
