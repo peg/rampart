@@ -110,6 +110,46 @@ func TestAuditVerify_ValidChain(t *testing.T) {
 	assert.Contains(t, stdout, "10 events")
 }
 
+func TestAuditVerifySince_AllowsPartialChainAndSkippedAnchor(t *testing.T) {
+	dir := t.TempDir()
+
+	first := makeEvent("exec", "old", "main", "allow", "ok")
+	first.ID = audit.NewEventID()
+	first.Timestamp = time.Date(2026, 2, 8, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, first.ComputeHash())
+
+	second := makeEvent("exec", "new", "main", "allow", "ok")
+	second.ID = audit.NewEventID()
+	second.Timestamp = time.Date(2026, 2, 9, 12, 0, 0, 0, time.UTC)
+	second.PrevHash = first.Hash
+	require.NoError(t, second.ComputeHash())
+
+	writeSingleAuditEvent := func(name string, event audit.Event) {
+		t.Helper()
+		data, err := json.Marshal(event)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), append(data, '\n'), 0o644))
+	}
+	writeSingleAuditEvent("2026-02-08.jsonl", first)
+	writeSingleAuditEvent("2026-02-09.jsonl", second)
+
+	anchor := audit.ChainAnchor{
+		EventID:    first.ID,
+		Hash:       first.Hash,
+		EventCount: 1,
+		Timestamp:  first.Timestamp,
+		File:       "2026-02-08.jsonl",
+	}
+	anchorData, err := json.Marshal(anchor)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "audit-anchor.json"), anchorData, 0o644))
+
+	stdout, _, err := runCLI(t, "audit", "verify", "--audit-dir", dir, "--since", "2026-02-09")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "1 events")
+	assert.Contains(t, stdout, "no tampering detected")
+}
+
 func TestAuditVerify_BrokenChain(t *testing.T) {
 	dir := t.TempDir()
 	events := make([]audit.Event, 5)

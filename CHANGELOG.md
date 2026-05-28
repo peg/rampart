@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-28
+
+### Added
+
+- **Hosted approval API foundation for host-owned approval flows** — Rampart can return hosted approval metadata without creating a hidden Rampart pending queue item, preserving the single approval-owner boundary for hosts such as Hermes.
+- **Hermes audit/tool-call correlation** — The experimental Hermes policy gate passes Hermes tool-call metadata through Rampart so audit entries can be correlated with the originating Hermes tool call.
+
+### Changed
+
+- **Bundled plugin metadata is aligned for v1.2.0** — The OpenClaw and experimental Hermes plugin manifests, runtime exports, and public examples now report `1.2.0` with the Rampart release.
+- **Release-facing docs and install examples now point at v1.2.0** — Current-version markers, troubleshooting examples, and container tag examples are refreshed for the release.
+
+### Fixed
+
+- **Audit chain recovery now resumes from the latest valid JSONL event** — Startup reconstruction recovers both the event count and chain head from existing audit logs instead of trusting absent, stale, or tampered anchors as the next `prev_hash` source.
+- **Partial audit verification is safer** — `rampart audit verify --since` accepts intentionally truncated history while continuing to verify the included hash chain and anchor data that is present in the selected window.
+
 ## [1.1.1] - 2026-05-26
 
 ### Added

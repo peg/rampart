@@ -378,6 +378,76 @@ func TestJSONLSink_RecoverByLineCounting(t *testing.T) {
 	defer sink2.Close()
 
 	assert.EqualValues(t, 5, sink2.eventCount)
+	assert.NotEmpty(t, sink2.lastHash)
+}
+
+func TestJSONLSink_RecoverWithoutAnchorContinuesHashChain(t *testing.T) {
+	dir := t.TempDir()
+
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0))
+	require.NoError(t, err)
+	for i := 0; i < 5; i++ {
+		require.NoError(t, sink.Write(sampleEvent("exec")))
+	}
+	savedHash := sink.lastHash
+	require.NoError(t, sink.Close())
+
+	sink2, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink2.Close()
+
+	assert.EqualValues(t, 5, sink2.eventCount)
+	assert.Equal(t, savedHash, sink2.lastHash)
+	require.NoError(t, sink2.Write(sampleEvent("exec")))
+	assertLastEventPrevHash(t, sink2.filePath(), savedHash)
+}
+
+func TestJSONLSink_StaleAnchorDoesNotOverrideLatestEvent(t *testing.T) {
+	dir := t.TempDir()
+
+	// Anchor interval 2 leaves a valid anchor on event 2 after event 3 is written.
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(2))
+	require.NoError(t, err)
+	for i := 0; i < 3; i++ {
+		require.NoError(t, sink.Write(sampleEvent("exec")))
+	}
+	savedHash := sink.lastHash
+	require.NoError(t, sink.Close())
+
+	sink2, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(2),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink2.Close()
+
+	assert.EqualValues(t, 3, sink2.eventCount)
+	assert.Equal(t, savedHash, sink2.lastHash)
+	require.NoError(t, sink2.Write(sampleEvent("exec")))
+	assertLastEventPrevHash(t, sink2.filePath(), savedHash)
+}
+
+func TestJSONLSink_RecoverAcrossDayFileContinuesHashChain(t *testing.T) {
+	dir := t.TempDir()
+
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0))
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(sampleEvent("exec")))
+	savedHash := sink.lastHash
+	oldPath := sink.filePath()
+	require.NoError(t, sink.Close())
+
+	yesterdayName := time.Now().UTC().Add(-24*time.Hour).Format("2006-01-02") + ".jsonl"
+	require.NoError(t, os.Rename(oldPath, filepath.Join(dir, yesterdayName)))
+
+	sink2, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink2.Close()
+
+	assert.EqualValues(t, 1, sink2.eventCount)
+	assert.Equal(t, savedHash, sink2.lastHash)
+	require.NoError(t, sink2.Write(sampleEvent("exec")))
+	assertLastEventPrevHash(t, sink2.filePath(), savedHash)
 }
 
 func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
@@ -389,6 +459,7 @@ func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		require.NoError(t, sink.Write(sampleEvent("exec")))
 	}
+	savedHash := sink.lastHash
 	require.NoError(t, sink.Close())
 
 	// Tamper with the anchor — change the hash.
@@ -407,10 +478,11 @@ func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
 	require.NoError(t, err)
 	defer sink2.Close()
 
-	// Should have recovered 3 events by line counting (not 2 from anchor).
+	// Should have recovered 3 events by scanning log events, not from the anchor.
 	assert.EqualValues(t, 3, sink2.eventCount)
-	// lastHash should be empty since we didn't trust the anchor.
-	assert.Empty(t, sink2.lastHash)
+	assert.Equal(t, savedHash, sink2.lastHash)
+	require.NoError(t, sink2.Write(sampleEvent("exec")))
+	assertLastEventPrevHash(t, sink2.filePath(), savedHash)
 }
 
 func TestJSONLSink_WriteErrorDoesNotUpdateHash(t *testing.T) {
@@ -450,6 +522,26 @@ func sampleEvent(tool string) Event {
 		},
 		Response: &ToolResponse{DurationMS: 5},
 	}
+}
+
+func assertLastEventPrevHash(t *testing.T, path, wantPrevHash string) {
+	t.Helper()
+	lines := readJSONLLines(t, path)
+	require.NotEmpty(t, lines)
+
+	for i := len(lines) - 1; i >= 0; i-- {
+		var event Event
+		require.NoError(t, json.Unmarshal([]byte(lines[i]), &event))
+		if event.ID == "" {
+			continue
+		}
+		assert.Equal(t, wantPrevHash, event.PrevHash)
+		ok, err := event.VerifyHash()
+		require.NoError(t, err)
+		assert.True(t, ok)
+		return
+	}
+	t.Fatal("no audit event found")
 }
 
 func readJSONLLines(t *testing.T, path string) []string {

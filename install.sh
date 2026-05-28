@@ -7,8 +7,8 @@
 # Usage: curl -fsSL https://rampart.sh/install | sh
 #        curl -fsSL https://rampart.sh/install | sh -s -- --version v0.1.0
 #        curl -fsSL https://rampart.sh/install | sh -s -- --auto-setup
-#        RAMPART_INSTALL_DRY_RUN=1 sh install.sh --version v1.1.1
-#        RAMPART_VERSION=v1.1.1 RAMPART_INSTALL_DIR=$HOME/.local/bin sh install.sh
+#        RAMPART_INSTALL_DRY_RUN=1 sh install.sh --version v1.2.0
+#        RAMPART_VERSION=v1.2.0 RAMPART_INSTALL_DIR=$HOME/.local/bin sh install.sh
 set -e
 
 REPO="peg/rampart"

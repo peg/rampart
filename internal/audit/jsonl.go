@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,56 +29,82 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// readLastLineHash reads the last non-empty line of a JSONL file and extracts
-// its "hash" field. Returns the hash and true if successful.
-func readLastLineHash(path string) (string, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", false
-	}
-	defer f.Close()
-
-	var lastLine string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		if line := scanner.Text(); line != "" {
-			lastLine = line
-		}
-	}
-	if lastLine == "" {
-		return "", false
-	}
-	var partial struct {
-		Hash string `json:"hash"`
-	}
-	if err := json.Unmarshal([]byte(lastLine), &partial); err != nil {
-		return "", false
-	}
-	return partial.Hash, partial.Hash != ""
+type recoveredChainState struct {
+	eventCount int64
+	lastHash   string
+	lastFile   string
 }
 
-// countLinesInDir counts non-empty lines across all .jsonl files in dir
-// using streaming IO to avoid loading entire files into memory.
-func countLinesInDir(dir string) int64 {
-	var count int64
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
+// recoverChainStateFromDir reconstructs the append position from the latest
+// valid event in existing JSONL audit files. Chain-continuation headers are
+// skipped. Anchors are checkpoints for verification, not the authority for the
+// next event's prev_hash.
+func recoverChainStateFromDir(dir string, logger *slog.Logger) recoveredChainState {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if logger != nil {
+			logger.Debug("audit: read audit dir during recovery", "error", err)
 		}
-		f, err := os.Open(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			if len(scanner.Bytes()) > 0 {
-				count++
-			}
-		}
-		_ = f.Close()
+		return recoveredChainState{}
 	}
-	return count
+
+	files := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		files = append(files, entry.Name())
+	}
+	sort.Strings(files)
+
+	var state recoveredChainState
+	for _, name := range files {
+		path := filepath.Join(dir, name)
+		file, err := os.Open(path)
+		if err != nil {
+			if logger != nil {
+				logger.Debug("audit: open audit file during recovery", "file", name, "error", err)
+			}
+			continue
+		}
+
+		scanner := bufio.NewScanner(file)
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+
+			var event Event
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				if logger != nil {
+					logger.Debug("audit: skip unparsable audit line during recovery", "file", name, "line", lineNum, "error", err)
+				}
+				continue
+			}
+			if event.ID == "" {
+				continue
+			}
+			ok, err := event.VerifyHash()
+			if err != nil || !ok {
+				if logger != nil {
+					logger.Debug("audit: skip invalid audit event during recovery", "file", name, "line", lineNum, "event_id", event.ID, "error", err)
+				}
+				continue
+			}
+
+			state.eventCount++
+			state.lastHash = event.Hash
+			state.lastFile = name
+		}
+		if err := scanner.Err(); err != nil && logger != nil {
+			logger.Debug("audit: scan audit file during recovery", "file", name, "error", err)
+		}
+		_ = file.Close()
+	}
+	return state
 }
 
 // JSONLSink is an append-only JSONL audit sink with hash chaining.
@@ -126,42 +153,40 @@ func NewJSONLSink(dir string, opts ...SinkOption) (*JSONLSink, error) {
 		logger:         logger,
 	}
 
-	// Recover state from anchor file if it exists.
+	// Recover append state from existing JSONL events. Anchors are not trusted as
+	// the sole chain head because they can be absent, stale, or tampered with.
+	recovered := recoverChainStateFromDir(dir, logger)
+	sink.eventCount = recovered.eventCount
+	sink.lastHash = recovered.lastHash
+	if sink.eventCount > 0 {
+		logger.Info("audit: recovered chain state from log files",
+			"event_count", sink.eventCount,
+			"hash", sink.lastHash,
+			"file", recovered.lastFile,
+		)
+	}
+
+	// Inspect the current anchor for diagnostics only. The next event always
+	// continues from the latest valid JSONL event recovered above.
 	anchorPath := filepath.Join(dir, anchorFilename)
-	anchorTrusted := false
 	if data, err := os.ReadFile(anchorPath); err == nil {
 		var anchor ChainAnchor
-		if err := json.Unmarshal(data, &anchor); err == nil {
-			// Validate anchor: verify the hash matches the last line of the referenced log file.
-			if anchor.File != "" {
-				if lastHash, ok := readLastLineHash(filepath.Join(dir, anchor.File)); ok {
-					if lastHash == anchor.Hash {
-						anchorTrusted = true
-					} else {
-						logger.Debug("audit: anchor hash mismatch, falling back to line count",
-							"tamper_suspected", false,
-							"anchor_hash", anchor.Hash,
-							"file_hash", lastHash,
-							"file", anchor.File,
-						)
-					}
-				}
-			}
-			if anchorTrusted {
-				sink.lastHash = anchor.Hash
-				sink.eventCount = anchor.EventCount
-				logger.Info("audit: recovered state from anchor",
+		if err := json.Unmarshal(data, &anchor); err == nil && anchor.EventID != "" {
+			if anchor.Hash == sink.lastHash && anchor.EventCount == sink.eventCount {
+				logger.Debug("audit: anchor matches recovered chain head",
 					"event_count", anchor.EventCount,
 					"hash", anchor.Hash,
+					"file", anchor.File,
+				)
+			} else {
+				logger.Debug("audit: anchor is not current chain head; continuing from latest log event",
+					"anchor_event_count", anchor.EventCount,
+					"recovered_event_count", sink.eventCount,
+					"anchor_hash", anchor.Hash,
+					"recovered_hash", sink.lastHash,
+					"file", anchor.File,
 				)
 			}
-		}
-	}
-	if !anchorTrusted {
-		// No anchor — count non-empty lines in existing log files to recover eventCount.
-		sink.eventCount = countLinesInDir(dir)
-		if sink.eventCount > 0 {
-			logger.Info("audit: recovered event count from log files", "event_count", sink.eventCount)
 		}
 	}
 

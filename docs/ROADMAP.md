@@ -45,12 +45,12 @@ What's coming next for Rampart. Priorities shift based on feedback — [open an 
 
 ## Current Focus
 
-### `v1.1.0`
-- Keep structured diagnostics boring and automation-friendly: `status --json`, `doctor --json`, and `inventory --json` should remain stable enough for scripts without replacing human-readable output.
-- Treat current OpenClaw gateway protocol support and Codex native shell audit correlation as release-gated integrations, with live regression proof before tagging.
-- Keep the release toolchain, plugin metadata, setup output, and docs aligned so users can answer "am I protected, how, and what version is active?" without reading source.
+### `v1.2.0`
+- Keep release-integrity claims backed by verifiable audit-chain behavior: startup recovery must continue from the latest valid JSONL event even when anchors are absent, stale, or tampered.
+- Keep hosted approval work scoped to the correct ownership boundary: host agents own the visible approval and exact resume, while Rampart owns policy, deny enforcement, audit, and diagnostics.
+- Keep bundled OpenClaw and experimental Hermes plugin metadata, setup output, and docs aligned so users can answer "am I protected, how, and what version is active?" without reading source.
 
-### After 1.1
+### After 1.2
 - Collect feedback from real OpenClaw, Claude Code, Cline, Codex, and MCP users.
 - Fix integration bugs without widening the public API unless the tradeoff is explicit.
 - Keep the support matrix and threat model honest as agent runtimes evolve.
