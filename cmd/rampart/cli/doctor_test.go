@@ -651,6 +651,9 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		requireNoErr(t, os.WriteFile(filepath.Join(binDir, "openclaw"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 		t.Setenv("PATH", binDir)
 		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw", "extensions", "rampart"), 0o755))
+		pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
+		requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(`{"version":"1.0.0","activation":{"onStartup":true}}`), 0o600))
+		requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "index.js"), []byte(`export const version = "1.0.0";`), 0o600))
 		return home
 	}
 
@@ -663,6 +666,17 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		warnings := doctorOpenClawPlugin(emit)
 		return warnings, results
 	}
+
+	t.Run("allows plugin when plugins.allow is absent", func(t *testing.T) {
+		home := setup(t)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+		requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}}}`), 0o600))
+
+		warnings, results := run(t)
+		if warnings != 0 || len(results) != 1 || results[0].Status != "ok" {
+			t.Fatalf("expected ok, got warnings=%d results=%+v", warnings, results)
+		}
+	})
 
 	t.Run("warns when plugin missing from allow list", func(t *testing.T) {
 		home := setup(t)
@@ -703,6 +717,48 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		}
 		if !strings.Contains(results[0].Message, "could not verify plugins.allow / enabled state") {
 			t.Fatalf("expected unreadable-config warning, got %s", results[0].Message)
+		}
+	})
+}
+
+func TestDoctorOpenClawProviderDiscovery(t *testing.T) {
+	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
+
+	setup := func(t *testing.T, config string) []checkResult {
+		t.Helper()
+		home := t.TempDir()
+		testSetHome(t, home)
+		binDir := t.TempDir()
+		requireNoErr(t, os.WriteFile(filepath.Join(binDir, "openclaw"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+		t.Setenv("PATH", binDir)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw", "extensions", "rampart"), 0o755))
+		requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(config), 0o600))
+		var results []checkResult
+		doctorOpenClawProviderDiscovery(func(name, status, msg string) {
+			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+		})
+		return results
+	}
+
+	t.Run("warns for restrictive allowlist with compatibility discovery", func(t *testing.T) {
+		results := setup(t, `{"plugins":{"allow":["rampart","codex"],"bundledDiscovery":"compat"}}`)
+		if len(results) != 1 || results[0].Status != "warn" {
+			t.Fatalf("expected one warning, got %+v", results)
+		}
+		if !strings.Contains(results[0].Message, "bundled provider discovery") {
+			t.Fatalf("expected provider discovery warning, got %s", results[0].Message)
+		}
+	})
+
+	t.Run("skips when allowlist absent", func(t *testing.T) {
+		if results := setup(t, `{"plugins":{"entries":{"rampart":{"enabled":true}}}}`); len(results) != 0 {
+			t.Fatalf("expected no warning, got %+v", results)
+		}
+	})
+
+	t.Run("skips when allowlist mode configured", func(t *testing.T) {
+		if results := setup(t, `{"plugins":{"allow":["rampart"],"bundledDiscovery":"allowlist"}}`); len(results) != 0 {
+			t.Fatalf("expected no warning, got %+v", results)
 		}
 	})
 }

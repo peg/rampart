@@ -228,6 +228,11 @@ func TestDetectProtectedAgents_OpenClawPluginRequiresAllowedAndEnabled(t *testin
 		t.Fatal("OpenClaw should not be reported when plugins.allow is missing rampart")
 	}
 
+	mustWrite(`{"plugins":{"entries":{"rampart":{"enabled":true}}}}`)
+	if !contains("OpenClaw (plugin)") {
+		t.Fatal("expected plugin to be reported when plugins.allow is absent")
+	}
+
 	mustWrite(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":false}}}}`)
 	if containsOpenClaw() {
 		t.Fatal("OpenClaw should not be reported when plugins.entries.rampart.enabled=false")

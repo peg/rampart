@@ -435,7 +435,8 @@ func newSetupOpenClawCmd(opts *rootOptions) *cobra.Command {
 Default behavior on current OpenClaw builds (>= 2026.3.28):
   - Installs the native Rampart plugin via "openclaw plugins install"
   - Ensures rampart serve is available for policy evaluation and approvals
-  - Adds rampart to plugins.allow and installs the OpenClaw policy profile
+  - Preserves OpenClaw's plugin discovery defaults; if plugins.allow already exists, adds rampart to it
+  - Installs the OpenClaw policy profile
   - Preserves OpenClaw's native approval UI while Rampart evaluates policy
 
 Legacy compatibility options still exist for older OpenClaw setups:
