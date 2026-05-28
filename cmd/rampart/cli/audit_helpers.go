@@ -320,7 +320,11 @@ func eventMatchesQuery(event audit.Event, query string) bool {
 	return false
 }
 
-func verifyAnchors(auditDir string, hashesByID map[string]string) error {
+func verifyAnchors(auditDir string, hashesByID map[string]string, strictOpt ...bool) error {
+	strict := true
+	if len(strictOpt) > 0 {
+		strict = strictOpt[0]
+	}
 	anchors, err := listAnchorFiles(auditDir)
 	if err != nil {
 		return err
@@ -342,6 +346,9 @@ func verifyAnchors(auditDir string, hashesByID map[string]string) error {
 
 		hash, ok := hashesByID[anchor.EventID]
 		if !ok {
+			if !strict {
+				continue
+			}
 			return fmt.Errorf("audit: CHAIN BROKEN at event %s in file %s: anchor event not found", anchor.EventID, filepath.Base(anchorFile))
 		}
 		if hash != anchor.Hash {

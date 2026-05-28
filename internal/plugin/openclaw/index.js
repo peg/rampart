@@ -5,7 +5,7 @@
  * Replaces brittle dist-file patching with the official OpenClaw plugin API.
  *
  * @see https://github.com/peg/rampart
- * @version 1.1.1
+ * @version 1.2.0
  */
 
 import { readFile } from "fs/promises";
@@ -259,7 +259,7 @@ async function auditLog(toolName, params, ctx, outcome, config) {
 export const id = "rampart";
 export const name = "Rampart";
 export const description = "AI agent firewall — YAML policy-as-code for every tool call";
-export const version = "1.1.1";
+export const version = "1.2.0";
 
 // OpenClaw runs higher-priority before_tool_call hooks first. Rampart should
 // act as the final normal plugin gate so it evaluates the params that will
