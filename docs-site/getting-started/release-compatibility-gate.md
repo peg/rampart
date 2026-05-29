@@ -70,4 +70,12 @@ node scripts/compat-openclaw-latest.mjs
 
 The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness expects `openclaw` to be on `PATH`, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks.
 
+For OpenClaw's recommended support tier, also run the opt-in runtime audit regression before a release promotion:
+
+```bash
+RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+```
+
+That live regression is intentionally separate from scheduled CI because it temporarily enables the OpenClaw Rampart plugin, restarts local OpenClaw user services, runs one real OpenClaw Codex app-server turn, and requires correlated OpenClaw trajectory plus Rampart canonical `exec` audit proof.
+
 A scheduled/manual GitHub Actions workflow runs these upstream checks outside the core unit-test matrix so external upstream breakage is visible without destabilizing ordinary pull-request CI.

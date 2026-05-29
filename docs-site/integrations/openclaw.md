@@ -159,6 +159,14 @@ For release-candidate validation, run the latest-OpenClaw compatibility harness 
 node scripts/compat-openclaw-latest.mjs
 ```
 
+That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as recommended, also run the opt-in live runtime audit regression:
+
+```bash
+RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+```
+
+The live regression temporarily enables the Rampart OpenClaw plugin and restarts local OpenClaw user services, then requires a real OpenClaw Codex app-server turn with correlated trajectory and Rampart canonical `exec` audit evidence.
+
 Or check plugin status directly:
 
 ```bash
