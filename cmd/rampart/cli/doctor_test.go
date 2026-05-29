@@ -640,6 +640,51 @@ func TestDoctorCoverage_OpenClawOnlyNoClaude(t *testing.T) {
 	}
 }
 
+func TestDoctorHermesPluginEnabled(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+	writeHermesRampartPluginFixture(t, home, "plugins:\n  enabled:\n    - rampart\n")
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorHermesPlugin(emit, "http://localhost:9090")
+	if warnings != 0 {
+		t.Fatalf("expected no warnings for enabled Hermes plugin, got %d (%+v)", warnings, results)
+	}
+	if len(results) != 1 || results[0].Name != "Hermes Agent plugin" || results[0].Status != "ok" {
+		t.Fatalf("expected ok Hermes Agent plugin check, got %+v", results)
+	}
+	if !strings.Contains(results[0].Message, "v1.2.0") || !strings.Contains(results[0].Message, "pre_tool_call") {
+		t.Fatalf("expected version and hook in message, got %q", results[0].Message)
+	}
+}
+
+func TestDoctorHermesPluginMissingWhenHermesDetected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH shim binaries in this test are Unix-only")
+	}
+	home := t.TempDir()
+	testSetHome(t, home)
+	binDir := t.TempDir()
+	writeTestExecutable(t, filepath.Join(binDir, "hermes"))
+	t.Setenv("PATH", binDir)
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorHermesPlugin(emit, "http://localhost:9090")
+	if warnings != 1 {
+		t.Fatalf("expected one warning for missing Hermes plugin, got %d (%+v)", warnings, results)
+	}
+	if len(results) != 1 || results[0].Status != "warn" || !strings.Contains(results[0].Message, "not installed") {
+		t.Fatalf("expected missing-plugin warning, got %+v", results)
+	}
+}
+
 func TestDoctorOpenClawPlugin(t *testing.T) {
 	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
 

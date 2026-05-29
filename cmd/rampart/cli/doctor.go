@@ -306,6 +306,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	if n := doctorOpenClawDiscordApprovalRuntime(emit); n > 0 {
 		warnings += n
 	}
+	if n := doctorHermesPlugin(emit, serveURL); n > 0 {
+		warnings += n
+	}
 
 	// 17. OpenClaw ask mode — only needed for legacy bridge users.
 	// With the native plugin active, before_tool_call covers all tool calls
@@ -676,6 +679,52 @@ func hasPermissiveAllowUnmatched(cfg *engine.Config) bool {
 		}
 	}
 	return false
+}
+
+func doctorHermesPlugin(emit emitFn, serveURL string) (warnings int) {
+	state := detectHermesPluginState()
+	_, hermesBinErr := exec.LookPath("hermes")
+	hermesDetected := hermesBinErr == nil || state.ConfigPresent || state.Installed
+	if !hermesDetected {
+		return 0
+	}
+	if !state.Installed {
+		emit("Hermes Agent plugin", "warn",
+			"Hermes detected but Rampart plugin is not installed"+
+				hintSep+"rampart setup hermes --enable")
+		return 1
+	}
+	if !state.ManifestValid {
+		emit("Hermes Agent plugin", "warn",
+			fmt.Sprintf("Rampart Hermes plugin manifest is invalid at %s", filepath.Join(state.PluginDir, "plugin.yaml"))+
+				hintSep+"rampart setup hermes")
+		return 1
+	}
+	if !state.HookDeclared {
+		emit("Hermes Agent plugin", "warn",
+			"Rampart Hermes plugin manifest does not declare pre_tool_call"+
+				hintSep+"rampart setup hermes")
+		return 1
+	}
+	if !state.Enabled {
+		emit("Hermes Agent plugin", "warn",
+			"Rampart Hermes plugin is installed but not enabled"+
+				hintSep+"hermes plugins enable rampart && restart long-running Hermes gateways")
+		return 1
+	}
+
+	version := state.Version
+	if version == "" {
+		version = "unknown version"
+	} else {
+		version = "v" + strings.TrimPrefix(version, "v")
+	}
+	msg := fmt.Sprintf("installed and enabled (%s, pre_tool_call hook declared)", version)
+	if serveURL != "" {
+		msg += fmt.Sprintf("; serve reachable at %s", serveURL)
+	}
+	emit("Hermes Agent plugin", "ok", msg)
+	return 0
 }
 
 // doctorServer checks if rampart serve is running on defaultServePort.
