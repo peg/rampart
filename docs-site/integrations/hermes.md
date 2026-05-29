@@ -101,14 +101,22 @@ Use this only when you understand the approval ownership tradeoff. If a policy r
 
 ## Verification
 
-Use a deny rule for a harmless command and confirm Hermes blocks it before execution:
+Use the isolated latest-Hermes compatibility harness before enabling the plugin on a live gateway:
+
+```bash
+python scripts/compat-hermes-latest.py
+```
+
+The harness creates a temporary Hermes state, installs the Rampart plugin there, exercises Hermes plugin discovery plus `pre_tool_call` dispatch, and verifies deny, allow, `ask` blocking, and fail-closed behavior without restarting any long-running Hermes gateway.
+
+For manual verification, use a deny rule for a harmless command and confirm Hermes blocks it before execution:
 
 ```bash
 rampart serve --addr 127.0.0.1 --port 9090
 hermes plugins list
 ```
 
-Then ask Hermes to run a command that policy denies, such as a destructive-command test pattern. The tool response should include a message beginning with `rampart:` and the command should not execute.
+Then ask Hermes to run a command that policy denies, such as a harmless unique-marker test pattern. The tool response should include a message beginning with `rampart:` and the command should not execute.
 
 ## Uninstall
 
