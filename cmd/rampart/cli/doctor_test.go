@@ -900,6 +900,134 @@ if (!params.decision) {
 	}
 }
 
+func TestDoctorHermesIntegrationSkipsWhenHermesAbsent(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("HERMES_HOME", filepath.Join(home, "hermes"))
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "", "")
+	if warnings != 0 || len(results) != 0 {
+		t.Fatalf("expected no Hermes checks, got warnings=%d results=%+v", warnings, results)
+	}
+}
+
+func TestDoctorHermesIntegrationWarnsWhenPluginNotEnabled(t *testing.T) {
+	home, _ := setupHermesDoctorFixture(t, `plugins:
+  enabled: []
+`)
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "http://127.0.0.1:9090", "test-token")
+	if warnings == 0 {
+		t.Fatalf("expected warnings, got results=%+v", results)
+	}
+	out := doctorResultText(results)
+	if !strings.Contains(out, "hermes binary was not found") {
+		t.Fatalf("expected missing-binary warning, got: %s", out)
+	}
+	if !strings.Contains(out, "not listed in plugins.enabled") {
+		t.Fatalf("expected plugin-enabled warning, got: %s", out)
+	}
+}
+
+func TestDoctorHermesIntegrationReportsReadyExperimentalGate(t *testing.T) {
+	home, _ := setupHermesDoctorFixture(t, `plugins:
+  enabled:
+    - rampart
+  entries:
+    rampart:
+      config:
+        endpoint_mode: preflight
+        fail_open_tools:
+          - read_file
+          - search_files
+`)
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "http://127.0.0.1:9090", "test-token")
+	if warnings != 1 {
+		t.Fatalf("expected only missing-binary warning, got warnings=%d results=%+v", warnings, results)
+	}
+	out := doctorResultText(results)
+	if !strings.Contains(out, "experimental policy gate configured") {
+		t.Fatalf("expected Hermes readiness message, got: %s", out)
+	}
+	if !strings.Contains(out, "full approval/resume support requires") {
+		t.Fatalf("expected support-tier boundary, got: %s", out)
+	}
+}
+
+func TestDoctorHermesIntegrationWarnsOnToolModeAndRiskyFailOpen(t *testing.T) {
+	home, _ := setupHermesDoctorFixture(t, `plugins:
+  enabled:
+    - rampart
+  entries:
+    rampart:
+      config:
+        endpoint_mode: tool
+        fail_open_tools:
+          - read_file
+          - terminal
+`)
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "http://127.0.0.1:9090", "test-token")
+	if warnings < 3 {
+		t.Fatalf("expected missing-binary, endpoint-mode, and fail-open warnings, got warnings=%d results=%+v", warnings, results)
+	}
+	out := doctorResultText(results)
+	if !strings.Contains(out, "endpoint_mode=tool") {
+		t.Fatalf("expected tool-mode warning, got: %s", out)
+	}
+	if !strings.Contains(out, "terminal") || !strings.Contains(out, "mutating/high-risk") {
+		t.Fatalf("expected risky fail-open warning, got: %s", out)
+	}
+}
+
+func setupHermesDoctorFixture(t *testing.T, config string) (home string, hermesHome string) {
+	t.Helper()
+	home = t.TempDir()
+	testSetHome(t, home)
+	hermesHome = filepath.Join(home, "hermes")
+	t.Setenv("HERMES_HOME", hermesHome)
+	pluginDir := filepath.Join(hermesHome, "plugins", "rampart")
+	requireNoErr(t, os.MkdirAll(pluginDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte(`name: rampart
+version: 1.2.0
+provides_hooks:
+  - pre_tool_call
+`), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "__init__.py"), []byte("def register(ctx):\n    pass\n"), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(hermesHome, "config.yaml"), []byte(config), 0o644))
+	return home, hermesHome
+}
+
+func doctorResultText(results []checkResult) string {
+	var b strings.Builder
+	for _, result := range results {
+		b.WriteString(result.Name)
+		b.WriteString(": ")
+		b.WriteString(result.Status)
+		b.WriteString(": ")
+		b.WriteString(result.Message)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 func TestIsReleaseVersion(t *testing.T) {
 	tests := []struct {
 		version string

@@ -16,7 +16,7 @@ For sensitive tools, the recommended operating assumption is simple: if Rampart 
     - **OpenClaw 2026.4.29 - 2026.5.1**: Supported for native plugin startup/interception; plugin approval delivery was not the launch baseline.
     - **OpenClaw 2026.3.28 - 2026.4.28**: Native plugin works for tool enforcement, but Rampart's polished approval path is supported on newer OpenClaw builds.
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades.
-    - **Verified 1.0 launch dogfood on**: OpenClaw 2026.5.6
+    - Refresh release claims against the latest stable OpenClaw before publishing a new Rampart release. See the [Release Compatibility Gate](../getting-started/release-compatibility-gate.md).
 
     `rampart setup openclaw` auto-detects your version and uses the right method.
 
@@ -152,6 +152,20 @@ For end-to-end confidence, validate one case in each state:
 - learned allow, for example `sudo true`
 - fresh ask, for example `sudo id`
 - hard deny, for example `rm -rf /tmp`
+
+For release-candidate validation, run the latest-OpenClaw compatibility harness in a temporary state directory:
+
+```bash
+node scripts/compat-openclaw-latest.mjs
+```
+
+That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as recommended, also run the opt-in live runtime audit regression:
+
+```bash
+RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+```
+
+The live regression temporarily enables the Rampart OpenClaw plugin and restarts local OpenClaw user services, then requires a real OpenClaw Codex app-server turn with correlated trajectory and Rampart canonical `exec` audit evidence.
 
 Or check plugin status directly:
 

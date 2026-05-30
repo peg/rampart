@@ -34,6 +34,7 @@ import (
 	"github.com/peg/rampart/internal/engine"
 	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // defaultServePort is the default port for rampart serve.
@@ -323,6 +324,12 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// binary is present with no native hooks (OpenClaw only covers sessions
 	// run through it; direct `claude` invocations would be unprotected).
 	if n := doctorCoverage(emit, protected); n > 0 {
+		warnings += n
+	}
+
+	// 17b. Hermes experimental plugin health. This is scoped separately from
+	// OpenClaw so optional Hermes gaps do not obscure OpenClaw readiness.
+	if n := doctorHermesIntegration(emit, serveURL, token); n > 0 {
 		warnings += n
 	}
 
@@ -2070,6 +2077,298 @@ func doctorOpenClawAskMode(emit emitFn) (warnings int) {
 				"Set tools.exec.ask to \"off\" for native plugin mode or \"on-miss\" for bridge-first exec mode, then restart OpenClaw")
 		return 1
 	}
+}
+
+type hermesDoctorConfig struct {
+	Plugins struct {
+		Enabled  []string `yaml:"enabled"`
+		Disabled []string `yaml:"disabled"`
+		Entries  map[string]struct {
+			Config map[string]any `yaml:"config"`
+		} `yaml:"entries"`
+	} `yaml:"plugins"`
+}
+
+type hermesPluginManifest struct {
+	Name          string   `yaml:"name"`
+	Version       string   `yaml:"version"`
+	ProvidesHooks []string `yaml:"provides_hooks"`
+}
+
+func doctorHermesIntegration(emit emitFn, serveURL, token string) (warnings int) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+	hermesHome := hermesHomeDir(home)
+	pluginDir := filepath.Join(hermesHome, "plugins", "rampart")
+	pluginInstalled := hermesPluginFilesInstalled(pluginDir)
+
+	hermesBin, hermesErr := exec.LookPath("hermes")
+	hermesInstalled := hermesErr == nil
+	if !hermesInstalled && !pluginInstalled {
+		return 0
+	}
+
+	if hermesInstalled {
+		emit("Hermes Agent", "ok", hermesVersionSummary(hermesBin))
+	} else {
+		emit("Hermes Agent", "warn", "Rampart Hermes plugin files are present, but the hermes binary was not found in PATH"+hintSep+
+			"Install Hermes Agent or remove the plugin with: rampart setup hermes --remove")
+		warnings++
+	}
+
+	if !pluginInstalled {
+		emit("Hermes plugin", "warn", "Hermes is installed, but Rampart's experimental plugin is not installed"+hintSep+
+			"rampart setup hermes --enable")
+		return warnings + 1
+	}
+
+	manifest, manifestErr := readHermesPluginManifest(pluginDir)
+	if manifestErr != nil {
+		emit("Hermes plugin", "warn", fmt.Sprintf("installed, but failed to parse plugin.yaml: %v", manifestErr)+hintSep+
+			"Reinstall the plugin: rampart setup hermes")
+		warnings++
+	} else {
+		if manifest.Name != "" && manifest.Name != "rampart" {
+			emit("Hermes plugin", "warn", fmt.Sprintf("installed manifest name is %q, expected rampart", manifest.Name)+hintSep+
+				"Reinstall the plugin: rampart setup hermes")
+			warnings++
+		}
+		if !containsString(manifest.ProvidesHooks, "pre_tool_call") {
+			emit("Hermes plugin", "warn", "installed manifest does not declare pre_tool_call hook support"+hintSep+
+				"Reinstall the plugin from a current Rampart build: rampart setup hermes")
+			warnings++
+		}
+		if manifest.Version != "" && !pluginVersionMatchesBuildVersion(manifest.Version, build.Version) {
+			emit("Hermes plugin", "warn", fmt.Sprintf("installed manifest version %s does not match rampart binary %s", manifest.Version, build.Version)+hintSep+
+				"Rerun `rampart setup hermes` from the same Rampart build, then restart long-running Hermes gateways")
+			warnings++
+		} else {
+			detail := "installed (experimental pre_tool_call policy gate)"
+			if manifest.Version != "" {
+				detail = fmt.Sprintf("installed (v%s, experimental pre_tool_call policy gate)", manifest.Version)
+			}
+			emit("Hermes plugin", "ok", detail)
+		}
+	}
+
+	cfg, configPath, configErr := readHermesDoctorConfig(hermesHome)
+	pluginEnabled := false
+	pluginConfig := map[string]any(nil)
+	if configErr != nil {
+		emit("Hermes plugin enabled", "warn", fmt.Sprintf("could not verify plugins.enabled in %s: %v", configPath, configErr)+hintSep+
+			"hermes plugins enable rampart")
+		warnings++
+	} else {
+		if containsString(cfg.Plugins.Disabled, "rampart") {
+			emit("Hermes plugin enabled", "warn", "plugins.disabled includes rampart, so Hermes will not load the policy hook"+hintSep+
+				"hermes plugins enable rampart")
+			warnings++
+		} else if !containsString(cfg.Plugins.Enabled, "rampart") {
+			emit("Hermes plugin enabled", "warn", "plugin files are installed, but rampart is not listed in plugins.enabled"+hintSep+
+				"hermes plugins enable rampart")
+			warnings++
+		} else {
+			pluginEnabled = true
+			emit("Hermes plugin enabled", "ok", "rampart listed in plugins.enabled; restart long-running gateways after changes")
+		}
+		if cfg.Plugins.Entries != nil {
+			if entry, ok := cfg.Plugins.Entries["rampart"]; ok {
+				pluginConfig = entry.Config
+			}
+		}
+	}
+
+	endpointMode := strings.ToLower(strings.TrimSpace(hermesConfigString(pluginConfig, "preflight", "endpoint_mode", "endpointMode")))
+	if endpointMode == "" {
+		endpointMode = "preflight"
+	}
+	if endpointMode == "tool" {
+		emit("Hermes policy mode", "warn", "endpoint_mode=tool can create Rampart-native pending approvals that Hermes cannot resume"+hintSep+
+			"Use endpoint_mode: preflight unless you are explicitly testing raw /v1/tool semantics")
+		warnings++
+	} else if endpointMode != "preflight" {
+		emit("Hermes policy mode", "warn", fmt.Sprintf("unknown endpoint_mode %q; plugin will fall back to preflight", endpointMode)+hintSep+
+			"Set endpoint_mode: preflight")
+		warnings++
+	} else {
+		emit("Hermes policy mode", "ok", "preflight mode; ask decisions block until Hermes exposes plugin approval/resume")
+	}
+
+	failOpenTools := hermesFailOpenTools(pluginConfig)
+	if risky := riskyHermesFailOpenTools(failOpenTools); len(risky) > 0 {
+		emit("Hermes degraded mode", "warn", fmt.Sprintf("fail_open_tools includes mutating/high-risk tools: %s", strings.Join(risky, ", "))+hintSep+
+			"Limit fail_open_tools to explicit read-only tools or set it to [] for fail-closed behavior")
+		warnings++
+	} else {
+		detail := "mutating/high-risk tools fail closed when Rampart is unavailable"
+		if len(failOpenTools) > 0 {
+			detail += fmt.Sprintf("; configured fail-open tools: %s", strings.Join(failOpenTools, ", "))
+		}
+		emit("Hermes degraded mode", "ok", detail)
+	}
+
+	if pluginEnabled {
+		if serveURL == "" {
+			emit("Hermes readiness", "warn", "plugin enabled, but rampart serve is unreachable; mutating/high-risk Hermes tools will fail closed"+hintSep+
+				"rampart serve --background")
+			warnings++
+		} else if strings.TrimSpace(token) == "" {
+			emit("Hermes readiness", "warn", "plugin enabled and serve reachable, but no Rampart token was found for authenticated policy checks"+hintSep+
+				"rampart serve --background")
+			warnings++
+		} else {
+			emit("Hermes readiness", "ok", fmt.Sprintf("experimental policy gate configured; serve reachable at %s; token present (redacted)", serveURL))
+		}
+	}
+
+	emit("Hermes support tier", "info", "experimental policy gate; full approval/resume support requires Hermes-owned approval APIs and E2E validation")
+	return warnings
+}
+
+func hermesHomeDir(home string) string {
+	if envHome := strings.TrimSpace(os.Getenv("HERMES_HOME")); envHome != "" {
+		expanded := os.ExpandEnv(envHome)
+		if strings.HasPrefix(expanded, "~"+string(os.PathSeparator)) {
+			expanded = filepath.Join(home, strings.TrimPrefix(expanded, "~"+string(os.PathSeparator)))
+		}
+		return filepath.Clean(expanded)
+	}
+	return filepath.Join(home, ".hermes")
+}
+
+func hermesPluginFilesInstalled(pluginDir string) bool {
+	if _, err := os.Stat(filepath.Join(pluginDir, "plugin.yaml")); err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(pluginDir, "__init__.py")); err != nil {
+		return false
+	}
+	return true
+}
+
+func readHermesPluginManifest(pluginDir string) (hermesPluginManifest, error) {
+	var manifest hermesPluginManifest
+	data, err := os.ReadFile(filepath.Join(pluginDir, "plugin.yaml"))
+	if err != nil {
+		return manifest, err
+	}
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return manifest, err
+	}
+	return manifest, nil
+}
+
+func readHermesDoctorConfig(hermesHome string) (hermesDoctorConfig, string, error) {
+	var cfg hermesDoctorConfig
+	path := filepath.Join(hermesHome, "config.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cfg, path, err
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return cfg, path, err
+	}
+	return cfg, path, nil
+}
+
+func hermesVersionSummary(bin string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "--version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return "installed (version unavailable)"
+	}
+	line := strings.TrimSpace(strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n")[0])
+	if len(line) > 160 {
+		line = line[:160]
+	}
+	return fmt.Sprintf("installed (%s)", line)
+}
+
+func hermesConfigString(config map[string]any, defaultValue string, keys ...string) string {
+	if config == nil {
+		return defaultValue
+	}
+	for _, key := range keys {
+		if value, ok := config[key]; ok {
+			if s, ok := value.(string); ok {
+				return s
+			}
+		}
+	}
+	return defaultValue
+}
+
+func hermesFailOpenTools(config map[string]any) []string {
+	defaultTools := []string{"read_file", "search_files", "browser_snapshot", "browser_get_images", "browser_vision", "vision_analyze"}
+	if config == nil {
+		return defaultTools
+	}
+	var raw any
+	for _, key := range []string{"fail_open_tools", "failOpenTools"} {
+		if value, ok := config[key]; ok {
+			raw = value
+			break
+		}
+	}
+	if raw == nil {
+		return defaultTools
+	}
+	var tools []string
+	switch v := raw.(type) {
+	case []string:
+		tools = append(tools, v...)
+	case []any:
+		for _, item := range v {
+			tools = append(tools, fmt.Sprint(item))
+		}
+	case string:
+		tools = strings.Split(v, ",")
+	default:
+		return defaultTools
+	}
+	return normalizedStringList(tools)
+}
+
+func riskyHermesFailOpenTools(tools []string) []string {
+	var risky []string
+	for _, tool := range tools {
+		switch strings.ToLower(strings.TrimSpace(tool)) {
+		case "terminal", "execute_code", "write_file", "patch", "process", "cronjob", "send_message", "text_to_speech", "memory", "todo",
+			"browser_back", "browser_cdp", "browser_click", "browser_console", "browser_dialog", "browser_navigate", "browser_press", "browser_scroll", "browser_type":
+			risky = append(risky, tool)
+		}
+	}
+	return normalizedStringList(risky)
+}
+
+func normalizedStringList(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func relHome(path, home string) string {

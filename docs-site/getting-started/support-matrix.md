@@ -7,6 +7,8 @@ description: "Supported Rampart integration modes, coverage, approval UX, serve 
 
 Use this page as the canonical support contract for Rampart's main integration surfaces.
 
+For release-candidate validation and latest-agent checks, use the [Release Compatibility Gate](release-compatibility-gate.md). The support tier below should match the most recent evidence from the exact Rampart candidate build and bundled plugin metadata.
+
 ## At a glance
 
 <table class="support-matrix-table">
@@ -97,7 +99,7 @@ Use this page as the canonical support contract for Rampart's main integration s
 
 - **Claude Code** → best overall native path
 - **Codex CLI** → best CLI path when you want strong coverage
-- **OpenClaw >= 2026.5.2** → best OpenClaw path for 1.0; plugin + native approval UI
+- **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path for early testing; `ask` decisions block rather than resume
 - **Cline** → good supported path, but less polished approval UX than Claude Code
 
@@ -120,6 +122,7 @@ Use this page as the canonical support contract for Rampart's main integration s
 ## Related guides
 
 - [Quick Start](quickstart.md)
+- [Release Compatibility Gate](release-compatibility-gate.md)
 - [How Rampart Works](how-it-works.md)
 - [OpenClaw integration](../integrations/openclaw.md)
 - [Hermes Agent integration](../integrations/hermes.md)
