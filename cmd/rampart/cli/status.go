@@ -419,12 +419,6 @@ type hermesPluginState struct {
 	PluginDir     string
 }
 
-type hermesPluginManifest struct {
-	Name          string   `yaml:"name"`
-	Version       string   `yaml:"version"`
-	ProvidesHooks []string `yaml:"provides_hooks"`
-}
-
 type hermesConfigFile struct {
 	Plugins hermesConfigPlugins `yaml:"plugins"`
 }
