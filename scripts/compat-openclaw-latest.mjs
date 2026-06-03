@@ -2,9 +2,10 @@
 /**
  * Validate Rampart's OpenClaw plugin against an isolated OpenClaw state.
  *
- * The script expects an `openclaw` executable on PATH. It sets HOME and
- * OPENCLAW_CONFIG_PATH to a temporary directory so plugin install/config checks
- * do not touch a live OpenClaw gateway or user config.
+ * By default the script expects an `openclaw` executable on PATH. Pass
+ * `--npm-latest` to run through `npm exec --package openclaw@latest` instead.
+ * It sets HOME and OPENCLAW_CONFIG_PATH to a temporary directory so plugin
+ * install/config checks do not touch a live OpenClaw gateway or user config.
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -17,7 +18,11 @@ const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-openclaw-compat-'));
 const tempHome = join(tempRoot, 'home');
 const openclawDir = join(tempHome, '.openclaw');
 const configPath = join(openclawDir, 'openclaw.json');
-const keepTemp = process.argv.includes('--keep-temp');
+const args = process.argv.slice(2);
+const keepTemp = args.includes('--keep-temp');
+const useNpmLatest = args.includes('--npm-latest');
+const openclawPackageArg = args.find((arg) => arg.startsWith('--openclaw-package='));
+const openclawPackage = openclawPackageArg ? openclawPackageArg.split('=', 2)[1] : 'openclaw@latest';
 
 function run(command, args, { required = true, env = compatEnv() } = {}) {
   const result = spawnSync(command, args, {
@@ -37,6 +42,13 @@ function run(command, args, { required = true, env = compatEnv() } = {}) {
     throw new Error(`command failed: ${detail}`);
   }
   return record;
+}
+
+function runOpenClaw(openclawArgs, options = {}) {
+  if (useNpmLatest) {
+    return run('npm', ['exec', '--yes', '--package', openclawPackage, '--', 'openclaw', ...openclawArgs], options);
+  }
+  return run('openclaw', openclawArgs, options);
 }
 
 function compatEnv() {
@@ -81,13 +93,13 @@ function main() {
   const env = compatEnv();
   const pluginDir = join(repoRoot, 'internal', 'plugin', 'openclaw');
 
-  const version = run('openclaw', ['--version'], { env });
-  const install = run('openclaw', ['plugins', 'install', pluginDir], { env });
-  const validate = run('openclaw', ['config', 'validate'], { env });
-  const inspect = run('openclaw', ['plugins', 'inspect', 'rampart'], { required: false, env });
+  const version = runOpenClaw(['--version'], { env });
+  const install = runOpenClaw(['plugins', 'install', pluginDir], { env });
+  const validate = runOpenClaw(['config', 'validate'], { env });
+  const inspect = runOpenClaw(['plugins', 'inspect', 'rampart'], { required: false, env });
   const list = inspect.status === 0
     ? { command: 'openclaw plugins list', status: 0, stdout: '', stderr: '' }
-    : run('openclaw', ['plugins', 'list'], { env });
+    : runOpenClaw(['plugins', 'list'], { env });
 
   const installedOutput = `${commandOutput(inspect)}\n${commandOutput(list)}\n${commandOutput(install)}`;
   if (!installedOutput.includes('rampart')) {
@@ -102,6 +114,7 @@ function main() {
     ok: true,
     temp_home: tempHome,
     openclaw_version: commandOutput(version).split('\n')[0],
+    openclaw_source: useNpmLatest ? openclawPackage : 'PATH',
     plugin_install_checked: true,
     config_validate_checked: validate.status === 0,
     plugin_inspect_checked: inspect.status === 0,

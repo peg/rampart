@@ -425,7 +425,10 @@ def _decode_http_error(exc: urllib.error.HTTPError) -> dict[str, Any]:
     except json.JSONDecodeError:
         parsed = {}
     if isinstance(parsed, dict):
-        parsed.setdefault("message", body or f"Rampart returned HTTP {exc.code}")
+        message = parsed.get("message") or parsed.get("error") or body or f"Rampart returned HTTP {exc.code}"
+        parsed["decision"] = "deny"
+        parsed["allowed"] = False
+        parsed["message"] = str(message)
         return parsed
     return {"decision": "deny", "allowed": False, "message": body or f"Rampart returned HTTP {exc.code}"}
 
@@ -469,6 +472,8 @@ def _decision_from_result(result: Mapping[str, Any]) -> str:
     decision = result.get("decision")
     if isinstance(decision, str) and decision:
         return decision.lower()
+    if result.get("error"):
+        return "deny"
     if result.get("allowed") is False:
         return "deny"
     return "allow"
