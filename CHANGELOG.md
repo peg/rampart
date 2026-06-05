@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Audit chain recovery now resumes from the latest valid JSONL event** — Startup reconstruction recovers both the event count and chain head from existing audit logs instead of trusting absent, stale, or tampered anchors as the next `prev_hash` source.
 - **Partial audit verification is safer** — `rampart audit verify --since` accepts intentionally truncated history while continuing to verify the included hash chain and anchor data that is present in the selected window.
+- **Release builds use Go 1.25.11**: CI, release, Docker, and upstream compatibility gates now use the Go patch release that resolves the called standard-library vulnerabilities reported against Go 1.25.10.
 
 ## [1.1.1] - 2026-05-26
 

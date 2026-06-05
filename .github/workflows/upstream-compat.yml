@@ -18,7 +18,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25.10'
+          go-version: '1.25.11'
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -39,8 +39,5 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install latest OpenClaw
-        run: npm install -g openclaw@latest
-
       - name: Validate against latest OpenClaw
-        run: node scripts/compat-openclaw-latest.mjs
+        run: node scripts/compat-openclaw-latest.mjs --npm-latest

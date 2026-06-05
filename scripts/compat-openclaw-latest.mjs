@@ -107,6 +107,7 @@ function main() {
   }
 
   const smoke = run(process.execPath, ['internal/plugin/openclaw/smoke-test.mjs'], { env });
+  const toolAlias = run(process.execPath, ['internal/plugin/openclaw/tool-alias-test.mjs'], { env });
   const approvals = run(process.execPath, ['internal/plugin/openclaw/approval-regression.mjs'], { env });
   const degraded = run(process.execPath, ['internal/plugin/openclaw/degraded-mode-test.mjs'], { env });
 
@@ -121,6 +122,7 @@ function main() {
     plugin_list_checked: inspect.status !== 0 && list.status === 0,
     bundled_plugin_harnesses: {
       smoke: JSON.parse(smoke.stdout),
+      tool_alias: JSON.parse(toolAlias.stdout),
       approvals: JSON.parse(approvals.stdout),
       degraded: JSON.parse(degraded.stdout),
     },
