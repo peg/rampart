@@ -51,6 +51,7 @@ class RampartStub(BaseHTTPRequestHandler):
         }
         self.requests_seen.append(record)
 
+        status = 200
         if "rampart-deny-marker" in command:
             body = {
                 "decision": "deny",
@@ -65,6 +66,12 @@ class RampartStub(BaseHTTPRequestHandler):
                 "matched_policies": ["compat-ask"],
                 "audit_id": "compat-audit-ask",
             }
+        elif "rampart-auth-error-marker" in command:
+            status = 401
+            body = {
+                "error": "invalid authorization token",
+                "message": "invalid authorization token",
+            }
         else:
             body = {
                 "decision": "allow",
@@ -73,7 +80,7 @@ class RampartStub(BaseHTTPRequestHandler):
             }
 
         encoded = json.dumps(body).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
@@ -85,7 +92,7 @@ class RampartStub(BaseHTTPRequestHandler):
 
 
 def _marker_from_command(command: str) -> str:
-    for marker in ("rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker"):
+    for marker in ("rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker", "rampart-auth-error-marker"):
         if marker in command:
             return marker
     return ""
@@ -101,6 +108,19 @@ def run(cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path = REPO_R
         stderr=subprocess.PIPE,
         check=True,
     )
+
+
+def resolve_executable(value: str) -> Path:
+    if not value:
+        raise ValueError("empty executable path")
+    if os.sep not in value and (os.altsep is None or os.altsep not in value):
+        found = shutil.which(value)
+        if found:
+            return Path(found)
+    path = Path(value).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"executable not found: {value}")
+    return path
 
 
 def make_venv(root: Path, package: str) -> tuple[Path, Path]:
@@ -181,6 +201,10 @@ def child_probe_code(unused_port: int) -> str:
         if allow is not None:
             raise SystemExit(f'allow should continue without a block message: {{allow!r}}')
 
+        auth_error = block('terminal', {{'command': 'printf rampart-auth-error-marker'}}, 'compat-auth-error-call')
+        if not auth_error or 'invalid authorization token' not in auth_error:
+            raise SystemExit(f'auth error did not fail closed: {{auth_error!r}}')
+
         os.environ['RAMPART_HERMES_URL'] = 'http://127.0.0.1:{unused_port}'
         os.environ['RAMPART_HERMES_TIMEOUT_MS'] = '250'
         fail_closed = block('terminal', {{'command': 'printf rampart-fail-closed-marker'}}, 'compat-fail-closed-call')
@@ -199,6 +223,7 @@ def child_probe_code(unused_port: int) -> str:
             'deny_blocked': True,
             'ask_blocked_without_resume': True,
             'allow_continued': True,
+            'auth_error_fail_closed': True,
             'mutating_fail_closed': True,
             'configured_read_fail_open': True,
         }}, sort_keys=True))
@@ -217,9 +242,11 @@ def main() -> int:
     temp = Path(tempfile.mkdtemp(prefix="rampart-hermes-compat-"))
     try:
         if args.hermes_python:
-            hermes_python = Path(args.hermes_python).resolve()
-            hermes_bin = Path(args.hermes_bin).resolve() if args.hermes_bin else shutil.which("hermes")
-            hermes_bin_path = Path(hermes_bin) if hermes_bin else None
+            hermes_python = resolve_executable(args.hermes_python)
+            hermes_bin_path = resolve_executable(args.hermes_bin) if args.hermes_bin else None
+            if hermes_bin_path is None:
+                hermes_bin = shutil.which("hermes")
+                hermes_bin_path = Path(hermes_bin) if hermes_bin else None
         else:
             hermes_python, hermes_bin_path = make_venv(temp, args.package)
 
@@ -274,7 +301,7 @@ def main() -> int:
             if "/v1/preflight/exec" not in paths:
                 raise RuntimeError(f"expected /v1/preflight/exec request, saw {sorted(paths)}")
             markers = {entry["command_marker"] for entry in RampartStub.requests_seen}
-            expected = {"rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker"}
+            expected = {"rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker", "rampart-auth-error-marker"}
             if not expected.issubset(markers):
                 raise RuntimeError(f"expected request markers {sorted(expected)}, saw {sorted(markers)}")
 

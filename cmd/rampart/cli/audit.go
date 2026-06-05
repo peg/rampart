@@ -18,7 +18,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -144,6 +143,7 @@ a known break in the chain from a previous dev session).
 Example:
   rampart audit verify --since 2026-03-20`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			var sinceDate *time.Time
 			files, err := listAuditFiles(auditDir)
 			if err != nil {
 				return err
@@ -155,10 +155,11 @@ Example:
 			// Filter files by --since date if provided. Size-rotated files use
 			// YYYY-MM-DD.pN.jsonl names, so compare only the leading date.
 			if since != "" {
-				sinceDate, parseErr := time.Parse("2006-01-02", since)
+				parsedSinceDate, parseErr := time.Parse("2006-01-02", since)
 				if parseErr != nil {
 					return fmt.Errorf("audit: invalid --since date %q: expected YYYY-MM-DD format", since)
 				}
+				sinceDate = &parsedSinceDate
 				filtered := files[:0]
 				for _, f := range files {
 					base := filepath.Base(f)
@@ -172,7 +173,7 @@ Example:
 						filtered = append(filtered, f)
 						continue
 					}
-					if !fileDate.Before(sinceDate) {
+					if !fileDate.Before(*sinceDate) {
 						filtered = append(filtered, f)
 					}
 				}
@@ -187,7 +188,7 @@ Example:
 				return err
 			}
 
-			if err := verifyAnchors(auditDir, hashesByID, since == ""); err != nil {
+			if err := verifyAnchorsWithSince(auditDir, hashesByID, since == "", sinceDate); err != nil {
 				return err
 			}
 
@@ -386,7 +387,7 @@ func listAuditFiles(auditDir string) ([]string, error) {
 		}
 		files = append(files, filepath.Join(auditDir, entry.Name()))
 	}
-	sort.Strings(files)
+	audit.SortAuditFiles(files)
 	return files, nil
 }
 

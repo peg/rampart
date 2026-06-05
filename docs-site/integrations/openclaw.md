@@ -12,7 +12,7 @@ When `rampart serve` is healthy, every supported tool call — exec, read, write
 For sensitive tools, the recommended operating assumption is simple: if Rampart policy service is unavailable, treat that as a broken state and fix it before trusting approval-path tests. By default the plugin blocks sensitive tools such as `exec` and `write` when `rampart serve` is unavailable; lower-risk tools (`read`, `web_fetch`, `web_search`, `image`) are explicitly configured fail-open and can be tightened with `plugins.entries.rampart.config.failOpenTools`.
 
 !!! info "Version requirements"
-    - **OpenClaw >= 2026.5.2**: Recommended 1.0 path. Supports explicit plugin startup activation plus first-class plugin approvals on the shared `/approve` / native approval path.
+    - **OpenClaw >= 2026.5.2**: Recommended current path. Supports explicit plugin startup activation plus first-class plugin approvals on the shared `/approve` / native approval path.
     - **OpenClaw 2026.4.29 - 2026.5.1**: Supported for native plugin startup/interception; plugin approval delivery was not the launch baseline.
     - **OpenClaw 2026.3.28 - 2026.4.28**: Native plugin works for tool enforcement, but Rampart's polished approval path is supported on newer OpenClaw builds.
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades.
@@ -156,7 +156,7 @@ For end-to-end confidence, validate one case in each state:
 For release-candidate validation, run the latest-OpenClaw compatibility harness in a temporary state directory:
 
 ```bash
-node scripts/compat-openclaw-latest.mjs
+node scripts/compat-openclaw-latest.mjs --npm-latest
 ```
 
 That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as recommended, also run the opt-in live runtime audit regression:

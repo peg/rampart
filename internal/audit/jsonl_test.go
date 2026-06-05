@@ -450,6 +450,32 @@ func TestJSONLSink_RecoverAcrossDayFileContinuesHashChain(t *testing.T) {
 	assertLastEventPrevHash(t, sink2.filePath(), savedHash)
 }
 
+func TestJSONLSink_RecoverSortsRotatedFilesNaturally(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{"2026-02-13.jsonl", "2026-02-13.p1.jsonl", "2026-02-13.p2.jsonl", "2026-02-13.p10.jsonl"}
+
+	prevHash := ""
+	var lastHash string
+	for i, name := range names {
+		event := sampleEvent("exec")
+		event.ID = NewEventID()
+		event.Timestamp = time.Date(2026, 2, 13, 12, i, 0, 0, time.UTC)
+		event.PrevHash = prevHash
+		require.NoError(t, event.ComputeHash())
+		prevHash = event.Hash
+		lastHash = event.Hash
+
+		data, err := json.Marshal(event)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), append(data, '\n'), 0o644))
+	}
+
+	state := recoverChainStateFromDir(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	assert.EqualValues(t, len(names), state.eventCount)
+	assert.Equal(t, lastHash, state.lastHash)
+	assert.Equal(t, "2026-02-13.p10.jsonl", state.lastFile)
+}
+
 func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
 	dir := t.TempDir()
 

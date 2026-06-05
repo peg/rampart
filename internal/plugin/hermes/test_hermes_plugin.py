@@ -150,6 +150,19 @@ class HermesPluginTests(unittest.TestCase):
         self.assertEqual(result["action"], "block")
         self.assertIn("unavailable", result["message"])
 
+    def test_auth_error_response_blocks_mutating_tool(self) -> None:
+        def requester(config, rampart_tool, payload):
+            return {"error": "invalid authorization token", "message": "invalid authorization token"}
+
+        result = plugin.evaluate_pre_tool_call(
+            "terminal",
+            {"command": "printf safe"},
+            requester=requester,
+        )
+
+        self.assertEqual(result["action"], "block")
+        self.assertIn("invalid authorization token", result["message"])
+
     def test_unavailable_allows_configured_read_only_tool(self) -> None:
         def requester(config, rampart_tool, payload):
             raise plugin.RampartUnavailable("connection refused")

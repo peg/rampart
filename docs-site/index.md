@@ -211,6 +211,7 @@ verify -> outcomes.approval
 - **Hosted approval foundation** — Rampart can support host-owned approval flows without creating a second hidden Rampart approval queue, preserving a single user-facing approval owner.
 - **Experimental Hermes policy gate correlation** — Hermes tool-call metadata now reaches Rampart audit records so policy-gate decisions can be traced back to the originating Hermes tool call.
 - **Bundled plugin versions are coherent** — OpenClaw and experimental Hermes plugin manifests/runtime exports now report `1.2.0` alongside the Rampart release.
+- **Patched release toolchain**: CI, release, Docker, and upstream compatibility gates now use Go 1.25.11.
 
 ### v1.1
 

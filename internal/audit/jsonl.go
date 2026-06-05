@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,7 +54,7 @@ func recoverChainStateFromDir(dir string, logger *slog.Logger) recoveredChainSta
 		}
 		files = append(files, entry.Name())
 	}
-	sort.Strings(files)
+	SortAuditFiles(files)
 
 	var state recoveredChainState
 	for _, name := range files {

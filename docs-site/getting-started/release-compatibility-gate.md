@@ -46,7 +46,7 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Install the candidate Rampart plugin into only that temporary Hermes plugin directory.
    - Enable only the temporary Hermes config.
    - Exercise the real Hermes plugin dispatcher, including plugin discovery and `pre_tool_call` hook registration.
-   - Prove deny blocks before execution, allow continues, `ask` blocks with an approval-required/no-resume message, and mutating tools fail closed when Rampart is unavailable.
+   - Prove deny blocks before execution, allow continues, `ask` blocks with an approval-required/no-resume message, Rampart auth failures fail closed for mutating tools, and mutating tools fail closed when Rampart is unavailable.
    - Do not restart or mutate a live Discord, Telegram, or other long-running Hermes gateway for this gate.
 
 5. **Run `rampart doctor` as a support-contract check**
@@ -65,10 +65,10 @@ The repository includes compatibility harnesses for latest upstream agent checks
 
 ```bash
 python scripts/compat-hermes-latest.py
-node scripts/compat-openclaw-latest.mjs
+node scripts/compat-openclaw-latest.mjs --npm-latest
 ```
 
-The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness expects `openclaw` to be on `PATH`, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks.
+The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness can run either the `openclaw` on `PATH` or `--npm-latest` for the latest npm package, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks.
 
 For OpenClaw's recommended support tier, also run the opt-in runtime audit regression before a release promotion:
 
