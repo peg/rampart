@@ -123,6 +123,14 @@ function normalizeExecParams(params) {
 function normalizeToolCall(toolName, params) {
   const originalToolName = typeof toolName === "string" && toolName ? toolName : "unknown";
   const canonical = originalToolName.toLowerCase();
+  if (canonical === "exec") {
+    return {
+      toolName: "exec",
+      params: normalizeExecParams(params),
+      originalToolName,
+      mapped: originalToolName !== "exec",
+    };
+  }
   if (EXEC_TOOL_ALIASES.has(canonical)) {
     return {
       toolName: "exec",
