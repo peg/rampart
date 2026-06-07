@@ -33,6 +33,15 @@ function parseBody(call) {
   return JSON.parse(call.opts.body);
 }
 
+async function waitFor(predicate, message, { timeoutMs = 250, intervalMs = 5 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(message);
+}
+
 function fetchJson(result) {
   return { ok: true, status: 200, json: async () => result, text: async () => JSON.stringify(result) };
 }
@@ -156,7 +165,10 @@ await withPlugin({
     const after = handlers.after_tool_call;
     assert(typeof after === 'function', 'after_tool_call handler missing');
     await after({ toolName: 'terminal', params: { args: { command: 'echo audited-provider' } }, durationMs: 5 }, ctx);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () => auditCalls.some((call) => call.url.includes('/v1/audit')),
+      'audit endpoint not called',
+    );
   },
 });
 const auditCall = auditCalls.find((call) => call.url.includes('/v1/audit'));

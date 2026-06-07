@@ -27,6 +27,15 @@ function parseBody(call) {
   return JSON.parse(call.opts.body);
 }
 
+async function waitFor(predicate, message, { timeoutMs = 250, intervalMs = 5 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(message);
+}
+
 async function runWithFetch({ name, fetchImpl, pluginConfig = {}, invoke }) {
   const { api, handlers, logs } = createApi(pluginConfig);
   const originalFetch = global.fetch;
@@ -128,7 +137,10 @@ await runWithFetch({
       sessionKey: 'agent:main:test',
       runId: 'bash-after-run',
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () => auditCalls.some((call) => call.url.includes('/v1/audit')),
+      'audit endpoint not called',
+    );
   },
 });
 const auditCall = auditCalls.find((call) => call.url.includes('/v1/audit'));
