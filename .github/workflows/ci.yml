@@ -54,6 +54,7 @@ jobs:
         run: |
           node internal/plugin/openclaw/smoke-test.mjs
           node internal/plugin/openclaw/tool-alias-test.mjs
+          node internal/plugin/openclaw/provider-surface-replay.mjs
           node internal/plugin/openclaw/approval-regression.mjs
           node internal/plugin/openclaw/degraded-mode-test.mjs
 

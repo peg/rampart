@@ -15,6 +15,7 @@ node internal/plugin/openclaw/smoke-test.mjs
 node internal/plugin/openclaw/approval-regression.mjs
 node internal/plugin/openclaw/degraded-mode-test.mjs
 node internal/plugin/openclaw/tool-alias-test.mjs
+node internal/plugin/openclaw/provider-surface-replay.mjs
 ```
 
 Default behavior simulates:
@@ -50,6 +51,7 @@ Arguments:
 - degraded mode blocks sensitive tools (`exec`, `write`) when serve is unreachable or returns 5xx
 - configured fail-open tools (`read`, `web_fetch`, `web_search`, `image` by default) remain explicit and test-covered
 - command-execution aliases such as OpenClaw `bash` map to Rampart `exec` for policy checks, learning, and audit events
+- provider-surface replay covers canonical `exec`, nested `input.command`, command aliases, file tools, hosted approval, auth-error fail-closed behavior, audit normalization, and degraded sensitive-tool blocking
 
 This is a deterministic harness for the highest-leverage plugin regression: approval-path behavior without depending on model tool selection.
 
