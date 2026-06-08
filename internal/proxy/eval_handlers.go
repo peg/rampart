@@ -122,7 +122,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		SetUptime(time.Since(s.startedAt))
 	}
 
-	s.writeAudit(req, toolName, decision)
+	auditID := s.writeAudit(req, toolName, decision)
 
 	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
 	resp := map[string]any{
@@ -130,6 +130,9 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		"decision":         decision.Action.String(),
 		"message":          decision.Message,
 		"eval_duration_us": decision.EvalDuration.Microseconds(),
+	}
+	if auditID != "" {
+		resp["audit_id"] = auditID
 	}
 
 	if len(decision.MatchedPolicies) > 0 {
@@ -169,23 +172,37 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk) {
-		if req.OpenClawHosted || req.SkipPendingApproval {
-			if identity.IsAdmin && req.OpenClawHosted && req.SkipPendingApproval {
-				s.logger.Info("proxy: trusted OpenClaw-hosted approval evaluation requested, skipping Rampart pending approval creation",
+		if req.requestsHostedApproval() {
+			if identity.IsAdmin {
+				if err := req.validateTrustedHostedApproval(); err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				s.logger.Info("proxy: trusted hosted approval evaluation requested, skipping Rampart pending approval creation",
 					"tool", toolName,
 					"decision", decision.Action.String(),
 					"session", call.Session,
+					"approval_owner", req.hostedApprovalOwnerMap(),
 				)
+				resp["approval_mode"] = "hosted"
+				if owner := req.hostedApprovalOwnerMap(); len(owner) > 0 {
+					resp["approval_owner"] = owner
+				}
+				if req.ToolCallID != "" {
+					resp["tool_call_id"] = req.ToolCallID
+				}
+				resp["approval"] = s.hostedApprovalDescriptor(req, decision)
 				writeJSON(w, http.StatusOK, resp)
 				return
 			}
-			s.logger.Warn("proxy: ignoring caller-supplied hosted approval bypass flags for untrusted or incomplete request",
+			s.logger.Warn("proxy: ignoring caller-supplied hosted approval bypass flags for untrusted request",
 				"tool", toolName,
 				"decision", decision.Action.String(),
 				"session", call.Session,
 				"is_admin", identity.IsAdmin,
 				"openclaw_hosted", req.OpenClawHosted,
 				"skip_pending_approval", req.SkipPendingApproval,
+				"approval_owner", req.hostedApprovalOwnerMap(),
 			)
 		}
 
@@ -263,18 +280,22 @@ func (s *Server) applyResponseEvaluation(
 	return true
 }
 
-func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.Decision) {
+func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.Decision) string {
 	if s.sink == nil {
-		return
+		return ""
 	}
 
+	eventID := audit.NewEventID()
 	event := audit.Event{
-		ID:        audit.NewEventID(),
-		Timestamp: time.Now().UTC(),
-		Agent:     req.Agent,
-		Session:   req.Session,
-		Tool:      toolName,
-		Request:   req.Params,
+		ID:            eventID,
+		Timestamp:     time.Now().UTC(),
+		Agent:         req.Agent,
+		Session:       req.Session,
+		RunID:         req.RunID,
+		ToolCallID:    req.ToolCallID,
+		ApprovalOwner: req.hostedApprovalOwnerMap(),
+		Tool:          toolName,
+		Request:       req.Params,
 		Decision: audit.EventDecision{
 			Action:          decision.Action.String(),
 			MatchedPolicies: decision.MatchedPolicies,
@@ -286,6 +307,7 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 
 	if err := s.sink.Write(event); err != nil {
 		s.logger.Error("proxy: audit write failed", "error", err)
+		return ""
 	}
 	s.broadcastSSE(map[string]any{"type": "audit", "event": event})
 
@@ -305,6 +327,26 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 			}
 			go s.sendWebhook(call, decision)
 		}
+	}
+	return eventID
+}
+
+func (s *Server) hostedApprovalDescriptor(req toolRequest, decision engine.Decision) map[string]any {
+	timeout := s.approvalTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	scopeOptions := []string{"once", "session"}
+	allowAlways := req.ApprovalOwner != nil && req.ApprovalOwner.SupportsAllowAlways
+	if allowAlways {
+		scopeOptions = append(scopeOptions, "always")
+	}
+	return map[string]any{
+		"reason":                 decision.Message,
+		"scope_options":          scopeOptions,
+		"allow_always_supported": allowAlways,
+		"timeout_ms":             timeout.Milliseconds(),
+		"expires_at":             time.Now().UTC().Add(timeout).Format(time.RFC3339),
 	}
 }
 
@@ -372,7 +414,7 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	}
 	decision := s.engine.EvaluateWith(call, evalOpts)
 	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
-	s.writeAudit(req, toolName, decision)
+	auditID := s.writeAudit(req, toolName, decision)
 
 	preflightResp := map[string]any{
 		"allowed":          allowed,
@@ -380,6 +422,9 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		"message":          decision.Message,
 		"matched_policies": decision.MatchedPolicies,
 		"eval_duration_us": decision.EvalDuration.Microseconds(),
+	}
+	if auditID != "" {
+		preflightResp["audit_id"] = auditID
 	}
 	if len(decision.Suggestions) > 0 {
 		preflightResp["suggestions"] = decision.Suggestions

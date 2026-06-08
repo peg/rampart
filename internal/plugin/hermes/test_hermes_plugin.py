@@ -88,7 +88,7 @@ class HermesPluginTests(unittest.TestCase):
             captured["config"] = config
             captured["tool"] = rampart_tool
             captured["payload"] = payload
-            return {"decision": "deny", "message": "blocked", "policy": "danger"}
+            return {"decision": "deny", "message": "blocked", "policy": "danger", "audit_id": "audit-deny-1"}
 
         result = plugin.evaluate_pre_tool_call(
             "terminal",
@@ -104,21 +104,30 @@ class HermesPluginTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["agent"], "hermes")
         self.assertEqual(captured["payload"]["session"], "sess-1")
         self.assertEqual(captured["payload"]["run_id"], "task-1")
-        self.assertEqual(captured["payload"]["params"]["hermes_tool_call_id"], "call-1")
+        self.assertEqual(captured["payload"]["tool_call_id"], "call-1")
+        self.assertNotIn("hermes_tool_call_id", captured["payload"]["params"])
         self.assertEqual(result["action"], "block")
         self.assertIn("blocked", result["message"])
         self.assertIn("danger", result["message"])
+        self.assertIn("audit-deny-1", result["message"])
 
     def test_ask_decision_blocks_without_hidden_approval(self) -> None:
         def requester(config, rampart_tool, payload):
             self.assertEqual(config.endpoint_mode, "preflight")
             self.assertNotIn("openclaw_hosted", payload)
             self.assertNotIn("skip_pending_approval", payload)
-            return {"decision": "ask", "message": "needs human review", "matched_policies": ["prod-change"]}
+            self.assertEqual(payload["tool_call_id"], "call-ask-1")
+            return {
+                "decision": "ask",
+                "message": "needs human review",
+                "matched_policies": ["prod-change"],
+                "audit_id": "audit-ask-1",
+            }
 
         result = plugin.evaluate_pre_tool_call(
             "terminal",
             {"command": "kubectl apply -f prod.yaml"},
+            tool_call_id="call-ask-1",
             requester=requester,
         )
 
@@ -126,6 +135,7 @@ class HermesPluginTests(unittest.TestCase):
         self.assertIn("approval required", result["message"])
         self.assertIn("does not yet resume", result["message"])
         self.assertIn("prod-change", result["message"])
+        self.assertIn("audit-ask-1", result["message"])
 
     def test_unavailable_blocks_mutating_tool(self) -> None:
         def requester(config, rampart_tool, payload):
@@ -139,6 +149,19 @@ class HermesPluginTests(unittest.TestCase):
 
         self.assertEqual(result["action"], "block")
         self.assertIn("unavailable", result["message"])
+
+    def test_auth_error_response_blocks_mutating_tool(self) -> None:
+        def requester(config, rampart_tool, payload):
+            return {"error": "invalid authorization token", "message": "invalid authorization token"}
+
+        result = plugin.evaluate_pre_tool_call(
+            "terminal",
+            {"command": "printf safe"},
+            requester=requester,
+        )
+
+        self.assertEqual(result["action"], "block")
+        self.assertIn("invalid authorization token", result["message"])
 
     def test_unavailable_allows_configured_read_only_tool(self) -> None:
         def requester(config, rampart_tool, payload):

@@ -1,12 +1,12 @@
 # Threat Model
 
-> Last reviewed: 2026-05-26 | Applies to: v1.1.1
+> Last reviewed: 2026-05-28 | Applies to: v1.2.0
 
-Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
+Rampart evaluates AI-agent tool calls against policy before an action proceeds. It is a policy enforcement layer, not a replacement for OS sandboxing, hypervisors, or workload isolation. This document defines the threats Rampart is designed to reduce and the boundaries operators should pair it with.
 
 ## What Rampart Is
 
-A firewall for AI agent tool calls. It evaluates agent tool calls — shell commands, file operations, and fetch requests — against YAML policies and makes allow/deny/log decisions in microseconds. Rampart sees what the agent framework sends it (tool call metadata), not raw syscalls or network traffic. It's designed to catch the 95%+ case: an AI agent that hallucinated a dangerous command or got manipulated by a prompt injection.
+A firewall for AI agent tool calls. It evaluates shell commands, file operations, fetch requests, and other framework-reported actions against YAML policies, then returns allow, deny, or watch decisions in microseconds. Rampart sees the metadata an agent framework sends it, not raw syscalls or network packets. It is designed for the common agent-risk case: a dangerous command caused by hallucination, prompt injection, or operator context mistakes.
 
 ## Primary Threat: Misbehaving AI Agents
 
@@ -17,7 +17,7 @@ Rampart's target threat is an AI agent that:
 - **Made a well-intentioned mistake** (wrong environment, wrong file, wrong server)
 - **Escalated beyond its intended scope** (sub-agent spawning unrestricted tool calls)
 
-These agents aren't adversarial — they're confused, manipulated, or wrong. Rampart catches them reliably.
+These agents are not adversarial. They are confused, manipulated, or wrong. Rampart is designed to catch these cases when the relevant integration path sends the tool call to Rampart.
 
 ## Not the Target: Adversarial Human Attackers
 
@@ -51,25 +51,25 @@ Policy files are the security boundary. If an attacker can modify policy files, 
 
 ### 1. Interpreter Bypass
 
-Rampart evaluates the command string passed to the shell. This applies to **all integration methods** — native hooks (Claude Code, Cline), wrap mode, LD_PRELOAD, and the HTTP API all see the same command string. If an agent runs `python3 script.py`, Rampart sees and evaluates `python3 script.py` — but cannot inspect what `script.py` does internally.
+Rampart evaluates the command string passed to the shell. This applies to **all integration methods**. Native hooks (Claude Code, Cline), wrap mode, LD_PRELOAD, and the HTTP API all see the same command string. If an agent runs `python3 script.py`, Rampart sees and evaluates `python3 script.py`, but cannot inspect what `script.py` does internally.
 
 **Mitigations:**
-- **LD_PRELOAD cascade** (v0.1.9+): `rampart preload` and `rampart wrap` intercept child processes spawned by allowed commands. `python3 script.py` calling `os.system("rm -rf /")` is caught — the subprocess goes through Rampart's policy engine.
+- **LD_PRELOAD cascade** (v0.1.9+): `rampart preload` and `rampart wrap` intercept child processes spawned by allowed commands. If `python3 script.py` calls `os.system("rm -rf /")`, the subprocess goes through Rampart's policy engine.
 - **Interpreter one-liner blocking** (v0.6.9+): Patterns like `python3 -c`, `node -e`, `ruby -e`, `perl -e` with dangerous system calls are blocked by default in standard/paranoid policies.
 - The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar uses LLM classification to assess intent of ambiguous commands via `action: webhook`.
 
 **Remaining surface:** LD_PRELOAD cascade only applies to wrap/preload modes, not native hooks (Claude Code, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
 
-**Multi-step sequences:** With file tool coverage enabled (native hooks, OpenClaw native plugin, or legacy `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
+**Multi-step sequences:** With file tool coverage enabled (native hooks, OpenClaw native plugin, or legacy `--patch-tools`), write-then-execute sequences are evaluated at both steps independently. The write is checked against file policies, and the exec is checked against command policies.
 
 ### 2. Audit Log Rewrite
 
-The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
+The hash-chained audit trail detects **partial tampering**. Editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](../deployment/production-checklist.md) so the agent can't access audit files
 - Enable SIEM export (`--syslog` or `--cef`) to send events to an external immutable system
-- Webhook notifications send real-time alerts to Discord/Slack — a separate record
+- Webhook notifications send real-time alerts to Discord/Slack as a separate record
 - External chain anchors every 100 events provide additional integrity checkpoints
 
 **For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](../features/siem-integration.md).
@@ -80,7 +80,7 @@ The `rampart wrap` shim needs a bearer token to authenticate with `rampart serve
 
 **Mitigations:**
 - Run `rampart serve` as a separate user and store the token in that user's home directory with restricted permissions
-- Use native hooks (`rampart setup claude-code`) instead of wrap mode — hooks don't require a token file
+- Use native hooks (`rampart setup claude-code`) instead of wrap mode because hooks do not require a token file
 
 **Resolution:** Use [user separation](../deployment/production-checklist.md) for production deployments, or prefer native hooks which don't require a token file.
 
@@ -95,7 +95,7 @@ An agent could encode commands to bypass pattern matching:
 - Rampart decodes base64 commands before pattern matching
 - Leading shell comments and ANSI escape sequences are stripped
 - Null bytes and control characters are removed
-- Subcommand extraction: `$(cmd)`, backticks, `eval 'cmd'` — inner commands are matched independently
+- Subcommand extraction: `$(cmd)`, backticks, and `eval 'cmd'` forms are matched independently
 - Common obfuscation patterns (`base64 *`, `eval *`, `xxd -r | bash`) trigger deny rules in standard policy
 - The semantic verification sidecar classifies intent regardless of encoding
 
@@ -103,25 +103,25 @@ An agent could encode commands to bypass pattern matching:
 
 ### 5. Framework-Specific Patching
 
-Older OpenClaw builds did not expose a native file-tool hook, so Rampart added `--patch-tools` as a compatibility path that modifies framework source files before read/write/edit operations. These patches don't survive framework upgrades — they modify files in `node_modules` that get replaced on update.
+Older OpenClaw builds did not expose a native file-tool hook, so Rampart added `--patch-tools` as a compatibility path that modifies framework source files before read/write/edit operations. These patches do not survive framework upgrades because they modify files in `node_modules` that get replaced on update.
 
 **Mitigations:**
-- Prefer the native OpenClaw plugin on current builds (`rampart setup openclaw`) — it covers tool calls without dist patching
+- Prefer the native OpenClaw plugin on current builds (`rampart setup openclaw`), which covers tool calls without dist patching
 - `rampart setup openclaw --patch-tools` must be re-run immediately after OpenClaw upgrades to restore protection on legacy setups
-- Native hook integrations (Claude Code, Cline) don't have this limitation — they use the framework's own hook system
+- Native hook integrations (Claude Code, Cline) do not have this limitation because they use the framework's own hook system
 
 **Security implications:**
 - **Timing window:** Between framework upgrade and re-patch, file tools bypass all policies (exec shim remains active)
 - **Silent degradation:** If the target code changes in a new version, patches fail to apply and file tools fail-open without warning. The patch script exits with an error, but if run unattended this could go unnoticed.
 
-**Trade-off:** Monkey-patching is fragile but functional. It closes a real security gap today while proper upstream hook support is developed. The patches fail-open — if the patched code changes in an upgrade, the worst case is that file tools bypass Rampart (reverting to the pre-patch state), not that they break.
+**Trade-off:** Monkey-patching is fragile and should be treated as a legacy compatibility path. If the patched code changes during an upgrade, file tools may bypass Rampart until re-patched. Prefer native plugin or native hook integrations where available.
 
 ### 6. Degraded-Mode Behavior
 
 Rampart does **not** behave identically across every integration when policy evaluation becomes unavailable. That difference is a real security boundary and has to be understood clearly.
 
 **Current behavior:**
-- `rampart wrap` and `rampart preload` default to **fail-open** — if `rampart serve` is unreachable, commands continue without policy checks unless you configure fail-closed behavior.
+- `rampart wrap` and `rampart preload` default to **fail-open**. If `rampart serve` is unreachable, commands continue without policy checks unless you configure fail-closed behavior.
 - The native OpenClaw plugin is stricter: sensitive tools such as `exec`, `write`, `edit`, `browser`, and `message` block when `rampart serve` is unavailable, while explicitly configured lower-risk tools (`read`, `web_fetch`, `web_search`, `image` by default) remain fail-open.
 - Native hook integrations (Claude Code, Cline) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path.
 
@@ -180,7 +180,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 
 ### 11. Community Policy Supply Chain
 
-`rampart policy fetch` downloads policies from the registry with SHA-256 verification. However, the registry itself is hosted in the main repo — a compromise of the repository could introduce malicious policies.
+`rampart policy fetch` downloads policies from the registry with SHA-256 verification. However, the registry itself is hosted in the main repo, so a repository compromise could introduce malicious policies.
 
 **Mitigations:**
 - SHA-256 verification prevents modification after registry publication
@@ -205,11 +205,11 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 
 v0.4.4 added 17 macOS-specific built-in policies to the standard and paranoid profiles. These cover:
 
-- **Keychain access** — blocks unauthorized reads from the macOS Keychain (`security` tool abuse)
-- **Gatekeeper bypass** — blocks attempts to disable or circumvent Gatekeeper (`spctl`, `xattr -d com.apple.quarantine`)
-- **Persistence mechanisms** — blocks writes to `~/Library/LaunchAgents/`, `~/Library/LaunchDaemons/`, and login items
-- **User management** — blocks `dscl` and `sysadminctl` commands that create or elevate user accounts
-- **AppleScript shell execution** — blocks `osascript -e "do shell script …"` patterns used to run commands via AppleScript
+- **Keychain access:** blocks unauthorized reads from the macOS Keychain (`security` tool abuse)
+- **Gatekeeper bypass:** blocks attempts to disable or circumvent Gatekeeper (`spctl`, `xattr -d com.apple.quarantine`)
+- **Persistence mechanisms:** blocks writes to `~/Library/LaunchAgents/`, `~/Library/LaunchDaemons/`, and login items
+- **User management:** blocks `dscl` and `sysadminctl` commands that create or elevate user accounts
+- **AppleScript shell execution:** blocks `osascript -e "do shell script …"` patterns used to run commands via AppleScript
 
 These policies are active automatically when using the standard or paranoid profile on macOS.
 
@@ -217,11 +217,11 @@ These policies are active automatically when using the standard or paranoid prof
 
 v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
-- **No LD_PRELOAD** — `rampart preload` is not available. Use native hooks or wrap mode instead.
-- **No POSIX file permissions** — `chmod 0600` is not enforced by the OS. Token files and signing keys are created with default permissions; use Windows ACLs for hardening.
-- **Binary upgrade** — Windows forbids overwriting a running executable. `rampart upgrade` renames the current binary to `.rampart.exe.old` first, then installs the new one.
-- **Path separators** — Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
-- **Service management** — `rampart serve install` creates a Windows service (not systemd/launchd). Auto-restart is configured by default.
+- **No LD_PRELOAD:** `rampart preload` is not available. Use native hooks or wrap mode instead.
+- **No POSIX file permissions:** `chmod 0600` is not enforced by the OS. Token files and signing keys are created with default permissions; use Windows ACLs for hardening.
+- **Binary upgrade:** Windows forbids overwriting a running executable. `rampart upgrade` renames the current binary to `.rampart.exe.old` first, then installs the new one.
+- **Path separators:** Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
+- **Service management:** `rampart serve install` creates a Windows service (not systemd/launchd). Auto-restart is configured by default.
 
 ## Deployment Recommendations
 
@@ -231,9 +231,9 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 | Separate user | ❌ No | ❌ No | Production, unsupervised agents |
 | Separate user + SIEM | ❌ No | ❌ No | Enterprise, compliance |
 
-**Prerequisite:** The agent must run as a non-root user. If the agent runs as root, user separation provides no protection — root can read and modify all files regardless of ownership.
+**Prerequisite:** The agent must run as a non-root user. If the agent runs as root, user separation provides no protection because root can read and modify all files regardless of ownership.
 
-**Sudo caveat:** Many real-world deployments grant the agent user `sudo` access for system administration tasks. An agent with unrestricted `sudo` (e.g., `NOPASSWD: ALL`) can bypass user separation by running `sudo cat /etc/rampart/policy.yaml` or `sudo rm -rf /var/lib/rampart/audit/`. Rampart still catches the common case — a hallucinating or prompt-injected agent won't think to `sudo` around a deny rule — but it's not a hard boundary.
+**Sudo caveat:** Many real-world deployments grant the agent user `sudo` access for system administration tasks. An agent with unrestricted `sudo` (for example, `NOPASSWD: ALL`) can bypass user separation by running `sudo cat /etc/rampart/policy.yaml` or `sudo rm -rf /var/lib/rampart/audit/`. Rampart still catches the common case where a hallucinating or prompt-injected agent does not intentionally bypass a deny rule, but sudo access means user separation is not a hard boundary.
 
 **Best practice:** Restrict sudo to the specific commands your agent needs (e.g., `apt`, `systemctl`, `k3s`) rather than granting blanket access. This limits the blast radius regardless of Rampart.
 
@@ -260,11 +260,12 @@ The remaining risk is narrower but still real: in same-user deployments, any int
 v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are **skipped during evaluation** but remain in the policy YAML until manually removed.
 
 **Security implications:**
-- Expired rules exist in the YAML but are inert — the engine checks `expires_at` before matching
+- Expired rules exist in the YAML but are inert because the engine checks `expires_at` before matching
 - `--once` rules are now consumed after their first successful match and removed from the backing policy file by the proxy layer
 - That removal is operationally best-effort rather than transactional: a crash at the wrong moment could leave a consumed `once` rule behind until cleanup or the next evaluation path removes it
-- Automatic cleanup of expired rules is still not universal — use `rampart rules remove` or explicit cleanup flows to keep policy files tidy
+- Expired-rule cleanup is explicit. Use `rampart rules remove` or another reviewed cleanup flow to keep policy files tidy
 - Clock skew: expiry is evaluated against the system clock. If the system clock is set backwards, an expired rule could become active again. Use NTP.
+
 ## Self-Modification Protection
 
 Rampart protects its own configuration from agent tampering through two layers:
@@ -272,15 +273,15 @@ Rampart protects its own configuration from agent tampering through two layers:
 1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and shell redirects to `.rampart/` directories. This prevents agents from running CLI commands that modify policy.
 2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This prevents agents from directly overwriting policy files, config, or audit logs via file tools.
 
-Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections — it's named that way for a reason.
+Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections by design.
 
 **Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), or kill the `rampart serve` process (triggering fail-open). User separation mitigates both: run `rampart serve` as a different user than the agent.
 
 ## Philosophy
 
-Rampart is a **seatbelt, not a roll cage**. It catches the vast majority of dangerous situations an AI agent will encounter — accidental or manipulated. It doesn't claim to stop every possible attack vector, and we're honest about what falls outside its scope.
+Rampart is a **seatbelt, not a roll cage**. It is designed for dangerous agent actions that are accidental, manipulated, or contextually wrong. It does not claim to stop every possible attack vector, and this document keeps those boundaries explicit.
 
-If you need full isolation, use a sandbox (container, VM, or a tool like [nono](https://github.com/nicholasgasior/nono)). Rampart and sandboxes are complementary — use both for defense in depth.
+If you need full isolation, use a sandbox, container, VM, or a tool like [nono](https://github.com/nicholasgasior/nono). Rampart and sandboxes are complementary layers for defense in depth.
 
 ---
 

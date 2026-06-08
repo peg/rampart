@@ -320,7 +320,15 @@ func eventMatchesQuery(event audit.Event, query string) bool {
 	return false
 }
 
-func verifyAnchors(auditDir string, hashesByID map[string]string) error {
+func verifyAnchors(auditDir string, hashesByID map[string]string, strictOpt ...bool) error {
+	strict := true
+	if len(strictOpt) > 0 {
+		strict = strictOpt[0]
+	}
+	return verifyAnchorsWithSince(auditDir, hashesByID, strict, nil)
+}
+
+func verifyAnchorsWithSince(auditDir string, hashesByID map[string]string, strict bool, sinceDate *time.Time) error {
 	anchors, err := listAnchorFiles(auditDir)
 	if err != nil {
 		return err
@@ -342,6 +350,9 @@ func verifyAnchors(auditDir string, hashesByID map[string]string) error {
 
 		hash, ok := hashesByID[anchor.EventID]
 		if !ok {
+			if !strict && sinceDate != nil && anchorBeforeSince(anchor, *sinceDate) {
+				continue
+			}
 			return fmt.Errorf("audit: CHAIN BROKEN at event %s in file %s: anchor event not found", anchor.EventID, filepath.Base(anchorFile))
 		}
 		if hash != anchor.Hash {
@@ -349,6 +360,25 @@ func verifyAnchors(auditDir string, hashesByID map[string]string) error {
 		}
 	}
 	return nil
+}
+
+func anchorBeforeSince(anchor audit.ChainAnchor, sinceDate time.Time) bool {
+	if !anchor.Timestamp.IsZero() {
+		return anchor.Timestamp.Before(sinceDate)
+	}
+	if anchor.File == "" {
+		return false
+	}
+	base := filepath.Base(anchor.File)
+	datePart := strings.TrimSuffix(base, ".jsonl")
+	if len(datePart) >= len("2006-01-02") {
+		datePart = datePart[:len("2006-01-02")]
+	}
+	fileDate, err := time.Parse("2006-01-02", datePart)
+	if err != nil {
+		return false
+	}
+	return fileDate.Before(sinceDate)
 }
 
 func listAnchorFiles(auditDir string) ([]string, error) {

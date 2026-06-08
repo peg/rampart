@@ -640,6 +640,51 @@ func TestDoctorCoverage_OpenClawOnlyNoClaude(t *testing.T) {
 	}
 }
 
+func TestDoctorHermesPluginEnabled(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+	writeHermesRampartPluginFixture(t, home, "plugins:\n  enabled:\n    - rampart\n")
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorHermesPlugin(emit, "http://localhost:9090")
+	if warnings != 0 {
+		t.Fatalf("expected no warnings for enabled Hermes plugin, got %d (%+v)", warnings, results)
+	}
+	if len(results) != 1 || results[0].Name != "Hermes Agent plugin" || results[0].Status != "ok" {
+		t.Fatalf("expected ok Hermes Agent plugin check, got %+v", results)
+	}
+	if !strings.Contains(results[0].Message, "v1.2.0") || !strings.Contains(results[0].Message, "pre_tool_call") {
+		t.Fatalf("expected version and hook in message, got %q", results[0].Message)
+	}
+}
+
+func TestDoctorHermesPluginMissingWhenHermesDetected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH shim binaries in this test are Unix-only")
+	}
+	home := t.TempDir()
+	testSetHome(t, home)
+	binDir := t.TempDir()
+	writeTestExecutable(t, filepath.Join(binDir, "hermes"))
+	t.Setenv("PATH", binDir)
+
+	var results []checkResult
+	emit := func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}
+	warnings := doctorHermesPlugin(emit, "http://localhost:9090")
+	if warnings != 1 {
+		t.Fatalf("expected one warning for missing Hermes plugin, got %d (%+v)", warnings, results)
+	}
+	if len(results) != 1 || results[0].Status != "warn" || !strings.Contains(results[0].Message, "not installed") {
+		t.Fatalf("expected missing-plugin warning, got %+v", results)
+	}
+}
+
 func TestDoctorOpenClawPlugin(t *testing.T) {
 	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
 
@@ -651,6 +696,9 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		requireNoErr(t, os.WriteFile(filepath.Join(binDir, "openclaw"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 		t.Setenv("PATH", binDir)
 		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw", "extensions", "rampart"), 0o755))
+		pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
+		requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(`{"version":"1.0.0","activation":{"onStartup":true}}`), 0o600))
+		requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "index.js"), []byte(`export const version = "1.0.0";`), 0o600))
 		return home
 	}
 
@@ -663,6 +711,17 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		warnings := doctorOpenClawPlugin(emit)
 		return warnings, results
 	}
+
+	t.Run("allows plugin when plugins.allow is absent", func(t *testing.T) {
+		home := setup(t)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+		requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}}}`), 0o600))
+
+		warnings, results := run(t)
+		if warnings != 0 || len(results) != 1 || results[0].Status != "ok" {
+			t.Fatalf("expected ok, got warnings=%d results=%+v", warnings, results)
+		}
+	})
 
 	t.Run("warns when plugin missing from allow list", func(t *testing.T) {
 		home := setup(t)
@@ -703,6 +762,48 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		}
 		if !strings.Contains(results[0].Message, "could not verify plugins.allow / enabled state") {
 			t.Fatalf("expected unreadable-config warning, got %s", results[0].Message)
+		}
+	})
+}
+
+func TestDoctorOpenClawProviderDiscovery(t *testing.T) {
+	skipOnWindows(t, "PATH shim binaries in this test are Unix-only")
+
+	setup := func(t *testing.T, config string) []checkResult {
+		t.Helper()
+		home := t.TempDir()
+		testSetHome(t, home)
+		binDir := t.TempDir()
+		requireNoErr(t, os.WriteFile(filepath.Join(binDir, "openclaw"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+		t.Setenv("PATH", binDir)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw", "extensions", "rampart"), 0o755))
+		requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(config), 0o600))
+		var results []checkResult
+		doctorOpenClawProviderDiscovery(func(name, status, msg string) {
+			results = append(results, checkResult{Name: name, Status: status, Message: msg})
+		})
+		return results
+	}
+
+	t.Run("warns for restrictive allowlist with compatibility discovery", func(t *testing.T) {
+		results := setup(t, `{"plugins":{"allow":["rampart","codex"],"bundledDiscovery":"compat"}}`)
+		if len(results) != 1 || results[0].Status != "warn" {
+			t.Fatalf("expected one warning, got %+v", results)
+		}
+		if !strings.Contains(results[0].Message, "bundled provider discovery") {
+			t.Fatalf("expected provider discovery warning, got %s", results[0].Message)
+		}
+	})
+
+	t.Run("skips when allowlist absent", func(t *testing.T) {
+		if results := setup(t, `{"plugins":{"entries":{"rampart":{"enabled":true}}}}`); len(results) != 0 {
+			t.Fatalf("expected no warning, got %+v", results)
+		}
+	})
+
+	t.Run("skips when allowlist mode configured", func(t *testing.T) {
+		if results := setup(t, `{"plugins":{"allow":["rampart"],"bundledDiscovery":"allowlist"}}`); len(results) != 0 {
+			t.Fatalf("expected no warning, got %+v", results)
 		}
 	})
 }
@@ -797,6 +898,134 @@ if (!params.decision) {
 	if len(results) != 2 || results[0].Status != "ok" || results[1].Status != "warn" {
 		t.Fatalf("expected plugin ok plus timeout warn, got %+v", results)
 	}
+}
+
+func TestDoctorHermesIntegrationSkipsWhenHermesAbsent(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("HERMES_HOME", filepath.Join(home, "hermes"))
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "", "")
+	if warnings != 0 || len(results) != 0 {
+		t.Fatalf("expected no Hermes checks, got warnings=%d results=%+v", warnings, results)
+	}
+}
+
+func TestDoctorHermesIntegrationWarnsWhenPluginNotEnabled(t *testing.T) {
+	home, _ := setupHermesDoctorFixture(t, `plugins:
+  enabled: []
+`)
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "http://127.0.0.1:9090", "test-token")
+	if warnings == 0 {
+		t.Fatalf("expected warnings, got results=%+v", results)
+	}
+	out := doctorResultText(results)
+	if !strings.Contains(out, "hermes binary was not found") {
+		t.Fatalf("expected missing-binary warning, got: %s", out)
+	}
+	if !strings.Contains(out, "not listed in plugins.enabled") {
+		t.Fatalf("expected plugin-enabled warning, got: %s", out)
+	}
+}
+
+func TestDoctorHermesIntegrationReportsReadyExperimentalGate(t *testing.T) {
+	home, _ := setupHermesDoctorFixture(t, `plugins:
+  enabled:
+    - rampart
+  entries:
+    rampart:
+      config:
+        endpoint_mode: preflight
+        fail_open_tools:
+          - read_file
+          - search_files
+`)
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "http://127.0.0.1:9090", "test-token")
+	if warnings != 1 {
+		t.Fatalf("expected only missing-binary warning, got warnings=%d results=%+v", warnings, results)
+	}
+	out := doctorResultText(results)
+	if !strings.Contains(out, "experimental policy gate configured") {
+		t.Fatalf("expected Hermes readiness message, got: %s", out)
+	}
+	if !strings.Contains(out, "full approval/resume support requires") {
+		t.Fatalf("expected support-tier boundary, got: %s", out)
+	}
+}
+
+func TestDoctorHermesIntegrationWarnsOnToolModeAndRiskyFailOpen(t *testing.T) {
+	home, _ := setupHermesDoctorFixture(t, `plugins:
+  enabled:
+    - rampart
+  entries:
+    rampart:
+      config:
+        endpoint_mode: tool
+        fail_open_tools:
+          - read_file
+          - terminal
+`)
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "http://127.0.0.1:9090", "test-token")
+	if warnings < 3 {
+		t.Fatalf("expected missing-binary, endpoint-mode, and fail-open warnings, got warnings=%d results=%+v", warnings, results)
+	}
+	out := doctorResultText(results)
+	if !strings.Contains(out, "endpoint_mode=tool") {
+		t.Fatalf("expected tool-mode warning, got: %s", out)
+	}
+	if !strings.Contains(out, "terminal") || !strings.Contains(out, "mutating/high-risk") {
+		t.Fatalf("expected risky fail-open warning, got: %s", out)
+	}
+}
+
+func setupHermesDoctorFixture(t *testing.T, config string) (home string, hermesHome string) {
+	t.Helper()
+	home = t.TempDir()
+	testSetHome(t, home)
+	hermesHome = filepath.Join(home, "hermes")
+	t.Setenv("HERMES_HOME", hermesHome)
+	pluginDir := filepath.Join(hermesHome, "plugins", "rampart")
+	requireNoErr(t, os.MkdirAll(pluginDir, 0o755))
+	requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte(`name: rampart
+version: 1.2.0
+provides_hooks:
+  - pre_tool_call
+`), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "__init__.py"), []byte("def register(ctx):\n    pass\n"), 0o644))
+	requireNoErr(t, os.WriteFile(filepath.Join(hermesHome, "config.yaml"), []byte(config), 0o644))
+	return home, hermesHome
+}
+
+func doctorResultText(results []checkResult) string {
+	var b strings.Builder
+	for _, result := range results {
+		b.WriteString(result.Name)
+		b.WriteString(": ")
+		b.WriteString(result.Status)
+		b.WriteString(": ")
+		b.WriteString(result.Message)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func TestIsReleaseVersion(t *testing.T) {

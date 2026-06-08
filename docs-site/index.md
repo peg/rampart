@@ -205,7 +205,15 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v1.1
+## What's New in v1.2
+
+- **Audit recovery is release-hardened** — `rampart serve` reconstructs the audit chain head from the latest valid JSONL event across log files, so absent, stale, or tampered anchors cannot reset the next `prev_hash`.
+- **Hosted approval foundation** — Rampart can support host-owned approval flows without creating a second hidden Rampart approval queue, preserving a single user-facing approval owner.
+- **Experimental Hermes policy gate correlation** — Hermes tool-call metadata now reaches Rampart audit records so policy-gate decisions can be traced back to the originating Hermes tool call.
+- **Bundled plugin versions are coherent** — OpenClaw and experimental Hermes plugin manifests/runtime exports now report `1.2.0` alongside the Rampart release.
+- **Patched release toolchain**: CI, release, Docker, and upstream compatibility gates now use Go 1.25.11.
+
+### v1.1
 
 - **Machine-readable diagnostics** — `rampart status --json`, `rampart doctor --json`, and `rampart inventory --json` expose structured runtime and integration state for automation.
 - **OpenClaw gateway v4 support** — the bundled plugin speaks the current gateway/status response contract while preserving native approval and audit ownership.

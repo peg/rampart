@@ -189,6 +189,54 @@ func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
 	}
 }
 
+func TestDetectProtectedAgents_HermesPluginEnabled(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	writeHermesRampartPluginFixture(t, home, "plugins:\n  enabled:\n    - rampart\n")
+
+	found := false
+	for _, agent := range detectProtectedAgents() {
+		if agent == "Hermes Agent (plugin)" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Hermes Agent plugin detection, got %v", detectProtectedAgents())
+	}
+}
+
+func TestDetectProtectedAgents_HermesPluginDisabled(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	writeHermesRampartPluginFixture(t, home, "plugins:\n  enabled:\n    - rampart\n  disabled:\n    - rampart\n")
+
+	for _, agent := range detectProtectedAgents() {
+		if agent == "Hermes Agent (plugin)" {
+			t.Fatalf("disabled Hermes plugin should not be reported as protected: %v", agent)
+		}
+	}
+}
+
+func writeHermesRampartPluginFixture(t *testing.T, home, config string) {
+	t.Helper()
+	pluginDir := filepath.Join(home, ".hermes", "plugins", "rampart")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "name: rampart\nversion: 1.2.0\nprovides_hooks:\n  - pre_tool_call\n"
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, ".hermes", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDetectProtectedAgents_OpenClawPluginRequiresAllowedAndEnabled(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
@@ -226,6 +274,11 @@ func TestDetectProtectedAgents_OpenClawPluginRequiresAllowedAndEnabled(t *testin
 	mustWrite(`{"plugins":{"allow":[]}}`)
 	if containsOpenClaw() {
 		t.Fatal("OpenClaw should not be reported when plugins.allow is missing rampart")
+	}
+
+	mustWrite(`{"plugins":{"entries":{"rampart":{"enabled":true}}}}`)
+	if !contains("OpenClaw (plugin)") {
+		t.Fatal("expected plugin to be reported when plugins.allow is absent")
 	}
 
 	mustWrite(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":false}}}}`)

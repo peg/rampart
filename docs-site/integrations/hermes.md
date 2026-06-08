@@ -5,7 +5,7 @@ description: "Experimental Rampart integration for Hermes Agent using a user plu
 
 # Hermes Agent
 
-Rampart can protect Hermes Agent through an **experimental user plugin**. The plugin registers a Hermes `pre_tool_call` hook, sends a sanitized policy check to Rampart before selected tools execute, and blocks the tool call when policy denies it.
+Rampart can protect Hermes Agent through an **experimental user plugin**. The plugin registers a Hermes `pre_tool_call` hook, sends a sanitized policy check to Rampart before selected tools execute, passes Hermes' top-level `tool_call_id` for audit correlation, and blocks the tool call when policy denies it.
 
 !!! warning "Experimental integration"
     This integration is intentionally conservative. It does not patch Hermes, does not create a hidden approval queue, and does not resume `ask` decisions automatically. Policies that return `ask` are blocked with an approval-required message until Hermes has a first-class plugin approval/resume flow.
@@ -84,29 +84,39 @@ plugins:
 | --- | --- |
 | `allow`, `watch`, `log` | Tool call continues. |
 | `deny` | Tool call is blocked with the policy reason. |
-| `ask`, `require_approval` | Tool call is blocked with an approval-required message. No hidden Rampart approval is created by default. |
+| `ask`, `require_approval` | Tool call is blocked with an approval-required message. No hidden Rampart approval is created by default. When Rampart returns an `audit_id`, the block message includes it for correlation. |
 | Rampart unavailable | Mutating/high-risk tools fail closed; configured read-only tools may fail open. |
 
-The default endpoint mode is `preflight`, which calls `POST /v1/preflight/{tool}`. This is deliberate: it avoids creating pending Rampart approvals that Hermes cannot yet resume from a plugin hook.
+The default endpoint mode is `preflight`, which calls `POST /v1/preflight/{tool}`. This is deliberate: it avoids creating pending Rampart approvals that Hermes cannot yet resume from a plugin hook. Rampart records the evaluation audit ID, and the plugin sends Hermes' top-level `tool_call_id` when Hermes provides one.
 
-For experiments that need full `/v1/tool/{tool}` semantics, set:
+Rampart's hosted approval API is ready for hosts that can create a single user-facing approval and resume the exact tool call. This plugin does not request hosted approvals yet because current Hermes plugin hooks do not expose that exact approval/resume contract as a stable plugin primitive.
+
+For experiments that need raw `/v1/tool/{tool}` semantics, set:
 
 ```bash
 export RAMPART_HERMES_ENDPOINT_MODE=tool
 ```
 
-Use this only when you understand the approval ownership tradeoff.
+Use this only when you understand the approval ownership tradeoff. If a policy returns `ask` in raw tool mode, Rampart may create a Rampart-native pending approval that Hermes cannot resume; keep the default `preflight` mode for normal Hermes testing.
 
 ## Verification
 
-Use a deny rule for a harmless command and confirm Hermes blocks it before execution:
+Use the isolated latest-Hermes compatibility harness before enabling the plugin on a live gateway:
+
+```bash
+python scripts/compat-hermes-latest.py
+```
+
+The harness creates a temporary Hermes state, installs the Rampart plugin there, exercises Hermes plugin discovery plus `pre_tool_call` dispatch, and verifies deny, allow, `ask` blocking, and fail-closed behavior without restarting any long-running Hermes gateway.
+
+For manual verification, use a deny rule for a harmless command and confirm Hermes blocks it before execution:
 
 ```bash
 rampart serve --addr 127.0.0.1 --port 9090
 hermes plugins list
 ```
 
-Then ask Hermes to run a command that policy denies, such as a destructive-command test pattern. The tool response should include a message beginning with `rampart:` and the command should not execute.
+Then ask Hermes to run a command that policy denies, such as a harmless unique-marker test pattern. The tool response should include a message beginning with `rampart:` and the command should not execute.
 
 ## Uninstall
 

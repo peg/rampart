@@ -62,6 +62,16 @@ type Event struct {
 	// or CLAUDE_CONVERSATION_ID fallback. Empty if no grouping applies.
 	RunID string `json:"run_id,omitempty"`
 
+	// ToolCallID is an optional host-provided identifier for the exact tool call.
+	// Agent hosts that own approval/resume flows can use this to correlate the
+	// Rampart policy decision with their native approval object and resumed call.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+
+	// ApprovalOwner records which system owns the user-facing approval object.
+	// In hosted-approval flows this is intentionally not a Rampart pending
+	// approval; it is correlation metadata for audit and callbacks.
+	ApprovalOwner map[string]any `json:"approval_owner,omitempty"`
+
 	// Tool is the tool that was invoked (e.g., "exec", "read").
 	Tool string `json:"tool"`
 

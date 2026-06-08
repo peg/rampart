@@ -27,6 +27,7 @@ import (
 	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -400,7 +401,96 @@ func detectProtectedAgents() []string {
 		agents = append(agents, "Codex (wrapper)")
 	}
 
+	// Hermes Agent user plugin installed by `rampart setup hermes`.
+	if state := detectHermesPluginStateForHome(home); state.Installed && state.Enabled && state.ManifestValid && state.HookDeclared {
+		agents = append(agents, "Hermes Agent (plugin)")
+	}
+
 	return agents
+}
+
+type hermesPluginState struct {
+	Installed     bool
+	Enabled       bool
+	ConfigPresent bool
+	ManifestValid bool
+	HookDeclared  bool
+	Version       string
+	PluginDir     string
+}
+
+type hermesConfigFile struct {
+	Plugins hermesConfigPlugins `yaml:"plugins"`
+}
+
+type hermesConfigPlugins struct {
+	Enabled  []string                      `yaml:"enabled"`
+	Disabled []string                      `yaml:"disabled"`
+	Entries  map[string]hermesPluginConfig `yaml:"entries"`
+}
+
+type hermesPluginConfig struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+func detectHermesPluginState() hermesPluginState {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return hermesPluginState{}
+	}
+	return detectHermesPluginStateForHome(home)
+}
+
+func detectHermesPluginStateForHome(home string) hermesPluginState {
+	state := hermesPluginState{PluginDir: filepath.Join(home, ".hermes", "plugins", "rampart")}
+	manifestPath := filepath.Join(state.PluginDir, "plugin.yaml")
+	data, err := os.ReadFile(manifestPath)
+	if err == nil {
+		state.Installed = true
+		var manifest hermesPluginManifest
+		if yaml.Unmarshal(data, &manifest) == nil {
+			state.ManifestValid = strings.TrimSpace(manifest.Name) == "rampart"
+			state.Version = strings.TrimSpace(manifest.Version)
+			for _, hook := range manifest.ProvidesHooks {
+				if strings.TrimSpace(hook) == "pre_tool_call" {
+					state.HookDeclared = true
+					break
+				}
+			}
+		}
+	}
+
+	configPath := filepath.Join(home, ".hermes", "config.yaml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return state
+	}
+	state.ConfigPresent = true
+
+	var cfg hermesConfigFile
+	if yaml.Unmarshal(configData, &cfg) != nil {
+		return state
+	}
+	if stringListContains(cfg.Plugins.Disabled, "rampart") {
+		state.Enabled = false
+		return state
+	}
+	if stringListContains(cfg.Plugins.Enabled, "rampart") {
+		state.Enabled = true
+	}
+	if entry, ok := cfg.Plugins.Entries["rampart"]; ok && entry.Enabled != nil {
+		state.Enabled = *entry.Enabled
+	}
+	return state
+}
+
+func stringListContains(values []string, want string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func hasLegacyOpenClawBridgeConfig(data []byte) bool {

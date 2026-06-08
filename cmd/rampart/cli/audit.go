@@ -18,7 +18,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -144,6 +143,7 @@ a known break in the chain from a previous dev session).
 Example:
   rampart audit verify --since 2026-03-20`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			var sinceDate *time.Time
 			files, err := listAuditFiles(auditDir)
 			if err != nil {
 				return err
@@ -152,24 +152,28 @@ Example:
 				return fmt.Errorf("audit: no .jsonl files found in %s", auditDir)
 			}
 
-			// Filter files by --since date if provided
+			// Filter files by --since date if provided. Size-rotated files use
+			// YYYY-MM-DD.pN.jsonl names, so compare only the leading date.
 			if since != "" {
-				sinceDate, parseErr := time.Parse("2006-01-02", since)
+				parsedSinceDate, parseErr := time.Parse("2006-01-02", since)
 				if parseErr != nil {
 					return fmt.Errorf("audit: invalid --since date %q: expected YYYY-MM-DD format", since)
 				}
+				sinceDate = &parsedSinceDate
 				filtered := files[:0]
 				for _, f := range files {
 					base := filepath.Base(f)
-					// Filename format: YYYY-MM-DD.jsonl
 					datePart := strings.TrimSuffix(base, ".jsonl")
+					if len(datePart) >= len("2006-01-02") {
+						datePart = datePart[:len("2006-01-02")]
+					}
 					fileDate, dateErr := time.Parse("2006-01-02", datePart)
 					if dateErr != nil {
-						// Can't parse date from filename — include it to be safe
+						// Can't parse date from filename — include it to be safe.
 						filtered = append(filtered, f)
 						continue
 					}
-					if !fileDate.Before(sinceDate) {
+					if !fileDate.Before(*sinceDate) {
 						filtered = append(filtered, f)
 					}
 				}
@@ -179,12 +183,12 @@ Example:
 				}
 			}
 
-			count, hashesByID, err := verifyAuditChain(files)
+			count, hashesByID, err := verifyAuditChain(files, since != "")
 			if err != nil {
 				return err
 			}
 
-			if err := verifyAnchors(auditDir, hashesByID); err != nil {
+			if err := verifyAnchorsWithSince(auditDir, hashesByID, since == "", sinceDate); err != nil {
 				return err
 			}
 
@@ -200,7 +204,8 @@ Example:
 	return cmd
 }
 
-func verifyAuditChain(files []string) (int, map[string]string, error) {
+func verifyAuditChain(files []string, allowInitialPrev ...bool) (int, map[string]string, error) {
+	partialChain := len(allowInitialPrev) > 0 && allowInitialPrev[0]
 	prevHash := ""
 	eventCount := 0
 	hashesByID := map[string]string{}
@@ -208,7 +213,7 @@ func verifyAuditChain(files []string) (int, map[string]string, error) {
 	for _, file := range files {
 		scanErr := scanAuditEvents(file, func(event audit.Event) error {
 			eventCount++
-			if eventCount == 1 && event.PrevHash != "" {
+			if eventCount == 1 && event.PrevHash != "" && !partialChain {
 				return fmt.Errorf("audit: CHAIN BROKEN at event %s in file %s: first event has non-empty prev_hash", event.ID, filepath.Base(file))
 			}
 			if eventCount > 1 && event.PrevHash != prevHash {
@@ -382,7 +387,7 @@ func listAuditFiles(auditDir string) ([]string, error) {
 		}
 		files = append(files, filepath.Join(auditDir, entry.Name()))
 	}
-	sort.Strings(files)
+	audit.SortAuditFiles(files)
 	return files, nil
 }
 
