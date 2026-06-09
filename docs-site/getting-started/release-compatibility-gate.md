@@ -57,7 +57,7 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
 6. **Publish claims that match the evidence**
    - OpenClaw can be called recommended only when the latest stable path has fresh runtime/audit proof.
    - Hermes can be called an experimental policy gate when isolated latest-Hermes plugin dispatch has deny, allow, ask-block, and fail-closed proof.
-   - Full Hermes support requires Hermes-owned approval/resume APIs plus live or staging end-to-end validation.
+   - First-class Hermes support requires Hermes-owned approval/resume APIs plus live or staging end-to-end validation.
 
 ## CI and local compatibility scripts
 
