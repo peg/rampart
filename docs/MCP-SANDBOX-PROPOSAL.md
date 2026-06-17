@@ -1,12 +1,12 @@
-# MCP Sandbox Proposal — Deno-Style Per-Server Permissions
+# MCP Sandbox Proposal: Deno-Style Per-Server Permissions
 
-*Status: Future work. Documented 2026-02-11.*
+*Status: Future containment research. Documented 2026-02-11.*
 
 ## Problem
 
 Rampart's MCP proxy protects against agent misuse (blocking dangerous tool calls). It does NOT protect against a malicious/compromised MCP server process that tries to steal credentials, open reverse shells, or escalate privileges on the host.
 
-## Proposed Solution
+## Possible Solution
 
 Add `--sandbox` flag to `rampart mcp` that spawns the MCP server in an isolated Linux namespace with restricted capabilities:
 
@@ -55,11 +55,13 @@ Agent → Rampart Policy Proxy → MCP Server (sandboxed) → External API
 
 ## Decision
 
-Deferred. Focus on policy proxy improvements, webhook notifications, and audit reports first. Revisit when there's user demand for supply-chain protection of MCP servers.
+Deferred. Rampart's core boundary is policy, approval, audit, and proof. Optional containment can become layered hardening later, but it is not the primary product contract. Revisit this design only when there is clear demand for MCP server supply-chain containment.
 
 ---
 
-# Exfiltration Detection (Roadmap — v0.2.0)
+# Deferred Exfiltration Detection
+
+*Status: Design backlog, not a release commitment.*
 
 ## Problem
 
