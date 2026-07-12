@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Release and source-build toolchains use Go 1.25.12** — The module baseline, CI, GoReleaser, Docker, and upstream compatibility workflows now use the patched Go release required for a clean reachable-vulnerability scan.
+
 ## [1.2.0] - 2026-05-28
 
 ### Added
