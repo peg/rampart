@@ -4,7 +4,7 @@
 
 **A firewall for AI coding agents.**
 
-[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.25.12+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/peg/rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/peg/rampart/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/peg/rampart?style=flat)](https://github.com/peg/rampart/releases)
@@ -29,7 +29,7 @@ brew install peg/tap/rampart
 # One-line install (no sudo required)
 curl -fsSL https://rampart.sh/install | bash
 
-# Go install (requires Go 1.24+)
+# Go install (requires Go 1.25.12+)
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
@@ -638,7 +638,7 @@ go build -o rampart ./cmd/rampart
 go test ./...
 ```
 
-Requires Go 1.24+.
+Requires Go 1.25.12+.
 
 ---
 
