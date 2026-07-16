@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 )
 
 func TestBehavioralVerificationSafeCanariesPass(t *testing.T) {
@@ -79,10 +81,14 @@ func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
 	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(`{"version":"1.2.0","activation":{"onStartup":true}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(`{"version":"1.3.0","activation":{"onStartup":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pluginDir, "index.js"), []byte(`export const version = "1.2.0";`), 0o600); err != nil {
+	bundled, err := ocplugin.PluginFS.ReadFile("index.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "index.js"), bundled, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}}}`), 0o600); err != nil {
@@ -90,7 +96,7 @@ func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
 	}
 	bin := filepath.Join(t.TempDir(), "openclaw")
 	shim := `#!/bin/sh
-printf '%s\n' '{"result":{"schema":"rampart.plugin.verify.v1","safeCanaries":true,"ok":true,"checks":[]}}'
+printf '%s\n' '{"result":{"schema":"rampart.plugin.verify.v1","safeCanaries":true,"ok":true,"checks":[{"id":"routine-command","expected":"allow","actual":"allow","pass":true},{"id":"destructive-command","expected":"deny","actual":"deny","pass":true},{"id":"external-deployment","expected":"ask","actual":"ask","pass":true},{"id":"cross-conversation-message","expected":"ask","actual":"ask","pass":true},{"id":"credential-shell-read","expected":"deny","actual":"deny","pass":true},{"id":"opaque-interpreter","expected":"ask","actual":"ask","pass":true}]}}'
 `
 	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
 		t.Fatal(err)
@@ -101,6 +107,15 @@ printf '%s\n' '{"result":{"schema":"rampart.plugin.verify.v1","safeCanaries":tru
 	check := verifyOpenClawPluginLive(context.Background(), time.Second)
 	if check.Status != verificationPass {
 		t.Fatalf("unexpected check: %#v", check)
+	}
+}
+
+func TestValidatePluginVerificationResultRejectsEmptyProof(t *testing.T) {
+	err := validatePluginVerificationResult(map[string]any{
+		"schema": "rampart.plugin.verify.v1", "safeCanaries": true, "ok": true, "checks": []any{},
+	})
+	if err == nil {
+		t.Fatal("empty self-reported proof must not pass verification")
 	}
 }
 

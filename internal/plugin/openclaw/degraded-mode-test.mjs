@@ -85,4 +85,26 @@ const serverErrorReadWithStrictConfig = await runScenario({
 });
 assert(serverErrorReadWithStrictConfig.result?.block === true, 'read should block when failOpenTools is empty');
 
-console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read', 'server-error-write', 'timeout-edit', 'server-error-read-strict'] }, null, 2));
+for (const [name, payload] of [
+  ['empty-object-response', {}],
+  ['array-response', []],
+  ['unknown-decision', { decision: 'maybe', allowed: true }],
+]) {
+  const scenario = await runScenario({
+    name,
+    toolName: 'exec',
+    pluginConfig: { failOpen: false },
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => payload }),
+  });
+  assert(scenario.result?.block === true, `${name} must fail closed`);
+}
+
+const untrustedServeUrl = await runScenario({
+  name: 'untrusted-serve-url',
+  toolName: 'exec',
+  pluginConfig: { serveUrl: 'https://example.invalid', failOpen: false },
+  fetchImpl: async () => { throw new Error('untrusted URL must not be fetched'); },
+});
+assert(untrustedServeUrl.result?.block === true, 'untrusted serveUrl must fail closed');
+
+console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read', 'server-error-write', 'timeout-edit', 'server-error-read-strict', 'empty-object-response', 'array-response', 'unknown-decision', 'untrusted-serve-url'] }, null, 2));

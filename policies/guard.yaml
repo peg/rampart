@@ -11,11 +11,12 @@ policies:
     description: "Require approval before publishing, deploying, or changing external systems"
     priority: 20
     match:
-      agent: "openclaw:*"
       tool: ["exec"]
     rules:
       - action: ask
         when:
+          tool_param_matches:
+            rampart_integration: "openclaw"
           command_matches:
             - "git push*"
             - "gh pr create*"
@@ -23,6 +24,15 @@ policies:
             - "gh issue create*"
             - "gh release create*"
             - "docker push*"
+            - "npm publish*"
+            - "pnpm publish*"
+            - "yarn npm publish*"
+            - "docker compose up*"
+            - "docker compose down*"
+            - "docker compose restart*"
+            - "docker-compose up*"
+            - "docker-compose down*"
+            - "docker-compose restart*"
             - "kubectl apply*"
             - "kubectl delete*"
             - "kubectl patch*"
@@ -37,11 +47,12 @@ policies:
     description: "Require approval before privileged or persistent host changes"
     priority: 20
     match:
-      agent: "openclaw:*"
       tool: ["exec"]
     rules:
       - action: ask
         when:
+          tool_param_matches:
+            rampart_integration: "openclaw"
           command_matches:
             - "sudo *"
             - "systemctl start*"
@@ -58,35 +69,123 @@ policies:
             - "launchctl bootout*"
         message: "This action changes host services or privileges — human approval required"
 
+  - name: guard-credential-shell-access
+    description: "Block shell utilities from reading private credentials or Rampart authority files"
+    priority: 5
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          tool_param_matches:
+            rampart_integration: "openclaw"
+          command_matches:
+            - "cat **/.ssh/id_*"
+            - "head **/.ssh/id_*"
+            - "tail **/.ssh/id_*"
+            - "less **/.ssh/id_*"
+            - "more **/.ssh/id_*"
+            - "base64 **/.ssh/id_*"
+            - "xxd **/.ssh/id_*"
+            - "hexdump **/.ssh/id_*"
+            - "od **/.ssh/id_*"
+            - "strings **/.ssh/id_*"
+            - "cat **/.rampart/token"
+            - "head **/.rampart/token"
+            - "tail **/.rampart/token"
+            - "base64 **/.rampart/token"
+            - "cat **/.aws/credentials"
+            - "cat **/.git-credentials"
+            - "cat **/.netrc"
+            - "cat **/.env"
+            - "cat **/.env.*"
+        message: "Credential and Rampart authority files cannot be read through shell execution"
+
+  - name: guard-external-network-exec
+    description: "Block direct external curl and wget so network access stays on policy-aware tools"
+    priority: 10
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          tool_param_matches:
+            rampart_integration: "openclaw"
+          command_matches:
+            - "curl **"
+            - "wget **"
+          command_not_matches:
+            - "curl http://localhost**"
+            - "curl https://localhost**"
+            - "curl http://127.0.0.1**"
+            - "curl https://127.0.0.1**"
+            - "wget http://localhost**"
+            - "wget https://localhost**"
+            - "wget http://127.0.0.1**"
+        message: "Direct external network commands are blocked — use policy-aware fetch tools"
+
+  - name: guard-opaque-execution
+    description: "Require approval for interpreters, package runners, build scripts, and broad orchestration commands"
+    priority: 20
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          tool_param_matches:
+            rampart_integration: "openclaw"
+          command_matches:
+            - "node **"
+            - "python **"
+            - "python3 **"
+            - "npm **"
+            - "npx **"
+            - "pnpm **"
+            - "yarn **"
+            - "pip **"
+            - "pip3 **"
+            - "make"
+            - "make **"
+            - "bash -c **"
+            - "bash -lc **"
+            - "sh -c **"
+            - "sh -lc **"
+            - "zsh -c **"
+            - "zsh -lc **"
+            - "docker compose**"
+            - "docker-compose**"
+            - "kubectl apply**"
+            - "kubectl config**"
+        message: "This command can conceal arbitrary code or external side effects — approval required"
+
   - name: guard-message-consequences
     description: "Allow routine replies while requiring approval for cross-conversation or mutating message actions"
     priority: 20
     match:
-      agent: "openclaw:*"
       tool: ["message"]
     rules:
       - action: allow
         when:
           tool_param_matches:
-            rampart_consequence: "read-only"
+            rampart_consequence: "openclaw:read-only"
         message: "Read-only messaging action allowed"
       - action: allow
         when:
           tool_param_matches:
-            rampart_consequence: "routine-reply"
+            rampart_consequence: "openclaw:routine-reply"
         message: "Reply to the originating conversation allowed"
       - action: ask
         when:
           tool_param_matches:
-            rampart_consequence: "external-message"
+            rampart_consequence: "openclaw:external-message"
         message: "The agent wants to contact a different conversation or recipient"
       - action: ask
         when:
           tool_param_matches:
-            rampart_consequence: "mutation"
+            rampart_consequence: "openclaw:mutation"
         message: "This messaging action changes external state — human approval required"
       - action: ask
         when:
           tool_param_matches:
-            rampart_consequence: "*"
+            rampart_consequence: "openclaw:*"
         message: "Unclassified messaging action — human approval required"

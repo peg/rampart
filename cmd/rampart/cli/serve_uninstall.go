@@ -28,12 +28,15 @@ func newServeUninstallCmd(runner commandRunner) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the rampart serve system service",
+		Short: "Remove the rampart serve system service and background fallback",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS == "windows" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Windows service uninstallation is not supported.")
 				fmt.Fprintln(cmd.ErrOrStderr(), "Remove any Task Scheduler entries or NSSM services manually.")
 				return nil
+			}
+			if err := stopBackgroundServe(cmd.OutOrStdout(), true); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Could not stop background Rampart fallback: %v\n", err)
 			}
 
 			switch runtime.GOOS {

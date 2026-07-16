@@ -212,10 +212,11 @@ The managed Guard defaults focus on consequences:
 - if the policy service is unavailable, every OpenClaw tool is blocked
 
 `rampart verify openclaw` uses fixed safe canaries. It traverses the running
-plugin's real normalization, message classification, policy request,
-degraded-mode, and decision-mapping code without executing a command, reading a
-file, sending a message, or contacting an external host. The policy evaluations
-are recorded as `rampart-verification` audit events.
+plugin's normalization, message classification, policy request, degraded-mode,
+and decision-mapping code without executing a command, reading a file, sending a
+message, contacting an external host, or adding verification noise to the audit
+log. Verification requires Rampart's local admin token and rejects incomplete or
+stale plugin self-reports.
 
 `rampart serve` is part of this path. The plugin calls the local Rampart service for policy evaluation, approvals, and audit flow.
 

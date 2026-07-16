@@ -189,9 +189,10 @@ func TestEndToEnd_PreflightNoSideEffects(t *testing.T) {
 	defer ts.Close()
 
 	body, _ := json.Marshal(map[string]any{
-		"agent":   "test",
-		"session": "s1",
-		"params":  map[string]any{"command": "rm -rf /"},
+		"agent":        "test",
+		"session":      "s1",
+		"verification": true,
+		"params":       map[string]any{"command": "rm -rf /"},
 	})
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/preflight/exec", bytes.NewReader(body))
@@ -208,6 +209,7 @@ func TestEndToEnd_PreflightNoSideEffects(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	assert.Equal(t, false, result["allowed"])
 	assert.Equal(t, "deny", result["decision"])
+	assert.NotContains(t, result, "audit_id")
 }
 
 func TestEndToEnd_PreflightFlatFormat(t *testing.T) {

@@ -18,9 +18,8 @@ Options:
   --hermes-bin PATH         Hermes executable paired with --hermes-python
   --help                    Show this help
 
-The OpenClaw runtime suites are fail-closed until the runtime regression uses
-an isolated state, workspace, session, and memory root. It will never target a
-primary OpenClaw home or restart its services.
+The OpenClaw runtime suites run only in a disposable official OpenClaw container.
+They never target a primary OpenClaw home or restart host user services.
 EOF
 }
 
@@ -92,11 +91,6 @@ case "$suite" in
     exit 2
     ;;
 esac
-
-if [[ "$suite" == "openclaw-runtime" || "$suite" == "openclaw" || "$suite" == "full" ]]; then
-  echo "run-e2e: $suite is disabled until OpenClaw runs with isolated state, workspace, sessions, and memory" >&2
-  exit 2
-fi
 
 if [[ -n "$hermes_bin" && -z "$hermes_python" ]]; then
   echo "run-e2e: --hermes-bin requires --hermes-python" >&2
@@ -395,16 +389,14 @@ run_hermes() {
 }
 
 run_openclaw() {
-  command -v openclaw >/dev/null 2>&1 || {
-    record_event "openclaw-live" "failed" 127
-    echo "[lab] openclaw executable not found" | tee "${artifact_dir}/openclaw-live.log"
-    failed=1
-    return
-  }
-  run_step openclaw-live env \
-    RAMPART_OPENCLAW_RUNTIME=1 \
-    RAMPART_KEEP_RUNTIME_ARTIFACTS=1 \
-    node "${worktree}/scripts/test-openclaw-codex-native-audit.mjs"
+  if [[ ! -x "${artifact_dir}/rampart" ]]; then
+    run_step go-build-openclaw isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
+      _ "$worktree" "${artifact_dir}/rampart"
+  fi
+  run_step openclaw-container \
+    "${worktree}/scripts/lab/openclaw-container-acceptance.sh" \
+    --rampart "${artifact_dir}/rampart" \
+    --artifact-dir "${artifact_dir}/openclaw-container"
 }
 
 case "$suite" in

@@ -5,7 +5,7 @@
  * Replaces brittle dist-file patching with the official OpenClaw plugin API.
  *
  * @see https://github.com/peg/rampart
- * @version 1.2.0
+ * @version 1.3.0
  */
 
 import { readFile } from "fs/promises";
@@ -227,7 +227,7 @@ function policyParamsForTool(toolName, params, ctx) {
   policyParams.rampart_integration = "openclaw";
   if (toolName !== "message") return policyParams;
 
-  policyParams.rampart_consequence = classifyMessageConsequence(policyParams, ctx);
+  policyParams.rampart_consequence = `openclaw:${classifyMessageConsequence(policyParams, ctx)}`;
   const originChannel = ctx?.channelId ?? ctx?.chatId ?? ctx?.channelContext?.chat?.id;
   if (originChannel !== undefined && originChannel !== null) {
     policyParams.rampart_origin_channel = String(originChannel);
@@ -237,7 +237,19 @@ function policyParamsForTool(toolName, params, ctx) {
 
 function rampartAgentIdentity(ctx) {
   const raw = String(ctx?.agentId ?? ctx?.agent ?? "unknown").trim() || "unknown";
-  return raw.startsWith("openclaw:") ? raw : `openclaw:${raw}`;
+  return raw;
+}
+
+function isTrustedServeUrl(value) {
+  try {
+    const url = new URL(value ?? "http://localhost:9090");
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function toolDisplayName(toolName, originalToolName) {
@@ -261,9 +273,13 @@ function toolDisplayName(toolName, originalToolName) {
  *   { decision: "ask", message }                     → require OpenClaw approval
  *   null                                              → degraded handling in hook (fail-open only for configured tools)
  */
-async function checkWithRampart(toolName, params, ctx, config) {
+async function checkWithRampart(toolName, params, ctx, config, { verification = false } = {}) {
   const serveUrl = config?.serveUrl ?? "http://localhost:9090";
   const timeoutMs = config?.timeoutMs ?? 3000;
+
+  if (!isTrustedServeUrl(serveUrl)) {
+    return { _unsafeServeUrl: true };
+  }
 
   const token = await loadToken();
 
@@ -283,9 +299,11 @@ async function checkWithRampart(toolName, params, ctx, config) {
       params,
       openclaw_hosted: true,
       skip_pending_approval: true,
+      verification,
     });
 
-    const resp = await fetch(`${serveUrl}/v1/tool/${encodeURIComponent(toolName)}`, {
+    const endpoint = verification ? "preflight" : "tool";
+    const resp = await fetch(`${serveUrl}/v1/${endpoint}/${encodeURIComponent(toolName)}`, {
       method: "POST",
       headers,
       body,
@@ -304,7 +322,15 @@ async function checkWithRampart(toolName, params, ctx, config) {
       return { _serveError: true, _status: resp.status };
     }
 
-    return await resp.json();
+    try {
+      const result = await resp.json();
+      if (!result || typeof result !== "object" || Array.isArray(result)) {
+        return { _invalidResponse: true };
+      }
+      return result;
+    } catch {
+      return { _invalidResponse: true };
+    }
   } catch (err) {
     clearTimeout(timer);
     if (err?.name === "AbortError") {
@@ -330,6 +356,7 @@ async function checkWithRampart(toolName, params, ctx, config) {
 
 async function auditLog(toolName, params, ctx, outcome, config) {
   const serveUrl = config?.serveUrl ?? "http://localhost:9090";
+  if (!isTrustedServeUrl(serveUrl)) return;
   const token = await loadToken();
 
   try {
@@ -360,7 +387,7 @@ async function auditLog(toolName, params, ctx, outcome, config) {
 export const id = "rampart";
 export const name = "Rampart";
 export const description = "Independent safety guard for unattended AI agent actions";
-export const version = "1.2.0";
+export const version = "1.3.0";
 
 // OpenClaw runs higher-priority before_tool_call hooks first. Rampart should
 // act as the final normal plugin gate so it evaluates the params that will
@@ -384,7 +411,7 @@ export function register(api) {
   const severityEmoji = { info: "ℹ️", warning: "⚠️", critical: "🚨" };
 
   // ── before_tool_call ────────────────────────────────────────────────────────
-  const evaluateToolCall = async (event, ctx) => {
+  const evaluateToolCall = async (event, ctx, options = {}) => {
     const normalized = normalizeToolCall(event?.toolName, event?.params);
     const { toolName, params, originalToolName, mapped } = normalized;
     const policyParams = policyParamsForTool(toolName, params, ctx);
@@ -393,7 +420,7 @@ export function register(api) {
       api.logger.info(`[rampart] mapped OpenClaw tool ${originalToolName} to Rampart ${toolName}`);
     }
 
-    const result = await checkWithRampart(toolName, policyParams, ctx, pluginConfig);
+    const result = await checkWithRampart(toolName, policyParams, ctx, pluginConfig, options);
 
     const configuredFailOpenTools = Array.isArray(pluginConfig.failOpenTools)
       ? pluginConfig.failOpenTools
@@ -403,6 +430,22 @@ export function register(api) {
     const failOpenTools = new Set(configuredFailOpenTools);
     const shouldFailOpen = failOpenTools.has(toolName);
     const unreachableReason = `[rampart] serve unavailable for ${displayToolName} at ${serveUrl}`;
+
+    if (result?._unsafeServeUrl) {
+      api.logger.warn(`[rampart] refusing untrusted serveUrl for ${displayToolName}: ${serveUrl}`);
+      return {
+        block: true,
+        blockReason: "rampart: untrusted policy service URL — managed protection requires loopback",
+      };
+    }
+
+    if (result?._invalidResponse) {
+      api.logger.warn(`[rampart] invalid policy response for ${displayToolName}; blocking tool call`);
+      return {
+        block: true,
+        blockReason: "rampart: invalid policy response — refusing tool call",
+      };
+    }
 
     // Serve unreachable → explicit degraded-state handling
     if (result?._unreachable) {
@@ -434,7 +477,14 @@ export function register(api) {
       };
     }
 
-    const decision = result.decision ?? (result.allowed === false ? "deny" : "allow");
+    const decision = result?.decision;
+    if (!new Set(["allow", "watch", "ask", "deny"]).has(decision)) {
+      api.logger.warn(`[rampart] unknown policy decision for ${displayToolName}: ${String(decision)}`);
+      return {
+        block: true,
+        blockReason: "rampart: unknown policy decision — refusing tool call",
+      };
+    }
 
     // Debug log every decision (not just blocks/approvals)
     api.logger.debug(`[rampart] ${displayToolName} → ${decision}${result.policy ? ` (policy: ${result.policy})` : ""}`);
@@ -474,6 +524,10 @@ export function register(api) {
               api.logger.info(`[rampart] plugin approval resolved: ${displayToolName} → ${resolution} (toolCallId: ${ctx.toolCallId ?? "none"}, session: ${ctx.sessionKey ?? "none"})`);
 
               if (resolution === "allow-always") {
+                if (!isTrustedServeUrl(serveUrl)) {
+                  api.logger.warn("[rampart] refusing allow-always persistence to an untrusted serveUrl");
+                  return;
+                }
                 const learnPayload = {
                   tool: toolName,
                   args: subject,
@@ -534,6 +588,10 @@ export function register(api) {
   // Expose a small status endpoint for dashboard integrations. Tool enforcement
   // still lives entirely in the typed before_tool_call / after_tool_call hooks.
   api.registerGatewayMethod("rampart.status", async ({ respond }) => {
+    if (!isTrustedServeUrl(serveUrl)) {
+      respond(true, { error: "untrusted Rampart serveUrl" });
+      return;
+    }
     try {
       const token = await loadToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -580,12 +638,22 @@ export function register(api) {
         },
         expected: "ask",
       },
+      {
+        id: "credential-shell-read",
+        event: { toolName: "exec", params: { command: "cat ~/.ssh/id_rampart_verification_canary" } },
+        expected: "deny",
+      },
+      {
+        id: "opaque-interpreter",
+        event: { toolName: "exec", params: { command: "python3 -c 'print(\"rampart-verification\")'" } },
+        expected: "ask",
+      },
     ];
 
     const checks = [];
     for (const canary of canaries) {
       try {
-        const result = await evaluateToolCall(canary.event, canaryCtx);
+        const result = await evaluateToolCall(canary.event, canaryCtx, { verification: true });
         const actual = result?.block === true
           ? "deny"
           : result?.requireApproval

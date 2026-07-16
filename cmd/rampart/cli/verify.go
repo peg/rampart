@@ -168,18 +168,39 @@ func behavioralCanaries(target string) []behavioralCanary {
 				ID: "cross-conversation-message", Name: "Cross-conversation message requires approval", Tool: "message",
 				Params: map[string]any{
 					"action": "send", "target": "channel:rampart-verification-other", "message": "safe canary",
-					"rampart_consequence": "external-message", "rampart_integration": "openclaw",
+					"rampart_consequence": "openclaw:external-message", "rampart_integration": "openclaw",
 				},
 				Expected: []string{"ask"},
 			},
 			behavioralCanary{
 				ID: "message-read", Name: "Read-only message action remains available", Tool: "message",
-				Params:   map[string]any{"action": "read", "target": "channel:rampart-verification", "rampart_consequence": "read-only", "rampart_integration": "openclaw"},
+				Params:   map[string]any{"action": "read", "target": "channel:rampart-verification", "rampart_consequence": "openclaw:read-only", "rampart_integration": "openclaw"},
 				Expected: []string{"allow", "watch"},
+			},
+			behavioralCanary{
+				ID: "credential-shell-read", Name: "Shell commands cannot read private credentials", Tool: "exec",
+				Params: map[string]any{
+					"command":             "cat " + filepath.Join(home, ".ssh", "id_rampart_verification_canary"),
+					"rampart_integration": "openclaw",
+				},
+				Expected: []string{"deny"},
+			},
+			behavioralCanary{
+				ID: "opaque-interpreter", Name: "Opaque interpreter execution requires approval", Tool: "exec",
+				Params: map[string]any{
+					"command": "python3 -c 'print(\"rampart-verification\")'", "rampart_integration": "openclaw",
+				},
+				Expected: []string{"ask"},
+			},
+			behavioralCanary{
+				ID: "package-publish", Name: "Package publishing requires approval", Tool: "exec",
+				Params:   map[string]any{"command": "npm publish", "rampart_integration": "openclaw"},
+				Expected: []string{"ask"},
 			},
 		)
 		for i := range canaries {
-			canaries[i].Agent = "openclaw:rampart-verification"
+			canaries[i].Agent = "rampart-verification"
+			canaries[i].Params["rampart_integration"] = "openclaw"
 		}
 	}
 	return canaries
@@ -227,7 +248,7 @@ func runPreflightCanary(ctx context.Context, client *http.Client, serveURL, toke
 		agent = "rampart-verify"
 	}
 	body, err := json.Marshal(map[string]any{
-		"agent": agent, "session": "rampart-verification", "params": canary.Params,
+		"agent": agent, "session": "rampart-verification", "params": canary.Params, "verification": true,
 	})
 	if err != nil {
 		return verificationCheck{ID: canary.ID, Name: canary.Name, Status: verificationUnverified, Message: err.Error()}
@@ -285,7 +306,7 @@ func runPreflightCanary(ctx context.Context, client *http.Client, serveURL, toke
 
 func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verificationCheck {
 	check := verificationCheck{
-		ID: "openclaw-hook-live", Name: "Live OpenClaw hook enforces canaries",
+		ID: "openclaw-plugin-self-test", Name: "OpenClaw plugin policy self-test",
 		Expected: "all plugin canaries pass", Actual: "unverified",
 	}
 	state := getOpenClawPluginState()
@@ -294,6 +315,13 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 		check.Actual = "not configured"
 		check.Message = "The Rampart plugin is not installed and enabled in the active OpenClaw state"
 		check.Hint = "Run `rampart protect openclaw`"
+		return check
+	}
+	if !openClawPluginCurrent(state) {
+		check.Status = verificationFail
+		check.Actual = "plugin integrity mismatch"
+		check.Message = "The installed Rampart plugin does not match the version bundled with this binary"
+		check.Hint = "Run `rampart protect openclaw --reinstall`, restart the gateway, and verify again"
 		return check
 	}
 
@@ -334,18 +362,63 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 		check.Hint = "Reinstall the current plugin with `rampart protect openclaw --reinstall`"
 		return check
 	}
-	if verified, _ := pluginResult["ok"].(bool); !verified {
+	if err := validatePluginVerificationResult(pluginResult); err != nil {
 		check.Status = verificationFail
-		check.Actual = "canary mismatch"
-		check.Message = "The running OpenClaw hook returned an unsafe or unexpected decision"
+		check.Actual = "invalid canary proof"
+		check.Message = "The running OpenClaw plugin did not return the complete expected canary proof: " + err.Error()
 		check.Hint = "Run `rampart protect openclaw --reinstall`, restart the gateway, and verify again"
 		return check
 	}
 
 	check.Status = verificationPass
-	check.Actual = "live and enforced"
-	check.Message = "The running before_tool_call path blocked, approved, and allowed the expected safe canaries"
+	check.Actual = "complete and current"
+	check.Message = "The current bundled plugin reached Rampart through its policy mapping path and returned every expected canary decision"
 	return check
+}
+
+var expectedPluginCanaries = map[string]string{
+	"routine-command":            "allow",
+	"destructive-command":        "deny",
+	"external-deployment":        "ask",
+	"cross-conversation-message": "ask",
+	"credential-shell-read":      "deny",
+	"opaque-interpreter":         "ask",
+}
+
+func validatePluginVerificationResult(result map[string]any) error {
+	if result["schema"] != "rampart.plugin.verify.v1" {
+		return fmt.Errorf("unexpected schema")
+	}
+	if safe, ok := result["safeCanaries"].(bool); !ok || !safe {
+		return fmt.Errorf("safe-canary marker missing")
+	}
+	if verified, ok := result["ok"].(bool); !ok || !verified {
+		return fmt.Errorf("plugin reported a canary mismatch")
+	}
+	checks, ok := result["checks"].([]any)
+	if !ok || len(checks) != len(expectedPluginCanaries) {
+		return fmt.Errorf("expected %d checks, got %d", len(expectedPluginCanaries), len(checks))
+	}
+	seen := make(map[string]bool, len(checks))
+	for _, raw := range checks {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("check payload is not an object")
+		}
+		id, _ := item["id"].(string)
+		want, exists := expectedPluginCanaries[id]
+		if !exists || seen[id] {
+			return fmt.Errorf("unexpected or duplicate check %q", id)
+		}
+		seen[id] = true
+		expected, _ := item["expected"].(string)
+		actual, _ := item["actual"].(string)
+		passed, _ := item["pass"].(bool)
+		if expected != want || actual != want || !passed {
+			return fmt.Errorf("check %q did not prove %q", id, want)
+		}
+	}
+	return nil
 }
 
 func findPluginVerificationResult(value any) (map[string]any, bool) {
@@ -387,7 +460,7 @@ func summarizeVerification(report verificationReport) verificationReport {
 func printVerificationReport(w io.Writer, report verificationReport) {
 	fmt.Fprintf(w, "Rampart behavioral verification — %s\n\n", report.Target)
 	fmt.Fprintln(w, "Safe canaries only: no commands, file reads, messages, or external network requests are executed.")
-	fmt.Fprintln(w, "The policy evaluations may appear as rampart-verification events in Rampart's audit log.")
+	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
 	fmt.Fprintln(w)
 	for _, check := range report.Checks {
 		icon := "?"

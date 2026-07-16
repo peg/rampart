@@ -7,6 +7,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 bash -n "$runner"
+bash -n "${repo_root}/scripts/lab/openclaw-container-acceptance.sh"
 bash -n "${repo_root}/scripts/test-approval-flow.sh"
 bash -n "${repo_root}/preload/test_preload.sh"
 
@@ -44,11 +45,8 @@ if "$runner" --sha main --no-fetch >"${tmp}/invalid.out" 2>"${tmp}/invalid.err";
 fi
 grep -q 'exact 40-character hexadecimal commit SHA' "${tmp}/invalid.err"
 
-sha="$(git -C "$repo_root" rev-parse HEAD)"
-if "$runner" --sha "$sha" --suite openclaw --no-fetch >"${tmp}/unsafe.out" 2>"${tmp}/unsafe.err"; then
-  echo "test-run-e2e: primary-state OpenClaw suite unexpectedly ran" >&2
-  exit 1
-fi
-grep -q 'disabled until OpenClaw runs with isolated state' "${tmp}/unsafe.err"
+grep -q 'openclaw-container-acceptance.sh' "$runner"
+"${repo_root}/scripts/lab/openclaw-container-acceptance.sh" --help >"${tmp}/openclaw-help"
+grep -q -- '--rampart' "${tmp}/openclaw-help"
 
 echo "test-run-e2e: PASS"

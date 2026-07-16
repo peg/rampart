@@ -9,7 +9,7 @@ checkout.
 
 - A dedicated, snapshotted Linux VM or test account
 - `git`, Go, Python 3, Node.js, a C compiler, `curl`, and development libcurl
-- Installed OpenClaw and Hermes runtimes for their live suites
+- Docker for the isolated OpenClaw suite and an installed Hermes runtime for installed-Hermes validation
 - A clean clone of `https://github.com/peg/rampart.git`
 
 Do not register a persistent lab containing credentials as an unrestricted
@@ -35,18 +35,21 @@ Suites are cumulative only where stated:
 | `e2e` | `core`, approval API flow, and enforced Linux preload behavior |
 | `hermes-runtime` | Installed or latest Hermes compatibility without repeating `core` |
 | `hermes` | `core` plus latest-Hermes compatibility, or an installed environment supplied with `--hermes-python` |
-| `openclaw-runtime` | Reserved for the isolated installed OpenClaw/Codex runtime regression |
-| `openclaw` | Reserved for `core` plus isolated OpenClaw coverage |
-| `full` | Reserved for all coverage after isolated OpenClaw support lands |
+| `openclaw-runtime` | Disposable official OpenClaw container, exact zero-config install, 12 safe canaries, and idempotency proof |
+| `openclaw` | `core` plus the disposable OpenClaw container acceptance test |
+| `full` | Core, runtime, Hermes, and disposable OpenClaw coverage |
 
-The OpenClaw runtime suites currently fail closed. The older regression edited
-the primary config, wrote a primary-agent session, and restarted user services;
-that is not acceptable on a working agent. Before these suites are enabled, the
-runner must create a disposable OpenClaw state tree and workspace beneath the
-run root, disable memory/session hooks there, perform a local agent turn, and
-prove that the primary state tree was unchanged. Installed binaries and
-read-only credential material may be reused, but primary memories, sessions,
-workspaces, databases, configuration, and services must never be modified.
+The OpenClaw runtime suites run the official OpenClaw image in a new disposable
+container. Only the candidate Rampart binary is mounted read-only. The state,
+workspace, plugin, policies, Rampart token, gateway, and policy service all live
+inside the container and are deleted after evidence is collected. No host
+OpenClaw configuration, credentials, memories, sessions, databases, workspaces,
+or user services are read or modified.
+
+The acceptance step records the OpenClaw image metadata and digest, the first
+zero-config installation log, a machine-readable 12-canary report, a second
+idempotency run, the resulting non-secret plugin configuration, and installed
+file checksums.
 
 To validate the VM's installed Hermes environment instead of downloading the
 latest package into a temporary virtual environment, provide its interpreter

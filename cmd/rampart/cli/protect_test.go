@@ -99,7 +99,7 @@ func TestConfigureOpenClawGuardModePreservesConfig(t *testing.T) {
 	if _, exists := pluginConfig["failOpenTools"]; exists {
 		t.Fatal("failOpenTools should be removed so failOpen=false controls every tool")
 	}
-	if pluginConfig["serveUrl"] != "http://127.0.0.1:9191" || pluginConfig["approvalTimeoutMs"] != float64(240000) {
+	if pluginConfig["serveUrl"] != "http://localhost:9090" || pluginConfig["approvalTimeoutMs"] != float64(240000) {
 		t.Fatal("unrelated Rampart plugin settings were not preserved")
 	}
 	if cfg["models"].(map[string]any)["provider"] != "local" {

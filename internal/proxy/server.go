@@ -397,6 +397,7 @@ type toolRequest struct {
 	ApprovalOwner       *approvalOwner `json:"approval_owner,omitempty"`
 	OpenClawHosted      bool           `json:"openclaw_hosted,omitempty"`
 	SkipPendingApproval bool           `json:"skip_pending_approval,omitempty"`
+	Verification        bool           `json:"verification,omitempty"`
 
 	// Convenience fields: callers can pass "command" or "path" at the top level
 	// instead of nesting inside "params". These are promoted into Params by

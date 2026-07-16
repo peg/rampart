@@ -55,6 +55,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	if !identity.IsAdmin && identity.Agent != "" {
 		req.Agent = identity.Agent
 	}
+	if req.Verification {
+		writeError(w, http.StatusBadRequest, "verification mode is only available on the preflight endpoint")
+		return
+	}
 
 	call := engine.ToolCall{
 		ID:        audit.NewEventID(),
@@ -390,6 +394,10 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	if !identity.IsAdmin && identity.Agent != "" {
 		req.Agent = identity.Agent
 	}
+	if req.Verification && !identity.IsAdmin {
+		writeError(w, http.StatusForbidden, "verification mode requires the local admin token")
+		return
+	}
 
 	toolName := r.PathValue("toolName")
 	enrichParams(toolName, req.Params)
@@ -414,7 +422,10 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	}
 	decision := s.engine.EvaluateWith(call, evalOpts)
 	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
-	auditID := s.writeAudit(req, toolName, decision)
+	auditID := ""
+	if !req.Verification {
+		auditID = s.writeAudit(req, toolName, decision)
+	}
 
 	preflightResp := map[string]any{
 		"allowed":          allowed,

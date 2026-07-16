@@ -83,7 +83,7 @@ async function runPolicyScenario({ name, event, expectedTool, expectedCommand, r
   const body = parseBody(calls[0]);
   assert(body.openclaw_hosted === true, 'expected openclaw_hosted=true');
   assert(body.skip_pending_approval === true, 'expected skip_pending_approval=true');
-  assert(body.agent === 'openclaw:main', `expected scoped OpenClaw identity, got ${body.agent}`);
+  assert(body.agent === 'main', `expected the original OpenClaw identity, got ${body.agent}`);
   assert(body.params.rampart_integration === 'openclaw', 'expected OpenClaw integration marker');
   if (expectedCommand !== undefined) {
     assert(body.params.command === expectedCommand, `expected command ${expectedCommand}, got ${JSON.stringify(body.params)}`);
@@ -136,25 +136,25 @@ for (const [name, params, context, expectedConsequence] of [
     'message-reply-to-originating-channel',
     { action: 'send', target: 'channel:12345', message: 'Routine reply' },
     { ...ctx, channelId: '12345', messageProvider: 'discord' },
-    'routine-reply',
+    'openclaw:routine-reply',
   ],
   [
     'message-send-to-other-channel',
     { action: 'send', target: 'channel:99999', message: 'Cross-channel send' },
     { ...ctx, channelId: '12345', messageProvider: 'discord' },
-    'external-message',
+    'openclaw:external-message',
   ],
   [
     'message-read-is-read-only',
     { action: 'read', target: 'channel:12345' },
     { ...ctx, channelId: '12345', messageProvider: 'discord' },
-    'read-only',
+    'openclaw:read-only',
   ],
   [
     'message-delete-is-mutation',
     { action: 'delete', target: 'channel:12345', messageId: 'abc' },
     { ...ctx, channelId: '12345', messageProvider: 'discord' },
-    'mutation',
+    'openclaw:mutation',
   ],
 ]) {
   await runPolicyScenario({
@@ -230,13 +230,16 @@ scenarios.push('after-tool-audit-canonical-exec');
 const liveVerification = await withPlugin({
   name: 'live-behavioral-verification',
   fetchImpl: async (url, opts = {}) => {
-    assert(String(url).includes('/v1/tool/'), `unexpected verification URL: ${url}`);
+    assert(String(url).includes('/v1/preflight/'), `unexpected verification URL: ${url}`);
     const body = parseBody({ opts });
-    const tool = decodeURIComponent(String(url).split('/v1/tool/')[1]);
+    const tool = decodeURIComponent(String(url).split('/v1/preflight/')[1]);
     let decision = 'allow';
     if (tool === 'exec' && body.params.command === 'rm -rf /') decision = 'deny';
     if (tool === 'exec' && body.params.command?.startsWith('git push ')) decision = 'ask';
-    if (tool === 'message' && body.params.rampart_consequence === 'external-message') decision = 'ask';
+    if (tool === 'message' && body.params.rampart_consequence === 'openclaw:external-message') decision = 'ask';
+    if (tool === 'exec' && body.params.command?.startsWith('cat ~/.ssh/id_')) decision = 'deny';
+    if (tool === 'exec' && body.params.command?.startsWith('python3 -c ')) decision = 'ask';
+    assert(body.verification === true, 'verification calls must request side-effect-free preflight mode');
     return fetchJson({ decision, allowed: decision === 'allow' });
   },
   invoke: async ({ gatewayMethods }) => {
@@ -251,7 +254,7 @@ assert(liveVerification?.ok === true, 'gateway verification RPC should respond s
 assert(liveVerification.payload?.schema === 'rampart.plugin.verify.v1', 'verification schema missing');
 assert(liveVerification.payload?.safeCanaries === true, 'verification must identify safe canaries');
 assert(liveVerification.payload?.ok === true, `verification failed: ${JSON.stringify(liveVerification.payload)}`);
-assert(liveVerification.payload?.checks?.length === 4, 'expected four live plugin canaries');
+assert(liveVerification.payload?.checks?.length === 6, 'expected six plugin policy canaries');
 scenarios.push('live-behavioral-verification');
 
 const degraded = await withPlugin({

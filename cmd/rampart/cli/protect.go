@@ -89,6 +89,11 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 		return fmt.Errorf("protect: install managed Guard policy: %w", err)
 	}
 	fmt.Fprintf(w, "✓ Managed Guard policy installed at %s\n", guardPath)
+	// Install every managed policy before setup starts rampart serve. A fresh
+	// protect run must never briefly start with only the Guard layer loaded.
+	if err := installOpenClawPolicy(w, errW); err != nil {
+		return fmt.Errorf("protect: install managed OpenClaw policy: %w", err)
+	}
 
 	state := getOpenClawPluginState()
 	if opts.Reinstall || !openClawPluginCurrent(state) {
@@ -101,12 +106,6 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 			return fmt.Errorf("protect: start Rampart policy service: %w", err)
 		}
 	}
-	// A current plugin does not prove its base profile is still present. Restore
-	// the managed profile on every protect run; custom policies remain untouched.
-	if err := installOpenClawPolicy(w, errW); err != nil {
-		return fmt.Errorf("protect: install managed OpenClaw policy: %w", err)
-	}
-
 	bin, err := findOpenClawBinary()
 	if err != nil {
 		return fmt.Errorf("protect: find OpenClaw: %w", err)
@@ -231,6 +230,11 @@ func configureOpenClawGuardModeAtPath(configPath string) (bool, error) {
 	}
 	if failOpen, ok := pluginConfig["failOpen"].(bool); !ok || failOpen {
 		pluginConfig["failOpen"] = false
+		changed = true
+	}
+	const managedServeURL = "http://localhost:9090"
+	if serveURL, ok := pluginConfig["serveUrl"].(string); !ok || serveURL != managedServeURL {
+		pluginConfig["serveUrl"] = managedServeURL
 		changed = true
 	}
 	if _, ok := pluginConfig["failOpenTools"]; ok {

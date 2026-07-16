@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Zero-configuration OpenClaw protection** — `rampart protect openclaw` installs managed Guard and OpenClaw policies, enables the bundled native plugin, starts the local policy service, configures fail-closed degraded behavior, restarts the gateway, and verifies the boundary with safe behavioral canaries.
+- **Active behavioral verification** — `rampart verify openclaw` checks routine work, destructive actions, credential access, external network commands, publishing, opaque execution, and cross-conversation messaging without executing the canary actions or writing verification events to the audit log.
+- **Immutable Linux lab evidence** — The lab runner accepts an exact commit SHA, validates it in a detached worktree, and retains structured logs, environment metadata, summaries, and checksums outside the checkout.
+
 ### Changed
 
 - **Release and source-build toolchains use Go 1.25.12** — The module baseline, CI, GoReleaser, Docker, and upstream compatibility workflows now use the patched Go release required for a clean reachable-vulnerability scan.
+- **OpenClaw defaults are consequence-oriented and safer** — Read-only work stays available while package publishing, interpreter and package-runner execution, privileged or external changes, and cross-conversation messaging require approval; credential reads, destructive commands, and direct external curl/wget are denied.
+- **Bundled integration metadata targets v1.3.0** — OpenClaw and experimental Hermes manifests and runtime exports are aligned for the next minor release.
+
+### Fixed
+
+- **OpenClaw policy responses fail closed** — Malformed, empty, array, or unknown policy responses block the tool call instead of silently becoming an allow decision.
+- **Rampart tokens stay on the loopback trust boundary** — Managed OpenClaw configuration forces the local policy URL, and the plugin refuses to send its admin token to non-loopback endpoints.
+- **Managed policies are loaded before enforcement and hot-reload correctly** — Fresh protection no longer starts with only one managed layer, and `rampart serve` now reloads YAML files created, replaced, renamed, or removed in the policy directory.
+- **Headless installs and cleanup include the fallback daemon** — Zero-config protection falls back to `rampart serve --background` when system service installation is unavailable, and `rampart serve uninstall` stops that fallback as well as removing service files.
+- **Plugin verification checks installed code integrity** — Verification rejects a plugin whose runtime file differs from the version bundled in the Rampart binary and validates every expected canary result rather than trusting an `ok` field alone.
+- **Existing OpenClaw agent identities remain compatible** — Native agent IDs are preserved instead of being rewritten with an integration prefix that could bypass exact-match user policies.
 
 ## [1.2.0] - 2026-05-28
 
