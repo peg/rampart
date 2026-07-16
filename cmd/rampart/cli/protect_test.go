@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
@@ -15,7 +16,7 @@ import (
 
 func TestInstallManagedGuardPolicy(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 
 	path, err := installManagedGuardPolicy()
 	if err != nil {
@@ -35,10 +36,12 @@ func TestInstallManagedGuardPolicy(t *testing.T) {
 	if string(normalizeManagedPolicyContent(installed)) != string(embedded) {
 		t.Fatal("installed Guard policy does not match the embedded profile")
 	}
-	if info, err := os.Stat(path); err != nil {
-		t.Fatal(err)
-	} else if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		} else if info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+		}
 	}
 }
 
@@ -105,10 +108,12 @@ func TestConfigureOpenClawGuardModePreservesConfig(t *testing.T) {
 	if _, exists := entries["existing"]; !exists {
 		t.Fatal("another plugin entry was removed")
 	}
-	if info, err := os.Stat(path); err != nil {
-		t.Fatal(err)
-	} else if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		} else if info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+		}
 	}
 
 	changed, err = configureOpenClawGuardModeAtPath(path)

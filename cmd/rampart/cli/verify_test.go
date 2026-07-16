@@ -60,7 +60,7 @@ func TestBehavioralVerificationDetectsWrongDecision(t *testing.T) {
 }
 
 func TestBehavioralVerificationReportsMissingTokenAsUnverified(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testSetHome(t, t.TempDir())
 	report := runBehavioralVerification(context.Background(), "policy", "http://127.0.0.1:1", 50*time.Millisecond)
 	if report.Summary.Unverified != 5 || report.Summary.Failed != 0 {
 		t.Fatalf("unexpected summary: %#v", report.Summary)
@@ -107,7 +107,7 @@ printf '%s\n' '{"result":{"schema":"rampart.plugin.verify.v1","safeCanaries":tru
 func installVerificationToken(t *testing.T, token string) {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testSetHome(t, home)
 	dir := filepath.Join(home, ".rampart")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
