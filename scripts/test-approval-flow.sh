@@ -8,6 +8,7 @@ TMP_DIR="$(mktemp -d)"
 CONFIG_PATH="$TMP_DIR/rampart-approval.yaml"
 AUDIT_DIR="$TMP_DIR/audit"
 SERVER_LOG="$TMP_DIR/server.log"
+SERVER_BIN="$TMP_DIR/rampart"
 SERVER_PID=""
 
 cleanup() {
@@ -30,7 +31,7 @@ policies:
     match:
       tool: exec
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "rm *"
@@ -39,9 +40,10 @@ policies:
         message: "Requires human approval"
 YAML
 
-echo "[1/6] Starting Rampart with require_approval policy"
+echo "[1/6] Starting Rampart with ask policy"
 echo "Expected: service starts and health endpoint reports status=ok"
-RAMPART_TOKEN="$TOKEN" go run ./cmd/rampart \
+go build -o "$SERVER_BIN" ./cmd/rampart
+RAMPART_TOKEN="$TOKEN" "$SERVER_BIN" \
   --config "$CONFIG_PATH" \
   serve --mode enforce --port "$PORT" --audit-dir "$AUDIT_DIR" \
   >"$SERVER_LOG" 2>&1 &
@@ -51,8 +53,19 @@ for _ in $(seq 1 50); do
   if curl -sf "http://127.0.0.1:${PORT}/healthz" >/dev/null; then
     break
   fi
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "ERROR: Rampart exited before becoming healthy"
+    sed -n '1,120p' "$SERVER_LOG"
+    exit 1
+  fi
   sleep 0.2
 done
+
+if ! curl -sf "http://127.0.0.1:${PORT}/healthz" >/dev/null; then
+  echo "ERROR: Rampart did not become healthy on port $PORT"
+  sed -n '1,120p' "$SERVER_LOG"
+  exit 1
+fi
 
 HEALTH_JSON="$(curl -s "http://127.0.0.1:${PORT}/healthz")"
 echo "healthz: $HEALTH_JSON"
@@ -71,7 +84,7 @@ echo "status: $TOOL_STATUS"
 echo "body:   $TOOL_BODY"
 
 if [[ "$TOOL_STATUS" != "202" ]]; then
-  echo "ERROR: expected 202 from require_approval path"
+  echo "ERROR: expected 202 from ask path"
   exit 1
 fi
 

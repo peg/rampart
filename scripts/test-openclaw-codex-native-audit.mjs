@@ -9,9 +9,8 @@
  *   3. Rampart wrote a correlated audit event for that command as canonical
  *      tool `exec`.
  *
- * The test temporarily enables the Rampart OpenClaw plugin and points it at an
- * ephemeral Rampart server on localhost. It restores the OpenClaw config and
- * Rampart token file before exit.
+ * The test may only operate beneath an explicit disposable isolation root. It
+ * refuses primary OpenClaw state, workspaces, sessions, memory, and services.
  */
 
 import { spawn } from 'node:child_process';
@@ -28,7 +27,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,10 +55,36 @@ const openclawConfigPath = process.env.OPENCLAW_CONFIG_PATH || join(homedir(), '
 const openclawStateDir = process.env.OPENCLAW_STATE_DIR || join(homedir(), '.openclaw');
 const sessionsDir = join(openclawStateDir, 'agents', agentId, 'sessions');
 const tokenPath = join(homedir(), '.rampart', 'token');
-const restartServices = (process.env.RAMPART_OPENCLAW_RESTART_SERVICES || 'openclaw-gateway.service,openclaw-node.service')
+const isolationRoot = process.env.RAMPART_OPENCLAW_ISOLATION_ROOT;
+const restartServices = (process.env.RAMPART_OPENCLAW_RESTART_SERVICES ?? 'openclaw-gateway.service,openclaw-node.service')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+function isWithin(root, candidate) {
+  const rel = relative(resolve(root), resolve(candidate));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+if (!isolationRoot) {
+  console.error('Refusing OpenClaw runtime regression without RAMPART_OPENCLAW_ISOLATION_ROOT.');
+  process.exit(2);
+}
+for (const [label, path] of [
+  ['HOME', homedir()],
+  ['OPENCLAW_CONFIG_PATH', openclawConfigPath],
+  ['OPENCLAW_STATE_DIR', openclawStateDir],
+  ['Rampart token path', tokenPath],
+]) {
+  if (!isWithin(isolationRoot, path)) {
+    console.error(`Refusing OpenClaw runtime regression: ${label} is outside the disposable isolation root.`);
+    process.exit(2);
+  }
+}
+if (restartServices.length > 0) {
+  console.error('Refusing OpenClaw runtime regression when service restarts are configured.');
+  process.exit(2);
+}
 
 const marker = `rampart-runtime-codex-shell-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}`;
 const sessionId = marker;

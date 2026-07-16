@@ -24,7 +24,9 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(
+    os.environ.get("RAMPART_COMPAT_REPO_ROOT", Path(__file__).resolve().parents[1])
+).expanduser().absolute()
 
 
 class RampartStub(BaseHTTPRequestHandler):
@@ -117,7 +119,10 @@ def resolve_executable(value: str) -> Path:
         found = shutil.which(value)
         if found:
             return Path(found)
-    path = Path(value).expanduser().resolve()
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.absolute()
     if not path.exists():
         raise FileNotFoundError(f"executable not found: {value}")
     return path
