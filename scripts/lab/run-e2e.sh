@@ -104,7 +104,10 @@ if [[ -n "$hermes_bin" && -z "$hermes_python" ]]; then
 fi
 
 for tool in git go python3; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "run-e2e: required tool not found: $tool" >&2; exit 2; }
+  PATH="${isolated_path}:${PATH:-}" command -v "$tool" >/dev/null 2>&1 || {
+    echo "run-e2e: required tool not found: $tool (checked controller PATH plus $isolated_path)" >&2
+    exit 2
+  }
 done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
