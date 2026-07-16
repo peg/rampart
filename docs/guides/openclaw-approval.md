@@ -21,13 +21,16 @@ For OpenClaw-hosted workflows, there should be exactly **one** human-facing appr
 
 ## Primary integration path
 
-Use the native plugin setup:
+Use the zero-configuration protection path:
 
 ```bash
-rampart setup openclaw
+rampart protect openclaw
 ```
 
-Use `--plugin` only if you need to force the native plugin path explicitly.
+This installs the plugin and service, activates the managed OpenClaw + Guard
+policy set, enables fail-closed degraded behavior, restarts the gateway, and
+runs non-executing behavioral canaries. Use `rampart setup openclaw` only when
+you are deliberately managing the integration by hand.
 
 The plugin integrates via OpenClaw's native hook APIs and is the preferred path because it survives upgrades much better than direct `dist/` patching.
 
@@ -71,6 +74,7 @@ That direct `dist/` patching approach is now **legacy compatibility**, not the r
 ## Verify the plugin path
 
 ```bash
+rampart verify openclaw
 rampart doctor
 ```
 
@@ -78,7 +82,7 @@ You should verify at minimum that:
 
 - Rampart plugin is installed in OpenClaw
 - `rampart serve` is running
-- plugin decisions are reaching Rampart
+- fixed allow, deny, and approval canaries pass through the live plugin hook
 - OpenClaw-hosted `ask` decisions do not create a second Rampart approval queue
 
 ## Practical guidance

@@ -1,7 +1,7 @@
 {
   "id": "rampart",
   "name": "Rampart",
-  "description": "AI agent firewall — YAML policy-as-code for every tool call",
+  "description": "Independent safety guard for unattended AI agent actions",
   "activation": {
     "onStartup": true,
     "onCapabilities": [

@@ -8,9 +8,11 @@ const ctx = {
 
 function createApi(pluginConfig = {}) {
   const handlers = {};
+  const gatewayMethods = {};
   const logs = [];
   return {
     handlers,
+    gatewayMethods,
     logs,
     api: {
       pluginConfig,
@@ -20,7 +22,7 @@ function createApi(pluginConfig = {}) {
         debug: (...a) => logs.push(['debug', a.join(' ')]),
       },
       on: (name, fn) => { handlers[name] = fn; },
-      registerGatewayMethod: () => {},
+      registerGatewayMethod: (name, fn) => { gatewayMethods[name] = fn; },
     },
   };
 }
@@ -47,12 +49,12 @@ function fetchJson(result) {
 }
 
 async function withPlugin({ name, fetchImpl, pluginConfig = {}, invoke }) {
-  const { api, handlers, logs } = createApi(pluginConfig);
+  const { api, handlers, gatewayMethods, logs } = createApi(pluginConfig);
   const originalFetch = global.fetch;
   global.fetch = fetchImpl;
   try {
     plugin.register(api);
-    return await invoke({ handlers, logs });
+    return await invoke({ handlers, gatewayMethods, logs });
   } catch (err) {
     err.message = `${name}: ${err.message}`;
     throw err;
@@ -61,7 +63,7 @@ async function withPlugin({ name, fetchImpl, pluginConfig = {}, invoke }) {
   }
 }
 
-async function runPolicyScenario({ name, event, expectedTool, expectedCommand, response = { decision: 'allow' }, assertResult }) {
+async function runPolicyScenario({ name, event, expectedTool, expectedCommand, response = { decision: 'allow' }, assertResult, context = ctx }) {
   const calls = [];
   const result = await withPlugin({
     name,
@@ -73,7 +75,7 @@ async function runPolicyScenario({ name, event, expectedTool, expectedCommand, r
     invoke: async ({ handlers }) => {
       const before = handlers.before_tool_call;
       assert(typeof before === 'function', 'before_tool_call handler missing');
-      return await before(event, ctx);
+      return await before(event, context);
     },
   });
 
@@ -81,6 +83,8 @@ async function runPolicyScenario({ name, event, expectedTool, expectedCommand, r
   const body = parseBody(calls[0]);
   assert(body.openclaw_hosted === true, 'expected openclaw_hosted=true');
   assert(body.skip_pending_approval === true, 'expected skip_pending_approval=true');
+  assert(body.agent === 'openclaw:main', `expected scoped OpenClaw identity, got ${body.agent}`);
+  assert(body.params.rampart_integration === 'openclaw', 'expected OpenClaw integration marker');
   if (expectedCommand !== undefined) {
     assert(body.params.command === expectedCommand, `expected command ${expectedCommand}, got ${JSON.stringify(body.params)}`);
   }
@@ -126,6 +130,51 @@ await runPolicyScenario({
   expectedTool: 'read',
 });
 scenarios.push('read-tool-policy-surface');
+
+for (const [name, params, context, expectedConsequence] of [
+  [
+    'message-reply-to-originating-channel',
+    { action: 'send', target: 'channel:12345', message: 'Routine reply' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'routine-reply',
+  ],
+  [
+    'message-send-to-other-channel',
+    { action: 'send', target: 'channel:99999', message: 'Cross-channel send' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'external-message',
+  ],
+  [
+    'message-read-is-read-only',
+    { action: 'read', target: 'channel:12345' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'read-only',
+  ],
+  [
+    'message-delete-is-mutation',
+    { action: 'delete', target: 'channel:12345', messageId: 'abc' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'mutation',
+  ],
+]) {
+  await runPolicyScenario({
+    name,
+    event: { toolName: 'message', params },
+    expectedTool: 'message',
+    context,
+    assertResult: (_result, body) => {
+      assert(
+        body.params.rampart_consequence === expectedConsequence,
+        `expected ${expectedConsequence}, got ${JSON.stringify(body.params)}`,
+      );
+      assert(
+        !Object.prototype.hasOwnProperty.call(params, 'rampart_consequence'),
+        'host-derived policy fields must not mutate executable tool params',
+      );
+    },
+  });
+  scenarios.push(name);
+}
 
 const ask = await runPolicyScenario({
   name: 'write-tool-hosted-approval',
@@ -177,6 +226,33 @@ const auditBody = parseBody(auditCall);
 assert(auditBody.tool === 'exec', `expected canonical audit tool exec, got ${auditBody.tool}`);
 assert(auditBody.params.command === 'echo audited-provider', `expected normalized audit command, got ${JSON.stringify(auditBody.params)}`);
 scenarios.push('after-tool-audit-canonical-exec');
+
+const liveVerification = await withPlugin({
+  name: 'live-behavioral-verification',
+  fetchImpl: async (url, opts = {}) => {
+    assert(String(url).includes('/v1/tool/'), `unexpected verification URL: ${url}`);
+    const body = parseBody({ opts });
+    const tool = decodeURIComponent(String(url).split('/v1/tool/')[1]);
+    let decision = 'allow';
+    if (tool === 'exec' && body.params.command === 'rm -rf /') decision = 'deny';
+    if (tool === 'exec' && body.params.command?.startsWith('git push ')) decision = 'ask';
+    if (tool === 'message' && body.params.rampart_consequence === 'external-message') decision = 'ask';
+    return fetchJson({ decision, allowed: decision === 'allow' });
+  },
+  invoke: async ({ gatewayMethods }) => {
+    const verify = gatewayMethods['rampart.verify'];
+    assert(typeof verify === 'function', 'rampart.verify gateway method missing');
+    let response;
+    await verify({ respond: (ok, payload) => { response = { ok, payload }; } });
+    return response;
+  },
+});
+assert(liveVerification?.ok === true, 'gateway verification RPC should respond successfully');
+assert(liveVerification.payload?.schema === 'rampart.plugin.verify.v1', 'verification schema missing');
+assert(liveVerification.payload?.safeCanaries === true, 'verification must identify safe canaries');
+assert(liveVerification.payload?.ok === true, `verification failed: ${JSON.stringify(liveVerification.payload)}`);
+assert(liveVerification.payload?.checks?.length === 4, 'expected four live plugin canaries');
+scenarios.push('live-behavioral-verification');
 
 const degraded = await withPlugin({
   name: 'degraded-sensitive-exec-blocks',
