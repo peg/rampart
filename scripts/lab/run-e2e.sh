@@ -103,6 +103,7 @@ if [[ -n "$hermes_bin" && -z "$hermes_python" ]]; then
   exit 2
 fi
 
+isolated_path="${RAMPART_LAB_PATH:-/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin}"
 for tool in git go python3; do
   PATH="${isolated_path}:${PATH:-}" command -v "$tool" >/dev/null 2>&1 || {
     echo "run-e2e: required tool not found: $tool (checked controller PATH plus $isolated_path)" >&2
@@ -119,7 +120,6 @@ artifact_dir="${run_root}/artifacts"
 worktree="${run_root}/worktree"
 isolated_home="${run_root}/home"
 tmp_dir="${run_root}/tmp"
-isolated_path="${RAMPART_LAB_PATH:-/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin}"
 events_file="${artifact_dir}/events.jsonl"
 summary_file="${artifact_dir}/summary.json"
 worktree_added=0

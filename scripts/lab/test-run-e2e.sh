@@ -10,6 +10,13 @@ bash -n "$runner"
 bash -n "${repo_root}/scripts/test-approval-flow.sh"
 bash -n "${repo_root}/preload/test_preload.sh"
 
+isolated_path_line="$(grep -n '^isolated_path=' "$runner" | cut -d: -f1)"
+tool_check_line="$(grep -n '^for tool in git go python3' "$runner" | cut -d: -f1)"
+if [[ -z "$isolated_path_line" || -z "$tool_check_line" || "$isolated_path_line" -ge "$tool_check_line" ]]; then
+  echo "test-run-e2e: isolated_path must be defined before tool discovery" >&2
+  exit 1
+fi
+
 "$runner" --help >"${tmp}/help"
 grep -q -- '--sha' "${tmp}/help"
 grep -q -- '--hermes-python' "${tmp}/help"
