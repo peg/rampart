@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-20
+
 ### Added
 
 - **Zero-configuration OpenClaw protection** — `rampart protect openclaw` installs managed Guard and OpenClaw policies, enables the bundled native plugin, starts the local policy service, configures fail-closed degraded behavior, restarts the gateway, and verifies the boundary with safe behavioral canaries.

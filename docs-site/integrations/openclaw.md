@@ -1,6 +1,6 @@
 ---
 title: Securing OpenClaw
-description: "Native Rampart integration for OpenClaw — policy enforcement via before_tool_call hook, with explicit degraded-mode behavior per tool class."
+description: "Protect OpenClaw in one command with Rampart-managed policy, fail-closed enforcement, and active behavioral verification."
 ---
 
 # OpenClaw
@@ -9,7 +9,7 @@ Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. T
 
 When `rampart serve` is healthy, every supported tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
 
-For sensitive tools, the recommended operating assumption is simple: if Rampart policy service is unavailable, treat that as a broken state and fix it before trusting approval-path tests. By default the plugin blocks sensitive tools such as `exec` and `write` when `rampart serve` is unavailable; lower-risk tools (`read`, `web_fetch`, `web_search`, `image`) are explicitly configured fail-open and can be tightened with `plugins.entries.rampart.config.failOpenTools`.
+The recommended managed path is fail closed: if the Rampart policy service is unavailable, OpenClaw tools stop instead of silently bypassing policy. Advanced manual setups can configure per-tool degraded behavior, but that is not the zero-configuration default.
 
 !!! info "Version requirements"
     - **OpenClaw >= 2026.5.2**: Recommended current path. Supports explicit plugin startup activation plus first-class plugin approvals on the shared `/approve` / native approval path.
@@ -18,22 +18,22 @@ For sensitive tools, the recommended operating assumption is simple: if Rampart 
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades.
     - Refresh release claims against the latest stable OpenClaw before publishing a new Rampart release. See the [Release Compatibility Gate](../getting-started/release-compatibility-gate.md).
 
-    `rampart setup openclaw` auto-detects your version and uses the right method.
+    `rampart protect openclaw` uses the native plugin on current supported OpenClaw versions. `rampart setup openclaw` remains available for advanced and legacy configurations.
 
 ## Setup
 
 ```bash
-rampart setup openclaw
+rampart protect openclaw
 ```
 
 That's it. Rampart:
 
-1. Detects your OpenClaw version
-2. **If >= 2026.3.28**: Extracts the bundled plugin and installs it via `openclaw plugins install`; current plugins declare `activation.onStartup: true` so startup protection does not rely on deprecated implicit loading
-3. Adds `rampart` to `plugins.allow` — existing plugins (discord, browser, etc.) are preserved
-4. Configures OpenClaw to route decisions through Rampart (`tools.exec.ask: off`)
-5. Copies the `openclaw.yaml` policy profile to `~/.rampart/policies/openclaw.yaml`
-6. Starts `rampart serve` as a boot service (if not already running)
+1. Installs managed Guard and OpenClaw policy layers
+2. Extracts and enables the bundled native `before_tool_call` plugin
+3. Preserves existing unrelated plugins and OpenClaw settings
+4. Starts `rampart serve` as a boot service, with a background fallback for headless environments
+5. Configures every OpenClaw tool to fail closed if the local policy service is unavailable
+6. Restarts the gateway and runs safe behavioral canaries through the live plugin path
 
 After setup, verify both services are healthy:
 
@@ -45,6 +45,8 @@ systemctl --user is-active rampart-serve.service
 Both should return `active`.
 
 No external downloads, no npm install — the plugin is bundled inside the `rampart` binary.
+
+For advanced setups that manage their own policies or require the legacy compatibility path, use `rampart setup openclaw` and configure degraded behavior explicitly.
 
 ### Security scanner note
 
@@ -136,10 +138,12 @@ For example, approving `sudo apt-get install nmap` always writes:
 ## Verify the integration
 
 ```bash
-rampart doctor
+rampart verify openclaw
 ```
 
-Expected output when fully configured:
+The verification command checks routine work, destructive actions, credential access, policy tampering, direct external network commands, publishing, cross-conversation messages, opaque interpreters, and package publishing. Its fixed canaries traverse policy evaluation and the live plugin's decision mapping without executing the represented actions.
+
+Use `rampart doctor` for the broader installation health report. Expected output when fully configured includes:
 
 ```
 ✓ rampart serve: running (pid 12345)
@@ -171,7 +175,7 @@ Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v1.2.0  active
+# rampart  v1.3.0  active
 ```
 
 ## Troubleshooting

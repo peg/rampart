@@ -21,6 +21,31 @@ rampart quickstart -y               # Short form of --yes
 
 `--yes` / `-y` skips prompts so setup can run unattended in CI, scripts, or agent-driven installs.
 
+### `rampart protect openclaw`
+
+Protect OpenClaw with Rampart-managed defaults. No policy authoring is required.
+
+```bash
+rampart protect openclaw              # Install, activate, restart, and verify
+rampart protect openclaw --reinstall  # Replace the plugin even when versions match
+rampart protect openclaw --no-restart # Configure without restarting the gateway
+rampart protect openclaw --no-verify  # Configure without running behavioral canaries
+```
+
+The command installs managed Guard and OpenClaw policies, enables the bundled native plugin, starts the local policy service, configures every OpenClaw tool to fail closed when Rampart is unavailable, restarts the gateway, and runs safe behavioral verification. Existing unrelated OpenClaw settings and custom Rampart policy files are preserved.
+
+### `rampart verify`
+
+Actively test expected policy decisions with fixed, non-executing canaries.
+
+```bash
+rampart verify openclaw        # Verify policy plus the live OpenClaw plugin path
+rampart verify policy          # Verify the local Rampart policy path
+rampart verify openclaw --json # Emit schema rampart.verify.v1
+```
+
+Verification does not execute commands, read files, send messages, contact external hosts, or add canary events to the audit log. A failed expectation exits with status 1; an incomplete or unreachable check exits with status 2.
+
 ### `rampart setup claude-code`
 
 Install native hooks into Claude Code. Adds a `PreToolUse` hook to `~/.claude/settings.json` — no LD_PRELOAD or shim needed.
@@ -45,7 +70,7 @@ rampart setup cline --remove  # Remove hooks
 
 ### `rampart setup openclaw`
 
-Install Rampart integration for OpenClaw. Auto-detects your OpenClaw version and uses the best available method.
+Install the Rampart integration for OpenClaw without applying the managed zero-configuration Guard posture. This remains available for advanced and legacy configurations; new installations should normally use `rampart protect openclaw`.
 
 ```bash
 rampart setup openclaw           # Auto-detect: native plugin (>= 2026.3.28) or legacy shim

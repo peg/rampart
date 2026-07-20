@@ -196,7 +196,7 @@ verify -> outcomes.approval
 |-------|------------|-------|
 | **Claude Code** | Native hooks | `rampart setup claude-code` |
 | **Cline** | Native hooks | `rampart setup cline` |
-| **OpenClaw** | Native plugin | `rampart setup openclaw` |
+| **OpenClaw** | Zero-config native guard | `rampart protect openclaw` |
 | **Codex CLI** | Wrapper + preload | `rampart setup codex` |
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
@@ -205,13 +205,20 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v1.2
+## What's New in v1.3
+
+- **Zero-configuration OpenClaw protection** — `rampart protect openclaw` installs managed policies, enables the native plugin, starts the local service, configures fail-closed behavior, restarts the gateway, and verifies the boundary.
+- **Active behavioral verification** — `rampart verify openclaw` sends fixed, non-executing canaries through the live plugin and policy path, then reports which expected decisions were observed.
+- **Safer managed defaults** — Routine local work continues while destructive actions and credential access are denied, and publishing, deployment, opaque execution, and cross-conversation messaging require approval.
+- **Fail-closed integration hardening** — Invalid policy responses, non-loopback policy URLs, installed-plugin tampering, and unavailable managed protection are detected instead of silently allowing tool calls.
+- **Repeatable Linux evidence** — The lab runner validates an exact commit in an isolated worktree and retains structured logs, summaries, environment metadata, and checksums.
+- **Patched release toolchain** — CI, release, Docker, and upstream compatibility gates use Go 1.25.12.
+
+### v1.2
 
 - **Audit recovery is release-hardened** — `rampart serve` reconstructs the audit chain head from the latest valid JSONL event across log files, so absent, stale, or tampered anchors cannot reset the next `prev_hash`.
 - **Hosted approval foundation** — Rampart can support host-owned approval flows without creating a second hidden Rampart approval queue, preserving a single user-facing approval owner.
-- **Experimental Hermes policy gate correlation** — Hermes tool-call metadata now reaches Rampart audit records so policy-gate decisions can be traced back to the originating Hermes tool call.
-- **Bundled plugin versions are coherent** — OpenClaw and experimental Hermes plugin manifests/runtime exports now report `1.2.0` alongside the Rampart release.
-- **Patched release toolchain**: CI, release, Docker, and upstream compatibility gates now use Go 1.25.11.
+- **Experimental Hermes policy gate correlation** — Hermes tool-call metadata reaches Rampart audit records so policy-gate decisions can be traced back to the originating Hermes tool call.
 
 ### v1.1
 
