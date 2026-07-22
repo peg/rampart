@@ -188,11 +188,12 @@ function sameConversation(target, ctx) {
     ctx?.channelContext?.chat?.id,
   ].map(normalizeConversationTarget).filter(Boolean);
 
-  return candidates.some((candidate) =>
-    normalizedTarget === candidate ||
-    normalizedTarget.endsWith(`:${candidate}`) ||
-    candidate.endsWith(`:${normalizedTarget}`)
-  );
+  // The target is agent-controlled. Prefix normalization above handles the
+  // provider/channel forms Rampart explicitly understands, so accepting a
+  // suffix match here would let a target such as "external:12345" impersonate
+  // the originating conversation "12345" and bypass cross-conversation
+  // approval.
+  return candidates.some((candidate) => normalizedTarget === candidate);
 }
 
 function classifyMessageConsequence(params, ctx) {

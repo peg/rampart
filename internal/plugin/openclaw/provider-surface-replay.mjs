@@ -145,6 +145,12 @@ for (const [name, params, context, expectedConsequence] of [
     'openclaw:external-message',
   ],
   [
+    'message-suffix-collision-is-external',
+    { action: 'send', target: 'channel:external:12345', message: 'Cross-channel suffix collision' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'openclaw:external-message',
+  ],
+  [
     'message-read-is-read-only',
     { action: 'read', target: 'channel:12345' },
     { ...ctx, channelId: '12345', messageProvider: 'discord' },

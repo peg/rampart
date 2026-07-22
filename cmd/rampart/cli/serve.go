@@ -636,6 +636,20 @@ func stopBackgroundServe(w io.Writer, missingOK bool) error {
 	if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 0 {
 		return fmt.Errorf("serve stop: invalid PID %q in %s", pidStr, pidPath)
 	}
+	owned, identity, err := isRampartServeProcess(pid)
+	if err != nil {
+		return fmt.Errorf("serve stop: verify pid %d before signaling: %w", pid, err)
+	}
+	if !owned {
+		_ = os.Remove(pidPath)
+		if missingOK {
+			return nil
+		}
+		if identity == "" {
+			identity = "process is no longer running"
+		}
+		return fmt.Errorf("serve stop: refusing to signal stale pid %d (%s)", pid, identity)
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return fmt.Errorf("serve stop: find process %d: %w", pid, err)
@@ -647,6 +661,49 @@ func stopBackgroundServe(w io.Writer, missingOK bool) error {
 	_ = os.Remove(pidPath)
 	fmt.Fprintf(w, "✓ rampart serve (pid=%d) stopped\n", pid)
 	return nil
+}
+
+// isRampartServeProcess authenticates a PID before stop/uninstall sends a
+// signal. PID files can outlive their process, and operating systems reuse
+// numeric PIDs; checking only that a PID exists can therefore terminate an
+// unrelated user process. `ps` is available on the Unix platforms where
+// service uninstallation uses this helper. On platforms without `ps`, stop
+// fails safely instead of signaling an unverified process.
+func isRampartServeProcess(pid int) (bool, string, error) {
+	pidArg := fmt.Sprintf("%d", pid)
+	commOut, err := exec.Command("ps", "-p", pidArg, "-o", "comm=").CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, strings.TrimSpace(string(commOut)), nil
+		}
+		return false, "", err
+	}
+	argsOut, err := exec.Command("ps", "-p", pidArg, "-o", "args=").CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, strings.TrimSpace(string(argsOut)), nil
+		}
+		return false, "", err
+	}
+
+	comm := strings.TrimSpace(string(commOut))
+	args := strings.TrimSpace(string(argsOut))
+	return isRampartServeCommand(comm, args), strings.TrimSpace(comm + " " + args), nil
+}
+
+func isRampartServeCommand(comm, args string) bool {
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(comm)))
+	if name != "rampart" && name != "rampart.exe" {
+		return false
+	}
+	for _, arg := range strings.Fields(args) {
+		if arg == "serve" {
+			return true
+		}
+	}
+	return false
 }
 
 func isWriteEvent(event fsnotify.Event) bool {

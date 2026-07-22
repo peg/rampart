@@ -106,6 +106,28 @@ func TestStopBackgroundServeAllowsMissingPID(t *testing.T) {
 	}
 }
 
+func TestIsRampartServeCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		comm string
+		args string
+		want bool
+	}{
+		{name: "serve", comm: "/usr/local/bin/rampart", args: "/usr/local/bin/rampart serve --port 9090", want: true},
+		{name: "serve with global flag", comm: "rampart", args: "rampart --config /tmp/policy.yaml serve", want: true},
+		{name: "different rampart command", comm: "rampart", args: "rampart doctor"},
+		{name: "different executable", comm: "/usr/bin/sleep", args: "sleep 60"},
+		{name: "name substring", comm: "/tmp/not-rampart", args: "/tmp/not-rampart serve"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRampartServeCommand(tt.comm, tt.args); got != tt.want {
+				t.Fatalf("isRampartServeCommand(%q, %q) = %v, want %v", tt.comm, tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSamePath(t *testing.T) {
 	tests := []struct {
 		a, b string
