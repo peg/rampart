@@ -306,8 +306,7 @@ run_preload() {
   port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   mkdir -p "${artifact_dir}/audit"
   mkdir -p "${isolated_home}/.ssh"
-  printf '%s\n' '-----BEGIN OPENSSH PRIVATE KEY-----' 'rampart-lab-canary' '-----END OPENSSH PRIVATE KEY-----' \
-    >"${isolated_home}/.ssh/id_rsa"
+  printf '%s\n' 'rampart-lab-private-credential-canary' >"${isolated_home}/.ssh/id_rsa"
   chmod 600 "${isolated_home}/.ssh/id_rsa"
   HOME="$isolated_home" \
     XDG_CONFIG_HOME="$isolated_home/.config" \
