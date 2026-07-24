@@ -8,6 +8,8 @@
  *   2. The session trajectory contains a native Codex `bash` tool call.
  *   3. Rampart wrote a correlated audit event for that command as canonical
  *      tool `exec`.
+ *   4. A second safe command reached OpenClaw's native plugin approval queue,
+ *      was approved once, resumed, executed, and produced correlated proof.
  *
  * The test may only operate beneath an explicit disposable isolation root. It
  * refuses primary OpenClaw state, workspaces, sessions, memory, and services.
@@ -38,12 +40,17 @@ if (!yes) {
   console.error([
     'Refusing to run live OpenClaw runtime regression without explicit opt-in.',
     '',
-    'This test temporarily enables the Rampart OpenClaw plugin, restarts OpenClaw',
-    'user services, starts a local Rampart server, and runs one real OpenClaw',
-    'Codex app-server turn.',
+    'This test uses a prepared disposable OpenClaw state, starts a local Rampart',
+    'server, and runs real OpenClaw Codex app-server turns.',
     '',
     'Run intentionally from the repo root with:',
-    '  RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs',
+    '  RAMPART_OPENCLAW_RUNTIME=1 \\',
+    '  RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root \\',
+    '  HOME=/path/to/disposable/root/home \\',
+    '  OPENCLAW_STATE_DIR=/path/to/disposable/root/home/.openclaw \\',
+    '  OPENCLAW_CONFIG_PATH=/path/to/disposable/root/home/.openclaw/openclaw.json \\',
+    '  RAMPART_OPENCLAW_RESTART_SERVICES= \\',
+    '  node scripts/test-openclaw-codex-native-audit.mjs',
   ].join('\n'));
   process.exit(2);
 }
@@ -86,7 +93,8 @@ if (restartServices.length > 0) {
   process.exit(2);
 }
 
-const marker = `rampart-runtime-codex-shell-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}`;
+const runStamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+const marker = `rampart-runtime-codex-shell-${runStamp}`;
 const sessionId = marker;
 const command = `printf '%s\\n' '${marker}'`;
 const prompt = [
@@ -95,17 +103,25 @@ const prompt = [
   command,
   'Do not use any other tool. Reply with only the command stdout.',
 ].join(' ');
+const approvalMarker = `rampart-runtime-approved-shell-${runStamp}`;
+const approvalSessionId = approvalMarker;
+const approvalCommand = `python3 -c "print('${approvalMarker}')"`;
+const approvalPrompt = [
+  'This is a controlled Rampart/OpenClaw approval and resume regression test.',
+  'Use the native shell/terminal/bash command tool exactly once to run:',
+  approvalCommand,
+  'Wait for approval if requested. Do not use any other tool. Reply with only the command stdout.',
+].join(' ');
 
 let tmpRoot;
 let auditDir;
 let server;
 let serverBinary;
 let serverLogs = '';
-let originalConfig = null;
-let configChanged = false;
 let tokenExisted = false;
 let tokenBackup = null;
 let cleanupErrors = [];
+let activeAgentChild = null;
 
 function redact(text) {
   return String(text ?? '')
@@ -151,6 +167,55 @@ function run(cmd, args = [], opts = {}) {
   });
 }
 
+function startCaptured(cmd, args = [], opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const child = spawn(cmd, args, {
+    cwd: opts.cwd ?? repoRoot,
+    env: opts.env ?? process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  activeAgentChild = child;
+  let stdout = '';
+  let stderr = '';
+  const completion = new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), 3_000).unref?.();
+      reject(new Error(`${cmd} ${args.join(' ')} timed out after ${timeoutMs}ms\nstdout:\n${redact(stdout)}\nstderr:\n${redact(stderr)}`));
+    }, timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (activeAgentChild === child) activeAgentChild = null;
+      if (code === 0) {
+        resolvePromise({ stdout, stderr, code, signal });
+      } else {
+        reject(new Error(`${cmd} ${args.join(' ')} exited ${code ?? signal}\nstdout:\n${redact(stdout)}\nstderr:\n${redact(stderr)}`));
+      }
+    });
+  });
+  return { child, completion };
+}
+
+function parseOpenClawJSON(output, label) {
+  const lines = String(output ?? '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i].trimStart();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) continue;
+    try {
+      return JSON.parse(lines.slice(i).join('\n'));
+    } catch {
+      // Migration notices can themselves begin with "[state-migrations]".
+    }
+  }
+  fail(`${label} did not contain a valid JSON object or array:\n${redact(output).slice(-4000)}`);
+}
+
 async function pathExists(path) {
   try {
     await access(path);
@@ -176,19 +241,6 @@ async function waitForHealth(url, timeoutMs = 45_000) {
   fail(`Rampart health check did not become ready at ${url}: ${lastErr?.message ?? 'unknown error'}\nserver logs:\n${redact(serverLogs).split('\n').slice(-40).join('\n')}`);
 }
 
-async function restartOpenClaw(reason) {
-  if (restartServices.length === 0) {
-    console.warn(`[runtime-regression] Skipping OpenClaw restart for ${reason} because RAMPART_OPENCLAW_RESTART_SERVICES is empty.`);
-    return;
-  }
-  for (const service of restartServices) {
-    await run('systemctl', ['--user', 'restart', service], { timeoutMs: 45_000, cwd: repoRoot });
-  }
-  for (const service of restartServices) {
-    await run('systemctl', ['--user', 'is-active', service], { timeoutMs: 15_000, cwd: repoRoot });
-  }
-}
-
 async function backupToken() {
   tokenBackup = join(tmpRoot, 'rampart-token.backup');
   tokenExisted = await pathExists(tokenPath);
@@ -205,35 +257,22 @@ async function restoreToken() {
   }
 }
 
-async function configureOpenClaw() {
-  originalConfig = await readFile(openclawConfigPath, 'utf8');
-  const cfg = JSON.parse(originalConfig);
-  cfg.plugins ??= {};
-  cfg.plugins.allow ??= [];
-  if (!cfg.plugins.allow.includes('rampart')) cfg.plugins.allow.push('rampart');
-  cfg.plugins.entries ??= {};
-  cfg.plugins.entries.rampart ??= {};
-  cfg.plugins.entries.rampart.enabled = true;
-  cfg.plugins.entries.rampart.config ??= {};
-  cfg.plugins.entries.rampart.config.serveUrl = serveUrl;
-  cfg.plugins.entries.rampart.config.failOpen = false;
-
-  const next = `${JSON.stringify(cfg, null, 2)}\n`;
-  if (next !== originalConfig) {
-    await writeFile(openclawConfigPath, next, 'utf8');
-    configChanged = true;
+async function validateOpenClawConfiguration() {
+  const cfg = JSON.parse(await readFile(openclawConfigPath, 'utf8'));
+  const allow = cfg?.plugins?.allow;
+  const entry = cfg?.plugins?.entries?.rampart;
+  const pluginConfig = entry?.config;
+  if (Array.isArray(allow) && !allow.includes('rampart')) {
+    fail('Disposable OpenClaw state must include rampart in plugins.allow.');
+  }
+  if (!entry || entry.enabled === false) {
+    fail('Disposable OpenClaw state must have plugins.entries.rampart.enabled=true.');
+  }
+  if (pluginConfig?.serveUrl !== serveUrl || pluginConfig?.failOpen !== false) {
+    fail(`Disposable OpenClaw state must configure Rampart with serveUrl=${serveUrl} and failOpen=false before its isolated gateway starts.`);
   }
 
   await run('openclaw', ['config', 'validate'], { timeoutMs: 30_000, cwd: repoRoot });
-  await restartOpenClaw('temporary Rampart plugin enablement');
-}
-
-async function restoreOpenClawConfig() {
-  if (originalConfig !== null && configChanged) {
-    await writeFile(openclawConfigPath, originalConfig, 'utf8');
-    await run('openclaw', ['config', 'validate'], { timeoutMs: 30_000, cwd: repoRoot });
-    await restartOpenClaw('Rampart plugin config restore');
-  }
 }
 
 async function startRampart() {
@@ -304,29 +343,90 @@ async function newestAuditEvents() {
   return events;
 }
 
-async function runOpenClawTurn() {
-  const result = await run('openclaw', [
+function openClawAgentArgs(turnSessionId, turnPrompt) {
+  return [
     'agent',
     '--agent', agentId,
-    '--session-id', sessionId,
-    '--message', prompt,
+    '--session-id', turnSessionId,
+    '--message', turnPrompt,
     '--json',
     '--timeout', process.env.RAMPART_OPENCLAW_AGENT_TIMEOUT || '180',
+  ];
+}
+
+async function runOpenClawTurn(turnSessionId, turnPrompt, expectedMarker) {
+  const result = await run('openclaw', [
+    ...openClawAgentArgs(turnSessionId, turnPrompt),
   ], { timeoutMs: Number(process.env.RAMPART_OPENCLAW_AGENT_TIMEOUT_MS || '240000'), cwd: repoRoot });
 
   const combined = `${result.stdout}\n${result.stderr}`;
-  if (!combined.includes(marker)) {
-    fail(`OpenClaw turn completed but output did not include marker ${marker}. Output:\n${redact(combined).slice(-4000)}`);
+  if (!combined.includes(expectedMarker)) {
+    fail(`OpenClaw turn completed but output did not include marker ${expectedMarker}. Output:\n${redact(combined).slice(-4000)}`);
   }
 }
 
-async function verifyCodexAppServerArtifact() {
-  const path = join(sessionsDir, `${sessionId}.jsonl.codex-app-server.json`);
+async function runApprovedOpenClawTurn() {
+  const turn = startCaptured('openclaw', openClawAgentArgs(approvalSessionId, approvalPrompt), {
+    timeoutMs: Number(process.env.RAMPART_OPENCLAW_AGENT_TIMEOUT_MS || '240000'),
+    cwd: repoRoot,
+  });
+  try {
+    const approval = await waitForPluginApproval(approvalMarker);
+    await run('openclaw', [
+      'gateway',
+      'call',
+      'plugin.approval.resolve',
+      '--params', JSON.stringify({ id: approval.id, decision: 'allow-once' }),
+      '--json',
+      '--timeout', '15000',
+    ], { timeoutMs: 30_000, cwd: repoRoot });
+    const result = await turn.completion;
+    const combined = `${result.stdout}\n${result.stderr}`;
+    if (!combined.includes(approvalMarker)) {
+      fail(`Approved OpenClaw turn completed but output did not include marker ${approvalMarker}. Output:\n${redact(combined).slice(-4000)}`);
+    }
+    return approval;
+  } catch (err) {
+    if (turn.child.exitCode === null && turn.child.signalCode === null) {
+      turn.child.kill('SIGTERM');
+    }
+    void turn.completion.catch(() => {});
+    throw err;
+  }
+}
+
+async function waitForPluginApproval(expectedMarker, timeoutMs = 45_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastPayload = null;
+  while (Date.now() < deadline) {
+    const result = await run('openclaw', [
+      'gateway',
+      'call',
+      'plugin.approval.list',
+      '--json',
+      '--timeout', '15000',
+    ], { timeoutMs: 30_000, cwd: repoRoot });
+    const payload = parseOpenClawJSON(result.stdout, 'plugin.approval.list');
+    lastPayload = payload;
+    const records = Array.isArray(payload)
+      ? payload
+      : (payload?.pending ?? payload?.approvals ?? payload?.result ?? []);
+    const match = Array.isArray(records)
+      ? records.find((record) => JSON.stringify(record?.request ?? record).includes(expectedMarker))
+      : null;
+    if (match?.id) return match;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  fail(`OpenClaw did not expose a pending plugin approval for ${expectedMarker}. Last payload: ${redact(JSON.stringify(lastPayload))}`);
+}
+
+async function verifyCodexAppServerArtifact(turnSessionId) {
+  const path = join(sessionsDir, `${turnSessionId}.jsonl.codex-app-server.json`);
   if (!existsSync(path)) {
     fail(`missing Codex app-server metadata file: ${path}`);
   }
   const meta = JSON.parse(await readFile(path, 'utf8'));
-  if (!String(meta.sessionFile || '').endsWith(`${sessionId}.jsonl`)) {
+  if (!String(meta.sessionFile || '').endsWith(`${turnSessionId}.jsonl`)) {
     fail(`Codex app-server metadata did not point at this session file: ${path}`);
   }
   if (!meta.model) {
@@ -335,8 +435,8 @@ async function verifyCodexAppServerArtifact() {
   return path;
 }
 
-async function verifyTrajectoryBashCall() {
-  const path = join(sessionsDir, `${sessionId}.trajectory.jsonl`);
+async function verifyTrajectoryBashCall(turnSessionId, expectedMarker) {
+  const path = join(sessionsDir, `${turnSessionId}.trajectory.jsonl`);
   if (!existsSync(path)) {
     fail(`missing OpenClaw trajectory file: ${path}`);
   }
@@ -344,19 +444,19 @@ async function verifyTrajectoryBashCall() {
   const bashCall = events.find((evt) => (
     evt?.type === 'tool.call' &&
     evt?.data?.name === 'bash' &&
-    JSON.stringify(evt.data.arguments || {}).includes(marker)
+    JSON.stringify(evt.data.arguments || {}).includes(expectedMarker)
   ));
   if (!bashCall) {
     const toolNames = events
       .filter((evt) => evt?.type === 'tool.call')
       .map((evt) => evt?.data?.name)
       .filter(Boolean);
-    fail(`trajectory did not contain a native bash tool.call for ${marker}; observed tools: ${JSON.stringify(toolNames)}`);
+    fail(`trajectory did not contain a native bash tool.call for ${expectedMarker}; observed tools: ${JSON.stringify(toolNames)}`);
   }
   return path;
 }
 
-async function verifyRampartAudit() {
+async function verifyRampartAudit(turnSessionId, expectedMarker, expectedAction) {
   const deadline = Date.now() + 10_000;
   let events = [];
   while (Date.now() < deadline) {
@@ -365,8 +465,9 @@ async function verifyRampartAudit() {
       const request = JSON.stringify(evt.request || evt.params || {});
       const session = String(evt.session || '').toLowerCase();
       return evt.tool === 'exec' &&
-        request.includes(marker) &&
-        session.includes(sessionId.toLowerCase());
+        request.includes(expectedMarker) &&
+        session.includes(turnSessionId.toLowerCase()) &&
+        (!expectedAction || evt.decision?.action === expectedAction);
     });
     if (match) return match;
     await new Promise((r) => setTimeout(r, 500));
@@ -378,12 +479,14 @@ async function verifyRampartAudit() {
     action: evt.decision?.action,
     request: evt.request,
   }));
-  fail(`Rampart audit did not contain canonical exec event for native bash marker ${marker}. Observed audit events: ${redact(JSON.stringify(compact, null, 2)).slice(-4000)}`);
+  fail(`Rampart audit did not contain canonical exec event for native bash marker ${expectedMarker}${expectedAction ? ` with decision ${expectedAction}` : ''}. Observed audit events: ${redact(JSON.stringify(compact, null, 2)).slice(-4000)}`);
 }
 
 async function cleanup() {
+  if (activeAgentChild && activeAgentChild.exitCode === null && activeAgentChild.signalCode === null) {
+    try { activeAgentChild.kill('SIGTERM'); } catch (err) { cleanupErrors.push(`stop OpenClaw test turn: ${err.message}`); }
+  }
   try { await stopRampart(); } catch (err) { cleanupErrors.push(`stop rampart: ${err.message}`); }
-  try { await restoreOpenClawConfig(); } catch (err) { cleanupErrors.push(`restore openclaw config: ${err.message}`); }
   try { await restoreToken(); } catch (err) { cleanupErrors.push(`restore rampart token: ${err.message}`); }
   if (tmpRoot && process.env.RAMPART_KEEP_RUNTIME_ARTIFACTS !== '1') {
     try { await rm(tmpRoot, { recursive: true, force: true }); } catch (err) { cleanupErrors.push(`remove tmp: ${err.message}`); }
@@ -401,12 +504,18 @@ try {
   console.log(`[runtime-regression] auditDir=${auditDir}`);
   await startRampart();
   console.log(`[runtime-regression] Rampart serve ready at ${serveUrl}`);
-  await configureOpenClaw();
-  console.log('[runtime-regression] OpenClaw plugin temporarily enabled and services restarted');
-  await runOpenClawTurn();
-  const appServerPath = await verifyCodexAppServerArtifact();
-  const trajectoryPath = await verifyTrajectoryBashCall();
-  const auditEvent = await verifyRampartAudit();
+  await validateOpenClawConfiguration();
+  console.log('[runtime-regression] Disposable OpenClaw plugin configuration validated');
+  await runOpenClawTurn(sessionId, prompt, marker);
+  const appServerPath = await verifyCodexAppServerArtifact(sessionId);
+  const trajectoryPath = await verifyTrajectoryBashCall(sessionId, marker);
+  const auditEvent = await verifyRampartAudit(sessionId, marker, 'allow');
+
+  console.log(`[runtime-regression] approvalMarker=${approvalMarker}`);
+  const approval = await runApprovedOpenClawTurn();
+  const approvalAppServerPath = await verifyCodexAppServerArtifact(approvalSessionId);
+  const approvalTrajectoryPath = await verifyTrajectoryBashCall(approvalSessionId, approvalMarker);
+  const approvalAuditEvent = await verifyRampartAudit(approvalSessionId, approvalMarker, 'ask');
 
   console.log(JSON.stringify({
     ok: true,
@@ -419,6 +528,20 @@ try {
       agent: auditEvent.agent,
       session: auditEvent.session,
       action: auditEvent.decision?.action,
+    },
+    approvedExecution: {
+      marker: approvalMarker,
+      approvalId: approval.id,
+      resolution: 'allow-once',
+      appServerMetadata: approvalAppServerPath,
+      trajectory: approvalTrajectoryPath,
+      rampartAudit: {
+        id: approvalAuditEvent.id,
+        tool: approvalAuditEvent.tool,
+        agent: approvalAuditEvent.agent,
+        session: approvalAuditEvent.session,
+        action: approvalAuditEvent.decision?.action,
+      },
     },
   }, null, 2));
 } catch (err) {

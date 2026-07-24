@@ -136,6 +136,9 @@ func runDoctorFix(cmd *cobra.Command) error {
 			return nil
 		} else {
 			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Native plugin repair failed: %v\n", err)
+			if version, modern := modernOpenClawVersion(); modern {
+				return fmt.Errorf("native plugin repair failed on OpenClaw %s; refusing unsafe legacy dist patch fallback: %w", version, err)
+			}
 		}
 	}
 

@@ -166,10 +166,16 @@ node scripts/compat-openclaw-latest.mjs --npm-latest
 That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as recommended, also run the opt-in live runtime audit regression:
 
 ```bash
-RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
+export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export OPENCLAW_STATE_DIR="$HOME/.openclaw"
+export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
+RAMPART_OPENCLAW_RUNTIME=1 \
+RAMPART_OPENCLAW_RESTART_SERVICES= \
+node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-The live regression temporarily enables the Rampart OpenClaw plugin and restarts local OpenClaw user services, then requires a real OpenClaw Codex app-server turn with correlated trajectory and Rampart canonical `exec` audit evidence.
+Use a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses primary-state paths and service restarts. It requires real Codex app-server turns with correlated trajectory and Rampart canonical `exec` audit evidence, including a native plugin approval, `allow-once`, exact resume, and successful execution.
 
 Or check plugin status directly:
 

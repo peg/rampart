@@ -62,15 +62,22 @@ It still does **not** prove that the currently installed OpenClaw + Codex app-se
 Run this only when you intentionally want a real local OpenClaw runtime check:
 
 ```bash
-RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
+export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export OPENCLAW_STATE_DIR="$HOME/.openclaw"
+export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
+RAMPART_OPENCLAW_RUNTIME=1 \
+RAMPART_OPENCLAW_RESTART_SERVICES= \
+node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-The live regression temporarily enables the Rampart OpenClaw plugin, points it at an ephemeral local `rampart serve`, restarts the OpenClaw user services, runs one real OpenClaw Codex app-server turn, and restores the prior OpenClaw config/token state before exit.
+Run it only with a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script starts the ephemeral policy service at that address, runs real OpenClaw Codex app-server turns, leaves OpenClaw config untouched, and restores the isolated token state. It proves routine native-shell interception plus a native plugin approval, `allow-once`, exact resume, and successful execution.
 
 Pass criteria:
 - a `*.jsonl.codex-app-server.json` metadata file exists for the test session
 - the OpenClaw trajectory contains a native Codex `bash` tool call for the marker command
 - the temporary Rampart audit log contains a correlated canonical `exec` event for that marker command
+- a second safe command is approved once through `plugin.approval.resolve`, resumes, executes, and has correlated trajectory plus Rampart `ask` audit evidence
 
 A successful assistant response or OpenClaw trajectory alone is not enough; this test fails unless Rampart audit proves the native shell call crossed the policy path.
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,95 @@ func TestResolveOpenClawStateDirHonorsConfigEnv(t *testing.T) {
 	}
 	if stateDir != tmp || configPath != cfg {
 		t.Fatalf("stateDir/configPath = %q/%q, want %q/%q", stateDir, configPath, tmp, cfg)
+	}
+}
+
+func TestResolveOpenClawStateDirIgnoresMigrationNotice(t *testing.T) {
+	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
+	stateDir := t.TempDir()
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	shim := "#!/bin/sh\n" +
+		"printf '%s\\n' '[state-migrations] Legacy state migration notes:'\n" +
+		"printf '%s\\n' '- Left plugin install index in place because shared SQLite state has conflicting plugin install metadata for: rampart'\n" +
+		"printf '%s\\n' '" + configPath + "'\n"
+	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENCLAW_STATE_DIR", "")
+	t.Setenv("OPENCLAW_CONFIG_PATH", "")
+
+	gotStateDir, gotConfigPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		t.Fatalf("resolveOpenClawStateDir returned error: %v", err)
+	}
+	if gotStateDir != stateDir || gotConfigPath != configPath {
+		t.Fatalf("stateDir/configPath = %q/%q, want %q/%q", gotStateDir, gotConfigPath, stateDir, configPath)
+	}
+}
+
+func TestGetOpenClawPluginStateWithMigrationNotice(t *testing.T) {
+	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
+	stateDir := t.TempDir()
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(`{"version":"1.3.0","activation":{"onStartup":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	shim := "#!/bin/sh\n" +
+		"printf '%s\\n' '[state-migrations] Legacy state migration notes:'\n" +
+		"printf '%s\\n' '- Left plugin install index in place because shared SQLite state has conflicting plugin install metadata for: rampart'\n" +
+		"printf '%s\\n' '" + configPath + "'\n"
+	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENCLAW_STATE_DIR", "")
+	t.Setenv("OPENCLAW_CONFIG_PATH", "")
+	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+
+	state := getOpenClawPluginState()
+	if !state.Installed || !state.Allowed || !state.Enabled {
+		t.Fatalf("expected installed, allowed, enabled plugin; got %#v", state)
+	}
+}
+
+func TestEnsureOpenClawApprovalHardeningRefusesLegacyPatchOnModernOpenClaw(t *testing.T) {
+	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
+	home := t.TempDir()
+	testSetHome(t, home)
+	stateDir := filepath.Join(home, ".openclaw")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	shim := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' '2026.7.1-2'
+  exit 0
+fi
+printf '%s\n' "$OPENCLAW_CONFIG_PATH"
+`
+	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENCLAW_CONFIG_PATH", filepath.Join(stateDir, "openclaw.json"))
+
+	var stdout, stderr bytes.Buffer
+	err := ensureOpenClawApprovalHardening(&stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "refusing legacy approval bundle patching") {
+		t.Fatalf("expected modern OpenClaw legacy-patch refusal, got %v", err)
 	}
 }
 

@@ -73,9 +73,17 @@ The Hermes harness installs or uses an isolated Hermes runtime and never touches
 For OpenClaw's recommended support tier, also run the opt-in runtime audit regression before a release promotion:
 
 ```bash
-RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
+export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export OPENCLAW_STATE_DIR="$HOME/.openclaw"
+export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
+RAMPART_OPENCLAW_RUNTIME=1 \
+RAMPART_OPENCLAW_RESTART_SERVICES= \
+node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-That live regression is intentionally separate from scheduled CI because it temporarily enables the OpenClaw Rampart plugin, restarts local OpenClaw user services, runs one real OpenClaw Codex app-server turn, and requires correlated OpenClaw trajectory plus Rampart canonical `exec` audit proof.
+The isolation root must contain a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false` before starting that gateway. Never point the test at a primary OpenClaw home. The script refuses paths outside the isolation root and refuses service restarts.
+
+That live regression is intentionally separate from scheduled CI because it uses a real OpenClaw Codex app-server. It proves both routine native-shell interception and the complete hosted approval path: pending plugin approval, `allow-once`, exact tool-call resume, successful execution, trajectory evidence, and correlated Rampart canonical `exec` audit evidence.
 
 A scheduled/manual GitHub Actions workflow runs these upstream checks outside the core unit-test matrix so external upstream breakage is visible without destabilizing ordinary pull-request CI.

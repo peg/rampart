@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Windows token hardening cannot lock domain or AzureAD users out of Rampart** — Token ACLs now use the current process SID through native Windows security APIs, protect only the token file, and fail setup safely if hardening cannot be applied.
+- **OpenClaw 2026.7 migration notices no longer break protection detection or verification** — Rampart extracts the real config path and JSON gateway payload when OpenClaw prints state-migration notices first, so existing upgraded installations continue to detect their native plugin and pass live canaries.
+- **Modern OpenClaw never falls into legacy bundle patching after a detection error** — Setup and `doctor --fix` refuse the legacy dist-patch fallback on native-plugin-capable OpenClaw releases.
+- **The live OpenClaw release gate proves successful approval resume** — The isolated regression now requires a native plugin approval, `allow-once`, exact tool-call resume, successful execution, and correlated trajectory/audit evidence; its documented invocation matches the isolation guard.
 - **OpenClaw policy responses fail closed** — Malformed, empty, array, or unknown policy responses block the tool call instead of silently becoming an allow decision.
 - **Rampart tokens stay on the loopback trust boundary** — Managed OpenClaw configuration forces the local policy URL, and the plugin refuses to send its admin token to non-loopback endpoints.
 - **Managed policies are loaded before enforcement and hot-reload correctly** — Fresh protection no longer starts with only one managed layer, and `rampart serve` now reloads YAML files created, replaced, renamed, or removed in the policy directory.

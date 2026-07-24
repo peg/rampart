@@ -37,7 +37,8 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          # Latest OpenClaw requires >=22.22.3 or a supported Node 24 release.
+          node-version: '24'
 
       - name: Validate against latest OpenClaw
         run: node scripts/compat-openclaw-latest.mjs --npm-latest
