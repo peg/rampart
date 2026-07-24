@@ -38,6 +38,8 @@ go install github.com/peg/rampart/cmd/rampart@latest
 irm https://rampart.sh/install.ps1 | iex
 ```
 
+> **Upgrading from Rampart 1.2.x on Windows?** Rerun the PowerShell installer above. It repairs the affected legacy `~\.rampart` ACL before replacing the binary. If that directory is locked, `rampart upgrade` may be unable to start and cannot perform the repair itself.
+
 For an unattended OpenClaw agent, the zero-configuration path is:
 
 ```bash

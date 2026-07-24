@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.0] - 2026-07-24
 
+> **Windows upgrade guidance:** If you installed Rampart 1.2.x on Windows, rerun the official PowerShell installer:
+> `irm https://rampart.sh/install.ps1 | iex`. The installer repairs the affected legacy `~\.rampart` ACL before replacing the binary. Do not rely on `rampart upgrade` if Windows cannot execute `rampart.exe` from the locked directory.
+
 ### Added
 
 - **Zero-configuration OpenClaw protection** — `rampart protect openclaw` installs managed Guard and OpenClaw policies, enables the bundled native plugin, starts the local policy service, configures fail-closed degraded behavior, restarts the gateway, and verifies the boundary with safe behavioral canaries.
