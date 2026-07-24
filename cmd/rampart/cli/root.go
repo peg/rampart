@@ -69,7 +69,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 
 	cmd := &cobra.Command{
 		Use:           "rampart",
-		Short:         "Runtime defense for AI agents",
+		Short:         "Independent safety guard for unattended AI agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -129,6 +129,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	// benchCmd removed in v0.9 cleanup — use `go test -bench` instead
 	// benchCmd := newBenchCmd(opts)
 	quickstartCmd := newQuickstartCmd()
+	protectCmd := newProtectCmd()
+	verifyCmd := newVerifyCmd()
 	upgradeCmd := newUpgradeCmd(opts)
 	uninstallCmd := newUninstallCmd(opts)
 	allowCmd := newAllowCmd(opts)
@@ -138,6 +140,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 
 	setupCmd.GroupID = groupSetup
 	quickstartCmd.GroupID = groupSetup
+	protectCmd.GroupID = groupSetup
+	verifyCmd.GroupID = groupSetup
 	upgradeCmd.GroupID = groupSetup
 	uninstallCmd.GroupID = groupSetup
 	doctorCmd.GroupID = groupSetup
@@ -197,6 +201,8 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(testCmd)
 	// cmd.AddCommand(benchCmd)
 	cmd.AddCommand(quickstartCmd)
+	cmd.AddCommand(protectCmd)
+	cmd.AddCommand(verifyCmd)
 	cmd.AddCommand(upgradeCmd)
 	cmd.AddCommand(uninstallCmd)
 	cmd.AddCommand(allowCmd)

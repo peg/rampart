@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-03-03 | Applies to: v0.7.4
+> Last reviewed: 2026-07-20 | Applies to: v1.3.0
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -103,7 +103,7 @@ An agent could encode commands to bypass pattern matching:
 
 ### 5. OpenClaw Integration Boundaries
 
-OpenClaw now has a native plugin path, which is the preferred integration. Rampart keeps global `tools.exec.ask` off by default, evaluates exec calls first, and only sets `ask: "always"` on exec calls that matched a Rampart `ask` rule. That gives you native OpenClaw approval cards without prompting on every routine command.
+OpenClaw has a native plugin path, which is the preferred integration. Rampart keeps global `tools.exec.ask` off by default, evaluates tool calls first, and returns OpenClaw's native `requireApproval` result only for calls that match a Rampart `ask` rule. That gives you native OpenClaw approval cards without prompting on every routine action.
 
 **What this means in practice:**
 - **Allow** rules pass through normally, with no approval prompt
@@ -124,14 +124,14 @@ Rampart does **not** behave identically across every integration when policy eva
 
 **Current behavior:**
 - `rampart wrap` and `rampart preload` default to **fail-open** — if `rampart serve` is unreachable, commands continue without policy checks unless you configure fail-closed behavior.
-- The native OpenClaw plugin is stricter: sensitive tools such as `exec`, `write`, `edit`, `browser`, and `message` block when `rampart serve` is unavailable, while explicitly configured lower-risk tools (`read`, `web_fetch`, `web_search`, `image` by default) remain fail-open.
+- The native OpenClaw plugin supports per-tool degraded behavior. A manual plugin setup keeps explicitly configured lower-risk tools fail-open by default; `rampart protect openclaw` removes those exceptions and configures every tool to fail closed.
 - Native hook integrations (Claude Code, Cline) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path.
 
 **Mitigations:**
 - Monitor the Rampart service and alert on downtime
 - Use systemd/launchd to auto-restart on failure (`rampart serve install` does this)
 - Prefer native hooks or the native OpenClaw plugin when you want less reliance on a long-running local service
-- For OpenClaw, tighten `failOpenTools` if your environment prefers a stricter degraded-mode posture
+- For OpenClaw, use `rampart protect openclaw` for the strict fail-closed posture, or manage `failOpenTools` explicitly in advanced setups
 
 **Trade-off:** Fail-open improves availability but creates a temporary security gap during outages. Fail-closed reduces bypass risk but can break agent workflows when the policy service is sick. Rampart makes that trade-off explicit per integration rather than pretending one answer fits everything.
 
@@ -197,7 +197,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
-| `rampart setup openclaw` | ✅ | ✅ | ❌ | ❌ |
+| `rampart protect openclaw` | ✅ | ✅ | ❌ | ❌ |
 | `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
 | `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |

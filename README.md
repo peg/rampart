@@ -4,7 +4,7 @@
 
 **A firewall for AI coding agents.**
 
-[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.25.12+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/peg/rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/peg/rampart/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/peg/rampart?style=flat)](https://github.com/peg/rampart/releases)
@@ -29,7 +29,7 @@ brew install peg/tap/rampart
 # One-line install (no sudo required)
 curl -fsSL https://rampart.sh/install | bash
 
-# Go install (requires Go 1.24+)
+# Go install (requires Go 1.25.12+)
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
@@ -38,20 +38,37 @@ go install github.com/peg/rampart/cmd/rampart@latest
 irm https://rampart.sh/install.ps1 | iex
 ```
 
-After installing, run `rampart quickstart` or follow the setup steps below.
+For an unattended OpenClaw agent, the zero-configuration path is:
+
+```bash
+rampart protect openclaw
+```
 
 ---
 
 ## Quick start
 
-Pick your agent and run one command:
+Protect OpenClaw with managed defaults—no policy file to read or write:
+
+```bash
+rampart protect openclaw
+```
+
+This installs the native plugin and local service, activates fail-closed Guard
+defaults, restarts the gateway, and runs safe behavioral canaries through the
+live `before_tool_call` path. It does not ask the model to run anything.
+
+Recheck the boundary at any time:
+
+```bash
+rampart verify openclaw
+```
+
+Other integrations currently use the setup workflow:
 
 ```bash
 # Claude Code
 rampart setup claude-code
-
-# OpenClaw
-rampart setup openclaw
 
 # Hermes Agent (experimental)
 rampart setup hermes
@@ -66,7 +83,7 @@ rampart setup codex
 rampart wrap -- your-agent
 ```
 
-That's it. Verify everything is working:
+Check the broader installation state:
 
 ```bash
 rampart doctor
@@ -125,7 +142,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | Agent | Setup command | Integration |
 |-------|--------------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
-| **OpenClaw** | `rampart setup openclaw` | Native plugin + selective native approvals |
+| **OpenClaw** | `rampart protect openclaw` | Zero-config native guard + active verification |
 | **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex CLI** | `rampart setup codex` | Wrapper that runs Codex through `rampart preload` |
@@ -175,19 +192,37 @@ rampart setup claude-code --remove
 
 ## OpenClaw
 
-Native plugin integration is now the preferred setup on current OpenClaw builds:
+OpenClaw is Rampart's first zero-configuration protection target:
 
 ```bash
-rampart setup openclaw
+rampart protect openclaw
 ```
 
-This keeps OpenClaw's native approval UI while letting Rampart decide which commands actually need approval.
+The command installs and enables the native plugin, restores Rampart's managed
+OpenClaw and Guard policies, starts the background service, enables fail-closed
+degraded behavior, restarts the gateway, and actively verifies the result.
+Existing unrelated OpenClaw settings and custom Rampart policies are preserved.
+
+The managed Guard defaults focus on consequences:
+
+- routine local work continues without prompts
+- destructive commands and credential access are denied
+- publishing, deployment, privileged service changes, and cross-conversation messages require approval
+- read-only message actions and replies to the originating conversation remain available
+- if the policy service is unavailable, every OpenClaw tool is blocked
+
+`rampart verify openclaw` uses fixed safe canaries. It traverses the running
+plugin's normalization, message classification, policy request, degraded-mode,
+and decision-mapping code without executing a command, reading a file, sending a
+message, contacting an external host, or adding verification noise to the audit
+log. Verification requires Rampart's local admin token and rejects incomplete or
+stale plugin self-reports.
 
 `rampart serve` is part of this path. The plugin calls the local Rampart service for policy evaluation, approvals, and audit flow.
 
 ### How exec approvals work
 
-Rampart leaves global `tools.exec.ask` set to `"off"`, so routine shell commands do not spam you with approval prompts. When a Rampart policy returns `ask` for a specific exec call, the plugin reissues only that command with `ask: "always"`, which sends it through OpenClaw's native approval card.
+Rampart leaves global `tools.exec.ask` set to `"off"`, so routine shell commands do not spam you with approval prompts. When a Rampart policy returns `ask`, the plugin returns OpenClaw's native `requireApproval` result for that specific tool call.
 
 In practice, that means:
 
@@ -197,17 +232,19 @@ In practice, that means:
 
 ### What the plugin protects
 
-**1. Native plugin**: evaluates tool calls in `before_tool_call`, blocks deny decisions immediately, and routes selective exec approvals through OpenClaw's native approval UI.
+**1. Native plugin**: evaluates tool calls in `before_tool_call`, blocks deny decisions immediately, and routes selective approvals through OpenClaw's native approval UI.
 
-**2. Selective native approvals**: Rampart decides when an exec should require approval, and OpenClaw shows the approval card only for those matched commands.
+**2. Selective native approvals**: Rampart decides when an action should require approval, and OpenClaw shows the approval card only for those matched calls.
 
-**3. Bundled policy profile**: installs the OpenClaw-focused policy profile used by the plugin setup.
+**3. Managed Guard defaults**: layers consequence-oriented safeguards over the OpenClaw profile without requiring YAML configuration.
+
+For advanced/manual integration work, `rampart setup openclaw` remains available.
 
 ### Legacy compatibility path
 
 `rampart setup openclaw --patch-tools` still exists as a compatibility option for older setups, but it is no longer the recommended path. It modifies OpenClaw dist files and must be re-applied after upgrades.
 
-Run `rampart doctor` at any time to verify the current OpenClaw integration state.
+Run `rampart verify openclaw` to test behavior; use `rampart doctor` for a wider configuration health report.
 
 ---
 
@@ -548,6 +585,8 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 
 ```bash
 # Setup
+rampart protect openclaw                    # Zero-config guard + live behavioral verification
+rampart verify openclaw                     # Re-run safe canaries through the live plugin
 rampart quickstart                           # Auto-detect, install, configure, health check
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
@@ -616,7 +655,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Agent | Method | Platforms |
 |-------|--------|-----------|
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
-| OpenClaw | `rampart setup openclaw` | Linux, macOS |
+| OpenClaw | `rampart protect openclaw` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS, Windows |
 | Codex CLI | `rampart setup codex` | Linux, macOS (requires `librampart.so`/`.dylib`) |
 | Claude Desktop | `rampart mcp` | All |
@@ -638,7 +677,7 @@ go build -o rampart ./cmd/rampart
 go test ./...
 ```
 
-Requires Go 1.24+.
+Requires Go 1.25.12+.
 
 ---
 

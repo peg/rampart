@@ -85,5 +85,5 @@ Recommended live checks:
 
 Important:
 - make sure `rampart-serve.service` is running before drawing conclusions
-- if Rampart serve is down, sensitive tools should now block instead of silently failing open; lower-risk tools listed in `failOpenTools` remain fail-open by configuration
+- if Rampart serve is down, sensitive tools block instead of silently failing open; manual installs may keep lower-risk tools in `failOpenTools`, while `rampart protect openclaw` configures every tool to fail closed
 - durable learned rules from the OpenClaw plugin are written to `~/.rampart/policies/user-overrides.yaml`

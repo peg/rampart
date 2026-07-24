@@ -43,7 +43,7 @@ This installs the `rampart` binary.
 
 ## Go Install
 
-Requires Go 1.24+:
+Requires Go 1.25.12+:
 
 ```bash
 go install github.com/peg/rampart/cmd/rampart@latest
@@ -97,7 +97,7 @@ volumes:
   rampart-audit:
 ```
 
-Available tags include full versions such as `1.2.0`, minor versions such as `1.2`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.2.0-rc.1`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+Available tags include full versions such as `1.3.0`, minor versions such as `1.3`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.3.0-rc.1`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
 
 ## Build from Source
 

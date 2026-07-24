@@ -1,14 +1,14 @@
 {
   "id": "rampart",
   "name": "Rampart",
-  "description": "AI agent firewall — YAML policy-as-code for every tool call",
+  "description": "Independent safety guard for unattended AI agent actions",
   "activation": {
     "onStartup": true,
     "onCapabilities": [
       "hook"
     ]
   },
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "peg",
   "homepage": "https://rampart.sh",
   "repository": "https://github.com/peg/rampart",

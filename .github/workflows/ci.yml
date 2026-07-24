@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2022]
-        go-version: ['1.25.11']
+        go-version: ['1.25.12']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -48,6 +48,10 @@ jobs:
           sh -n docs/install
           sh -n docs/install.sh
           sh -n scripts/install.sh
+
+      - name: Linux lab runner contract
+        if: runner.os != 'Windows'
+        run: make lab-runner-test
 
       - name: OpenClaw plugin regression tests
         if: runner.os != 'Windows'
@@ -151,7 +155,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25.11'
+          go-version: '1.25.12'
 
       - name: GoReleaser snapshot (all platforms, no publish)
         uses: goreleaser/goreleaser-action@v7

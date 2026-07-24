@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="${RAMPART_PRELOAD_SOURCE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 LIB_PATH="/tmp/librampart.so"
 ERR_OK="/tmp/rampart_preload_ok.stderr"
 ERR_BLOCK="/tmp/rampart_preload_block.stderr"
@@ -16,6 +16,8 @@ set +e
 RAMPART_DEBUG=1 \
 RAMPART_MODE=monitor \
 RAMPART_FAIL_OPEN=1 \
+RAMPART_AGENT=preload-test \
+RAMPART_SESSION=preload-test-allow \
 RAMPART_URL="${RAMPART_URL:-http://127.0.0.1:19090}" \
 LD_PRELOAD="$LIB_PATH" \
 /bin/sh -c 'echo rampart-preload-ok >/dev/null' 2>"$ERR_OK"
@@ -41,6 +43,8 @@ if [[ -n "${RAMPART_ADDR:-}" ]]; then
   RAMPART_DEBUG=1 \
   RAMPART_MODE=enforce \
   RAMPART_FAIL_OPEN=0 \
+  RAMPART_AGENT=preload-test \
+  RAMPART_SESSION=preload-test-deny \
   RAMPART_URL="${RAMPART_URL:-http://$RAMPART_ADDR}" \
   LD_PRELOAD="$LIB_PATH" \
   /bin/sh -c "$BLOCK_CMD" >/dev/null 2>"$ERR_BLOCK"

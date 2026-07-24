@@ -74,6 +74,60 @@ func TestIsWriteEvent(t *testing.T) {
 	}
 }
 
+func TestIsPolicyDirEvent(t *testing.T) {
+	dir := filepath.Join(string(filepath.Separator), "tmp", "rampart", "policies")
+	tests := []struct {
+		name  string
+		event fsnotify.Event
+		want  bool
+	}{
+		{name: "yaml write", event: fsnotify.Event{Name: filepath.Join(dir, "guard.yaml"), Op: fsnotify.Write}, want: true},
+		{name: "yml create", event: fsnotify.Event{Name: filepath.Join(dir, "custom.yml"), Op: fsnotify.Create}, want: true},
+		{name: "yaml remove", event: fsnotify.Event{Name: filepath.Join(dir, "old.yaml"), Op: fsnotify.Remove}, want: true},
+		{name: "yaml rename", event: fsnotify.Event{Name: filepath.Join(dir, "old.yaml"), Op: fsnotify.Rename}, want: true},
+		{name: "unrelated extension", event: fsnotify.Event{Name: filepath.Join(dir, "notes.txt"), Op: fsnotify.Write}},
+		{name: "nested directory", event: fsnotify.Event{Name: filepath.Join(dir, "nested", "guard.yaml"), Op: fsnotify.Write}},
+		{name: "different directory", event: fsnotify.Event{Name: filepath.Join(filepath.Dir(dir), "guard.yaml"), Op: fsnotify.Write}},
+		{name: "chmod only", event: fsnotify.Event{Name: filepath.Join(dir, "guard.yaml"), Op: fsnotify.Chmod}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPolicyDirEvent(tt.event, dir); got != tt.want {
+				t.Fatalf("isPolicyDirEvent(%v, %q) = %v, want %v", tt.event, dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStopBackgroundServeAllowsMissingPID(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	if err := stopBackgroundServe(&bytes.Buffer{}, true); err != nil {
+		t.Fatalf("stopBackgroundServe(missingOK=true): %v", err)
+	}
+}
+
+func TestIsRampartServeCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		comm string
+		args string
+		want bool
+	}{
+		{name: "serve", comm: "/usr/local/bin/rampart", args: "/usr/local/bin/rampart serve --port 9090", want: true},
+		{name: "serve with global flag", comm: "rampart", args: "rampart --config /tmp/policy.yaml serve", want: true},
+		{name: "different rampart command", comm: "rampart", args: "rampart doctor"},
+		{name: "different executable", comm: "/usr/bin/sleep", args: "sleep 60"},
+		{name: "name substring", comm: "/tmp/not-rampart", args: "/tmp/not-rampart serve"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRampartServeCommand(tt.comm, tt.args); got != tt.want {
+				t.Fatalf("isRampartServeCommand(%q, %q) = %v, want %v", tt.comm, tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSamePath(t *testing.T) {
 	tests := []struct {
 		a, b string

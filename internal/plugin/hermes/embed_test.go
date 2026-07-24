@@ -11,7 +11,7 @@ import (
 )
 
 func TestVersionReadsManifest(t *testing.T) {
-	if got, want := Version(), "1.2.0"; got != want {
+	if got, want := Version(), "1.3.0"; got != want {
 		t.Fatalf("Version() = %q, want %q", got, want)
 	}
 }

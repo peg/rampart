@@ -934,21 +934,25 @@ func ensureServeRunning(w io.Writer, errW io.Writer) error {
 	installCmd := osexec.Command(rampartBin, "serve", "install")
 	installCmd.Stdout = w
 	installCmd.Stderr = errW
-	if err := installCmd.Run(); err != nil {
-		return fmt.Errorf("rampart serve install failed: %w", err)
-	}
-
-	// Wait up to 3 seconds for serve to come up.
-	for i := 0; i < 6; i++ {
-		time.Sleep(500 * time.Millisecond)
-		if isSetupServeReachable() {
-			fmt.Fprintln(w, "✓ Rampart serve started (systemd service)")
-			return nil
+	installErr := installCmd.Run()
+	if installErr == nil {
+		// Wait up to 3 seconds for serve to come up.
+		for i := 0; i < 6; i++ {
+			time.Sleep(500 * time.Millisecond)
+			if isSetupServeReachable() {
+				fmt.Fprintln(w, "✓ Rampart serve started (system service)")
+				return nil
+			}
 		}
+		fmt.Fprintln(errW, "⚠ rampart serve service install did not become reachable; trying background fallback")
+	} else {
+		fmt.Fprintf(errW, "⚠ rampart serve service install failed (%v); trying background fallback\n", installErr)
 	}
 
-	fmt.Fprintln(errW, "⚠ rampart serve service install did not become reachable; trying background fallback")
 	if err := startServeBackgroundFallback(rampartBin, w, errW); err != nil {
+		if installErr != nil {
+			return fmt.Errorf("rampart serve service install failed (%v) and background fallback failed: %w", installErr, err)
+		}
 		return fmt.Errorf("rampart serve installed but not reachable after 3s; background fallback failed: %w", err)
 	}
 	return nil

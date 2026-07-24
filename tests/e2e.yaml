@@ -127,7 +127,7 @@ tests:
 
   - name: "deny: read ~/.ssh/id_rsa (read tool)"
     tool: read
-    params: {path: "/home/clap/.ssh/id_rsa"}
+    params: {path: "/home/rampart-test/.ssh/id_rsa"}
     expect: deny
 
   - name: "deny: cat /etc/shadow"
@@ -137,12 +137,12 @@ tests:
 
   - name: "deny: cat ~/.ssh/id_rsa"
     tool: exec
-    params: {command: "cat /home/clap/.ssh/id_rsa"}
+    params: {command: "cat /home/rampart-test/.ssh/id_rsa"}
     expect: deny
 
   - name: "allow: cat ~/.ssh/id_rsa.pub (public key OK)"
     tool: exec
-    params: {command: "cat /home/clap/.ssh/id_rsa.pub"}
+    params: {command: "cat /home/rampart-test/.ssh/id_rsa.pub"}
     expect: allow
 
   # ── Network exfil (must deny) ────────────────────────────────────────────────
@@ -210,7 +210,7 @@ tests:
 
   - name: "allow: read ~/.ssh/id_rsa.pub (read tool, public key)"
     tool: read
-    params: {path: "/home/clap/.ssh/id_rsa.pub"}
+    params: {path: "/home/rampart-test/.ssh/id_rsa.pub"}
     expect: allow
 
   # ── Self-modification protection ────────────────────────────────────────────

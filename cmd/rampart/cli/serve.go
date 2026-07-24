@@ -321,6 +321,16 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					return fmt.Errorf("serve: watch config file %s: %w", configAbs, err)
 				}
 			}
+			var policyDirAbs string
+			if effectiveDir != "" {
+				policyDirAbs, err = filepath.Abs(effectiveDir)
+				if err != nil {
+					return fmt.Errorf("serve: resolve policy directory %s: %w", effectiveDir, err)
+				}
+				if err := watcher.Add(policyDirAbs); err != nil {
+					return fmt.Errorf("serve: watch policy directory %s: %w", policyDirAbs, err)
+				}
+			}
 
 			logger.Info("serve: started",
 				"mode", mode,
@@ -533,7 +543,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					if !ok {
 						return nil
 					}
-					if usingEmbedded || !isWriteEvent(event) || !samePath(configAbs, event.Name) {
+					configChanged := !usingEmbedded && isWriteEvent(event) && samePath(configAbs, event.Name)
+					policyDirChanged := isPolicyDirEvent(event, policyDirAbs)
+					if !configChanged && !policyDirChanged {
 						continue
 					}
 					now := time.Now()
@@ -552,7 +564,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					if err := writeActivePolicyMarkdown(eng); err != nil {
 						logger.Warn("serve: failed to write ACTIVE_POLICY.md after reload", "error", err)
 					}
-					logger.Info("serve: policy reloaded", "path", configAbs, "policy_count", eng.PolicyCount())
+					logger.Info("serve: policy reloaded", "path", event.Name, "policy_count", eng.PolicyCount())
 				case err, ok := <-watcher.Errors:
 					if !ok {
 						continue
@@ -598,40 +610,120 @@ func newServeStopCmd() *cobra.Command {
 		Short: "Stop a background rampart serve process",
 		Long:  `Stop a rampart serve process started with --background by reading the PID from ~/.rampart/serve.pid and sending SIGTERM.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return fmt.Errorf("serve stop: %w", err)
-			}
-			pidPath := filepath.Join(home, ".rampart", "serve.pid")
-			data, err := os.ReadFile(pidPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					return fmt.Errorf("serve stop: no PID file found at %s (is rampart serve --background running?)", pidPath)
-				}
-				return fmt.Errorf("serve stop: read pid file: %w", err)
-			}
-			pidStr := strings.TrimSpace(string(data))
-			pid := 0
-			if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 0 {
-				return fmt.Errorf("serve stop: invalid PID %q in %s", pidStr, pidPath)
-			}
-			proc, err := os.FindProcess(pid)
-			if err != nil {
-				return fmt.Errorf("serve stop: find process %d: %w", pid, err)
-			}
-			if err := proc.Signal(syscall.SIGTERM); err != nil {
-				_ = os.Remove(pidPath)
-				return fmt.Errorf("serve stop: signal pid %d: %w (process may have already exited)", pid, err)
-			}
-			_ = os.Remove(pidPath)
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart serve (pid=%d) stopped\n", pid)
-			return nil
+			return stopBackgroundServe(cmd.OutOrStdout(), false)
 		},
 	}
 }
 
+func stopBackgroundServe(w io.Writer, missingOK bool) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("serve stop: %w", err)
+	}
+	pidPath := filepath.Join(home, ".rampart", "serve.pid")
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if missingOK {
+				return nil
+			}
+			return fmt.Errorf("serve stop: no PID file found at %s (is rampart serve --background running?)", pidPath)
+		}
+		return fmt.Errorf("serve stop: read pid file: %w", err)
+	}
+	pidStr := strings.TrimSpace(string(data))
+	pid := 0
+	if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 0 {
+		return fmt.Errorf("serve stop: invalid PID %q in %s", pidStr, pidPath)
+	}
+	owned, identity, err := isRampartServeProcess(pid)
+	if err != nil {
+		return fmt.Errorf("serve stop: verify pid %d before signaling: %w", pid, err)
+	}
+	if !owned {
+		_ = os.Remove(pidPath)
+		if missingOK {
+			return nil
+		}
+		if identity == "" {
+			identity = "process is no longer running"
+		}
+		return fmt.Errorf("serve stop: refusing to signal stale pid %d (%s)", pid, identity)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("serve stop: find process %d: %w", pid, err)
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		_ = os.Remove(pidPath)
+		return fmt.Errorf("serve stop: signal pid %d: %w (process may have already exited)", pid, err)
+	}
+	_ = os.Remove(pidPath)
+	fmt.Fprintf(w, "✓ rampart serve (pid=%d) stopped\n", pid)
+	return nil
+}
+
+// isRampartServeProcess authenticates a PID before stop/uninstall sends a
+// signal. PID files can outlive their process, and operating systems reuse
+// numeric PIDs; checking only that a PID exists can therefore terminate an
+// unrelated user process. `ps` is available on the Unix platforms where
+// service uninstallation uses this helper. On platforms without `ps`, stop
+// fails safely instead of signaling an unverified process.
+func isRampartServeProcess(pid int) (bool, string, error) {
+	pidArg := fmt.Sprintf("%d", pid)
+	commOut, err := exec.Command("ps", "-p", pidArg, "-o", "comm=").CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, strings.TrimSpace(string(commOut)), nil
+		}
+		return false, "", err
+	}
+	argsOut, err := exec.Command("ps", "-p", pidArg, "-o", "args=").CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, strings.TrimSpace(string(argsOut)), nil
+		}
+		return false, "", err
+	}
+
+	comm := strings.TrimSpace(string(commOut))
+	args := strings.TrimSpace(string(argsOut))
+	return isRampartServeCommand(comm, args), strings.TrimSpace(comm + " " + args), nil
+}
+
+func isRampartServeCommand(comm, args string) bool {
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(comm)))
+	if name != "rampart" && name != "rampart.exe" {
+		return false
+	}
+	for _, arg := range strings.Fields(args) {
+		if arg == "serve" {
+			return true
+		}
+	}
+	return false
+}
+
 func isWriteEvent(event fsnotify.Event) bool {
 	return event.Has(fsnotify.Write)
+}
+
+func isPolicyDirEvent(event fsnotify.Event, policyDir string) bool {
+	if policyDir == "" {
+		return false
+	}
+	eventPath := filepath.Clean(strings.TrimSpace(event.Name))
+	if filepath.Dir(eventPath) != filepath.Clean(policyDir) {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(eventPath))
+	if ext != ".yaml" && ext != ".yml" {
+		return false
+	}
+	return event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
+		event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
 }
 
 func samePath(a, b string) bool {

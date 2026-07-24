@@ -7,6 +7,8 @@ description: "Supported Rampart integration modes, coverage, approval UX, serve 
 
 Use this page as the canonical support contract for Rampart's main integration surfaces.
 
+Rampart is policy, approval, audit, and proof infrastructure for agents that need real system access. This matrix describes current support evidence, not future-feature commitments. Optional containment, fleet controls, and broader enterprise administration should not be inferred from these support tiers.
+
 For release-candidate validation and latest-agent checks, use the [Release Compatibility Gate](release-compatibility-gate.md). The support tier below should match the most recent evidence from the exact Rampart candidate build and bundled plugin metadata.
 
 ## At a glance
