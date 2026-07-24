@@ -414,8 +414,8 @@ func lockLegacyRampartDir(t *testing.T, dir string) {
 	if err := windows.SetNamedSecurityInfo(
 		dir,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		processSID,
 		nil,
 		lockedACL,
 		nil,
