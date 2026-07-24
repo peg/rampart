@@ -54,7 +54,8 @@ node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
 Pass criteria:
-- test creates a real OpenClaw Codex app-server session metadata file (`*.jsonl.codex-app-server.json`)
+- test creates a real Codex app-server binding in modern OpenClaw plugin state
+  (or the legacy `*.jsonl.codex-app-server.json` sidecar on older releases)
 - trajectory contains a native Codex `bash` tool call for the test marker
 - Rampart audit contains a correlated canonical `exec` event for the same marker/session
 - a second safe command appears in `plugin.approval.list`, is resolved with `allow-once`, resumes the exact tool call, and executes successfully

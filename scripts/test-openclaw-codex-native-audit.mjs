@@ -420,19 +420,58 @@ async function waitForPluginApproval(expectedMarker, timeoutMs = 45_000) {
   fail(`OpenClaw did not expose a pending plugin approval for ${expectedMarker}. Last payload: ${redact(JSON.stringify(lastPayload))}`);
 }
 
-async function verifyCodexAppServerArtifact(turnSessionId) {
-  const path = join(sessionsDir, `${turnSessionId}.jsonl.codex-app-server.json`);
-  if (!existsSync(path)) {
-    fail(`missing Codex app-server metadata file: ${path}`);
+async function verifyCodexAppServerBinding(turnSessionId) {
+  const legacyPath = join(sessionsDir, `${turnSessionId}.jsonl.codex-app-server.json`);
+  if (existsSync(legacyPath)) {
+    const meta = JSON.parse(await readFile(legacyPath, 'utf8'));
+    if (!String(meta.sessionFile || '').endsWith(`${turnSessionId}.jsonl`)) {
+      fail(`legacy Codex app-server metadata did not point at this session file: ${legacyPath}`);
+    }
+    if (!meta.model) {
+      fail(`legacy Codex app-server metadata missing model field: ${legacyPath}`);
+    }
+    return legacyPath;
   }
-  const meta = JSON.parse(await readFile(path, 'utf8'));
-  if (!String(meta.sessionFile || '').endsWith(`${turnSessionId}.jsonl`)) {
-    fail(`Codex app-server metadata did not point at this session file: ${path}`);
+
+  const statePath = join(openclawStateDir, 'state', 'openclaw.sqlite');
+  if (!existsSync(statePath)) {
+    fail(`missing modern Codex plugin-state database and legacy metadata for session ${turnSessionId}`);
   }
-  if (!meta.model) {
-    fail(`Codex app-server metadata missing model field: ${path}`);
+
+  let DatabaseSync;
+  try {
+    ({ DatabaseSync } = await import('node:sqlite'));
+  } catch (err) {
+    fail(`cannot inspect modern Codex plugin state with this Node.js runtime: ${err.message}`);
   }
-  return path;
+
+  const database = new DatabaseSync(statePath, { readOnly: true });
+  let row;
+  try {
+    row = database.prepare(`
+      SELECT value_json
+      FROM plugin_state_entries
+      WHERE plugin_id = 'codex'
+        AND namespace = 'app-server-thread-bindings'
+        AND json_extract(value_json, '$.sessionId') = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(turnSessionId);
+  } finally {
+    database.close();
+  }
+  if (!row?.value_json) {
+    fail(`modern Codex plugin state did not contain a binding for session ${turnSessionId}`);
+  }
+
+  const binding = JSON.parse(row.value_json);
+  if (binding.sessionId !== turnSessionId || binding.state !== 'active') {
+    fail(`modern Codex plugin binding was not active for session ${turnSessionId}`);
+  }
+  if (!binding.binding?.threadId || !binding.binding?.model) {
+    fail(`modern Codex plugin binding was missing thread or model metadata for session ${turnSessionId}`);
+  }
+  return `${statePath}#codex/app-server-thread-bindings/${turnSessionId}`;
 }
 
 async function verifyTrajectoryBashCall(turnSessionId, expectedMarker) {
@@ -507,20 +546,20 @@ try {
   await validateOpenClawConfiguration();
   console.log('[runtime-regression] Disposable OpenClaw plugin configuration validated');
   await runOpenClawTurn(sessionId, prompt, marker);
-  const appServerPath = await verifyCodexAppServerArtifact(sessionId);
+  const appServerBinding = await verifyCodexAppServerBinding(sessionId);
   const trajectoryPath = await verifyTrajectoryBashCall(sessionId, marker);
   const auditEvent = await verifyRampartAudit(sessionId, marker, 'allow');
 
   console.log(`[runtime-regression] approvalMarker=${approvalMarker}`);
   const approval = await runApprovedOpenClawTurn();
-  const approvalAppServerPath = await verifyCodexAppServerArtifact(approvalSessionId);
+  const approvalAppServerBinding = await verifyCodexAppServerBinding(approvalSessionId);
   const approvalTrajectoryPath = await verifyTrajectoryBashCall(approvalSessionId, approvalMarker);
   const approvalAuditEvent = await verifyRampartAudit(approvalSessionId, approvalMarker, 'ask');
 
   console.log(JSON.stringify({
     ok: true,
     marker,
-    appServerMetadata: appServerPath,
+    appServerBinding,
     trajectory: trajectoryPath,
     rampartAudit: {
       id: auditEvent.id,
@@ -533,7 +572,7 @@ try {
       marker: approvalMarker,
       approvalId: approval.id,
       resolution: 'allow-once',
-      appServerMetadata: approvalAppServerPath,
+      appServerBinding: approvalAppServerBinding,
       trajectory: approvalTrajectoryPath,
       rampartAudit: {
         id: approvalAuditEvent.id,
