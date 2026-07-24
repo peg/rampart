@@ -22,3 +22,11 @@ func rampartDir() (string, error) {
 	}
 	return filepath.Join(home, ".rampart"), nil
 }
+
+func ensureDefaultRampartDirAccessible() error {
+	dir, err := rampartDir()
+	if err != nil {
+		return err
+	}
+	return ensureRampartDirAccessible(dir)
+}

@@ -38,6 +38,24 @@ jobs:
       - name: Build
         run: go build -v ./cmd/rampart
 
+      - name: PowerShell installers parse
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($file in @("install.ps1", "docs/install.ps1")) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file`: $_" }
+              exit 1
+            }
+          }
+
       - name: Installer scripts are synced
         if: runner.os == 'Linux'
         run: |

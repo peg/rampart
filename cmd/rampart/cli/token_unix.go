@@ -15,3 +15,8 @@ func secureFilePermissions(path string) error {
 func secureDirPermissions(path string) error {
 	return os.Chmod(path, 0o700)
 }
+
+// Unix directory permissions never used the affected Windows ACL path.
+func ensureRampartDirAccessible(string) error {
+	return nil
+}

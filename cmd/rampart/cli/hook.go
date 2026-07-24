@@ -230,6 +230,13 @@ Claude Code setup (add to ~/.claude/settings.json):
 
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := ensureDefaultRampartDirAccessible(); err != nil {
+				if mode == "enforce" {
+					return outputHookResult(cmd, format, hookDeny, false, "Rampart data directory is inaccessible; refusing tool call until permissions are repaired", "")
+				}
+				return fmt.Errorf("hook: prepare Rampart data directory: %w", err)
+			}
+
 			// Derive session identity once at the top (git repo/branch or RAMPART_SESSION env).
 			gitCtx := deriveGitContext()
 			hookSession := gitCtx.session

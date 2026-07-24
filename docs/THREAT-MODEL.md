@@ -223,7 +223,7 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 - **No POSIX file permissions** — `chmod 0600` is not enforced by the OS. Rampart protects its persisted token with an owner-only Windows DACL derived from the current process SID; other sensitive files need explicit Windows ACL hardening.
 - **Binary upgrade** — Windows forbids overwriting a running executable. `rampart upgrade` renames the current binary to `.rampart.exe.old` first, then installs the new one.
 - **Path separators** — Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
-- **Service management** — `rampart serve install` creates a Windows service (not systemd/launchd). Auto-restart is configured by default.
+- **Service management** — automatic service installation is currently supported on Linux and macOS only. On Windows, run `rampart serve` directly or configure Task Scheduler/NSSM.
 
 ## Deployment Recommendations
 

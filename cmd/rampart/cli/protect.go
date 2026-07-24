@@ -36,6 +36,9 @@ behavior, and verifies the live boundary with non-destructive canaries.
 OpenClaw is the first fully supported zero-configuration target.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := ensureDefaultRampartDirAccessible(); err != nil {
+				return fmt.Errorf("protect: prepare Rampart data directory: %w", err)
+			}
 			target := ""
 			if len(args) == 1 {
 				target = strings.ToLower(strings.TrimSpace(args[0]))

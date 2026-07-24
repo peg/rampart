@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoOwner = "peg"
 $RepoName = "rampart"
+$RampartDir = "$env:USERPROFILE\.rampart"
 $InstallDir = "$env:USERPROFILE\.rampart\bin"
 
 function Write-Status($msg) { Write-Host "  $msg" -ForegroundColor Cyan }
@@ -19,9 +20,100 @@ function Write-Success($msg) { Write-Host "[OK] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
 function Write-Err($msg) { Write-Host "[X] $msg" -ForegroundColor Red }
 
+function Test-IsUnauthorizedAccess($errorRecord) {
+    $exception = $errorRecord.Exception
+    while ($null -ne $exception) {
+        if ($exception -is [System.UnauthorizedAccessException]) { return $true }
+        $exception = $exception.InnerException
+    }
+    return $false
+}
+
+function Test-DirectoryExistsFromParent($path) {
+    $parent = Split-Path -Parent $path
+    $leaf = Split-Path -Leaf $path
+    foreach ($candidate in [System.IO.Directory]::EnumerateDirectories(
+        $parent,
+        $leaf,
+        [System.IO.SearchOption]::TopDirectoryOnly
+    )) {
+        if ([System.StringComparer]::OrdinalIgnoreCase.Equals($candidate, $path)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-DirectoryWritable($path) {
+    $probe = Join-Path $path ".rampart-installer-$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllText($probe, "")
+        [System.IO.File]::Delete($probe)
+        return $true
+    } catch {
+        try { [System.IO.File]::Delete($probe) } catch { }
+        if (Test-IsUnauthorizedAccess $_) { return $false }
+        throw
+    }
+}
+
+function Repair-LegacyRampartDirectoryAcl {
+    if (-not (Test-DirectoryExistsFromParent $RampartDir)) { return }
+    if (Test-DirectoryWritable $RampartDir) { return }
+
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl = Get-Acl -LiteralPath $RampartDir
+    $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+    if ($ownerSid.Value -ne $currentSid.Value) {
+        throw "Refusing to repair $RampartDir because it is not owned by the current user."
+    }
+    if (-not $acl.AreAccessRulesProtected) {
+        throw "Refusing to repair $RampartDir because it does not have the legacy protected ACL."
+    }
+
+    $explicitRules = $acl.GetAccessRules(
+        $true,
+        $false,
+        [System.Security.Principal.SecurityIdentifier]
+    )
+    foreach ($rule in $explicitRules) {
+        if ($rule.IdentityReference.Value -eq $currentSid.Value) {
+            throw "Refusing to replace an existing explicit ACL for the current user on $RampartDir."
+        }
+    }
+
+    $accessRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $currentSid,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.InheritanceFlags]::None,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    [void]$acl.AddAccessRule($accessRule)
+    $acl.SetAccessRuleProtection($false, $true)
+    Set-Acl -LiteralPath $RampartDir -AclObject $acl
+
+    if (-not (Test-DirectoryWritable $RampartDir)) {
+        throw "The ACL repair completed but $RampartDir is still inaccessible."
+    }
+    Write-Success "Repaired permissions from an affected Rampart 1.2.x installation"
+}
+
 Write-Host ""
 Write-Host "Rampart Installer" -ForegroundColor White
 Write-Host ""
+
+try {
+    Repair-LegacyRampartDirectoryAcl
+} catch {
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    Write-Err "Cannot safely access $RampartDir`: $_"
+    Write-Host ""
+    Write-Host "  To repair it manually, run PowerShell as Administrator:" -ForegroundColor Yellow
+    Write-Host "    icacls `"$RampartDir`" /grant `"*$($currentSid):F`"" -ForegroundColor Cyan
+    Write-Host "    icacls `"$RampartDir`" /inheritance:e" -ForegroundColor Cyan
+    exit 1
+}
 
 # Detect architecture
 $arch = if ([Environment]::Is64BitOperatingSystem) {
@@ -136,7 +228,8 @@ if (Test-Path $InstallDir) {
         Write-Host "    2. Run PowerShell as Administrator and execute:" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "       takeown /f `"$InstallDir`" /r /d y" -ForegroundColor Cyan
-        Write-Host "       icacls `"$InstallDir`" /grant `"$($env:USERNAME):F`" /t" -ForegroundColor Cyan
+        $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        Write-Host "       icacls `"$InstallDir`" /grant `"*$($currentSid):F`" /t" -ForegroundColor Cyan
         Write-Host "       Remove-Item -Recurse -Force `"$InstallDir`"" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "    3. Re-run this installer" -ForegroundColor Yellow

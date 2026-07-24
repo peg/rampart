@@ -57,15 +57,6 @@ func printServeToken(w io.Writer, token string, interactive bool) {
 	fmt.Fprintln(w, "  🔑 Token      : saved to ~/.rampart/token")
 }
 
-func printPersistTokenWarning(w io.Writer, err error, token string, interactive bool) {
-	fmt.Fprintf(w, "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
-	if interactive {
-		fmt.Fprintf(w, "  Run: echo '%s' > ~/.rampart/token\n", token)
-		return
-	}
-	fmt.Fprintln(w, "  Token not printed because stderr is not an interactive terminal.")
-}
-
 func defaultServeDeps() serveDeps {
 	return serveDeps{
 		newWatcher:    fsnotify.NewWatcher,
@@ -105,6 +96,12 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start Rampart policy runtime and file watcher",
+		PreRunE: func(_ *cobra.Command, _ []string) error {
+			if err := ensureDefaultRampartDirAccessible(); err != nil {
+				return fmt.Errorf("serve: prepare Rampart data directory: %w", err)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if background {
 				home, err := os.UserHomeDir()
@@ -429,6 +426,13 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 				listenPort := listener.Addr().(*net.TCPAddr).Port
 
+				// Persist before reporting readiness or starting the server.
+				// Hooks cannot authenticate safely without the shared token.
+				if err := persistToken(token); err != nil {
+					_ = listener.Close()
+					return fmt.Errorf("serve: persist token: %w", err)
+				}
+
 				// Stop the startup spinner and print a clean ready message.
 				if startSpin != nil {
 					startSpin.Stop(fmt.Sprintf("Rampart ready  —  :%d (token=%s)", listenPort, display))
@@ -446,11 +450,6 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "  🌐 Dashboard  : %s://localhost:%d/dashboard/\n", scheme, listenPort)
 				if tlsCfg != nil && tlsFingerprint != "" {
 					fmt.Fprintf(cmd.ErrOrStderr(), "  🔒 TLS        : sha256:%s\n", tlsFingerprint[:23]+"...")
-				}
-
-				// Persist the token so it survives restarts.
-				if err := persistToken(token); err != nil {
-					printPersistTokenWarning(cmd.ErrOrStderr(), err, token, interactiveStderr)
 				}
 
 				if metrics {

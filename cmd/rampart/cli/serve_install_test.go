@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestGeneratePlist(t *testing.T) {
@@ -209,6 +211,193 @@ func TestBuildServiceArgs_Defaults(t *testing.T) {
 func mockRunner(calls *[]string) commandRunner {
 	return func(name string, args ...string) *exec.Cmd {
 		*calls = append(*calls, name+" "+strings.Join(args, " "))
+		return exec.Command("true")
+	}
+}
+
+func TestInstallLinuxRotatesTokenBetweenStopAndStart(t *testing.T) {
+	skipOnWindows(t, "Unix service runner")
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := persistToken("old-token"); err != nil {
+		t.Fatal(err)
+	}
+	unitPath, err := systemdUnitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("old unit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+	runner := tokenObservingRunner(t, &calls)
+	cfg := serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   "new-token",
+		LogPath: filepath.Join(home, ".rampart", "serve.log"),
+	}
+	cmd := &cobra.Command{}
+	if err := installLinux(cmd, cfg, true, false, defaultServePort, runner); err != nil {
+		t.Fatalf("installLinux: %v", err)
+	}
+
+	want := []string{
+		"systemctl --user stop rampart-serve.service|old-token",
+		"systemctl --user daemon-reload|old-token",
+		"systemctl --user enable rampart-serve.service|new-token",
+		"systemctl --user start rampart-serve.service|new-token",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("service/token ordering:\n got: %q\nwant: %q", calls, want)
+	}
+}
+
+func TestInstallDarwinRotatesTokenBetweenUnloadAndLoad(t *testing.T) {
+	skipOnWindows(t, "Unix service runner")
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := persistToken("old-token"); err != nil {
+		t.Fatal(err)
+	}
+	path, err := plistPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old plist"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+	runner := tokenObservingRunner(t, &calls)
+	cfg := serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   "new-token",
+		LogPath: filepath.Join(home, ".rampart", "serve.log"),
+	}
+	cmd := &cobra.Command{}
+	if err := installDarwin(cmd, cfg, true, false, defaultServePort, runner); err != nil {
+		t.Fatalf("installDarwin: %v", err)
+	}
+
+	want := []string{
+		"launchctl list " + plistLabel + "|old-token",
+		"launchctl unload " + path + "|old-token",
+		"launchctl load " + path + "|new-token",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("service/token ordering:\n got: %q\nwant: %q", calls, want)
+	}
+}
+
+func TestInstallDarwinAllowsExistingUnloadedService(t *testing.T) {
+	skipOnWindows(t, "Unix service runner")
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := persistToken("old-token"); err != nil {
+		t.Fatal(err)
+	}
+	path, err := plistPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old plist"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+	runner := func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if len(args) > 0 && args[0] == "list" {
+			return exec.Command("sh", "-c", "exit 113")
+		}
+		return exec.Command("true")
+	}
+	cfg := serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   "new-token",
+		LogPath: filepath.Join(home, ".rampart", "serve.log"),
+	}
+	if err := installDarwin(&cobra.Command{}, cfg, true, false, defaultServePort, runner); err != nil {
+		t.Fatalf("installDarwin: %v", err)
+	}
+	want := []string{
+		"launchctl list " + plistLabel,
+		"launchctl load " + path,
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n got: %q\nwant: %q", calls, want)
+	}
+	token, err := readPersistedToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "new-token" {
+		t.Fatalf("persisted token = %q, want new-token", token)
+	}
+}
+
+func TestInstallDarwinRefusesTokenRotationOnUnknownListFailure(t *testing.T) {
+	skipOnWindows(t, "Unix service runner")
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := persistToken("old-token"); err != nil {
+		t.Fatal(err)
+	}
+	path, err := plistPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old plist"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+	runner := func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return exec.Command("false")
+	}
+	cfg := serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   "new-token",
+		LogPath: filepath.Join(home, ".rampart", "serve.log"),
+	}
+	err = installDarwin(&cobra.Command{}, cfg, true, false, defaultServePort, runner)
+	if err == nil || !strings.Contains(err.Error(), "launchctl list") {
+		t.Fatalf("installDarwin error = %v, want launchctl list failure", err)
+	}
+	if len(calls) != 1 || calls[0] != "launchctl list "+plistLabel {
+		t.Fatalf("calls after ambiguous list failure = %q", calls)
+	}
+	token, err := readPersistedToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "old-token" {
+		t.Fatalf("persisted token = %q, want old-token", token)
+	}
+}
+
+func tokenObservingRunner(t *testing.T, calls *[]string) commandRunner {
+	t.Helper()
+	return func(name string, args ...string) *exec.Cmd {
+		token, err := readPersistedToken()
+		if err != nil {
+			t.Fatalf("read token while invoking %s: %v", name, err)
+		}
+		*calls = append(*calls, name+" "+strings.Join(args, " ")+"|"+token)
 		return exec.Command("true")
 	}
 }

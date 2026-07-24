@@ -17,10 +17,12 @@ func withWindowsACLStubs(t *testing.T) {
 	t.Helper()
 	originalCurrentProcessUserSID := currentProcessUserSID
 	originalACLFromEntries := aclFromEntries
+	originalGetNamedSecurityInfo := getNamedSecurityInfo
 	originalSetNamedSecurityInfo := setNamedSecurityInfo
 	t.Cleanup(func() {
 		currentProcessUserSID = originalCurrentProcessUserSID
 		aclFromEntries = originalACLFromEntries
+		getNamedSecurityInfo = originalGetNamedSecurityInfo
 		setNamedSecurityInfo = originalSetNamedSecurityInfo
 	})
 }
@@ -226,4 +228,216 @@ func TestSecureDirPermissionsDoesNotChangeSharedDirectoryACL(t *testing.T) {
 	if err := secureDirPermissions(`C:\Users\alice\.rampart`); err != nil {
 		t.Fatalf("secureDirPermissions: %v", err)
 	}
+}
+
+func TestEnsureRampartDirAccessibleLeavesAccessibleProtectedACLAlone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".rampart")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	processSID, err := currentProcessUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.SET_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(processSID),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		acl,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureRampartDirAccessible(dir); err != nil {
+		t.Fatalf("ensureRampartDirAccessible: %v", err)
+	}
+	descriptor, err := windows.GetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatal("accessible custom protected DACL was unexpectedly changed")
+	}
+}
+
+func TestServePreRunRepairsLegacyDirectoryLockout(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	dir := filepath.Join(home, ".rampart")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockLegacyRampartDir(t, dir)
+
+	if err := probeDirectoryWrite(dir); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("legacy lock probe error = %v, want access denied", err)
+	}
+
+	cmd := newServeCmd(&rootOptions{configPath: "rampart.yaml"}, nil)
+	if cmd.PreRunE == nil {
+		t.Fatal("serve has no early Rampart directory recovery hook")
+	}
+	if err := cmd.PreRunE(cmd, nil); err != nil {
+		t.Fatalf("serve pre-run recovery: %v", err)
+	}
+	if err := probeDirectoryWrite(dir); err != nil {
+		t.Fatalf("repaired directory is not writable: %v", err)
+	}
+
+	descriptor, err := windows.GetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if control&windows.SE_DACL_PROTECTED != 0 {
+		t.Fatal("legacy directory DACL is still protected from inheritance")
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	processSID, err := currentProcessUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !aclContainsSID(t, dacl, processSID) {
+		t.Fatalf("repaired directory DACL does not contain process SID %s", processSID)
+	}
+}
+
+func TestHookRepairsLegacyDirectoryBeforeCommandWork(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	dir := filepath.Join(home, ".rampart")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockLegacyRampartDir(t, dir)
+
+	cmd := newHookCmd(&rootOptions{configPath: "rampart.yaml"})
+	cmd.SetArgs([]string{"--mode", "invalid"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "invalid mode") {
+		t.Fatalf("hook error = %v, want invalid mode after recovery", err)
+	}
+	if err := probeDirectoryWrite(dir); err != nil {
+		t.Fatalf("hook did not repair legacy directory before command work: %v", err)
+	}
+}
+
+func lockLegacyRampartDir(t *testing.T, dir string) {
+	t.Helper()
+	processSID, err := currentProcessUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.SET_ACCESS,
+			Inheritance:       windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(processSID),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = windows.SetNamedSecurityInfo(
+			dir,
+			windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+			nil,
+			nil,
+			recoveryACL,
+			nil,
+		)
+	})
+
+	unrelatedSID, err := windows.StringToSid("S-1-5-19")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockedACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.SET_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(unrelatedSID),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		lockedACL,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func aclContainsSID(t *testing.T, acl *windows.ACL, want *windows.SID) bool {
+	t.Helper()
+	if acl == nil {
+		return false
+	}
+	for i := uint32(0); i < uint32(acl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, i, &ace); err != nil {
+			t.Fatalf("GetAce(%d): %v", i, err)
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if sid.Equals(want) {
+			return true
+		}
+	}
+	return false
 }
