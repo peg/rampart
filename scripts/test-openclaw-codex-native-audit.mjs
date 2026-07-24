@@ -117,6 +117,16 @@ const approvalPrompt = [
   approvalCommand,
   'Wait for approval if requested. Do not use any other tool. Reply with only the command stdout.',
 ].join(' ');
+const approvalDriver = process.env.RAMPART_OPENCLAW_APPROVAL_DRIVER || 'gateway';
+const approvalProofPath = process.env.RAMPART_OPENCLAW_APPROVAL_PROOF_FILE || '';
+if (!['gateway', 'external'].includes(approvalDriver)) {
+  console.error('RAMPART_OPENCLAW_APPROVAL_DRIVER must be "gateway" or "external".');
+  process.exit(2);
+}
+if (approvalDriver === 'external' && !approvalProofPath) {
+  console.error('External approval mode requires RAMPART_OPENCLAW_APPROVAL_PROOF_FILE.');
+  process.exit(2);
+}
 
 let tmpRoot;
 let auditDir;
@@ -376,6 +386,15 @@ async function runApprovedOpenClawTurn() {
     cwd: repoRoot,
   });
   try {
+    if (approvalDriver === 'external') {
+      const result = await turn.completion;
+      const combined = `${result.stdout}\n${result.stderr}`;
+      if (!combined.includes(approvalMarker)) {
+        fail(`Externally approved OpenClaw turn completed without marker ${approvalMarker}. Output:\n${redact(combined).slice(-4000)}`);
+      }
+      const proof = await waitForExternalApprovalProof(approvalMarker);
+      return { id: 'external-ui', resolution: 'allow-once', proof };
+    }
     const approval = await waitForPluginApproval(approvalMarker, turn);
     await run('openclaw', [
       'gateway',
@@ -398,6 +417,27 @@ async function runApprovedOpenClawTurn() {
     void turn.completion.catch(() => {});
     throw err;
   }
+}
+
+function stripAnsi(value) {
+  return String(value ?? '').replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+}
+
+async function waitForExternalApprovalProof(expectedMarker, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = '';
+  while (Date.now() < deadline) {
+    try {
+      last = stripAnsi(await readFile(approvalProofPath, 'utf8'));
+      if (last.includes(expectedMarker) && last.includes('plugin approval: allowed once')) {
+        return approvalProofPath;
+      }
+    } catch {
+      // The approval surface may not have flushed its proof file yet.
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  fail(`external approval proof did not record allow-once for ${expectedMarker}: ${redact(last).slice(-2000)}`);
 }
 
 async function waitForPluginApproval(expectedMarker, turn, timeoutMs = 45_000) {
@@ -580,7 +620,8 @@ try {
     approvedExecution: {
       marker: approvalMarker,
       approvalId: approval.id,
-      resolution: 'allow-once',
+      resolution: approval.resolution || 'allow-once',
+      ...(approval.proof ? { approvalProof: approval.proof } : {}),
       appServerBinding: approvalAppServerBinding,
       trajectory: approvalTrajectoryPath,
       rampartAudit: {

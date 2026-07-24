@@ -58,7 +58,15 @@ Pass criteria:
   (or the legacy `*.jsonl.codex-app-server.json` sidecar on older releases)
 - trajectory contains a native Codex `bash` tool call for the test marker
 - Rampart audit contains a correlated canonical `exec` event for the same marker/session
-- a second safe command appears in `plugin.approval.list`, is resolved with `allow-once`, resumes the exact tool call, and executes successfully
+- a second safe command reaches an OpenClaw approval surface, is resolved with
+  `allow-once`, resumes the exact tool call, and executes successfully
+- gateway-scoped approvals must appear in `plugin.approval.list` and be resolved
+  through `plugin.approval.resolve`
+- UI-scoped approvals must run with
+  `RAMPART_OPENCLAW_APPROVAL_DRIVER=external` and
+  `RAMPART_OPENCLAW_APPROVAL_PROOF_FILE=<disposable-ui-log>`; the log must
+  contain both the synthetic request marker and
+  `plugin approval: allowed once`, because command output alone is not accepted
 - the approved execution has its own correlated trajectory and Rampart `ask` audit event
 - OpenClaw config remains untouched and the isolated Rampart token file is restored after the test
 
