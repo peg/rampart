@@ -93,7 +93,12 @@ if (restartServices.length > 0) {
   process.exit(2);
 }
 
-const runStamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+const runStamp = process.env.RAMPART_OPENCLAW_RUN_STAMP
+  || new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+if (!/^[A-Za-z0-9_-]+$/.test(runStamp)) {
+  console.error('RAMPART_OPENCLAW_RUN_STAMP may contain only letters, numbers, underscores, and hyphens.');
+  process.exit(2);
+}
 const marker = `rampart-runtime-codex-shell-${runStamp}`;
 const sessionId = marker;
 const command = `printf '%s\\n' '${marker}'`;
