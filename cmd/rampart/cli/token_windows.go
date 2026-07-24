@@ -87,10 +87,14 @@ func ensureRampartDirAccessible(path string) error {
 		if !info.IsDir() {
 			return fmt.Errorf("Rampart data path is not a directory: %s", path)
 		}
-		// The affected legacy ACL denies even directory metadata access. Avoid
-		// creating a probe file on every short-lived hook invocation when Stat
-		// proves this is not that lockout shape.
-		return nil
+		// Stat can succeed on Windows even when the directory denies traversal.
+		// Opening the directory is a read-only access probe and avoids creating
+		// an antivirus-visible temp file on every short-lived hook invocation.
+		if err := probeDirectoryAccess(path); err == nil {
+			return nil
+		} else if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return fmt.Errorf("check Rampart directory access: %w", err)
+		}
 	}
 
 	sid, err := currentProcessUserSID()
@@ -164,6 +168,14 @@ func ensureRampartDirAccessible(path string) error {
 		return fmt.Errorf("verify repaired Rampart directory access: %w", err)
 	}
 	return nil
+}
+
+func probeDirectoryAccess(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return dir.Close()
 }
 
 func aclContainsExplicitSID(acl *windows.ACL, sid *windows.SID) (bool, error) {
