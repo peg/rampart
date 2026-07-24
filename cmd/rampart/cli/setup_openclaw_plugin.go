@@ -188,10 +188,6 @@ func ensureOpenClawApprovalHardening(w io.Writer, errW io.Writer) error {
 		}
 	}
 
-	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
-	if err != nil {
-		return fmt.Errorf("inspect current hardening state: %w", err)
-	}
 	if isOpenClawPluginInstalled() {
 		updated, timeoutErr := ochardening.EnsurePluginApprovalTimeoutConfig(configPath)
 		if timeoutErr != nil {
@@ -202,6 +198,14 @@ func ensureOpenClawApprovalHardening(w io.Writer, errW io.Writer) error {
 		}
 		fmt.Fprintln(w, "✓ Native OpenClaw plugin approvals configured; skipped legacy exec approval bundle patching")
 		return nil
+	}
+	if version, modern := modernOpenClawVersion(); modern {
+		return fmt.Errorf("OpenClaw %s supports Rampart's native plugin; refusing legacy approval bundle patching because the native plugin was not detected (run `rampart protect openclaw --reinstall`)", version)
+	}
+
+	state, err := ochardening.InspectConfig(configPath, openclawDistCandidates())
+	if err != nil {
+		return fmt.Errorf("inspect current hardening state: %w", err)
 	}
 	if state.ExecApprovalsPath == "" || state.BashToolsPath == "" {
 		return fmt.Errorf("openclaw approval bundles not found under supported dist paths")
@@ -486,8 +490,8 @@ func resolveOpenClawStateDir(openclawBin string) (stateDir string, configPath st
 		cmd.Env = append(os.Environ(), "OPENCLAW_HIDE_BANNER=1", "OPENCLAW_SUPPRESS_NOTES=1")
 		out, runErr := cmd.Output()
 		if runErr == nil {
-			configPath = expandHomePath(strings.TrimSpace(string(out)))
-			if configPath != "" {
+			configPath, parseErr := parseOpenClawConfigPath(out)
+			if parseErr == nil {
 				return filepath.Dir(configPath), configPath, nil
 			}
 		}
@@ -913,6 +917,15 @@ func detectOpenClawVersion() (string, error) {
 		return "", err
 	}
 	return getOpenClawVersion(bin)
+}
+
+func modernOpenClawVersion() (string, bool) {
+	version, err := detectOpenClawVersion()
+	if err != nil {
+		return "", false
+	}
+	ok, err := openclawVersionAtLeast(version, openclawMinVersion)
+	return version, err == nil && ok
 }
 
 // ensureServeRunning checks whether rampart serve is reachable, and if not,

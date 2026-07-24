@@ -44,16 +44,34 @@ Pass criteria:
 ### 4. Live Codex app-server shell-audit regression
 
 ```bash
-RAMPART_OPENCLAW_RUNTIME=1 node scripts/test-openclaw-codex-native-audit.mjs
+export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
+export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export OPENCLAW_STATE_DIR="$HOME/.openclaw"
+export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
+RAMPART_OPENCLAW_RUNTIME=1 \
+RAMPART_OPENCLAW_RESTART_SERVICES= \
+node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
 Pass criteria:
-- test creates a real OpenClaw Codex app-server session metadata file (`*.jsonl.codex-app-server.json`)
-- trajectory contains a native Codex `bash` tool call for the test marker
+- test creates a real Codex app-server binding in modern OpenClaw plugin state
+  (or the legacy `*.jsonl.codex-app-server.json` sidecar on older releases)
+- trajectory contains a native Codex `bash` tool call and its successful,
+  matching `tool.result` output for the test marker
 - Rampart audit contains a correlated canonical `exec` event for the same marker/session
-- OpenClaw config and Rampart token file are restored after the test
+- a second safe command reaches an OpenClaw approval surface, is resolved with
+  `allow-once`, resumes the exact tool call, and executes successfully
+- gateway-scoped approvals must appear in `plugin.approval.list` and be resolved
+  through `plugin.approval.resolve`
+- UI-scoped approvals must run with
+  `RAMPART_OPENCLAW_APPROVAL_DRIVER=external` and
+  `RAMPART_OPENCLAW_APPROVAL_PROOF_FILE=<disposable-ui-log>`; the log must
+  contain both the synthetic request marker and
+  `plugin approval: allowed once`, because command output alone is not accepted
+- the approved execution has its own correlated trajectory and Rampart `ask` audit event
+- OpenClaw config remains untouched and the isolated Rampart token file is restored after the test
 
-Do not count a successful OpenClaw command or trajectory as sufficient by itself. The audit event is the proof that the native shell path crossed Rampart policy evaluation.
+The isolation root must contain a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses primary-state paths and service restarts. Do not count a successful OpenClaw command or trajectory as sufficient by itself. The audit event is the proof that the native shell path crossed Rampart policy evaluation.
 
 ## Installed integration checks
 

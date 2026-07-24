@@ -348,7 +348,7 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 		return check
 	}
 	var payload any
-	if err := json.Unmarshal(output, &payload); err != nil {
+	if err := decodeOpenClawJSON(output, &payload); err != nil {
 		check.Status = verificationUnverified
 		check.Actual = "unreadable gateway response"
 		check.Message = "The live plugin responded, but OpenClaw returned an unreadable verification payload"

@@ -96,6 +96,8 @@ func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
 	}
 	bin := filepath.Join(t.TempDir(), "openclaw")
 	shim := `#!/bin/sh
+printf '%s\n' '[state-migrations] Legacy state migration notes:'
+printf '%s\n' '- Left plugin install index in place because shared SQLite state has conflicting plugin install metadata for: rampart'
 printf '%s\n' '{"result":{"schema":"rampart.plugin.verify.v1","safeCanaries":true,"ok":true,"checks":[{"id":"routine-command","expected":"allow","actual":"allow","pass":true},{"id":"destructive-command","expected":"deny","actual":"deny","pass":true},{"id":"external-deployment","expected":"ask","actual":"ask","pass":true},{"id":"cross-conversation-message","expected":"ask","actual":"ask","pass":true},{"id":"credential-shell-read","expected":"deny","actual":"deny","pass":true},{"id":"opaque-interpreter","expected":"ask","actual":"ask","pass":true}]}}'
 `
 	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {

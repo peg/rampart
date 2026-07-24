@@ -96,6 +96,15 @@ function main() {
   const version = runOpenClaw(['--version'], { env });
   const install = runOpenClaw(['plugins', 'install', pluginDir], { env });
   const validate = runOpenClaw(['config', 'validate'], { env });
+  const configFile = runOpenClaw(['config', 'file'], { env });
+  const reportedConfigPath = commandOutput(configFile)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (reportedConfigPath !== configPath) {
+    throw new Error(`OpenClaw config file reported ${JSON.stringify(reportedConfigPath)}, expected ${JSON.stringify(configPath)}`);
+  }
   const inspect = runOpenClaw(['plugins', 'inspect', 'rampart'], { required: false, env });
   const list = inspect.status === 0
     ? { command: 'openclaw plugins list', status: 0, stdout: '', stderr: '' }
@@ -119,6 +128,7 @@ function main() {
     openclaw_source: useNpmLatest ? openclawPackage : 'PATH',
     plugin_install_checked: true,
     config_validate_checked: validate.status === 0,
+    config_file_checked: reportedConfigPath === configPath,
     plugin_inspect_checked: inspect.status === 0,
     plugin_list_checked: inspect.status !== 0 && list.status === 0,
     bundled_plugin_harnesses: {
