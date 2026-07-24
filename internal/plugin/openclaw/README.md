@@ -83,7 +83,8 @@ test then requires the matching request plus the client's
 Pass criteria:
 - a Codex app-server binding exists in modern OpenClaw plugin state (or the
   legacy `*.jsonl.codex-app-server.json` sidecar on older releases)
-- the OpenClaw trajectory contains a native Codex `bash` tool call for the marker command
+- the OpenClaw trajectory contains a native Codex `bash` tool call and its
+  successful, matching `tool.result` output for the marker command
 - the temporary Rampart audit log contains a correlated canonical `exec` event for that marker command
 - a second safe command is approved once through `plugin.approval.resolve`, resumes, executes, and has correlated trajectory plus Rampart `ask` audit evidence
 

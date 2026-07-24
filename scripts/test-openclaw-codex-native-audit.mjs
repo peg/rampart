@@ -5,7 +5,8 @@
  * This intentionally exercises the real OpenClaw runtime instead of the plugin
  * unit harness. Passing means:
  *   1. OpenClaw created a Codex app-server session for this run.
- *   2. The session trajectory contains a native Codex `bash` tool call.
+ *   2. The session trajectory contains a successful native Codex `bash`
+ *      tool call and matching result.
  *   3. Rampart wrote a correlated audit event for that command as canonical
  *      tool `exec`.
  *   4. A second safe command reached OpenClaw's native plugin approval queue,
@@ -523,7 +524,7 @@ async function verifyCodexAppServerBinding(turnSessionId) {
   return `${statePath}#codex/app-server-thread-bindings/${turnSessionId}`;
 }
 
-async function verifyTrajectoryBashCall(turnSessionId, expectedMarker) {
+async function verifyTrajectoryBashExecution(turnSessionId, expectedMarker) {
   const path = join(sessionsDir, `${turnSessionId}.trajectory.jsonl`);
   if (!existsSync(path)) {
     fail(`missing OpenClaw trajectory file: ${path}`);
@@ -540,6 +541,28 @@ async function verifyTrajectoryBashCall(turnSessionId, expectedMarker) {
       .map((evt) => evt?.data?.name)
       .filter(Boolean);
     fail(`trajectory did not contain a native bash tool.call for ${expectedMarker}; observed tools: ${JSON.stringify(toolNames)}`);
+  }
+  const callId = bashCall.data.toolCallId || bashCall.data.itemId;
+  const bashResult = events.find((evt) => {
+    if (evt?.type !== 'tool.result' || evt?.data?.name !== 'bash') return false;
+    const resultCallId = evt.data.toolCallId || evt.data.itemId;
+    if (callId && resultCallId !== callId) return false;
+    const status = String(evt.data.status || '').toLowerCase();
+    if (evt.data.isError === true || ['cancelled', 'error', 'failed'].includes(status)) return false;
+    return JSON.stringify({
+      result: evt.data.result,
+      output: evt.data.output,
+    }).includes(expectedMarker);
+  });
+  if (!bashResult) {
+    const bashResults = events
+      .filter((evt) => evt?.type === 'tool.result' && evt?.data?.name === 'bash')
+      .map((evt) => ({
+        toolCallId: evt.data.toolCallId || evt.data.itemId,
+        status: evt.data.status,
+        isError: evt.data.isError,
+      }));
+    fail(`trajectory did not contain a successful matching bash tool.result with output ${expectedMarker}; observed bash results: ${JSON.stringify(bashResults)}`);
   }
   return path;
 }
@@ -596,13 +619,13 @@ try {
   console.log('[runtime-regression] Disposable OpenClaw plugin configuration validated');
   await runOpenClawTurn(sessionId, prompt, marker);
   const appServerBinding = await verifyCodexAppServerBinding(sessionId);
-  const trajectoryPath = await verifyTrajectoryBashCall(sessionId, marker);
+  const trajectoryPath = await verifyTrajectoryBashExecution(sessionId, marker);
   const auditEvent = await verifyRampartAudit(sessionId, marker, 'allow');
 
   console.log(`[runtime-regression] approvalMarker=${approvalMarker}`);
   const approval = await runApprovedOpenClawTurn();
   const approvalAppServerBinding = await verifyCodexAppServerBinding(approvalSessionId);
-  const approvalTrajectoryPath = await verifyTrajectoryBashCall(approvalSessionId, approvalMarker);
+  const approvalTrajectoryPath = await verifyTrajectoryBashExecution(approvalSessionId, approvalMarker);
   const approvalAuditEvent = await verifyRampartAudit(approvalSessionId, approvalMarker, 'ask');
 
   console.log(JSON.stringify({
