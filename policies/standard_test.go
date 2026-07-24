@@ -77,6 +77,9 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny rampart control env override", tool: "exec", command: "RAMPART_MODE=disabled true", expected: engine.ActionDeny},
 		{name: "deny rampart control env override case-insensitive", tool: "exec", command: "rampart_mode=disabled true", expected: engine.ActionDeny},
 
+		// Must ask
+		{name: "ask before safe shred help probe", tool: "exec", command: "shred --help >/dev/null && printf '%s\\n' 'probe'", expected: engine.ActionAsk},
+
 		// Must allow
 		{name: "allow git status", tool: "exec", command: "git status", expected: engine.ActionAllow},
 		{name: "allow npm install", tool: "exec", command: "npm install", expected: engine.ActionAllow},

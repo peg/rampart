@@ -105,7 +105,7 @@ const prompt = [
 ].join(' ');
 const approvalMarker = `rampart-runtime-approved-shell-${runStamp}`;
 const approvalSessionId = approvalMarker;
-const approvalCommand = `python3 -c "print('${approvalMarker}')"`;
+const approvalCommand = `shred --help >/dev/null && printf '%s\\n' '${approvalMarker}'`;
 const approvalPrompt = [
   'This is a controlled Rampart/OpenClaw approval and resume regression test.',
   'Use the native shell/terminal/bash command tool exactly once to run:',
@@ -371,7 +371,7 @@ async function runApprovedOpenClawTurn() {
     cwd: repoRoot,
   });
   try {
-    const approval = await waitForPluginApproval(approvalMarker);
+    const approval = await waitForPluginApproval(approvalMarker, turn);
     await run('openclaw', [
       'gateway',
       'call',
@@ -395,7 +395,7 @@ async function runApprovedOpenClawTurn() {
   }
 }
 
-async function waitForPluginApproval(expectedMarker, timeoutMs = 45_000) {
+async function waitForPluginApproval(expectedMarker, turn, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
   let lastPayload = null;
   while (Date.now() < deadline) {
@@ -415,6 +415,10 @@ async function waitForPluginApproval(expectedMarker, timeoutMs = 45_000) {
       ? records.find((record) => JSON.stringify(record?.request ?? record).includes(expectedMarker))
       : null;
     if (match?.id) return match;
+    if (turn.child.exitCode !== null || turn.child.signalCode !== null) {
+      const result = await turn.completion;
+      fail(`OpenClaw turn completed before exposing an approval for ${expectedMarker}. Output:\n${redact(`${result.stdout}\n${result.stderr}`).slice(-4000)}`);
+    }
     await new Promise((r) => setTimeout(r, 500));
   }
   fail(`OpenClaw did not expose a pending plugin approval for ${expectedMarker}. Last payload: ${redact(JSON.stringify(lastPayload))}`);
