@@ -18,7 +18,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,7 +136,8 @@ func tokenFilePath() (string, error) {
 }
 
 // persistToken writes the token to ~/.rampart/token with owner-only permissions.
-// On Unix: 0600. On Windows: ACL granting GENERIC_ALL to owner only.
+// It secures a temporary file before writing the token, then atomically replaces
+// the destination so a hardening failure cannot expose or destroy a valid token.
 func persistToken(token string) error {
 	p, err := tokenFilePath()
 	if err != nil {
@@ -148,14 +148,31 @@ func persistToken(token string) error {
 		return err
 	}
 	if err := secureDirPermissions(dir); err != nil {
-		slog.Debug("could not secure directory permissions", "path", dir, "error", err)
+		return fmt.Errorf("secure token directory: %w", err)
 	}
-	if err := os.WriteFile(p, []byte(token), 0o600); err != nil {
-		return err
+
+	f, err := os.CreateTemp(dir, ".token-*")
+	if err != nil {
+		return fmt.Errorf("create temporary token file: %w", err)
 	}
-	if err := secureFilePermissions(p); err != nil {
-		slog.Debug("could not secure file permissions", "path", p, "error", err)
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+
+	if err := secureFilePermissions(tmpPath); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("secure temporary token file: %w", err)
 	}
+	if _, err := f.WriteString(token); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write temporary token file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temporary token file: %w", err)
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		return fmt.Errorf("replace token file: %w", err)
+	}
+
 	return nil
 }
 
