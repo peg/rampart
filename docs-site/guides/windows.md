@@ -75,9 +75,11 @@ rampart test "rm -rf /"
 |---------|--------|-------|
 | `rampart serve --background` | ❌ Unix only | Uses fork/exec |
 | `rampart serve stop` | ❌ Unix only | Uses SIGTERM |
-| `rampart upgrade` | ✅ Works | Downloads `.zip` asset, replaces `rampart.exe` |
+| `rampart upgrade` | ⚠️ Re-run installer | Required when upgrading affected v1.2.x installations |
 | `rampart wrap` | ❌ Unix only | Uses `$SHELL` |
 | `rampart preload` | ❌ Linux only | Uses LD_PRELOAD |
+
+For the v1.2.x to v1.3.0 upgrade, rerun `irm https://rampart.sh/install.ps1 | iex`. The installer repairs the affected legacy `~\.rampart` ACL before replacing the binary. If that directory is locked, the existing `rampart.exe` may not be able to start `rampart upgrade`.
 
 ### Path Matching
 

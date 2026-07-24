@@ -25,6 +25,16 @@ brew upgrade rampart
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
+### Windows
+
+Rerun the official PowerShell installer:
+
+```powershell
+irm https://rampart.sh/install.ps1 | iex
+```
+
+For the v1.2.x to v1.3.0 upgrade, use this installer instead of `rampart upgrade`. The installer can repair the affected legacy `~\.rampart` ACL before accessing the existing binary; an installed `rampart.exe` inside that locked directory may be unable to start and repair itself.
+
 ### Manual Binary
 
 Download the latest release from [GitHub Releases](https://github.com/peg/rampart/releases):

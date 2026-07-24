@@ -36,6 +36,18 @@ Supported AI Agents:
   • Hermes Agent              - Experimental user plugin integration
   • Cline (VS Code)           - Native hook integration
   • OpenClaw                  - Native plugin integration`,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if flag := cmd.Flags().Lookup("remove"); flag != nil {
+				remove, err := cmd.Flags().GetBool("remove")
+				if err == nil && remove {
+					return nil
+				}
+			}
+			if err := ensureDefaultRampartDirAccessible(); err != nil {
+				return fmt.Errorf("setup: prepare Rampart data directory: %w", err)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInteractiveSetup(cmd, opts)
 		},

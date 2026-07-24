@@ -57,9 +57,7 @@ const openclawMinVersion = "2026.3.28"
 func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 	// 0. Ensure rampart serve is running (start as systemd service if needed).
 	if err := ensureServeRunning(w, errW); err != nil {
-		fmt.Fprintf(errW, "⚠ Could not start rampart serve: %v\n", err)
-		fmt.Fprintln(errW, "  Start manually: rampart serve --background")
-		// Non-fatal — continue setup, serve can be started later.
+		return fmt.Errorf("start Rampart policy service: %w", err)
 	}
 
 	// 1. Locate openclaw.

@@ -16,9 +16,9 @@ package cli
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,25 +137,46 @@ func tokenFilePath() (string, error) {
 }
 
 // persistToken writes the token to ~/.rampart/token with owner-only permissions.
-// On Unix: 0600. On Windows: ACL granting GENERIC_ALL to owner only.
+// It secures a temporary file before writing the token, then atomically replaces
+// the destination so a hardening failure cannot expose or destroy a valid token.
 func persistToken(token string) error {
 	p, err := tokenFilePath()
 	if err != nil {
 		return err
 	}
 	dir := filepath.Dir(p)
+	if err := ensureRampartDirAccessible(dir); err != nil {
+		return fmt.Errorf("prepare token directory: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return fmt.Errorf("create token directory: %w", err)
 	}
 	if err := secureDirPermissions(dir); err != nil {
-		slog.Debug("could not secure directory permissions", "path", dir, "error", err)
+		return fmt.Errorf("secure token directory: %w", err)
 	}
-	if err := os.WriteFile(p, []byte(token), 0o600); err != nil {
-		return err
+
+	f, err := os.CreateTemp(dir, ".token-*")
+	if err != nil {
+		return fmt.Errorf("create temporary token file: %w", err)
 	}
-	if err := secureFilePermissions(p); err != nil {
-		slog.Debug("could not secure file permissions", "path", p, "error", err)
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+
+	if err := secureFilePermissions(tmpPath); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("secure temporary token file: %w", err)
 	}
+	if _, err := f.WriteString(token); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write temporary token file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temporary token file: %w", err)
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		return fmt.Errorf("replace token file: %w", err)
+	}
+
 	return nil
 }
 
@@ -312,11 +333,8 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return nil
 	}
 
-	// Unload any existing service before writing new plist.
-	// Best-effort: ignore errors if the service wasn't loaded.
-	if _, err := os.Stat(path); err == nil {
-		_, _ = runner("launchctl", "unload", path).CombinedOutput()
-	}
+	_, existingErr := os.Stat(path)
+	serviceExists := existingErr == nil
 
 	content, err := generatePlist(cfg)
 	if err != nil {
@@ -337,13 +355,26 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 	}
 	_ = os.Chmod(path, 0o600)
 
+	// Stop before rotating the shared token. Otherwise an old process can keep
+	// authenticating with the previous token while hooks read the new one.
+	if serviceExists {
+		// A plist can exist while the job is already unloaded. Only unload a
+		// job launchctl reports as loaded; a real unload failure is fatal.
+		loaded, err := launchctlServiceLoaded(runner)
+		if err != nil {
+			return err
+		}
+		if loaded {
+			if out, err := runner("launchctl", "unload", path).CombinedOutput(); err != nil {
+				return fmt.Errorf("launchctl unload: %w\n%s", err, out)
+			}
+		}
+	}
+	if err := persistToken(cfg.Token); err != nil {
+		return fmt.Errorf("persist service token: %w", err)
+	}
 	if out, err := runner("launchctl", "load", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl load: %w\n%s", err, out)
-	}
-
-	if err := persistToken(cfg.Token); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
-		fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", cfg.Token)
 	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
@@ -359,6 +390,9 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
 		return nil
 	}
+
+	_, existingErr := os.Stat(path)
+	serviceExists := existingErr == nil
 
 	content, err := generateSystemdUnit(cfg)
 	if err != nil {
@@ -378,22 +412,44 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 	}
 	_ = os.Chmod(path, 0o600)
 
-	// Stop the old service before reload so the new binary/token take effect.
-	_, _ = runner("systemctl", "--user", "stop", "rampart-serve.service").CombinedOutput()
-
+	// Fail closed during token rotation: stop the old process before changing
+	// either the loaded unit or the token hooks will read.
+	if serviceExists {
+		if out, err := runner("systemctl", "--user", "stop", "rampart-serve.service").CombinedOutput(); err != nil {
+			return fmt.Errorf("systemctl stop: %w\n%s", err, out)
+		}
+	}
 	if out, err := runner("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w\n%s", err, out)
 	}
-	if out, err := runner("systemctl", "--user", "enable", "--now", "rampart-serve.service").CombinedOutput(); err != nil {
+	if err := persistToken(cfg.Token); err != nil {
+		return fmt.Errorf("persist service token: %w", err)
+	}
+	if out, err := runner("systemctl", "--user", "enable", "rampart-serve.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl enable: %w\n%s", err, out)
 	}
-
-	if err := persistToken(cfg.Token); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Warning: could not save token to ~/.rampart/token: %v\n", err)
-		fmt.Fprintf(cmd.ErrOrStderr(), "  Run: echo '%s' > ~/.rampart/token\n", cfg.Token)
+	if out, err := runner("systemctl", "--user", "start", "rampart-serve.service").CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl start: %w\n%s", err, out)
 	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
+}
+
+func launchctlServiceLoaded(runner commandRunner) (bool, error) {
+	out, err := runner("launchctl", "list", plistLabel).CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 113 {
+		return false, nil
+	}
+	message := strings.ToLower(string(out))
+	if strings.Contains(message, "could not find service") ||
+		strings.Contains(message, "could not find specified service") {
+		return false, nil
+	}
+	return false, fmt.Errorf("launchctl list %s: %w\n%s", plistLabel, err, out)
 }
 
 func printSuccess(cmd *cobra.Command, token string, generated bool, port int, path string) {

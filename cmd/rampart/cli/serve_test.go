@@ -38,19 +38,6 @@ func TestServeTokenOutputPrintsForInteractiveTerminal(t *testing.T) {
 	}
 }
 
-func TestPersistTokenWarningRedactsFallbackWhenNonInteractive(t *testing.T) {
-	const token = "secret-token-value"
-	var buf bytes.Buffer
-	printPersistTokenWarning(&buf, os.ErrPermission, token, false)
-	got := buf.String()
-	if strings.Contains(got, token) {
-		t.Fatalf("non-interactive persist warning leaked full token: %q", got)
-	}
-	if !strings.Contains(got, "not printed") {
-		t.Fatalf("non-interactive persist warning should explain redaction, got: %q", got)
-	}
-}
-
 func TestIsWriteEvent(t *testing.T) {
 	tests := []struct {
 		name string

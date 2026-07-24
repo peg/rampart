@@ -119,6 +119,8 @@ rampart --version
 
 Rampart works on Windows with some limitations:
 
+> **Upgrading from Rampart 1.2.x:** rerun `irm https://rampart.sh/install.ps1 | iex`. The installer repairs the affected legacy `~\.rampart` ACL before replacing the binary. Do not rely on `rampart upgrade` when the existing binary is inaccessible.
+
 | Feature | Windows | macOS/Linux |
 |---------|---------|-------------|
 | `rampart serve` | ✅ Foreground only | ✅ Background supported |

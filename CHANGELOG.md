@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-07-22
+## [1.3.0] - 2026-07-24
+
+> **Windows upgrade guidance:** If you installed Rampart 1.2.x on Windows, rerun the official PowerShell installer:
+> `irm https://rampart.sh/install.ps1 | iex`. The installer repairs the affected legacy `~\.rampart` ACL before replacing the binary. Do not rely on `rampart upgrade` if Windows cannot execute `rampart.exe` from the locked directory.
 
 ### Added
 
@@ -23,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Windows token hardening cannot lock domain or AzureAD users out of Rampart** — Token ACLs now use the current process SID through native Windows security APIs, protect only the token file, and fail setup safely if hardening cannot be applied.
 - **OpenClaw policy responses fail closed** — Malformed, empty, array, or unknown policy responses block the tool call instead of silently becoming an allow decision.
 - **Rampart tokens stay on the loopback trust boundary** — Managed OpenClaw configuration forces the local policy URL, and the plugin refuses to send its admin token to non-loopback endpoints.
 - **Managed policies are loaded before enforcement and hot-reload correctly** — Fresh protection no longer starts with only one managed layer, and `rampart serve` now reloads YAML files created, replaced, renamed, or removed in the policy directory.
