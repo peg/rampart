@@ -36,6 +36,7 @@ marker = (
     if "rampart-host-canary" in prompt
     else "rampart-host-allowed"
 )
+command = prompt.split("exact command: ", 1)[1].split(". Do not use", 1)[0]
 
 hooks = json.loads((Path(os.environ["CODEX_HOME"]) / "hooks.json").read_text())
 tool_use_id = "call-deny" if marker.endswith("canary") else "call-allow"
@@ -45,7 +46,7 @@ base = {
     "cwd": str(cwd),
     "tool_name": "Bash",
     "tool_use_id": tool_use_id,
-    "tool_input": {"command": f"printf {marker}"},
+    "tool_input": {"command": command},
 }
 
 def invoke(event, response=None):
@@ -77,9 +78,25 @@ if specific.get("permissionDecision") == "deny":
     raise SystemExit(0)
 
 print("hook: PreToolUse Completed")
-print(marker, end="")
-invoke("PostToolUse", {"stdout": marker, "stderr": "", "exit_code": 0})
-print("\nhook: PostToolUse Completed")
+if os.environ.get("RAMPART_FAKE_CODEX_SKIP_EXECUTION") == "1":
+    completed = subprocess.CompletedProcess(command, 0, "", "")
+else:
+    completed = subprocess.run(
+        command,
+        shell=True,
+        cwd=cwd,
+        env=os.environ,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+if completed.returncode != 0:
+    raise SystemExit(f"fake codex: command failed: {completed.stderr}")
+invoke(
+    "PostToolUse",
+    {"stdout": completed.stdout, "stderr": completed.stderr, "exit_code": 0},
+)
+print("hook: PostToolUse Completed")
 PY
 chmod +x "${tmp}/bin/codex"
 
@@ -91,6 +108,30 @@ else
   echo "test-compat-codex-host: help is missing opt-in guidance" >&2
   exit 1
 fi
+
+# Printing successful hook messages is not execution proof. The harness must
+# fail when the fake host reports success but deliberately skips the command.
+if TMPDIR="${tmp}/runtime" \
+  RAMPART_FAKE_CODEX_SKIP_EXECUTION=1 \
+  "$harness" \
+    --yes \
+    --codex-bin "${tmp}/bin/codex" \
+    --rampart-bin "${tmp}/bin/rampart" \
+    --codex-home "${tmp}/source-codex" \
+    --artifacts "${tmp}/false-positive-artifacts" \
+    >"${tmp}/false-positive.out" 2>"${tmp}/false-positive.err"; then
+  echo "test-compat-codex-host: missing execution side effect was accepted" >&2
+  exit 1
+fi
+python3 - "${tmp}/false-positive-artifacts/summary.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+summary = json.loads(Path(sys.argv[1]).read_text())
+assert summary["result"] == "fail", summary
+assert summary["checks"]["allow_command_executed"] is False, summary
+PY
 
 if TMPDIR="${tmp}/runtime" \
   "$harness" \

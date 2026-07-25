@@ -4,8 +4,10 @@
 package assurance
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -28,6 +30,63 @@ func TestRepositoryManifest(t *testing.T) {
 	}
 	if err := manifest.Validate(root); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCommittedLiveEvidenceSummaries(t *testing.T) {
+	root := repositoryRoot(t)
+	manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitPattern := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	datePattern := regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+	for _, integration := range manifest.Integrations {
+		for _, evidence := range integration.Evidence {
+			if evidence.Kind != "live" || filepath.Ext(evidence.Path) != ".json" {
+				continue
+			}
+			t.Run(integration.ID, func(t *testing.T) {
+				data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(evidence.Path)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var summary struct {
+					SchemaVersion   string          `json:"schema_version"`
+					Result          string          `json:"result"`
+					RecordedAt      string          `json:"recorded_at"`
+					CandidateCommit string          `json:"candidate_commit"`
+					Platform        string          `json:"platform"`
+					Checks          map[string]bool `json:"checks"`
+				}
+				if err := json.Unmarshal(data, &summary); err != nil {
+					t.Fatalf("decode %s: %v", evidence.Path, err)
+				}
+				if !strings.HasPrefix(summary.SchemaVersion, "rampart.") || !strings.HasSuffix(summary.SchemaVersion, ".v1") {
+					t.Errorf("schema_version = %q, want rampart.*.v1", summary.SchemaVersion)
+				}
+				if summary.Result != "pass" {
+					t.Errorf("result = %q, want pass", summary.Result)
+				}
+				if !datePattern.MatchString(summary.RecordedAt) {
+					t.Errorf("recorded_at = %q, want YYYY-MM-DD", summary.RecordedAt)
+				}
+				if !commitPattern.MatchString(summary.CandidateCommit) {
+					t.Errorf("candidate_commit = %q, want a full lowercase commit SHA", summary.CandidateCommit)
+				}
+				if !strings.Contains(summary.Platform, "/") {
+					t.Errorf("platform = %q, want os/arch", summary.Platform)
+				}
+				if len(summary.Checks) == 0 {
+					t.Error("checks must not be empty")
+				}
+				for name, passed := range summary.Checks {
+					if !passed {
+						t.Errorf("check %q is not passing", name)
+					}
+				}
+			})
+		}
 	}
 }
 

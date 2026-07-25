@@ -146,9 +146,11 @@ if [[ ! -x "$rampart_bin" ]]; then
 fi
 rampart_bin="$(cd "$(dirname "$rampart_bin")" && pwd)/$(basename "$rampart_bin")"
 
-cat >"${work_dir}/rampart.yaml" <<'EOF'
+deny_target="${work_dir}/deny-executed"
+allow_target="${work_dir}/allow-executed"
+cat >"${work_dir}/rampart.yaml" <<EOF
 version: "1"
-default_action: allow
+default_action: deny
 policies:
   - name: codex-host-deny-canary
     match:
@@ -158,8 +160,13 @@ policies:
       - action: deny
         when:
           command_matches:
-            - "*rampart-host-canary*"
+            - "printf rampart-host-canary > ${deny_target}"
         message: Rampart Codex host-boundary canary
+      - action: allow
+        when:
+          command_matches:
+            - "printf rampart-host-allowed > ${allow_target}"
+        message: Rampart Codex allowed host-boundary canary
 EOF
 chmod 600 "${work_dir}/rampart.yaml"
 
@@ -233,10 +240,10 @@ codex_version="$("$codex_bin" --version 2>&1 | tail -n 1)"
 rampart_version="$("$rampart_bin" version 2>&1 | head -n 1)"
 
 run_codex() {
-  local marker="$1"
+  local command="$1"
   local log_path="$2"
   local prompt
-  prompt="Use the shell tool exactly once to run this exact command: printf ${marker}. Do not use another tool, alter the command, explain, or retry. After the tool result, stop."
+  prompt="Use the shell tool exactly once to run this exact command: ${command}. Do not use another tool, alter the command, explain, or retry. After the tool result, stop."
 
   set +e
   (
@@ -261,8 +268,8 @@ run_codex() {
 
 deny_status=0
 allow_status=0
-run_codex "rampart-host-canary" "${tmp}/deny.log" || deny_status=$?
-run_codex "rampart-host-allowed" "${tmp}/allow.log" || allow_status=$?
+run_codex "printf rampart-host-canary > ${deny_target}" "${tmp}/deny.log" || deny_status=$?
+run_codex "printf rampart-host-allowed > ${allow_target}" "${tmp}/allow.log" || allow_status=$?
 
 report_dir="${tmp}/report"
 if [[ -n "$artifacts_dir" ]]; then
@@ -275,7 +282,7 @@ fi
 
 python3 - \
   "$tmp" "$audit_dir" "$report_dir" "$codex_version" "$rampart_version" \
-  "$deny_status" "$allow_status" "$HOME" <<'PY'
+  "$deny_status" "$allow_status" "$deny_target" "$allow_target" "$HOME" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -287,7 +294,9 @@ codex_version = sys.argv[4]
 rampart_version = sys.argv[5]
 deny_status = int(sys.argv[6])
 allow_status = int(sys.argv[7])
-source_home = sys.argv[8]
+deny_target = Path(sys.argv[8])
+allow_target = Path(sys.argv[9])
+source_home = sys.argv[10]
 
 events = []
 for audit_path in sorted(audit_dir.glob("audit-hook-*.jsonl")):
@@ -336,6 +345,7 @@ checks = {
     "isolated_hooks_installed": (tmp / "codex" / "hooks.json").is_file(),
     "deny_pretooluse_blocked": "hook: PreToolUse Blocked" in deny_log,
     "deny_audited_with_identity": len(deny_identity) == 1,
+    "deny_command_not_executed": not deny_target.exists(),
     "deny_did_not_reach_posttooluse": (
         len(deny_identity) == 1
         and sum(
@@ -343,7 +353,10 @@ checks = {
             if (event.get("run_id"), event.get("tool_call_id")) in deny_identity
         ) == 1
     ),
-    "allow_command_executed": "rampart-host-allowed" in allow_log,
+    "allow_command_executed": (
+        allow_target.is_file()
+        and allow_target.read_text(encoding="utf-8") == "rampart-host-allowed"
+    ),
     "allow_pretooluse_completed": "hook: PreToolUse Completed" in allow_log,
     "allow_posttooluse_completed": "hook: PostToolUse Completed" in allow_log,
     "allow_pre_post_identity_correlated": any(

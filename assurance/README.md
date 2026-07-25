@@ -43,7 +43,8 @@ An executable harness is evidence that a check can be performed; it is not by
 itself evidence that a live run passed. Sanitized completed-run summaries live
 under `assurance/evidence/` when a coverage claim depends on a maintainer host
 run. The summaries omit credentials, raw model output, hostnames, and temporary
-paths.
+paths. They are reviewable maintainer attestations tied to a candidate commit,
+not cryptographic signatures or substitutes for rerunning the harness.
 
 The public corpus contains mitigated regression cases only. Report suspected
 or unpatched bypasses privately through [`SECURITY.md`](../SECURITY.md);

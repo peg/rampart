@@ -41,7 +41,9 @@ The canonical source is
 [`assurance/integrations.yaml`](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
 Sanitized completed-run summaries are stored under
 [`assurance/evidence/`](https://github.com/peg/rampart/tree/main/assurance/evidence).
-They omit credentials, raw model output, hostnames, and temporary paths.
+They omit credentials, raw model output, hostnames, and temporary paths. These
+summaries are reviewable maintainer attestations tied to a candidate commit;
+they are not cryptographic signatures or substitutes for rerunning the harness.
 
 ## Run the local gate
 
