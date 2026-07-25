@@ -166,6 +166,11 @@
   box-shadow: inset 3px 0 0 rgba(255, 99, 146, 0.65);
 }
 
+.support-matrix-table .tier-limited td:first-child,
+.support-matrix-table .tier-limited td:last-child {
+  box-shadow: inset 3px 0 0 rgba(148, 163, 184, 0.5);
+}
+
 .support-matrix-table .tier-legacy td:first-child,
 .support-matrix-table .tier-legacy td:last-child {
   box-shadow: inset 3px 0 0 rgba(245, 158, 11, 0.55);

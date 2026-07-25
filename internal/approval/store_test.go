@@ -26,11 +26,14 @@ import (
 
 func testCall() engine.ToolCall {
 	return engine.ToolCall{
-		ID:        "test-1",
-		Agent:     "main",
-		Tool:      "exec",
-		Params:    map[string]any{"command": "sudo reboot"},
-		Timestamp: time.Now(),
+		ID:         "test-1",
+		Agent:      "main",
+		Session:    "session-1",
+		RunID:      "run-1",
+		ToolCallID: "tool-call-1",
+		Tool:       "exec",
+		Params:     map[string]any{"command": "sudo reboot"},
+		Timestamp:  time.Now(),
 	}
 }
 
@@ -164,6 +167,83 @@ func TestDeduplicateWithinWindow(t *testing.T) {
 	assert.NotEqual(t, req1.ID, req3.ID, "different call should get different approval")
 }
 
+func TestDeduplicationIsBoundToExecutionContext(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*engine.ToolCall)
+	}{
+		{
+			name: "different session",
+			mutate: func(call *engine.ToolCall) {
+				call.Session = "session-2"
+			},
+		},
+		{
+			name: "different run",
+			mutate: func(call *engine.ToolCall) {
+				call.RunID = "run-2"
+			},
+		},
+		{
+			name: "different tool call",
+			mutate: func(call *engine.ToolCall) {
+				call.ToolCallID = "tool-call-2"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore()
+			defer store.Close()
+
+			first := testCall()
+			req1, err := store.Create(first, testDecision())
+			require.NoError(t, err)
+
+			second := testCall()
+			tt.mutate(&second)
+			req2, err := store.Create(second, testDecision())
+			require.NoError(t, err)
+
+			assert.NotEqual(t, req1.ID, req2.ID)
+		})
+	}
+}
+
+func TestCallsWithoutStableToolCallIDAreNeverDeduplicated(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+
+	call := testCall()
+	call.ToolCallID = ""
+
+	req1, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	req2, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+
+	assert.NotEqual(t, req1.ID, req2.ID)
+}
+
+func TestDeduplicationRequiresIdenticalActionPayload(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+
+	first := testCall()
+	first.Tool = "write"
+	first.Params = map[string]any{"path": "/tmp/first", "content": "same"}
+	req1, err := store.Create(first, testDecision())
+	require.NoError(t, err)
+
+	second := first
+	second.Params = map[string]any{"path": "/tmp/second", "content": "same"}
+	req2, err := store.Create(second, testDecision())
+	require.NoError(t, err)
+
+	assert.NotEqual(t, req1.ID, req2.ID)
+}
+
 func TestWaitForResolution(t *testing.T) {
 	store := NewStore()
 	req, _ := store.Create(testCall(), testDecision())
@@ -207,6 +287,9 @@ func TestApprovalStorePersistence(t *testing.T) {
 	assert.Equal(t, req.ID, restored.ID)
 	assert.Equal(t, req.Call.Tool, restored.Call.Tool)
 	assert.Equal(t, req.Call.Agent, restored.Call.Agent)
+	assert.Equal(t, req.Call.Session, restored.Call.Session)
+	assert.Equal(t, req.Call.RunID, restored.Call.RunID)
+	assert.Equal(t, req.Call.ToolCallID, restored.Call.ToolCallID)
 
 	// Also verify it shows up in List().
 	pending := store2.List()

@@ -662,7 +662,7 @@ policies:
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
-	body := `{"agent":"main","session":"discord/direct/test","openclaw_hosted":true,"skip_pending_approval":true,"params":{"command":"sudo true"}}`
+	body := `{"agent":"main","session":"discord/direct/test","run_id":"run-1","tool_call_id":"tool-call-1","openclaw_hosted":true,"skip_pending_approval":true,"params":{"command":"sudo true"}}`
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -711,7 +711,7 @@ policies:
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
-	body := `{"agent":"main","session":"discord/direct/test","openclaw_hosted":true,"skip_pending_approval":true,"params":{"command":"sudo true"}}`
+	body := `{"agent":"main","session":"discord/direct/test","run_id":"run-1","tool_call_id":"tool-call-1","openclaw_hosted":true,"skip_pending_approval":true,"params":{"command":"sudo true"}}`
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+plaintext)
@@ -728,7 +728,11 @@ policies:
 	assert.Equal(t, "needs approval", got["message"])
 	_, hasApprovalID := got["approval_id"]
 	assert.True(t, hasApprovalID, "agent token must still receive Rampart approval_id")
-	assert.Len(t, srv.approvals.List(), 1, "agent token must still enqueue Rampart approvals")
+	pending := srv.approvals.List()
+	require.Len(t, pending, 1, "agent token must still enqueue Rampart approvals")
+	assert.Equal(t, "discord/direct/test", pending[0].Call.Session)
+	assert.Equal(t, "run-1", pending[0].Call.RunID)
+	assert.Equal(t, "tool-call-1", pending[0].Call.ToolCallID)
 }
 
 func TestGenericHostedAskSkipsPendingApprovalCreationForAdmin(t *testing.T) {

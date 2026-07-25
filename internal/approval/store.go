@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,7 +43,7 @@ const dedupWindow = 60 * time.Second
 type Status int
 
 const (
-	StatusPending  Status = iota
+	StatusPending Status = iota
 	StatusApproved
 	StatusDenied
 	StatusExpired
@@ -92,7 +93,7 @@ type Request struct {
 	// Persisted indicates this approval resulted in a persistent allow-always rule.
 	Persisted bool
 
-	// dedupKey is the SHA-256 hash of tool+command+agent for deduplication.
+	// dedupKey scopes retries to one host-provided tool-call identity.
 	dedupKey string
 
 	// done is closed when the approval is resolved.
@@ -102,22 +103,23 @@ type Request struct {
 // persistRecord is the on-disk representation of an approval request.
 // Uses flat string fields to avoid circular JSON dependencies on engine types.
 type persistRecord struct {
-	ID              string            `json:"id"`
-	Tool            string            `json:"tool"`
-	Agent           string            `json:"agent"`
-	Session         string            `json:"session,omitempty"`
-	RunID           string            `json:"run_id,omitempty"`
-	Command         string            `json:"command,omitempty"`
-	Params          map[string]any    `json:"params,omitempty"`
-	Input           map[string]any    `json:"input,omitempty"`
-	MatchedPolicies []string          `json:"matched_policies,omitempty"`
-	Message         string            `json:"message,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	ExpiresAt       time.Time         `json:"expires_at"`
-	ResolvedAt      time.Time         `json:"resolved_at,omitempty"`
-	ResolvedBy      string            `json:"resolved_by,omitempty"`
-	Status          string            `json:"status"`
-	Persisted       bool              `json:"persisted,omitempty"`
+	ID              string         `json:"id"`
+	Tool            string         `json:"tool"`
+	Agent           string         `json:"agent"`
+	Session         string         `json:"session,omitempty"`
+	RunID           string         `json:"run_id,omitempty"`
+	ToolCallID      string         `json:"tool_call_id,omitempty"`
+	Command         string         `json:"command,omitempty"`
+	Params          map[string]any `json:"params,omitempty"`
+	Input           map[string]any `json:"input,omitempty"`
+	MatchedPolicies []string       `json:"matched_policies,omitempty"`
+	Message         string         `json:"message,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	ExpiresAt       time.Time      `json:"expires_at"`
+	ResolvedAt      time.Time      `json:"resolved_at,omitempty"`
+	ResolvedBy      string         `json:"resolved_by,omitempty"`
+	Status          string         `json:"status"`
+	Persisted       bool           `json:"persisted,omitempty"`
 }
 
 // Store manages pending approval requests.
@@ -219,9 +221,34 @@ const maxPendingApprovals = 1000
 // ErrTooManyPending is returned when the pending approval limit is reached.
 var ErrTooManyPending = fmt.Errorf("approval: too many pending requests (limit: %d)", maxPendingApprovals)
 
-// dedupKey computes a SHA-256 hash of tool + command + agent for dedup lookup.
+// dedupKey computes a scoped retry identity for approval deduplication.
+// Without a stable host-provided tool-call ID, deduplication is disabled:
+// creating an extra approval is safer than reusing authorization across calls.
 func dedupKey(call engine.ToolCall) string {
-	h := sha256.Sum256([]byte(call.Tool + "\x00" + call.Command() + "\x00" + call.Agent))
+	if strings.TrimSpace(call.ToolCallID) == "" {
+		return ""
+	}
+	action, err := json.Marshal(struct {
+		Agent      string         `json:"agent"`
+		Session    string         `json:"session"`
+		RunID      string         `json:"run_id"`
+		ToolCallID string         `json:"tool_call_id"`
+		Tool       string         `json:"tool"`
+		Params     map[string]any `json:"params"`
+		Input      map[string]any `json:"input"`
+	}{
+		Agent:      call.Agent,
+		Session:    call.Session,
+		RunID:      call.RunID,
+		ToolCallID: call.ToolCallID,
+		Tool:       call.Tool,
+		Params:     call.Params,
+		Input:      call.Input,
+	})
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(action)
 	return hex.EncodeToString(h[:])
 }
 
@@ -229,9 +256,10 @@ func dedupKey(call engine.ToolCall) string {
 // The caller should wait on request.Done() for resolution.
 // Returns nil and an error if the pending approval limit has been reached.
 //
-// If an identical pending approval (same tool + command + agent) was created
-// within the last 60 seconds, the existing approval is returned instead of
-// creating a duplicate. This handles agent retries on timeout/reconnect.
+// If the same host-identified tool call was submitted by the same agent,
+// session, and run within the last 60 seconds, the existing approval is
+// returned. Calls without a stable host-provided tool-call ID are never
+// deduplicated.
 func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -240,9 +268,11 @@ func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request
 	key := dedupKey(call)
 
 	// Check for an existing identical pending approval within the dedup window.
-	for _, req := range s.pending {
-		if req.Status == StatusPending && req.dedupKey == key && now.Sub(req.CreatedAt) < dedupWindow {
-			return req, nil
+	if key != "" {
+		for _, req := range s.pending {
+			if req.Status == StatusPending && req.dedupKey == key && now.Sub(req.CreatedAt) < dedupWindow {
+				return req, nil
+			}
 		}
 	}
 
@@ -456,6 +486,7 @@ func toRecord(req *Request) persistRecord {
 		Agent:           req.Call.Agent,
 		Session:         req.Call.Session,
 		RunID:           req.Call.RunID,
+		ToolCallID:      req.Call.ToolCallID,
 		Command:         req.Call.Command(),
 		Params:          req.Call.Params,
 		Input:           req.Call.Input,
@@ -483,12 +514,13 @@ func fromRecord(rec persistRecord) (*Request, bool) {
 	}
 
 	call := engine.ToolCall{
-		Tool:    rec.Tool,
-		Agent:   rec.Agent,
-		Session: rec.Session,
-		RunID:   rec.RunID,
-		Params:  rec.Params,
-		Input:   rec.Input,
+		Tool:       rec.Tool,
+		Agent:      rec.Agent,
+		Session:    rec.Session,
+		RunID:      rec.RunID,
+		ToolCallID: rec.ToolCallID,
+		Params:     rec.Params,
+		Input:      rec.Input,
 	}
 	if call.Params == nil {
 		call.Params = make(map[string]any)

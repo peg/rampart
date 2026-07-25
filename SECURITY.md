@@ -4,9 +4,9 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 1.0.x   | ✅ Current release |
-| 0.9.x   | ⚠️ Critical fixes only |
-| < 0.9   | ❌ No longer supported |
+| 1.3.x   | ✅ Current release |
+| 1.2.x   | ⚠️ Critical fixes only |
+| < 1.2   | ❌ No longer supported |
 
 ## Reporting a Vulnerability
 
@@ -36,10 +36,15 @@ If you discover a security vulnerability in Rampart, please report it responsibl
 
 Rampart's threat model is documented in [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md). Key design principles:
 
-- **Fail-open by default** — if Rampart crashes, commands execute normally (deliberate: fail-closed locks users out)
+- **Explicit degraded behavior** — failure behavior is integration-specific and
+  documented; managed OpenClaw protection fails closed, while compatibility
+  paths such as preload may fail open
 - **Deny-wins evaluation** — any deny from any policy overrides all allows
 - **Local-first** — no data leaves the machine, no cloud dependency, no telemetry
 - **Hash-chained audit** — tamper-evident append-only trail with SIEM export
+
+The machine-readable integration guarantees, evidence paths, known limitations,
+and shared adversarial corpus live in [`assurance/`](assurance/README.md).
 
 ## Scope
 

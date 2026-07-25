@@ -1,0 +1,206 @@
+schema_version: rampart.assurance.v1
+baseline_release: v1.3.0
+reviewed_at: "2026-07-24"
+
+# This manifest records the guarantees Rampart can support with evidence today.
+# "tested" means the Rampart adapter is exercised in isolation. "verified"
+# means a live host boundary is exercised with safe behavioral canaries.
+integrations:
+  - id: openclaw
+    display_name: OpenClaw
+    support_tier: verified
+    setup_command: rampart protect openclaw
+    boundary: native_plugin
+    platforms: [linux, macos]
+    service_required: true
+    upstream_ci: rolling_latest
+    coverage:
+      shell: verified
+      file_read: verified
+      file_write: verified
+      network: partial
+      mcp: unknown
+      subagents: partial
+    degraded:
+      policy_unavailable: deny
+      adapter_error: unknown
+      timeout: deny
+    approval: native
+    verification:
+      level: active
+      command: rampart verify openclaw
+      safe_canaries: true
+      host_boundary: true
+    evidence:
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Verification rejects incomplete or stale plugin canary results.
+      - path: internal/plugin/openclaw/provider-surface-replay.mjs
+        kind: integration
+        proves: Provider aliases and action consequences reach the canonical policy surface.
+      - path: internal/plugin/openclaw/degraded-mode-test.mjs
+        kind: failure_injection
+        proves: Managed sensitive tools deny on service errors, malformed replies, and timeouts.
+      - path: scripts/compat-openclaw-latest.mjs
+        kind: upstream_latest
+        proves: The bundled plugin contract is checked against the latest published OpenClaw.
+      - path: scripts/lab/openclaw-container-acceptance.sh
+        kind: live
+        proves: A disposable OpenClaw installation exercises the real plugin boundary.
+    limitations:
+      - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
+      - Host behavior after an uncaught plugin exception is not yet independently proven fail-closed.
+      - MCP and delegated-agent coverage need dedicated live canaries.
+
+  - id: claude_code
+    display_name: Claude Code
+    support_tier: supported
+    setup_command: rampart setup claude-code
+    boundary: native_hook
+    platforms: [linux, macos, windows]
+    service_required: false
+    upstream_ci: none
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: tested
+      mcp: unknown
+      subagents: partial
+    degraded:
+      policy_unavailable: local
+      adapter_error: deny
+      timeout: host_defined
+    approval: native
+    verification:
+      level: policy_only
+      command: rampart verify policy
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_test.go
+        kind: unit
+        proves: Claude hook payloads map to structured allow, ask, and deny responses.
+      - path: cmd/rampart/cli/hook_ask_test.go
+        kind: integration
+        proves: Invalid policy and malformed input fail closed through the hook protocol.
+      - path: cmd/rampart/cli/setup_test.go
+        kind: unit
+        proves: Setup preserves existing settings while installing required hook events.
+    limitations:
+      - No rolling latest-Claude compatibility job currently exercises the installed host.
+      - rampart verify policy proves policy behavior but does not prove Claude loaded or invoked the hook.
+      - MCP, subagent, hook-crash, and host-timeout behavior need live conformance tests.
+
+  - id: cline
+    display_name: Cline
+    support_tier: supported
+    setup_command: rampart setup cline
+    boundary: native_hook
+    platforms: [linux, macos]
+    service_required: false
+    upstream_ci: none
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: tested
+      mcp: unknown
+      subagents: unknown
+    degraded:
+      policy_unavailable: local
+      adapter_error: deny
+      timeout: host_defined
+    approval: block_and_retry
+    verification:
+      level: policy_only
+      command: rampart verify policy
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/cline_test.go
+        kind: unit
+        proves: Setup installs the Cline pre- and post-tool hook scripts.
+      - path: cmd/rampart/cli/hook_test.go
+        kind: unit
+        proves: Cline hook payloads map to allow and cancellation responses.
+    limitations:
+      - No rolling latest-Cline compatibility job currently exercises the installed host.
+      - The installed hook scripts require Bash; native Windows behavior is not currently claimed.
+      - Cline has no native Rampart approval-resume path; ask decisions cancel with context.
+
+  - id: codex_cli
+    display_name: Codex CLI
+    support_tier: limited
+    setup_command: rampart setup codex
+    boundary: process_interposition
+    platforms: [linux, macos]
+    service_required: true
+    upstream_ci: none
+    coverage:
+      shell: tested
+      file_read: not_covered
+      file_write: not_covered
+      network: partial
+      mcp: not_covered
+      subagents: partial
+    degraded:
+      policy_unavailable: allow
+      adapter_error: allow
+      timeout: allow
+    approval: external
+    verification:
+      level: policy_only
+      command: rampart verify policy
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/setup_codex_test.go
+        kind: unit
+        proves: Setup safely installs and removes the Codex preload wrapper.
+      - path: preload/test_preload.sh
+        kind: integration
+        proves: Supported exec-family subprocess calls are intercepted on Linux.
+    limitations:
+      - The v1.3.0 integration does not use Codex lifecycle hooks.
+      - Direct Codex file edits, MCP calls, hosted tools, and specialized local tools are not intercepted.
+      - Preload inheritance is unavailable on Windows and constrained by macOS SIP and static or privileged binaries.
+      - The preload path defaults fail-open when Rampart is unavailable.
+
+  - id: hermes
+    display_name: Hermes Agent
+    support_tier: experimental
+    setup_command: rampart setup hermes
+    boundary: native_plugin
+    platforms: [linux, macos]
+    service_required: true
+    upstream_ci: rolling_latest
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: tested
+      mcp: unknown
+      subagents: unknown
+    degraded:
+      policy_unavailable: mixed
+      adapter_error: allow
+      timeout: mixed
+    approval: block_and_retry
+    verification:
+      level: static
+      command: rampart doctor
+      safe_canaries: false
+      host_boundary: false
+    evidence:
+      - path: internal/plugin/hermes/test_hermes_plugin.py
+        kind: unit
+        proves: Tool normalization, redaction, allow, deny, ask, and service failure are tested.
+      - path: scripts/compat-hermes-latest.py
+        kind: upstream_latest
+        proves: Plugin discovery and pre_tool_call registration are checked against latest Hermes.
+    limitations:
+      - Hermes documents that a crashing plugin callback is skipped and the agent continues.
+      - Hermes approval observer hooks cannot answer or resume an approval.
+      - Read-only tools may be configured fail-open when Rampart is unavailable.
+      - Full CLI, gateway, delegated-agent, and approved-execution E2E are not yet present.

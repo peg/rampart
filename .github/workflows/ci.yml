@@ -83,6 +83,10 @@ jobs:
       - name: Hermes plugin regression tests
         run: python -m unittest internal/plugin/hermes/test_hermes_plugin.py
 
+      - name: Security assurance contract
+        if: runner.os == 'Linux'
+        run: make security-assurance
+
       - name: Policy check (standard)
         run: go run ./cmd/rampart policy check --config policies/standard.yaml
 

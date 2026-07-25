@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Executable security-assurance gate** — A machine-readable integration
+  manifest, shared adversarial policy corpus, and one-command Go, OpenClaw, and
+  Hermes regression suite now run in Linux CI.
+
+### Changed
+
+- **Integration guarantees are evidence-based** — Public support guidance now
+  distinguishes verified host boundaries from tested, limited, and
+  experimental paths, including the direct file and MCP coverage gaps in the
+  current Codex CLI preload integration.
+
+### Security
+
+- **Approvals are bound to the exact execution context** — Retry
+  deduplication now requires an identical host-provided tool-call ID, agent,
+  session, run, tool, and action payload. Calls without stable host identity
+  receive independent approvals, preventing one approved session from
+  releasing an identical action in another session.
+
 ## [1.3.0] - 2026-07-24
 
 > **Windows upgrade guidance:** If you installed Rampart 1.2.x on Windows, rerun the official PowerShell installer:

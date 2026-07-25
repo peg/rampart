@@ -24,19 +24,19 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     </tr>
   </thead>
   <tbody>
-    <tr class="tier-recommended">
+    <tr class="tier-supported">
       <td data-label="Surface"><strong>Claude Code</strong></td>
       <td data-label="Best path">Native hooks<br><code>rampart setup claude-code</code></td>
       <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
       <td data-label="Approval UX">Claude native approval prompt</td>
-      <td data-label="Support tier"><strong>Recommended</strong></td>
+      <td data-label="Support tier"><strong>Supported</strong><br>host verification pending</td>
     </tr>
-    <tr class="tier-recommended">
+    <tr class="tier-limited">
       <td data-label="Surface"><strong>Codex CLI</strong></td>
       <td data-label="Best path">Preload + wrapper<br><code>rampart setup codex</code></td>
       <td data-label="rampart serve">Typically yes</td>
       <td data-label="Approval UX">Wrapper/preload approval semantics</td>
-      <td data-label="Support tier"><strong>Recommended</strong></td>
+      <td data-label="Support tier"><strong>Limited</strong><br>subprocess defense in depth</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Cline</strong></td>
@@ -50,7 +50,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">First-class plugin approvals / native approval UI</td>
-      <td data-label="Support tier"><strong>Recommended</strong></td>
+      <td data-label="Support tier"><strong>Verified</strong></td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Hermes Agent</strong></td>
@@ -99,8 +99,8 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 ### Best default choices
 
-- **Claude Code** → best overall native path
-- **Codex CLI** → best CLI path when you want strong coverage
+- **Claude Code** → strongest existing local-hook path; live host verification is still being added
+- **Codex CLI** → subprocess defense in depth only in v1.3.0; direct file and MCP tool calls are not covered
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path for early testing; `ask` decisions block rather than resume
 - **Cline** → good supported path, but less polished approval UX than Claude Code
@@ -112,6 +112,9 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 - **Hermes Agent plugin**: depends on `rampart serve`; mutating/high-risk tools fail closed when unavailable, while explicitly configured read-only tools may fail open.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.
 - **Wrapper / preload / API paths**: behavior depends on integration settings and fail-open/fail-closed configuration.
+
+The machine-readable source for current integration guarantees and evidence is
+[`assurance/integrations.yaml`](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
 
 ## Choosing the right path
 
