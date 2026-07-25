@@ -125,8 +125,16 @@ func TestSetupCopilotRemoveOnlyDeletesManagedFile(t *testing.T) {
 
 func TestCopilotHomeHonorsEnvironment(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("COPILOT_HOME", "~/custom-copilot")
-	if got, want := copilotHomeDir(home), filepath.Join(home, "custom-copilot"); got != want {
-		t.Fatalf("copilotHomeDir = %q, want %q", got, want)
+	for _, configured := range []string{"~", "~/custom-copilot", `~\custom-copilot`} {
+		t.Run(configured, func(t *testing.T) {
+			t.Setenv("COPILOT_HOME", configured)
+			want := home
+			if configured != "~" {
+				want = filepath.Join(home, "custom-copilot")
+			}
+			if got := copilotHomeDir(home); got != want {
+				t.Fatalf("copilotHomeDir = %q, want %q", got, want)
+			}
+		})
 	}
 }

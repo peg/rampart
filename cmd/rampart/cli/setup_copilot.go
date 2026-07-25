@@ -98,8 +98,14 @@ Run 'rampart setup copilot --remove' to uninstall the user hook.`,
 func copilotHomeDir(home string) string {
 	if configured := strings.TrimSpace(os.Getenv("COPILOT_HOME")); configured != "" {
 		expanded := os.ExpandEnv(configured)
-		if strings.HasPrefix(expanded, "~"+string(os.PathSeparator)) {
-			expanded = filepath.Join(home, strings.TrimPrefix(expanded, "~"+string(os.PathSeparator)))
+		if expanded == "~" {
+			expanded = home
+		} else if strings.HasPrefix(expanded, "~/") || strings.HasPrefix(expanded, `~\`) {
+			// Accept either separator because COPILOT_HOME is commonly copied
+			// between shell profiles and Windows environments.
+			relative := strings.TrimLeft(expanded[1:], `/\`)
+			relative = filepath.FromSlash(strings.ReplaceAll(relative, `\`, "/"))
+			expanded = filepath.Join(home, relative)
 		}
 		return filepath.Clean(expanded)
 	}
