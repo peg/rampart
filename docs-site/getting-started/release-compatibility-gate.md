@@ -1,6 +1,6 @@
 ---
 title: Release Compatibility Gate
-description: "How Rampart validates advertised agent integrations before release, including latest OpenClaw and experimental Hermes Agent checks."
+description: "How Rampart validates Claude Code, Codex, Cline, OpenClaw, and experimental Hermes Agent claims before release."
 ---
 
 # Release Compatibility Gate
@@ -28,6 +28,9 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
 
 2. **Check upstream version currency**
    - Record current Claude Code with `claude update` and `claude --version`.
+   - Record the current Codex version exercised by the host harness.
+   - Record the current Cline version reviewed or exercised; if no host run is
+     completed, keep that limitation explicit in the support matrix.
    - Record latest stable OpenClaw from npm.
    - Record latest stable Hermes Agent from PyPI.
    - Treat upstream release notes touching plugin discovery, hook dispatch, approval behavior, native tool relay, model/tool execution, or security boundaries as compatibility-relevant.
@@ -53,7 +56,28 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - For command execution paths, require OpenClaw runtime evidence plus a correlated Rampart audit event for canonical `exec`.
    - Check for stale shim, dist patch, or duplicate enforcement paths before calling the result clean.
 
-5. **Validate latest stable Hermes Agent in isolation**
+5. **Validate current Codex**
+   - Run `rampart verify codex` against the installed candidate hook definition.
+   - Require the adapter canary to deny without execution and confirm existing
+     unrelated user hooks remain intact.
+   - Run `scripts/compat-codex-host.sh --yes --rampart-bin ./rampart` from an
+     authenticated maintainer installation when making a real-host claim.
+   - Require denied execution, successful allowed execution, and correlated
+     pre/post tool-call identity from the disposable Codex home.
+   - Record physical Windows validation separately; cross-compilation and
+     Windows unit tests do not prove a live Windows Codex host boundary.
+
+6. **Validate Cline without overstating it**
+   - Exercise Cline setup and hook payload regression tests on the candidate.
+   - Review the latest documented hook payloads for shell, file, web, and MCP
+     changes.
+   - Do not claim rolling-latest or real-host verification until a current Cline
+     installation invokes the candidate hooks and harmless allow/deny behavior
+     is recorded.
+   - Do not claim native Windows Cline coverage while the installed Rampart hook
+     scripts require Bash.
+
+7. **Validate latest stable Hermes Agent in isolation**
    - Use a temporary `HERMES_HOME` or temporary home directory.
    - Install latest Hermes Agent in a temporary Python environment.
    - Install the candidate Rampart plugin into only that temporary Hermes plugin directory.
@@ -62,18 +86,19 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Prove deny blocks before execution, allow continues, `ask` blocks with an approval-required/no-resume message, Rampart auth failures fail closed for mutating tools, and mutating tools fail closed when Rampart is unavailable.
    - Do not restart or mutate a live Discord, Telegram, or other long-running Hermes gateway for this gate.
 
-6. **Run `rampart doctor` as a support-contract check**
+8. **Run `rampart doctor` as a support-contract check**
    - Group findings by integration surface.
    - Classify each finding as blocker, expected optional local gap, or follow-up diagnostic improvement.
    - Do not collapse OpenClaw, Hermes, Claude Code, Codex, and Cline findings into one global yes/no.
 
-7. **Publish claims that match the evidence**
+9. **Publish claims that match the evidence**
    - Coverage means tool calls delivered through the named integration
      boundary, not all syscalls, packets, or behavior inside allowed processes.
    - A harness proves a live check is available; only a completed sanitized run
      can substantiate a host-passed claim.
-   - Claude Code remains supported rather than verified until the authenticated
-     host harness passes on the reviewed current version.
+   - A completed Claude Code shell host proof supports only the shell claim;
+     file, network, MCP, subagent, crash, and timeout behavior keep their own
+     evidence levels until separately exercised.
    - OpenClaw can be called recommended only when the latest stable path has fresh runtime/audit proof.
    - Hermes can be called an experimental policy gate when isolated latest-Hermes plugin dispatch has deny, allow, ask-block, and fail-closed proof.
    - First-class Hermes support requires Hermes-owned approval/resume APIs plus live or staging end-to-end validation.
@@ -86,6 +111,7 @@ The repository includes compatibility harnesses for latest upstream agent checks
 python scripts/compat-hermes-latest.py
 node scripts/compat-openclaw-latest.mjs --npm-latest
 scripts/compat-claude-host.sh --yes
+scripts/compat-codex-host.sh --yes
 ```
 
 The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness can run either the `openclaw` on `PATH` or `--npm-latest` for the latest npm package, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks.

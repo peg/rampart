@@ -93,7 +93,10 @@ brew install peg/tap/rampart
 rampart setup claude-code
 
 # OpenClaw
-rampart setup openclaw
+rampart protect openclaw
+
+# Codex CLI, IDE, and desktop
+rampart setup codex
 ```
 
 That's it. Pick the integration that matches your agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
@@ -219,12 +222,35 @@ verify -> outcomes.approval
 | **Cline** | Native hooks | `rampart setup cline` |
 | **OpenClaw** | Zero-config native guard | `rampart protect openclaw` |
 | **Codex CLI, IDE, desktop** | Native lifecycle hooks | `rampart setup codex` |
+| **Hermes Agent** | Experimental native plugin | `rampart setup hermes` |
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
 | **Python agents** | HTTP API / SDK | `localhost:9090` |
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
+
+## In development for v1.4
+
+The following work is available on the `staging` branch and remains subject to
+release-candidate validation:
+
+- **Native Codex lifecycle hooks** — One user-level setup covers Codex CLI, IDE,
+  and desktop host-exposed shell, file, patch, MCP, web, and delegated-agent
+  calls without replacing the Codex executable.
+- **Current Claude Code tool mapping** — Claude Code 2.1.220 hook-visible tools
+  are classified, unknown future pre-call tools deny in enforce mode, and an
+  isolated shell allow/deny host proof is recorded.
+- **Stronger experimental Hermes enforcement** — Batched patches use
+  deny-wins evaluation, with an isolated Hermes 0.19.0 shell host proof and
+  rolling latest-plugin checks. Approval/resume and plugin-failure limitations
+  keep the integration experimental.
+- **Executable security assurance** — A public manifest, adversarial corpus,
+  sanitized evidence summaries, and CI gate connect support claims to their
+  actual test level. [Read the assurance model →](getting-started/security-assurance.md)
+- **Exact-context approvals** — An approval retry must match the originating
+  host identity and normalized action payload instead of being reusable across
+  otherwise identical sessions.
 
 ## What's New in v1.3
 

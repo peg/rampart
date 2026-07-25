@@ -44,7 +44,7 @@ When a policy action is `ask`, behavior varies by integration:
 | Agent | Method | Command | Platforms |
 |-------|--------|---------|-----------|
 | [Claude Code](claude-code.md) | Native hooks | `rampart setup claude-code` | All |
-| [Cline](cline.md) | Native hooks | `rampart setup cline` | All |
+| [Cline](cline.md) | Native hooks | `rampart setup cline` | Linux, macOS |
 | [Cursor](cursor.md) | MCP proxy | `rampart mcp --` | All |
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI, IDE, desktop](codex-cli.md) | Native hooks | `rampart setup codex` | All |

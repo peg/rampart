@@ -100,6 +100,22 @@ claude
 Allowed calls continue normally. Use `rampart watch` or the local audit log to
 confirm which calls actually crossed the Rampart boundary.
 
+## Verification evidence
+
+Rampart's adapter and setup behavior run in ordinary tests. Maintainers can
+additionally use the isolated real-host harness:
+
+```bash
+scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
+```
+
+A completed Claude Code 2.1.220 macOS run proved shell denial without
+execution, successful allowed execution, and matching pre/post tool-call
+identity. It did not load project configuration, MCP servers, or persistent
+sessions. This is live proof for the shell boundary; file, network, MCP,
+subagent, hook-crash, and host-timeout behavior retain their narrower evidence
+levels. See [Security Assurance](../getting-started/security-assurance.md).
+
 ## Monitor in Real Time
 
 ```bash

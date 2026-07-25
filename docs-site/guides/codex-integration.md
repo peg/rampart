@@ -76,6 +76,12 @@ ephemeral sessions, ignores user configuration, retains Codex's
 `workspace-write` sandbox, and cleans up credentials on every exit. Add
 `--artifacts DIR` for sanitized logs and a JSON summary.
 
+The ordinary verifier proves installed configuration and adapter behavior; the
+opt-in script is the real Codex host check. Current physical Windows host proof
+is still pending. See
+[Security Assurance](../getting-started/security-assurance.md) for the precise
+claim boundary.
+
 ## Uninstall
 
 ```bash

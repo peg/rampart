@@ -87,6 +87,12 @@ ignores user configuration, runs with Codex's `workspace-write` sandbox, and
 removes the credential copy on every exit. Pass `--artifacts DIR` to retain
 sanitized logs and a machine-readable summary.
 
+The ordinary verifier proves installed configuration and adapter behavior; the
+opt-in script is the real Codex host check. Current physical Windows host proof
+is still pending. See the
+[security-assurance guide](https://docs.rampart.sh/getting-started/security-assurance/)
+for the precise claim boundary.
+
 You can also inspect overall health:
 
 ```bash

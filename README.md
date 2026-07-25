@@ -96,6 +96,10 @@ Check the broader installation state:
 rampart doctor
 ```
 
+Current integration coverage, live-host evidence, and known gaps are published
+in the [support matrix](https://docs.rampart.sh/getting-started/support-matrix/)
+and [security-assurance guide](https://docs.rampart.sh/getting-started/security-assurance/).
+
 Then watch your agent in real time:
 
 ```bash
@@ -294,7 +298,7 @@ rampart wrap -- python my_agent.py
 For agents with no hook system and no `$SHELL` support, `preload` intercepts exec-family syscalls at the OS level:
 
 ```bash
-rampart preload -- codex
+rampart preload -- your-agent
 rampart preload -- python my_agent.py
 rampart preload -- node agent.js
 

@@ -54,6 +54,12 @@ The host test uses harmless canaries and a disposable Codex home containing
 only a temporary copy of `auth.json`. It does not load user configuration,
 memories, rules, or persistent sessions.
 
+`rampart verify codex` proves installed configuration and adapter behavior; it
+does not itself launch a real Codex model/tool loop. The opt-in harness is the
+separate host-boundary check. See
+[Security Assurance](../getting-started/security-assurance.md) for the evidence
+levels and current platform gaps.
+
 ## Uninstall
 
 ```bash

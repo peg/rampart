@@ -11,6 +11,9 @@ and MCP actions. This adapter is regression-tested in isolation; there is no
 rolling latest-Cline host job, so consult the support matrix for the current
 evidence level.
 
+The installed hook scripts currently require Bash, so Rampart claims this path
+on Linux and macOS. A native Windows Cline boundary has not yet been proven.
+
 ## Setup
 
 ```bash

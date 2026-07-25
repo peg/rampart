@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Native Codex lifecycle-hook integration** — `rampart setup codex` now
+  installs user-level `PreToolUse` and `PostToolUse` hooks shared by Codex CLI,
+  the IDE extension, and the desktop app. The adapter covers host-exposed
+  shell, file, patch, MCP, web, and delegated-agent calls, evaluates every
+  target in multi-file patches, and denies unknown pre-call tools in enforce
+  mode until they are classified.
+- **Isolated host compatibility harnesses** — Opt-in Codex, Claude Code, and
+  Hermes harnesses exercise harmless allow/deny canaries through real agent
+  processes without loading normal configuration, memories, rules, or
+  persistent sessions. Sanitized completed-run evidence records the reviewed
+  Claude Code and Hermes host proofs.
 - **Executable security-assurance gate** — A machine-readable integration
   manifest, shared adversarial policy corpus, and one-command Go, OpenClaw, and
   Hermes regression suite now run in Linux CI.
@@ -17,8 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Integration guarantees are evidence-based** — Public support guidance now
   distinguishes verified host boundaries from tested, limited, and
-  experimental paths, including the direct file and MCP coverage gaps in the
-  current Codex CLI preload integration.
+  experimental paths, and explicitly limits coverage to actions each host
+  exposes through the named hook, plugin, proxy, or process boundary.
+- **Claude Code hooks track the current native tool surface** — Wildcard
+  `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` handlers classify the
+  documented Claude Code 2.1.220 hook-visible shell, file, web, MCP,
+  delegation, message, scheduling, and task tools. Unknown future pre-call
+  tools deny in enforce mode instead of silently falling through.
+- **Codex setup migrates away from the managed preload wrapper** — Existing
+  unrelated hooks remain intact while recognized legacy Rampart wrappers are
+  removed, avoiding duplicate evaluation and making native lifecycle hooks the
+  primary cross-platform Codex path.
+
+### Fixed
+
+- **Hermes batched tool updates use deny-wins evaluation** — Rampart evaluates
+  every action represented by a Hermes patch batch and blocks the entire call
+  when any path is denied, rather than depending on only one update.
 
 ### Security
 

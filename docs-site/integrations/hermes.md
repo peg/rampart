@@ -26,6 +26,11 @@ The plugin maps common Hermes tools to Rampart policy classes:
 
 Unknown tools are still sent to Rampart using their Hermes tool name with sensitive-looking values redacted.
 
+For Hermes patch calls that carry multiple file updates, Rampart evaluates
+every represented path and applies the most restrictive decision to the whole
+call. One denied update cannot be hidden by an allowed update in the same
+batch.
+
 ## Setup
 
 Install the bundled Hermes plugin files:
@@ -108,6 +113,27 @@ python scripts/compat-hermes-latest.py
 ```
 
 The harness creates a temporary Hermes state, installs the Rampart plugin there, exercises Hermes plugin discovery plus `pre_tool_call` dispatch, and verifies deny, allow, `ask` blocking, and fail-closed behavior without restarting any long-running Hermes gateway.
+
+Maintainers can also run the opt-in real-host harness:
+
+```bash
+scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
+```
+
+A completed isolated Hermes 0.19.0 Linux run proved that a denied shell marker
+did not execute, an allowed marker did execute, and the pre-tool audit record
+kept the originating tool identity. The run loaded only isolated model,
+provider, toolset, and authentication state; it did not load normal memories,
+sessions, rules, gateways, or MCP configuration. See
+[Security Assurance](../getting-started/security-assurance.md) for the evidence
+contract and remaining gaps.
+
+!!! warning "Why this remains experimental"
+    Hermes currently documents that a crashing plugin callback is skipped and
+    agent execution continues. Its plugin hooks also do not expose a stable
+    exact-call approval/resume primitive. Rampart can conservatively block an
+    `ask` decision, but it cannot honestly promise a first-class pause and
+    resume flow or fail-closed behavior after every host-level plugin failure.
 
 For manual verification, use a deny rule for a harmless command and confirm Hermes blocks it before execution:
 

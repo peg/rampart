@@ -180,7 +180,7 @@ Add exec-family interception to supported dynamically linked processes via
 `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES`.
 
 ```bash
-rampart preload -- codex                        # Enforce mode
+rampart preload -- your-agent                   # Enforce mode
 rampart preload --mode monitor -- agent         # Audit only
 rampart preload --debug -- agent                # Debug to stderr
 ```

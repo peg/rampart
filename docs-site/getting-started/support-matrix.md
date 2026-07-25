@@ -43,7 +43,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Native hooks<br><code>rampart setup cline</code></td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
-      <td data-label="Support tier">Supported</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>adapter-tested; no current host proof</td>
     </tr>
     <tr class="tier-recommended">
       <td data-label="Surface"><strong>OpenClaw &gt;= 2026.5.2</strong></td>
@@ -106,7 +106,9 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path with a completed isolated
   Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than resume
-- **Cline** → good supported path, but less polished approval UX than Claude Code
+- **Cline** → supported adapter path on Linux/macOS, but without a rolling
+  latest-Cline job or completed current-host proof; the installed hook scripts
+  require Bash and native Windows behavior is not currently claimed
 
 ## Degraded behavior notes
 
@@ -138,6 +140,7 @@ It does not imply syscall, packet, or arbitrary subprocess inspection.
 
 - [Quick Start](quickstart.md)
 - [Release Compatibility Gate](release-compatibility-gate.md)
+- [Security Assurance](security-assurance.md)
 - [How Rampart Works](how-it-works.md)
 - [OpenClaw integration](../integrations/openclaw.md)
 - [Hermes Agent integration](../integrations/hermes.md)

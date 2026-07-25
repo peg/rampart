@@ -7,13 +7,15 @@
 
 `rampart preload` provides universal agent protection via LD_PRELOAD (Linux) / DYLD_INSERT_LIBRARIES (macOS). It intercepts exec syscalls at the process level and routes them through Rampart's policy engine before execution.
 
-This is the fallback for agents that don't have hook systems. Native hooks (Claude Code, Cline) remain the preferred integration — preload is for everything else.
+This is the fallback for agents that do not have hook systems. Native hooks
+(Claude Code, Codex, and Cline) remain the preferred integration; preload is
+optional defense in depth or a fallback for other processes.
 
 ## User Experience
 
 ```bash
 # Protect any agent, zero configuration in the agent itself
-rampart preload -- codex
+rampart preload -- your-agent
 rampart preload -- python my_agent.py
 rampart preload -- node agent.js
 

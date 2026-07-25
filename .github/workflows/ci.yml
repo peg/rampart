@@ -67,6 +67,10 @@ jobs:
           sh -n docs/install.sh
           sh -n scripts/install.sh
 
+      - name: Landing page sources are synced
+        if: runner.os == 'Linux'
+        run: cmp -s docs-site/index.html docs/index.html
+
       - name: Linux lab runner contract
         if: runner.os != 'Windows'
         run: make lab-runner-test
