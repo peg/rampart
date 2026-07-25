@@ -2,7 +2,12 @@
 
 ## What happens if Rampart crashes?
 
-Your tools keep working. Rampart fails open by default — if the policy engine is unreachable, commands pass through normally. You'll never get locked out of your own machine.
+There is no universal fallback. Claude Code, Codex, and Cline normally evaluate
+local policy without `rampart serve`; Rampart-handled parse/config errors deny
+in enforce mode, while an unexpected hook-process crash or timeout follows the
+host's behavior. Managed OpenClaw denies when its policy service is unavailable.
+Hermes can fail open only for explicitly configured lower-risk tools. See the
+[support matrix](support-matrix.md#degraded-behavior-notes).
 
 ## How do I update Rampart?
 
@@ -14,11 +19,17 @@ Run `rampart setup claude-code --remove` (or `cline --remove` / `openclaw --remo
 
 ## What's the performance impact?
 
-Effectively zero. Policy checks are pure in-memory pattern matching — no network calls, no disk I/O, no measurable impact on your agent's workflow. The optional [semantic verification sidecar](../features/semantic-verification.md) does use an LLM call, but only when you opt in and only for ambiguous cases.
+Core matching is local and benchmarked in microseconds. Hook process startup and
+audit I/O add machine-dependent overhead. The optional
+[semantic verification sidecar](../features/semantic-verification.md) adds a
+network model call when configured.
 
 ## Does it work on Windows?
 
-Yes. Install with PowerShell: `irm https://rampart.sh/install.ps1 | iex`. The policy engine and hook integrations (Claude Code, Cline) work fully on Windows. Shell wrapping (`rampart wrap`) and LD_PRELOAD are Linux/macOS only.
+The policy engine and Claude Code/Codex hook setup are built and tested on
+Windows CI. A physical Windows host E2E is still pending, Cline's installed hook
+scripts currently require Bash, and `rampart wrap`/preload are Unix-only. See
+the [Windows guide](../guides/windows.md).
 
 ## Can I use project-specific policies?
 
@@ -26,11 +37,18 @@ Yes. Put a `rampart.yaml` in your project root and Rampart will use it. You can 
 
 ## Can my agent bypass Rampart?
 
-Pattern-based deny rules can be evaded by obfuscated commands (quoting, variable expansion). For high-security environments, use allowlist mode: set `default_action: deny` — only explicitly permitted commands run, and evasion techniques fail by default. Rampart also blocks agents from modifying their own policies. See the [Threat Model](../reference/threat-model.md) for a full analysis.
+Pattern-based deny rules can be evaded by obfuscation or by behavior inside an
+allowed process. Allowlist mode reduces that risk, but Rampart is not an OS
+sandbox. Its standard policy also blocks recognized self-modification paths;
+separate users and file permissions are required for a stronger boundary. See
+the [Threat Model](../reference/threat-model.md).
 
 ## Can I require human approval for certain commands?
 
-Yes. Set `action: ask` on any policy rule. Your agent pauses, Rampart sends a notification (Discord, Slack, or any webhook), and the command stays blocked until you approve or deny it from the [dashboard](../features/dashboard.md) or CLI.
+Set `action: ask` on a policy rule. Claude Code uses its native prompt,
+OpenClaw can use its native approval UI, Codex uses Rampart's external queue,
+Cline blocks with context, and Hermes currently blocks without resume. Consult
+the support matrix before relying on a particular approval workflow.
 
 ```yaml
 policies:

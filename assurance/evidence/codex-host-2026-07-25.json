@@ -1,0 +1,30 @@
+{
+  "schema_version": "rampart.codex-host-e2e.v1",
+  "result": "pass",
+  "recorded_at": "2026-07-25",
+  "candidate_commit": "044afcf989010ea094eb3c02492b7d7272f2bdec",
+  "platform": "macos/arm64",
+  "codex_version": "codex-cli 0.145.0",
+  "model_invocations": 2,
+  "source_codex_state_loaded": [
+    "auth.json"
+  ],
+  "session_persistence": "ephemeral",
+  "user_config_loaded": false,
+  "sandbox": "workspace-write",
+  "checks": {
+    "allow_command_executed": true,
+    "allow_posttooluse_completed": true,
+    "allow_pre_post_identity_correlated": true,
+    "allow_pretooluse_completed": true,
+    "deny_audited_with_identity": true,
+    "deny_command_not_executed": true,
+    "deny_did_not_reach_posttooluse": true,
+    "deny_pretooluse_blocked": true,
+    "isolated_hooks_installed": true
+  },
+  "notes": [
+    "The candidate binary was built from candidate_commit.",
+    "Credentials, commands containing temporary paths, audit identifiers, hostnames, logs, and raw model output are intentionally omitted."
+  ]
+}

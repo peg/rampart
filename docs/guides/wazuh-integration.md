@@ -4,7 +4,9 @@ Monitor AI agent activity and trigger alerts when Rampart blocks dangerous opera
 
 ## Overview
 
-Rampart logs every tool call decision to JSON files in `~/.rampart/audit/`. Wazuh can monitor these files, decode the events, and generate alerts based on deny/log actions — giving your SOC visibility into AI agent behavior alongside your existing security monitoring.
+Rampart logs decisions observed at its configured integration boundaries to
+JSON files in `~/.rampart/audit/`. Wazuh can monitor those files and alert on
+deny/watch actions; actions the host never sends to Rampart are not represented.
 
 ## Architecture
 

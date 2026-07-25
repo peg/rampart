@@ -2,7 +2,10 @@
 
 ## Overview
 
-Rampart is a policy enforcement layer between AI agents and their tools. Every tool call passes through Rampart, which evaluates it against YAML policies and returns allow, deny, or log. Everything is audited to a hash-chained trail.
+Rampart is a policy enforcement layer between AI agents and their tools.
+Supported integrations send host-exposed tool calls through Rampart, which
+evaluates them against YAML policies and returns allow, deny, or log. Decisions
+that reach Rampart are written to a hash-chained audit trail.
 
 ```
 Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
@@ -13,7 +16,9 @@ Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
 
 **Fail-open by default.** If Rampart crashes or is unreachable, tool calls pass through. This is deliberate — fail-closed locks you out of your own machine. See the [threat model](THREAT-MODEL.md) for trade-offs and mitigations.
 
-**Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call run?" — and doesn't need a general-purpose policy language. Three lines of YAML beats fifteen lines of Rego. The custom engine also evaluates in <10µs vs OPA's 0.1-1ms.
+**Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call
+run?" — and doesn't need a general-purpose policy language. The custom engine's
+hot path is benchmarked in this repository; results vary by policy set and host.
 
 **Local-first.** No data leaves the machine. No cloud dependency. No telemetry. You're adding a security layer, not another SaaS.
 
@@ -76,7 +81,17 @@ WebSocket client that connects to an OpenClaw gateway. This is the older bridge-
 
 ## Integration Patterns
 
-**`rampart wrap`** — Wrap any process. No code changes, no config beyond a policy file. The shell shim intercepts commands transparently. Best for: Claude Code, Codex, standalone scripts.
+**Codex lifecycle hooks** — `rampart setup codex` installs user-level
+`PreToolUse` and `PostToolUse` hooks shared by Codex CLI, IDE, and desktop.
+This is the preferred Codex path and preserves Codex's native sandbox.
+
+**Claude Code lifecycle hooks** — `rampart setup claude-code` installs
+user-level `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` hooks.
+Pre-tool policy controls execution; post-tool policy can replace denied
+response content with shape-preserving redacted output before the next model
+turn.
+
+**`rampart wrap`** — Wrap any process. No code changes, no config beyond a policy file. The shell shim intercepts commands transparently. Best for: agents without a native hook or plugin, and standalone scripts.
 
 **HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.
 

@@ -152,8 +152,9 @@ func newSetupClaudeCodeCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "claude-code",
 		Short: "Install Rampart hook into Claude Code settings",
-		Long: `Adds a PreToolUse hook to ~/.claude/settings.json that routes ALL
-tool calls through Rampart's policy engine before execution.
+		Long: `Adds PreToolUse, PostToolUse, and PostToolUseFailure hooks to
+~/.claude/settings.json. Tool calls are evaluated before execution and
+successful responses are scanned after execution.
 
 This includes Bash, Read, Write, Edit, Fetch, Task, and any future tools.
 
@@ -191,19 +192,25 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			// Build the hook config — no --serve-url needed; the hook resolves its
 			// endpoint via flag/env/config/state with localhost:9090 as the final fallback.
-			// Use absolute path so the hook works regardless of Claude Code's PATH.
+			// Use an absolute path so the hook works regardless of Claude Code's PATH.
 			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
 			// settings.json never needs to contain credentials.
 			hookBin := "rampart"
-			if exe, err := os.Executable(); err == nil {
-				hookBin = exe
-			} else if p, err := execLookPath("rampart"); err == nil {
+			// Prefer the PATH entry because package managers generally expose a
+			// stable symlink there while os.Executable may point at a versioned
+			// location that disappears during an upgrade.
+			if p, err := execLookPath("rampart"); err == nil {
 				hookBin = p
+			} else if exe, err := os.Executable(); err == nil {
+				hookBin = exe
+			}
+			if absolute, err := filepath.Abs(hookBin); err == nil {
+				hookBin = absolute
 			}
 			// Convert Windows paths to Git Bash format. Claude Code on Windows runs
 			// hooks through Git Bash which doesn't understand backslash paths.
 			hookBin = toGitBashPath(hookBin)
-			hookCommand := hookBin + " hook"
+			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format claude-code"
 
 			rampartHook := map[string]any{
 				"type":    "command",
@@ -217,7 +224,14 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				"hooks":   []any{rampartHook},
 			}
 
-			// PostToolUseFailure: fires when Claude Code denies a tool after PreToolUse.
+			// PostToolUse scans successful tool responses and correlates approval
+			// outcomes with the matching PreToolUse call.
+			postToolUseMatcher := map[string]any{
+				"matcher": ".*",
+				"hooks":   []any{rampartHook},
+			}
+
+			// PostToolUseFailure fires when Claude Code denies a tool after PreToolUse.
 			// Matcher ".*" catches all tools so Rampart can inject additionalContext
 			// telling Claude to stop retrying instead of burning turns on workarounds.
 			postToolUseFailureMatcher := map[string]any{
@@ -246,6 +260,20 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 			preToolUse = append(preToolUse, allToolsMatcher)
 
+			// Get or create PostToolUse array (dedup existing rampart entries).
+			var postToolUse []any
+			if existing, ok := hooks["PostToolUse"].([]any); ok {
+				for _, h := range existing {
+					if m, ok := h.(map[string]any); ok {
+						if hasRampartInMatcher(m) {
+							continue
+						}
+					}
+					postToolUse = append(postToolUse, h)
+				}
+			}
+			postToolUse = append(postToolUse, postToolUseMatcher)
+
 			// Get or create PostToolUseFailure array (dedup existing rampart entries)
 			var postToolUseFailure []any
 			if existing, ok := hooks["PostToolUseFailure"].([]any); ok {
@@ -261,6 +289,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			postToolUseFailure = append(postToolUseFailure, postToolUseFailureMatcher)
 
 			hooks["PreToolUse"] = preToolUse
+			hooks["PostToolUse"] = postToolUse
 			hooks["PostToolUseFailure"] = postToolUseFailure
 			settings["hooks"] = hooks
 
@@ -282,8 +311,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
-			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route ALL tool calls through Rampart.")
-			fmt.Fprintln(cmd.OutOrStdout(), "  (Bash, Read, Write, Edit, Fetch, Task, and any new tools)")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will route hook-visible tool calls through Rampart.")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Documented tools are classified; in enforce mode, unknown future PreToolUse tools deny until Rampart is updated.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
 			fmt.Fprintln(cmd.OutOrStdout(), "")
 
@@ -301,7 +330,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
 			if !hasInstalledPolicy() {
-				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile openclaw' to install the OpenClaw-optimized policy")
+				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile standard' to install the standard policy")
 			}
 
 			// Check if rampart is in system PATH.
@@ -363,41 +392,26 @@ func removeClaudeCodeHooks(cmd *cobra.Command) error {
 
 	var removedCount int
 
-	// Remove from PreToolUse
-	if preToolUse, ok := hooks["PreToolUse"].([]any); ok {
+	// Remove Rampart from each installed lifecycle event.
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+		eventHooks, ok := hooks[event].([]any)
+		if !ok {
+			continue
+		}
 		var kept []any
-		for _, h := range preToolUse {
+		for _, h := range eventHooks {
 			if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
 				removedCount++
 				matcher, _ := m["matcher"].(string)
-				fmt.Fprintf(cmd.OutOrStdout(), "  Removed PreToolUse hook: matcher=%s\n", matcher)
+				fmt.Fprintf(cmd.OutOrStdout(), "  Removed %s hook: matcher=%s\n", event, matcher)
 				continue
 			}
 			kept = append(kept, h)
 		}
 		if len(kept) == 0 {
-			delete(hooks, "PreToolUse")
+			delete(hooks, event)
 		} else {
-			hooks["PreToolUse"] = kept
-		}
-	}
-
-	// Remove from PostToolUseFailure
-	if postToolUseFailure, ok := hooks["PostToolUseFailure"].([]any); ok {
-		var kept []any
-		for _, h := range postToolUseFailure {
-			if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
-				removedCount++
-				matcher, _ := m["matcher"].(string)
-				fmt.Fprintf(cmd.OutOrStdout(), "  Removed PostToolUseFailure hook: matcher=%s\n", matcher)
-				continue
-			}
-			kept = append(kept, h)
-		}
-		if len(kept) == 0 {
-			delete(hooks, "PostToolUseFailure")
-		} else {
-			hooks["PostToolUseFailure"] = kept
+			hooks[event] = kept
 		}
 	}
 
@@ -1266,20 +1280,24 @@ func hasRampartHook(settings claudeSettings) bool {
 		return false
 	}
 
-	// Also require PostToolUseFailure to be registered; if it's missing,
-	// return false so setup re-runs and adds it (dedup handles PreToolUse).
-	postToolUseFailure, ok := hooks["PostToolUseFailure"].([]any)
-	if !ok {
-		return false
-	}
-	for _, h := range postToolUseFailure {
-		if m, ok := h.(map[string]any); ok {
-			if hasRampartInMatcher(m) {
-				return true
+	// Require both post events so existing installs are upgraded automatically.
+	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
+		eventHooks, ok := hooks[event].([]any)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, h := range eventHooks {
+			if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
+				found = true
+				break
 			}
 		}
+		if !found {
+			return false
+		}
 	}
-	return false
+	return true
 }
 
 // openclawToolsCandidates returns possible paths for OpenClaw's pi-coding-agent tools directory.
@@ -1949,6 +1967,11 @@ func hasRampartInMatcher(matcher map[string]any) bool {
 	for _, h := range hooks {
 		if m, ok := h.(map[string]any); ok {
 			if cmd, ok := m["command"].(string); ok {
+				// Current installs always carry this explicit protocol marker;
+				// matching it also handles shell-quoted executable paths.
+				if strings.Contains(cmd, "hook --format claude-code") {
+					return true
+				}
 				// Match bare "rampart hook" or absolute path variants:
 				// - Unix: /usr/local/bin/rampart hook
 				// - Windows: C:\Users\foo\.rampart\bin\rampart.exe hook

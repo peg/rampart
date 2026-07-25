@@ -538,12 +538,7 @@ func quickstartHooksConfigured(env string) bool {
 		_, postErr := os.Stat(post)
 		return preErr == nil && postErr == nil
 	case "codex":
-		wrapper := filepath.Join(home, ".local", "bin", "codex")
-		data, err := os.ReadFile(wrapper)
-		if err != nil {
-			return false
-		}
-		return containsRampartPreload(string(data))
+		return codexHooksConfiguredForHome(home)
 	default:
 		return false
 	}

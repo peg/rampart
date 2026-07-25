@@ -61,14 +61,15 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	call := engine.ToolCall{
-		ID:        audit.NewEventID(),
-		Agent:     req.Agent,
-		Session:   req.Session,
-		RunID:     req.RunID,
-		Tool:      toolName,
-		Params:    req.Params,
-		Input:     extractToolInput(toolName, req.Params, req.Input),
-		Timestamp: time.Now().UTC(),
+		ID:         audit.NewEventID(),
+		Agent:      req.Agent,
+		Session:    req.Session,
+		RunID:      req.RunID,
+		ToolCallID: req.ToolCallID,
+		Tool:       toolName,
+		Params:     req.Params,
+		Input:      extractToolInput(toolName, req.Params, req.Input),
+		Timestamp:  time.Now().UTC(),
 	}
 
 	// Count every PreToolUse event regardless of policy outcome.

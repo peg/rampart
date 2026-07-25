@@ -8,7 +8,9 @@ description: "Secure Cursor MCP integrations with Rampart's proxy layer. Note: T
 !!! warning "Important Limitation"
     **Cursor's native built-in tools (file read/write, terminal, code editing) do not go through MCP and cannot be protected by Rampart.** This guide only covers MCP server protection, which is a small fraction of Cursor's tool usage.
     
-    For full protection, use [Claude Code](claude-code.md) which exposes a hooks API that Rampart can intercept.
+    Claude Code exposes a broader native hook surface, but it is also a host
+    tool boundary rather than complete process isolation. See the
+    [Claude Code guide](claude-code.md).
 
 Cursor uses MCP servers for *some* tool access. Rampart can sit between Cursor and MCP servers as a transparent proxy.
 

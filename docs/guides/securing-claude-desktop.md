@@ -1,8 +1,12 @@
 # Securing Claude Desktop with Rampart
 
-Claude Desktop uses [MCP servers](https://modelcontextprotocol.io) to interact with your filesystem, databases, APIs, and other tools. Every tool call from Claude flows through these servers — and without protection, a prompt injection attack can turn any of them into an attack vector.
+Claude Desktop can use [MCP servers](https://modelcontextprotocol.io) to
+interact with your filesystem, databases, APIs, and other tools. MCP tool calls
+can be an attack vector when untrusted content influences the model; built-in
+and directly connected tools do not necessarily cross the MCP proxy boundary.
 
-Rampart sits between Claude Desktop and your MCP servers, evaluating every tool call against your security policy before it executes.
+Rampart sits between Claude Desktop and MCP servers you explicitly route
+through the proxy, evaluating each proxied `tools/call` before forwarding it.
 
 ## The Threat
 
@@ -232,9 +236,9 @@ Most MCP servers today run locally — Claude Desktop launches them as child pro
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Rampart blocks the request before it reaches the server.** The MCP server never sees denied tool calls. Since the server runs on your machine, a blocked call means the action never happens — your files stay untouched, no network requests fire, no commands execute.
-
-**This is full protection.** You control both the policy layer and the execution environment.
+**Rampart blocks a denied proxied request before it reaches the server.** That
+specific tool request is not executed by the server. Rampart does not inspect
+behavior inside an allowed request or tools that bypass the proxy.
 
 ### Cloud/Remote MCP Servers
 
@@ -261,7 +265,9 @@ Some MCP servers run remotely — on Cloudflare, AWS, a company API, etc. Claude
 
 - **Credential exfiltration stopped** — if a prompt injection tries to send your SSH key to a remote API, the tool call gets denied locally. The data never hits the wire.
 - **Destructive remote actions stopped** — `delete_database`, `terminate_instance`, etc. get blocked before the request reaches the cloud.
-- **Full audit trail** — every tool call (allowed or denied) is logged locally, even for cloud servers. You have a record of what your AI tried to do.
+- **Proxy audit trail** — each MCP `tools/call` routed through Rampart is logged
+  locally, including calls to remote servers. Native client tools that bypass
+  the proxy are not present.
 
 **What Rampart can't do for cloud servers:**
 - If a tool call is **allowed** and the cloud server executes it maliciously, Rampart can't prevent that — it already forwarded the request.
@@ -272,7 +278,7 @@ Some MCP servers run remotely — on Cloudflare, AWS, a company API, etc. Claude
 
 | Scenario | What Rampart blocks | Where |
 |----------|-------------------|-------|
-| **Local MCP server** | Request + execution | Everything happens on your machine — full protection |
+| **Local MCP server** | Denied proxied request | Stopped before the local server receives it; allowed-call behavior remains outside the proxy |
 | **Cloud MCP server** | Request only | Blocked calls never leave your machine. Allowed calls execute remotely. |
 | **Direct cloud connection** | Nothing (without proxy) | If Claude connects to a remote URL directly, Rampart isn't in the path |
 
@@ -287,7 +293,11 @@ This same approach works with any MCP-compatible app:
 - **Zed** — MCP support in settings
 - **Any MCP client** — if it launches MCP servers via command, Rampart can wrap them
 
-> **Note**: This technique only protects MCP server tools. Editors like Cursor and Windsurf have built-in native tools (file read/write, terminal) that don't go through MCP and cannot be intercepted by Rampart. For full protection, use Claude Code with native hooks (`rampart setup claude-code`).
+> **Note**: This technique only protects MCP server tools. Editors like Cursor
+> and Windsurf have built-in native tools (file read/write, terminal) that don't
+> go through MCP and cannot be intercepted by this proxy. Claude Code exposes a
+> broader native hook surface (`rampart setup claude-code`), but that is still a
+> host tool boundary rather than a sandbox.
 
 ## Limitations
 

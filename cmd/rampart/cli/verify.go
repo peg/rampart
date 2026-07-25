@@ -76,7 +76,7 @@ func newVerifyCmd() *cobra.Command {
 	var timeout time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "verify [openclaw|policy]",
+		Use:   "verify [openclaw|codex|policy]",
 		Short: "Actively verify that agent safety boundaries really block",
 		Long: `Run non-destructive behavioral canaries against the live Rampart policy path.
 
@@ -98,8 +98,8 @@ implementation.`,
 					target = "policy"
 				}
 			}
-			if target != "openclaw" && target != "policy" {
-				return fmt.Errorf("verify: unsupported target %q (supported: openclaw, policy)", target)
+			if target != "openclaw" && target != "codex" && target != "policy" {
+				return fmt.Errorf("verify: unsupported target %q (supported: openclaw, codex, policy)", target)
 			}
 
 			resolvedURL, err := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
@@ -202,6 +202,10 @@ func behavioralCanaries(target string) []behavioralCanary {
 			canaries[i].Agent = "rampart-verification"
 			canaries[i].Params["rampart_integration"] = "openclaw"
 		}
+	} else if target == "codex" {
+		for i := range canaries {
+			canaries[i].Agent = "codex"
+		}
 	}
 	return canaries
 }
@@ -220,6 +224,9 @@ func runBehavioralVerification(ctx context.Context, target, serveURL string, tim
 
 	if target == "openclaw" {
 		report.Checks = append(report.Checks, verifyOpenClawPluginLive(ctx, timeout))
+	} else if target == "codex" {
+		report.Checks = append(report.Checks, verifyCodexHooksInstalled())
+		report.Checks = append(report.Checks, verifyCodexHookAdapter(ctx))
 	}
 
 	token, err := readPersistedToken()
@@ -240,6 +247,111 @@ func runBehavioralVerification(ctx context.Context, target, serveURL string, tim
 		report.Checks = append(report.Checks, runPreflightCanary(ctx, client, strings.TrimRight(serveURL, "/"), token, canary))
 	}
 	return summarizeVerification(report)
+}
+
+func verifyCodexHooksInstalled() verificationCheck {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return verificationCheck{
+			ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
+			Status: verificationUnverified, Actual: "home unavailable",
+			Message: "Could not locate the Codex user configuration",
+			Hint:    "Run `rampart setup codex`, then rerun `rampart verify codex`",
+		}
+	}
+	if !codexHooksConfiguredForHome(home) {
+		return verificationCheck{
+			ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
+			Status: verificationFail, Expected: "PreToolUse and PostToolUse", Actual: "missing or incomplete",
+			Message: "Codex is not configured to invoke Rampart for both lifecycle events",
+			Hint:    "Run `rampart setup codex`, review the hooks with `/hooks`, then rerun verification",
+		}
+	}
+	return verificationCheck{
+		ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
+		Status: verificationPass, Expected: "PreToolUse and PostToolUse", Actual: "configured",
+		Message: "The user-level Codex hook configuration contains both Rampart lifecycle hooks",
+	}
+}
+
+func verifyCodexHookAdapter(ctx context.Context) verificationCheck {
+	auditDir, err := os.MkdirTemp("", "rampart-verify-codex-*")
+	if err != nil {
+		return verificationCheck{
+			ID: "codex-native-deny", Name: "Codex native deny response works",
+			Status: verificationUnverified, Actual: "temporary directory unavailable",
+			Message: err.Error(),
+		}
+	}
+	defer os.RemoveAll(auditDir)
+
+	payload := `{
+		"session_id":"rampart-verification",
+		"turn_id":"rampart-verification",
+		"cwd":".",
+		"hook_event_name":"PreToolUse",
+		"tool_name":"Bash",
+		"tool_use_id":"rampart-verification",
+		"tool_input":{"command":"rm -rf /"}
+	}`
+	var stdout, stderr bytes.Buffer
+	hookCmd := NewRootCmd(ctx, &stdout, &stderr)
+	hookCmd.SetIn(strings.NewReader(payload))
+	hookCmd.SetArgs([]string{"hook", "--format", "codex", "--audit-dir", auditDir})
+	if err := hookCmd.Execute(); err != nil {
+		return verificationCheck{
+			ID: "codex-native-deny", Name: "Codex native deny response works",
+			Status: verificationFail, Expected: "structured deny", Actual: "hook error",
+			Message: err.Error(),
+		}
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		return verificationCheck{
+			ID: "codex-native-deny", Name: "Codex native deny response works",
+			Status: verificationFail, Expected: "structured deny", Actual: strings.TrimSpace(stdout.String()),
+			Message: "Rampart's Codex hook response was not valid JSON",
+		}
+	}
+	specific, _ := output["hookSpecificOutput"].(map[string]any)
+	if specific["hookEventName"] != "PreToolUse" || specific["permissionDecision"] != "deny" {
+		return verificationCheck{
+			ID: "codex-native-deny", Name: "Codex native deny response works",
+			Status: verificationFail, Expected: "structured deny", Actual: strings.TrimSpace(stdout.String()),
+			Message: "The live Rampart hook adapter did not block the destructive canary",
+		}
+	}
+	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
+	if len(auditMatches) != 1 {
+		return verificationCheck{
+			ID: "codex-native-deny", Name: "Codex native deny response works",
+			Status: verificationFail, Expected: "correlated deny audit", Actual: "audit record missing",
+			Message: "The Codex hook denied the canary but did not produce its correlated audit record",
+		}
+	}
+	auditData, err := os.ReadFile(auditMatches[0])
+	if err != nil {
+		return verificationCheck{
+			ID: "codex-native-deny", Name: "Codex native deny response works",
+			Status: verificationFail, Expected: "correlated deny audit", Actual: "audit unreadable",
+			Message: err.Error(),
+		}
+	}
+	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
+	var auditRecord map[string]any
+	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil ||
+		auditRecord["agent"] != "codex" || auditRecord["tool_call_id"] != "rampart-verification" {
+		return verificationCheck{
+			ID: "codex-native-deny", Name: "Codex native deny response works",
+			Status: verificationFail, Expected: "correlated deny audit", Actual: "correlation missing",
+			Message: "The Codex hook audit did not preserve the host tool-call identity",
+		}
+	}
+	return verificationCheck{
+		ID: "codex-native-deny", Name: "Codex native deny response works",
+		Status: verificationPass, Expected: "structured deny and correlated audit", Actual: "deny + audit",
+		Message: "The live Rampart hook adapter returned Codex's supported deny schema and preserved the exact tool-call identity in audit",
+	}
 }
 
 func runPreflightCanary(ctx context.Context, client *http.Client, serveURL, token string, canary behavioralCanary) verificationCheck {

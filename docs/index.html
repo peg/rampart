@@ -1123,7 +1123,7 @@
                 </div>
                 <div class="hero-meta">
                     <span>Installs to <code>~/.local/bin</code> by default on macOS/Linux. Usually no sudo required.</span>
-                    <span>Claude Code · Codex CLI · Cline · OpenClaw · MCP</span>
+                    <span>Claude Code · Codex · Cline · OpenClaw · Hermes preview · MCP</span>
                 </div>
                 <div class="hero-actions">
                     <a href="#install" class="btn btn-primary">Quickstart</a>
@@ -1154,7 +1154,7 @@
             <span class="proof-chip">blocks credential reads</span>
             <span class="proof-chip">stops exfiltration patterns</span>
             <span class="proof-chip">hash-chained local audit</span>
-            <span class="proof-chip">Claude Code · Codex · Cline · OpenClaw</span>
+            <span class="proof-chip">Claude Code · Codex · Cline · OpenClaw · Hermes preview</span>
             <span class="proof-chip"><a href="https://github.com/peg/rampart" id="star-count" style="text-decoration:none; color:inherit;">GitHub repo</a></span>
         </div>
     </div>
@@ -1177,7 +1177,7 @@
             <div class="platform-grid reveal">
                 <div class="platform-card interactive"><h3>Linux: strongest path</h3><p><code>LD_PRELOAD</code>, wrappers, hooks, and file/network policy enforcement are the happy path.</p></div>
                 <div class="platform-card interactive"><h3>macOS: works, with caveats</h3><p><code>DYLD_INSERT_LIBRARIES</code> has SIP boundaries. Homebrew and user-installed binaries work best.</p></div>
-                <div class="platform-card interactive"><h3>Windows: hooks, not preload</h3><p>Use Claude/Cline/API/MCP-style integrations. Codex preload and OpenClaw plugin setup are not the Windows story.</p></div>
+                <div class="platform-card interactive"><h3>Windows: hooks, not preload</h3><p>Claude Code, Codex, and other hook/API integrations work without process preloading. OpenClaw’s native plugin remains a Unix path.</p></div>
             </div>
         </div>
     </div>
@@ -1211,7 +1211,7 @@
             <div class="stat-card interactive"><span class="stat-num">8µs</span><span class="stat-label">example deny decision</span></div>
             <div class="stat-card interactive"><span class="stat-num">47</span><span class="stat-label">rules in standard.yaml</span></div>
             <div class="stat-card interactive"><span class="stat-num">local</span><span class="stat-label">audit + policy evaluation</span></div>
-            <div class="stat-card interactive"><span class="stat-num">4</span><span class="stat-label">native agent integrations</span></div>
+            <div class="stat-card interactive"><span class="stat-num">4 + 1</span><span class="stat-label">supported + experimental native paths</span></div>
         </div>
     </div>
 </section>
@@ -1221,7 +1221,7 @@
         <div class="story-copy reveal">
             <div class="section-label">A seatbelt, not a cage</div>
             <h2 class="section-title">Rampart does not ask the agent to behave.</h2>
-            <p class="section-desc">It sits in the execution path. Every command, file read, network request, and MCP call is evaluated before it runs. Safe work stays fast. Risky work is denied, held for approval, or redacted before secrets ever reach the model.</p>
+            <p class="section-desc">It sits on supported agent tool boundaries. Hook-visible requests are evaluated before the host invokes the tool. Safe work stays fast; risky work can be denied, held for approval, or have supported responses redacted. Work performed inside an already allowed process is outside this boundary.</p>
             <div class="story-points">
                 <div class="story-point interactive"><h3>Allow normal development</h3><p><code>npm install</code>, <code>go test ./...</code>, and <code>git status</code> stay fast because common safe actions are pattern matched locally.</p></div>
                 <div class="story-point interactive"><h3>Ask for risky actions</h3><p>Rules with <code>action: ask</code> hold commands like <code>kubectl apply</code> until a human decides.</p></div>
@@ -1235,7 +1235,7 @@
                         <div class="flow-row active" data-flow-row="0"><span class="flow-label">request</span><span><span class="flow-main">Agent asks for a tool call</span><span class="flow-sub">exec · file.read · network · MCP</span></span><span class="flow-chip">normalize</span></div>
                         <div class="flow-row" data-flow-row="1"><span class="flow-label">policy</span><span><span class="flow-main">YAML rules evaluate locally</span><span class="flow-sub">scope, command, path, URL, response patterns</span></span><span class="flow-chip allow">8µs</span></div>
                         <div class="flow-row" data-flow-row="2"><span class="flow-label">decision</span><span><span class="flow-main">Allow, ask, deny, or redact</span><span class="flow-sub">normal dev continues; risky actions pause or stop</span></span><span class="flow-chip ask">ask</span></div>
-                        <div class="flow-row" data-flow-row="3"><span class="flow-label">audit</span><span><span class="flow-main">Hash-chained JSONL record</span><span class="flow-sub">every allow, ask, deny, and redaction is written locally</span></span><span class="flow-chip deny">verify</span></div>
+                        <div class="flow-row" data-flow-row="3"><span class="flow-label">audit</span><span><span class="flow-main">Hash-chained JSONL record</span><span class="flow-sub">decisions observed at this boundary are written locally</span></span><span class="flow-chip deny">verify</span></div>
                     </div>
                     <div class="flow-status"><span>stage <strong id="flow-stage">request</strong></span><span id="flow-detail">tool call normalized before policy evaluation</span></div>
                 </div>
@@ -1253,18 +1253,19 @@
 <section class="section">
     <div class="container reveal">
         <div class="section-label">Works with your agent</div>
-        <h2 class="section-title">Claude Code, Codex CLI, Cline, OpenClaw, MCP.</h2>
+        <h2 class="section-title">Claude Code, Codex, Cline, OpenClaw, Hermes, MCP.</h2>
         <p class="section-desc">Use the native path where Rampart knows the agent. Use preload, wrapping, MCP proxy, or the HTTP API everywhere else. For exact support tiers, approval UX, and whether <code>rampart serve</code> is required, check the support matrix.</p>
         <div class="integrations-grid">
             <div class="integration-row header"><span>Agent</span><span>Setup</span><span>Enforcement path</span><span>Status</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Claude Code</span><span class="integration-code">rampart setup claude-code</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Codex CLI</span><span class="integration-code">rampart setup codex</span><span class="integration-path">preload + wrapper</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Codex CLI, IDE, desktop</span><span class="integration-code">rampart setup codex</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Cline</span><span class="integration-code">rampart setup cline</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">OpenClaw</span><span class="integration-code">rampart setup openclaw</span><span class="integration-path">native plugin</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Hermes Agent</span><span class="integration-code">rampart setup hermes</span><span class="integration-path">user plugin</span><span class="integration-status">experimental</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Any agent</span><span class="integration-code">rampart wrap -- &lt;cmd&gt;</span><span class="integration-path">shim</span><span class="integration-status">universal</span></div>
             <div class="integration-row interactive"><span class="integration-agent">MCP servers</span><span class="integration-code">rampart mcp -- &lt;server&gt;</span><span class="integration-path">proxy</span><span class="integration-status">universal</span></div>
         </div>
-        <p style="margin-top:16px;color:var(--text-dim);font-size:0.9rem;">OpenClaw’s native plugin path depends on <code>rampart serve</code>. Claude Code and Cline can still enforce locally without it. <a href="https://docs.rampart.sh/getting-started/support-matrix/" style="color:var(--accent);text-decoration:none;">Read the canonical support matrix →</a></p>
+        <p style="margin-top:16px;color:var(--text-dim);font-size:0.9rem;">OpenClaw’s native plugin path depends on <code>rampart serve</code>. Claude Code, Codex, and Cline can enforce ordinary allow/deny policy locally; Codex approval actions use the Rampart service. <a href="https://docs.rampart.sh/getting-started/support-matrix/" style="color:var(--accent);text-decoration:none;">Read the canonical support matrix →</a></p>
     </div>
 </section>
 
@@ -1370,7 +1371,8 @@
 <span style="color:var(--accent)">$</span> rampart setup claude-code
 <span style="color:var(--accent)">$</span> rampart setup codex
 <span style="color:var(--accent)">$</span> rampart setup cline
-<span style="color:var(--accent)">$</span> rampart setup openclaw</pre>
+<span style="color:var(--accent)">$</span> rampart setup openclaw
+<span style="color:var(--accent)">$</span> rampart setup hermes     <span style="color:var(--text-dim)"># experimental</span></pre>
         </div>
 
         <div class="setup-box panel" style="margin-top:16px;">
@@ -1489,7 +1491,7 @@ function copyCode(el) {
         ['request', 'tool call normalized before policy evaluation'],
         ['policy', 'local YAML rules decide the common case in microseconds'],
         ['decision', 'allow, ask, deny, or redact before execution'],
-        ['audit', 'every decision lands in a hash-chained local record']
+        ['audit', 'each observed decision lands in a hash-chained local record']
     ];
     if (!steps.length) return;
     var flowObserver = new IntersectionObserver(function(entries) {

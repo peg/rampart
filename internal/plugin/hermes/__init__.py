@@ -35,6 +35,7 @@ DEFAULT_SERVE_URL = "http://127.0.0.1:9090"
 DEFAULT_TIMEOUT_MS = 3000
 DEFAULT_ENDPOINT_MODE = "preflight"
 DEFAULT_AGENT_NAME = "hermes"
+MAX_PATCH_PATHS = 100
 
 # Read-only tools that may proceed when Rampart is unavailable. Operators can
 # narrow this with plugins.entries.rampart.config.fail_open_tools or
@@ -272,11 +273,20 @@ def _patch_touched_paths(patch_text: Any) -> list[str]:
         return []
     paths: list[str] = []
     for line in patch_text.splitlines():
-        if line.startswith("*** Update File: ") or line.startswith("*** Add File: ") or line.startswith("*** Delete File: "):
+        if (
+            line.startswith("*** Update File: ")
+            or line.startswith("*** Add File: ")
+            or line.startswith("*** Delete File: ")
+            or line.startswith("*** Move to: ")
+        ):
             path = line.split(": ", 1)[1].strip()
             if path and path not in paths:
                 paths.append(path)
-    return paths[:20]
+                # Preserve one over the limit so evaluation can fail closed
+                # instead of silently ignoring a later protected target.
+                if len(paths) > MAX_PATCH_PATHS:
+                    break
+    return paths
 
 
 def normalize_tool_call(tool_name: str, args: Mapping[str, Any] | None) -> tuple[str, dict[str, Any]]:
@@ -479,6 +489,30 @@ def _decision_from_result(result: Mapping[str, Any]) -> str:
     return "allow"
 
 
+def _decision_rank(result: Mapping[str, Any]) -> int:
+    decision = _decision_from_result(result)
+    if decision == "deny":
+        return 3
+    if decision in {"ask", "require_approval"}:
+        return 2
+    if decision in {"allow", "watch", "log"}:
+        return 1
+    # Unknown service decisions are treated as blocking, so rank them with deny.
+    return 3
+
+
+def _policy_param_variants(rampart_tool: str, params: Mapping[str, Any]) -> list[dict[str, Any]]:
+    touched_paths = params.get("touched_paths")
+    if rampart_tool != "edit" or not isinstance(touched_paths, list) or not touched_paths:
+        return [dict(params)]
+    variants: list[dict[str, Any]] = []
+    for path in touched_paths:
+        variant = dict(params)
+        variant["path"] = path
+        variants.append(variant)
+    return variants
+
+
 def _audit_suffix(result: Mapping[str, Any]) -> str:
     audit_id = result.get("audit_id")
     if isinstance(audit_id, str) and audit_id.strip():
@@ -500,24 +534,39 @@ def evaluate_pre_tool_call(
 
     config = load_config(config_overrides)
     rampart_tool, params = normalize_tool_call(tool_name, args)
-    payload = _build_payload(
-        config,
-        params,
-        session_id=session_id,
-        task_id=task_id,
-        tool_call_id=tool_call_id,
-    )
     caller = requester or post_to_rampart
 
-    try:
-        result = caller(config, rampart_tool, payload)
-    except RampartUnavailable as exc:
-        if tool_name in config.fail_open_tools or rampart_tool in config.fail_open_tools:
-            logger.warning("Rampart unavailable for %s/%s; configured fail-open", tool_name, rampart_tool)
-            return None
+    touched_paths = params.get("touched_paths")
+    if isinstance(touched_paths, list) and len(touched_paths) > MAX_PATCH_PATHS:
         return _block(
-            f"rampart: unavailable ({tool_name}→{rampart_tool}) — policy service could not be reached; refusing sensitive tool call"
+            f"rampart: patch touches more than {MAX_PATCH_PATHS} paths — refusing batched edit until it is split into smaller calls"
         )
+
+    result: Mapping[str, Any] = {"decision": "allow"}
+    selected_rank = 0
+    for policy_params in _policy_param_variants(rampart_tool, params):
+        payload = _build_payload(
+            config,
+            policy_params,
+            session_id=session_id,
+            task_id=task_id,
+            tool_call_id=tool_call_id,
+        )
+        try:
+            candidate = caller(config, rampart_tool, payload)
+        except RampartUnavailable:
+            if tool_name in config.fail_open_tools or rampart_tool in config.fail_open_tools:
+                logger.warning("Rampart unavailable for %s/%s; configured fail-open", tool_name, rampart_tool)
+                continue
+            return _block(
+                f"rampart: unavailable ({tool_name}→{rampart_tool}) — policy service could not be reached; refusing sensitive tool call"
+            )
+        rank = _decision_rank(candidate)
+        if rank > selected_rank:
+            result = candidate
+            selected_rank = rank
+        if _decision_from_result(candidate) == "deny":
+            break
 
     decision = _decision_from_result(result)
     if decision in {"allow", "watch", "log"}:

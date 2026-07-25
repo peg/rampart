@@ -51,6 +51,31 @@ zero-config installation log, a machine-readable 12-canary report, a second
 idempotency run, the resulting non-secret plugin configuration, and installed
 file checksums.
 
+## Opt-in real host proofs
+
+The normal lab suites do not spend model tokens or copy user credentials.
+Two separate opt-in harnesses exercise real host boundaries with disposable
+state:
+
+```bash
+scripts/compat-hermes-host.sh --yes
+scripts/compat-claude-host.sh --yes
+```
+
+The Hermes harness copies only `auth.json` and non-secret model selection by
+default. Env-only providers require explicit `--copy-env`. It does not load
+source memories, sessions, rules, skills, gateways, MCP servers, workspaces, or
+plugins. The Claude harness uses a disposable home and copies only
+`.credentials.json` on Linux/Windows when present. A macOS Keychain login is not
+resolvable from the disposable home in Claude Code 2.1.220, so the harness
+requires an ephemeral `CLAUDE_CODE_OAUTH_TOKEN` environment value for an
+authenticated macOS proof. Subprocess environment scrubbing prevents Bash from
+receiving that token. The harness excludes source settings, sessions, memories,
+plugins, MCP servers, and project instructions.
+
+Both harnesses run one deny and one allow canary, remove their disposable
+runtime, and optionally retain sanitized evidence with `--artifacts DIR`.
+
 To validate the VM's installed Hermes environment instead of downloading the
 latest package into a temporary virtual environment, provide its interpreter
 and optional CLI path:

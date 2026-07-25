@@ -16,7 +16,11 @@
 
 Claude Code's `--dangerously-skip-permissions` mode, and similar autonomous modes in Cline and Codex, give agents unrestricted shell access. Your agent can read your SSH keys, exfiltrate your `.env`, or `rm -rf /` with no guardrails.
 
-Rampart sits between the agent and your system. Every command, file access, and network request is evaluated against your policy before it executes. Dangerous commands never run.
+Rampart evaluates the actions an agent exposes through a supported hook,
+plugin, proxy, or process boundary. Matching shell commands, file operations,
+fetches, and other tool calls can be blocked before the host executes them.
+Rampart does not see arbitrary syscalls or network traffic inside a process you
+already allowed; read the [threat model](docs/THREAT-MODEL.md) for the boundary.
 
 ---
 
@@ -78,8 +82,9 @@ rampart setup hermes
 # Cline
 rampart setup cline
 
-# Codex CLI
+# Codex CLI, IDE extension, and desktop app
 rampart setup codex
+rampart verify codex
 
 # Any other agent (wraps $SHELL)
 rampart wrap -- your-agent
@@ -90,6 +95,10 @@ Check the broader installation state:
 ```bash
 rampart doctor
 ```
+
+Current integration coverage, live-host evidence, and known gaps are published
+in the [support matrix](https://docs.rampart.sh/getting-started/support-matrix/)
+and [security-assurance guide](https://docs.rampart.sh/getting-started/security-assurance/).
 
 Then watch your agent in real time:
 
@@ -121,7 +130,8 @@ Notes:
 
 Resolution order is: flag → environment → config file → auto-discovered state → default.
 
-Once running, every tool call goes through Rampart's policy engine first:
+Once an integration is configured, each tool call that integration exposes to
+Rampart goes through the policy engine:
 
 ```
 ALLOW 14:23:01  exec  "npm test"                      [allow-dev]
@@ -139,15 +149,18 @@ DENY  14:23:12  resp  read .env                        [block-credential-leak]
 
 <img src="docs/architecture.svg" alt="Rampart architecture" width="100%">
 
-Pattern matching handles 95%+ of decisions in microseconds. The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based classification for ambiguous commands. All decisions go to a hash-chained audit trail.
+Local pattern matching is benchmarked in microseconds. The optional
+[rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based
+classification for selected ambiguous commands. Decisions observed at the
+configured Rampart boundary are written to a hash-chained audit trail.
 
 | Agent | Setup command | Integration |
 |-------|--------------|-------------|
-| **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
+| **Claude Code** | `rampart setup claude-code` | Native pre/post tool hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart protect openclaw` | Zero-config native guard + active verification |
 | **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Codex CLI** | `rampart setup codex` | Wrapper that runs Codex through `rampart preload` |
+| **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -173,10 +186,14 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 
 ## Claude Code
 
-Native integration through Claude Code's hook system. Every Bash command, file read, and write goes through Rampart before execution:
+Native integration through Claude Code's hook system. Rampart classifies the
+current hook-visible shell, file, network, MCP, delegation, transfer, and
+scheduling tools before execution. In enforce mode, a future unknown
+`PreToolUse` tool fails closed until Rampart is updated. Successful tool responses are scanned and
+policy-blocked string content is replaced before the next model turn:
 
 ```bash
-# Install background service
+# Optional: dashboard and service-backed/headless approval features
 rampart serve install
 
 # Wire up hooks
@@ -211,7 +228,8 @@ The managed Guard defaults focus on consequences:
 - destructive commands and credential access are denied
 - publishing, deployment, privileged service changes, and cross-conversation messages require approval
 - read-only message actions and replies to the originating conversation remain available
-- if the policy service is unavailable, every OpenClaw tool is blocked
+- with the managed `failOpen: false` setting, the plugin returns a deny for
+  tool requests when the policy service is unavailable
 
 `rampart verify openclaw` uses fixed safe canaries. It traverses the running
 plugin's normalization, message classification, policy request, degraded-mode,
@@ -275,12 +293,12 @@ rampart wrap -- python my_agent.py
 
 ---
 
-## Protect any process (LD_PRELOAD)
+## Add preload coverage to a process
 
 For agents with no hook system and no `$SHELL` support, `preload` intercepts exec-family syscalls at the OS level:
 
 ```bash
-rampart preload -- codex
+rampart preload -- your-agent
 rampart preload -- python my_agent.py
 rampart preload -- node agent.js
 
@@ -290,7 +308,10 @@ rampart preload --mode monitor -- risky-tool
 
 Intercepts `execve`, `execvp`, `system()`, `popen()`, and `posix_spawn()`. Denied calls return `EPERM`.
 
-**Platform notes:** Works with all dynamically-linked binaries on Linux. Works on macOS with Homebrew/nvm/pyenv binaries; blocked by SIP for `/usr/bin/*` (AI agents don't live there).
+**Platform notes:** Preload mode covers supported exec-family calls made through
+the dynamic loader on Linux and in non-SIP-protected macOS processes. Static or
+setuid binaries, direct syscalls, and macOS SIP-protected processes can bypass
+this boundary; see the threat model before relying on preload mode.
 
 ---
 
@@ -458,7 +479,8 @@ Pending approvals expire after 2 minutes by default (`--approval-timeout` to cha
 
 ## Audit trail
 
-Every tool call is logged to hash-chained JSONL. Tamper with any record and the chain breaks:
+Each tool decision Rampart receives is logged to hash-chained JSONL. Editing,
+inserting, or deleting an individual record breaks chain verification:
 
 ```bash
 rampart audit tail --follow    # Stream events
@@ -540,7 +562,8 @@ curl -s localhost:9090/v1/preflight/exec \
 
 ## Performance
 
-Policy evaluation in single-digit microseconds:
+Policy evaluation is benchmarked in microseconds on maintainer and CI hardware.
+Exact latency depends on the policy set, machine, and audit path:
 
 | Command | Decision | Time |
 |---------|----------|------|
@@ -554,7 +577,10 @@ Policy evaluation in single-digit microseconds:
 
 ## Security recommendations
 
-**Self-modification protection.** Agents cannot bypass their own policy by running `rampart allow` or `rampart block`. Those commands are blocked when executed by an agent. Policy modifications must be made by a human.
+**Self-modification protection.** The standard profile blocks recognized
+agent-issued Rampart mutation commands and writes to known Rampart paths.
+This is defense in depth, not an OS isolation boundary: keep policy files and
+admin credentials outside the agent account for stronger protection.
 
 **Don't run your AI agent as root.** Root access defeats user separation. Run agent frameworks as an unprivileged user.
 
@@ -570,11 +596,11 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 
 | Risk | Coverage |
 |------|----------|
-| **ASI02: Tool Misuse** | Yes: every tool call is evaluated before execution |
-| **ASI05: Unexpected Code Execution** | Yes: pattern matching plus optional LLM verification |
-| **ASI08: Data Exfiltration** | Yes: domain blocking and credential response scanning |
-| **ASI09: Human-Agent Trust** | Yes: `ask` actions enforce human-in-the-loop |
-| **ASI10: Rogue Agents** | Yes: hash-chained audit trail and response scanning |
+| **ASI02: Tool Misuse** | Partial: supported host-exposed tool calls are policy evaluated |
+| **ASI05: Unexpected Code Execution** | Partial: command patterns and optional semantic verification; allowed interpreters remain a boundary |
+| **ASI08: Data Exfiltration** | Partial: known domains, file paths, and credential patterns |
+| **ASI09: Human-Agent Trust** | Partial: `ask` where the integration has an approval path |
+| **ASI10: Rogue Agents** | Partial: observed actions are audited; Rampart is not process isolation |
 | **ASI01: Goal Hijack** | Partial: policy limits blast radius even if goals are altered |
 | **ASI06: Context Poisoning** | Partial: response scanning blocks credentials from context window |
 | **ASI07: Inter-Agent Communication** | ❌ Not addressed |
@@ -593,7 +619,8 @@ rampart quickstart                           # Auto-detect, install, configure, 
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # OpenClaw native plugin integration
-rampart setup codex                          # Codex CLI shell wrapper (Linux, macOS)
+rampart setup codex                          # Codex native lifecycle hooks
+rampart verify codex                         # Verify hook install + native deny response
 rampart setup <agent> --remove               # Clean uninstall
 
 # Run
@@ -658,15 +685,15 @@ rampart upgrade --no-binary                 # Refresh policies only
 |-------|--------|-----------|
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
 | OpenClaw | `rampart protect openclaw` | Linux, macOS |
-| Cline | `rampart setup cline` | Linux, macOS, Windows |
-| Codex CLI | `rampart setup codex` | Linux, macOS (requires `librampart.so`/`.dylib`) |
-| Claude Desktop | `rampart mcp` | All |
+| Cline | `rampart setup cline` | Linux, macOS |
+| Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
+| Claude Desktop MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |
 | Node.js agents | `rampart preload` or HTTP API | Linux, macOS |
-| Any MCP server | `rampart mcp` | All |
-| Any process | `rampart preload` | Linux, macOS |
-| Custom agents | HTTP API at `localhost:9090` | All |
+| Command-launched MCP servers | `rampart mcp` | Linux, macOS, Windows |
+| Supported dynamically linked processes | `rampart preload` | Linux, macOS |
+| Custom agents | HTTP API at `localhost:9090` | Linux, macOS, Windows |
 
 ---
 

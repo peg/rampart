@@ -86,15 +86,18 @@ rampart setup openclaw --remove  # Remove integration
 
 ### `rampart setup codex`
 
-Install a wrapper script that runs Codex through `rampart preload`.
+Install Rampart lifecycle hooks for Codex CLI, IDE, and desktop.
 
 ```bash
-rampart setup codex                   # Install wrapper
-rampart setup codex --force           # Overwrite existing wrapper
-rampart setup codex --remove          # Remove wrapper
+rampart setup codex                   # Install PreToolUse/PostToolUse hooks
+rampart setup codex --force           # Replace an invalid hooks.json
+rampart setup codex --remove          # Remove Rampart hooks
 ```
 
-The wrapper is installed at `~/.local/bin/codex` and transparently wraps the real Codex binary. `rampart setup codex` requires `librampart.so` on Linux or `librampart.dylib` on macOS; source builds should place it in `~/.rampart/lib/` or `/usr/local/lib/` first. Codex subprocesses spawned through libc exec-family calls go through Rampart policy via preload inheritance.
+Rampart writes wildcard `PreToolUse` and `PostToolUse` handlers to
+`$CODEX_HOME/hooks.json` (or `~/.codex/hooks.json`). Existing unrelated hooks
+remain in place. The generated definition includes POSIX and Windows commands,
+does not replace the `codex` executable, and requires no preload library.
 
 ### `rampart setup` (interactive)
 
@@ -163,7 +166,7 @@ rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 
 ### `rampart wrap`
 
-Wrap any agent with policy enforcement via `$SHELL`.
+Add policy enforcement to agents that launch commands through `$SHELL`.
 
 ```bash
 rampart wrap -- aider                           # Enforce mode
@@ -173,10 +176,11 @@ rampart wrap --config policy.yaml -- agent      # Custom policy
 
 ### `rampart preload`
 
-Protect any process via LD_PRELOAD syscall interception.
+Add exec-family interception to supported dynamically linked processes via
+`LD_PRELOAD` or `DYLD_INSERT_LIBRARIES`.
 
 ```bash
-rampart preload -- codex                        # Enforce mode
+rampart preload -- your-agent                   # Enforce mode
 rampart preload --mode monitor -- agent         # Audit only
 rampart preload --debug -- agent                # Debug to stderr
 ```

@@ -1,11 +1,14 @@
 ---
 title: Policy Engine
-description: "Rampart's YAML policy engine checks every AI agent tool call in microseconds. Deny, allow, log, or require approval by command, path, URL, or pattern."
+description: "Rampart's YAML policy engine checks tool calls delivered by configured integrations. Deny, allow, log, or require approval by command, path, URL, or pattern."
 ---
 
 # Policy Engine
 
-Rampart's policy engine evaluates every AI agent tool call against YAML rules in single-digit microseconds. No network calls, no external dependencies — just fast pattern matching.
+Rampart's policy engine evaluates tool-call metadata delivered by configured
+integrations against YAML rules. Core matching is local and benchmarked in
+microseconds; end-to-end hook latency also includes process startup and audit
+I/O. Optional semantic verification is a separate networked component.
 
 ## Evaluation Flow
 
@@ -187,13 +190,15 @@ The webhook receives the full tool call context and returns `{"decision": "allow
 
 ## Response-Side Evaluation
 
-Rampart can scan tool output (PostToolUse) for sensitive patterns, preventing credential leakage from reaching the AI agent. When a response matches, the output is blocked before the agent sees it.
+On supported `PostToolUse` hooks, Rampart can scan tool output for sensitive
+patterns. Matching string fields are replaced before the next model turn;
+unsupported response shapes or tools without post-call hooks are not covered.
 
 ### How it works
 
 1. After a tool executes, the agent runtime sends a PostToolUse hook with the tool's output
 2. Rampart evaluates the output against `response_matches` regex patterns
-3. If a pattern matches, Rampart blocks the response — the agent never sees the sensitive data
+3. If a pattern matches, Rampart returns a shape-preserving output with matching string content replaced
 
 ### Configuration
 

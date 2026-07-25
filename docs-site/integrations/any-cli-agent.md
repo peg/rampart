@@ -25,11 +25,15 @@ rampart wrap -- node agent.js
 ## How It Works
 
 1. Rampart starts an embedded policy server
-2. Generates a shell shim that checks every command against the policy
+2. Generates a shell shim that checks commands launched through that shim
+   against the policy
 3. Sets `$SHELL` to point at the shim
 4. Execs your agent as a child process
 
-Every time the agent spawns a shell command, the shim intercepts it, checks the preflight API, and either allows or blocks execution.
+Commands the agent launches through the declared `$SHELL` reach the shim, which
+checks the preflight API and allows or blocks them. Direct process spawning,
+native file/network APIs, and a shell path the agent ignores are outside this
+boundary.
 
 ```
 Agent → spawns shell → $SHELL (rampart shim) → Policy Engine → Allow/Deny/Ask

@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,18 @@ from typing import Any
 REPO_ROOT = Path(
     os.environ.get("RAMPART_COMPAT_REPO_ROOT", Path(__file__).resolve().parents[1])
 ).expanduser().absolute()
+
+
+def remove_temp_tree(path: Path) -> None:
+    """Remove Go module caches even though downloaded module files are read-only."""
+
+    def make_writable_and_retry(func: Any, item: str, _: Any) -> None:
+        parent = Path(item).parent
+        os.chmod(parent, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        os.chmod(item, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        func(item)
+
+    shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
 class RampartStub(BaseHTTPRequestHandler):
@@ -50,11 +63,19 @@ class RampartStub(BaseHTTPRequestHandler):
             "session": payload.get("session") if isinstance(payload, dict) else None,
             "tool_call_id_present": bool(payload.get("tool_call_id")) if isinstance(payload, dict) else False,
             "command_marker": _marker_from_command(command),
+            "policy_path": str(params.get("path") or ""),
         }
         self.requests_seen.append(record)
 
         status = 200
-        if "rampart-deny-marker" in command:
+        if params.get("path") == "secrets/.env":
+            body = {
+                "decision": "deny",
+                "message": "protected compatibility path",
+                "policy": "compat-path-deny",
+                "audit_id": "compat-audit-path-deny",
+            }
+        elif "rampart-deny-marker" in command:
             body = {
                 "decision": "deny",
                 "message": "blocked by compatibility harness",
@@ -128,9 +149,13 @@ def resolve_executable(value: str) -> Path:
     return path
 
 
-def make_venv(root: Path, package: str) -> tuple[Path, Path]:
+def make_venv(root: Path, package: str, base_python: str | None = None) -> tuple[Path, Path]:
     venv_dir = root / "venv"
-    venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
+    if base_python:
+        resolved_python = resolve_executable(base_python)
+        run([str(resolved_python), "-m", "venv", str(venv_dir)], cwd=root)
+    else:
+        venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
     python = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     hermes = venv_dir / ("Scripts/hermes.exe" if os.name == "nt" else "bin/hermes")
     run([str(python), "-m", "pip", "install", "--upgrade", "pip"], cwd=root)
@@ -210,6 +235,24 @@ def child_probe_code(unused_port: int) -> str:
         if not auth_error or 'invalid authorization token' not in auth_error:
             raise SystemExit(f'auth error did not fail closed: {{auth_error!r}}')
 
+        patch = block(
+            'patch',
+            {{
+                'mode': 'patch',
+                'patch': (
+                    '*** Begin Patch\\n'
+                    '*** Add File: safe.txt\\n'
+                    '+safe\\n'
+                    '*** Update File: secrets/.env\\n'
+                    '@@\\n-old\\n+new\\n'
+                    '*** End Patch'
+                ),
+            }},
+            'compat-patch-call',
+        )
+        if not patch or 'protected compatibility path' not in patch or 'compat-audit-path-deny' not in patch:
+            raise SystemExit(f'multi-path patch did not block protected second target: {{patch!r}}')
+
         os.environ['RAMPART_HERMES_URL'] = 'http://127.0.0.1:{unused_port}'
         os.environ['RAMPART_HERMES_TIMEOUT_MS'] = '250'
         fail_closed = block('terminal', {{'command': 'printf rampart-fail-closed-marker'}}, 'compat-fail-closed-call')
@@ -229,6 +272,7 @@ def child_probe_code(unused_port: int) -> str:
             'ask_blocked_without_resume': True,
             'allow_continued': True,
             'auth_error_fail_closed': True,
+            'multi_path_patch_deny_wins': True,
             'mutating_fail_closed': True,
             'configured_read_fail_open': True,
         }}, sort_keys=True))
@@ -239,6 +283,7 @@ def child_probe_code(unused_port: int) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Rampart's Hermes plugin against an isolated latest Hermes runtime.")
     parser.add_argument("--package", default="hermes-agent", help="pip package spec to install, default: hermes-agent")
+    parser.add_argument("--python", help="Base Python interpreter used to create the isolated environment")
     parser.add_argument("--hermes-python", help="Use an existing Python interpreter with Hermes installed instead of creating a venv")
     parser.add_argument("--hermes-bin", help="Hermes executable to report version from when --hermes-python is used")
     parser.add_argument("--keep-temp", action="store_true", help="Keep the temporary directory for debugging")
@@ -253,7 +298,7 @@ def main() -> int:
                 hermes_bin = shutil.which("hermes")
                 hermes_bin_path = Path(hermes_bin) if hermes_bin else None
         else:
-            hermes_python, hermes_bin_path = make_venv(temp, args.package)
+            hermes_python, hermes_bin_path = make_venv(temp, args.package, args.python)
 
         hermes_home = temp / "hermes-home"
         plugin_dir = hermes_home / "plugins" / "rampart"
@@ -309,6 +354,13 @@ def main() -> int:
             expected = {"rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker", "rampart-auth-error-marker"}
             if not expected.issubset(markers):
                 raise RuntimeError(f"expected request markers {sorted(expected)}, saw {sorted(markers)}")
+            patch_paths = [
+                entry["policy_path"]
+                for entry in RampartStub.requests_seen
+                if entry["path"] == "/v1/preflight/edit"
+            ]
+            if patch_paths != ["safe.txt", "secrets/.env"]:
+                raise RuntimeError(f"expected both patch targets in order, saw {patch_paths}")
 
             print(
                 json.dumps(
@@ -333,7 +385,7 @@ def main() -> int:
         if args.keep_temp:
             print(f"kept temporary directory: {temp}", file=sys.stderr)
         else:
-            shutil.rmtree(temp, ignore_errors=True)
+            remove_temp_tree(temp)
 
 
 if __name__ == "__main__":

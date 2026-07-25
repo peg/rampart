@@ -5,16 +5,19 @@ description: "Find the right Rampart integration for Claude Code, Cline, Cursor,
 
 # Integration Guides
 
-Rampart works with every major AI agent through multiple integration methods. Choose the guide for your agent below.
+Rampart supports several widely used AI agents through multiple integration
+methods, with different assurance levels and boundaries. Choose the guide for
+your agent below, then check the [support matrix](../getting-started/support-matrix.md)
+for the evidence and known limitations of that path.
 
 ## Integration Methods
 
 | Method | How It Works | Best For |
 |--------|-------------|----------|
-| **Native Hooks** | Uses the agent's built-in hook system | Claude Code, Cline |
+| **Native Hooks** | Uses the agent's built-in hook system | Claude Code, Cline, Codex |
 | **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, OpenCode, Continue |
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
-| **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Codex CLI, any process |
+| **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Optional Unix defense in depth |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
 | **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Hermes Agent (experimental) |
 | **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
@@ -27,6 +30,7 @@ When a policy action is `ask`, behavior varies by integration:
 | Integration | Behavior |
 |-------------|----------|
 | **Claude Code** | Hook returns `"permissionDecision":"ask"` — Claude Code shows native prompt |
+| **Codex** | Rampart's external approval queue blocks; unavailable queue denies |
 | **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
 | **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
 | **OpenClaw** | OpenClaw owns the visible approval UI; Rampart plugin supplies policy decisions |
@@ -40,16 +44,14 @@ When a policy action is `ask`, behavior varies by integration:
 | Agent | Method | Command | Platforms |
 |-------|--------|---------|-----------|
 | [Claude Code](claude-code.md) | Native hooks | `rampart setup claude-code` | All |
-| [Cline](cline.md) | Native hooks | `rampart setup cline` | All |
+| [Cline](cline.md) | Native hooks | `rampart setup cline` | Linux, macOS |
 | [Cursor](cursor.md) | MCP proxy | `rampart mcp --` | All |
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
-| [Codex CLI](codex-cli.md) | Wrapper + preload | `rampart setup codex` | Linux, macOS* |
+| [Codex CLI, IDE, desktop](codex-cli.md) | Native hooks | `rampart setup codex` | All |
 | [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw` | Linux, macOS |
 | [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | All |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
-
-\* macOS preload coverage is best for Homebrew/user-installed binaries; SIP-protected system binaries cannot be interposed.
 
 ## Choosing an Integration
 
@@ -60,7 +62,7 @@ start: "Your agent" {shape: oval}
 
 q: "Integration method?" {shape: diamond}
 
-hooks: "rampart setup claude-code\\nrampart setup cline" {
+hooks: "rampart setup claude-code\\nrampart setup cline\\nrampart setup codex" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 shim: "rampart setup openclaw\\nrampart setup hermes" {
@@ -81,7 +83,7 @@ api: "HTTP API / SDK\\nlocalhost:9090" {
 
 start -> q
 
-q -> hooks: "Claude Code or Cline\\n(native hooks, lowest overhead)"
+q -> hooks: "Claude Code, Cline, or Codex\\n(native hooks, lowest overhead)"
 q -> shim: "OpenClaw or Hermes Agent\\n(native plugin where supported)"
 q -> mcp: "Cursor, Claude Desktop\\nor any MCP-compatible client"
 q -> wrap: "Any CLI agent\\nwith \$SHELL support"

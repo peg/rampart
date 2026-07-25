@@ -60,7 +60,6 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 		{name: "EditFile", toolName: "EditFile", wantTool: "write", withInput: false},
 		{name: "WebFetch", toolName: "WebFetch", wantTool: "fetch", withInput: true},
 		{name: "Fetch", toolName: "Fetch", wantTool: "fetch", withInput: false},
-		{name: "Default", toolName: "UnknownTool", wantTool: "unknown", withInput: false},
 	}
 
 	for _, tt := range tests {
@@ -92,10 +91,42 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 	}
 }
 
+func TestParseClaudeCodeInput_UnknownPreToolFailsClosed(t *testing.T) {
+	input := `{
+		"hook_event_name":"PreToolUse",
+		"tool_name":"FutureMutatingTool",
+		"tool_input":{"target":"outside"},
+		"tool_use_id":"toolu_future_1"
+	}`
+	_, err := parseClaudeCodeInput(strings.NewReader(input), testLogger())
+	if err == nil || !strings.Contains(err.Error(), "unsupported Claude Code tool_name") {
+		t.Fatalf("expected unsupported-tool error, got %v", err)
+	}
+}
+
 func TestParseClaudeCodeInput_InvalidJSON(t *testing.T) {
 	_, err := parseClaudeCodeInput(strings.NewReader("{"), testLogger())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestParseClaudeCodeInput_MonitorWebSocketUsesNetworkPolicy(t *testing.T) {
+	input := `{
+		"hook_event_name":"PreToolUse",
+		"tool_name":"Monitor",
+		"tool_input":{"ws":{"url":"wss://events.example.com/feed"},"timeout_ms":1000},
+		"tool_use_id":"toolu_monitor_1"
+	}`
+	result, err := parseClaudeCodeInput(strings.NewReader(input), testLogger())
+	if err != nil {
+		t.Fatalf("parseClaudeCodeInput error: %v", err)
+	}
+	if result.Tool != "fetch" {
+		t.Fatalf("tool = %q, want fetch", result.Tool)
+	}
+	if result.Params["url"] != "wss://events.example.com/feed" {
+		t.Fatalf("url = %#v", result.Params["url"])
 	}
 }
 
@@ -248,6 +279,59 @@ func TestOutputHookResult_ClaudeCode(t *testing.T) {
 		}
 		if allow.Decision != "" {
 			t.Fatalf("expected empty Decision for PostToolUse allow, got %q", allow.Decision)
+		}
+	})
+
+	t.Run("PostToolUse block replaces structured output", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		out := &bytes.Buffer{}
+		cmd.SetOut(out)
+		response := map[string]any{
+			"stdout":      "AKIA1234567890ABCDEF",
+			"stderr":      "",
+			"interrupted": false,
+			"nested":      []any{"secret", map[string]any{"detail": "token"}},
+		}
+
+		err := outputHookResultWithResponse(
+			cmd,
+			"claude-code",
+			hookBlock,
+			true,
+			"credential response blocked",
+			"printenv",
+			redactClaudeToolOutput(response),
+		)
+		if err != nil {
+			t.Fatalf("block outputHookResultWithResponse error: %v", err)
+		}
+
+		var blocked hookOutput
+		if err := json.Unmarshal(out.Bytes(), &blocked); err != nil {
+			t.Fatalf("unmarshal block output: %v", err)
+		}
+		if blocked.Decision != "block" {
+			t.Fatalf("Decision = %q, want block", blocked.Decision)
+		}
+		if blocked.HookSpecificOutput == nil {
+			t.Fatal("expected updatedToolOutput for PostToolUse block")
+		}
+		updated, ok := blocked.HookSpecificOutput.UpdatedToolOutput.(map[string]any)
+		if !ok {
+			t.Fatalf("updatedToolOutput = %#v, want object", blocked.HookSpecificOutput.UpdatedToolOutput)
+		}
+		if updated["stdout"] != redactedToolOutput || updated["stderr"] != redactedToolOutput {
+			t.Fatalf("string fields were not redacted: %#v", updated)
+		}
+		if updated["interrupted"] != false {
+			t.Fatalf("non-string field changed: %#v", updated)
+		}
+		encoded, err := json.Marshal(updated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(encoded, []byte("AKIA")) || bytes.Contains(encoded, []byte("secret")) {
+			t.Fatalf("updated output leaked original strings: %s", encoded)
 		}
 	})
 
@@ -438,17 +522,48 @@ func TestMapClaudeCodeTool(t *testing.T) {
 		{"Bash", "exec"},
 		{"Read", "read"},
 		{"ReadFile", "read"},
+		{"Glob", "read"},
+		{"Grep", "read"},
+		{"LSP", "read"},
 		{"Write", "write"},
 		{"WriteFile", "write"},
 		{"Edit", "write"},
 		{"EditFile", "write"},
+		{"NotebookEdit", "write"},
+		{"EnterWorktree", "write"},
+		{"PowerShell", "exec"},
+		{"Monitor", "exec"},
 		{"WebFetch", "fetch"},
+		{"WebSearch", "fetch"},
 		{"Fetch", "fetch"},
 		{"web_search", "fetch"},
 		{"web_fetch", "fetch"},
 		{"memory", "memory"},
 		{"code_execution", "exec"},
 		{"tool_search", "read"},
+		{"ToolSearch", "read"},
+		{"mcp__github__create_issue", "mcp"},
+		{"ListMcpResourcesTool", "read"},
+		{"Agent", "agent"},
+		{"Workflow", "agent"},
+		{"CronCreate", "process"},
+		{"CronList", "read"},
+		{"Artifact", "message"},
+		{"PushNotification", "message"},
+		{"RemoteTrigger", "agent"},
+		{"ReportFindings", "interact"},
+		{"ScheduleWakeup", "process"},
+		{"SendMessage", "message"},
+		{"SendUserFile", "message"},
+		{"ShareOnboardingGuide", "message"},
+		{"TaskCreate", "process"},
+		{"TaskGet", "read"},
+		{"TaskList", "read"},
+		{"TaskOutput", "read"},
+		{"TaskStop", "process"},
+		{"TaskUpdate", "process"},
+		{"TodoWrite", "process"},
+		{"AskUserQuestion", "interact"},
 		{"SomethingUnknown", "unknown"},
 	}
 	for _, tt := range tests {

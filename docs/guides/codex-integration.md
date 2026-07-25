@@ -1,117 +1,104 @@
-# Securing Codex CLI with Rampart
+# Securing Codex with Rampart
 
-Protect OpenAI Codex CLI subprocesses using Rampart's LD_PRELOAD/DYLD interception. Every shell command Codex spawns through libc exec-family calls passes through your policy before execution.
-
-## How it works
-
-Unlike Claude Code and Cline — which expose hook APIs — Codex CLI doesn't have a native hook system. Rampart uses `LD_PRELOAD` to intercept system calls (`execve`, `execvp`, `system`, `popen`, `posix_spawn`) at the OS level. This means every command Codex spawns is evaluated against your policy regardless of how Codex invokes it.
-
-```
-Codex CLI → tool call → librampart.so intercept → Rampart policy → allow / deny
-```
+Rampart uses [Codex lifecycle hooks](https://developers.openai.com/codex/hooks)
+to evaluate local tool calls before they run. One user-level setup covers
+Codex CLI, the IDE extension, and the desktop app.
 
 ## Setup
-
-`rampart setup codex` requires the preload library (`librampart.so` on Linux, `librampart.dylib` on macOS). If your install does not include it — common for source builds — build and place it first:
-
-```bash
-mkdir -p ~/.rampart/lib
-# Linux
-cc -shared -fPIC -o ~/.rampart/lib/librampart.so preload/librampart.c -ldl -lcurl -lpthread
-# macOS
-cc -dynamiclib -fPIC -o ~/.rampart/lib/librampart.dylib preload/librampart.c -lcurl
-```
-
-Then install the persistent Codex wrapper:
 
 ```bash
 rampart setup codex
 ```
 
-This creates `~/.local/bin/codex` — a wrapper script that runs the real Codex binary through `rampart preload`. From that point on, just use `codex` normally.
+Rampart adds wildcard `PreToolUse` and `PostToolUse` entries to
+`$CODEX_HOME/hooks.json`, or `~/.codex/hooks.json` when `CODEX_HOME` is unset.
+Existing unrelated hooks are preserved. If an older Rampart release installed
+`~/.local/bin/codex`, setup removes that managed preload wrapper to avoid
+evaluating shell commands twice.
 
-```
-✓ Wrapper installed at /home/user/.local/bin/codex
-  Wraps: /usr/local/bin/codex
-  Via:   /usr/local/bin/rampart preload
+Codex treats user hooks as executable configuration. Open `/hooks` in Codex,
+review the exact Rampart command, and trust it. A changed hook definition must
+be reviewed again.
 
-✓ Run 'codex' normally — all tool calls are now enforced by Rampart.
-  Uninstall: rampart setup codex --remove
-```
+## What is covered
 
-### PATH order matters
+Codex reports supported local tool calls through the same lifecycle protocol:
 
-The wrapper lives in `~/.local/bin`. Make sure that directory appears **before** the real Codex binary in your PATH:
+- shell and unified execution calls;
+- reads, writes, edits, and `apply_patch`;
+- MCP tool calls;
+- web/browser-style local tools;
+- delegated-agent tool calls when the host emits the lifecycle event.
 
-```bash
-# ~/.bashrc or ~/.zshrc
-export PATH="$HOME/.local/bin:$PATH"
-```
+Rampart expands every target in a multi-file `apply_patch` request and applies
+deny-wins policy evaluation to each path. An allowed first file cannot conceal
+a protected later target.
 
-Verify the right `codex` is active:
+Hosted tools and specialized execution paths that Codex does not expose to
+lifecycle hooks remain outside this boundary. `rampart preload` remains an
+optional Unix defense-in-depth mechanism for other processes; it is no longer
+the primary Codex integration.
 
-```bash
-which codex
-# Should print: /home/user/.local/bin/codex
-```
+If a future Codex release exposes an unfamiliar tool name through
+`PreToolUse`, Rampart denies it in enforce mode until that tool is classified.
+This prevents a new mutating surface from inheriting an unmatched allow rule.
+Monitor and audit modes remain observational.
 
-### Alternative: run inline
+## Decisions and approvals
 
-If you don't want the wrapper, you can invoke Rampart inline for any command:
+On allow, Rampart returns an empty hook response. This deliberately preserves
+Codex's own sandbox and permission checks. On deny, Rampart returns Codex's
+structured `PreToolUse` denial.
 
-```bash
-rampart preload -- codex exec --full-auto 'fix the bug in auth.py'
-```
-
-## Interactive setup wizard
-
-If you run `rampart setup` without arguments, the wizard detects installed agents automatically:
-
-```
-Detected agents:
-  ✓ Codex (found)        → rampart setup codex
-  ✗ Claude Code          → not found
-  ✗ OpenClaw             → not found
-
-Which agents would you like to protect? [all detected/select/skip]
-```
-
-Codex is set up automatically when detected.
-
-## Verify it's working
-
-Start the Rampart server, then run Codex:
+Codex does not currently accept an `ask` decision from `PreToolUse`. Policies
+that require approval therefore use Rampart's blocking approval queue:
 
 ```bash
-# Terminal 1
 rampart serve
-
-# Terminal 2 — Rampart watch shows live decisions
 rampart watch
-
-# Terminal 3 — run Codex normally
-codex exec --full-auto 'check disk usage'
 ```
 
-You should see `df -h` appear in `rampart watch` as allowed. Try something blocked:
+If the approval service is unavailable, Rampart denies the call instead of
+silently allowing it. Ordinary local allow/deny policy evaluation does not
+require the service.
+
+## Verify
 
 ```bash
-codex exec --full-auto 'show me the SSH private key'
-# → Operation not permitted (blocked by block-credential-access)
+rampart verify codex
 ```
 
-## Policy
+Verification checks that both lifecycle hooks are installed and sends a safe,
+non-executing destructive-command canary through Rampart's live Codex adapter.
+It also runs the standard policy canaries when the Rampart service is
+available. This proves the installed configuration and adapter response; the
+assurance manifest separately records that a real Codex host-boundary test is
+not part of the ordinary CI gate.
 
-Rampart's standard policy covers the most common Codex threat scenarios out of the box:
+Maintainers can run the opt-in real-host check against a candidate binary:
 
-| Scenario | Policy | Action |
-|---|---|---|
-| `cat ~/.ssh/id_rsa` | `block-credential-access` | deny |
-| `curl ... \| bash` | `block-destructive` | deny |
-| `base64 -d \| sh` | `block-destructive` | deny |
-| `sudo rm -rf /` | `require-privileged-approval` | require approval |
-| `cat /etc/shadow` | `block-credential-access` | deny |
-| `/dev/tcp/` shell redirect | `block-network-exfil` | deny |
+```bash
+scripts/compat-codex-host.sh --yes --rampart-bin ./rampart
+```
+
+It invokes Codex twice with harmless deny/allow shell canaries. The harness
+copies only `auth.json` into a disposable `CODEX_HOME`, uses ephemeral sessions,
+ignores user configuration, runs with Codex's `workspace-write` sandbox, and
+removes the credential copy on every exit. Pass `--artifacts DIR` to retain
+sanitized logs and a machine-readable summary.
+
+The ordinary verifier proves installed configuration and adapter behavior; the
+opt-in script is the real Codex host check. Current physical Windows host proof
+is still pending. See the
+[security-assurance guide](https://docs.rampart.sh/getting-started/security-assurance/)
+for the precise claim boundary.
+
+You can also inspect overall health:
+
+```bash
+rampart doctor
+rampart status
+```
 
 ## Uninstall
 
@@ -119,8 +106,12 @@ Rampart's standard policy covers the most common Codex threat scenarios out of t
 rampart setup codex --remove
 ```
 
-Rampart verifies the file is its own wrapper before removing it. The real Codex binary is restored automatically (it was never moved).
+Only Rampart's Codex hook entries and a recognized legacy Rampart wrapper are
+removed. Other user hooks are left untouched.
 
 ## Platform support
 
-`rampart setup codex` supports Linux and macOS by installing a wrapper at `~/.local/bin/codex` that invokes Codex through `rampart preload`. Linux provides full LD_PRELOAD coverage. macOS works for dynamically linked/Homebrew-style binaries, but SIP prevents preload interception for protected system binaries. Windows is not supported; use the HTTP API or MCP proxy mode instead. Run `rampart setup --help` for alternatives.
+The native hook setup supports Linux, macOS, and Windows. The generated
+configuration includes both POSIX and Windows command forms and uses a
+restrictive file mode on Unix. Hook timeout behavior is controlled by Codex;
+Rampart does not claim that a host-enforced timeout fails closed.

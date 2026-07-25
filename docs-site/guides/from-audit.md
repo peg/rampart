@@ -7,7 +7,7 @@ This is the fastest way to go from "no policy" to "production-ready policy" with
 ## How it works
 
 ```
-1. Run Rampart in monitor mode        → logs every tool call
+1. Run Rampart in monitor mode        → logs calls observed at its integration boundary
 2. Let your agent do its normal work   → builds a behavior profile
 3. rampart init --from-audit           → generates policy YAML from logs
 4. Review, tweak, deploy               → enforce with confidence

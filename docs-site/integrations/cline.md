@@ -1,11 +1,18 @@
 ---
 title: Securing Cline
-description: "Secure Cline with Rampart native hooks. Evaluate shell commands and file operations before execution, block risky behavior, and keep full audit visibility."
+description: "Add Rampart native hooks to Cline. Evaluate supported shell, file, and web hook payloads before execution and audit observed decisions."
 ---
 
 # Cline
 
-[Cline](https://github.com/cline/cline) is an AI coding assistant for VS Code. Rampart integrates via Cline's native hook system — every command, file read, and file write gets evaluated before execution.
+[Cline](https://github.com/cline/cline) is an AI coding assistant for VS Code.
+Rampart integrates with Cline's documented hook payloads for shell, file, web,
+and MCP actions. This adapter is regression-tested in isolation; there is no
+rolling latest-Cline host job, so consult the support matrix for the current
+evidence level.
+
+The installed hook scripts currently require Bash, so Rampart claims this path
+on Linux and macOS. A native Windows Cline boundary has not yet been proven.
 
 ## Setup
 
@@ -13,7 +20,7 @@ description: "Secure Cline with Rampart native hooks. Evaluate shell commands an
 rampart setup cline
 ```
 
-This installs hooks into Cline's settings that route tool calls through `rampart hook` for policy evaluation.
+This installs scripts for Cline's documented pre- and post-tool hook events.
 
 ## What Gets Intercepted
 
@@ -29,14 +36,15 @@ This installs hooks into Cline's settings that route tool calls through `rampart
 When Cline wants to execute a tool:
 
 1. Cline's hook system sends the tool call to `rampart hook --format cline` via stdin (JSON)
-2. Rampart evaluates the call against your YAML policies (<10μs)
+2. Rampart evaluates the call against your YAML policies
 3. If **allowed**: Rampart returns `{"cancel":false}`, Cline proceeds
 4. If **denied**: Rampart returns `{"cancel":true,"errorMessage":"Blocked by Rampart: reason"}`, Cline never executes the command
 5. If **ask**: Rampart returns `{"cancel":true}` immediately (no waiting), blocking execution
 
 **Ask behavior:** Unlike integrations with native approval UI, Cline gets an immediate `cancel:true` response for `ask` policies. This prevents Cline from hanging while waiting for approval.
 
-This happens transparently — you use Cline exactly as before.
+After setup, you continue using Cline normally and can confirm observed calls
+with `rampart watch`.
 
 ## Monitor in Real Time
 
@@ -48,7 +56,10 @@ rampart watch
 
 ## Start in Monitor Mode
 
-Not sure about your policies yet? Set your policy's `default_action: allow` and use `action: log` rules instead of `deny` — everything gets logged but nothing gets blocked. In v0.9.x, `action: log` was renamed to `action: watch`. Check `rampart watch` to see what would be caught, then switch rules to `deny` when you're confident.
+Not sure about your policies yet? Set your policy's `default_action: allow` and
+use `action: watch` rules instead of `deny`. Calls Cline emits to the installed
+hooks are logged without being blocked. Check `rampart watch`, then switch rules
+to `deny` when you're confident.
 
 ## Troubleshooting
 

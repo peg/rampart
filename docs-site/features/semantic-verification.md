@@ -5,7 +5,9 @@ description: "Rampart adds optional LLM semantic verification for ambiguous AI a
 
 # Semantic Verification
 
-Pattern matching handles 95%+ of decisions instantly. For the ambiguous rest, Rampart supports LLM-based intent classification via the optional **rampart-verify** sidecar.
+Pattern matching handles deterministic rules locally. For selected ambiguous
+commands, Rampart supports LLM-based intent classification through the optional
+**rampart-verify** sidecar. No universal detection-rate percentage is claimed.
 
 ## The Problem
 
@@ -263,4 +265,5 @@ OPENAI_API_KEY=***
 - The sidecar binds to `127.0.0.1` by default — not accessible from the network
 - There is no authentication on sidecar endpoints. On shared machines, use a firewall or bind to a Unix socket
 - Secret redaction is best-effort — custom secret formats may not be caught. Add patterns via `VERIFY_EXTRA_RULES` or contribute to `redact.py`
-- The LLM never sees actual secret values, only the command structure
+- Built-in redaction attempts to remove recognized secret values before the
+  command is sent, but it is best-effort; unmatched values may reach the model

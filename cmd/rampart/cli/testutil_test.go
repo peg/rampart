@@ -13,6 +13,7 @@ func testSetHome(t *testing.T, dir string) {
 		t.Setenv("USERPROFILE", dir)
 	}
 	t.Setenv("HOME", dir)
+	t.Setenv("CODEX_HOME", "")
 }
 
 // skipOnWindows skips the test on Windows with the given reason.

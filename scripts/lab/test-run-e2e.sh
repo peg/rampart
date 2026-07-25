@@ -10,6 +10,15 @@ bash -n "$runner"
 bash -n "${repo_root}/scripts/lab/openclaw-container-acceptance.sh"
 bash -n "${repo_root}/scripts/test-approval-flow.sh"
 bash -n "${repo_root}/preload/test_preload.sh"
+bash -n "${repo_root}/scripts/compat-codex-host.sh"
+bash -n "${repo_root}/scripts/compat-claude-host.sh"
+bash -n "${repo_root}/scripts/compat-hermes-host.sh"
+grep -q 'default_action: deny' "${repo_root}/scripts/compat-claude-host.sh"
+grep -q 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1' "${repo_root}/scripts/compat-claude-host.sh"
+grep -q -- '--allowedTools "Bash(${command})"' "${repo_root}/scripts/compat-claude-host.sh"
+grep -q 'keychain_unavailable_in_disposable_home' "${repo_root}/scripts/compat-claude-host.sh"
+grep -q 'default_action: deny' "${repo_root}/scripts/compat-hermes-host.sh"
+grep -q -- '--copy-env' "${repo_root}/scripts/compat-hermes-host.sh"
 
 isolated_path_line="$(grep -n '^isolated_path=' "$runner" | cut -d: -f1)"
 tool_check_line="$(grep -n '^for tool in git go python3' "$runner" | cut -d: -f1)"
@@ -37,6 +46,14 @@ spec.loader.exec_module(module)
 link = tmp / "venv-python"
 link.symlink_to(sys.executable)
 assert module.resolve_executable(str(link)) == link.absolute()
+readonly_tree = tmp / "readonly-tree"
+readonly_tree.mkdir()
+readonly_file = readonly_tree / "module.txt"
+readonly_file.write_text("module", encoding="utf-8")
+readonly_file.chmod(0o444)
+readonly_tree.chmod(0o555)
+module.remove_temp_tree(readonly_tree)
+assert not readonly_tree.exists()
 PY
 
 if "$runner" --sha main --no-fetch >"${tmp}/invalid.out" 2>"${tmp}/invalid.err"; then
@@ -48,5 +65,7 @@ grep -q 'exact 40-character hexadecimal commit SHA' "${tmp}/invalid.err"
 grep -q 'openclaw-container-acceptance.sh' "$runner"
 "${repo_root}/scripts/lab/openclaw-container-acceptance.sh" --help >"${tmp}/openclaw-help"
 grep -q -- '--rampart' "${tmp}/openclaw-help"
+
+"${repo_root}/scripts/lab/test-compat-codex-host.sh"
 
 echo "test-run-e2e: PASS"

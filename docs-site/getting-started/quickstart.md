@@ -68,12 +68,20 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
     rampart setup cline
     ```
 
-=== "Codex / Any CLI Agent"
+=== "Codex"
 
     ```bash
-    # LD_PRELOAD shim — works with any dynamically-linked process
-    rampart preload -- codex
-    rampart preload -- node agent.js
+    rampart setup codex
+    rampart verify codex
+    ```
+
+=== "Any CLI Agent"
+
+    ```bash
+    rampart wrap -- your-agent
+
+    # Optional process-interposition fallback on supported Unix processes
+    rampart preload -- your-agent
     ```
 
 === "OpenClaw"

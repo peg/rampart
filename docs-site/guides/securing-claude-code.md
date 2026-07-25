@@ -58,7 +58,8 @@ The default model is:
 
 That split matters. A credential file should not be silently exposed. But some agent artifacts, like Claude Code history or settings, are sensitive in a different way: a human may still intentionally inspect or modify them. Those are better handled with `ask` instead of a blanket deny.
 
-Policies are evaluated quickly and consistently on every tool call. You can inspect why a command was allowed or denied with:
+Policies are evaluated on each hook-visible tool call delivered to Rampart. You
+can inspect why a command was allowed or denied with:
 
 ```bash
 rampart policy explain --tool exec 'rm -rf /'
@@ -108,7 +109,8 @@ Then trigger a known blocked command from Claude Code, such as `rm -rf /` in a t
 ## Common Questions
 
 **Q: Will Rampart slow down Claude Code?**  
-A: Policy evaluation takes under 10 microseconds. You will not notice it.
+A: Core matching is benchmarked in microseconds. Hook process startup, audit
+I/O, machine load, and policy size determine end-to-end overhead.
 
 **Q: What if a legitimate command gets blocked?**  
 A: Add an allow rule to your policy, or use `action: ask` so you decide per-instance.
@@ -117,4 +119,7 @@ A: Add an allow rule to your policy, or use `action: ask` so you decide per-inst
 A: Yes — Rampart hooks into Claude Code's hook system, which operates independently of the permissions mode.
 
 **Q: What if Rampart's service goes down?**  
-A: Rampart prints `WARNING: rampart serve unreachable` to stderr and falls back to `hookAsk` — Claude Code shows its standard permission prompt for each tool call. You won't get locked out, but you lose policy enforcement until the service restarts.
+A: Core allow/deny policy evaluation runs inside `rampart hook`, so it continues
+without the background service. Approval APIs, dashboard mirroring, and other
+service-backed features are unavailable until `rampart serve` returns. Invalid
+or unreadable local policy fails closed.

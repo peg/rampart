@@ -24,40 +24,40 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     </tr>
   </thead>
   <tbody>
-    <tr class="tier-recommended">
+    <tr class="tier-supported">
       <td data-label="Surface"><strong>Claude Code</strong></td>
       <td data-label="Best path">Native hooks<br><code>rampart setup claude-code</code></td>
       <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
       <td data-label="Approval UX">Claude native approval prompt</td>
-      <td data-label="Support tier"><strong>Recommended</strong></td>
+      <td data-label="Support tier"><strong>Supported</strong><br>2.1.220 mapping review + isolated shell host proof</td>
     </tr>
-    <tr class="tier-recommended">
-      <td data-label="Surface"><strong>Codex CLI</strong></td>
-      <td data-label="Best path">Preload + wrapper<br><code>rampart setup codex</code></td>
-      <td data-label="rampart serve">Typically yes</td>
-      <td data-label="Approval UX">Wrapper/preload approval semantics</td>
-      <td data-label="Support tier"><strong>Recommended</strong></td>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>Codex CLI, IDE, desktop</strong></td>
+      <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup codex</code></td>
+      <td data-label="rampart serve">Not required for local allow/deny;<br>required for approval queue</td>
+      <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>opt-in host proof available</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Cline</strong></td>
       <td data-label="Best path">Native hooks<br><code>rampart setup cline</code></td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
-      <td data-label="Support tier">Supported</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>adapter-tested; no current host proof</td>
     </tr>
     <tr class="tier-recommended">
       <td data-label="Surface"><strong>OpenClaw &gt;= 2026.5.2</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">First-class plugin approvals / native approval UI</td>
-      <td data-label="Support tier"><strong>Recommended</strong></td>
+      <td data-label="Support tier"><strong>Verified</strong></td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Hermes Agent</strong></td>
       <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
-      <td data-label="Support tier">Experimental</td>
+      <td data-label="Support tier">Experimental<br>0.19.0 shell deny/allow host proof</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
@@ -99,19 +99,34 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 ### Best default choices
 
-- **Claude Code** → best overall native path
-- **Codex CLI** → best CLI path when you want strong coverage
+- **Claude Code** → current documented hook-visible tools are mapped and, in
+  enforce mode, unknown future pre-call tools deny; an isolated Claude Code
+  2.1.220 shell deny/allow host run is recorded
+- **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
-- **Hermes Agent** → experimental plugin path for early testing; `ask` decisions block rather than resume
-- **Cline** → good supported path, but less polished approval UX than Claude Code
+- **Hermes Agent** → experimental plugin path with a completed isolated
+  Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than resume
+- **Cline** → supported adapter path on Linux/macOS, but without a rolling
+  latest-Cline job or completed current-host proof; the installed hook scripts
+  require Bash and native Windows behavior is not currently claimed
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline native hooks**: local policy evaluation still works when `rampart serve` is down, but dashboard features, approval APIs, and external approval state do not.
+- **Claude Code / Cline / Codex native hooks**: local allow/deny policy
+  evaluation works when `rampart serve` is down. Rampart-handled parse and
+  policy errors deny in enforce mode, but an unexpected hook crash or host
+  timeout follows the host's behavior. Dashboard features and external
+  approvals need the service; Codex approval-required actions deny when its
+  queue is unavailable.
 - **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed.
 - **Hermes Agent plugin**: depends on `rampart serve`; mutating/high-risk tools fail closed when unavailable, while explicitly configured read-only tools may fail open.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.
 - **Wrapper / preload / API paths**: behavior depends on integration settings and fail-open/fail-closed configuration.
+
+The machine-readable source for current integration guarantees and evidence is
+[`assurance/integrations.yaml`](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
+Coverage applies only to actions the host exposes through the named boundary.
+It does not imply syscall, packet, or arbitrary subprocess inspection.
 
 ## Choosing the right path
 
@@ -125,6 +140,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 - [Quick Start](quickstart.md)
 - [Release Compatibility Gate](release-compatibility-gate.md)
+- [Security Assurance](security-assurance.md)
 - [How Rampart Works](how-it-works.md)
 - [OpenClaw integration](../integrations/openclaw.md)
 - [Hermes Agent integration](../integrations/hermes.md)

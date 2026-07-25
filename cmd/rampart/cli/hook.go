@@ -60,6 +60,7 @@ type hookDecision struct {
 	PermissionDecision       string `json:"permissionDecision,omitempty"`
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
 	AdditionalContext        string `json:"additionalContext,omitempty"`
+	UpdatedToolOutput        any    `json:"updatedToolOutput,omitempty"`
 }
 
 // clineHookInput is the JSON sent by Cline on stdin for PreToolUse hooks.
@@ -90,8 +91,10 @@ type clineHookOutput struct {
 type hookParseResult struct {
 	Tool          string
 	Params        map[string]any
+	PolicyPaths   []string // every independently evaluated path in a batched write
 	Agent         string
 	Response      string // non-empty for PostToolUse events
+	RawResponse   map[string]any
 	RunID         string // run ID derived from session_id (or env overrides)
 	HookEventName string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
 	SessionID     string // raw session_id from Claude Code input (for session state)
@@ -208,6 +211,7 @@ func newHookCmd(opts *rootOptions) *cobra.Command {
 
 Supports multiple formats:
   --format claude-code (default): Claude Code integration
+  --format codex: Codex CLI, IDE, and desktop lifecycle hooks
   --format cline: Cline (VS Code extension) integration
 
 Claude Code setup (add to ~/.claude/settings.json):
@@ -244,8 +248,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
-			if format != "claude-code" && format != "cline" {
-				return fmt.Errorf("hook: invalid format %q (must be claude-code or cline)", format)
+			if format != "claude-code" && format != "codex" && format != "cline" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, or cline)", format)
 			}
 
 			// Resolve serve-url and serve-token from standard config/env locations.
@@ -356,6 +360,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			switch format {
 			case "claude-code":
 				parsed, err = parseClaudeCodeInput(cmd.InOrStdin(), logger)
+			case "codex":
+				parsed, err = parseCodexInput(cmd.InOrStdin())
 			case "cline":
 				parsed, err = parseClineInput(cmd.InOrStdin(), logger)
 			default:
@@ -428,13 +434,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 
 				postToolUseFailureEvent := audit.Event{
-					ID:        audit.NewEventID(),
-					Timestamp: time.Now().UTC(),
-					Agent:     parsed.Agent,
-					Session:   hookSession,
-					RunID:     parsed.RunID,
-					Tool:      parsed.Tool,
-					Request:   parsed.Params,
+					ID:         audit.NewEventID(),
+					Timestamp:  time.Now().UTC(),
+					Agent:      parsed.Agent,
+					Session:    hookSession,
+					RunID:      parsed.RunID,
+					ToolCallID: parsed.ToolUseID,
+					Tool:       parsed.Tool,
+					Request:    parsed.Params,
 					Decision: audit.EventDecision{
 						Action:  "feedback",
 						Message: "PostToolUseFailure short-circuit: injecting denial guidance to stop retry loops",
@@ -498,13 +505,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				AgentDepth: depth,
 				Session:    hookSession,
 				RunID:      parsed.RunID,
+				ToolCallID: parsed.ToolUseID,
 				Tool:       parsed.Tool,
 				Params:     parsed.Params,
 				Input:      parsed.Params,
 				Timestamp:  time.Now().UTC(),
 			}
 
-			isPostToolUse := parsed.Response != ""
+			isPostToolUse := parsed.HookEventName == "PostToolUse" || parsed.Response != ""
 
 			// Evaluate: for PreToolUse, run command-side policy check.
 			// For PostToolUse, run response-side evaluation.
@@ -513,7 +521,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				decision = eng.EvaluateResponse(call, parsed.Response)
 			} else {
 				eng.IncrementCallCount(call.Tool, call.Timestamp)
-				decision = eng.Evaluate(call)
+				call, decision = evaluateHookCall(eng, call, parsed.PolicyPaths)
 			}
 
 			// Write audit event
@@ -525,14 +533,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Suggestions:     decision.Suggestions,
 			}
 			event := audit.Event{
-				ID:        call.ID,
-				Timestamp: call.Timestamp,
-				Agent:     call.Agent,
-				Session:   call.Session,
-				RunID:     call.RunID,
-				Tool:      call.Tool,
-				Request:   parsed.Params,
-				Decision:  eventDecision,
+				ID:         call.ID,
+				Timestamp:  call.Timestamp,
+				Agent:      call.Agent,
+				Session:    call.Session,
+				RunID:      call.RunID,
+				ToolCallID: call.ToolCallID,
+				Tool:       call.Tool,
+				Request:    parsed.Params,
+				Decision:   eventDecision,
 			}
 			line, err := json.Marshal(event)
 			if err != nil {
@@ -616,10 +625,22 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			switch decision.Action {
 			case engine.ActionDeny:
 				if isPostToolUse {
-					return outputHookResult(cmd, format, hookBlock, true, reasonMsg, cmdStr, decision.Suggestions...)
+					return outputHookResultWithResponse(
+						cmd,
+						format,
+						hookBlock,
+						true,
+						reasonMsg,
+						cmdStr,
+						redactClaudeToolOutput(parsed.RawResponse),
+						decision.Suggestions...,
+					)
 				}
 				return outputHookResult(cmd, format, hookDeny, false, reasonMsg, cmdStr, decision.Suggestions...)
 			case engine.ActionAsk:
+				if format == "codex" {
+					return resolveCodexApproval(cmd, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
+				}
 				if decision.HeadlessOnly {
 					if serveURL == "" || !isServeRunning(serveURL) {
 						return fmt.Errorf("hook: ask.headless_only requires rampart serve, but no serve instance is reachable at %s", serveURL)
@@ -633,7 +654,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					command, _ := call.Params["command"].(string)
 					path := call.Path() // handles both "file_path" (Claude Code) and "path"
-					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, reasonMsg, 5*time.Minute)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg, 5*time.Minute)
 					if result == hookAsk {
 						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
 					}
@@ -654,7 +675,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					command, _ := call.Params["command"].(string)
 					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -681,6 +702,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionRequireApproval:
+				if format == "codex" {
+					return resolveCodexApproval(cmd, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
+				}
 				askAudit := true
 				auditApprovalID := ""
 				// For ask+audit, best-effort mirror pending state into serve if reachable.
@@ -695,7 +719,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					command, _ := call.Params["command"].(string)
 					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -724,7 +748,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
-	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
+	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover via url/config/state; env: RAMPART_URL or RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
@@ -746,9 +770,33 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	}
 
 	toolType := mapClaudeCodeTool(input.ToolName)
+	// Claude Code adds tool surfaces over time. A newly hook-visible action must
+	// not inherit the policy's unmatched/default behavior before Rampart knows
+	// its security consequence. Match the Codex adapter's fail-closed behavior
+	// for unknown pre-call tools; post-call payloads remain available for
+	// response scanning and audit compatibility.
+	if input.HookEventName == "PreToolUse" && toolType == "unknown" {
+		return nil, fmt.Errorf(
+			"hook: unsupported Claude Code tool_name %q; update Rampart before allowing this tool",
+			input.ToolName,
+		)
+	}
 	params := input.ToolInput
 	if params == nil {
 		params = map[string]any{}
+	}
+	// Monitor can either run a command or open a WebSocket. Normalize the
+	// WebSocket form to fetch with a top-level URL so network policies apply.
+	if input.ToolName == "Monitor" {
+		if websocket, ok := params["ws"].(map[string]any); ok {
+			toolType = "fetch"
+			normalized := make(map[string]any, len(params)+1)
+			for key, value := range params {
+				normalized[key] = value
+			}
+			normalized["url"] = websocket["url"]
+			params = normalized
+		}
 	}
 
 	result := &hookParseResult{
@@ -764,6 +812,7 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	// Extract response text from PostToolUse tool_response.
 	if len(input.ToolResponse) > 0 {
 		result.Response = extractToolResponse(input.ToolResponse)
+		result.RawResponse = input.ToolResponse
 	}
 
 	return result, nil
@@ -789,6 +838,33 @@ func extractToolResponse(resp map[string]any) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+const redactedToolOutput = "[blocked by Rampart response policy]"
+
+// redactClaudeToolOutput preserves the host's response shape while removing
+// every string value. Claude Code validates built-in updatedToolOutput values
+// against the original tool schema, so replacing the response with a scalar
+// would be ignored for structured tools such as Bash.
+func redactClaudeToolOutput(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = redactClaudeToolOutput(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for index, item := range typed {
+			out[index] = redactClaudeToolOutput(item)
+		}
+		return out
+	case string:
+		return redactedToolOutput
+	default:
+		return value
+	}
 }
 
 // parseClineInput parses Cline hook input format
@@ -837,26 +913,38 @@ func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog
 
 // mapClaudeCodeTool maps Claude Code tool names to Rampart tool types.
 func mapClaudeCodeTool(toolName string) string {
+	if strings.HasPrefix(toolName, "mcp__") {
+		return "mcp"
+	}
 	switch toolName {
-	case "Bash":
+	case "Bash", "PowerShell", "Monitor":
 		return "exec"
-	case "Read", "ReadFile":
+	case "Read", "ReadFile", "Glob", "Grep", "LSP":
 		return "read"
-	case "Write", "WriteFile", "Edit", "EditFile":
+	case "Write", "WriteFile", "Edit", "EditFile", "NotebookEdit", "EnterWorktree":
 		return "write"
-	case "WebFetch", "Fetch", "web_search", "web_fetch":
+	case "WebFetch", "WebSearch", "Fetch", "web_search", "web_fetch":
 		return "fetch"
 	case "memory":
 		return "memory"
 	case "code_execution":
 		return "exec"
-	case "tool_search":
+	case "ToolSearch", "tool_search", "ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers", "Skill",
+		"TaskGet", "TaskList", "TaskOutput":
 		return "read"
-	case "Task":
+	case "Task", "Agent", "Workflow", "RemoteTrigger":
 		// Sub-agent spawn: the orchestrator is delegating a task to a new agent.
 		// Mapped to "agent" so policies can match `tool: ["agent"]` and watch
 		// displays it distinctly from exec/read/write.
 		return "agent"
+	case "CronCreate", "CronDelete", "ScheduleWakeup", "TaskCreate", "TaskStop", "TaskUpdate", "TodoWrite":
+		return "process"
+	case "CronList":
+		return "read"
+	case "Artifact", "PushNotification", "SendMessage", "SendUserFile", "ShareOnboardingGuide":
+		return "message"
+	case "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "ExitWorktree", "EndConversation", "ReportFindings":
+		return "interact"
 	default:
 		// NOTE: Don't log here - this function is called before the logger is available,
 		// and any stderr output causes Claude Code to report "hook error".
@@ -929,6 +1017,19 @@ func validateToolUseID(id string) error {
 // (Cline has no native ask equivalent).
 // suggestions contains ready-to-run "rampart allow ..." commands shown on deny.
 func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, isPostToolUse bool, reason string, command string, suggestions ...string) error {
+	return outputHookResultWithResponse(cmd, format, decision, isPostToolUse, reason, command, nil, suggestions...)
+}
+
+func outputHookResultWithResponse(
+	cmd *cobra.Command,
+	format string,
+	decision hookDecisionType,
+	isPostToolUse bool,
+	reason string,
+	command string,
+	updatedToolOutput any,
+	suggestions ...string,
+) error {
 	// NOTE: Do NOT print to stderr for Claude Code hook decisions — Claude Code
 	// can interpret stderr as a hook failure. The structured JSON response carries
 	// deny/ask reasons. Keep Cline's historical stderr deny output for now.
@@ -945,6 +1046,33 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 		}
 		if decision == hookAsk {
 			out.ErrorMessage = "Rampart: approval required — " + reason
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+	case "codex":
+		var out hookOutput
+		switch decision {
+		case hookDeny:
+			out.HookSpecificOutput = &hookDecision{
+				HookEventName:            "PreToolUse",
+				PermissionDecision:       "deny",
+				PermissionDecisionReason: "Rampart: " + reason,
+			}
+		case hookAsk:
+			// Codex currently rejects permissionDecision:"ask" from PreToolUse.
+			// Approval-requiring calls must be resolved through rampart serve
+			// before reaching this formatter; fail closed if one reaches it.
+			out.HookSpecificOutput = &hookDecision{
+				HookEventName:            "PreToolUse",
+				PermissionDecision:       "deny",
+				PermissionDecisionReason: "Rampart: approval required — " + reason,
+			}
+		case hookAllow:
+			// Empty output leaves Codex's own sandbox and approval policy intact.
+			// An explicit allow without updatedInput is rejected by current Codex,
+			// and Rampart must never bypass Codex's native permission system.
+		case hookBlock:
+			out.Decision = "block"
+			out.Reason = "Rampart: " + reason
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	default: // claude-code
@@ -977,6 +1105,12 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 			// PostToolUse uses top-level decision/reason per Claude Code docs.
 			out.Decision = "block"
 			out.Reason = "Rampart: " + reason
+			if updatedToolOutput != nil {
+				out.HookSpecificOutput = &hookDecision{
+					HookEventName:     "PostToolUse",
+					UpdatedToolOutput: updatedToolOutput,
+				}
+			}
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}

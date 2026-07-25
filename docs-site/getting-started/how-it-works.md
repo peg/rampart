@@ -14,7 +14,7 @@ You don't usually run this directly. `rampart quickstart` and the service-backed
 
 **What happens if it's not running?** Behavior depends on the integration:
 
-- **Claude Code / Cline native hooks** can still evaluate policy locally for direct hook decisions.
+- **Claude Code / Cline / Codex native hooks** can still evaluate policy locally for direct hook decisions.
 - **OpenClaw native plugin** depends on `rampart serve`; sensitive tools such as `exec` and `write` block when the service is unavailable, while explicitly configured lower-risk `failOpenTools` can still proceed.
 - **Wrapper / preload / API integrations** typically need the service path and may fail open or fail closed depending on configuration.
 
@@ -25,15 +25,18 @@ This wires an agent to use the daemon. What it does depends on the agent:
 | Agent | What `setup` does |
 |-------|-------------------|
 | **Claude Code** | Writes native hooks in `~/.claude/settings.json` |
-| **Codex** | Installs `~/.local/bin/codex` wrapper that runs the real Codex binary through `rampart preload` |
+| **Codex** | Installs native lifecycle hooks in `$CODEX_HOME/hooks.json` for CLI, IDE, and desktop |
 | **Cline** | Installs hook scripts under `~/Documents/Cline/Hooks/` |
 | **OpenClaw** | Installs native `before_tool_call` plugin on >= 2026.3.28; uses legacy shim/bridge only on older versions |
 | **MCP servers** | Use `rampart mcp --` prefix instead of setup |
 
-After setup, every tool call goes through the integration's enforcement path before execution. Some paths call into `rampart serve`; Claude/Cline native hooks can also evaluate locally.
+After setup, every tool call exposed by the host goes through the integration's
+enforcement path before execution. Some paths call into `rampart serve`;
+Claude/Cline/Codex native hooks can also evaluate allow/deny policy locally.
 
 ```
 rampart setup claude-code   # one-time, survives agent updates
+rampart setup codex         # native lifecycle hooks; no wrapper replacement
 rampart setup openclaw      # auto-detects version; native plugin on >= 2026.3.28
 ```
 

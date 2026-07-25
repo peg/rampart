@@ -320,6 +320,7 @@ func TestDoctorToken_Missing(t *testing.T) {
 func TestDoctorHooks_PathHints(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
 
 	claudeDir := filepath.Join(home, ".claude")
 	requireNoErr(t, os.MkdirAll(claudeDir, 0o755))

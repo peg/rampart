@@ -1,85 +1,76 @@
 ---
-title: Securing Codex CLI
-description: "Secure Codex CLI with Rampart using LD_PRELOAD syscall interception. Block dangerous commands and log execution decisions even without native hooks."
+title: Securing Codex
+description: "Secure Codex CLI, IDE, and desktop local tool calls with Rampart lifecycle hooks."
 ---
 
-# Codex CLI
+# Codex
 
-Codex CLI is protected via a **shell wrapper** installed by `rampart setup codex`. The wrapper runs Codex through Rampart's preload library so spawned shell commands are checked before execution.
+Rampart's primary Codex integration is the host's native lifecycle-hook
+boundary. It does not replace the `codex` executable and does not require the
+preload library.
 
 ## Setup
 
-`rampart setup codex` requires the preload library (`librampart.so` on Linux, `librampart.dylib` on macOS). If your install does not include it — common for source builds — build and place it first:
-
-```bash
-mkdir -p ~/.rampart/lib
-# Linux
-cc -shared -fPIC -o ~/.rampart/lib/librampart.so preload/librampart.c -ldl -lcurl -lpthread
-# macOS
-cc -dynamiclib -fPIC -o ~/.rampart/lib/librampart.dylib preload/librampart.c -lcurl
-```
-
-Then install the persistent wrapper:
-
 ```bash
 rampart setup codex
-
-# Alternative: wrap a single session
-rampart preload -- codex
 ```
 
-`rampart setup codex` installs a wrapper script at `~/.local/bin/codex` that transparently runs the real Codex binary through `rampart preload`. Once installed, every `codex` invocation is automatically protected — no need to remember to add `rampart preload --` each time.
+This installs Rampart wildcard `PreToolUse` and `PostToolUse` handlers in the
+user-level Codex `hooks.json`. Existing unrelated hooks are preserved. Review
+and trust the definition in Codex with `/hooks` before first use.
 
-To remove the wrapper: `rampart setup codex --remove`.
+The same user-level hook configuration applies to Codex CLI, the IDE extension,
+and the desktop app when they use that `CODEX_HOME`.
 
-## How It Works
+## What Rampart evaluates
 
-```
-Codex CLI
-  └─ calls execve("rm", ["-rf", "/"], env)
-       └─ librampart.so intercepts (LD_PRELOAD)
-            └─ HTTP POST to rampart /v1/preflight/exec
-                 ├─ allow → real execve() runs
-                 ├─ deny  → returns EPERM
-                 └─ ask   → blocks until resolved, then allow/deny
-```
+- shell and unified execution;
+- direct reads, writes, edits, and multi-file patches;
+- MCP calls exposed to lifecycle hooks;
+- local web/browser-style actions;
+- delegated-agent calls exposed by the host.
 
-**Ask behavior**: The preload library blocks the exec call and polls the approval API until resolved by a human via `rampart approve <id>`. The process appears "hung" until approved or denied.
+Unknown future `PreToolUse` tool names deny in enforce mode until Rampart knows
+how to classify them. A hosted or specialized action that does not emit the
+lifecycle event cannot be protected by this boundary.
 
-The preload library intercepts:
+Allowed calls retain Codex's native sandbox and permission policy. Denied calls
+stop before execution. Approval-required calls use Rampart's external approval
+queue and require `rampart serve`; if it is unavailable, Rampart denies.
 
-- `execve` — primary exec syscall
-- `execvp` / `execvpe` — PATH-resolved variants
-- `system()` — libc shell wrapper
-- `popen()` — pipe to shell command
-- `posix_spawn()` — modern spawn API
-
-## Monitor Mode
-
-Log everything without blocking:
+## Verification
 
 ```bash
-rampart preload --mode monitor -- codex
+rampart verify codex
 ```
 
-## Platform Support
-
-| Platform | Coverage |
-|----------|----------|
-| **Linux** | ~95% of dynamically-linked binaries |
-| **macOS** | ~70-85% — works with Homebrew, nvm, pyenv. Blocked by SIP for `/usr/bin/*` |
-| **Windows** | Not supported — use HTTP API instead |
-
-## Requirements
-
-The preload library (`librampart.so` or `librampart.dylib`) must be installed before `rampart setup codex` will create a wrapper. This prevents Rampart from replacing a working `codex` command with a wrapper that cannot start. If you built Rampart from source, build the library from `preload/librampart.c` as shown above.
-
-## Performance
-
-The library adds <1ms per intercepted call via Unix socket, <3ms via TCP. Fail-open is instant (<0.01ms).
-
-## Monitor
+For an opt-in real-host compatibility check against a candidate build:
 
 ```bash
-rampart watch
+scripts/compat-codex-host.sh --yes --rampart-bin ./rampart
 ```
+
+The host test uses harmless canaries and a disposable Codex home containing
+only a temporary copy of `auth.json`. It does not load user configuration,
+memories, rules, or persistent sessions.
+
+`rampart verify codex` proves installed configuration and adapter behavior; it
+does not itself launch a real Codex model/tool loop. The opt-in harness is the
+separate host-boundary check. See
+[Security Assurance](../getting-started/security-assurance.md) for the evidence
+levels and current platform gaps.
+
+## Uninstall
+
+```bash
+rampart setup codex --remove
+```
+
+Rampart removes only its hook entries and any recognized legacy Rampart
+wrapper.
+
+## Platform support
+
+The lifecycle-hook integration supports Linux, macOS, and Windows. POSIX
+preload remains optional defense in depth for other processes; it is not the
+Codex integration and is unavailable on Windows.

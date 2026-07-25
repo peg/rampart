@@ -18,7 +18,7 @@ agents: {
     style.font-color: "#FF6392"
     style.border-radius: 6
   }
-  codex: "Codex CLI"
+  codex: "Codex"
   other: "Any Agent"
 }
 
@@ -81,7 +81,7 @@ agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
 agents.openclaw -> intercept.bridge: "exec approvals\n+ tool patches"
 agents.openclaw -> intercept.shim: "subagents"
-agents.codex -> intercept.preload
+agents.codex -> intercept.hooks
 agents.other -> intercept.mcp
 
 # Intercept to engine

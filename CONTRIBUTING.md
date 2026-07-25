@@ -121,6 +121,23 @@ if errors.Is(err, os.ErrNotExist) { ... }
 // Panics are only for unrecoverable startup failures in main().
 ```
 
+## Documentation sites
+
+This repository owns the source for both public sites, but they deploy through
+different GitHub Pages projects:
+
+- `rampart.sh` is served directly from `docs/` on the `main` branch of
+  `peg/rampart`. Its standalone landing page is `docs/index.html`.
+- `docs.rampart.sh` is built by MkDocs from `docs-site/`. On changes to `main`,
+  `.github/workflows/docs.yml` publishes the generated `site/` output to the
+  `gh-pages` branch of `peg/rampart-docs`.
+
+`docs-site/index.html` is the editable landing-page source retained beside the
+MkDocs content, while `docs/index.html` is the copy GitHub Pages actually serves
+at `rampart.sh`. Keep those two files byte-for-byte identical; CI enforces this.
+`docs-site/index.md` is a different file: it is the MkDocs homepage served at
+`docs.rampart.sh`.
+
 ## Testing
 
 ### Requirements

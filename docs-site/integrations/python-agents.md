@@ -1,6 +1,6 @@
 ---
 title: Securing Python Agents
-description: "Protect Python AI agents with Rampart's HTTP preflight API. Check commands before execution, enforce policy decisions, and log every tool action."
+description: "Integrate Python AI agents with Rampart's HTTP preflight API. Check and audit the actions your code explicitly submits before execution."
 ---
 
 # Python Agents
@@ -84,7 +84,10 @@ For simpler integration, wrap your entire Python process:
 rampart preload -- python my_agent.py
 ```
 
-This intercepts all `os.system()`, `subprocess.run()`, and `os.exec*()` calls automatically — no code changes needed.
+This can intercept supported exec-family calls that reach the dynamic loader,
+including common `os.system()` and `subprocess` paths. It does not cover static
+binaries, direct syscalls, in-process Python file or network I/O, or every
+possible subprocess implementation.
 
 ## LangChain Example
 

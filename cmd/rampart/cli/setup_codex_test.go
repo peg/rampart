@@ -1,171 +1,263 @@
 // Copyright 2026 The Rampart Authors
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
+// Licensed under the Apache License, Version 2.0
 
 package cli
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestSetupCodexRequiresPreloadLibrary(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("codex setup is unsupported on Windows")
-	}
-
+func TestSetupCodexInstallsNativeHooksWithoutCodexOrPreload(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	binDir := filepath.Join(home, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	codexPath := filepath.Join(binDir, "codex")
-	if err := os.WriteFile(codexPath, []byte("#!/bin/sh\necho codex\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", t.TempDir())
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	var stdout bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &bytes.Buffer{})
 	cmd.SetArgs([]string{"setup", "codex"})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected setup codex to fail when librampart is missing")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("setup codex: %v", err)
 	}
-	if !strings.Contains(err.Error(), "preload library unavailable") {
-		t.Fatalf("error = %q, want preload library unavailable", err.Error())
+
+	settings := readCodexHookSettings(t, filepath.Join(home, ".codex", "hooks.json"))
+	assertRampartCodexHook(t, settings, "PreToolUse")
+	assertRampartCodexHook(t, settings, "PostToolUse")
+	if !strings.Contains(stdout.String(), "Open `/hooks`") {
+		t.Fatalf("setup output must explain Codex hook trust:\n%s", stdout.String())
 	}
-	if _, statErr := os.Stat(filepath.Join(home, ".local", "bin", "codex")); !os.IsNotExist(statErr) {
-		t.Fatalf("wrapper should not be installed without preload library; stat err=%v", statErr)
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "codex")); !os.IsNotExist(err) {
+		t.Fatalf("native setup must not create a codex wrapper: %v", err)
 	}
 }
 
-func TestSetupCodexInstallsWrapperWhenPreloadLibraryExists(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("codex setup is unsupported on Windows")
-	}
-
+func TestSetupCodexHonorsCodexHome(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	binDir := filepath.Join(home, "bin")
-	libDir := filepath.Join(home, ".rampart", "lib")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(libDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	codexPath := filepath.Join(binDir, "codex")
-	if err := os.WriteFile(codexPath, []byte("#!/bin/sh\necho codex\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	libName := "librampart.so"
-	if runtime.GOOS == "darwin" {
-		libName = "librampart.dylib"
-	}
-	if err := os.WriteFile(filepath.Join(libDir, libName), []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codexHome := filepath.Join(home, "isolated-codex")
+	t.Setenv("CODEX_HOME", codexHome)
 
 	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
 	cmd.SetArgs([]string{"setup", "codex"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("setup codex: %v", err)
 	}
-	wrapperPath := filepath.Join(home, ".local", "bin", "codex")
-	data, err := os.ReadFile(wrapperPath)
-	if err != nil {
-		t.Fatalf("read wrapper: %v", err)
-	}
-	if !strings.Contains(string(data), "rampart preload") {
-		t.Fatalf("wrapper missing rampart preload: %s", data)
+	assertRampartCodexHook(t, readCodexHookSettings(t, filepath.Join(codexHome, "hooks.json")), "PreToolUse")
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("default Codex home should remain untouched: %v", err)
 	}
 }
 
-func TestSetupCodexRemoveDoesNotRequireCodexOrPreloadLibrary(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("codex setup is unsupported on Windows")
+func TestSetupCodexPreservesOtherHooksAndIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{
+	  "description": "user hooks",
+	  "hooks": {
+	    "PreToolUse": [
+	      {"matcher":"Bash","hooks":[{"type":"command","command":"user-policy"}]}
+	    ],
+	    "SessionStart": [
+	      {"hooks":[{"type":"command","command":"session-notes"}]}
+	    ]
+	  }
+	}`
+	if err := os.WriteFile(hooksPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
+	for iteration := 0; iteration < 2; iteration++ {
+		cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+		cmd.SetArgs([]string{"setup", "codex"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("setup iteration %d: %v", iteration+1, err)
+		}
+	}
+
+	settings := readCodexHookSettings(t, hooksPath)
+	if settings["description"] != "user hooks" {
+		t.Fatalf("description was overwritten: %#v", settings["description"])
+	}
+	hooks := settings["hooks"].(map[string]any)
+	pre := hooks["PreToolUse"].([]any)
+	if len(pre) != 2 {
+		t.Fatalf("PreToolUse entries = %d, want user + one Rampart entry", len(pre))
+	}
+	if len(hooks["SessionStart"].([]any)) != 1 {
+		t.Fatal("unrelated SessionStart hooks were not preserved")
+	}
+	assertRampartCodexHook(t, settings, "PreToolUse")
+	assertRampartCodexHook(t, settings, "PostToolUse")
+}
+
+func TestSetupCodexMigratesAndRemovesManagedWrapper(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	wrapperPath := filepath.Join(home, ".local", "bin", "codex")
 	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wrapper := "#!/bin/sh\n# Rampart wrapper for Codex — managed by 'rampart setup codex'\n# Real codex: /missing/codex\nexec rampart preload -- /missing/codex \"$@\"\n"
+	wrapper := "#!/bin/sh\n# Rampart wrapper for Codex\nexec rampart preload -- /usr/bin/codex \"$@\"\n"
 	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", t.TempDir())
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex", "--remove"})
+	var stdout bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &bytes.Buffer{})
+	cmd.SetArgs([]string{"setup", "codex"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("remove should not require codex or librampart: %v", err)
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(wrapperPath); !os.IsNotExist(err) {
-		t.Fatalf("wrapper should be removed, stat err=%v", err)
+		t.Fatalf("managed wrapper was not removed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Removed legacy preload wrapper") {
+		t.Fatalf("migration was not reported:\n%s", stdout.String())
 	}
 }
 
-func TestSetupCodexIsIdempotentWhenWrapperFirstOnPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("codex setup is unsupported on Windows")
-	}
-
+func TestSetupCodexRemovePreservesUnrelatedHooks(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	realBinDir := filepath.Join(home, "real-bin")
-	wrapperDir := filepath.Join(home, ".local", "bin")
-	libDir := filepath.Join(home, ".rampart", "lib")
-	for _, dir := range []string{realBinDir, wrapperDir, libDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	realCodex := filepath.Join(realBinDir, "codex")
-	if err := os.WriteFile(realCodex, []byte("#!/bin/sh\necho real codex\n"), 0o755); err != nil {
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	libName := "librampart.so"
-	if runtime.GOOS == "darwin" {
-		libName = "librampart.dylib"
+	initial := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"user-policy"}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(libDir, libName), []byte("fake"), 0o644); err != nil {
+	setup := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	setup.SetArgs([]string{"setup", "codex"})
+	if err := setup.Execute(); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+realBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	for i := 0; i < 2; i++ {
-		cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-		cmd.SetArgs([]string{"setup", "codex"})
-		if err := cmd.Execute(); err != nil {
-			t.Fatalf("setup codex iteration %d: %v", i+1, err)
-		}
+	remove := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	remove.SetArgs([]string{"setup", "codex", "--remove"})
+	if err := remove.Execute(); err != nil {
+		t.Fatal(err)
 	}
 
-	wrapperPath := filepath.Join(wrapperDir, "codex")
-	data, err := os.ReadFile(wrapperPath)
+	settings := readCodexHookSettings(t, hooksPath)
+	hooks := settings["hooks"].(map[string]any)
+	pre := hooks["PreToolUse"].([]any)
+	if len(pre) != 1 {
+		t.Fatalf("PreToolUse entries = %d, want one user hook", len(pre))
+	}
+	if isRampartCodexMatcher(pre[0].(map[string]any)) {
+		t.Fatal("Rampart hook remained after removal")
+	}
+	if _, ok := hooks["PostToolUse"]; ok {
+		t.Fatal("empty Rampart-only PostToolUse group remained after removal")
+	}
+}
+
+func TestSetupCodexInvalidJSONRequiresForce(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"setup", "codex"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("invalid JSON error = %v, want --force guidance", err)
+	}
+
+	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"setup", "codex", "--force"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("force setup: %v", err)
+	}
+	assertRampartCodexHook(t, readCodexHookSettings(t, hooksPath), "PreToolUse")
+}
+
+func TestSetupCodexInvalidHookShapeRequiresForce(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksPath, []byte(`{"hooks":{"PreToolUse":"user-value"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"setup", "codex"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("invalid hook shape error = %v, want --force guidance", err)
+	}
+
+	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"setup", "codex", "--force"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("force setup: %v", err)
+	}
+	assertRampartCodexHook(t, readCodexHookSettings(t, hooksPath), "PreToolUse")
+}
+
+func readCodexHookSettings(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read wrapper: %v", err)
+		t.Fatal(err)
 	}
-	content := string(data)
-	recordedReal := extractRealBinFromWrapper(content)
-	if !sameCodexPath(recordedReal, realCodex) {
-		t.Fatalf("wrapper should keep real codex path %q, got %q in:\n%s", realCodex, recordedReal, content)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
 	}
-	if sameCodexPath(recordedReal, wrapperPath) || strings.Contains(content, "preload -- "+wrapperPath) {
-		t.Fatalf("wrapper became self-recursive:\n%s", content)
+	return settings
+}
+
+func assertRampartCodexHook(t *testing.T, settings map[string]any, event string) {
+	t.Helper()
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hooks object: %#v", settings)
+	}
+	entries, ok := hooks[event].([]any)
+	if !ok {
+		t.Fatalf("missing %s entries: %#v", event, hooks)
+	}
+	found := 0
+	for _, entry := range entries {
+		matcher, ok := entry.(map[string]any)
+		if !ok || !isRampartCodexMatcher(matcher) {
+			continue
+		}
+		found++
+		if matcher["matcher"] != "*" {
+			t.Fatalf("%s matcher = %#v, want *", event, matcher["matcher"])
+		}
+		handlers := matcher["hooks"].([]any)
+		handler := handlers[0].(map[string]any)
+		if !strings.Contains(handler["command"].(string), "hook --format codex") {
+			t.Fatalf("%s command = %#v", event, handler["command"])
+		}
+		if !strings.Contains(handler["commandWindows"].(string), "hook --format codex") {
+			t.Fatalf("%s commandWindows = %#v", event, handler["commandWindows"])
+		}
+		if handler["timeout"] != float64(330) {
+			t.Fatalf("%s timeout = %#v, want 330", event, handler["timeout"])
+		}
+	}
+	if found != 1 {
+		t.Fatalf("%s Rampart entries = %d, want 1", event, found)
 	}
 }

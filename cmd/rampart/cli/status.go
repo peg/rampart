@@ -395,10 +395,15 @@ func detectProtectedAgents() []string {
 		}
 	}
 
-	// Codex wrapper installed by `rampart setup codex`.
-	codexWrapper := filepath.Join(home, ".local", "bin", "codex")
-	if data, err := os.ReadFile(codexWrapper); err == nil && containsRampartPreload(string(data)) {
-		agents = append(agents, "Codex (wrapper)")
+	// Codex native hooks installed by `rampart setup codex`. Keep recognizing
+	// the former wrapper so upgrades can surface that legacy state.
+	if codexHooksConfiguredForHome(home) {
+		agents = append(agents, "Codex (hooks)")
+	} else {
+		codexWrapper := filepath.Join(home, ".local", "bin", "codex")
+		if data, err := os.ReadFile(codexWrapper); err == nil && containsRampartPreload(string(data)) {
+			agents = append(agents, "Codex (legacy wrapper)")
+		}
 	}
 
 	// Hermes Agent user plugin installed by `rampart setup hermes`.

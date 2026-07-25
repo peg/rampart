@@ -242,6 +242,12 @@ func TestQuickstartHooksConfigured_ClaudeCode(t *testing.T) {
 					"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
 				},
 			},
+			"PostToolUse": []any{
+				map[string]any{
+					"matcher": ".*",
+					"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+				},
+			},
 			"PostToolUseFailure": []any{
 				map[string]any{
 					"matcher": ".*",
@@ -267,16 +273,16 @@ func TestQuickstartHooksConfigured_Codex(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 
-	wrapperPath := filepath.Join(home, ".local", "bin", "codex")
-	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(wrapperPath, []byte("#!/bin/sh\nexec rampart preload -- /usr/bin/codex \"$@\"\n"), 0o755); err != nil {
+	if err := installCodexHooks(hooksPath, "rampart hook --format codex", "rampart.exe hook --format codex", false); err != nil {
 		t.Fatal(err)
 	}
 
 	if !quickstartHooksConfigured("codex") {
-		t.Fatal("expected codex wrapper to be detected")
+		t.Fatal("expected Codex lifecycle hooks to be detected")
 	}
 }
 

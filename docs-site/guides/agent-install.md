@@ -178,7 +178,7 @@ Then add an allow rule for your specific use case. See [Securing Claude Code](ht
 | `rampart quickstart --yes` | Full non-interactive setup |
 | `rampart doctor` | Health check — hooks, service, permissions |
 | `rampart status` | Show protected agents, mode, today's allow/deny counts |
-| `rampart watch` | Live audit feed of all tool calls |
+| `rampart watch` | Live feed of tool decisions observed by Rampart |
 | `rampart token` | Print bearer token for the dashboard |
 | `rampart policy explain '<tool>'` | Show which policy applies to a tool call |
 

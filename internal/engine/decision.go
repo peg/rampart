@@ -104,6 +104,11 @@ type ToolCall struct {
 	// Empty string means no grouping (standalone call).
 	RunID string
 
+	// ToolCallID is the stable invocation identifier supplied by the host harness.
+	// Unlike ID, it should remain the same when a host retries the same tool call.
+	// Empty string means the host did not provide a stable invocation identity.
+	ToolCallID string
+
 	// Tool is the tool being invoked (e.g., "exec", "read", "write").
 	Tool string
 
