@@ -38,3 +38,7 @@ The gate validates the manifest, confirms every evidence path exists, runs the
 adversarial corpus, exercises the Go test suite's fuzz seed corpora, and runs
 the bundled OpenClaw and Hermes adapter regressions. It never executes any
 command contained in `corpus.yaml`; cases are policy evaluations only.
+
+The public corpus contains mitigated regression cases only. Report suspected
+or unpatched bypasses privately through [`SECURITY.md`](../SECURITY.md);
+regression cases are published after a fix is available.
