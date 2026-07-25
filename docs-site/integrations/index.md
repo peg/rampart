@@ -5,7 +5,10 @@ description: "Find the right Rampart integration for Claude Code, Cline, Cursor,
 
 # Integration Guides
 
-Rampart works with every major AI agent through multiple integration methods. Choose the guide for your agent below.
+Rampart supports several widely used AI agents through multiple integration
+methods, with different assurance levels and boundaries. Choose the guide for
+your agent below, then check the [support matrix](../getting-started/support-matrix.md)
+for the evidence and known limitations of that path.
 
 ## Integration Methods
 

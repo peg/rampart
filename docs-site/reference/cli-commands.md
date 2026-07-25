@@ -166,7 +166,7 @@ rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 
 ### `rampart wrap`
 
-Wrap any agent with policy enforcement via `$SHELL`.
+Add policy enforcement to agents that launch commands through `$SHELL`.
 
 ```bash
 rampart wrap -- aider                           # Enforce mode
@@ -176,7 +176,8 @@ rampart wrap --config policy.yaml -- agent      # Custom policy
 
 ### `rampart preload`
 
-Protect any process via LD_PRELOAD syscall interception.
+Add exec-family interception to supported dynamically linked processes via
+`LD_PRELOAD` or `DYLD_INSERT_LIBRARIES`.
 
 ```bash
 rampart preload -- codex                        # Enforce mode

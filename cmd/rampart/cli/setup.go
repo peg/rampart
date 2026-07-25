@@ -311,8 +311,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
-			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will now route ALL tool calls through Rampart.")
-			fmt.Fprintln(cmd.OutOrStdout(), "  (Bash, Read, Write, Edit, Fetch, Task, and any new tools)")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will route hook-visible tool calls through Rampart.")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Documented tools are classified; in enforce mode, unknown future PreToolUse tools deny until Rampart is updated.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
 			fmt.Fprintln(cmd.OutOrStdout(), "")
 
@@ -330,7 +330,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
 			if !hasInstalledPolicy() {
-				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile openclaw' to install the OpenClaw-optimized policy")
+				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile standard' to install the standard policy")
 			}
 
 			// Check if rampart is in system PATH.

@@ -7,7 +7,9 @@ description: "Follow Rampart's 5-minute tutorial to secure your first AI coding 
 
 So you've got an AI agent writing code on your machine. Maybe it's Claude Code, maybe it's Codex, maybe it's Cline. It can run commands, read your files, and — if you're not careful — do things you didn't ask for.
 
-Rampart sits between your agent and your system, checking every action against rules you define. Safe commands pass through in microseconds. Dangerous ones stop at the door. Risky ones pause for your approval.
+Rampart checks actions that your chosen integration exposes against rules you
+define. Matching denies stop before host execution; approval behavior depends
+on the integration. It is a policy boundary, not a sandbox.
 
 Let's set it up.
 
@@ -82,7 +84,10 @@ Now start Claude Code:
 claude
 ```
 
-Every command Claude attempts runs through Rampart first. Most will pass through instantly — you'll never notice. The dangerous ones stop before they execute.
+Claude Code sends its hook-visible tool requests through Rampart. Routine
+requests usually pass immediately; policy can deny or request approval for
+risky requests before Claude Code invokes the tool. This boundary does not
+observe work performed inside an already allowed process.
 
 !!! note "Different agents use different integration paths"
     Claude Code, Cline, and Codex use native hooks. OpenClaw uses a native
@@ -241,11 +246,13 @@ rampart doctor
 ⚠ 2 pending approvals
 ```
 
-Green across the board means you're fully protected.
+Green checks mean the reported installation and integration diagnostics passed.
+They do not prove coverage of actions the host does not expose; review the
+[support matrix](support-matrix.md) and [threat model](../reference/threat-model.md).
 
 ---
 
-## What Happens on Every Tool Call
+## What Happens on a Hook-Visible Tool Call
 
 ```
 Agent wants to run "npm test"

@@ -18,6 +18,7 @@ credentials_file=""
 artifacts_dir=""
 confirmed=false
 tmp=""
+source_auth_mode="none"
 
 usage() {
   cat <<'EOF'
@@ -37,6 +38,12 @@ Options:
 
 Without --artifacts, the JSON summary is printed and all temporary files are
 removed. Set RAMPART_CLAUDE_HOST_E2E=1 instead of --yes in automation.
+
+On macOS, Keychain auth is intentionally not available inside the disposable
+HOME used by this harness. Supply an ephemeral CLAUDE_CODE_OAUTH_TOKEN in the
+environment when running the proof; the harness does not pass it to Bash
+subprocesses or intentionally persist it in retained artifacts. Linux/Windows normally use the credentials
+file discovered by --claude-home.
 EOF
 }
 
@@ -112,6 +119,16 @@ if [[ -n "$credentials_file" && ! -f "$credentials_file" ]]; then
   echo "compat-claude-host: credentials file not found: $credentials_file" >&2
   exit 2
 fi
+if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  source_auth_mode="oauth_env"
+elif [[ -n "$credentials_file" ]]; then
+  source_auth_mode="credentials_file"
+else
+  auth_status="$("$claude_bin" auth status --json 2>/dev/null || true)"
+  if [[ "$auth_status" == *'"loggedIn": true'* ]]; then
+    source_auth_mode="os_keychain"
+  fi
+fi
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/rampart-claude-host.XXXXXX")"
 chmod 700 "$tmp"
@@ -179,6 +196,9 @@ fi
 
 HOME="$isolated_home" \
 PATH="$isolated_path" \
+RAMPART_TOKEN= \
+RAMPART_URL= \
+RAMPART_SERVE_URL= \
 "$rampart_bin" setup claude-code >"${tmp}/setup.log" 2>&1
 
 settings_path="${isolated_claude_home}/settings.json"
@@ -249,8 +269,11 @@ run_claude() {
   (
     cd "$work_dir"
     HOME="$isolated_home" \
+    CLAUDE_CONFIG_DIR="$isolated_claude_home" \
     PATH="$isolated_path" \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 \
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
     CLAUDE_CODE_SKIP_PROMPT_HISTORY=1 \
     "$claude_bin" -p "$prompt" \
@@ -260,9 +283,9 @@ run_claude() {
       --strict-mcp-config \
       --mcp-config '{"mcpServers":{}}' \
       --tools Bash \
+      --allowedTools "Bash(${command})" \
       --disable-slash-commands \
       --no-chrome \
-      --dangerously-skip-permissions \
       --effort low \
       --max-budget-usd 0.20 \
       --output-format stream-json \
@@ -292,9 +315,10 @@ fi
 python3 - \
   "$tmp" "$audit_dir" "$report_dir" "$claude_version" "$rampart_version" \
   "$deny_status" "$allow_status" "$deny_target" "$allow_target" "$HOME" \
-  "$credentials_file" <<'PY'
+  "$credentials_file" "$source_auth_mode" <<'PY'
 import json
 from pathlib import Path
+import re
 import sys
 
 tmp = Path(sys.argv[1])
@@ -308,6 +332,7 @@ deny_target = Path(sys.argv[8])
 allow_target = Path(sys.argv[9])
 source_home = sys.argv[10]
 credentials_file = sys.argv[11]
+source_auth_mode = sys.argv[12]
 
 events = []
 for audit_path in sorted(audit_dir.glob("audit-hook-*.jsonl")):
@@ -371,15 +396,22 @@ checks = {
 }
 
 def sanitize(value):
-    value = value.replace(str(tmp), "<isolated-root>")
+    for temporary_root in {str(tmp), str(tmp.resolve())}:
+        value = value.replace(temporary_root, "<isolated-root>")
     if source_home:
         value = value.replace(source_home, "<user-home>")
     if credentials_file:
         value = value.replace(credentials_file, "<credential-file>")
+    value = re.sub(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        "<uuid>",
+        value,
+    )
     return value
 
 report_dir.mkdir(parents=True, exist_ok=True)
-for name in ("setup.log", "deny.log", "allow.log", "deny-debug.log", "allow-debug.log"):
+for name in ("setup.log", "deny.log", "allow.log"):
     source = tmp / name
     if source.is_file():
         (report_dir / name).write_text(
@@ -394,15 +426,68 @@ for path in report_dir.iterdir():
     if path.is_file():
         path.chmod(0o600)
 
+def invoked_model(log_name):
+    log_path = tmp / log_name
+    if not log_path.is_file():
+        return False
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("type") == "result" and (
+            int(record.get("duration_api_ms") or 0) > 0
+            or float(record.get("total_cost_usd") or 0) > 0
+        ):
+            return True
+    return False
+
+def log_contains(log_name, needle):
+    log_path = tmp / log_name
+    return (
+        log_path.is_file()
+        and needle in log_path.read_text(encoding="utf-8", errors="replace")
+    )
+
+model_invocations = sum(
+    invoked_model(log_name) for log_name in ("deny.log", "allow.log")
+)
+authentication_required = (
+    model_invocations == 0
+    and deny_status != 0
+    and allow_status != 0
+    and all(
+        log_contains(log_name, "authentication_failed")
+        for log_name in ("deny.log", "allow.log")
+    )
+)
+failure_reason = None
+if authentication_required:
+    if all(
+        log_contains(log_name, "OAuth access token has expired")
+        or log_contains(log_name, "OAuth session expired")
+        for log_name in ("deny.log", "allow.log")
+    ):
+        failure_reason = "oauth_token_expired"
+    elif source_auth_mode == "os_keychain":
+        failure_reason = "keychain_unavailable_in_disposable_home"
+    else:
+        failure_reason = "authentication_required"
 summary = {
     "schema_version": "rampart.claude-host-e2e.v1",
     "result": "pass" if all(checks.values()) else "fail",
+    "failure_reason": failure_reason,
     "claude_version": claude_version,
     "rampart_version": rampart_version,
-    "model_invocations": 2,
-    "source_claude_state_loaded": (
-        [".credentials.json"] if credentials_file else ["os_keychain_only"]
-    ),
+    "host_attempts": 2,
+    "model_invocations": model_invocations,
+    "source_auth_available": source_auth_mode,
+    "source_claude_state_loaded": {
+        "credentials_file": [".credentials.json"],
+        "oauth_env": ["CLAUDE_CODE_OAUTH_TOKEN"],
+        "os_keychain": [],
+        "none": [],
+    }[source_auth_mode],
     "session_persistence": False,
     "user_project_config_loaded": False,
     "mcp_servers_loaded": False,

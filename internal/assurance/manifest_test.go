@@ -49,6 +49,74 @@ func TestPublicSupportMatrixNamesEveryAssuredIntegration(t *testing.T) {
 	}
 }
 
+func TestPublicDocsAvoidKnownAbsoluteBoundaryClaims(t *testing.T) {
+	root := repositoryRoot(t)
+	targets := []string{
+		filepath.Join(root, "README.md"),
+		filepath.Join(root, "docs-site"),
+		filepath.Join(root, "docs"),
+		filepath.Join(root, "docs", "THREAT-MODEL.md"),
+	}
+	banned := []string{
+		"every command, file access, and network request",
+		"every command, file read, network request",
+		"every command claude attempts",
+		"dangerous commands never run",
+		"green across the board means you're fully protected",
+		"rampart fully supports windows",
+		"rampart fails open by default",
+		"pattern matching handles 95%+",
+		"yes: every tool call is evaluated",
+		"works with every major ai agent",
+		"works with every agent",
+		"everything is logged",
+		"every tool call passes through rampart",
+		"everything is audited to a hash-chained trail",
+		"works with all dynamically-linked binaries",
+		"rampart protects all of them",
+		"this intercepts all `os.system()`",
+		"this is full protection",
+		"1 fully covered",
+	}
+
+	for _, target := range targets {
+		info, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() {
+			assertNoAbsoluteClaim(t, target, banned)
+			continue
+		}
+		err = filepath.Walk(target, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			ext := filepath.Ext(path)
+			if !info.IsDir() && (strings.EqualFold(ext, ".md") || strings.EqualFold(ext, ".html")) {
+				assertNoAbsoluteClaim(t, path, banned)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertNoAbsoluteClaim(t *testing.T, path string, banned []string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phrase := range banned {
+		if strings.Contains(strings.ToLower(string(data)), phrase) {
+			t.Errorf("%s contains unqualified boundary claim %q", path, phrase)
+		}
+	}
+}
+
 func TestVerifiedTierCannotUsePolicyOnlyEvidence(t *testing.T) {
 	root := repositoryRoot(t)
 	manifest := Manifest{

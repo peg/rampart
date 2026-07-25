@@ -12,8 +12,8 @@ executable evidence.
 ## Evidence vocabulary
 
 - **tested** — Rampart's adapter or mapping is exercised in isolation.
-- **verified** — a live host integration is exercised with safe behavioral
-  canaries before the action would execute.
+- **verified** — a completed live host-boundary run is recorded, or the
+  installed integration provides an active safe verifier for that boundary.
 - **partial** — some routes are covered, but the surface has known exclusions.
 - **not_covered** — the integration does not intercept the surface.
 - **unknown** — no reliable claim is made until evidence is added.
@@ -39,6 +39,12 @@ adversarial corpus, exercises the Go test suite's fuzz seed corpora, and runs
 the bundled OpenClaw and Hermes adapter regressions. It never executes any
 command contained in `corpus.yaml`; cases are policy evaluations only.
 
+An executable harness is evidence that a check can be performed; it is not by
+itself evidence that a live run passed. Sanitized completed-run summaries live
+under `assurance/evidence/` when a coverage claim depends on a maintainer host
+run. The summaries omit credentials, raw model output, hostnames, and temporary
+paths.
+
 The public corpus contains mitigated regression cases only. Report suspected
 or unpatched bypasses privately through [`SECURITY.md`](../SECURITY.md);
 regression cases are published after a fix is available.
@@ -54,3 +60,18 @@ The harness copies only Codex authentication into a disposable home, ignores
 user configuration, persists no session, and deletes the credential copy on
 every exit. Its offline test double runs as part of the lab-runner contract;
 ordinary CI does not make a model call.
+
+The equivalent opt-in host harnesses for Claude Code and Hermes Agent are:
+
+```bash
+scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
+scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
+```
+
+Claude host verification remains pending until the harness completes with an
+authenticated current Claude Code installation. On macOS the disposable HOME
+cannot use the account's Keychain login in Claude Code 2.1.220, so an ephemeral
+`CLAUDE_CODE_OAUTH_TOKEN` must be supplied for the proof; subprocess scrubbing
+prevents the harness from passing it to the Bash canary. The Hermes
+completed-run summary records the exact reviewed upstream version and
+behavioral checks.

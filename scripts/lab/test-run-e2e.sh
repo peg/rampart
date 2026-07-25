@@ -15,6 +15,8 @@ bash -n "${repo_root}/scripts/compat-claude-host.sh"
 bash -n "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q 'default_action: deny' "${repo_root}/scripts/compat-claude-host.sh"
 grep -q 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1' "${repo_root}/scripts/compat-claude-host.sh"
+grep -q -- '--allowedTools "Bash(${command})"' "${repo_root}/scripts/compat-claude-host.sh"
+grep -q 'keychain_unavailable_in_disposable_home' "${repo_root}/scripts/compat-claude-host.sh"
 grep -q 'default_action: deny' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q -- '--copy-env' "${repo_root}/scripts/compat-hermes-host.sh"
 

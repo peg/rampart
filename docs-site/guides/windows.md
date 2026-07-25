@@ -1,11 +1,13 @@
 ---
 title: Windows Setup Guide
-description: Install and configure Rampart on Windows to protect Claude Code and other AI agents.
+description: Install Rampart on Windows and configure its tested Claude Code or Codex hook paths.
 ---
 
 # Windows Setup Guide
 
-Rampart fully supports Windows for protecting Claude Code and other AI agents.
+Rampart builds and tests its policy engine plus Claude Code and Codex hook setup
+on Windows CI. A physical Windows host E2E is still pending, and Unix-specific
+integration modes remain unavailable.
 
 ## Quick Install
 
@@ -23,17 +25,20 @@ This downloads the latest release, installs to `~\.rampart\bin`, adds it to your
 rampart setup claude-code
 ```
 
-This adds hooks to `~\.claude\settings.json`. Claude Code will now route all Bash commands through Rampart.
+This adds lifecycle hooks to `~\.claude\settings.json`. Claude Code routes
+hook-visible Bash and PowerShell calls through Rampart.
 
-## That's It — You're Protected!
+## Basic Hook Protection Is Configured
 
-After running `rampart setup claude-code`, dangerous commands are blocked immediately. **No need to run `rampart serve` for basic protection** — the hook evaluates policies locally.
+After setup, matched hook-visible calls can be denied locally without
+`rampart serve`. This does not create an OS sandbox or cover host actions that
+Claude does not emit to hooks.
 
 ## Optional: Policy Server
 
 Run `rampart serve` if you want:
 - **Live dashboard** — `rampart watch` shows real-time decisions
-- **Approval flow** — `action: ask` policies need serve to handle human review
+- **External/headless approval flow** — Claude's native `ask` prompt itself does not require serve
 - **Centralized audit** — stream events to the dashboard
 
 ```powershell
@@ -106,7 +111,8 @@ Rampart automatically normalizes Windows paths for policy matching:
 rampart uninstall
 ```
 
-This removes hooks from Claude Code and Cline, removes Rampart from your PATH, and prints instructions to delete the remaining files.
+Remove each configured integration with its `rampart setup <agent> --remove`
+command before deleting the binary and data directory.
 
 **Manual cleanup** (if rampart command isn't working):
 ```powershell

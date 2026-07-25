@@ -336,7 +336,9 @@ The `command_contains` approach is robust against shell wrapper bypasses — `ba
 This means:
 
 - ✅ **You** can run `rampart allow "npm install *"` in your terminal
-- ❌ **Your agent** cannot run `rampart allow "npm install *"` to unblock itself
+- ❌ The **standard policy** blocks a recognized agent-issued
+  `rampart allow "npm install *"` command; use OS user separation to keep this
+  from depending only on the same policy boundary
 - ✅ When your agent is denied and shows you the `rampart allow` hint, **you** run it
 
 This keeps the security boundary intact. Agents can request permission by surfacing the denial hint; you decide whether to grant it.

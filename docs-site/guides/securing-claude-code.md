@@ -58,7 +58,8 @@ The default model is:
 
 That split matters. A credential file should not be silently exposed. But some agent artifacts, like Claude Code history or settings, are sensitive in a different way: a human may still intentionally inspect or modify them. Those are better handled with `ask` instead of a blanket deny.
 
-Policies are evaluated quickly and consistently on every tool call. You can inspect why a command was allowed or denied with:
+Policies are evaluated on each hook-visible tool call delivered to Rampart. You
+can inspect why a command was allowed or denied with:
 
 ```bash
 rampart policy explain --tool exec 'rm -rf /'
@@ -108,7 +109,8 @@ Then trigger a known blocked command from Claude Code, such as `rm -rf /` in a t
 ## Common Questions
 
 **Q: Will Rampart slow down Claude Code?**  
-A: Policy evaluation takes under 10 microseconds. You will not notice it.
+A: Core matching is benchmarked in microseconds. Hook process startup, audit
+I/O, machine load, and policy size determine end-to-end overhead.
 
 **Q: What if a legitimate command gets blocked?**  
 A: Add an allow rule to your policy, or use `action: ask` so you decide per-instance.

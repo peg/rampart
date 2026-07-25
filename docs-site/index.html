@@ -1221,7 +1221,7 @@
         <div class="story-copy reveal">
             <div class="section-label">A seatbelt, not a cage</div>
             <h2 class="section-title">Rampart does not ask the agent to behave.</h2>
-            <p class="section-desc">It sits in the execution path. Every command, file read, network request, and MCP call is evaluated before it runs. Safe work stays fast. Risky work is denied, held for approval, or redacted before secrets ever reach the model.</p>
+            <p class="section-desc">It sits on supported agent tool boundaries. Hook-visible requests are evaluated before the host invokes the tool. Safe work stays fast; risky work can be denied, held for approval, or have supported responses redacted. Work performed inside an already allowed process is outside this boundary.</p>
             <div class="story-points">
                 <div class="story-point interactive"><h3>Allow normal development</h3><p><code>npm install</code>, <code>go test ./...</code>, and <code>git status</code> stay fast because common safe actions are pattern matched locally.</p></div>
                 <div class="story-point interactive"><h3>Ask for risky actions</h3><p>Rules with <code>action: ask</code> hold commands like <code>kubectl apply</code> until a human decides.</p></div>
@@ -1235,7 +1235,7 @@
                         <div class="flow-row active" data-flow-row="0"><span class="flow-label">request</span><span><span class="flow-main">Agent asks for a tool call</span><span class="flow-sub">exec · file.read · network · MCP</span></span><span class="flow-chip">normalize</span></div>
                         <div class="flow-row" data-flow-row="1"><span class="flow-label">policy</span><span><span class="flow-main">YAML rules evaluate locally</span><span class="flow-sub">scope, command, path, URL, response patterns</span></span><span class="flow-chip allow">8µs</span></div>
                         <div class="flow-row" data-flow-row="2"><span class="flow-label">decision</span><span><span class="flow-main">Allow, ask, deny, or redact</span><span class="flow-sub">normal dev continues; risky actions pause or stop</span></span><span class="flow-chip ask">ask</span></div>
-                        <div class="flow-row" data-flow-row="3"><span class="flow-label">audit</span><span><span class="flow-main">Hash-chained JSONL record</span><span class="flow-sub">every allow, ask, deny, and redaction is written locally</span></span><span class="flow-chip deny">verify</span></div>
+                        <div class="flow-row" data-flow-row="3"><span class="flow-label">audit</span><span><span class="flow-main">Hash-chained JSONL record</span><span class="flow-sub">decisions observed at this boundary are written locally</span></span><span class="flow-chip deny">verify</span></div>
                     </div>
                     <div class="flow-status"><span>stage <strong id="flow-stage">request</strong></span><span id="flow-detail">tool call normalized before policy evaluation</span></div>
                 </div>
@@ -1489,7 +1489,7 @@ function copyCode(el) {
         ['request', 'tool call normalized before policy evaluation'],
         ['policy', 'local YAML rules decide the common case in microseconds'],
         ['decision', 'allow, ask, deny, or redact before execution'],
-        ['audit', 'every decision lands in a hash-chained local record']
+        ['audit', 'each observed decision lands in a hash-chained local record']
     ];
     if (!steps.length) return;
     var flowObserver = new IntersectionObserver(function(entries) {

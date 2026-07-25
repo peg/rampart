@@ -770,6 +770,17 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	}
 
 	toolType := mapClaudeCodeTool(input.ToolName)
+	// Claude Code adds tool surfaces over time. A newly hook-visible action must
+	// not inherit the policy's unmatched/default behavior before Rampart knows
+	// its security consequence. Match the Codex adapter's fail-closed behavior
+	// for unknown pre-call tools; post-call payloads remain available for
+	// response scanning and audit compatibility.
+	if input.HookEventName == "PreToolUse" && toolType == "unknown" {
+		return nil, fmt.Errorf(
+			"hook: unsupported Claude Code tool_name %q; update Rampart before allowing this tool",
+			input.ToolName,
+		)
+	}
 	params := input.ToolInput
 	if params == nil {
 		params = map[string]any{}
@@ -918,20 +929,21 @@ func mapClaudeCodeTool(toolName string) string {
 		return "memory"
 	case "code_execution":
 		return "exec"
-	case "ToolSearch", "tool_search", "ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers", "Skill":
+	case "ToolSearch", "tool_search", "ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers", "Skill",
+		"TaskGet", "TaskList", "TaskOutput":
 		return "read"
-	case "Task", "Agent", "Workflow":
+	case "Task", "Agent", "Workflow", "RemoteTrigger":
 		// Sub-agent spawn: the orchestrator is delegating a task to a new agent.
 		// Mapped to "agent" so policies can match `tool: ["agent"]` and watch
 		// displays it distinctly from exec/read/write.
 		return "agent"
-	case "CronCreate", "CronDelete":
+	case "CronCreate", "CronDelete", "ScheduleWakeup", "TaskCreate", "TaskStop", "TaskUpdate", "TodoWrite":
 		return "process"
 	case "CronList":
 		return "read"
-	case "Artifact":
+	case "Artifact", "PushNotification", "SendMessage", "SendUserFile", "ShareOnboardingGuide":
 		return "message"
-	case "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "ExitWorktree", "EndConversation":
+	case "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "ExitWorktree", "EndConversation", "ReportFindings":
 		return "interact"
 	default:
 		// NOTE: Don't log here - this function is called before the logger is available,

@@ -2,7 +2,10 @@
 
 ## Overview
 
-Rampart is a policy enforcement layer between AI agents and their tools. Every tool call passes through Rampart, which evaluates it against YAML policies and returns allow, deny, or log. Everything is audited to a hash-chained trail.
+Rampart is a policy enforcement layer between AI agents and their tools.
+Supported integrations send host-exposed tool calls through Rampart, which
+evaluates them against YAML policies and returns allow, deny, or log. Decisions
+that reach Rampart are written to a hash-chained audit trail.
 
 ```
 Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
@@ -13,7 +16,9 @@ Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
 
 **Fail-open by default.** If Rampart crashes or is unreachable, tool calls pass through. This is deliberate — fail-closed locks you out of your own machine. See the [threat model](THREAT-MODEL.md) for trade-offs and mitigations.
 
-**Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call run?" — and doesn't need a general-purpose policy language. Three lines of YAML beats fifteen lines of Rego. The custom engine also evaluates in <10µs vs OPA's 0.1-1ms.
+**Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call
+run?" — and doesn't need a general-purpose policy language. The custom engine's
+hot path is benchmarked in this repository; results vary by policy set and host.
 
 **Local-first.** No data leaves the machine. No cloud dependency. No telemetry. You're adding a security layer, not another SaaS.
 

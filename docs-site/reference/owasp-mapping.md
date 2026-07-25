@@ -10,25 +10,28 @@ This page maps Rampart's capabilities to the [OWASP Top 10 for Agentic Applicati
 | # | OWASP Agentic Risk | Rampart | Coverage |
 |---|-------------------|---------|----------|
 | ASI01 | **Agent Goal Hijack** | `watch-prompt-injection` policy monitors tool responses for injection patterns. Blocks injected commands via pattern matching. Does not prevent prompt-level goal manipulation — if an agent's goals are altered, Rampart limits what the hijacked agent can *do* but cannot detect the hijack itself. | ⚠️ Partial |
-| ASI02 | **Tool Misuse and Exploitation** | Every tool call (exec, read, write, fetch, MCP) is evaluated against YAML policies before execution. `default_action: deny` enforces least-privilege. Parameter validation, command pattern matching, and approval workflows for sensitive operations. This is Rampart's core function. | ✅ Covered |
-| ASI03 | **Identity and Privilege Abuse** | `agent_depth` conditions limit sub-agent privilege escalation. Self-modification protection blocks agents from running `rampart allow`/`rampart block`. User separation prevents agents from accessing policies/audit. Does not manage agent credentials, OAuth tokens, or delegated permissions — over-scoped keys are outside Rampart's scope. | ⚠️ Partial |
+| ASI02 | **Tool Misuse and Exploitation** | Host-exposed calls on supported integrations are evaluated against YAML policies before execution. `default_action: deny`, parameter matching, and approval workflows support least privilege. Calls omitted by the host and behavior inside allowed processes are outside this boundary. | ⚠️ Partial |
+| ASI03 | **Identity and Privilege Abuse** | `agent_depth` conditions can limit delegated calls observed by Rampart. The standard policy matches known Rampart mutation commands, and optional OS-user separation can keep policy/audit files outside the agent account. Rampart does not manage agent credentials, OAuth tokens, or delegated permissions. | ⚠️ Partial |
 | ASI04 | **Agentic Supply Chain Vulnerabilities** | Community policy SHA-256 verification detects tampering after registry publication. `rampart mcp scan` auto-generates policy from MCP server tool definitions. Project-local policies enforce deny-wins (a project policy can tighten but not loosen global policy). Does not verify tool provenance at source, inspect dependency trees, or provide SBOM/AIBOM. | ⚠️ Partial |
 | ASI05 | **Unexpected Code Execution (RCE)** | Shell command normalization, interpreter one-liner blocking (`python3 -c`, `node -e`, `perl -e`), LD_PRELOAD cascade for subprocess interception, and pattern matching catch common injected code patterns before they run. Does not inspect code executed inside allowed interpreters (e.g., `python3 script.py`), cannot handle all obfuscation variants, and LD_PRELOAD cascade does not apply in native-hook mode (Claude Code, Cline). See [Threat Model — Known Gaps](threat-model.md). | ⚠️ Partial |
-| ASI06 | **Memory & Context Poisoning** | Response scanning (`response_matches`) blocks credentials and known-bad patterns in tool responses before they enter the agent's context window. Does not protect persistent memory stores, RAG databases, embeddings, or conversation history — Rampart operates at the tool call layer, not the memory layer. | ⚠️ Partial |
+| ASI06 | **Memory & Context Poisoning** | On supported post-tool boundaries, response scanning (`response_matches`) replaces matched string content before the next model turn. It does not protect persistent memory stores, RAG databases, embeddings, conversation history, unsupported response shapes, or tools without response hooks. | ⚠️ Partial |
 | ASI07 | **Insecure Inter-Agent Communication** | Not addressed. Rampart operates at the agent-to-OS boundary; it has no visibility into messages passed between agents in a multi-agent system. Does not provide mutual authentication, message signing, anti-replay, or encryption for agent-to-agent channels. Note: *tool calls* from sub-agents are evaluated by the same policy engine, and `agent_depth` conditions limit sub-agent nesting depth — but these address sub-agent containment, not communication security. | ❌ Not covered |
-| ASI08 | **Cascading Failures** | Fail-open design prevents Rampart from becoming a single point of failure (a crashed Rampart doesn't lock out the system). `call_count` rate limiting throttles runaway agents. Webhook notifications alert on anomalies in real time. Does not prevent agent-to-agent cascade in multi-agent systems. | ⚠️ Partial |
+| ASI08 | **Cascading Failures** | `call_count` rules can throttle observed repeated calls, and webhook notifications can report anomalies. Degraded behavior is integration- and configuration-specific: some sensitive paths deny, while configured lower-risk paths or host failures may proceed. Rampart does not prevent agent-to-agent cascades. | ⚠️ Partial |
 | ASI09 | **Human-Agent Trust Exploitation** | `require_approval` and `ask` actions enforce human-in-the-loop gates for sensitive operations. HMAC-signed approval URLs provide authenticity. Full hash-chained audit trail enables post-hoc accountability. Does not detect persuasion attempts directed at the human approver or protect against over-reliance on agent output. | ⚠️ Partial |
-| ASI10 | **Rogue Agents** | Self-modification protection prevents agents from weakening their own policy constraints (blocks `rampart allow`, `rampart block`, writes to `.rampart/`). Hash-chained audit trail makes rogue behavior detectable and verifiable. Response scanning catches credential exfiltration attempts. Does not detect agent misalignment, goal divergence, or colluding agents. | ⚠️ Partial |
+| ASI10 | **Rogue Agents** | The standard policy matches known Rampart mutation commands and paths; hash chaining detects partial audit-log edits, and response scanning can catch configured patterns on supported hooks. Strong protection requires OS-user separation because an agent sharing the Rampart account may find unobserved mutation paths. Rampart does not detect misalignment, goal divergence, or collusion. | ⚠️ Partial |
 
-**Summary: 1 fully covered, 8 partially mitigated, 1 not addressed.**
+**Summary: 9 partially mitigated, 1 not addressed.**
 
-Rampart directly addresses the risk most central to tool-call security (ASI02) and partially mitigates eight others. The one architectural gap — inter-agent communication security (ASI07) — requires frameworks that provide agent-to-agent authentication and message signing, which is outside Rampart's scope as a tool-call policy engine.
+Tool misuse (ASI02) is Rampart's primary focus, but its coverage remains partial
+because enforcement depends on the host exposing the action at a supported
+boundary. Inter-agent communication security (ASI07) is not addressed.
 
 ## What Rampart Does Well
 
-### ASI02: Tool Misuse and Exploitation (Fully Covered)
+### ASI02: Tool Misuse and Exploitation (Partial)
 
-This is Rampart's core purpose. Every tool invocation passes through the policy engine:
+This is Rampart's core purpose. Tool invocations exposed by a configured,
+supported integration pass through the policy engine:
 
 ```yaml
 # Allowlist mode — only explicitly permitted commands run
@@ -59,7 +62,11 @@ Pattern matching catches common injection vectors before execution:
 - Shell wrapper bypasses (quoted strings, compound commands, `eval`)
 - Interpreter one-liners (`python3 -c`, `node -e`, `ruby -e`, `perl -e`)
 
-LD_PRELOAD cascade (wrap/preload modes) intercepts subprocesses spawned by allowed commands. The [rampart-verify](https://github.com/peg/rampart-verify) project provides experimental LLM-based intent classification for ambiguous commands that pattern matching can't catch — it is a separate tool and not yet integrated into the standard Rampart distribution.
+LD_PRELOAD cascade (preload mode) covers supported exec-family calls made
+through the dynamic loader, but not static binaries or direct syscalls. The
+[rampart-verify](https://github.com/peg/rampart-verify) project provides
+experimental LLM-based intent classification for ambiguous commands — it is a
+separate tool and not integrated into the standard Rampart distribution.
 
 See [Threat Model — Known Gaps](threat-model.md) for evasion techniques that pattern matching cannot catch (variable expansion, base64 payloads, native file I/O in subprocesses).
 
@@ -70,7 +77,8 @@ Most security tools focus on blocking dangerous *commands*. Rampart also scans t
 1. Agent runs `cat config.yaml` — a legitimate read
 2. The file contains `AWS_SECRET_ACCESS_KEY=AKIA...`
 3. Without response scanning: the secret enters the agent's context window
-4. With Rampart: the response is blocked before the agent ever sees it
+4. With a supported post-tool hook and matching rule: Rampart replaces the
+   matched response strings before the next model turn
 
 ```yaml
 - name: block-credential-leak

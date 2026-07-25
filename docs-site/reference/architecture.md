@@ -7,7 +7,10 @@ description: "Understand Rampart's architecture: hooks and proxies feed a local 
 
 ## Overview
 
-Rampart is a policy enforcement layer between AI agents and their tools. Every tool call passes through Rampart, which evaluates it against YAML policies and returns allow, deny, or log.
+Rampart is a policy enforcement layer between AI agents and their tools.
+Supported integrations send host-exposed tool calls through Rampart, which
+evaluates them against YAML policies and returns allow, deny, or log. Calls
+inside an allowed process or omitted by the host remain outside that boundary.
 
 ```d2
 direction: right
@@ -29,7 +32,7 @@ intercept: {
   mcp: "MCP Proxy"
 }
 
-engine: "YAML Policy Engine\\n<10μs" {
+engine: "YAML Policy Engine\\nlocal matching" {
   style.fill: "#1d3320"
   style.stroke: "#2ea043"
   style.font-color: "#3fb950"
@@ -92,7 +95,9 @@ verify -> outcomes.approval
 
 **Fail-open by default.** If Rampart crashes, tool calls pass through. Fail-closed locks you out of your machine. Configurable for strict environments.
 
-**Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call run?" Custom engine evaluates in <10μs vs OPA's 0.1-1ms.
+**Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call
+run?" The custom engine's hot path is benchmarked in this repository; results
+vary by policy set and host.
 
 **Local-first.** No data leaves the machine. No cloud dependency. No telemetry.
 

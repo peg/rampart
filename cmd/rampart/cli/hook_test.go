@@ -60,7 +60,6 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 		{name: "EditFile", toolName: "EditFile", wantTool: "write", withInput: false},
 		{name: "WebFetch", toolName: "WebFetch", wantTool: "fetch", withInput: true},
 		{name: "Fetch", toolName: "Fetch", wantTool: "fetch", withInput: false},
-		{name: "Default", toolName: "UnknownTool", wantTool: "unknown", withInput: false},
 	}
 
 	for _, tt := range tests {
@@ -89,6 +88,19 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 				t.Fatal("params is nil")
 			}
 		})
+	}
+}
+
+func TestParseClaudeCodeInput_UnknownPreToolFailsClosed(t *testing.T) {
+	input := `{
+		"hook_event_name":"PreToolUse",
+		"tool_name":"FutureMutatingTool",
+		"tool_input":{"target":"outside"},
+		"tool_use_id":"toolu_future_1"
+	}`
+	_, err := parseClaudeCodeInput(strings.NewReader(input), testLogger())
+	if err == nil || !strings.Contains(err.Error(), "unsupported Claude Code tool_name") {
+		t.Fatalf("expected unsupported-tool error, got %v", err)
 	}
 }
 
@@ -537,6 +549,20 @@ func TestMapClaudeCodeTool(t *testing.T) {
 		{"CronCreate", "process"},
 		{"CronList", "read"},
 		{"Artifact", "message"},
+		{"PushNotification", "message"},
+		{"RemoteTrigger", "agent"},
+		{"ReportFindings", "interact"},
+		{"ScheduleWakeup", "process"},
+		{"SendMessage", "message"},
+		{"SendUserFile", "message"},
+		{"ShareOnboardingGuide", "message"},
+		{"TaskCreate", "process"},
+		{"TaskGet", "read"},
+		{"TaskList", "read"},
+		{"TaskOutput", "read"},
+		{"TaskStop", "process"},
+		{"TaskUpdate", "process"},
+		{"TodoWrite", "process"},
 		{"AskUserQuestion", "interact"},
 		{"SomethingUnknown", "unknown"},
 	}

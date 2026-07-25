@@ -3,8 +3,9 @@ baseline_release: v1.3.0
 reviewed_at: "2026-07-24"
 
 # This manifest records the guarantees Rampart can support with evidence today.
-# "tested" means the Rampart adapter is exercised in isolation. "verified"
-# means a live host boundary is exercised with safe behavioral canaries.
+# "tested" means the Rampart adapter or mapping is exercised in isolation.
+# "verified" means a completed live host-boundary run is recorded as evidence,
+# or the installed integration exposes an active safe host-boundary verifier.
 integrations:
   - id: openclaw
     display_name: OpenClaw
@@ -69,7 +70,7 @@ integrations:
       subagents: partial
     degraded:
       policy_unavailable: local
-      adapter_error: deny
+      adapter_error: host_defined
       timeout: host_defined
     approval: native
     verification:
@@ -94,6 +95,8 @@ integrations:
       - No rolling latest-Claude compatibility job currently exercises the installed host.
       - rampart verify policy proves policy behavior but does not prove Claude loaded or invoked the hook.
       - The opt-in host harness requires an authenticated Claude Code installation; a passing authenticated host run is still pending.
+      - Claude Code 2.1.220 is the latest version reviewed; its documented hook-visible tools are mapped, and in enforce mode future unknown PreToolUse tools deny until Rampart is updated.
+      - Host-owned or server-side actions that do not emit lifecycle hooks are outside this boundary; Claude's EndConversation tool is a documented benign example.
       - Subagent, hook-crash, and host-timeout behavior need live conformance tests.
 
   - id: cline
@@ -113,7 +116,7 @@ integrations:
       subagents: unknown
     degraded:
       policy_unavailable: local
-      adapter_error: deny
+      adapter_error: host_defined
       timeout: host_defined
     approval: block_and_retry
     verification:
@@ -150,7 +153,7 @@ integrations:
       subagents: partial
     degraded:
       policy_unavailable: deny
-      adapter_error: deny
+      adapter_error: host_defined
       timeout: host_defined
     approval: external
     verification:
@@ -167,7 +170,7 @@ integrations:
         proves: Setup preserves existing hooks, migrates the legacy wrapper, and installs cross-platform commands.
       - path: cmd/rampart/cli/verify_test.go
         kind: integration
-        proves: Active verification checks installed hooks and runs a destructive canary through the live adapter.
+        proves: Active verification checks installed hook configuration and directly invokes the adapter with a destructive canary that must deny.
       - path: scripts/compat-codex-host.sh
         kind: live
         proves: An opt-in credential-isolated harness proves deny and allow behavior through a real ephemeral Codex process.
@@ -211,8 +214,11 @@ integrations:
         kind: upstream_latest
         proves: Latest Hermes discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
       - path: scripts/compat-hermes-host.sh
-        kind: live
+        kind: integration
         proves: An opt-in auth-minimized harness proves deny and allowed execution through a real isolated Hermes model/tool loop.
+      - path: assurance/evidence/hermes-host-2026-07-24.json
+        kind: live
+        proves: A completed Linux host run records blocked deny execution, successful allow execution, pre-tool audit correlation, and isolated source-state use on Hermes Agent 0.19.0.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.

@@ -5,13 +5,17 @@ description: "Protect Claude Desktop MCP tool access with Rampart. Enforce guard
 
 # Claude Desktop
 
-Claude Desktop uses MCP servers for filesystem access, databases, APIs, and more. Rampart protects all of them with a single proxy layer.
+Claude Desktop can use MCP servers for filesystem access, databases, APIs, and
+more. Rampart evaluates the MCP servers you explicitly route through its local
+proxy; built-in and directly connected tools remain outside that boundary.
 
 ## The Threat
 
 Claude Desktop processes content from emails, documents, calendar invites, and web pages. Any of these can contain hidden instructions ([prompt injection](https://simonwillison.net/series/prompt-injection/)) that hijack Claude's behavior.
 
-**Example attack:** A calendar invite contains hidden text telling Claude to read `~/.ssh/id_rsa` and send it to `webhook.site`. Without Rampart, both steps succeed. With Rampart, both get blocked and logged.
+**Example attack:** A calendar invite contains hidden text telling Claude to
+read `~/.ssh/id_rsa` and send it to `webhook.site`. If both requested tools are
+proxied and match the standard policy, Rampart denies and logs those requests.
 
 ## Setup
 
@@ -65,7 +69,8 @@ With the standard policy:
 
 ## Local vs Cloud MCP Servers
 
-- **Local servers:** Rampart blocks requests before the server sees them. Full protection.
+- **Local servers:** A denied proxied request is stopped before the server sees
+  it. Behavior inside an allowed server call is not inspected.
 - **Cloud servers:** Rampart blocks requests before they leave your machine. Allowed calls execute remotely.
 
 For cloud MCP servers, use a more restrictive policy (deny by default, explicit allowlist).

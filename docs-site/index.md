@@ -1,6 +1,6 @@
 ---
 title: Rampart
-description: "Rampart is an open-source security policy engine for AI coding agents. Block dangerous commands, detect prompt injection, and audit every tool call."
+description: "Rampart is an open-source security policy engine for hook-visible AI agent actions. Block matched dangerous commands, detect known prompt-injection patterns, and audit policy decisions."
 hide:
   - navigation
   - toc
@@ -18,9 +18,17 @@ hide:
 
 ## What is Rampart?
 
-Rampart is a **policy engine** that sits between AI agents and the tools they use. Every command, file access, and network request gets evaluated against your YAML policies before it executes. Dangerous actions get blocked instantly. Everything gets logged to a tamper-evident audit trail where each entry is cryptographically linked to the previous one — if anyone tampers with a record, the chain breaks.
+Rampart is a **policy engine** for actions exposed by a supported agent
+integration. Hook-visible commands, file operations, fetches, and related tool
+calls are evaluated against YAML policies before the host executes them.
+Observed decisions are logged to a hash-chained audit trail. Rampart is not a
+network firewall or sandbox and does not see arbitrary behavior inside an
+allowed process.
 
-Rampart also scans tool **responses** — if your agent reads a file containing credentials, the response is blocked before those secrets enter the agent's context window. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
+On supported post-tool boundaries, Rampart can scan tool **responses** and
+replace matching string content before the next model turn. This is
+pattern-based mitigation, not a guarantee that secrets never enter agent
+context. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
 
 <div class="grid cards" markdown>
 
@@ -28,7 +36,7 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     ---
 
-    YAML-based policies with glob matching. Deny, allow, log, or require human approval. Zero noticeable overhead.
+    YAML-based policies with glob matching. Deny, allow, log, or require human approval. Local matching is benchmarked in microseconds.
 
     [:octicons-arrow-right-24: Learn more](features/policy-engine.md)
 
@@ -52,7 +60,8 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     ---
 
-    Native hooks, native plugins, shell wrapping, MCP proxy, system-level interception, HTTP API. Works with every major AI agent.
+    Native hooks and plugins for named supported agents, plus shell wrapping,
+    MCP proxy, process interposition, and an HTTP API for other integrations.
 
     [:octicons-arrow-right-24: Integration guides](integrations/index.md)
 
@@ -60,7 +69,7 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     ---
 
-    Block credentials in tool responses before they reach the agent's context window. Prevents secrets from being exfiltrated in later turns.
+    On supported post-tool hooks, replace response strings that match configured credential patterns before the next model turn.
 
     [:octicons-arrow-right-24: How it works](reference/owasp-mapping.md#response-scanning-asi06)
 
@@ -68,7 +77,7 @@ Rampart also scans tool **responses** — if your agent reads a file containing 
 
     ---
 
-    Mapped against the 2026 OWASP framework for autonomous AI agents. 1 fully covered, 8 partially mitigated, 1 not addressed, with honest assessment of gaps.
+    Mapped against the 2026 OWASP framework for autonomous AI agents. Nine risks are partially mitigated and one is not addressed; none are claimed as fully covered.
 
     [:octicons-arrow-right-24: Full mapping](reference/owasp-mapping.md)
 
@@ -92,19 +101,31 @@ That's it. Pick the integration that matches your agent. [Full setup guide →](
 ## Frequently Asked Questions
 
 **Is Claude Code safe to use in --dangerously-skip-permissions mode?**  
-It can be — with guardrails. `--dangerously-skip-permissions` gives Claude Code full shell access, which is powerful but risky. Rampart provides those guardrails: every command is evaluated against your policy before it runs. [Full guide →](guides/securing-claude-code.md)
+It can be used with an additional policy boundary, but Rampart is not a
+sandbox. `--dangerously-skip-permissions` gives Claude Code broad shell access;
+Rampart evaluates Bash and PowerShell tool calls that Claude exposes to its
+hooks. Commands executed inside an already allowed interpreter are outside
+that metadata boundary. [Full guide →](guides/securing-claude-code.md)
 
 **What happens if my AI agent runs a destructive command?**  
-Without Rampart: it runs. With Rampart: the command is evaluated against your policy in under 10μs. If it matches a deny rule, it's blocked before execution and logged. Claude Code receives the denial reason and explains it to you.
+With a working native hook, the command is evaluated before execution. If it
+matches a deny rule, Rampart returns a structured denial and records the
+decision. Evaluation is normally measured in microseconds, but end-to-end hook
+latency varies by machine and policy set.
 
 **Can AI agents be manipulated by prompt injection?**  
 Yes — a webpage or MCP tool response can contain instructions that try to override an agent's behavior. Rampart's `watch-prompt-injection` policy monitors tool responses for these patterns and logs them for review. [Learn more →](guides/prompt-injection.md)
 
 **Does Rampart send my commands to any external server?**  
-No. Rampart runs entirely on your machine. Policy evaluation, audit logging, and the dashboard are all local processes. No command data, file paths, or decisions are sent anywhere.
+Core Rampart policy evaluation, audit logging, and the dashboard are local.
+Optional semantic verification and notification/webhook features send the
+configured request data to their configured providers. The agent itself may
+also use remote model and tool services independently of Rampart.
 
 **Will Rampart slow down my agent?**  
-Policy checks are pure in-memory pattern matching — no network calls, no disk I/O, no measurable impact on your agent's workflow.
+Core matching is local and benchmarked in microseconds. Hook startup and audit
+I/O add environment-dependent overhead; optional semantic verification adds a
+network model call.
 
 **What if I need to allow a command that's blocked?**  
 Run `rampart allow "your command pattern"` and it's done — no YAML editing required. The rule takes effect immediately. For one-time exceptions, use `action: ask` in your policy so you can approve each instance. [Full guide →](guides/customizing-policy.md)
@@ -131,7 +152,7 @@ intercept: {
   mcp: "MCP Proxy"
 }
 
-engine: "YAML Policy Engine\\n<10μs" {
+engine: "YAML Policy Engine\\nlocal matching" {
   style.fill: "#1d3320"
   style.stroke: "#2ea043"
   style.font-color: "#3fb950"
@@ -190,7 +211,7 @@ verify -> outcomes.deny
 verify -> outcomes.approval
 ```
 
-## Works With Every Agent
+## Supported Integration Paths
 
 | Agent | Integration | Setup |
 |-------|------------|-------|

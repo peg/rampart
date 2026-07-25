@@ -29,7 +29,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Native hooks<br><code>rampart setup claude-code</code></td>
       <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
       <td data-label="Approval UX">Claude native approval prompt</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>host verification pending</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>2.1.220 mapping review; authenticated host proof pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Codex CLI, IDE, desktop</strong></td>
@@ -57,7 +57,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
-      <td data-label="Support tier">Experimental</td>
+      <td data-label="Support tier">Experimental<br>0.19.0 shell deny/allow host proof</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
@@ -99,15 +99,23 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 ### Best default choices
 
-- **Claude Code** → strongest existing local-hook path; live host verification is still being added
+- **Claude Code** → current documented hook-visible tools are mapped and, in
+  enforce mode, unknown future pre-call tools deny; an authenticated real-host
+  pass is still pending
 - **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
-- **Hermes Agent** → experimental plugin path for early testing; `ask` decisions block rather than resume
+- **Hermes Agent** → experimental plugin path with a completed isolated
+  Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than resume
 - **Cline** → good supported path, but less polished approval UX than Claude Code
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline / Codex native hooks**: local allow/deny policy evaluation works when `rampart serve` is down, but dashboard features and external approvals do not. Codex approval-required actions deny when the queue is unavailable.
+- **Claude Code / Cline / Codex native hooks**: local allow/deny policy
+  evaluation works when `rampart serve` is down. Rampart-handled parse and
+  policy errors deny in enforce mode, but an unexpected hook crash or host
+  timeout follows the host's behavior. Dashboard features and external
+  approvals need the service; Codex approval-required actions deny when its
+  queue is unavailable.
 - **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed.
 - **Hermes Agent plugin**: depends on `rampart serve`; mutating/high-risk tools fail closed when unavailable, while explicitly configured read-only tools may fail open.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.
@@ -115,6 +123,8 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 The machine-readable source for current integration guarantees and evidence is
 [`assurance/integrations.yaml`](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
+Coverage applies only to actions the host exposes through the named boundary.
+It does not imply syscall, packet, or arbitrary subprocess inspection.
 
 ## Choosing the right path
 

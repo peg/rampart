@@ -12,7 +12,7 @@ The report evaluates four areas of Rampart's enforcement:
 
 | Control | Name | What it checks |
 |---------|------|----------------|
-| RC-1 | Tool Call Authorization | All tool calls are evaluated against policy before executing |
+| RC-1 | Tool Call Authorization | Observed Rampart decisions show policy evaluation at the configured boundary |
 | RC-2 | Audit Logging | A tamper-evident audit chain is maintained |
 | RC-3 | Human-in-the-Loop | Sensitive operations require human approval |
 | RC-4 | Data Exfiltration Prevention | Credential and sensitive path access is blocked |
@@ -104,6 +104,9 @@ JSON output includes the full evidence array per control, suitable for internal 
 Checks that Rampart is actively evaluating tool calls. Passes if:
 - Audit logs exist with allow or deny decisions
 - No evidence of policy bypass
+
+This is evidence about calls present in Rampart's audit period, not proof that
+the host exposed every possible action to Rampart.
 
 ### RC-2 — Audit Logging
 
