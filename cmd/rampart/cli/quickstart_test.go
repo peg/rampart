@@ -242,6 +242,12 @@ func TestQuickstartHooksConfigured_ClaudeCode(t *testing.T) {
 					"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
 				},
 			},
+			"PostToolUse": []any{
+				map[string]any{
+					"matcher": ".*",
+					"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+				},
+			},
 			"PostToolUseFailure": []any{
 				map[string]any{
 					"matcher": ".*",

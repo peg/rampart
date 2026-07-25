@@ -117,4 +117,7 @@ A: Add an allow rule to your policy, or use `action: ask` so you decide per-inst
 A: Yes — Rampart hooks into Claude Code's hook system, which operates independently of the permissions mode.
 
 **Q: What if Rampart's service goes down?**  
-A: Rampart prints `WARNING: rampart serve unreachable` to stderr and falls back to `hookAsk` — Claude Code shows its standard permission prompt for each tool call. You won't get locked out, but you lose policy enforcement until the service restarts.
+A: Core allow/deny policy evaluation runs inside `rampart hook`, so it continues
+without the background service. Approval APIs, dashboard mirroring, and other
+service-backed features are unavailable until `rampart serve` returns. Invalid
+or unreadable local policy fails closed.

@@ -144,7 +144,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 
 | Agent | Setup command | Integration |
 |-------|--------------|-------------|
-| **Claude Code** | `rampart setup claude-code` | Native `PreToolUse` hooks via `~/.claude/settings.json` |
+| **Claude Code** | `rampart setup claude-code` | Native pre/post tool hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart protect openclaw` | Zero-config native guard + active verification |
 | **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
@@ -174,7 +174,10 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 
 ## Claude Code
 
-Native integration through Claude Code's hook system. Every Bash command, file read, and write goes through Rampart before execution:
+Native integration through Claude Code's hook system. Current shell, file,
+network, MCP, subagent, and related tool calls go through Rampart before
+execution. Successful tool responses are scanned and policy-blocked output is
+redacted before the model sees it:
 
 ```bash
 # Install background service

@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,18 @@ from typing import Any
 REPO_ROOT = Path(
     os.environ.get("RAMPART_COMPAT_REPO_ROOT", Path(__file__).resolve().parents[1])
 ).expanduser().absolute()
+
+
+def remove_temp_tree(path: Path) -> None:
+    """Remove Go module caches even though downloaded module files are read-only."""
+
+    def make_writable_and_retry(func: Any, item: str, _: Any) -> None:
+        parent = Path(item).parent
+        os.chmod(parent, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        os.chmod(item, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        func(item)
+
+    shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
 class RampartStub(BaseHTTPRequestHandler):
@@ -372,7 +385,7 @@ def main() -> int:
         if args.keep_temp:
             print(f"kept temporary directory: {temp}", file=sys.stderr)
         else:
-            shutil.rmtree(temp, ignore_errors=True)
+            remove_temp_tree(temp)
 
 
 if __name__ == "__main__":

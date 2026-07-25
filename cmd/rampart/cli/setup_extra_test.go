@@ -20,8 +20,8 @@ func TestHasRampartHook(t *testing.T) {
 		{"empty", claudeSettings{}, false},
 		{"no hooks", claudeSettings{"other": "value"}, false},
 		{"hooks but no PreToolUse", claudeSettings{"hooks": map[string]any{}}, false},
-		// PreToolUse alone is not enough — PostToolUseFailure must also be present
-		// so that existing installs are upgraded to include the new hook.
+		// PreToolUse alone is not enough — both post events must also be present
+		// so that existing installs are upgraded to the complete lifecycle.
 		{"with rampart PreToolUse only (incomplete)", claudeSettings{
 			"hooks": map[string]any{
 				"PreToolUse": []any{
@@ -32,11 +32,33 @@ func TestHasRampartHook(t *testing.T) {
 				},
 			},
 		}, false},
-		{"with both PreToolUse and PostToolUseFailure (complete)", claudeSettings{
+		{"missing PostToolUse (incomplete)", claudeSettings{
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
 						"matcher": "Bash",
+						"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					},
+				},
+				"PostToolUseFailure": []any{
+					map[string]any{
+						"matcher": ".*",
+						"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					},
+				},
+			},
+		}, false},
+		{"with PreToolUse and both post events (complete)", claudeSettings{
+			"hooks": map[string]any{
+				"PreToolUse": []any{
+					map[string]any{
+						"matcher": ".*",
+						"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					},
+				},
+				"PostToolUse": []any{
+					map[string]any{
+						"matcher": ".*",
 						"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
 					},
 				},
@@ -75,6 +97,7 @@ func TestHasRampartInMatcher(t *testing.T) {
 		want    bool
 	}{
 		{"rampart hook", map[string]any{"hooks": []any{map[string]any{"command": "rampart hook"}}}, true},
+		{"quoted current hook", map[string]any{"hooks": []any{map[string]any{"command": "'/opt/Rampart App/rampart' hook --format claude-code"}}}, true},
 		{"other hook", map[string]any{"hooks": []any{map[string]any{"command": "other"}}}, false},
 		{"no hooks key", map[string]any{"matcher": "Bash"}, false},
 		{"empty hooks", map[string]any{"hooks": []any{}}, false},
@@ -125,11 +148,41 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 
 	var settings map[string]any
 	json.Unmarshal(data, &settings)
-	// setup now writes an absolute path (e.g. "/usr/local/bin/rampart hook"),
-	// so hasRampartHook (which checks for bare "rampart hook") won't match in tests.
-	// Instead, verify a hook command ending in " hook" exists in the raw JSON.
-	if !strings.Contains(string(data), " hook\"") {
+	// Setup writes an absolute, shell-quoted path and an explicit hook format.
+	if !strings.Contains(string(data), "hook --format claude-code") {
 		t.Errorf("rampart hook not found in settings; got: %s", data)
+	}
+	hooks := settings["hooks"].(map[string]any)
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+		if entries, ok := hooks[event].([]any); !ok || len(entries) != 1 {
+			t.Errorf("expected one %s matcher, got %#v", event, hooks[event])
+		}
+	}
+
+	// A second run must recognize the shell-quoted current command and avoid
+	// duplicating any lifecycle matcher.
+	second := newSetupClaudeCodeCmd(opts)
+	var secondOut strings.Builder
+	second.SetOut(&secondOut)
+	second.SetErr(&errOut)
+	if err := second.Execute(); err != nil {
+		t.Fatalf("second setup failed: %v", err)
+	}
+	if !strings.Contains(secondOut.String(), "already configured") {
+		t.Fatalf("second setup did not report idempotency: %s", secondOut.String())
+	}
+	data, err = os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	hooks = settings["hooks"].(map[string]any)
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+		if entries := hooks[event].([]any); len(entries) != 1 {
+			t.Errorf("second setup duplicated %s: %#v", event, entries)
+		}
 	}
 }
 
@@ -172,11 +225,14 @@ func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
 	claudeDir := filepath.Join(tmpHome, ".claude")
 	os.MkdirAll(claudeDir, 0o755)
 
-	// Both PreToolUse and PostToolUseFailure must be present for "already configured".
+	// All three lifecycle events must be present for "already configured".
 	settings := map[string]any{
 		"hooks": map[string]any{
 			"PreToolUse": []any{
 				map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "rampart hook"}}},
+			},
+			"PostToolUse": []any{
+				map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": "rampart hook"}}},
 			},
 			"PostToolUseFailure": []any{
 				map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": "rampart hook"}}},

@@ -80,6 +80,12 @@ WebSocket client that connects to an OpenClaw gateway. This is the older bridge-
 `PreToolUse` and `PostToolUse` hooks shared by Codex CLI, IDE, and desktop.
 This is the preferred Codex path and preserves Codex's native sandbox.
 
+**Claude Code lifecycle hooks** — `rampart setup claude-code` installs
+user-level `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` hooks.
+Pre-tool policy controls execution; post-tool policy can replace denied
+response content with shape-preserving redacted output before the next model
+turn.
+
 **`rampart wrap`** — Wrap any process. No code changes, no config beyond a policy file. The shell shim intercepts commands transparently. Best for: agents without a native hook or plugin, and standalone scripts.
 
 **HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.

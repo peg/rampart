@@ -36,19 +36,26 @@ This split is deliberate. Secret stores are too dangerous to expose silently. Bu
 rampart setup claude-code
 ```
 
-That's it. This installs hooks into Claude Code's hook system that intercept every:
+That's it. This installs wildcard `PreToolUse`, `PostToolUse`, and
+`PostToolUseFailure` hooks. Rampart currently classifies:
 
-- **Bash command** (`exec`)
-- **File read** (`read`)
-- **File write/edit** (`write`)
+- **Bash, PowerShell, and Monitor commands** (`exec`)
+- **Read, Glob, Grep, and LSP calls** (`read`)
+- **Write, Edit, NotebookEdit, and worktree creation** (`write`)
+- **WebFetch and WebSearch calls** (`fetch`)
+- **MCP tools** (`mcp`)
+- **Agent and Workflow delegation** (`agent`)
 
 ## How It Works
 
-Claude Code has a built-in [hook system](https://docs.anthropic.com/en/docs/claude-code/hooks) that allows external tools to evaluate tool calls before they execute. Rampart registers as a hook handler.
+Claude Code has a built-in [hook system](https://code.claude.com/docs/en/hooks)
+that allows external tools to evaluate calls before they execute and replace
+tool output before the next model turn. Rampart registers as a hook handler.
 
 ```
-Claude Code → Tool Call → rampart hook → Policy Engine → Allow/Deny
-                                                       → Audit Trail
+Claude Code → PreToolUse  → Rampart policy → Allow/Deny/Ask
+            → tool runs
+            → PostToolUse → Response policy → Pass/Redact + Audit
 ```
 
 When Claude Code wants to run a command, it sends the tool call to `rampart hook` via stdin. Rampart evaluates it against your policies and returns a JSON response:
@@ -66,7 +73,10 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 
 **Ask behavior:** When a policy action is `ask`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt, so the user approves or denies directly in the Claude Code UI.
 
-Denied commands never execute. Claude Code receives the denial reason and can explain it to the user.
+Denied calls never execute. If a response-side rule denies successful tool
+output, Rampart returns a shape-preserving `updatedToolOutput` with string
+content redacted and a block reason. The tool has already run, but the original
+content is not passed into Claude's next model turn.
 
 ## Usage
 
@@ -113,7 +123,8 @@ This removes the Rampart hooks from Claude Code's settings. Your policies and au
 cat ~/.claude/settings.json
 ```
 
-You should see Rampart entries for `PreToolUse` hooks.
+You should see Rampart entries for `PreToolUse`, `PostToolUse`, and
+`PostToolUseFailure`.
 
 ### Test a decision
 

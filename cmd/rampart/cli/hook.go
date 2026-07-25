@@ -60,6 +60,7 @@ type hookDecision struct {
 	PermissionDecision       string `json:"permissionDecision,omitempty"`
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
 	AdditionalContext        string `json:"additionalContext,omitempty"`
+	UpdatedToolOutput        any    `json:"updatedToolOutput,omitempty"`
 }
 
 // clineHookInput is the JSON sent by Cline on stdin for PreToolUse hooks.
@@ -93,6 +94,7 @@ type hookParseResult struct {
 	PolicyPaths   []string // every independently evaluated path in a batched write
 	Agent         string
 	Response      string // non-empty for PostToolUse events
+	RawResponse   map[string]any
 	RunID         string // run ID derived from session_id (or env overrides)
 	HookEventName string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
 	SessionID     string // raw session_id from Claude Code input (for session state)
@@ -623,7 +625,16 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			switch decision.Action {
 			case engine.ActionDeny:
 				if isPostToolUse {
-					return outputHookResult(cmd, format, hookBlock, true, reasonMsg, cmdStr, decision.Suggestions...)
+					return outputHookResultWithResponse(
+						cmd,
+						format,
+						hookBlock,
+						true,
+						reasonMsg,
+						cmdStr,
+						redactClaudeToolOutput(parsed.RawResponse),
+						decision.Suggestions...,
+					)
 				}
 				return outputHookResult(cmd, format, hookDeny, false, reasonMsg, cmdStr, decision.Suggestions...)
 			case engine.ActionAsk:
@@ -763,6 +774,19 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	if params == nil {
 		params = map[string]any{}
 	}
+	// Monitor can either run a command or open a WebSocket. Normalize the
+	// WebSocket form to fetch with a top-level URL so network policies apply.
+	if input.ToolName == "Monitor" {
+		if websocket, ok := params["ws"].(map[string]any); ok {
+			toolType = "fetch"
+			normalized := make(map[string]any, len(params)+1)
+			for key, value := range params {
+				normalized[key] = value
+			}
+			normalized["url"] = websocket["url"]
+			params = normalized
+		}
+	}
 
 	result := &hookParseResult{
 		Tool:          toolType,
@@ -777,6 +801,7 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	// Extract response text from PostToolUse tool_response.
 	if len(input.ToolResponse) > 0 {
 		result.Response = extractToolResponse(input.ToolResponse)
+		result.RawResponse = input.ToolResponse
 	}
 
 	return result, nil
@@ -802,6 +827,33 @@ func extractToolResponse(resp map[string]any) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+const redactedToolOutput = "[blocked by Rampart response policy]"
+
+// redactClaudeToolOutput preserves the host's response shape while removing
+// every string value. Claude Code validates built-in updatedToolOutput values
+// against the original tool schema, so replacing the response with a scalar
+// would be ignored for structured tools such as Bash.
+func redactClaudeToolOutput(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = redactClaudeToolOutput(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for index, item := range typed {
+			out[index] = redactClaudeToolOutput(item)
+		}
+		return out
+	case string:
+		return redactedToolOutput
+	default:
+		return value
+	}
 }
 
 // parseClineInput parses Cline hook input format
@@ -850,26 +902,37 @@ func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog
 
 // mapClaudeCodeTool maps Claude Code tool names to Rampart tool types.
 func mapClaudeCodeTool(toolName string) string {
+	if strings.HasPrefix(toolName, "mcp__") {
+		return "mcp"
+	}
 	switch toolName {
-	case "Bash":
+	case "Bash", "PowerShell", "Monitor":
 		return "exec"
-	case "Read", "ReadFile":
+	case "Read", "ReadFile", "Glob", "Grep", "LSP":
 		return "read"
-	case "Write", "WriteFile", "Edit", "EditFile":
+	case "Write", "WriteFile", "Edit", "EditFile", "NotebookEdit", "EnterWorktree":
 		return "write"
-	case "WebFetch", "Fetch", "web_search", "web_fetch":
+	case "WebFetch", "WebSearch", "Fetch", "web_search", "web_fetch":
 		return "fetch"
 	case "memory":
 		return "memory"
 	case "code_execution":
 		return "exec"
-	case "tool_search":
+	case "ToolSearch", "tool_search", "ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers", "Skill":
 		return "read"
-	case "Task":
+	case "Task", "Agent", "Workflow":
 		// Sub-agent spawn: the orchestrator is delegating a task to a new agent.
 		// Mapped to "agent" so policies can match `tool: ["agent"]` and watch
 		// displays it distinctly from exec/read/write.
 		return "agent"
+	case "CronCreate", "CronDelete":
+		return "process"
+	case "CronList":
+		return "read"
+	case "Artifact":
+		return "message"
+	case "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "ExitWorktree", "EndConversation":
+		return "interact"
 	default:
 		// NOTE: Don't log here - this function is called before the logger is available,
 		// and any stderr output causes Claude Code to report "hook error".
@@ -942,6 +1005,19 @@ func validateToolUseID(id string) error {
 // (Cline has no native ask equivalent).
 // suggestions contains ready-to-run "rampart allow ..." commands shown on deny.
 func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionType, isPostToolUse bool, reason string, command string, suggestions ...string) error {
+	return outputHookResultWithResponse(cmd, format, decision, isPostToolUse, reason, command, nil, suggestions...)
+}
+
+func outputHookResultWithResponse(
+	cmd *cobra.Command,
+	format string,
+	decision hookDecisionType,
+	isPostToolUse bool,
+	reason string,
+	command string,
+	updatedToolOutput any,
+	suggestions ...string,
+) error {
 	// NOTE: Do NOT print to stderr for Claude Code hook decisions — Claude Code
 	// can interpret stderr as a hook failure. The structured JSON response carries
 	// deny/ask reasons. Keep Cline's historical stderr deny output for now.
@@ -1017,6 +1093,12 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 			// PostToolUse uses top-level decision/reason per Claude Code docs.
 			out.Decision = "block"
 			out.Reason = "Rampart: " + reason
+			if updatedToolOutput != nil {
+				out.HookSpecificOutput = &hookDecision{
+					HookEventName:     "PostToolUse",
+					UpdatedToolOutput: updatedToolOutput,
+				}
+			}
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}

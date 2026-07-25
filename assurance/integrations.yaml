@@ -65,7 +65,7 @@ integrations:
       file_read: tested
       file_write: tested
       network: tested
-      mcp: unknown
+      mcp: tested
       subagents: partial
     degraded:
       policy_unavailable: local
@@ -87,10 +87,14 @@ integrations:
       - path: cmd/rampart/cli/setup_test.go
         kind: unit
         proves: Setup preserves existing settings while installing required hook events.
+      - path: scripts/compat-claude-host.sh
+        kind: integration
+        proves: An opt-in state-isolated harness can prove deny, execution, and pre/post correlation through a real Claude Code process.
     limitations:
       - No rolling latest-Claude compatibility job currently exercises the installed host.
       - rampart verify policy proves policy behavior but does not prove Claude loaded or invoked the hook.
-      - MCP, subagent, hook-crash, and host-timeout behavior need live conformance tests.
+      - The opt-in host harness requires an authenticated Claude Code installation; a passing authenticated host run is still pending.
+      - Subagent, hook-crash, and host-timeout behavior need live conformance tests.
 
   - id: cline
     display_name: Cline
@@ -183,7 +187,7 @@ integrations:
     service_required: true
     upstream_ci: rolling_latest
     coverage:
-      shell: tested
+      shell: verified
       file_read: tested
       file_write: tested
       network: tested
@@ -206,8 +210,11 @@ integrations:
       - path: scripts/compat-hermes-latest.py
         kind: upstream_latest
         proves: Latest Hermes discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
+      - path: scripts/compat-hermes-host.sh
+        kind: live
+        proves: An opt-in auth-minimized harness proves deny and allowed execution through a real isolated Hermes model/tool loop.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.
       - Read-only tools may be configured fail-open when Rampart is unavailable.
-      - Full CLI, gateway, delegated-agent, and approved-execution E2E are not yet present.
+      - Gateway, delegated-agent, and approved-execution E2E are not yet present.
