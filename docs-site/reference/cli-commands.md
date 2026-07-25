@@ -30,6 +30,7 @@ policy authoring is required.
 ```bash
 rampart protect                       # Detect and protect supported installed agents
 rampart protect gemini                # Protect only Gemini CLI
+rampart protect copilot               # Protect Copilot CLI and VS Code agent sessions
 rampart protect openclaw              # Install, activate, restart, and verify
 rampart protect openclaw --reinstall  # Replace the plugin even when versions match
 rampart protect openclaw --no-restart # Configure without restarting the gateway
@@ -48,6 +49,7 @@ rampart verify claude-code     # Verify Claude hook installation and adapter den
 rampart verify cline           # Verify Cline hook installation and adapter denial
 rampart verify codex           # Verify Codex hook installation and adapter denial
 rampart verify gemini          # Verify Gemini hook installation and adapter denial
+rampart verify copilot         # Verify shared Copilot hook and dual-host denial
 rampart verify policy          # Verify the local Rampart policy path
 rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
@@ -122,6 +124,27 @@ Rampart writes wildcard `BeforeTool` and `AfterTool` entries to
 Allowed calls continue through Gemini CLI's own permission checks. Gemini's
 hook protocol has no native ask result, so approval-required calls use Rampart's
 external queue and deny when `rampart serve` is unavailable.
+
+### `rampart setup copilot`
+
+Install one shared hook integration for GitHub Copilot CLI and VS Code agent
+sessions.
+
+```bash
+rampart setup copilot                   # Install the shared user hook
+rampart setup copilot --force           # Replace a foreign rampart.json file
+rampart setup copilot --remove          # Remove the managed user hook
+rampart setup copilot --policy          # Elevated: install Copilot CLI machine policy
+rampart setup copilot --policy --remove # Elevated: remove the CLI machine policy
+```
+
+Rampart writes `$COPILOT_HOME/hooks/rampart.json` (normally
+`~/.copilot/hooks/rampart.json`) with PascalCase `PreToolUse` and `PostToolUse`
+events. Copilot CLI emits the VS Code-compatible payload for these events, so
+the same adapter protects both hosts. The `--policy` form is Copilot CLI-only;
+managed VS Code deployment requires the user hook plus VS Code enterprise/MDM
+controls. Copilot CLI hook timeouts are upstream fail-open, including policy
+hooks.
 
 ### `rampart setup` (interactive)
 

@@ -275,3 +275,50 @@ integrations:
       - Gemini hooks do not currently expose a native ask result, so approval actions require rampart serve and deny when that service is unavailable.
       - An unexpected hook crash or host timeout follows Gemini CLI behavior and is not claimed fail-closed.
       - Physical Windows host proof and completed authenticated live-host proof are still pending.
+
+  - id: github_copilot
+    display_name: GitHub Copilot CLI / VS Code
+    support_tier: supported
+    setup_command: rampart setup copilot
+    boundary: native_hook
+    platforms: [linux, macos, windows]
+    service_required: false
+    upstream_ci: rolling_latest
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: tested
+      mcp: tested
+      subagents: partial
+    degraded:
+      policy_unavailable: local
+      adapter_error: mixed
+      timeout: mixed
+    approval: native
+    verification:
+      level: active
+      command: rampart verify copilot
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_copilot_test.go
+        kind: unit
+        proves: Copilot CLI and VS Code payloads normalize to shared policy surfaces, multi-file writes evaluate every path, unknown future pre-call tools fail closed, and decisions include both host schemas.
+      - path: cmd/rampart/cli/setup_copilot_test.go
+        kind: unit
+        proves: Setup generates the shared cross-platform user hook idempotently, refuses to overwrite foreign files, and removes only Rampart-owned configuration.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification invokes the real adapter with a destructive canary and requires CLI and VS Code denials plus session-correlated audit output.
+      - path: scripts/compat-copilot-latest.mjs
+        kind: upstream_latest
+        proves: The latest published Copilot CLI starts with isolated state while the generated shared hook schema and destructive denial adapter are checked.
+    limitations:
+      - VS Code agent hooks are an upstream Preview feature and their configuration or behavior may change.
+      - Copilot CLI command-hook crashes and non-zero exits fail closed for PreToolUse, but every CLI hook timeout is fail-open, including administrator policy hooks.
+      - VS Code blocks on exit code 2 but treats other non-zero exits as warnings; Rampart returns structured decisions with exit code 0, and does not claim unexpected VS Code adapter crashes fail closed.
+      - The machine-wide --policy hook is supported by Copilot CLI only; VS Code requires the user hook plus separately managed VS Code enterprise settings and file deployment.
+      - User hooks can be modified by the user. Enterprise enforcement requires administrator-owned Copilot CLI policy hooks or OS/MDM controls around the VS Code hook file.
+      - The ordinary verifier exercises installed configuration and the Rampart adapter, not an authenticated model/tool invocation through either host.
+      - Copilot cloud agent does not load local user or administrator hook files; repository hooks require a separately deployed repository configuration.

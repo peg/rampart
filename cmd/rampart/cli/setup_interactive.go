@@ -64,6 +64,11 @@ func detectAgents() []agentInfo {
 			SetupCmd: "gemini",
 		},
 		{
+			Name:     "GitHub Copilot CLI / VS Code",
+			HasSetup: true,
+			SetupCmd: "copilot",
+		},
+		{
 			Name:      "Aider",
 			HasSetup:  false,
 			ManualCmd: "rampart wrap -- aider",
@@ -87,9 +92,10 @@ func detectAgents() []agentInfo {
 		agents[3].Detected = env.HasCodex
 		home, _ := os.UserHomeDir()
 		agents[4].Detected = integrationBinaryOrPathInstalled("gemini", filepath.Join(home, ".gemini"))
-		agents[5].Detected = env.HasAider
-		agents[6].Detected = env.HasCursor
-		agents[7].Detected = env.HasWindsurf
+		agents[5].Detected = copilotInstalledForHome(home)
+		agents[6].Detected = env.HasAider
+		agents[7].Detected = env.HasCursor
+		agents[8].Detected = env.HasWindsurf
 	}
 
 	return agents
@@ -238,6 +244,8 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 			fmt.Fprintf(out, "  • Codex: hooks in %s\n", filepath.Join(codexHomeDir(home), "hooks.json"))
 		case "gemini":
 			fmt.Fprintf(out, "  • Gemini CLI: hooks in %s\n", filepath.Join(home, ".gemini", "settings.json"))
+		case "copilot":
+			fmt.Fprintf(out, "  • GitHub Copilot CLI / VS Code: hooks in %s\n", filepath.Join(copilotHomeDir(home), "hooks", copilotRampartHookFile))
 		}
 	}
 	fmt.Fprintf(out, "  • Policy: %s\n", filepath.Join(home, ".rampart", "policies", selectedProfile+".yaml"))

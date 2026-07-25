@@ -91,6 +91,12 @@ Pre-tool policy controls execution; post-tool policy can replace denied
 response content with shape-preserving redacted output before the next model
 turn.
 
+**GitHub Copilot lifecycle hooks** — `rampart setup copilot` installs one
+PascalCase `PreToolUse`/`PostToolUse` hook file shared by Copilot CLI and VS
+Code's agent host. The adapter emits both hosts' decision schemas. Copilot CLI
+also supports an administrator-owned machine policy file; that policy directory
+does not apply to VS Code.
+
 **`rampart wrap`** — Wrap any process. No code changes, no config beyond a policy file. The shell shim intercepts commands transparently. Best for: agents without a native hook or plugin, and standalone scripts.
 
 **HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.

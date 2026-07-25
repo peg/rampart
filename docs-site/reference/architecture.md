@@ -191,7 +191,7 @@ preload/             C library for LD_PRELOAD
 
 | Pattern | How | Best For |
 |---------|-----|----------|
-| **Native hooks** | Agent's hook system calls `rampart hook` | Claude Code, Cline, Codex, Gemini CLI |
+| **Native hooks** | Agent's hook system calls `rampart hook` | Claude Code, Cline, Codex, Gemini CLI, GitHub Copilot CLI / VS Code |
 | **Native plugin** | Agent plugin forwards tool calls to Rampart before execution | OpenClaw |
 | **Wrap** | `$SHELL` shim intercepts commands | Aider, OpenCode |
 | **MCP Proxy** | Transparent MCP protocol proxy | Claude Desktop, Cursor |

@@ -189,6 +189,21 @@ func TestDetectProtectedAgents_GeminiHooks(t *testing.T) {
 	}
 }
 
+func TestDetectProtectedAgents_CopilotHooks(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
+	if err := installCopilotHooks(path, "rampart hook --format copilot", "rampart.exe hook --format copilot", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range detectProtectedAgents() {
+		if agent == "GitHub Copilot CLI / VS Code (hooks)" {
+			return
+		}
+	}
+	t.Fatalf("expected shared Copilot lifecycle hook detection, got %v", detectProtectedAgents())
+}
+
 func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)

@@ -214,6 +214,7 @@ Supports multiple formats:
   --format codex: Codex CLI, IDE, and desktop lifecycle hooks
   --format cline: Cline (VS Code extension) integration
   --format gemini: Gemini CLI lifecycle hooks
+  --format copilot: GitHub Copilot CLI and VS Code agent hooks
 
 Claude Code setup (add to ~/.claude/settings.json):
 {
@@ -249,8 +250,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
-			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" {
-				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, or gemini)", format)
+			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "copilot" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, or copilot)", format)
 			}
 
 			// Resolve serve-url and serve-token from standard config/env locations.
@@ -367,6 +368,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				parsed, err = parseClineInput(cmd.InOrStdin(), logger)
 			case "gemini":
 				parsed, err = parseGeminiInput(cmd.InOrStdin())
+			case "copilot":
+				parsed, err = parseCopilotInput(cmd.InOrStdin())
 			default:
 				// Should be unreachable — format is validated above.
 				// Explicit default prevents a nil parsed pointer reaching
@@ -751,7 +754,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
-	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini")
+	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini | copilot")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover via url/config/state; env: RAMPART_URL or RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
@@ -1042,6 +1045,8 @@ func outputHookResultWithResponse(
 	switch format {
 	case "gemini":
 		return outputGeminiHookResult(cmd.OutOrStdout(), decision, reason)
+	case "copilot":
+		return outputCopilotHookResult(cmd.OutOrStdout(), decision, reason)
 	case "cline":
 		// Cline has no "ask" — cancel on deny, block, and ask.
 		cancel := decision == hookDeny || decision == hookAsk || decision == hookBlock

@@ -11,12 +11,15 @@ import (
 
 func TestFindIntegrationDriverResolvesCanonicalIDsAndAliases(t *testing.T) {
 	for input, want := range map[string]string{
-		"openclaw":   "openclaw",
-		"claude":     "claude-code",
-		"codex":      "codex",
-		"gemini":     "gemini",
-		"gemini-cli": "gemini",
-		"cline":      "cline",
+		"openclaw":       "openclaw",
+		"claude":         "claude-code",
+		"codex":          "codex",
+		"gemini":         "gemini",
+		"gemini-cli":     "gemini",
+		"copilot":        "copilot",
+		"copilot-cli":    "copilot",
+		"github-copilot": "copilot",
+		"cline":          "cline",
 	} {
 		driver, ok := findIntegrationDriver(input)
 		if !ok || driver.ID != want || driver.VerifyTarget == "" || driver.Installed == nil || driver.VerifyChecks == nil {
@@ -33,7 +36,7 @@ func TestDetectInstalledIntegrationDriversUsesIsolatedHome(t *testing.T) {
 	testSetHome(t, home)
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("CODEX_HOME", "")
-	for _, dir := range []string{filepath.Join(home, ".claude"), filepath.Join(home, ".gemini")} {
+	for _, dir := range []string{filepath.Join(home, ".claude"), filepath.Join(home, ".gemini"), filepath.Join(home, ".copilot")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -46,7 +49,7 @@ func TestDetectInstalledIntegrationDriversUsesIsolatedHome(t *testing.T) {
 	for _, driver := range drivers {
 		ids = append(ids, driver.ID)
 	}
-	if len(ids) != 2 || ids[0] != "claude-code" || ids[1] != "gemini" {
-		t.Fatalf("detected IDs = %#v, want claude-code and gemini", ids)
+	if len(ids) != 3 || ids[0] != "claude-code" || ids[1] != "gemini" || ids[2] != "copilot" {
+		t.Fatalf("detected IDs = %#v, want claude-code, gemini, and copilot", ids)
 	}
 }

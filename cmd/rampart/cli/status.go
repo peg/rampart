@@ -411,6 +411,11 @@ func detectProtectedAgents() []string {
 		agents = append(agents, "Gemini CLI (hooks)")
 	}
 
+	// Shared user hooks loaded by Copilot CLI and VS Code's agent host.
+	if copilotHooksConfiguredForHome(home) {
+		agents = append(agents, "GitHub Copilot CLI / VS Code (hooks)")
+	}
+
 	// Hermes Agent user plugin installed by `rampart setup hermes`.
 	if state := detectHermesPluginStateForHome(home); state.Installed && state.Enabled && state.ManifestValid && state.HookDeclared {
 		agents = append(agents, "Hermes Agent (plugin)")

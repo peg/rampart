@@ -9,6 +9,25 @@ permissions:
   contents: read
 
 jobs:
+  copilot-latest:
+    name: Copilot CLI latest isolated hook gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Validate against latest Copilot CLI
+        run: node scripts/compat-copilot-latest.mjs
+
   gemini-latest:
     name: Gemini CLI latest isolated hook gate
     runs-on: ubuntu-latest

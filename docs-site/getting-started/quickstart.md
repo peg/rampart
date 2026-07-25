@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: "Get Rampart protecting Claude Code, Codex, Cline, or OpenClaw in minutes. Install, pick your integration path, and verify coverage clearly."
+description: "Get Rampart protecting Claude Code, Codex, Copilot, Cline, Gemini CLI, or OpenClaw in minutes."
 ---
 
 # Quick Start
@@ -73,6 +73,21 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
     ```bash
     rampart setup codex
     rampart verify codex
+    ```
+
+=== "Gemini CLI"
+
+    ```bash
+    rampart setup gemini
+    rampart verify gemini
+    ```
+
+=== "GitHub Copilot"
+
+    ```bash
+    # Covers Copilot CLI and VS Code agent sessions
+    rampart setup copilot
+    rampart verify copilot
     ```
 
 === "Any CLI Agent"

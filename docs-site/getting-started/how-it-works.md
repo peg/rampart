@@ -14,7 +14,7 @@ You don't usually run this directly. `rampart quickstart` and the service-backed
 
 **What happens if it's not running?** Behavior depends on the integration:
 
-- **Claude Code / Cline / Codex / Gemini CLI native hooks** can still evaluate policy locally for direct hook decisions.
+- **Claude Code / Cline / Codex / Gemini CLI / GitHub Copilot native hooks** can still evaluate policy locally for direct hook decisions.
 - **OpenClaw native plugin** depends on `rampart serve`; sensitive tools such as `exec` and `write` block when the service is unavailable, while explicitly configured lower-risk `failOpenTools` can still proceed.
 - **Wrapper / preload / API integrations** typically need the service path and may fail open or fail closed depending on configuration.
 

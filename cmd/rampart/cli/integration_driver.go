@@ -69,6 +69,14 @@ func supportedIntegrationDrivers() []integrationDriver {
 			},
 		},
 		{
+			ID: "copilot", Aliases: []string{"copilot-cli", "github-copilot"}, DisplayName: "GitHub Copilot CLI / VS Code", Boundary: "native hooks", VerifyTarget: "copilot",
+			Installed:    func(home string) bool { return copilotInstalledForHome(home) },
+			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupCopilotCmd() },
+			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
+				return []verificationCheck{verifyCopilotHooksInstalled(), verifyCopilotHookAdapter(ctx)}
+			},
+		},
+		{
 			ID: "cline", DisplayName: "Cline", Boundary: "native hooks", VerifyTarget: "cline",
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("cline", filepath.Join(home, "Documents", "Cline"))

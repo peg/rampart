@@ -52,6 +52,13 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
       <td data-label="Support tier"><strong>Supported</strong><br>enterprise/API-key Gemini CLI; adapter-tested; authenticated host proof pending</td>
     </tr>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>GitHub Copilot CLI / VS Code</strong></td>
+      <td data-label="Best path">Shared native lifecycle hooks<br><code>rampart setup copilot</code></td>
+      <td data-label="rampart serve">Not required for local enforcement</td>
+      <td data-label="Approval UX">Native Copilot prompt</td>
+      <td data-label="Support tier"><strong>Supported</strong> for CLI adapter<br>VS Code hook host is upstream Preview</td>
+    </tr>
     <tr class="tier-recommended">
       <td data-label="Surface"><strong>OpenClaw &gt;= 2026.5.2</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
@@ -113,6 +120,9 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 - **Gemini CLI** → native `BeforeTool`/`AfterTool` hooks cover documented shell,
   file, network, MCP, memory, and delegated-agent calls; the adapter is actively
   verifiable, while a real authenticated host proof is still pending
+- **GitHub Copilot CLI / VS Code** → one shared user hook covers both hosts;
+  Copilot CLI also supports a separate administrator-owned machine policy hook,
+  while VS Code hooks remain an upstream Preview surface
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path with a completed isolated
   Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than resume
@@ -122,12 +132,16 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline / Codex / Gemini CLI native hooks**: local allow/deny policy
+- **Claude Code / Cline / Codex / Gemini CLI / GitHub Copilot native hooks**: local allow/deny policy
   evaluation works when `rampart serve` is down. Rampart-handled parse and
   policy errors deny in enforce mode, but an unexpected hook crash or host
   timeout follows the host's behavior. Dashboard features and external
   approvals need the service; Codex approval-required actions deny when its
   queue is unavailable.
+- **GitHub Copilot**: native `ask` does not require the Rampart service. Copilot
+  CLI `PreToolUse` command errors deny, but CLI hook timeouts always fail open,
+  even for administrator policy hooks. VS Code blocks exit code 2 but treats
+  other hook errors as warnings; unexpected crashes are not claimed fail-closed.
 - **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed.
 - **Hermes Agent plugin**: depends on `rampart serve`; mutating/high-risk tools fail closed when unavailable, while explicitly configured read-only tools may fail open.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.

@@ -109,6 +109,21 @@ func TestVerifyGeminiHooksAndAdapterBlockCanary(t *testing.T) {
 	}
 }
 
+func TestVerifyCopilotHooksAndAdapterBlockCanary(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
+	if err := installCopilotHooks(path, "rampart hook --format copilot", "rampart.exe hook --format copilot", false); err != nil {
+		t.Fatal(err)
+	}
+	if check := verifyCopilotHooksInstalled(); check.Status != verificationPass {
+		t.Fatalf("unexpected installation check: %#v", check)
+	}
+	if check := verifyCopilotHookAdapter(context.Background()); check.Status != verificationPass {
+		t.Fatalf("unexpected adapter check: %#v", check)
+	}
+}
+
 func TestVerifyClaudeAndClineAdaptersBlockCanary(t *testing.T) {
 	testSetHome(t, t.TempDir())
 	for _, target := range []string{"claude-code", "cline"} {

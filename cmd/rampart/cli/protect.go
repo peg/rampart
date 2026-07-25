@@ -52,7 +52,7 @@ protects each one through its strongest available native boundary.`,
 					return fmt.Errorf("protect: detect installed agents: %w", err)
 				}
 				if len(detected) == 0 {
-					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Gemini CLI, Cline; Hermes remains experimental)")
+					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Gemini CLI, GitHub Copilot, Cline; Hermes remains experimental)")
 				}
 				drivers = detected
 				fmt.Fprintf(cmd.OutOrStdout(), "Detected %d supported agent(s): ", len(drivers))
@@ -66,7 +66,7 @@ protects each one through its strongest available native boundary.`,
 			} else {
 				driver, ok := findIntegrationDriver(target)
 				if !ok {
-					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, gemini, cline; Hermes remains experimental)", target)
+					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, gemini, copilot, cline; Hermes remains experimental)", target)
 				}
 				home, err := os.UserHomeDir()
 				if err != nil {

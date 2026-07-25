@@ -76,7 +76,7 @@ func newVerifyCmd() *cobra.Command {
 	var timeout time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "verify [openclaw|claude-code|cline|codex|gemini|policy]",
+		Use:   "verify [openclaw|claude-code|cline|codex|gemini|copilot|policy]",
 		Short: "Actively verify that agent safety boundaries really block",
 		Long: `Run non-destructive behavioral canaries against the live Rampart policy path.
 
@@ -101,7 +101,7 @@ implementation.`,
 			if target != "policy" {
 				driver, ok := findIntegrationDriver(target)
 				if !ok {
-					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, policy)", target)
+					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, copilot, policy)", target)
 				}
 				target = driver.VerifyTarget
 			}
@@ -206,7 +206,7 @@ func behavioralCanaries(target string) []behavioralCanary {
 			canaries[i].Agent = "rampart-verification"
 			canaries[i].Params["rampart_integration"] = "openclaw"
 		}
-	} else if target == "claude-code" || target == "cline" || target == "codex" || target == "gemini" {
+	} else if target == "claude-code" || target == "cline" || target == "codex" || target == "gemini" || target == "copilot" {
 		for i := range canaries {
 			canaries[i].Agent = target
 		}
@@ -468,6 +468,107 @@ func verifyGeminiHookAdapter(ctx context.Context) verificationCheck {
 		ID: "gemini-native-deny", Name: "Gemini CLI native deny response works",
 		Status: verificationPass, Expected: "structured deny and session-correlated audit", Actual: "deny + audit",
 		Message: "The live Rampart hook adapter returned Gemini CLI's deny schema and preserved session identity in audit",
+	}
+}
+
+func verifyCopilotHooksInstalled() verificationCheck {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return verificationCheck{
+			ID: "copilot-hook-installation", Name: "Copilot CLI / VS Code lifecycle hooks are installed",
+			Status: verificationUnverified, Actual: "home unavailable",
+			Message: "Could not locate the Copilot user hook directory",
+			Hint:    "Run `rampart setup copilot`, then rerun `rampart verify copilot`",
+		}
+	}
+	if !copilotHooksConfiguredForHome(home) {
+		return verificationCheck{
+			ID: "copilot-hook-installation", Name: "Copilot CLI / VS Code lifecycle hooks are installed",
+			Status: verificationFail, Expected: "PreToolUse and PostToolUse", Actual: "missing or incomplete",
+			Message: "Copilot is not configured to invoke Rampart for both lifecycle events",
+			Hint:    "Run `rampart setup copilot`, then restart Copilot CLI or reload VS Code",
+		}
+	}
+	return verificationCheck{
+		ID: "copilot-hook-installation", Name: "Copilot CLI / VS Code lifecycle hooks are installed",
+		Status: verificationPass, Expected: "PreToolUse and PostToolUse", Actual: "configured",
+		Message: "The shared Copilot user hook file contains both Rampart lifecycle hooks",
+	}
+}
+
+func verifyCopilotHookAdapter(ctx context.Context) verificationCheck {
+	auditDir, err := os.MkdirTemp("", "rampart-verify-copilot-*")
+	if err != nil {
+		return verificationCheck{
+			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+			Status: verificationUnverified, Actual: "temporary directory unavailable", Message: err.Error(),
+		}
+	}
+	defer os.RemoveAll(auditDir)
+
+	payload := `{
+		"session_id":"rampart-verification",
+		"cwd":".",
+		"hook_event_name":"PreToolUse",
+		"tool_name":"Bash",
+		"tool_use_id":"rampart-verification",
+		"tool_input":{"command":"rm -rf /"}
+	}`
+	var stdout, stderr bytes.Buffer
+	hookCmd := NewRootCmd(ctx, &stdout, &stderr)
+	hookCmd.SetIn(strings.NewReader(payload))
+	hookCmd.SetArgs([]string{"hook", "--format", "copilot", "--audit-dir", auditDir})
+	if err := hookCmd.Execute(); err != nil {
+		return verificationCheck{
+			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+			Status: verificationFail, Expected: "dual-host structured deny", Actual: "hook error", Message: err.Error(),
+		}
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		return verificationCheck{
+			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+			Status: verificationFail, Expected: "dual-host structured deny", Actual: strings.TrimSpace(stdout.String()),
+			Message: "Rampart's Copilot hook response was not valid JSON",
+		}
+	}
+	specific, _ := output["hookSpecificOutput"].(map[string]any)
+	if output["permissionDecision"] != "deny" || specific["permissionDecision"] != "deny" {
+		return verificationCheck{
+			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+			Status: verificationFail, Expected: "CLI and VS Code deny fields", Actual: strings.TrimSpace(stdout.String()),
+			Message: "The live adapter did not return both Copilot CLI and VS Code deny controls",
+		}
+	}
+	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
+	if len(auditMatches) != 1 {
+		return verificationCheck{
+			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+			Status: verificationFail, Expected: "deny audit", Actual: "audit record missing",
+			Message: "The Copilot hook denied the canary but did not produce an audit record",
+		}
+	}
+	auditData, err := os.ReadFile(auditMatches[0])
+	if err != nil {
+		return verificationCheck{
+			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+			Status: verificationFail, Expected: "deny audit", Actual: "audit unreadable", Message: err.Error(),
+		}
+	}
+	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
+	var auditRecord map[string]any
+	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil ||
+		auditRecord["agent"] != "github-copilot" || auditRecord["run_id"] != "rampart-verification" {
+		return verificationCheck{
+			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+			Status: verificationFail, Expected: "session-correlated deny audit", Actual: "correlation missing",
+			Message: "The Copilot hook audit did not preserve host session identity",
+		}
+	}
+	return verificationCheck{
+		ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
+		Status: verificationPass, Expected: "CLI + VS Code deny and session-correlated audit", Actual: "dual deny + audit",
+		Message: "The live adapter blocked the destructive canary for both Copilot hook schemas and preserved session identity",
 	}
 }
 

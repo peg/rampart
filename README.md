@@ -94,6 +94,10 @@ rampart verify codex
 rampart setup gemini
 rampart verify gemini
 
+# GitHub Copilot CLI and VS Code agent sessions
+rampart setup copilot
+rampart verify copilot
+
 # Any other agent (wraps $SHELL)
 rampart wrap -- your-agent
 ```
@@ -170,6 +174,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Gemini CLI** | `rampart setup gemini` | Native `BeforeTool`/`AfterTool` lifecycle hooks |
+| **GitHub Copilot** | `rampart setup copilot` | Shared native hooks for Copilot CLI and VS Code agent sessions |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -631,8 +636,10 @@ rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # OpenClaw native plugin integration
 rampart setup codex                          # Codex native lifecycle hooks
 rampart setup gemini                         # Gemini CLI native lifecycle hooks
+rampart setup copilot                        # Copilot CLI + VS Code shared native hooks
 rampart verify codex                         # Verify hook install + native deny response
 rampart verify gemini                        # Verify hook install + native deny response
+rampart verify copilot                       # Verify dual-host deny response + audit
 rampart setup <agent> --remove               # Clean uninstall
 
 # Run
@@ -700,6 +707,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Cline | `rampart setup cline` | Linux, macOS |
 | Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
 | Gemini CLI | `rampart setup gemini` | Linux, macOS |
+| GitHub Copilot CLI / VS Code | `rampart setup copilot` | Linux, macOS, Windows |
 | Claude Desktop MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |
