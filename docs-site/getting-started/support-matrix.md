@@ -29,7 +29,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Native hooks<br><code>rampart setup claude-code</code></td>
       <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
       <td data-label="Approval UX">Claude native approval prompt</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>2.1.220 mapping review; authenticated host proof pending</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>2.1.220 mapping review + isolated shell host proof</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Codex CLI, IDE, desktop</strong></td>
@@ -100,8 +100,8 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 ### Best default choices
 
 - **Claude Code** → current documented hook-visible tools are mapped and, in
-  enforce mode, unknown future pre-call tools deny; an authenticated real-host
-  pass is still pending
+  enforce mode, unknown future pre-call tools deny; an isolated Claude Code
+  2.1.220 shell deny/allow host run is recorded
 - **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path with a completed isolated

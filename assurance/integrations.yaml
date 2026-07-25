@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v1
 baseline_release: v1.3.0
-reviewed_at: "2026-07-24"
+reviewed_at: "2026-07-25"
 
 # This manifest records the guarantees Rampart can support with evidence today.
 # "tested" means the Rampart adapter or mapping is exercised in isolation.
@@ -62,7 +62,7 @@ integrations:
     service_required: false
     upstream_ci: none
     coverage:
-      shell: tested
+      shell: verified
       file_read: tested
       file_write: tested
       network: tested
@@ -74,10 +74,10 @@ integrations:
       timeout: host_defined
     approval: native
     verification:
-      level: policy_only
-      command: rampart verify policy
+      level: active
+      command: scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
       safe_canaries: true
-      host_boundary: false
+      host_boundary: true
     evidence:
       - path: cmd/rampart/cli/hook_test.go
         kind: unit
@@ -91,10 +91,13 @@ integrations:
       - path: scripts/compat-claude-host.sh
         kind: integration
         proves: An opt-in state-isolated harness can prove deny, execution, and pre/post correlation through a real Claude Code process.
+      - path: assurance/evidence/claude-host-2026-07-25.json
+        kind: live
+        proves: A completed macOS host run records blocked deny execution, successful allow execution, pre/post tool-call correlation, and isolated source-state use on Claude Code 2.1.220.
     limitations:
       - No rolling latest-Claude compatibility job currently exercises the installed host.
       - rampart verify policy proves policy behavior but does not prove Claude loaded or invoked the hook.
-      - The opt-in host harness requires an authenticated Claude Code installation; a passing authenticated host run is still pending.
+      - Re-running the opt-in host proof requires an authenticated Claude Code installation; on macOS its disposable home needs an ephemeral CLAUDE_CODE_OAUTH_TOKEN because it cannot use the source home's Keychain login directly.
       - Claude Code 2.1.220 is the latest version reviewed; its documented hook-visible tools are mapped, and in enforce mode future unknown PreToolUse tools deny until Rampart is updated.
       - Host-owned or server-side actions that do not emit lifecycle hooks are outside this boundary; Claude's EndConversation tool is a documented benign example.
       - Subagent, hook-crash, and host-timeout behavior need live conformance tests.

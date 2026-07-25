@@ -68,10 +68,10 @@ scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
 scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
 ```
 
-Claude host verification remains pending until the harness completes with an
-authenticated current Claude Code installation. On macOS the disposable HOME
-cannot use the account's Keychain login in Claude Code 2.1.220, so an ephemeral
-`CLAUDE_CODE_OAUTH_TOKEN` must be supplied for the proof; subprocess scrubbing
-prevents the harness from passing it to the Bash canary. The Hermes
-completed-run summary records the exact reviewed upstream version and
-behavioral checks.
+The completed Claude Code 2.1.220 macOS run proves shell deny, allowed
+execution, and pre/post identity correlation through an isolated real host
+process. On macOS the disposable HOME cannot use the account's Keychain login,
+so an ephemeral `CLAUDE_CODE_OAUTH_TOKEN` is required when re-running the proof;
+subprocess scrubbing prevents the harness from passing it to the Bash canary.
+The Claude and Hermes completed-run summaries record the exact reviewed
+upstream versions and behavioral checks.
