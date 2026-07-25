@@ -76,6 +76,55 @@ class HermesPluginTests(unittest.TestCase):
         self.assertEqual(params["touched_paths"], ["a.txt"])
         self.assertNotIn("replacement", json.dumps(params))
 
+    def test_patch_checks_every_path_and_deny_wins(self) -> None:
+        paths_seen = []
+
+        def requester(config, rampart_tool, payload):
+            self.assertEqual(rampart_tool, "edit")
+            path = payload["params"]["path"]
+            paths_seen.append(path)
+            if path == "secrets/.env":
+                return {"decision": "deny", "message": "protected environment file"}
+            return {"decision": "allow"}
+
+        result = plugin.evaluate_pre_tool_call(
+            "patch",
+            {
+                "mode": "patch",
+                "patch": (
+                    "*** Begin Patch\n"
+                    "*** Add File: safe.txt\n"
+                    "+safe\n"
+                    "*** Update File: secrets/.env\n"
+                    "@@\n-old\n+new\n"
+                    "*** Move to: archive/.env\n"
+                    "*** End Patch"
+                ),
+            },
+            requester=requester,
+        )
+
+        self.assertEqual(paths_seen, ["safe.txt", "secrets/.env"])
+        self.assertEqual(result["action"], "block")
+        self.assertIn("protected environment file", result["message"])
+
+    def test_oversized_patch_fails_closed_without_policy_requests(self) -> None:
+        patch = "\n".join(
+            f"*** Add File: generated/file-{index}.txt"
+            for index in range(plugin.MAX_PATCH_PATHS + 1)
+        )
+        requester = mock.Mock(return_value={"decision": "allow"})
+
+        result = plugin.evaluate_pre_tool_call(
+            "patch",
+            {"mode": "patch", "patch": patch},
+            requester=requester,
+        )
+
+        requester.assert_not_called()
+        self.assertEqual(result["action"], "block")
+        self.assertIn("split into smaller calls", result["message"])
+
     def test_preflight_endpoint_is_default(self) -> None:
         config = plugin.load_config({"serve_url": "http://example.invalid/base/", "timeout_ms": 250})
         self.assertEqual(config.endpoint_mode, "preflight")
