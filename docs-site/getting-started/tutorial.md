@@ -85,7 +85,9 @@ claude
 Every command Claude attempts runs through Rampart first. Most will pass through instantly — you'll never notice. The dangerous ones stop before they execute.
 
 !!! note "Different agents use different integration paths"
-    Claude Code and Cline use native hooks. OpenClaw uses a native plugin. Codex CLI uses a wrapper + preload path. The exact setup varies by agent, but `rampart quickstart` picks the right path automatically. See the [support matrix](support-matrix.md).
+    Claude Code, Cline, and Codex use native hooks. OpenClaw uses a native
+    plugin. The exact setup varies by agent, but `rampart quickstart` picks the
+    right path automatically. See the [support matrix](support-matrix.md).
 
 ---
 

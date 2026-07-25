@@ -31,12 +31,12 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Approval UX">Claude native approval prompt</td>
       <td data-label="Support tier"><strong>Supported</strong><br>host verification pending</td>
     </tr>
-    <tr class="tier-limited">
-      <td data-label="Surface"><strong>Codex CLI</strong></td>
-      <td data-label="Best path">Preload + wrapper<br><code>rampart setup codex</code></td>
-      <td data-label="rampart serve">Typically yes</td>
-      <td data-label="Approval UX">Wrapper/preload approval semantics</td>
-      <td data-label="Support tier"><strong>Limited</strong><br>subprocess defense in depth</td>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>Codex CLI, IDE, desktop</strong></td>
+      <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup codex</code></td>
+      <td data-label="rampart serve">Not required for local allow/deny;<br>required for approval queue</td>
+      <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>opt-in host proof available</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Cline</strong></td>
@@ -100,14 +100,14 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 ### Best default choices
 
 - **Claude Code** → strongest existing local-hook path; live host verification is still being added
-- **Codex CLI** → subprocess defense in depth only in v1.3.0; direct file and MCP tool calls are not covered
+- **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path for early testing; `ask` decisions block rather than resume
 - **Cline** → good supported path, but less polished approval UX than Claude Code
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline native hooks**: local policy evaluation still works when `rampart serve` is down, but dashboard features, approval APIs, and external approval state do not.
+- **Claude Code / Cline / Codex native hooks**: local allow/deny policy evaluation works when `rampart serve` is down, but dashboard features and external approvals do not. Codex approval-required actions deny when the queue is unavailable.
 - **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed.
 - **Hermes Agent plugin**: depends on `rampart serve`; mutating/high-risk tools fail closed when unavailable, while explicitly configured read-only tools may fail open.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.

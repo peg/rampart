@@ -39,6 +39,11 @@ lifecycle hooks remain outside this boundary. `rampart preload` remains an
 optional Unix defense-in-depth mechanism for other processes; it is no longer
 the primary Codex integration.
 
+If a future Codex release exposes an unfamiliar tool name through
+`PreToolUse`, Rampart denies it in enforce mode until that tool is classified.
+This prevents a new mutating surface from inheriting an unmatched allow rule.
+Monitor and audit modes remain observational.
+
 ## Decisions and approvals
 
 On allow, Rampart returns an empty hook response. This deliberately preserves
@@ -68,7 +73,19 @@ non-executing destructive-command canary through Rampart's live Codex adapter.
 It also runs the standard policy canaries when the Rampart service is
 available. This proves the installed configuration and adapter response; the
 assurance manifest separately records that a real Codex host-boundary test is
-still pending.
+not part of the ordinary CI gate.
+
+Maintainers can run the opt-in real-host check against a candidate binary:
+
+```bash
+scripts/compat-codex-host.sh --yes --rampart-bin ./rampart
+```
+
+It invokes Codex twice with harmless deny/allow shell canaries. The harness
+copies only `auth.json` into a disposable `CODEX_HOME`, uses ephemeral sessions,
+ignores user configuration, runs with Codex's `workspace-write` sandbox, and
+removes the credential copy on every exit. Pass `--artifacts DIR` to retain
+sanitized logs and a machine-readable summary.
 
 You can also inspect overall health:
 

@@ -199,7 +199,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart protect openclaw` | ✅ | ✅ | ❌ | ❌ |
 | `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
-| `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
+| `rampart setup codex` | ✅ (native hooks) | ✅ (native hooks) | ✅ PostToolUse | ❌ |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |
 | MCP proxy | ✅ | ✅ | ✅ | ❌ |
 

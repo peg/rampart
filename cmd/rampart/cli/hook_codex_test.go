@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -221,6 +223,7 @@ func TestParseCodexInputRejectsUnsafeOrUnsupportedPayloads(t *testing.T) {
 	tests := []string{
 		`{"session_id":"session","hook_event_name":"SessionStart","tool_name":"Bash","tool_use_id":"call","tool_input":{}}`,
 		`{"session_id":"session","hook_event_name":"PreToolUse","tool_name":"","tool_use_id":"call","tool_input":{}}`,
+		`{"session_id":"session","hook_event_name":"PreToolUse","tool_name":"future_mutating_tool","tool_use_id":"call","tool_input":{}}`,
 		`{"session_id":"","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"call","tool_input":{}}`,
 		`{"session_id":"session","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"","tool_input":{}}`,
 		`{"session_id":"session","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"call/unsafe","tool_input":{}}`,
@@ -229,6 +232,49 @@ func TestParseCodexInputRejectsUnsafeOrUnsupportedPayloads(t *testing.T) {
 		if _, err := parseCodexInput(strings.NewReader(payload)); err == nil {
 			t.Fatalf("expected payload to be rejected: %s", payload)
 		}
+	}
+}
+
+func TestCodexUnknownPreToolUseFailsClosed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", "")
+	policyPath := filepath.Join(home, "rampart.yaml")
+	if err := os.WriteFile(policyPath, []byte("version: \"1\"\ndefault_action: allow\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auditDir := filepath.Join(home, "audit")
+	payload := `{
+		"session_id":"session",
+		"hook_event_name":"PreToolUse",
+		"tool_name":"future_mutating_tool",
+		"tool_use_id":"call",
+		"tool_input":{"target":"outside-workspace"}
+	}`
+
+	var stdout bytes.Buffer
+	root := NewRootCmd(context.Background(), &stdout, io.Discard)
+	root.SetIn(strings.NewReader(payload))
+	root.SetArgs([]string{
+		"--config", policyPath,
+		"hook", "--format", "codex", "--audit-dir", auditDir,
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output %q: %v", stdout.String(), err)
+	}
+	specific, ok := output["hookSpecificOutput"].(map[string]any)
+	if !ok || specific["permissionDecision"] != "deny" {
+		t.Fatalf("unknown Codex tool must deny in enforce mode: %#v", output)
+	}
+	reason, _ := specific["permissionDecisionReason"].(string)
+	if !strings.Contains(reason, "unsupported Codex tool_name") {
+		t.Fatalf("deny reason = %q, want compatibility guidance", reason)
 	}
 }
 

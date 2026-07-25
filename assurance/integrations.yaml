@@ -164,11 +164,15 @@ integrations:
       - path: cmd/rampart/cli/verify_test.go
         kind: integration
         proves: Active verification checks installed hooks and runs a destructive canary through the live adapter.
+      - path: scripts/compat-codex-host.sh
+        kind: live
+        proves: An opt-in credential-isolated harness proves deny and allow behavior through a real ephemeral Codex process.
     limitations:
-      - Verification exercises the installed configuration and Rampart adapter but not a real Codex host invocation yet.
+      - The ordinary verification command exercises installed configuration and the adapter; the real Codex host check is a separate opt-in model invocation and is not run in regular CI.
       - Codex hosted tools and specialized local tool paths that opt out of lifecycle hooks are not covered.
       - Approval actions require rampart serve because Codex PreToolUse does not currently accept an ask decision.
       - Codex controls hook timeout behavior; a host timeout cannot be claimed fail-closed.
+      - The opt-in host harness is exercised on macOS/Linux; a physical Windows Codex host run is still pending.
 
   - id: hermes
     display_name: Hermes Agent

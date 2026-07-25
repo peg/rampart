@@ -42,3 +42,15 @@ command contained in `corpus.yaml`; cases are policy evaluations only.
 The public corpus contains mitigated regression cases only. Report suspected
 or unpatched bypasses privately through [`SECURITY.md`](../SECURITY.md);
 regression cases are published after a fix is available.
+
+Real Codex host verification is intentionally opt-in because it uses the
+maintainer's configured model:
+
+```bash
+scripts/compat-codex-host.sh --yes --rampart-bin ./rampart
+```
+
+The harness copies only Codex authentication into a disposable home, ignores
+user configuration, persists no session, and deletes the credential copy on
+every exit. Its offline test double runs as part of the lab-runner contract;
+ordinary CI does not make a model call.

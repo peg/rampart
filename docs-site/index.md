@@ -172,7 +172,7 @@ outcomes: {
 agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
 agents.openclaw -> intercept.plugin
-agents.codex -> intercept.preload
+agents.codex -> intercept.hooks
 agents.other -> intercept.mcp
 
 intercept.hooks -> engine
@@ -197,7 +197,7 @@ verify -> outcomes.approval
 | **Claude Code** | Native hooks | `rampart setup claude-code` |
 | **Cline** | Native hooks | `rampart setup cline` |
 | **OpenClaw** | Zero-config native guard | `rampart protect openclaw` |
-| **Codex CLI** | Wrapper + preload | `rampart setup codex` |
+| **Codex CLI, IDE, desktop** | Native lifecycle hooks | `rampart setup codex` |
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |

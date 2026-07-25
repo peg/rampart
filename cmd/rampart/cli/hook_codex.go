@@ -60,8 +60,19 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	mappedTool := mapCodexTool(input.ToolName)
+	// Codex adds tool surfaces over time. A newly hook-visible action must not
+	// inherit the policy's unmatched/default behavior before Rampart knows its
+	// security consequence. Deny the pre-call through the normal parse-failure
+	// protocol in enforce mode; monitor/audit modes remain observational.
+	if input.HookEventName == "PreToolUse" && mappedTool == "unknown" {
+		return nil, fmt.Errorf(
+			"hook: unsupported Codex tool_name %q; update Rampart before allowing this tool",
+			input.ToolName,
+		)
+	}
 	result := &hookParseResult{
-		Tool:          mapCodexTool(input.ToolName),
+		Tool:          mappedTool,
 		Params:        params,
 		Agent:         "codex",
 		RunID:         deriveRunID(input.SessionID),

@@ -1177,7 +1177,7 @@
             <div class="platform-grid reveal">
                 <div class="platform-card interactive"><h3>Linux: strongest path</h3><p><code>LD_PRELOAD</code>, wrappers, hooks, and file/network policy enforcement are the happy path.</p></div>
                 <div class="platform-card interactive"><h3>macOS: works, with caveats</h3><p><code>DYLD_INSERT_LIBRARIES</code> has SIP boundaries. Homebrew and user-installed binaries work best.</p></div>
-                <div class="platform-card interactive"><h3>Windows: hooks, not preload</h3><p>Use Claude/Cline/API/MCP-style integrations. Codex preload and OpenClaw plugin setup are not the Windows story.</p></div>
+                <div class="platform-card interactive"><h3>Windows: hooks, not preload</h3><p>Claude Code, Cline, and Codex use native hook paths. OpenClaw’s native plugin remains a Unix path.</p></div>
             </div>
         </div>
     </div>
@@ -1258,7 +1258,7 @@
         <div class="integrations-grid">
             <div class="integration-row header"><span>Agent</span><span>Setup</span><span>Enforcement path</span><span>Status</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Claude Code</span><span class="integration-code">rampart setup claude-code</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Codex CLI</span><span class="integration-code">rampart setup codex</span><span class="integration-path">preload + wrapper</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Codex CLI, IDE, desktop</span><span class="integration-code">rampart setup codex</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Cline</span><span class="integration-code">rampart setup cline</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">OpenClaw</span><span class="integration-code">rampart setup openclaw</span><span class="integration-path">native plugin</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Any agent</span><span class="integration-code">rampart wrap -- &lt;cmd&gt;</span><span class="integration-path">shim</span><span class="integration-status">universal</span></div>

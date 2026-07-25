@@ -70,7 +70,7 @@ outcomes: {
 agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
 agents.openclaw -> intercept.plugin
-agents.codex -> intercept.preload
+agents.codex -> intercept.hooks
 agents.other -> intercept.mcp
 
 intercept.hooks -> engine
@@ -190,6 +190,6 @@ preload/             C library for LD_PRELOAD
 | **Native plugin** | Agent plugin forwards tool calls to Rampart before execution | OpenClaw |
 | **Wrap** | `$SHELL` shim intercepts commands | Aider, OpenCode |
 | **MCP Proxy** | Transparent MCP protocol proxy | Claude Desktop, Cursor |
-| **LD_PRELOAD** | Syscall interception | Codex CLI, any process |
+| **LD_PRELOAD** | Optional Unix syscall interception | Any compatible process |
 | **HTTP API** | Direct REST calls | Python agents, custom |
 | **Go SDK** | Embed engine in Go code | Go agents |

@@ -10,6 +10,7 @@ bash -n "$runner"
 bash -n "${repo_root}/scripts/lab/openclaw-container-acceptance.sh"
 bash -n "${repo_root}/scripts/test-approval-flow.sh"
 bash -n "${repo_root}/preload/test_preload.sh"
+bash -n "${repo_root}/scripts/compat-codex-host.sh"
 
 isolated_path_line="$(grep -n '^isolated_path=' "$runner" | cut -d: -f1)"
 tool_check_line="$(grep -n '^for tool in git go python3' "$runner" | cut -d: -f1)"
@@ -48,5 +49,7 @@ grep -q 'exact 40-character hexadecimal commit SHA' "${tmp}/invalid.err"
 grep -q 'openclaw-container-acceptance.sh' "$runner"
 "${repo_root}/scripts/lab/openclaw-container-acceptance.sh" --help >"${tmp}/openclaw-help"
 grep -q -- '--rampart' "${tmp}/openclaw-help"
+
+"${repo_root}/scripts/lab/test-compat-codex-host.sh"
 
 echo "test-run-e2e: PASS"
