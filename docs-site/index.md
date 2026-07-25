@@ -230,10 +230,7 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## In development for v1.4
-
-The following work is available on the `staging` branch and remains subject to
-release-candidate validation:
+## What's New in v1.4
 
 - **Native Codex lifecycle hooks** — One user-level setup covers Codex CLI, IDE,
   and desktop host-exposed shell, file, patch, MCP, web, and delegated-agent
