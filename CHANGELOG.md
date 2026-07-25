@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Hermes harnesses exercise harmless allow/deny canaries through real agent
   processes without loading normal configuration, memories, rules, or
   persistent sessions. Sanitized completed-run evidence records the reviewed
-  Claude Code and Hermes host proofs.
+  Codex, Claude Code, and Hermes host proofs.
 - **Executable security-assurance gate** — A machine-readable integration
   manifest, shared adversarial policy corpus, and one-command Go, OpenClaw, and
   Hermes regression suite now run in Linux CI.

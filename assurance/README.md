@@ -69,10 +69,10 @@ scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
 scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
 ```
 
-The completed Claude Code 2.1.220 macOS run proves shell deny, allowed
-execution, and pre/post identity correlation through an isolated real host
-process. On macOS the disposable HOME cannot use the account's Keychain login,
-so an ephemeral `CLAUDE_CODE_OAUTH_TOKEN` is required when re-running the proof;
-subprocess scrubbing prevents the harness from passing it to the Bash canary.
-The Claude and Hermes completed-run summaries record the exact reviewed
-upstream versions and behavioral checks.
+The completed Codex CLI 0.145.0 and Claude Code 2.1.220 macOS runs prove shell
+deny, allowed execution, and pre/post identity correlation through isolated
+real host processes. On macOS the disposable Claude HOME cannot use the
+account's Keychain login, so an ephemeral `CLAUDE_CODE_OAUTH_TOKEN` is required
+when re-running that proof; subprocess scrubbing prevents the harness from
+passing it to the Bash canary. The Codex, Claude, and Hermes completed-run
+summaries record the exact reviewed upstream versions and behavioral checks.

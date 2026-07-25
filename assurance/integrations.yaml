@@ -148,7 +148,7 @@ integrations:
     service_required: false
     upstream_ci: none
     coverage:
-      shell: tested
+      shell: verified
       file_read: tested
       file_write: tested
       network: tested
@@ -177,6 +177,9 @@ integrations:
       - path: scripts/compat-codex-host.sh
         kind: live
         proves: An opt-in credential-isolated harness proves deny and allow behavior through a real ephemeral Codex process.
+      - path: assurance/evidence/codex-host-2026-07-25.json
+        kind: live
+        proves: A completed macOS host run records blocked deny execution, successful allow execution, pre/post tool-call correlation, and isolated source-state use on Codex CLI 0.145.0.
     limitations:
       - The ordinary verification command exercises installed configuration and the adapter; the real Codex host check is a separate opt-in model invocation and is not run in regular CI.
       - Codex hosted tools and specialized local tool paths that opt out of lifecycle hooks are not covered.

@@ -33,7 +33,7 @@ support.
 | --- | --- | --- |
 | **OpenClaw** | Active, non-executing `rampart verify openclaw` canaries plus isolated compatibility and approval-path tests. | Dedicated MCP and delegated-agent live canaries. |
 | **Claude Code** | Isolated Claude Code 2.1.220 macOS proof: deny did not execute, allow executed, and pre/post tool-call identity correlated. | Live file, network, MCP, subagent, crash, and timeout conformance. |
-| **Codex** | Active installed-hook and adapter verification, plus an opt-in isolated real-host harness. | Physical Windows host proof and host-timeout guarantees. |
+| **Codex** | Isolated Codex CLI 0.145.0 macOS proof: deny did not execute, allow executed, and pre/post tool-call identity correlated. | Physical Windows host proof and host-timeout guarantees. |
 | **Cline** | Adapter and setup regression tests. | A rolling latest-Cline job and completed real-host proof; native Windows is not currently claimed. |
 | **Hermes Agent** | Isolated Hermes 0.19.0 Linux proof: deny did not execute, allow executed, and pre-tool audit identity correlated. | Hermes can skip crashing plugin callbacks and does not expose a stable plugin approval/resume primitive. |
 
