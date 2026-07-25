@@ -6,6 +6,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newProtectCmd() *cobra.Command {
+func newProtectCmd(rootOpts *rootOptions) *cobra.Command {
 	var noRestart bool
 	var noVerify bool
 	var reinstall bool
@@ -25,7 +26,7 @@ func newProtectCmd() *cobra.Command {
 	var timeout time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "protect [openclaw]",
+		Use:   "protect [agent]",
 		Short: "Protect an installed agent with safe managed defaults",
 		Long: `Install and activate Rampart's managed safety guard for an agent harness.
 
@@ -33,7 +34,8 @@ No policy file or rule authoring is required. Protect installs the native
 integration, starts Rampart's policy service, enables fail-closed degraded
 behavior, and verifies the live boundary with non-destructive canaries.
 
-OpenClaw is the first fully supported zero-configuration target.`,
+Without an agent argument, Rampart detects installed supported agents and
+protects each one through its strongest available native boundary.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensureDefaultRampartDirAccessible(); err != nil {
@@ -43,26 +45,55 @@ OpenClaw is the first fully supported zero-configuration target.`,
 			if len(args) == 1 {
 				target = strings.ToLower(strings.TrimSpace(args[0]))
 			}
+			var drivers []integrationDriver
 			if target == "" {
-				if !isOpenClawInstalled() {
-					return fmt.Errorf("protect: no supported agent harness detected; OpenClaw is currently the zero-configuration target (Hermes support remains experimental)")
+				detected, err := detectInstalledIntegrationDrivers()
+				if err != nil {
+					return fmt.Errorf("protect: detect installed agents: %w", err)
 				}
-				target = "openclaw"
-			}
-			if target != "openclaw" {
-				return fmt.Errorf("protect: unsupported target %q; OpenClaw is currently supported and Hermes remains experimental", target)
-			}
-			if !isOpenClawInstalled() {
-				return fmt.Errorf("protect: OpenClaw was not found; install OpenClaw first, then rerun `rampart protect openclaw`")
+				if len(detected) == 0 {
+					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Gemini CLI, Cline; Hermes remains experimental)")
+				}
+				drivers = detected
+				fmt.Fprintf(cmd.OutOrStdout(), "Detected %d supported agent(s): ", len(drivers))
+				for i, driver := range drivers {
+					if i > 0 {
+						fmt.Fprint(cmd.OutOrStdout(), ", ")
+					}
+					fmt.Fprint(cmd.OutOrStdout(), driver.DisplayName)
+				}
+				fmt.Fprintln(cmd.OutOrStdout())
+			} else {
+				driver, ok := findIntegrationDriver(target)
+				if !ok {
+					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, gemini, cline; Hermes remains experimental)", target)
+				}
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("protect: resolve home: %w", err)
+				}
+				if driver.Installed == nil || !driver.Installed(home) {
+					return fmt.Errorf("protect: %s was not found; install it first, then rerun `rampart protect %s`", driver.DisplayName, driver.ID)
+				}
+				drivers = []integrationDriver{driver}
+				if !driver.OpenClaw && (cmd.Flags().Changed("no-restart") || cmd.Flags().Changed("reinstall")) {
+					return fmt.Errorf("protect: --no-restart and --reinstall apply only to OpenClaw")
+				}
 			}
 
-			return runProtectOpenClaw(cmd, protectOpenClawOptions{
-				NoRestart: noRestart,
-				NoVerify:  noVerify,
-				Reinstall: reinstall,
-				ServeURL:  serveURL,
-				Timeout:   timeout,
-			})
+			var protectErrors []error
+			for _, driver := range drivers {
+				if driver.OpenClaw {
+					if err := runProtectOpenClaw(cmd, protectOpenClawOptions{NoRestart: noRestart, NoVerify: noVerify, Reinstall: reinstall, ServeURL: serveURL, Timeout: timeout}); err != nil {
+						protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
+					}
+					continue
+				}
+				if err := runProtectHookDriver(cmd, rootOpts, driver, protectHookOptions{NoVerify: noVerify, ServeURL: serveURL, Timeout: timeout}); err != nil {
+					protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
+				}
+			}
+			return errors.Join(protectErrors...)
 		},
 	}
 
@@ -72,6 +103,50 @@ OpenClaw is the first fully supported zero-configuration target.`,
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override used for verification")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for each active verification check")
 	return cmd
+}
+
+type protectHookOptions struct {
+	NoVerify bool
+	ServeURL string
+	Timeout  time.Duration
+}
+
+func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver integrationDriver, opts protectHookOptions) error {
+	w := cmd.OutOrStdout()
+	errW := cmd.ErrOrStderr()
+	fmt.Fprintf(w, "\nProtecting %s through %s...\n", driver.DisplayName, driver.Boundary)
+	guardPath, err := installManagedGuardPolicy()
+	if err != nil {
+		return fmt.Errorf("protect %s: install managed Guard policy: %w", driver.ID, err)
+	}
+	fmt.Fprintf(w, "✓ Managed Guard policy installed at %s\n", guardPath)
+	if err := ensureServeRunning(w, errW); err != nil {
+		return fmt.Errorf("protect %s: start Rampart policy service: %w", driver.ID, err)
+	}
+	if err := runIntegrationSetup(cmd, rootOpts, driver); err != nil {
+		return fmt.Errorf("protect %s: configure native integration: %w", driver.ID, err)
+	}
+	if opts.NoVerify {
+		fmt.Fprintf(w, "Rampart protection is configured for %s. Behavioral verification was skipped.\n", driver.DisplayName)
+		fmt.Fprintf(w, "Run `rampart verify %s` to prove the boundary.\n", driver.VerifyTarget)
+		return nil
+	}
+	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Errorf("protect %s: resolve serve URL: %w", driver.ID, err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, resolvedURL, opts.Timeout)
+	fmt.Fprintln(w)
+	printVerificationReport(w, report)
+	if report.Summary.Failed > 0 {
+		return exitCodeError{code: 1}
+	}
+	if report.Summary.Unverified > 0 {
+		return exitCodeError{code: 2}
+	}
+	fmt.Fprintf(w, "\nRampart is actively protecting %s.\n", driver.DisplayName)
+	return nil
 }
 
 type protectOpenClawOptions struct {

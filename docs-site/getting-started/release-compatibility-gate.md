@@ -1,6 +1,6 @@
 ---
 title: Release Compatibility Gate
-description: "How Rampart validates Claude Code, Codex, Cline, OpenClaw, and experimental Hermes Agent claims before release."
+description: "How Rampart validates Claude Code, Codex, Gemini CLI, Cline, OpenClaw, and experimental Hermes Agent claims before release."
 ---
 
 # Release Compatibility Gate
@@ -31,6 +31,8 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Record the current Codex version exercised by the host harness.
    - Record the current Cline version reviewed or exercised; if no host run is
      completed, keep that limitation explicit in the support matrix.
+   - Record latest stable Gemini CLI from npm and note whether the tested access
+     is enterprise, Google Cloud, or paid API-key based.
    - Record latest stable OpenClaw from npm.
    - Record latest stable Hermes Agent from PyPI.
    - Treat upstream release notes touching plugin discovery, hook dispatch, approval behavior, native tool relay, model/tool execution, or security boundaries as compatibility-relevant.
@@ -77,7 +79,19 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Do not claim native Windows Cline coverage while the installed Rampart hook
      scripts require Bash.
 
-7. **Validate latest stable Hermes Agent in isolation**
+7. **Validate latest stable Gemini CLI without conflating adapter and host proof**
+   - Run `node scripts/compat-gemini-latest.mjs` to install the latest published
+     package in a disposable home, generate candidate hooks, and require the
+     documented destructive `BeforeTool` denial schema.
+   - Run `rampart verify gemini` against the candidate settings.
+   - Confirm every currently documented built-in tool has a deliberate mapping;
+     unknown future `BeforeTool` names must deny in enforce mode.
+   - Do not claim an authenticated host boundary until a real Gemini tool call
+     proves the denied command did not execute and an allowed command did.
+   - Do not describe this as Antigravity CLI coverage; it is a separate product
+     surface after Google's June 2026 transition.
+
+8. **Validate latest stable Hermes Agent in isolation**
    - Use a temporary `HERMES_HOME` or temporary home directory.
    - Install latest Hermes Agent in a temporary Python environment.
    - Install the candidate Rampart plugin into only that temporary Hermes plugin directory.
@@ -86,12 +100,12 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Prove deny blocks before execution, allow continues, `ask` blocks with an approval-required/no-resume message, Rampart auth failures fail closed for mutating tools, and mutating tools fail closed when Rampart is unavailable.
    - Do not restart or mutate a live Discord, Telegram, or other long-running Hermes gateway for this gate.
 
-8. **Run `rampart doctor` as a support-contract check**
+9. **Run `rampart doctor` as a support-contract check**
    - Group findings by integration surface.
    - Classify each finding as blocker, expected optional local gap, or follow-up diagnostic improvement.
    - Do not collapse OpenClaw, Hermes, Claude Code, Codex, and Cline findings into one global yes/no.
 
-9. **Publish claims that match the evidence**
+10. **Publish claims that match the evidence**
    - Coverage means tool calls delivered through the named integration
      boundary, not all syscalls, packets, or behavior inside allowed processes.
    - A harness proves a live check is available; only a completed sanitized run
@@ -110,11 +124,12 @@ The repository includes compatibility harnesses for latest upstream agent checks
 ```bash
 python scripts/compat-hermes-latest.py
 node scripts/compat-openclaw-latest.mjs --npm-latest
+node scripts/compat-gemini-latest.mjs
 scripts/compat-claude-host.sh --yes
 scripts/compat-codex-host.sh --yes
 ```
 
-The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness can run either the `openclaw` on `PATH` or `--npm-latest` for the latest npm package, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks.
+The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness can run either the `openclaw` on `PATH` or `--npm-latest` for the latest npm package, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks. The Gemini gate uses a disposable home, accepts the candidate-generated settings with the latest published CLI, and exercises the adapter without credentials or model calls.
 
 For OpenClaw's recommended support tier, also run the opt-in runtime audit regression before a release promotion:
 

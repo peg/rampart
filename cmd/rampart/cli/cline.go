@@ -81,7 +81,7 @@ Use --remove to uninstall the Rampart hook scripts.`,
 			// Create PreToolUse hook script
 			preHookPath := filepath.Join(preToolUseDir, "rampart-policy")
 			preHookContent := createPreToolUseScript(rampartBin)
-			
+
 			if err := installHookScript(preHookPath, preHookContent, force); err != nil {
 				return fmt.Errorf("setup cline: install PreToolUse hook: %w", err)
 			}
@@ -89,7 +89,7 @@ Use --remove to uninstall the Rampart hook scripts.`,
 			// Create PostToolUse hook script
 			postHookPath := filepath.Join(postToolUseDir, "rampart-audit")
 			postHookContent := createPostToolUseScript(rampartBin)
-			
+
 			if err := installHookScript(postHookPath, postHookContent, force); err != nil {
 				return fmt.Errorf("setup cline: install PostToolUse hook: %w", err)
 			}
@@ -161,12 +161,12 @@ func findRampartBinary() (string, error) {
 	if exe, err := osExecutable(); err == nil {
 		return exe, nil
 	}
-	
+
 	// Fall back to PATH lookup
 	if path, err := execLookPath("rampart"); err == nil {
 		return path, nil
 	}
-	
+
 	return "", fmt.Errorf("rampart binary not found in PATH")
 }
 
@@ -184,7 +184,7 @@ exec "%s" hook --format cline
 `, rampartBin)
 }
 
-// createPostToolUseScript generates the PostToolUse hook script content  
+// createPostToolUseScript generates the PostToolUse hook script content
 func createPostToolUseScript(rampartBin string) string {
 	return fmt.Sprintf(`#!/usr/bin/env bash
 # Rampart PostToolUse hook for Cline
@@ -201,14 +201,17 @@ exec "%s" hook --format cline --mode audit 2>/dev/null || true
 // installHookScript writes a hook script to disk with executable permissions
 func installHookScript(path, content string, force bool) error {
 	// Check if file already exists
-	if _, err := os.Stat(path); err == nil && !force {
+	if existing, err := os.ReadFile(path); err == nil && !force {
+		if string(existing) == content {
+			return nil
+		}
 		return fmt.Errorf("hook script already exists at %s (use --force to overwrite)", path)
 	}
-	
+
 	// Write script with executable permissions
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write hook script: %w", err)
 	}
-	
+
 	return nil
 }

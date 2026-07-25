@@ -45,6 +45,13 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
       <td data-label="Support tier"><strong>Supported</strong><br>adapter-tested; no current host proof</td>
     </tr>
+    <tr class="tier-supported">
+      <td data-label="Surface"><strong>Gemini CLI</strong></td>
+      <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup gemini</code></td>
+      <td data-label="rampart serve">Not required for local allow/deny;<br>used by managed <code>rampart protect</code> verification</td>
+      <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>enterprise/API-key Gemini CLI; adapter-tested; authenticated host proof pending</td>
+    </tr>
     <tr class="tier-recommended">
       <td data-label="Surface"><strong>OpenClaw &gt;= 2026.5.2</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
@@ -103,6 +110,9 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
   enforce mode, unknown future pre-call tools deny; an isolated Claude Code
   2.1.220 shell deny/allow host run is recorded
 - **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
+- **Gemini CLI** → native `BeforeTool`/`AfterTool` hooks cover documented shell,
+  file, network, MCP, memory, and delegated-agent calls; the adapter is actively
+  verifiable, while a real authenticated host proof is still pending
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path with a completed isolated
   Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than resume
@@ -112,7 +122,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline / Codex native hooks**: local allow/deny policy
+- **Claude Code / Cline / Codex / Gemini CLI native hooks**: local allow/deny policy
   evaluation works when `rampart serve` is down. Rampart-handled parse and
   policy errors deny in enforce mode, but an unexpected hook crash or host
   timeout follows the host's behavior. Dashboard features and external

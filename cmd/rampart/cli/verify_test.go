@@ -95,6 +95,29 @@ func TestVerifyCodexHookAdapterBlocksCanary(t *testing.T) {
 	}
 }
 
+func TestVerifyGeminiHooksAndAdapterBlockCanary(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := installGeminiHooks(filepath.Join(home, ".gemini", "settings.json"), "rampart hook --format gemini", false); err != nil {
+		t.Fatal(err)
+	}
+	if check := verifyGeminiHooksInstalled(); check.Status != verificationPass {
+		t.Fatalf("unexpected installation check: %#v", check)
+	}
+	if check := verifyGeminiHookAdapter(context.Background()); check.Status != verificationPass {
+		t.Fatalf("unexpected adapter check: %#v", check)
+	}
+}
+
+func TestVerifyClaudeAndClineAdaptersBlockCanary(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	for _, target := range []string{"claude-code", "cline"} {
+		if check := verifyNativeHookAdapter(context.Background(), target); check.Status != verificationPass {
+			t.Fatalf("%s adapter check: %#v", target, check)
+		}
+	}
+}
+
 func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
 	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
 	stateDir := t.TempDir()

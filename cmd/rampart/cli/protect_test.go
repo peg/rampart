@@ -4,15 +4,33 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
 )
+
+func TestProtectRejectsOpenClawOnlyFlagsForGemini(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"protect", "gemini", "--no-restart"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "apply only to OpenClaw") {
+		t.Fatalf("error = %v, want OpenClaw-only flag guidance", err)
+	}
+}
 
 func TestInstallManagedGuardPolicy(t *testing.T) {
 	home := t.TempDir()

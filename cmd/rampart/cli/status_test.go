@@ -171,6 +171,24 @@ func TestDetectProtectedAgents_CodexHooks(t *testing.T) {
 	}
 }
 
+func TestDetectProtectedAgents_GeminiHooks(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := installGeminiHooks(filepath.Join(home, ".gemini", "settings.json"), "rampart hook --format gemini", false); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, agent := range detectProtectedAgents() {
+		if agent == "Gemini CLI (hooks)" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Gemini CLI lifecycle hook detection, got %v", detectProtectedAgents())
+	}
+}
+
 func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)

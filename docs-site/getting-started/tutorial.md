@@ -90,7 +90,7 @@ risky requests before Claude Code invokes the tool. This boundary does not
 observe work performed inside an already allowed process.
 
 !!! note "Different agents use different integration paths"
-    Claude Code, Cline, and Codex use native hooks. OpenClaw uses a native
+    Claude Code, Cline, Codex, and Gemini CLI use native hooks. OpenClaw uses a native
     plugin. The exact setup varies by agent, but `rampart quickstart` picks the
     right path automatically. See the [support matrix](support-matrix.md).
 

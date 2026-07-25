@@ -1,0 +1,240 @@
+// Copyright 2026 The Rampart Authors
+// Licensed under the Apache License, Version 2.0
+
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/spf13/cobra"
+)
+
+func newSetupGeminiCmd() *cobra.Command {
+	var force bool
+	var remove bool
+
+	cmd := &cobra.Command{
+		Use:   "gemini",
+		Short: "Install Rampart lifecycle hooks for Gemini CLI",
+		Long: `Installs user-level BeforeTool and AfterTool hooks in
+~/.gemini/settings.json. Existing Gemini settings and non-Rampart hooks are
+preserved.
+
+Run 'rampart setup gemini --remove' to uninstall.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("setup gemini: resolve home: %w", err)
+			}
+			settingsPath := filepath.Join(home, ".gemini", "settings.json")
+			if remove {
+				removed, err := removeGeminiHooks(settingsPath)
+				if err != nil {
+					return err
+				}
+				if !removed {
+					fmt.Fprintln(cmd.OutOrStdout(), "No Rampart Gemini CLI integration found. Nothing to remove.")
+					return nil
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hooks removed from %s\n", settingsPath)
+				return nil
+			}
+
+			hookBin := "rampart"
+			if path, lookupErr := exec.LookPath("rampart"); lookupErr == nil {
+				hookBin = path
+			} else if executable, executableErr := os.Executable(); executableErr == nil {
+				hookBin = executable
+			}
+			if absolute, absoluteErr := filepath.Abs(hookBin); absoluteErr == nil {
+				hookBin = absolute
+			}
+			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format gemini"
+			if runtime.GOOS == "windows" {
+				hookCommand = windowsQuoteCodexHookArg(hookBin) + " hook --format gemini"
+			}
+			if err := installGeminiHooks(settingsPath, hookCommand, force); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart lifecycle hooks installed in %s\n", settingsPath)
+			fmt.Fprintln(cmd.OutOrStdout(), "  Covers Gemini CLI tool calls exposed through BeforeTool and AfterTool.")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Allowed calls still pass through Gemini's own permission checks.")
+			fmt.Fprintln(cmd.OutOrStdout(), "  Uninstall: rampart setup gemini --remove")
+			printFirstRunTest(cmd.OutOrStdout())
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "Replace invalid Gemini hook configuration instead of refusing")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart hooks from Gemini CLI settings")
+	return cmd
+}
+
+func installGeminiHooks(path, command string, force bool) error {
+	settings := make(map[string]any)
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			if !force {
+				return fmt.Errorf("setup gemini: existing %s has invalid JSON (use --force to replace): %w", path, err)
+			}
+			settings = make(map[string]any)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("setup gemini: read %s: %w", path, err)
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		if _, exists := settings["hooks"]; exists && !force {
+			return fmt.Errorf("setup gemini: existing %s has a non-object hooks value (use --force to replace)", path)
+		}
+		hooks = make(map[string]any)
+	}
+	handler := map[string]any{
+		"type":    "command",
+		"command": command,
+		"name":    "Rampart policy enforcement",
+		"timeout": 330000,
+	}
+	matcher := map[string]any{
+		"matcher": ".*",
+		"hooks":   []any{handler},
+	}
+	for _, event := range []string{"BeforeTool", "AfterTool"} {
+		if existing, exists := hooks[event]; exists {
+			if _, valid := existing.([]any); !valid && !force {
+				return fmt.Errorf("setup gemini: existing %s %s value is not an array (use --force to replace)", path, event)
+			}
+		}
+		hooks[event] = replaceGeminiRampartMatcher(hooks[event], matcher)
+	}
+	settings["hooks"] = hooks
+	return writeGeminiSettings(path, settings)
+}
+
+func geminiHooksConfiguredForHome(home string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".gemini", "settings.json"))
+	if err != nil {
+		return false
+	}
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return false
+	}
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, event := range []string{"BeforeTool", "AfterTool"} {
+		entries, ok := hooks[event].([]any)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, entry := range entries {
+			matcher, ok := entry.(map[string]any)
+			if ok && isRampartGeminiMatcher(matcher) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func replaceGeminiRampartMatcher(existing any, rampartMatcher map[string]any) []any {
+	var kept []any
+	if entries, ok := existing.([]any); ok {
+		for _, entry := range entries {
+			if matcher, ok := entry.(map[string]any); ok && isRampartGeminiMatcher(matcher) {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+	}
+	return append(kept, rampartMatcher)
+}
+
+func removeGeminiHooks(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("setup gemini: read %s: %w", path, err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false, fmt.Errorf("setup gemini: parse %s: %w", path, err)
+	}
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return false, nil
+	}
+
+	removed := false
+	for _, event := range []string{"BeforeTool", "AfterTool"} {
+		entries, ok := hooks[event].([]any)
+		if !ok {
+			continue
+		}
+		var kept []any
+		for _, entry := range entries {
+			if matcher, ok := entry.(map[string]any); ok && isRampartGeminiMatcher(matcher) {
+				removed = true
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		if len(kept) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = kept
+		}
+	}
+	if !removed {
+		return false, nil
+	}
+	settings["hooks"] = hooks
+	return true, writeGeminiSettings(path, settings)
+}
+
+func isRampartGeminiMatcher(matcher map[string]any) bool {
+	handlers, ok := matcher["hooks"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawHandler := range handlers {
+		handler, ok := rawHandler.(map[string]any)
+		if !ok {
+			continue
+		}
+		command, _ := handler["command"].(string)
+		if strings.Contains(command, "hook --format gemini") {
+			return true
+		}
+	}
+	return false
+}
+
+func writeGeminiSettings(path string, settings map[string]any) error {
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("setup gemini: marshal settings: %w", err)
+	}
+	data = append(data, '\n')
+	if err := atomicWritePrivateFile(path, data); err != nil {
+		return fmt.Errorf("setup gemini: write settings: %w", err)
+	}
+	return nil
+}

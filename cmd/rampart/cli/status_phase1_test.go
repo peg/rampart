@@ -11,6 +11,7 @@ func TestIsHookBasedOnly(t *testing.T) {
 		{name: "claude only", protected: []string{"Claude Code (hooks)"}, want: true},
 		{name: "cline only", protected: []string{"Cline (hooks)"}, want: true},
 		{name: "codex only", protected: []string{"Codex (hooks)"}, want: true},
+		{name: "gemini only", protected: []string{"Gemini CLI (hooks)"}, want: true},
 		{name: "claude and cline", protected: []string{"Claude Code (hooks)", "Cline (hooks)"}, want: true},
 		{name: "openclaw plugin is not hook-only", protected: []string{"OpenClaw (plugin)"}, want: false},
 		{name: "codex legacy wrapper is not hook-only", protected: []string{"Codex (legacy wrapper)"}, want: false},

@@ -1,5 +1,5 @@
 schema_version: rampart.assurance.v1
-baseline_release: v1.3.0
+baseline_release: v1.4.0
 reviewed_at: "2026-07-25"
 
 # This manifest records the guarantees Rampart can support with evidence today.
@@ -230,3 +230,48 @@ integrations:
       - Hermes approval observer hooks cannot answer or resume an approval.
       - Read-only tools may be configured fail-open when Rampart is unavailable.
       - Gateway, delegated-agent, and approved-execution E2E are not yet present.
+
+  - id: gemini_cli
+    display_name: Gemini CLI
+    support_tier: supported
+    setup_command: rampart setup gemini
+    boundary: native_hook
+    platforms: [linux, macos]
+    service_required: false
+    upstream_ci: rolling_latest
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: tested
+      mcp: tested
+      subagents: partial
+    degraded:
+      policy_unavailable: local
+      adapter_error: host_defined
+      timeout: host_defined
+    approval: external
+    verification:
+      level: active
+      command: rampart verify gemini
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_gemini_test.go
+        kind: unit
+        proves: Documented Gemini tool payloads normalize to policy surfaces, unknown future pre-call tools fail closed, and deny/approval responses use the supported hook schema.
+      - path: cmd/rampart/cli/setup_gemini_test.go
+        kind: unit
+        proves: Setup preserves unrelated user settings and hooks, is idempotent, supports clean removal, and refuses malformed configuration by default.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification invokes the real adapter with a destructive canary and requires both a structured denial and session-correlated audit record.
+      - path: scripts/compat-gemini-latest.mjs
+        kind: upstream_latest
+        proves: The latest published Gemini CLI starts with Rampart's generated settings and the candidate adapter returns the documented destructive-tool denial schema.
+    limitations:
+      - This targets Gemini CLI's continuing enterprise, Google Cloud, and paid API-key surface; Antigravity CLI compatibility is not claimed.
+      - The ordinary verifier exercises installed configuration and Rampart's adapter, not a real Gemini model/tool invocation.
+      - Gemini hooks do not currently expose a native ask result, so approval actions require rampart serve and deny when that service is unavailable.
+      - An unexpected hook crash or host timeout follows Gemini CLI behavior and is not claimed fail-closed.
+      - Physical Windows host proof and completed authenticated live-host proof are still pending.

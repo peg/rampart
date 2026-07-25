@@ -44,25 +44,29 @@ irm https://rampart.sh/install.ps1 | iex
 
 > **Upgrading from Rampart 1.2.x on Windows?** Rerun the PowerShell installer above. It repairs the affected legacy `~\.rampart` ACL before replacing the binary. If that directory is locked, `rampart upgrade` may be unable to start and cannot perform the repair itself.
 
-For an unattended OpenClaw agent, the zero-configuration path is:
+To detect and protect every installed supported agent with managed defaults:
 
 ```bash
-rampart protect openclaw
+rampart protect
 ```
 
 ---
 
 ## Quick start
 
-Protect OpenClaw with managed defaults—no policy file to read or write:
+Detect supported installed agents, install their native boundaries, and run
+safe behavioral verification—no policy file to read or write:
 
 ```bash
-rampart protect openclaw
+rampart protect
 ```
 
-This installs the native plugin and local service, activates fail-closed Guard
-defaults, restarts the gateway, and runs safe behavioral canaries through the
-live `before_tool_call` path. It does not ask the model to run anything.
+You can also select one integration explicitly. For OpenClaw, this installs the
+native plugin and local service, activates fail-closed Guard defaults, restarts
+the gateway, and runs safe canaries through the live `before_tool_call` path.
+For native-hook agents, Rampart verifies the installed configuration, directly
+exercises the adapter, and checks the live local policy service. It never asks a
+model to execute a verification canary.
 
 Recheck the boundary at any time:
 
@@ -70,7 +74,7 @@ Recheck the boundary at any time:
 rampart verify openclaw
 ```
 
-Other integrations currently use the setup workflow:
+Direct per-agent setup remains available:
 
 ```bash
 # Claude Code
@@ -85,6 +89,10 @@ rampart setup cline
 # Codex CLI, IDE extension, and desktop app
 rampart setup codex
 rampart verify codex
+
+# Gemini CLI
+rampart setup gemini
+rampart verify gemini
 
 # Any other agent (wraps $SHELL)
 rampart wrap -- your-agent
@@ -161,6 +169,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 | **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
+| **Gemini CLI** | `rampart setup gemini` | Native `BeforeTool`/`AfterTool` lifecycle hooks |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -211,7 +220,7 @@ rampart setup claude-code --remove
 
 ## OpenClaw
 
-OpenClaw is Rampart's first zero-configuration protection target:
+OpenClaw uses Rampart's strongest native-plugin zero-configuration path:
 
 ```bash
 rampart protect openclaw
@@ -613,6 +622,7 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 
 ```bash
 # Setup
+rampart protect                             # Detect, configure, and verify supported installed agents
 rampart protect openclaw                    # Zero-config guard + live behavioral verification
 rampart verify openclaw                     # Re-run safe canaries through the live plugin
 rampart quickstart                           # Auto-detect, install, configure, health check
@@ -620,7 +630,9 @@ rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # OpenClaw native plugin integration
 rampart setup codex                          # Codex native lifecycle hooks
+rampart setup gemini                         # Gemini CLI native lifecycle hooks
 rampart verify codex                         # Verify hook install + native deny response
+rampart verify gemini                        # Verify hook install + native deny response
 rampart setup <agent> --remove               # Clean uninstall
 
 # Run
@@ -687,6 +699,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | OpenClaw | `rampart protect openclaw` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS |
 | Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
+| Gemini CLI | `rampart setup gemini` | Linux, macOS |
 | Claude Desktop MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |

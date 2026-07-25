@@ -1,6 +1,6 @@
 ---
 title: CLI Commands
-description: "Reference every Rampart CLI command for setup, policy checks, auditing, MCP proxying, and integrations with Claude Code, Cline, OpenClaw, and Codex."
+description: "Reference every Rampart CLI command for setup, policy checks, auditing, MCP proxying, and native integrations."
 ---
 
 # CLI Commands
@@ -21,11 +21,15 @@ rampart quickstart -y               # Short form of --yes
 
 `--yes` / `-y` skips prompts so setup can run unattended in CI, scripts, or agent-driven installs.
 
-### `rampart protect openclaw`
+### `rampart protect`
 
-Protect OpenClaw with Rampart-managed defaults. No policy authoring is required.
+Detect installed supported agents, install their strongest native Rampart
+boundary, start the local policy service, and actively verify the result. No
+policy authoring is required.
 
 ```bash
+rampart protect                       # Detect and protect supported installed agents
+rampart protect gemini                # Protect only Gemini CLI
 rampart protect openclaw              # Install, activate, restart, and verify
 rampart protect openclaw --reinstall  # Replace the plugin even when versions match
 rampart protect openclaw --no-restart # Configure without restarting the gateway
@@ -40,6 +44,10 @@ Actively test expected policy decisions with fixed, non-executing canaries.
 
 ```bash
 rampart verify openclaw        # Verify policy plus the live OpenClaw plugin path
+rampart verify claude-code     # Verify Claude hook installation and adapter denial
+rampart verify cline           # Verify Cline hook installation and adapter denial
+rampart verify codex           # Verify Codex hook installation and adapter denial
+rampart verify gemini          # Verify Gemini hook installation and adapter denial
 rampart verify policy          # Verify the local Rampart policy path
 rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
@@ -99,6 +107,22 @@ Rampart writes wildcard `PreToolUse` and `PostToolUse` handlers to
 remain in place. The generated definition includes POSIX and Windows commands,
 does not replace the `codex` executable, and requires no preload library.
 
+### `rampart setup gemini`
+
+Install Rampart lifecycle hooks for Gemini CLI.
+
+```bash
+rampart setup gemini           # Install BeforeTool/AfterTool hooks
+rampart setup gemini --force   # Replace invalid hook configuration
+rampart setup gemini --remove  # Remove only Rampart hooks
+```
+
+Rampart writes wildcard `BeforeTool` and `AfterTool` entries to
+`~/.gemini/settings.json` while preserving unrelated settings and hooks.
+Allowed calls continue through Gemini CLI's own permission checks. Gemini's
+hook protocol has no native ask result, so approval-required calls use Rampart's
+external queue and deny when `rampart serve` is unavailable.
+
 ### `rampart setup` (interactive)
 
 Auto-detects installed agents and guides you through setup.
@@ -137,7 +161,7 @@ After running, delete `~/.rampart/` manually and remove any `rampart`-related li
 
 ### `rampart hook`
 
-Hook handler called by Claude Code/Cline. Reads tool call from stdin, writes decision to stdout.
+Hook handler called by Claude Code, Cline, Codex, and Gemini CLI. Reads a tool call from stdin and writes the host's native decision schema to stdout.
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook

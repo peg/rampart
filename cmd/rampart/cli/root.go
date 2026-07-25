@@ -129,7 +129,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	// benchCmd removed in v0.9 cleanup — use `go test -bench` instead
 	// benchCmd := newBenchCmd(opts)
 	quickstartCmd := newQuickstartCmd()
-	protectCmd := newProtectCmd()
+	protectCmd := newProtectCmd(opts)
 	verifyCmd := newVerifyCmd()
 	upgradeCmd := newUpgradeCmd(opts)
 	uninstallCmd := newUninstallCmd(opts)

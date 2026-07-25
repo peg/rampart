@@ -406,6 +406,11 @@ func detectProtectedAgents() []string {
 		}
 	}
 
+	// Gemini CLI native hooks installed by `rampart setup gemini`.
+	if geminiHooksConfiguredForHome(home) {
+		agents = append(agents, "Gemini CLI (hooks)")
+	}
+
 	// Hermes Agent user plugin installed by `rampart setup hermes`.
 	if state := detectHermesPluginStateForHome(home); state.Installed && state.Enabled && state.ManifestValid && state.HookDeclared {
 		agents = append(agents, "Hermes Agent (plugin)")

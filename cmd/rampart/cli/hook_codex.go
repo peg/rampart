@@ -268,10 +268,27 @@ func resolveCodexApproval(
 	autoDiscovered bool,
 	logger *slog.Logger,
 ) error {
+	return resolveExternalHookApproval(cmd, "codex", call, reason, serveURL, serveToken, autoDiscovered, logger)
+}
+
+// resolveExternalHookApproval handles hook protocols that cannot request a
+// native user prompt. The exact invocation waits on Rampart's approval queue;
+// an approval continues through the host's own sandbox, and an unavailable
+// service fails closed.
+func resolveExternalHookApproval(
+	cmd *cobra.Command,
+	format string,
+	call engine.ToolCall,
+	reason string,
+	serveURL string,
+	serveToken string,
+	autoDiscovered bool,
+	logger *slog.Logger,
+) error {
 	if serveURL == "" || !isServeRunning(serveURL) {
 		return outputHookResult(
 			cmd,
-			"codex",
+			format,
 			hookDeny,
 			false,
 			reason+"; approval requires a running Rampart service (`rampart serve`)",
@@ -310,5 +327,5 @@ func resolveCodexApproval(
 		result = hookDeny
 		reason += "; Rampart approval service was unavailable"
 	}
-	return outputHookResult(cmd, "codex", result, false, reason, extractCommand(call))
+	return outputHookResult(cmd, format, result, false, reason, extractCommand(call))
 }

@@ -153,6 +153,7 @@ nav:
     - Claude Desktop: integrations/claude-desktop.md
     - Cursor: integrations/cursor.md
     - Codex CLI: integrations/codex-cli.md
+    - Gemini CLI: integrations/gemini-cli.md
     - OpenClaw: integrations/openclaw.md
     - Hermes Agent: integrations/hermes.md
     - Python Agents: integrations/python-agents.md

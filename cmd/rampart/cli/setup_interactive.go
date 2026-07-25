@@ -59,6 +59,11 @@ func detectAgents() []agentInfo {
 			SetupCmd: "codex",
 		},
 		{
+			Name:     "Gemini CLI",
+			HasSetup: true,
+			SetupCmd: "gemini",
+		},
+		{
 			Name:      "Aider",
 			HasSetup:  false,
 			ManualCmd: "rampart wrap -- aider",
@@ -80,9 +85,11 @@ func detectAgents() []agentInfo {
 		agents[1].Detected = env.HasCline
 		agents[2].Detected = env.HasOpenClaw
 		agents[3].Detected = env.HasCodex
-		agents[4].Detected = env.HasAider
-		agents[5].Detected = env.HasCursor
-		agents[6].Detected = env.HasWindsurf
+		home, _ := os.UserHomeDir()
+		agents[4].Detected = integrationBinaryOrPathInstalled("gemini", filepath.Join(home, ".gemini"))
+		agents[5].Detected = env.HasAider
+		agents[6].Detected = env.HasCursor
+		agents[7].Detected = env.HasWindsurf
 	}
 
 	return agents
@@ -227,6 +234,10 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 			fmt.Fprintf(out, "  • Cline: hooks in %s\n", filepath.Join(home, "Documents", "Cline", "Hooks"))
 		case "openclaw":
 			fmt.Fprintf(out, "  • OpenClaw: shell shim in %s\n", filepath.Join(home, ".local", "bin", "rampart-shim"))
+		case "codex":
+			fmt.Fprintf(out, "  • Codex: hooks in %s\n", filepath.Join(codexHomeDir(home), "hooks.json"))
+		case "gemini":
+			fmt.Fprintf(out, "  • Gemini CLI: hooks in %s\n", filepath.Join(home, ".gemini", "settings.json"))
 		}
 	}
 	fmt.Fprintf(out, "  • Policy: %s\n", filepath.Join(home, ".rampart", "policies", selectedProfile+".yaml"))

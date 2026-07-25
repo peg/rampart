@@ -35,7 +35,9 @@ Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
   • Hermes Agent              - Experimental user plugin integration
   • Cline (VS Code)           - Native hook integration
-  • OpenClaw                  - Native plugin integration`,
+  • OpenClaw                  - Native plugin integration
+  • Codex                     - Native lifecycle hook integration
+  • Gemini CLI                - Native lifecycle hook integration`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if flag := cmd.Flags().Lookup("remove"); flag != nil {
 				remove, err := cmd.Flags().GetBool("remove")
@@ -60,6 +62,7 @@ Supported AI Agents:
 	cmd.AddCommand(newSetupClineCmd(opts))
 	cmd.AddCommand(newSetupOpenClawCmd(opts))
 	cmd.AddCommand(newSetupCodexCmd(opts))
+	cmd.AddCommand(newSetupGeminiCmd())
 
 	return cmd
 }
