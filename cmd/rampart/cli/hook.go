@@ -90,6 +90,7 @@ type clineHookOutput struct {
 type hookParseResult struct {
 	Tool          string
 	Params        map[string]any
+	PolicyPaths   []string // every independently evaluated path in a batched write
 	Agent         string
 	Response      string // non-empty for PostToolUse events
 	RunID         string // run ID derived from session_id (or env overrides)
@@ -208,6 +209,7 @@ func newHookCmd(opts *rootOptions) *cobra.Command {
 
 Supports multiple formats:
   --format claude-code (default): Claude Code integration
+  --format codex: Codex CLI, IDE, and desktop lifecycle hooks
   --format cline: Cline (VS Code extension) integration
 
 Claude Code setup (add to ~/.claude/settings.json):
@@ -244,8 +246,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
-			if format != "claude-code" && format != "cline" {
-				return fmt.Errorf("hook: invalid format %q (must be claude-code or cline)", format)
+			if format != "claude-code" && format != "codex" && format != "cline" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, or cline)", format)
 			}
 
 			// Resolve serve-url and serve-token from standard config/env locations.
@@ -356,6 +358,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			switch format {
 			case "claude-code":
 				parsed, err = parseClaudeCodeInput(cmd.InOrStdin(), logger)
+			case "codex":
+				parsed, err = parseCodexInput(cmd.InOrStdin())
 			case "cline":
 				parsed, err = parseClineInput(cmd.InOrStdin(), logger)
 			default:
@@ -428,13 +432,14 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 
 				postToolUseFailureEvent := audit.Event{
-					ID:        audit.NewEventID(),
-					Timestamp: time.Now().UTC(),
-					Agent:     parsed.Agent,
-					Session:   hookSession,
-					RunID:     parsed.RunID,
-					Tool:      parsed.Tool,
-					Request:   parsed.Params,
+					ID:         audit.NewEventID(),
+					Timestamp:  time.Now().UTC(),
+					Agent:      parsed.Agent,
+					Session:    hookSession,
+					RunID:      parsed.RunID,
+					ToolCallID: parsed.ToolUseID,
+					Tool:       parsed.Tool,
+					Request:    parsed.Params,
 					Decision: audit.EventDecision{
 						Action:  "feedback",
 						Message: "PostToolUseFailure short-circuit: injecting denial guidance to stop retry loops",
@@ -505,7 +510,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Timestamp:  time.Now().UTC(),
 			}
 
-			isPostToolUse := parsed.Response != ""
+			isPostToolUse := parsed.HookEventName == "PostToolUse" || parsed.Response != ""
 
 			// Evaluate: for PreToolUse, run command-side policy check.
 			// For PostToolUse, run response-side evaluation.
@@ -514,7 +519,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				decision = eng.EvaluateResponse(call, parsed.Response)
 			} else {
 				eng.IncrementCallCount(call.Tool, call.Timestamp)
-				decision = eng.Evaluate(call)
+				call, decision = evaluateHookCall(eng, call, parsed.PolicyPaths)
 			}
 
 			// Write audit event
@@ -526,14 +531,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Suggestions:     decision.Suggestions,
 			}
 			event := audit.Event{
-				ID:        call.ID,
-				Timestamp: call.Timestamp,
-				Agent:     call.Agent,
-				Session:   call.Session,
-				RunID:     call.RunID,
-				Tool:      call.Tool,
-				Request:   parsed.Params,
-				Decision:  eventDecision,
+				ID:         call.ID,
+				Timestamp:  call.Timestamp,
+				Agent:      call.Agent,
+				Session:    call.Session,
+				RunID:      call.RunID,
+				ToolCallID: call.ToolCallID,
+				Tool:       call.Tool,
+				Request:    parsed.Params,
+				Decision:   eventDecision,
 			}
 			line, err := json.Marshal(event)
 			if err != nil {
@@ -621,6 +627,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 				return outputHookResult(cmd, format, hookDeny, false, reasonMsg, cmdStr, decision.Suggestions...)
 			case engine.ActionAsk:
+				if format == "codex" {
+					return resolveCodexApproval(cmd, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
+				}
 				if decision.HeadlessOnly {
 					if serveURL == "" || !isServeRunning(serveURL) {
 						return fmt.Errorf("hook: ask.headless_only requires rampart serve, but no serve instance is reachable at %s", serveURL)
@@ -634,7 +643,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					command, _ := call.Params["command"].(string)
 					path := call.Path() // handles both "file_path" (Claude Code) and "path"
-					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, reasonMsg, 5*time.Minute)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg, 5*time.Minute)
 					if result == hookAsk {
 						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
 					}
@@ -655,7 +664,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					command, _ := call.Params["command"].(string)
 					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -682,6 +691,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionRequireApproval:
+				if format == "codex" {
+					return resolveCodexApproval(cmd, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
+				}
 				askAudit := true
 				auditApprovalID := ""
 				// For ask+audit, best-effort mirror pending state into serve if reachable.
@@ -696,7 +708,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					command, _ := call.Params["command"].(string)
 					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -725,7 +737,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
-	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | cline")
+	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover via url/config/state; env: RAMPART_URL or RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
@@ -946,6 +958,33 @@ func outputHookResult(cmd *cobra.Command, format string, decision hookDecisionTy
 		}
 		if decision == hookAsk {
 			out.ErrorMessage = "Rampart: approval required — " + reason
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+	case "codex":
+		var out hookOutput
+		switch decision {
+		case hookDeny:
+			out.HookSpecificOutput = &hookDecision{
+				HookEventName:            "PreToolUse",
+				PermissionDecision:       "deny",
+				PermissionDecisionReason: "Rampart: " + reason,
+			}
+		case hookAsk:
+			// Codex currently rejects permissionDecision:"ask" from PreToolUse.
+			// Approval-requiring calls must be resolved through rampart serve
+			// before reaching this formatter; fail closed if one reaches it.
+			out.HookSpecificOutput = &hookDecision{
+				HookEventName:            "PreToolUse",
+				PermissionDecision:       "deny",
+				PermissionDecisionReason: "Rampart: approval required — " + reason,
+			}
+		case hookAllow:
+			// Empty output leaves Codex's own sandbox and approval policy intact.
+			// An explicit allow without updatedInput is rejected by current Codex,
+			// and Rampart must never bypass Codex's native permission system.
+		case hookBlock:
+			out.Decision = "block"
+			out.Reason = "Rampart: " + reason
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	default: // claude-code

@@ -76,7 +76,11 @@ WebSocket client that connects to an OpenClaw gateway. This is the older bridge-
 
 ## Integration Patterns
 
-**`rampart wrap`** — Wrap any process. No code changes, no config beyond a policy file. The shell shim intercepts commands transparently. Best for: Claude Code, Codex, standalone scripts.
+**Codex lifecycle hooks** — `rampart setup codex` installs user-level
+`PreToolUse` and `PostToolUse` hooks shared by Codex CLI, IDE, and desktop.
+This is the preferred Codex path and preserves Codex's native sandbox.
+
+**`rampart wrap`** — Wrap any process. No code changes, no config beyond a policy file. The shell shim intercepts commands transparently. Best for: agents without a native hook or plugin, and standalone scripts.
 
 **HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.
 

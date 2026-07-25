@@ -8,12 +8,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -25,17 +24,16 @@ func newSetupCodexCmd(_ *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "codex",
-		Short: "Install Rampart wrapper for Codex CLI",
-		Long: `Creates a wrapper script that intercepts all Codex tool calls via
-rampart preload (LD_PRELOAD syscall interception). The wrapper is installed
-at ~/.local/bin/codex and the real codex binary is called through it.
+		Short: "Install Rampart lifecycle hooks for Codex",
+		Long: `Installs user-level PreToolUse and PostToolUse lifecycle hooks in
+~/.codex/hooks.json. The hooks protect Codex CLI, the IDE extension, and the
+desktop app without replacing the codex executable.
+
+Existing non-Rampart hooks are preserved. A legacy Rampart preload wrapper is
+removed during migration to avoid evaluating shell commands twice.
 
 Run 'rampart setup codex --remove' to uninstall.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if runtime.GOOS == "windows" {
-				return fmt.Errorf("setup codex: LD_PRELOAD not supported on Windows — use 'rampart wrap -- codex' instead")
-			}
-
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 
 			home, err := os.UserHomeDir()
@@ -43,217 +41,302 @@ Run 'rampart setup codex --remove' to uninstall.`,
 				return fmt.Errorf("setup codex: resolve home: %w", err)
 			}
 
+			hooksPath := filepath.Join(codexHomeDir(home), "hooks.json")
 			wrapperDir := filepath.Join(home, ".local", "bin")
 			wrapperPath := filepath.Join(wrapperDir, "codex")
 
 			if remove {
-				return removeCodexWrapper(out, wrapperPath)
+				removedHooks, err := removeCodexHooks(hooksPath)
+				if err != nil {
+					return err
+				}
+				removedWrapper, err := removeManagedCodexWrapper(wrapperPath)
+				if err != nil {
+					return err
+				}
+				if !removedHooks && !removedWrapper {
+					fmt.Fprintln(out, "No Rampart Codex integration found. Nothing to remove.")
+					return nil
+				}
+				if removedHooks {
+					fmt.Fprintf(out, "✓ Rampart hooks removed from %s\n", hooksPath)
+				}
+				if removedWrapper {
+					fmt.Fprintf(out, "✓ Legacy Rampart wrapper removed from %s\n", wrapperPath)
+				}
+				return nil
 			}
 
-			// Verify the preload library before installing a wrapper. A wrapper without
-			// librampart would replace a working codex binary with a broken command.
-			if _, _, err := resolvePreloadLibrary(); err != nil {
-				return fmt.Errorf("setup codex: preload library unavailable: %w", err)
+			hookBin := "rampart"
+			// Prefer the PATH entry because package managers usually expose a
+			// stable symlink there while os.Executable may resolve to a
+			// versioned location that disappears on upgrade.
+			if path, lookupErr := exec.LookPath("rampart"); lookupErr == nil {
+				hookBin = path
+			} else if executable, executableErr := os.Executable(); executableErr == nil {
+				hookBin = executable
 			}
+			if absolute, absoluteErr := filepath.Abs(hookBin); absoluteErr == nil {
+				hookBin = absolute
+			}
+			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format codex"
+			hookCommandWindows := windowsQuoteCodexHookArg(hookBin) + " hook --format codex"
 
-			realCodex, err := resolveRealCodexBinary(wrapperPath)
+			if err := installCodexHooks(hooksPath, hookCommand, hookCommandWindows, force); err != nil {
+				return err
+			}
+			removedWrapper, err := removeManagedCodexWrapper(wrapperPath)
 			if err != nil {
 				return err
 			}
 
-			// Safety: don't overwrite if it's already pointing somewhere else.
-			if _, err := os.Stat(wrapperPath); err == nil && !force {
-				data, readErr := os.ReadFile(wrapperPath)
-				if readErr == nil && !containsRampartPreload(string(data)) {
-					return fmt.Errorf("setup codex: %s already exists and is not a Rampart wrapper\n  use --force to overwrite or --remove to uninstall", wrapperPath)
-				}
+			fmt.Fprintf(out, "✓ Rampart lifecycle hooks installed in %s\n", hooksPath)
+			fmt.Fprintln(out, "  Covers Codex CLI, IDE extension, and desktop local tool calls.")
+			fmt.Fprintln(out, "  Codex will require review of this hook definition before first use.")
+			fmt.Fprintln(out, "  Open `/hooks` in Codex and trust the Rampart hooks.")
+			if removedWrapper {
+				fmt.Fprintf(out, "✓ Removed legacy preload wrapper at %s to prevent duplicate checks.\n", wrapperPath)
 			}
-
-			if err := os.MkdirAll(wrapperDir, 0o755); err != nil {
-				return fmt.Errorf("setup codex: create %s: %w", wrapperDir, err)
-			}
-
-			// Find rampart binary path for the wrapper.
-			rampartPath, err := exec.LookPath("rampart")
-			if err != nil {
-				rampartPath = "rampart" // fallback to PATH lookup at runtime
-			}
-
-			wrapper := fmt.Sprintf(`#!/bin/sh
-# Rampart wrapper for Codex — managed by 'rampart setup codex'
-# Intercepts all tool calls via LD_PRELOAD syscall enforcement.
-# Real codex: %s
-# Remove: rampart setup codex --remove
-exec %s preload -- %s "$@"
-`, realCodex, rampartPath, realCodex)
-
-			// Atomic write.
-			tmp, err := os.CreateTemp(wrapperDir, ".rampart-codex-wrapper-*.sh")
-			if err != nil {
-				return fmt.Errorf("setup codex: create temp file: %w", err)
-			}
-			tmpPath := tmp.Name()
-			if _, err := tmp.WriteString(wrapper); err != nil {
-				tmp.Close()
-				os.Remove(tmpPath)
-				return fmt.Errorf("setup codex: write wrapper: %w", err)
-			}
-			if err := tmp.Chmod(0o755); err != nil {
-				tmp.Close()
-				os.Remove(tmpPath)
-				return fmt.Errorf("setup codex: chmod wrapper: %w", err)
-			}
-			tmp.Close()
-			if err := os.Rename(tmpPath, wrapperPath); err != nil {
-				os.Remove(tmpPath)
-				return fmt.Errorf("setup codex: install wrapper: %w", err)
-			}
-
-			fmt.Fprintf(out, "✓ Wrapper installed at %s\n", wrapperPath)
-			fmt.Fprintf(out, "  Wraps: %s\n", realCodex)
-			fmt.Fprintf(out, "  Via:   %s preload\n\n", rampartPath)
-
-			// Check if wrapperDir is on PATH and warn if not.
-			if !isOnPath(wrapperDir) {
-				fmt.Fprintf(out, "⚠ %s is not on your PATH.\n", wrapperDir)
-				fmt.Fprintln(out, "  Add this to your shell config (~/.bashrc, ~/.zshrc):")
-				fmt.Fprintf(out, "    export PATH=\"%s:$PATH\"\n\n", wrapperDir)
-			}
-
-			fmt.Fprintln(out, "✓ Run 'codex' normally — all tool calls are now enforced by Rampart.")
 			fmt.Fprintln(out, "  Uninstall: rampart setup codex --remove")
-
 			printFirstRunTest(out)
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVar(&remove, "remove", false, "Remove the Codex wrapper")
-	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing wrapper")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart Codex hooks and any managed legacy wrapper")
+	cmd.Flags().BoolVar(&force, "force", false, "Replace invalid hooks.json instead of refusing")
 	return cmd
 }
 
-func resolveRealCodexBinary(wrapperPath string) (string, error) {
-	candidates := filepath.SplitList(os.Getenv("PATH"))
-	for _, dir := range candidates {
-		if dir == "" {
-			continue
-		}
-		candidate := filepath.Join(dir, "codex")
-		resolved, err := filepath.EvalSymlinks(candidate)
-		if err != nil {
-			continue
-		}
-		if sameCodexPath(resolved, wrapperPath) || sameCodexPath(candidate, wrapperPath) {
-			if realFromWrapper := realCodexFromExistingWrapper(wrapperPath); realFromWrapper != "" {
-				return realFromWrapper, nil
+func installCodexHooks(path, command, commandWindows string, force bool) error {
+	settings := make(map[string]any)
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			if !force {
+				return fmt.Errorf("setup codex: existing %s has invalid JSON (use --force to replace): %w", path, err)
 			}
-			continue
+			settings = make(map[string]any)
 		}
-		info, err := os.Stat(resolved)
-		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-			continue
-		}
-		if data, readErr := os.ReadFile(resolved); readErr == nil && containsRampartPreload(string(data)) {
-			continue
-		}
-		return resolved, nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("setup codex: read %s: %w", path, err)
 	}
 
-	return "", fmt.Errorf("setup codex: codex not found in PATH — install it first")
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		if _, exists := settings["hooks"]; exists && !force {
+			return fmt.Errorf("setup codex: existing %s has a non-object hooks value (use --force to replace)", path)
+		}
+		hooks = make(map[string]any)
+	}
+	handler := map[string]any{
+		"type":           "command",
+		"command":        command,
+		"commandWindows": commandWindows,
+		"timeout":        330,
+		"statusMessage":  "Checking Rampart policy",
+	}
+	matcher := map[string]any{
+		"matcher": "*",
+		"hooks":   []any{handler},
+	}
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		if existing, exists := hooks[event]; exists {
+			if _, valid := existing.([]any); !valid && !force {
+				return fmt.Errorf("setup codex: existing %s %s value is not an array (use --force to replace)", path, event)
+			}
+		}
+		hooks[event] = replaceRampartMatcher(hooks[event], matcher)
+	}
+	settings["hooks"] = hooks
+	if _, ok := settings["description"]; !ok {
+		settings["description"] = "Codex lifecycle hooks, including Rampart policy enforcement."
+	}
+	return writeCodexHooks(path, settings)
 }
 
-func realCodexFromExistingWrapper(wrapperPath string) string {
-	data, err := os.ReadFile(wrapperPath)
-	if err != nil || !containsRampartPreload(string(data)) {
-		return ""
-	}
-	realBin := extractRealBinFromWrapper(string(data))
-	if realBin == "" {
-		return ""
-	}
-	info, err := os.Stat(realBin)
-	if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-		return ""
-	}
-	return realBin
-}
-
-func sameCodexPath(a, b string) bool {
-	if a == "" || b == "" {
+func codexHooksConfiguredForHome(home string) bool {
+	data, err := os.ReadFile(filepath.Join(codexHomeDir(home), "hooks.json"))
+	if err != nil {
 		return false
 	}
-	cleanA := filepath.Clean(a)
-	cleanB := filepath.Clean(b)
-	if cleanA == cleanB {
-		return true
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil {
+		return false
 	}
-	canonA := canonicalCodexPath(cleanA)
-	canonB := canonicalCodexPath(cleanB)
-	return canonA != "" && canonA == canonB
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		entries, ok := hooks[event].([]any)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, entry := range entries {
+			matcher, ok := entry.(map[string]any)
+			if ok && isRampartCodexMatcher(matcher) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
-func canonicalCodexPath(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
+func codexHomeDir(home string) string {
+	if configured := strings.TrimSpace(os.Getenv("CODEX_HOME")); configured != "" {
+		expanded := os.ExpandEnv(configured)
+		if strings.HasPrefix(expanded, "~"+string(os.PathSeparator)) {
+			expanded = filepath.Join(home, strings.TrimPrefix(expanded, "~"+string(os.PathSeparator)))
+		}
+		return filepath.Clean(expanded)
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return ""
-	}
-	return filepath.Clean(abs)
+	return filepath.Join(home, ".codex")
 }
 
-func removeCodexWrapper(out io.Writer, wrapperPath string) error {
-	data, err := os.ReadFile(wrapperPath)
+func replaceRampartMatcher(existing any, rampartMatcher map[string]any) []any {
+	var kept []any
+	if entries, ok := existing.([]any); ok {
+		for _, entry := range entries {
+			if matcher, ok := entry.(map[string]any); ok && isRampartCodexMatcher(matcher) {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+	}
+	return append(kept, rampartMatcher)
+}
+
+func removeCodexHooks(path string) (bool, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintf(out, "Nothing to remove — %s does not exist.\n", wrapperPath)
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("setup codex: read wrapper: %w", err)
+		return false, fmt.Errorf("setup codex: read %s: %w", path, err)
 	}
-	if !containsRampartPreload(string(data)) {
-		return fmt.Errorf("setup codex: %s does not appear to be a Rampart wrapper — refusing to remove", wrapperPath)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false, fmt.Errorf("setup codex: parse %s: %w", path, err)
 	}
-	// Extract real binary path from the wrapper comment before deleting.
-	realBin := extractRealBinFromWrapper(string(data))
-	if err := os.Remove(wrapperPath); err != nil {
-		return fmt.Errorf("setup codex: remove wrapper: %w", err)
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return false, nil
 	}
-	fmt.Fprintf(out, "✓ Wrapper removed from %s\n", wrapperPath)
-	if realBin != "" {
-		fmt.Fprintf(out, "  codex now points to: %s\n", realBin)
+
+	removed := false
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		entries, ok := hooks[event].([]any)
+		if !ok {
+			continue
+		}
+		var kept []any
+		for _, entry := range entries {
+			if matcher, ok := entry.(map[string]any); ok && isRampartCodexMatcher(matcher) {
+				removed = true
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		if len(kept) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = kept
+		}
+	}
+	if !removed {
+		return false, nil
+	}
+	settings["hooks"] = hooks
+	return true, writeCodexHooks(path, settings)
+}
+
+func isRampartCodexMatcher(matcher map[string]any) bool {
+	handlers, ok := matcher["hooks"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawHandler := range handlers {
+		handler, ok := rawHandler.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range []string{"command", "commandWindows"} {
+			command, _ := handler[field].(string)
+			// "hook --format codex" is Rampart's CLI contract. The executable
+			// may be an absolute release path (or a Go test binary), so do not
+			// key ownership detection on the basename.
+			if strings.Contains(command, "hook --format codex") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func writeCodexHooks(path string, settings map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("setup codex: create hooks directory: %w", err)
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("setup codex: marshal hooks: %w", err)
+	}
+	data = append(data, '\n')
+
+	temp, err := os.CreateTemp(filepath.Dir(path), ".rampart-codex-hooks-*.json")
+	if err != nil {
+		return fmt.Errorf("setup codex: create temporary hooks file: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("setup codex: secure temporary hooks file: %w", err)
+	}
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("setup codex: write temporary hooks file: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("setup codex: close temporary hooks file: %w", err)
+	}
+	if err := replaceCodexHooksFile(tempPath, path); err != nil {
+		return fmt.Errorf("setup codex: replace hooks file: %w", err)
 	}
 	return nil
 }
 
-// extractRealBinFromWrapper parses "# Real codex: /path" from the wrapper script.
-func extractRealBinFromWrapper(content string) string {
-	const prefix = "# Real codex: "
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+func removeManagedCodexWrapper(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
 		}
+		return false, fmt.Errorf("setup codex: read legacy wrapper: %w", err)
 	}
-	return ""
+	if !containsRampartPreload(string(data)) {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return false, fmt.Errorf("setup codex: remove legacy wrapper: %w", err)
+	}
+	return true, nil
+}
+
+func shellQuoteCodexHookArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func windowsQuoteCodexHookArg(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
 
 func containsRampartPreload(content string) bool {
 	return strings.Contains(content, "rampart preload") ||
 		strings.Contains(content, "Rampart wrapper")
-}
-
-func isOnPath(dir string) bool {
-	pathEnv := os.Getenv("PATH")
-	for _, p := range filepath.SplitList(pathEnv) {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			continue
-		}
-		if abs == dir {
-			return true
-		}
-	}
-	return false
 }

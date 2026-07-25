@@ -241,7 +241,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// 5. Hook binary path
 	issues += doctorHookBinary(emit)
 
-	// 6. Hooks installed (claude settings + cline)
+	// 6. Hooks installed (Claude Code, Codex, and Cline)
 	issues += doctorHooks(emit)
 
 	// 7. Audit directory
@@ -994,6 +994,23 @@ func doctorHooks(emit emitFn) int {
 			emit("Hooks", "fail",
 				fmt.Sprintf("Cline hook not installed (expected Rampart hook scripts in %s)", clineDir)+
 					hintSep+"rampart setup cline")
+			issues++
+		}
+	}
+
+	// Codex lifecycle hooks — shared by CLI, IDE, and desktop. Check when a
+	// Codex home exists or the CLI is discoverable.
+	codexDir := codexHomeDir(home)
+	_, codexDirErr := os.Stat(codexDir)
+	codexBinary, _ := exec.LookPath("codex")
+	if codexDirErr == nil || codexBinary != "" {
+		hooksPath := filepath.Join(codexDir, "hooks.json")
+		if codexHooksConfiguredForHome(home) {
+			emit("Hooks", "ok", "Codex (PreToolUse and PostToolUse in hooks.json)")
+		} else {
+			emit("Hooks", "fail",
+				fmt.Sprintf("Codex lifecycle hooks not installed or incomplete (expected Rampart hooks in %s)", hooksPath)+
+					hintSep+"rampart setup codex")
 			issues++
 		}
 	}

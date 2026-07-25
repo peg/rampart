@@ -78,8 +78,9 @@ rampart setup hermes
 # Cline
 rampart setup cline
 
-# Codex CLI
+# Codex CLI, IDE extension, and desktop app
 rampart setup codex
+rampart verify codex
 
 # Any other agent (wraps $SHELL)
 rampart wrap -- your-agent
@@ -147,7 +148,7 @@ Pattern matching handles 95%+ of decisions in microseconds. The optional [rampar
 | **OpenClaw** | `rampart protect openclaw` | Zero-config native guard + active verification |
 | **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
-| **Codex CLI** | `rampart setup codex` | Wrapper that runs Codex through `rampart preload` |
+| **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
 | **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
@@ -593,7 +594,8 @@ rampart quickstart                           # Auto-detect, install, configure, 
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # OpenClaw native plugin integration
-rampart setup codex                          # Codex CLI shell wrapper (Linux, macOS)
+rampart setup codex                          # Codex native lifecycle hooks
+rampart verify codex                         # Verify hook install + native deny response
 rampart setup <agent> --remove               # Clean uninstall
 
 # Run
@@ -659,7 +661,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
 | OpenClaw | `rampart protect openclaw` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS, Windows |
-| Codex CLI | `rampart setup codex` | Linux, macOS (requires `librampart.so`/`.dylib`) |
+| Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
 | Claude Desktop | `rampart mcp` | All |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |

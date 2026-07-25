@@ -147,27 +147,27 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 	}
 }
 
-func TestDetectProtectedAgents_CodexWrapper(t *testing.T) {
+func TestDetectProtectedAgents_CodexHooks(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	wrapperPath := filepath.Join(home, ".local", "bin", "codex")
-	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(wrapperPath, []byte("#!/bin/sh\nexec rampart preload -- /usr/bin/codex \"$@\"\n"), 0o755); err != nil {
+	if err := installCodexHooks(hooksPath, "rampart hook --format codex", "rampart.exe hook --format codex", false); err != nil {
 		t.Fatal(err)
 	}
 
 	agents := detectProtectedAgents()
 	found := false
 	for _, agent := range agents {
-		if agent == "Codex (wrapper)" {
+		if agent == "Codex (hooks)" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected Codex wrapper detection, got %v", agents)
+		t.Fatalf("expected Codex lifecycle hook detection, got %v", agents)
 	}
 }
 
@@ -183,7 +183,7 @@ func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
 	}
 
 	for _, agent := range detectProtectedAgents() {
-		if agent == "Codex (wrapper)" {
+		if strings.Contains(agent, "Codex") {
 			t.Fatalf("plain codex binary should not be reported as protected: %v", agent)
 		}
 	}

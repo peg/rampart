@@ -31,12 +31,13 @@ type hookApprovalClient struct {
 
 // createApprovalRequest is the JSON body POSTed to POST /v1/approvals.
 type createApprovalRequest struct {
-	Tool    string `json:"tool"`
-	Command string `json:"command,omitempty"`
-	Agent   string `json:"agent"`
-	Path    string `json:"path,omitempty"`
-	Message string `json:"message"`
-	RunID   string `json:"run_id,omitempty"`
+	Tool       string `json:"tool"`
+	Command    string `json:"command,omitempty"`
+	Agent      string `json:"agent"`
+	Path       string `json:"path,omitempty"`
+	Message    string `json:"message"`
+	RunID      string `json:"run_id,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 // createApprovalResponse is the JSON returned from POST /v1/approvals.
@@ -57,21 +58,22 @@ type pollApprovalResponse struct {
 // Falls back to hookAsk if the serve instance is unreachable.
 // The context allows cancellation (e.g., user Ctrl-C).
 func (c *hookApprovalClient) requestApproval(tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
-	return c.requestApprovalCtx(context.Background(), tool, command, agent, path, runID, message, timeout)
+	return c.requestApprovalCtx(context.Background(), tool, command, agent, path, runID, "", message, timeout)
 }
 
 // requestApprovalCtx is like requestApproval but accepts a context for cancellation.
-func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
+func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, runID, toolCallID, message string, timeout time.Duration) hookDecisionType {
 	message = enrichApprovalMessage(message, command)
 
 	// Create the approval
 	body := createApprovalRequest{
-		Tool:    tool,
-		Command: command,
-		Agent:   agent,
-		Path:    path,
-		Message: message,
-		RunID:   runID,
+		Tool:       tool,
+		Command:    command,
+		Agent:      agent,
+		Path:       path,
+		Message:    message,
+		RunID:      runID,
+		ToolCallID: toolCallID,
 	}
 
 	data, err := json.Marshal(body)
@@ -121,7 +123,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 				return hookAllow
 			case "denied":
 				c.logger.Debug("hook: run auto-denied by bulk-resolve, skipping queue")
-				fmt.Fprintf(os.Stderr, "❌ Auto-denied (run was bulk-denied)\n")
+				fmt.Fprintf(c.stderrWriter(), "❌ Auto-denied (run was bulk-denied)\n")
 				return hookDeny
 			}
 		}
@@ -232,14 +234,15 @@ func (c *hookApprovalClient) stderrWriter() io.Writer {
 
 // registerAskAuditCtx creates a pending approval in serve for ask+audit
 // visibility, but does not wait for human resolution.
-func (c *hookApprovalClient) registerAskAuditCtx(ctx context.Context, tool, command, agent, path, runID, message string) (string, error) {
+func (c *hookApprovalClient) registerAskAuditCtx(ctx context.Context, tool, command, agent, path, runID, toolCallID, message string) (string, error) {
 	body := createApprovalRequest{
-		Tool:    tool,
-		Command: command,
-		Agent:   agent,
-		Path:    path,
-		Message: enrichApprovalMessage(message, command),
-		RunID:   runID,
+		Tool:       tool,
+		Command:    command,
+		Agent:      agent,
+		Path:       path,
+		Message:    enrichApprovalMessage(message, command),
+		RunID:      runID,
+		ToolCallID: toolCallID,
 	}
 	data, err := json.Marshal(body)
 	if err != nil {

@@ -194,12 +194,13 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | Integration | Exec Coverage | File Coverage | Response Scanning | Cascade |
 |-------------|--------------|---------------|-------------------|---------|
 | Native hooks (Claude Code) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
+| Native hooks (Codex CLI/IDE/desktop) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart protect openclaw` | ✅ | ✅ | ❌ | ❌ |
 | `rampart setup openclaw --patch-tools` | ✅ (shim) | ✅ (patched) | ❌ | ❌ |
-| `rampart setup codex` | ✅ (LD_PRELOAD) | ❌ | ❌ | ✅ LD_PRELOAD |
+| `rampart setup codex` | ✅ (native hooks) | ✅ (native hooks) | ✅ PostToolUse | ❌ |
 | HTTP proxy | ✅ | ✅ | ✅ | ❌ |
 | MCP proxy | ✅ | ✅ | ✅ | ❌ |
 

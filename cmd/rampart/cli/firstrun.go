@@ -110,7 +110,9 @@ func isHookBasedOnly(protected []string) bool {
 		return false
 	}
 	for _, p := range protected {
-		if !(strings.Contains(p, "Claude Code (hooks)") || strings.Contains(p, "Cline (hooks)")) {
+		if !(strings.Contains(p, "Claude Code (hooks)") ||
+			strings.Contains(p, "Cline (hooks)") ||
+			strings.Contains(p, "Codex (hooks)")) {
 			return false
 		}
 	}

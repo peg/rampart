@@ -74,6 +74,27 @@ func TestBehavioralVerificationReportsMissingTokenAsUnverified(t *testing.T) {
 	}
 }
 
+func TestVerifyCodexHooksInstalled(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := installCodexHooks(hooksPath, "rampart hook --format codex", "rampart.exe hook --format codex", false); err != nil {
+		t.Fatal(err)
+	}
+	check := verifyCodexHooksInstalled()
+	if check.Status != verificationPass {
+		t.Fatalf("unexpected check: %#v", check)
+	}
+}
+
+func TestVerifyCodexHookAdapterBlocksCanary(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	check := verifyCodexHookAdapter(context.Background())
+	if check.Status != verificationPass {
+		t.Fatalf("unexpected check: %#v", check)
+	}
+}
+
 func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
 	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
 	stateDir := t.TempDir()
