@@ -50,7 +50,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup gemini</code></td>
       <td data-label="rampart serve">Not required for local allow/deny;<br>used by managed <code>rampart protect</code> verification</td>
       <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>individual, organization, Cloud, and API-key Gemini CLI; adapter-tested; authenticated host proof pending</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>enterprise/API-key Gemini CLI; adapter-tested; authenticated host proof pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>GitHub Copilot CLI / VS Code</strong></td>

@@ -10,11 +10,12 @@ Rampart uses Gemini CLI's native
 to evaluate host-exposed tool calls before execution and inspect responses
 afterward.
 
-!!! note "Accounts and product boundary"
-    Gemini CLI supports free individual Google-account access, unpaid Gemini
-    API keys, Google Cloud access, and paid organizational subscriptions. This
-    integration targets the local Gemini CLI hook host; it does not claim
-    compatibility with Gemini Code Assist IDE agent mode or Antigravity CLI.
+!!! note "Current Google product split"
+    Google moved unpaid and Google One users to Antigravity CLI on June 18,
+    2026. Gemini CLI remains supported for Gemini Code Assist Standard and
+    Enterprise organizations, Google Cloud users, and paid API-key access.
+    This integration targets that continuing Gemini CLI enterprise surface; it
+    does not claim Antigravity CLI compatibility.
 
 ## Zero-configuration protection
 
