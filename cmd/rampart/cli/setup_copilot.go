@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -55,15 +54,7 @@ Run 'rampart setup copilot --remove' to uninstall the user hook.`,
 				return nil
 			}
 
-			hookBin := "rampart"
-			if found, lookupErr := exec.LookPath("rampart"); lookupErr == nil {
-				hookBin = found
-			} else if executable, executableErr := os.Executable(); executableErr == nil {
-				hookBin = executable
-			}
-			if absolute, absoluteErr := filepath.Abs(hookBin); absoluteErr == nil {
-				hookBin = absolute
-			}
+			hookBin := resolveRampartHookBinary()
 			bashCommand := shellQuoteCodexHookArg(hookBin) + " hook --format copilot"
 			powershellCommand := "& " + windowsQuoteCodexHookArg(hookBin) + " hook --format copilot"
 			if err := installCopilotHooks(path, bashCommand, powershellCommand, force); err != nil {

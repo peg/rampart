@@ -21,6 +21,38 @@ import (
 
 var execLookPath = osexec.LookPath
 
+// resolveRampartHookBinary returns the executable that managed hook files
+// should invoke. Stable installations prefer the package-manager PATH entry so
+// hooks survive upgrades. Explicit side-by-side builds (for example
+// rampart-staging) bind to themselves so candidate testing cannot silently
+// fall back to an older stable binary.
+func resolveRampartHookBinary() string {
+	executable, executableErr := osExecutable()
+	if executableErr == nil {
+		base := strings.TrimSuffix(strings.ToLower(filepath.Base(executable)), ".exe")
+		if strings.HasPrefix(base, "rampart-") {
+			if absolute, err := filepath.Abs(executable); err == nil {
+				return absolute
+			}
+			return executable
+		}
+	}
+
+	if path, err := execLookPath("rampart"); err == nil {
+		if absolute, absoluteErr := filepath.Abs(path); absoluteErr == nil {
+			return absolute
+		}
+		return path
+	}
+	if executableErr == nil {
+		if absolute, err := filepath.Abs(executable); err == nil {
+			return absolute
+		}
+		return executable
+	}
+	return "rampart"
+}
+
 func newSetupCmd(opts *rootOptions) *cobra.Command {
 	var force bool
 
@@ -200,18 +232,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			// Use an absolute path so the hook works regardless of Claude Code's PATH.
 			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
 			// settings.json never needs to contain credentials.
-			hookBin := "rampart"
-			// Prefer the PATH entry because package managers generally expose a
-			// stable symlink there while os.Executable may point at a versioned
-			// location that disappears during an upgrade.
-			if p, err := execLookPath("rampart"); err == nil {
-				hookBin = p
-			} else if exe, err := os.Executable(); err == nil {
-				hookBin = exe
-			}
-			if absolute, err := filepath.Abs(hookBin); err == nil {
-				hookBin = absolute
-			}
+			hookBin := resolveRampartHookBinary()
 			// Convert Windows paths to Git Bash format. Claude Code on Windows runs
 			// hooks through Git Bash which doesn't understand backslash paths.
 			hookBin = toGitBashPath(hookBin)

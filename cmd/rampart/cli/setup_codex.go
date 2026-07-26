@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -67,18 +66,7 @@ Run 'rampart setup codex --remove' to uninstall.`,
 				return nil
 			}
 
-			hookBin := "rampart"
-			// Prefer the PATH entry because package managers usually expose a
-			// stable symlink there while os.Executable may resolve to a
-			// versioned location that disappears on upgrade.
-			if path, lookupErr := exec.LookPath("rampart"); lookupErr == nil {
-				hookBin = path
-			} else if executable, executableErr := os.Executable(); executableErr == nil {
-				hookBin = executable
-			}
-			if absolute, absoluteErr := filepath.Abs(hookBin); absoluteErr == nil {
-				hookBin = absolute
-			}
+			hookBin := resolveRampartHookBinary()
 			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format codex"
 			hookCommandWindows := windowsQuoteCodexHookArg(hookBin) + " hook --format codex"
 

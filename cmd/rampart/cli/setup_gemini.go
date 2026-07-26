@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -46,15 +45,7 @@ Run 'rampart setup gemini --remove' to uninstall.`,
 				return nil
 			}
 
-			hookBin := "rampart"
-			if path, lookupErr := exec.LookPath("rampart"); lookupErr == nil {
-				hookBin = path
-			} else if executable, executableErr := os.Executable(); executableErr == nil {
-				hookBin = executable
-			}
-			if absolute, absoluteErr := filepath.Abs(hookBin); absoluteErr == nil {
-				hookBin = absolute
-			}
+			hookBin := resolveRampartHookBinary()
 			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format gemini"
 			if runtime.GOOS == "windows" {
 				hookCommand = windowsQuoteCodexHookArg(hookBin) + " hook --format gemini"
