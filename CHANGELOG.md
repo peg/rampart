@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Zero-configuration protection across supported local agents** —
+  `rampart protect` now detects installed integrations through a shared driver
+  contract, installs the strongest supported boundary, and runs the matching
+  active verifier without requiring users to choose an adapter manually.
+- **Native Gemini CLI lifecycle-hook integration** — `rampart setup gemini`
+  installs managed `BeforeTool` and `AfterTool` hooks, preserves unrelated
+  settings, covers documented shell, file, web, MCP, memory, and delegated-tool
+  surfaces, and provides active non-executing verification plus a rolling
+  latest-upstream compatibility gate.
+- **GitHub Copilot CLI and VS Code protection** — `rampart setup copilot`
+  installs one cross-platform `PreToolUse`/`PostToolUse` user hook shared by
+  Copilot CLI and VS Code agent sessions. Copilot CLI administrators can also
+  install a machine-owned policy hook with `--policy`.
+
+### Changed
+
+- **Integration status and setup use one source of truth** — Aliases,
+  installation detection, setup, verification, interactive setup, and protected
+  status reporting now resolve through the same integration-driver registry.
+- **Public support guidance includes editor boundaries** — The support matrix,
+  quickstart, architecture, threat model, landing page, and integration guides
+  distinguish CLI, editor, Preview, service-dependent, and administrator-owned
+  enforcement paths.
+
+### Security
+
+- **Gemini and Copilot adapters deny unknown future pre-call tools** — New tool
+  names cannot silently bypass classification in enforce mode. Allowed calls
+  still pass through each host's native permission and sandbox checks, and
+  multi-file edits evaluate every reported path with deny-wins behavior.
+- **Rolling compatibility gates track upstream Gemini and Copilot releases** —
+  Disposable homes validate generated hook configuration and destructive-call
+  denial adapters against the latest published CLIs without touching normal
+  user state or claiming authenticated host execution.
+
 ## [1.4.0] - 2026-07-25
 
 ### Added
