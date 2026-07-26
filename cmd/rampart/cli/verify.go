@@ -247,7 +247,7 @@ func runBehavioralVerification(ctx context.Context, target, serveURL string, tim
 
 	client := &http.Client{Timeout: timeout}
 	for _, canary := range behavioralCanaries(target) {
-		report.Checks = append(report.Checks, runPreflightCanary(ctx, client, strings.TrimRight(serveURL, "/"), token, canary))
+		report.Checks = append(report.Checks, runPreflightCanary(ctx, client, strings.TrimRight(serveURL, "/"), token, target, canary))
 	}
 	return summarizeVerification(report)
 }
@@ -677,7 +677,7 @@ func verifyCodexHookAdapter(ctx context.Context) verificationCheck {
 	}
 }
 
-func runPreflightCanary(ctx context.Context, client *http.Client, serveURL, token string, canary behavioralCanary) verificationCheck {
+func runPreflightCanary(ctx context.Context, client *http.Client, serveURL, token, target string, canary behavioralCanary) verificationCheck {
 	agent := canary.Agent
 	if agent == "" {
 		agent = "rampart-verify"
@@ -735,7 +735,11 @@ func runPreflightCanary(ctx context.Context, client *http.Client, serveURL, toke
 		}
 	}
 	check.Status = verificationFail
-	check.Hint = "Run `rampart protect openclaw` to restore the managed Guard policy, then verify again"
+	if target == "" || target == "policy" {
+		check.Hint = "Run `rampart protect` to restore the managed Guard policy, then verify again"
+	} else {
+		check.Hint = fmt.Sprintf("Run `rampart protect %s` to restore the managed Guard policy, then verify again", target)
+	}
 	return check
 }
 
