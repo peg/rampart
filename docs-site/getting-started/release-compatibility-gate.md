@@ -32,7 +32,8 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Record the current Cline version reviewed or exercised; if no host run is
      completed, keep that limitation explicit in the support matrix.
    - Record latest stable Gemini CLI from npm and note whether the tested access
-     is enterprise, Google Cloud, or paid API-key based.
+     uses an individual Google account, organization subscription, Google
+     Cloud, or a free/paid API key.
    - Record latest stable GitHub Copilot CLI from the official npm package and
      the VS Code version used for any Preview hook-host claim.
    - Record latest stable OpenClaw from npm.

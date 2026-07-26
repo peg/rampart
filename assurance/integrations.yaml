@@ -270,7 +270,7 @@ integrations:
         kind: upstream_latest
         proves: The latest published Gemini CLI starts with Rampart's generated settings and the candidate adapter returns the documented destructive-tool denial schema.
     limitations:
-      - This targets Gemini CLI's continuing enterprise, Google Cloud, and paid API-key surface; Antigravity CLI compatibility is not claimed.
+      - This targets the local Gemini CLI hook host across individual, organization, Google Cloud, and API-key authentication; Gemini Code Assist IDE agent mode and Antigravity CLI compatibility are not claimed.
       - The ordinary verifier exercises installed configuration and Rampart's adapter, not a real Gemini model/tool invocation.
       - Gemini hooks do not currently expose a native ask result, so approval actions require rampart serve and deny when that service is unavailable.
       - An unexpected hook crash or host timeout follows Gemini CLI behavior and is not claimed fail-closed.
