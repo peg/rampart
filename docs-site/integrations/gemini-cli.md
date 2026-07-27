@@ -1,9 +1,14 @@
 ---
 title: Gemini CLI
-description: Protect Gemini CLI tool calls with native BeforeTool and AfterTool hooks.
+description: Experimentally protect enterprise/API-key Gemini CLI tool calls with native BeforeTool and AfterTool hooks.
 ---
 
 # Securing Gemini CLI with Rampart
+
+!!! warning "Experimental enterprise integration"
+    This adapter is available for explicit testing but is not included in
+    zero-configuration auto-protection. It has rolling adapter compatibility
+    coverage, but no completed authenticated host-boundary proof.
 
 Rampart uses Gemini CLI's native
 [`BeforeTool` and `AfterTool` hooks](https://geminicli.com/docs/hooks/reference/)
@@ -17,23 +22,16 @@ afterward.
     This integration targets that continuing Gemini CLI enterprise surface; it
     does not claim Antigravity CLI compatibility.
 
-## Zero-configuration protection
-
-If Gemini CLI is installed or has a `~/.gemini` configuration directory:
-
-```bash
-rampart protect gemini
-```
-
-Running `rampart protect` without a target auto-detects Gemini CLI alongside
-other supported local agents. It installs the managed Guard policy, ensures the
-local service is available, configures the hooks, and runs safe verification.
-
-For setup without the managed protection workflow:
+## Explicit experimental setup
 
 ```bash
 rampart setup gemini
+rampart verify gemini
 ```
+
+Rampart intentionally does not infer Gemini CLI from the shared `~/.gemini`
+directory because Antigravity uses the same tree. This integration is never
+installed by a bare `rampart protect` run.
 
 Setup adds wildcard lifecycle entries to `~/.gemini/settings.json`. Existing
 settings and unrelated hooks are preserved, and rerunning setup is idempotent.
@@ -64,9 +62,10 @@ adapter with a non-executing destructive canary, requires Gemini's structured
 deny response, checks session-correlated audit output, and tests the live local
 policy path. It does not invoke a model or execute the canary command.
 
-The current support claim covers adapter behavior on Linux and macOS. A rolling
-latest-Gemini compatibility job, authenticated live-host proof, and physical
-Windows host proof remain release-assurance follow-ups.
+The current experimental claim covers adapter behavior on Linux and macOS. A
+rolling latest-Gemini compatibility job validates the published CLI and
+generated settings without credentials. Authenticated live-host proof and
+physical Windows host proof remain release-assurance follow-ups.
 
 ## Uninstall
 

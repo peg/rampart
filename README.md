@@ -90,7 +90,7 @@ rampart setup cline
 rampart setup codex
 rampart verify codex
 
-# Gemini CLI
+# Gemini CLI (experimental enterprise/API-key preview)
 rampart setup gemini
 rampart verify gemini
 
@@ -173,7 +173,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 | **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
-| **Gemini CLI** | `rampart setup gemini` | Native `BeforeTool`/`AfterTool` lifecycle hooks |
+| **Gemini CLI** | `rampart setup gemini` | Experimental enterprise/API-key `BeforeTool`/`AfterTool` hooks |
 | **GitHub Copilot** | `rampart setup copilot` | Shared native hooks for Copilot CLI and VS Code agent sessions |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
@@ -635,7 +635,7 @@ rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # OpenClaw native plugin integration
 rampart setup codex                          # Codex native lifecycle hooks
-rampart setup gemini                         # Gemini CLI native lifecycle hooks
+rampart setup gemini                         # Experimental enterprise/API-key Gemini CLI hooks
 rampart setup copilot                        # Copilot CLI + VS Code shared native hooks
 rampart verify codex                         # Verify hook install + native deny response
 rampart verify gemini                        # Verify hook install + native deny response
@@ -706,7 +706,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | OpenClaw | `rampart protect openclaw` | Linux, macOS |
 | Cline | `rampart setup cline` | Linux, macOS |
 | Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
-| Gemini CLI | `rampart setup gemini` | Linux, macOS |
+| Gemini CLI (enterprise/API key) | `rampart setup gemini` | Experimental; Linux, macOS |
 | GitHub Copilot CLI / VS Code | `rampart setup copilot` | Linux, macOS, Windows |
 | Claude Desktop MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |

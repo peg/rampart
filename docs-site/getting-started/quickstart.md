@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: "Get Rampart protecting Claude Code, Codex, Copilot, Cline, Gemini CLI, or OpenClaw in minutes."
+description: "Get Rampart protecting Claude Code, Codex, Copilot, Cline, or OpenClaw in minutes, with experimental integrations documented separately."
 ---
 
 # Quick Start
@@ -75,12 +75,15 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
     rampart verify codex
     ```
 
-=== "Gemini CLI"
+=== "Gemini CLI (experimental)"
 
     ```bash
     rampart setup gemini
     rampart verify gemini
     ```
+
+    Enterprise/API-key Gemini CLI only. This is an explicit experimental path,
+    not Antigravity support and not part of bare `rampart protect` detection.
 
 === "GitHub Copilot"
 

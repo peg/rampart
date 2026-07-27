@@ -1,6 +1,6 @@
 ---
 title: Release Compatibility Gate
-description: "How Rampart validates Claude Code, Codex, Gemini CLI, GitHub Copilot, Cline, OpenClaw, and Hermes Agent claims before release."
+description: "How Rampart validates Claude Code, Codex, experimental Gemini CLI, GitHub Copilot, Cline, OpenClaw, and Hermes Agent claims before release."
 ---
 
 # Release Compatibility Gate
@@ -16,7 +16,7 @@ Rampart uses these tiers in the support matrix:
 - **Experimental**: installable and useful, but with known limits that are still part of the public contract.
 - **Legacy compatibility**: maintained where practical for older clients, but not the preferred path.
 
-Hermes Agent remains **experimental** until Hermes exposes a stable plugin approval/resume primitive and a full end-to-end test proves a single user-facing approval, exact tool-call resume, deny non-bypass, and audit/result correlation.
+Gemini CLI remains **experimental** because consumer Google sign-in is retired, Antigravity uses a different plugin surface, and the gate does not make an authenticated model/tool call. Hermes Agent remains **experimental** until Hermes exposes a stable plugin approval/resume primitive and a full end-to-end test proves a single user-facing approval, exact tool-call resume, deny non-bypass, and audit/result correlation.
 
 ## Required gate for release candidates
 
@@ -81,7 +81,7 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Do not claim native Windows Cline coverage while the installed Rampart hook
      scripts require Bash.
 
-7. **Validate latest stable Gemini CLI without conflating adapter and host proof**
+7. **Validate experimental enterprise Gemini CLI without conflating adapter and host proof**
    - Run `node scripts/compat-gemini-latest.mjs` to install the latest published
      package in a disposable home, generate candidate hooks, and require the
      documented destructive `BeforeTool` denial schema.
@@ -119,7 +119,7 @@ Hermes Agent remains **experimental** until Hermes exposes a stable plugin appro
    - Classify each finding as blocker, expected optional local gap, or follow-up diagnostic improvement.
    - Do not collapse OpenClaw, Hermes, Claude Code, Codex, and Cline findings into one global yes/no.
 
-10. **Publish claims that match the evidence**
+11. **Publish claims that match the evidence**
    - Coverage means tool calls delivered through the named integration
      boundary, not all syscalls, packets, or behavior inside allowed processes.
    - A harness proves a live check is available; only a completed sanitized run

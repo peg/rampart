@@ -19,6 +19,8 @@ import sys
 import tempfile
 import textwrap
 import threading
+import urllib.parse
+import urllib.request
 import venv
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -163,6 +165,28 @@ def make_venv(root: Path, package: str, base_python: str | None = None) -> tuple
     return python, hermes
 
 
+def distribution_version(python: Path, distribution: str) -> str:
+    result = run(
+        [
+            str(python),
+            "-c",
+            "import importlib.metadata; print(importlib.metadata.version(" + repr(distribution) + "))",
+        ]
+    )
+    return result.stdout.strip()
+
+
+def pypi_latest_version(distribution: str) -> str:
+    name = urllib.parse.quote(distribution, safe="")
+    request = urllib.request.Request(
+        f"https://pypi.org/pypi/{name}/json",
+        headers={"User-Agent": "rampart-hermes-compat/1"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = json.load(response)
+    return str(payload["info"]["version"])
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -291,6 +315,8 @@ def main() -> int:
 
     temp = Path(tempfile.mkdtemp(prefix="rampart-hermes-compat-"))
     try:
+        installed_package_version = None
+        published_package_version = None
         if args.hermes_python:
             hermes_python = resolve_executable(args.hermes_python)
             hermes_bin_path = resolve_executable(args.hermes_bin) if args.hermes_bin else None
@@ -299,6 +325,15 @@ def main() -> int:
                 hermes_bin_path = Path(hermes_bin) if hermes_bin else None
         else:
             hermes_python, hermes_bin_path = make_venv(temp, args.package, args.python)
+            if args.package == "hermes-agent":
+                installed_package_version = distribution_version(hermes_python, "hermes-agent")
+                published_package_version = pypi_latest_version("hermes-agent")
+                if installed_package_version != published_package_version:
+                    raise RuntimeError(
+                        "hermes-agent resolved to "
+                        f"{installed_package_version}, but PyPI latest is {published_package_version}; "
+                        "use a Python version supported by the latest Hermes release"
+                    )
 
         hermes_home = temp / "hermes-home"
         plugin_dir = hermes_home / "plugins" / "rampart"
@@ -367,6 +402,8 @@ def main() -> int:
                     {
                         "ok": True,
                         "hermes_version": hermes_version,
+                        "installed_package_version": installed_package_version,
+                        "published_package_version": published_package_version,
                         "hermes_home_isolated": str(hermes_home),
                         "plugin_dir": str(plugin_dir),
                         "requests_seen": RampartStub.requests_seen,

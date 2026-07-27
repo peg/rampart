@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -27,12 +28,15 @@ type integrationDriver struct {
 	SetupCommand func(opts *rootOptions) *cobra.Command
 	VerifyChecks func(ctx context.Context, timeout time.Duration) []verificationCheck
 	OpenClaw     bool
+	AutoProtect  bool
+	Platforms    []string
 }
 
 func supportedIntegrationDrivers() []integrationDriver {
 	return []integrationDriver{
 		{
 			ID: "openclaw", DisplayName: "OpenClaw", Boundary: "native plugin", VerifyTarget: "openclaw", OpenClaw: true,
+			AutoProtect: true, Platforms: []string{"linux", "darwin"},
 			Installed: func(_ string) bool { return isOpenClawInstalled() },
 			VerifyChecks: func(ctx context.Context, timeout time.Duration) []verificationCheck {
 				return []verificationCheck{verifyOpenClawPluginLive(ctx, timeout)}
@@ -40,6 +44,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "claude-code", Aliases: []string{"claude"}, DisplayName: "Claude Code", Boundary: "native hooks", VerifyTarget: "claude-code",
+			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("claude", filepath.Join(home, ".claude"))
 			},
@@ -50,6 +55,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "codex", DisplayName: "Codex", Boundary: "native hooks", VerifyTarget: "codex",
+			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("codex", codexHomeDir(home))
 			},
@@ -59,9 +65,11 @@ func supportedIntegrationDrivers() []integrationDriver {
 			},
 		},
 		{
-			ID: "gemini", Aliases: []string{"gemini-cli"}, DisplayName: "Gemini CLI", Boundary: "native hooks", VerifyTarget: "gemini",
+			ID: "gemini", Aliases: []string{"gemini-cli"}, DisplayName: "Gemini CLI", Boundary: "experimental native hooks", VerifyTarget: "gemini",
+			AutoProtect: false, Platforms: []string{"linux", "darwin"},
 			Installed: func(home string) bool {
-				return integrationBinaryOrPathInstalled("gemini", filepath.Join(home, ".gemini"))
+				_, err := execLookPath("gemini")
+				return err == nil
 			},
 			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupGeminiCmd() },
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
@@ -70,6 +78,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "copilot", Aliases: []string{"copilot-cli", "github-copilot"}, DisplayName: "GitHub Copilot CLI / VS Code", Boundary: "native hooks", VerifyTarget: "copilot",
+			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed:    func(home string) bool { return copilotInstalledForHome(home) },
 			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupCopilotCmd() },
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
@@ -78,6 +87,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "cline", DisplayName: "Cline", Boundary: "native hooks", VerifyTarget: "cline",
+			AutoProtect: true, Platforms: []string{"linux", "darwin"},
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("cline", filepath.Join(home, "Documents", "Cline"))
 			},
@@ -119,6 +129,15 @@ func findIntegrationDriver(target string) (integrationDriver, bool) {
 	return integrationDriver{}, false
 }
 
+func integrationDriverSupportsPlatform(driver integrationDriver, goos string) bool {
+	for _, platform := range driver.Platforms {
+		if platform == goos {
+			return true
+		}
+	}
+	return false
+}
+
 func detectInstalledIntegrationDrivers() ([]integrationDriver, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -126,7 +145,7 @@ func detectInstalledIntegrationDrivers() ([]integrationDriver, error) {
 	}
 	var detected []integrationDriver
 	for _, driver := range supportedIntegrationDrivers() {
-		if driver.Installed != nil && driver.Installed(home) {
+		if driver.AutoProtect && integrationDriverSupportsPlatform(driver, runtime.GOOS) && driver.Installed != nil && driver.Installed(home) {
 			detected = append(detected, driver)
 		}
 	}

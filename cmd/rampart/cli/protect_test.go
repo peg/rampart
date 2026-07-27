@@ -17,7 +17,7 @@ import (
 	"github.com/peg/rampart/policies"
 )
 
-func TestProtectRejectsOpenClawOnlyFlagsForGemini(t *testing.T) {
+func TestProtectKeepsExperimentalGeminiExplicit(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	t.Setenv("PATH", t.TempDir())
@@ -27,8 +27,8 @@ func TestProtectRejectsOpenClawOnlyFlagsForGemini(t *testing.T) {
 	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
 	cmd.SetArgs([]string{"protect", "gemini", "--no-restart"})
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "apply only to OpenClaw") {
-		t.Fatalf("error = %v, want OpenClaw-only flag guidance", err)
+	if err == nil || !strings.Contains(err.Error(), "remains experimental") || !strings.Contains(err.Error(), "rampart setup gemini") {
+		t.Fatalf("error = %v, want experimental setup guidance", err)
 	}
 }
 

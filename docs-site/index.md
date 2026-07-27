@@ -214,7 +214,7 @@ verify -> outcomes.deny
 verify -> outcomes.approval
 ```
 
-## Supported Integration Paths
+## Integration Paths
 
 | Agent | Integration | Setup |
 |-------|------------|-------|
@@ -222,6 +222,8 @@ verify -> outcomes.approval
 | **Cline** | Native hooks | `rampart setup cline` |
 | **OpenClaw** | Zero-config native guard | `rampart protect openclaw` |
 | **Codex CLI, IDE, desktop** | Native lifecycle hooks | `rampart setup codex` |
+| **GitHub Copilot CLI / VS Code** | Shared native hooks | `rampart setup copilot` |
+| **Gemini CLI (enterprise/API key)** | Experimental native hooks | `rampart setup gemini` |
 | **Hermes Agent** | Experimental native plugin | `rampart setup hermes` |
 | **Cursor** | MCP proxy | `rampart mcp --` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |

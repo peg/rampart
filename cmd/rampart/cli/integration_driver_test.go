@@ -26,6 +26,10 @@ func TestFindIntegrationDriverResolvesCanonicalIDsAndAliases(t *testing.T) {
 			t.Fatalf("findIntegrationDriver(%q) = %#v, %v; want %q", input, driver, ok, want)
 		}
 	}
+	gemini, ok := findIntegrationDriver("gemini")
+	if !ok || gemini.AutoProtect {
+		t.Fatal("experimental Gemini CLI must remain explicit setup/verification, not zero-configuration protection")
+	}
 	if _, ok := findIntegrationDriver("hermes"); ok {
 		t.Fatal("experimental Hermes must not be advertised as zero-configuration protection")
 	}
@@ -49,7 +53,33 @@ func TestDetectInstalledIntegrationDriversUsesIsolatedHome(t *testing.T) {
 	for _, driver := range drivers {
 		ids = append(ids, driver.ID)
 	}
-	if len(ids) != 3 || ids[0] != "claude-code" || ids[1] != "gemini" || ids[2] != "copilot" {
-		t.Fatalf("detected IDs = %#v, want claude-code, gemini, and copilot", ids)
+	if len(ids) != 2 || ids[0] != "claude-code" || ids[1] != "copilot" {
+		t.Fatalf("detected IDs = %#v, want claude-code and copilot only", ids)
+	}
+}
+
+func TestIntegrationDriverPlatformEligibility(t *testing.T) {
+	drivers := supportedIntegrationDrivers()
+	find := func(id string) integrationDriver {
+		t.Helper()
+		for _, driver := range drivers {
+			if driver.ID == id {
+				return driver
+			}
+		}
+		t.Fatalf("driver %q not found", id)
+		return integrationDriver{}
+	}
+
+	if integrationDriverSupportsPlatform(find("cline"), "windows") {
+		t.Fatal("Cline's Bash hook integration must not be auto-protected on Windows")
+	}
+	if integrationDriverSupportsPlatform(find("openclaw"), "windows") {
+		t.Fatal("OpenClaw must not be auto-protected on Windows")
+	}
+	for _, id := range []string{"claude-code", "codex", "copilot"} {
+		if !integrationDriverSupportsPlatform(find(id), "windows") {
+			t.Fatalf("%s should support Windows", id)
+		}
 	}
 }

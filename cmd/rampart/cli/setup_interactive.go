@@ -91,7 +91,8 @@ func detectAgents() []agentInfo {
 		agents[2].Detected = env.HasOpenClaw
 		agents[3].Detected = env.HasCodex
 		home, _ := os.UserHomeDir()
-		agents[4].Detected = integrationBinaryOrPathInstalled("gemini", filepath.Join(home, ".gemini"))
+		_, geminiErr := execLookPath("gemini")
+		agents[4].Detected = geminiErr == nil
 		agents[5].Detected = copilotInstalledForHome(home)
 		agents[6].Detected = env.HasAider
 		agents[7].Detected = env.HasCursor

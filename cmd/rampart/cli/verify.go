@@ -489,6 +489,15 @@ func verifyCopilotHooksInstalled() verificationCheck {
 			Hint:    "Run `rampart setup copilot`, then restart Copilot CLI or reload VS Code",
 		}
 	}
+	cwd, _ := os.Getwd()
+	if disabledAt, disabled := copilotCLIUserHooksDisabled(home, cwd); disabled {
+		return verificationCheck{
+			ID: "copilot-hook-loading", Name: "Copilot CLI is loading user hooks",
+			Status: verificationFail, Expected: "disableAllHooks is false", Actual: "disabled",
+			Message: fmt.Sprintf("Copilot CLI user hooks are disabled by %s; administrator policy hooks are not affected", disabledAt),
+			Hint:    "Remove `disableAllHooks: true` for this session; a machine policy hook can protect Copilot CLI separately but does not cover VS Code",
+		}
+	}
 	return verificationCheck{
 		ID: "copilot-hook-installation", Name: "Copilot CLI / VS Code lifecycle hooks are installed",
 		Status: verificationPass, Expected: "PreToolUse and PostToolUse", Actual: "configured",

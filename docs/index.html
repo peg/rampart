@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rampart — A Firewall for AI Coding Agents</title>
-    <meta name="description" content="Block dangerous commands before they run. Rampart enforces local YAML policies for Claude Code, Codex, GitHub Copilot, Gemini CLI, Cline, OpenClaw, and MCP — no cloud, no account required.">
+    <meta name="description" content="Block dangerous commands before they run. Rampart enforces local YAML policies for Claude Code, Codex, GitHub Copilot, Cline, OpenClaw, and MCP — no cloud, no account required.">
     <link rel="canonical" href="https://rampart.sh/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Rampart — A Firewall for AI Coding Agents">
@@ -1123,7 +1123,7 @@
                 </div>
                 <div class="hero-meta">
                     <span>Installs to <code>~/.local/bin</code> by default on macOS/Linux. Usually no sudo required.</span>
-                    <span>Claude Code · Codex · Copilot · Gemini CLI · Cline · OpenClaw · Hermes preview · MCP</span>
+                    <span>Claude Code · Codex · Copilot · Cline · OpenClaw · Hermes preview · MCP</span>
                 </div>
                 <div class="hero-actions">
                     <a href="#install" class="btn btn-primary">Quickstart</a>
@@ -1154,7 +1154,7 @@
             <span class="proof-chip">blocks credential reads</span>
             <span class="proof-chip">stops exfiltration patterns</span>
             <span class="proof-chip">hash-chained local audit</span>
-            <span class="proof-chip">Claude Code · Codex · Copilot · Gemini CLI · Cline · OpenClaw · Hermes preview</span>
+            <span class="proof-chip">Claude Code · Codex · Copilot · Cline · OpenClaw · Hermes preview</span>
             <span class="proof-chip"><a href="https://github.com/peg/rampart" id="star-count" style="text-decoration:none; color:inherit;">GitHub repo</a></span>
         </div>
     </div>
@@ -1211,7 +1211,7 @@
             <div class="stat-card interactive"><span class="stat-num">8µs</span><span class="stat-label">example deny decision</span></div>
             <div class="stat-card interactive"><span class="stat-num">47</span><span class="stat-label">rules in standard.yaml</span></div>
             <div class="stat-card interactive"><span class="stat-num">local</span><span class="stat-label">audit + policy evaluation</span></div>
-            <div class="stat-card interactive"><span class="stat-num">6 + 1</span><span class="stat-label">supported + experimental native paths</span></div>
+            <div class="stat-card interactive"><span class="stat-num">5 + 2</span><span class="stat-label">supported + experimental native paths</span></div>
         </div>
     </div>
 </section>
@@ -1253,21 +1253,21 @@
 <section class="section">
     <div class="container reveal">
         <div class="section-label">Works with your agent</div>
-        <h2 class="section-title">Claude Code, Codex, Copilot, Gemini, Cline, OpenClaw, Hermes, MCP.</h2>
+        <h2 class="section-title">Claude Code, Codex, Copilot, Cline, OpenClaw, Hermes, MCP.</h2>
         <p class="section-desc">Use the native path where Rampart knows the agent. Use preload, wrapping, MCP proxy, or the HTTP API everywhere else. For exact support tiers, approval UX, and whether <code>rampart serve</code> is required, check the support matrix.</p>
         <div class="integrations-grid">
             <div class="integration-row header"><span>Agent</span><span>Setup</span><span>Enforcement path</span><span>Status</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Claude Code</span><span class="integration-code">rampart setup claude-code</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Codex CLI, IDE, desktop</span><span class="integration-code">rampart setup codex</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">GitHub Copilot CLI, VS Code</span><span class="integration-code">rampart setup copilot</span><span class="integration-path">shared native hooks</span><span class="integration-status">native / preview</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Gemini CLI</span><span class="integration-code">rampart setup gemini</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Gemini CLI (enterprise/API key)</span><span class="integration-code">rampart setup gemini</span><span class="integration-path">native hooks</span><span class="integration-status">experimental</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Cline</span><span class="integration-code">rampart setup cline</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">OpenClaw</span><span class="integration-code">rampart setup openclaw</span><span class="integration-path">native plugin</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Hermes Agent</span><span class="integration-code">rampart setup hermes</span><span class="integration-path">user plugin</span><span class="integration-status">experimental</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Any agent</span><span class="integration-code">rampart wrap -- &lt;cmd&gt;</span><span class="integration-path">shim</span><span class="integration-status">universal</span></div>
             <div class="integration-row interactive"><span class="integration-agent">MCP servers</span><span class="integration-code">rampart mcp -- &lt;server&gt;</span><span class="integration-path">proxy</span><span class="integration-status">universal</span></div>
         </div>
-        <p style="margin-top:16px;color:var(--text-dim);font-size:0.9rem;">OpenClaw’s native plugin path depends on <code>rampart serve</code>. Claude Code, Codex, Cline, Gemini CLI, and GitHub Copilot enforce ordinary allow/deny policy locally. Codex and Gemini approval actions use the Rampart service; Copilot uses its native approval prompt. <a href="https://docs.rampart.sh/getting-started/support-matrix/" style="color:var(--accent);text-decoration:none;">Read the canonical support matrix →</a></p>
+        <p style="margin-top:16px;color:var(--text-dim);font-size:0.9rem;">OpenClaw’s native plugin path depends on <code>rampart serve</code>. Claude Code, Codex, Cline, GitHub Copilot, and the experimental Gemini CLI adapter enforce ordinary allow/deny policy locally. Codex and Gemini approval actions use the Rampart service; Copilot uses its native approval prompt. <a href="https://docs.rampart.sh/getting-started/support-matrix/" style="color:var(--accent);text-decoration:none;">Read the canonical support matrix →</a></p>
     </div>
 </section>
 
@@ -1373,7 +1373,7 @@
 <span style="color:var(--accent)">$</span> rampart setup claude-code
 <span style="color:var(--accent)">$</span> rampart setup codex
 <span style="color:var(--accent)">$</span> rampart setup copilot
-<span style="color:var(--accent)">$</span> rampart setup gemini
+<span style="color:var(--accent)">$</span> rampart setup gemini     <span style="color:var(--text-dim)"># experimental enterprise/API-key path</span>
 <span style="color:var(--accent)">$</span> rampart setup cline
 <span style="color:var(--accent)">$</span> rampart setup openclaw
 <span style="color:var(--accent)">$</span> rampart setup hermes     <span style="color:var(--text-dim)"># experimental</span></pre>

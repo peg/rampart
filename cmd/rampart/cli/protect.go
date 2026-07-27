@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -32,7 +33,8 @@ func newProtectCmd(rootOpts *rootOptions) *cobra.Command {
 
 No policy file or rule authoring is required. Protect installs the native
 integration, starts Rampart's policy service, enables fail-closed degraded
-behavior, and verifies the live boundary with non-destructive canaries.
+behavior, and verifies the installed boundary. Native-hook integrations use
+non-destructive adapter canaries; OpenClaw exercises its live plugin path.
 
 Without an agent argument, Rampart detects installed supported agents and
 protects each one through its strongest available native boundary.`,
@@ -52,7 +54,7 @@ protects each one through its strongest available native boundary.`,
 					return fmt.Errorf("protect: detect installed agents: %w", err)
 				}
 				if len(detected) == 0 {
-					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Gemini CLI, GitHub Copilot, Cline; Hermes remains experimental)")
+					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, GitHub Copilot, Cline; Gemini CLI and Hermes remain experimental)")
 				}
 				drivers = detected
 				fmt.Fprintf(cmd.OutOrStdout(), "Detected %d supported agent(s): ", len(drivers))
@@ -66,7 +68,13 @@ protects each one through its strongest available native boundary.`,
 			} else {
 				driver, ok := findIntegrationDriver(target)
 				if !ok {
-					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, gemini, copilot, cline; Hermes remains experimental)", target)
+					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, copilot, cline; Gemini CLI and Hermes remain experimental)", target)
+				}
+				if !driver.AutoProtect {
+					return fmt.Errorf("protect: %s remains experimental; use `rampart setup %s` and `rampart verify %s` for explicit testing", driver.DisplayName, driver.ID, driver.VerifyTarget)
+				}
+				if !integrationDriverSupportsPlatform(driver, runtime.GOOS) {
+					return fmt.Errorf("protect: %s is not supported on %s", driver.DisplayName, runtime.GOOS)
 				}
 				home, err := os.UserHomeDir()
 				if err != nil {
@@ -145,7 +153,7 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 	if report.Summary.Unverified > 0 {
 		return exitCodeError{code: 2}
 	}
-	fmt.Fprintf(w, "\nRampart is actively protecting %s.\n", driver.DisplayName)
+	fmt.Fprintf(w, "\nRampart configuration and adapter verification passed for %s. Restart or reload the host if setup requested it.\n", driver.DisplayName)
 	return nil
 }
 

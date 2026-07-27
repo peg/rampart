@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rampart protect` now detects installed integrations through a shared driver
   contract, installs the strongest supported boundary, and runs the matching
   active verifier without requiring users to choose an adapter manually.
-- **Native Gemini CLI lifecycle-hook integration** — `rampart setup gemini`
+- **Experimental Gemini CLI lifecycle-hook integration** — `rampart setup gemini`
   installs managed `BeforeTool` and `AfterTool` hooks, preserves unrelated
   settings, covers documented shell, file, web, MCP, memory, and delegated-tool
   surfaces, and provides active non-executing verification plus a rolling
@@ -39,10 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names cannot silently bypass classification in enforce mode. Allowed calls
   still pass through each host's native permission and sandbox checks, and
   multi-file edits evaluate every reported path with deny-wins behavior.
+- **Platform-aware zero-configuration detection** — `rampart protect` skips
+  integrations that are not supported on the current operating system and no
+  longer mistakes Antigravity's shared `~/.gemini` state for Gemini CLI.
+- **Copilot disabled-hook detection** — Verification reports when Copilot CLI's
+  `disableAllHooks` setting prevents the user-level Rampart boundary from
+  loading in the current repository.
 - **Rolling compatibility gates track upstream Gemini and Copilot releases** —
   Disposable homes validate generated hook configuration and destructive-call
   denial adapters against the latest published CLIs without touching normal
   user state or claiming authenticated host execution.
+- **Hermes latest-version gate rejects silent dependency fallback** — The
+  disposable Hermes harness now compares the installed distribution with
+  PyPI's current release and fails when an unsupported Python version causes
+  pip to select an older Hermes build.
 
 ## [1.4.0] - 2026-07-25
 

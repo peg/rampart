@@ -69,7 +69,7 @@ Supported AI Agents:
   • Cline (VS Code)           - Native hook integration
   • OpenClaw                  - Native plugin integration
   • Codex                     - Native lifecycle hook integration
-  • Gemini CLI                - Native lifecycle hook integration
+  • Gemini CLI                - Experimental enterprise/API-key hooks
   • GitHub Copilot            - Copilot CLI and VS Code native hooks`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if flag := cmd.Flags().Lookup("remove"); flag != nil {

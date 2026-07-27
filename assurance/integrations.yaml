@@ -123,8 +123,8 @@ integrations:
       timeout: host_defined
     approval: block_and_retry
     verification:
-      level: policy_only
-      command: rampart verify policy
+      level: active
+      command: rampart verify cline
       safe_canaries: true
       host_boundary: false
     evidence:
@@ -134,6 +134,9 @@ integrations:
       - path: cmd/rampart/cli/hook_test.go
         kind: unit
         proves: Cline hook payloads map to allow and cancellation responses.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification checks both installed hook scripts and directly invokes the adapter with a destructive canary that must cancel.
     limitations:
       - No rolling latest-Cline compatibility job currently exercises the installed host.
       - The installed hook scripts require Bash; native Windows behavior is not currently claimed.
@@ -233,7 +236,7 @@ integrations:
 
   - id: gemini_cli
     display_name: Gemini CLI
-    support_tier: supported
+    support_tier: experimental
     setup_command: rampart setup gemini
     boundary: native_hook
     platforms: [linux, macos]
@@ -259,7 +262,7 @@ integrations:
     evidence:
       - path: cmd/rampart/cli/hook_gemini_test.go
         kind: unit
-        proves: Documented Gemini tool payloads normalize to policy surfaces, unknown future pre-call tools fail closed, and deny/approval responses use the supported hook schema.
+        proves: Documented Gemini tool payloads normalize to policy surfaces, and the complete enforce-mode command path converts unknown future pre-call tools into structured host denials.
       - path: cmd/rampart/cli/setup_gemini_test.go
         kind: unit
         proves: Setup preserves unrelated user settings and hooks, is idempotent, supports clean removal, and refuses malformed configuration by default.
@@ -271,6 +274,7 @@ integrations:
         proves: The latest published Gemini CLI starts with Rampart's generated settings and the candidate adapter returns the documented destructive-tool denial schema.
     limitations:
       - This targets Gemini CLI's continuing enterprise, Google Cloud, and paid API-key surface; Antigravity CLI compatibility is not claimed.
+      - Gemini CLI is excluded from zero-configuration auto-protection so Antigravity's shared ~/.gemini state cannot be mistaken for an installed Gemini CLI.
       - The ordinary verifier exercises installed configuration and Rampart's adapter, not a real Gemini model/tool invocation.
       - Gemini hooks do not currently expose a native ask result, so approval actions require rampart serve and deny when that service is unavailable.
       - An unexpected hook crash or host timeout follows Gemini CLI behavior and is not claimed fail-closed.

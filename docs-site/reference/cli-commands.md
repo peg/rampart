@@ -24,12 +24,12 @@ rampart quickstart -y               # Short form of --yes
 ### `rampart protect`
 
 Detect installed supported agents, install their strongest native Rampart
-boundary, start the local policy service, and actively verify the result. No
-policy authoring is required.
+boundary, start the local policy service, and verify the result. OpenClaw uses
+its live plugin path; native-hook agents verify installed configuration and the
+real Rampart adapter without invoking a model. No policy authoring is required.
 
 ```bash
 rampart protect                       # Detect and protect supported installed agents
-rampart protect gemini                # Protect only Gemini CLI
 rampart protect copilot               # Protect Copilot CLI and VS Code agent sessions
 rampart protect openclaw              # Install, activate, restart, and verify
 rampart protect openclaw --reinstall  # Replace the plugin even when versions match
@@ -109,9 +109,9 @@ Rampart writes wildcard `PreToolUse` and `PostToolUse` handlers to
 remain in place. The generated definition includes POSIX and Windows commands,
 does not replace the `codex` executable, and requires no preload library.
 
-### `rampart setup gemini`
+### `rampart setup gemini` (experimental)
 
-Install Rampart lifecycle hooks for Gemini CLI.
+Install experimental Rampart lifecycle hooks for enterprise/API-key Gemini CLI.
 
 ```bash
 rampart setup gemini           # Install BeforeTool/AfterTool hooks
@@ -124,6 +124,8 @@ Rampart writes wildcard `BeforeTool` and `AfterTool` entries to
 Allowed calls continue through Gemini CLI's own permission checks. Gemini's
 hook protocol has no native ask result, so approval-required calls use Rampart's
 external queue and deny when `rampart serve` is unavailable.
+This is an explicit testing path and is not installed by bare `rampart protect`;
+it does not claim Antigravity compatibility.
 
 ### `rampart setup copilot`
 
@@ -184,7 +186,7 @@ After running, delete `~/.rampart/` manually and remove any `rampart`-related li
 
 ### `rampart hook`
 
-Hook handler called by Claude Code, Cline, Codex, and Gemini CLI. Reads a tool call from stdin and writes the host's native decision schema to stdout.
+Hook handler called by Claude Code, Cline, Codex, experimental Gemini CLI, and GitHub Copilot CLI / VS Code. Reads a tool call from stdin and writes the host's native decision schema to stdout.
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook

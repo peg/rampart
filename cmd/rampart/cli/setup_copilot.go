@@ -185,6 +185,35 @@ func copilotHookDataManaged(data []byte) bool {
 	return true
 }
 
+func copilotCLIUserHooksDisabled(home, cwd string) (string, bool) {
+	paths := []string{
+		filepath.Join(copilotHomeDir(home), "hooks", copilotRampartHookFile),
+		filepath.Join(copilotHomeDir(home), "settings.json"),
+	}
+	if strings.TrimSpace(cwd) != "" {
+		paths = append(paths,
+			filepath.Join(cwd, ".github", "copilot", "settings.json"),
+			filepath.Join(cwd, ".github", "copilot", "settings.local.json"),
+			filepath.Join(cwd, ".claude", "settings.json"),
+			filepath.Join(cwd, ".claude", "settings.local.json"),
+		)
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var settings map[string]any
+		if json.Unmarshal(data, &settings) != nil {
+			continue
+		}
+		if disabled, _ := settings["disableAllHooks"].(bool); disabled {
+			return path, true
+		}
+	}
+	return "", false
+}
+
 func copilotHooksConfiguredForHome(home string) bool {
 	data, err := os.ReadFile(filepath.Join(copilotHomeDir(home), "hooks", copilotRampartHookFile))
 	return err == nil && copilotHookDataManaged(data)

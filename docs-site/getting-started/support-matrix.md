@@ -45,12 +45,12 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
       <td data-label="Support tier"><strong>Supported</strong><br>adapter-tested; no current host proof</td>
     </tr>
-    <tr class="tier-supported">
-      <td data-label="Surface"><strong>Gemini CLI</strong></td>
+    <tr class="tier-experimental">
+      <td data-label="Surface"><strong>Gemini CLI (enterprise/API key)</strong></td>
       <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup gemini</code></td>
-      <td data-label="rampart serve">Not required for local allow/deny;<br>used by managed <code>rampart protect</code> verification</td>
+      <td data-label="rampart serve">Not required for local allow/deny;<br>required for external approvals</td>
       <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>enterprise/API-key Gemini CLI; adapter-tested; authenticated host proof pending</td>
+      <td data-label="Support tier"><strong>Experimental</strong><br>adapter-tested; authenticated host proof pending; not Antigravity</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>GitHub Copilot CLI / VS Code</strong></td>
@@ -117,9 +117,10 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
   enforce mode, unknown future pre-call tools deny; an isolated Claude Code
   2.1.220 shell deny/allow host run is recorded
 - **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
-- **Gemini CLI** → native `BeforeTool`/`AfterTool` hooks cover documented shell,
-  file, network, MCP, memory, and delegated-agent calls; the adapter is actively
-  verifiable, while a real authenticated host proof is still pending
+- **Gemini CLI (enterprise/API key)** → experimental native
+  `BeforeTool`/`AfterTool` hooks cover documented shell, file, network, MCP,
+  memory, and delegated-agent calls; a real authenticated host proof is still
+  pending, and this does not cover Antigravity
 - **GitHub Copilot CLI / VS Code** → one shared user hook covers both hosts;
   Copilot CLI also supports a separate administrator-owned machine policy hook,
   while VS Code hooks remain an upstream Preview surface
@@ -132,7 +133,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline / Codex / Gemini CLI / GitHub Copilot native hooks**: local allow/deny policy
+- **Claude Code / Cline / Codex / GitHub Copilot native hooks**, plus the experimental Gemini CLI adapter: local allow/deny policy
   evaluation works when `rampart serve` is down. Rampart-handled parse and
   policy errors deny in enforce mode, but an unexpected hook crash or host
   timeout follows the host's behavior. Dashboard features and external

@@ -5,7 +5,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -42,6 +44,29 @@ func TestParseCopilotInputFailsClosedForUnknownPreTool(t *testing.T) {
 	_, err := parseCopilotInput(strings.NewReader(`{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"future_remote_mutator","tool_input":{}}`))
 	if err == nil || !strings.Contains(err.Error(), "unsupported Copilot tool_name") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCopilotUnknownPreToolEmitsDualHostStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(`{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"future_remote_mutator","tool_input":{}}`))
+	cmd.SetArgs([]string{"hook", "--format", "copilot", "--audit-dir", filepath.Join(home, "audit")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("structured output = %q: %v", stdout.String(), err)
+	}
+	if output["permissionDecision"] != "deny" {
+		t.Fatalf("CLI decision = %#v, want deny", output["permissionDecision"])
+	}
+	specific, _ := output["hookSpecificOutput"].(map[string]any)
+	if specific["permissionDecision"] != "deny" {
+		t.Fatalf("VS Code decision = %#v, want deny", specific["permissionDecision"])
 	}
 }
 

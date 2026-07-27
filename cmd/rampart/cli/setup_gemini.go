@@ -20,10 +20,13 @@ func newSetupGeminiCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "gemini",
-		Short: "Install Rampart lifecycle hooks for Gemini CLI",
-		Long: `Installs user-level BeforeTool and AfterTool hooks in
+		Short: "Install experimental Rampart hooks for Gemini CLI",
+		Long: `Installs experimental user-level BeforeTool and AfterTool hooks in
 ~/.gemini/settings.json. Existing Gemini settings and non-Rampart hooks are
 preserved.
+
+This targets enterprise, Google Cloud, and paid API-key Gemini CLI access. It
+does not configure Antigravity and is not part of zero-configuration protect.
 
 Run 'rampart setup gemini --remove' to uninstall.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {

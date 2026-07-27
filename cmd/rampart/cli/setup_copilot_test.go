@@ -138,3 +138,41 @@ func TestCopilotHomeHonorsEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestCopilotHookDataManagedRecognizesDisabledFileForRepairAndRemoval(t *testing.T) {
+	data := []byte(`{"version":1,"disableAllHooks":true,"hooks":{"PreToolUse":[{"command":"rampart hook --format copilot"}],"PostToolUse":[{"command":"rampart hook --format copilot"}]}}`)
+	if !copilotHookDataManaged(data) {
+		t.Fatal("a disabled Rampart hook file must remain identifiable for repair and removal")
+	}
+}
+
+func TestCopilotCLIUserHooksDisabledFindsSettings(t *testing.T) {
+	for _, relative := range []string{
+		filepath.Join(".copilot", "hooks", copilotRampartHookFile),
+		filepath.Join(".copilot", "settings.json"),
+		filepath.Join(".github", "copilot", "settings.json"),
+		filepath.Join(".github", "copilot", "settings.local.json"),
+		filepath.Join(".claude", "settings.json"),
+		filepath.Join(".claude", "settings.local.json"),
+	} {
+		t.Run(relative, func(t *testing.T) {
+			home := t.TempDir()
+			cwd := t.TempDir()
+			base := cwd
+			if strings.HasPrefix(relative, ".copilot") {
+				base = home
+			}
+			settingsPath := filepath.Join(base, relative)
+			if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(settingsPath, []byte(`{"disableAllHooks":true}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path, disabled := copilotCLIUserHooksDisabled(home, cwd)
+			if !disabled || path != settingsPath {
+				t.Fatalf("disabled = %v at %q, want %q", disabled, path, settingsPath)
+			}
+		})
+	}
+}
