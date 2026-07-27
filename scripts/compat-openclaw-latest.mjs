@@ -12,6 +12,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {
+  configPathsMatch,
+  normalizeConfigPath,
+  reportedConfigPath,
+} from './compat-openclaw-path.mjs';
 
 const repoRoot = resolve(new URL('..', import.meta.url).pathname);
 const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-openclaw-compat-'));
@@ -97,13 +102,14 @@ function main() {
   const install = runOpenClaw(['plugins', 'install', pluginDir], { env });
   const validate = runOpenClaw(['config', 'validate'], { env });
   const configFile = runOpenClaw(['config', 'file'], { env });
-  const reportedConfigPath = commandOutput(configFile)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1);
-  if (reportedConfigPath !== configPath) {
-    throw new Error(`OpenClaw config file reported ${JSON.stringify(reportedConfigPath)}, expected ${JSON.stringify(configPath)}`);
+  const configFilePath = reportedConfigPath(commandOutput(configFile));
+  const configFileMatches = configPathsMatch(configFilePath, configPath, tempHome);
+  if (!configFileMatches) {
+    throw new Error(
+      `OpenClaw config file reported ${JSON.stringify(configFilePath)} `
+      + `(${JSON.stringify(normalizeConfigPath(configFilePath, tempHome))}), `
+      + `expected ${JSON.stringify(configPath)}`,
+    );
   }
   const inspect = runOpenClaw(['plugins', 'inspect', 'rampart'], { required: false, env });
   const list = inspect.status === 0
@@ -128,7 +134,7 @@ function main() {
     openclaw_source: useNpmLatest ? openclawPackage : 'PATH',
     plugin_install_checked: true,
     config_validate_checked: validate.status === 0,
-    config_file_checked: reportedConfigPath === configPath,
+    config_file_checked: configFileMatches,
     plugin_inspect_checked: inspect.status === 0,
     plugin_list_checked: inspect.status !== 0 && list.status === 0,
     bundled_plugin_harnesses: {

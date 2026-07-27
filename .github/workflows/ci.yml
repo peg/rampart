@@ -78,6 +78,7 @@ jobs:
       - name: OpenClaw plugin regression tests
         if: runner.os != 'Windows'
         run: |
+          node --test scripts/compat-openclaw-latest.test.mjs
           node internal/plugin/openclaw/smoke-test.mjs
           node internal/plugin/openclaw/tool-alias-test.mjs
           node internal/plugin/openclaw/provider-surface-replay.mjs
