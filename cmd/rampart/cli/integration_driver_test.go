@@ -16,6 +16,8 @@ func TestFindIntegrationDriverResolvesCanonicalIDsAndAliases(t *testing.T) {
 		"codex":          "codex",
 		"gemini":         "gemini",
 		"gemini-cli":     "gemini",
+		"antigravity":    "antigravity",
+		"agy":            "antigravity",
 		"copilot":        "copilot",
 		"copilot-cli":    "copilot",
 		"github-copilot": "copilot",
@@ -77,7 +79,7 @@ func TestIntegrationDriverPlatformEligibility(t *testing.T) {
 	if integrationDriverSupportsPlatform(find("openclaw"), "windows") {
 		t.Fatal("OpenClaw must not be auto-protected on Windows")
 	}
-	for _, id := range []string{"claude-code", "codex", "copilot"} {
+	for _, id := range []string{"claude-code", "codex", "antigravity", "copilot"} {
 		if !integrationDriverSupportsPlatform(find(id), "windows") {
 			t.Fatalf("%s should support Windows", id)
 		}

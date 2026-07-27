@@ -19,6 +19,8 @@ grep -q -- '--allowedTools "Bash(${command})"' "${repo_root}/scripts/compat-clau
 grep -q 'keychain_unavailable_in_disposable_home' "${repo_root}/scripts/compat-claude-host.sh"
 grep -q 'default_action: deny' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q -- '--copy-env' "${repo_root}/scripts/compat-hermes-host.sh"
+grep -q -- '--gateway' "${repo_root}/scripts/compat-hermes-host.sh"
+grep -q 'API_SERVER_ENABLED=true' "${repo_root}/scripts/compat-hermes-host.sh"
 
 isolated_path_line="$(grep -n '^isolated_path=' "$runner" | cut -d: -f1)"
 tool_check_line="$(grep -n '^for tool in git go python3' "$runner" | cut -d: -f1)"

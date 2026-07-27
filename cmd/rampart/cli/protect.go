@@ -54,7 +54,7 @@ protects each one through its strongest available native boundary.`,
 					return fmt.Errorf("protect: detect installed agents: %w", err)
 				}
 				if len(detected) == 0 {
-					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, GitHub Copilot, Cline; Gemini CLI and Hermes remain experimental)")
+					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Antigravity, GitHub Copilot, Cline; Gemini CLI and Hermes remain experimental)")
 				}
 				drivers = detected
 				fmt.Fprintf(cmd.OutOrStdout(), "Detected %d supported agent(s): ", len(drivers))
@@ -68,7 +68,7 @@ protects each one through its strongest available native boundary.`,
 			} else {
 				driver, ok := findIntegrationDriver(target)
 				if !ok {
-					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, copilot, cline; Gemini CLI and Hermes remain experimental)", target)
+					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, antigravity, copilot, cline; Gemini CLI and Hermes remain experimental)", target)
 				}
 				if !driver.AutoProtect {
 					return fmt.Errorf("protect: %s remains experimental; use `rampart setup %s` and `rampart verify %s` for explicit testing", driver.DisplayName, driver.ID, driver.VerifyTarget)

@@ -62,6 +62,13 @@ scripts/compat-hermes-host.sh --yes
 scripts/compat-claude-host.sh --yes
 ```
 
+Use `scripts/compat-hermes-host.sh --yes --gateway` to exercise the same two
+Hermes canaries through an isolated localhost API gateway rather than the
+direct one-shot CLI. It does not connect the source profile's Telegram,
+Discord, or other messaging gateways.
+Gateway mode refuses `--copy-env` so an isolated run cannot accidentally load
+live messaging-platform tokens; it requires an `auth.json`-backed provider.
+
 The Hermes harness copies only `auth.json` and non-secret model selection by
 default. Env-only providers require explicit `--copy-env`. It does not load
 source memories, sessions, rules, skills, gateways, MCP servers, workspaces, or

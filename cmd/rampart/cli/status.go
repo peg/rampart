@@ -411,6 +411,11 @@ func detectProtectedAgents() []string {
 		agents = append(agents, "Gemini CLI (hooks)")
 	}
 
+	// Global plugin loaded by Antigravity CLI and IDE.
+	if antigravityPluginConfiguredForHome(home) {
+		agents = append(agents, "Antigravity CLI / IDE (plugin)")
+	}
+
 	// Shared user hooks loaded by Copilot CLI and VS Code's agent host.
 	if copilotHooksConfiguredForHome(home) {
 		agents = append(agents, "GitHub Copilot CLI / VS Code (hooks)")

@@ -1,6 +1,6 @@
 ---
 title: Integration Guides
-description: "Find the right Rampart integration for Claude Code, Cline, Cursor, OpenClaw, Hermes Agent, Codex, experimental Gemini CLI, GitHub Copilot, and custom agents."
+description: "Find the right Rampart integration for Claude Code, Cline, Cursor, OpenClaw, Hermes Agent, Codex, Antigravity, experimental Gemini CLI, GitHub Copilot, and custom agents."
 ---
 
 # Integration Guides
@@ -19,7 +19,7 @@ for the evidence and known limitations of that path.
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
 | **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Optional Unix defense in depth |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
-| **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Hermes Agent (experimental) |
+| **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Antigravity, Hermes Agent (experimental) |
 | **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
 | **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (legacy / alternative) |
 
@@ -32,6 +32,7 @@ When a policy action is `ask`, behavior varies by integration:
 | **Claude Code** | Hook returns `"permissionDecision":"ask"` — Claude Code shows native prompt |
 | **Codex** | Rampart's external approval queue blocks; unavailable queue denies |
 | **Gemini CLI (experimental)** | External Rampart queue blocks; unavailable queue denies |
+| **Antigravity CLI / IDE** | Native `force_ask` prompt, ignoring cached Always Allow permissions |
 | **GitHub Copilot CLI / VS Code** | Native Copilot approval prompt |
 | **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
 | **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
@@ -51,6 +52,7 @@ When a policy action is `ask`, behavior varies by integration:
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI, IDE, desktop](codex-cli.md) | Native hooks | `rampart setup codex` | All |
 | [Gemini CLI](gemini-cli.md) | Experimental enterprise/API-key native hooks | `rampart setup gemini` | Linux, macOS |
+| [Antigravity CLI / IDE](antigravity.md) | Shared native policy plugin | `rampart setup antigravity` | All |
 | [GitHub Copilot CLI / VS Code](github-copilot.md) | Shared native hooks | `rampart setup copilot` | All |
 | [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw` | Linux, macOS |
 | [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | All |
@@ -88,7 +90,7 @@ api: "HTTP API / SDK\\nlocalhost:9090" {
 start -> q
 
 q -> hooks: "Claude Code, Cline, Codex, or Copilot\\n(native hooks, lowest overhead)"
-q -> shim: "OpenClaw or Hermes Agent\\n(native plugin where supported)"
+q -> shim: "OpenClaw, Antigravity, or Hermes\\n(native plugin where supported)"
 q -> mcp: "Cursor, Claude Desktop\\nor any MCP-compatible client"
 q -> wrap: "Any CLI agent\\nwith \$SHELL support"
 q -> preload: "Any CLI agent\\nwithout \$SHELL or native hooks"

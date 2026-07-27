@@ -94,6 +94,10 @@ rampart verify codex
 rampart setup gemini
 rampart verify gemini
 
+# Antigravity CLI and IDE
+rampart setup antigravity
+rampart verify antigravity
+
 # GitHub Copilot CLI and VS Code agent sessions
 rampart setup copilot
 rampart verify copilot
@@ -174,6 +178,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 | **Cline** | `rampart setup cline` | Native hooks via settings |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Gemini CLI** | `rampart setup gemini` | Experimental enterprise/API-key `BeforeTool`/`AfterTool` hooks |
+| **Antigravity** | `rampart setup antigravity` | Shared CLI/IDE `PreToolUse` policy plugin with native `force_ask` |
 | **GitHub Copilot** | `rampart setup copilot` | Shared native hooks for Copilot CLI and VS Code agent sessions |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
@@ -186,7 +191,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 <details>
 <summary><strong>Table of Contents</strong></summary>
 
-**Getting Started:** [Install](#install) · [Quick start](#quick-start) · [Claude Code](#claude-code) · [OpenClaw](#openclaw) · [Hermes Agent](#hermes-agent-experimental) · [Wrap any agent](#wrap-any-agent)
+**Getting Started:** [Install](#install) · [Quick start](#quick-start) · [Claude Code](#claude-code) · [OpenClaw](#openclaw) · [Antigravity](#antigravity) · [Hermes Agent](#hermes-agent-experimental) · [Wrap any agent](#wrap-any-agent)
 
 **Core Features:** [Policies](#writing-policies) · [Approval flow](#approval-flow) · [Audit trail](#audit-trail) · [Live dashboard](#live-dashboard) · [Webhook notifications](#webhook-notifications)
 
@@ -279,6 +284,28 @@ For advanced/manual integration work, `rampart setup openclaw` remains available
 `rampart setup openclaw --patch-tools` still exists as a compatibility option for older setups, but it is no longer the recommended path. It modifies OpenClaw dist files and must be re-applied after upgrades.
 
 Run `rampart verify openclaw` to test behavior; use `rampart doctor` for a wider configuration health report.
+
+---
+
+## Antigravity
+
+Rampart installs one global plugin shared by Antigravity CLI and the
+Antigravity IDE:
+
+```bash
+rampart setup antigravity
+rampart verify antigravity
+```
+
+The plugin evaluates every documented `PreToolUse` call before execution.
+Approval rules return Antigravity's native `force_ask`, so a cached "Always
+Allow" permission cannot bypass a Rampart prompt. Unknown future tool names
+deny until Rampart understands their policy surface.
+
+Antigravity's current `PostToolUse` payload does not include the completed tool
+call or its result. This integration therefore protects actions before they
+run, but does not claim post-result secret scanning. Allowed actions still run
+inside Antigravity's own permission and sandbox model.
 
 ---
 
@@ -636,9 +663,11 @@ rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # OpenClaw native plugin integration
 rampart setup codex                          # Codex native lifecycle hooks
 rampart setup gemini                         # Experimental enterprise/API-key Gemini CLI hooks
+rampart setup antigravity                    # Antigravity CLI + IDE shared policy plugin
 rampart setup copilot                        # Copilot CLI + VS Code shared native hooks
 rampart verify codex                         # Verify hook install + native deny response
 rampart verify gemini                        # Verify hook install + native deny response
+rampart verify antigravity                   # Verify plugin install + native deny response
 rampart verify copilot                       # Verify dual-host deny response + audit
 rampart setup <agent> --remove               # Clean uninstall
 
@@ -707,6 +736,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Cline | `rampart setup cline` | Linux, macOS |
 | Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
 | Gemini CLI (enterprise/API key) | `rampart setup gemini` | Experimental; Linux, macOS |
+| Antigravity CLI / IDE | `rampart setup antigravity` | Linux, macOS, Windows |
 | GitHub Copilot CLI / VS Code | `rampart setup copilot` | Linux, macOS, Windows |
 | Claude Desktop MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |

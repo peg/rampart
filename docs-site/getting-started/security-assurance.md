@@ -35,9 +35,10 @@ support.
 | **Claude Code** | Isolated Claude Code 2.1.220 macOS proof: deny did not execute, allow executed, and pre/post tool-call identity correlated. | Live file, network, MCP, subagent, crash, and timeout conformance. |
 | **Codex** | Isolated Codex CLI 0.145.0 macOS proof: deny did not execute, allow executed, and pre/post tool-call identity correlated. | Physical Windows host proof and host-timeout guarantees. |
 | **Gemini CLI (experimental)** | Rolling-latest isolated configuration and adapter gate plus active local adapter verification. | Consumer Google sign-in is retired, Antigravity is not covered, and authenticated model/tool host proof is still missing. |
+| **Antigravity CLI / IDE** | Antigravity CLI 1.1.7 loaded the generated plugin; an allowed command was audited and a disposable sensitive-path write was denied before modification. | PostToolUse omits tool results; rolling-latest and physical Windows host proof are pending. |
 | **GitHub Copilot CLI / VS Code** | Rolling-latest isolated CLI/configuration gate plus a dual-schema destructive-call adapter canary. | Authenticated CLI and VS Code host proof; VS Code hooks remain Preview and CLI timeouts fail open. |
 | **Cline** | Adapter and setup regression tests. | A rolling latest-Cline job and completed real-host proof; native Windows is not currently claimed. |
-| **Hermes Agent** | Isolated Hermes 0.19.0 Linux proof: deny did not execute, allow executed, and pre-tool audit identity correlated. | Hermes can skip crashing plugin callbacks and does not expose a stable plugin approval/resume primitive. |
+| **Hermes Agent** | Isolated Hermes 0.19.0 Linux direct and localhost API-gateway proofs: deny did not execute, allow executed, and pre-tool audit identity correlated. | Hermes can skip crashing plugin callbacks, delegated-agent proof is pending, and it does not expose a stable plugin approval/resume primitive. |
 
 The canonical source is
 [`assurance/integrations.yaml`](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
@@ -74,6 +75,7 @@ separate from ordinary CI:
 scripts/compat-codex-host.sh --yes --rampart-bin ./rampart
 scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
 scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
+scripts/compat-hermes-host.sh --yes --gateway --rampart-bin ./rampart
 ```
 
 Each harness uses disposable state, harmless marker canaries, and explicit

@@ -120,11 +120,19 @@ Maintainers can also run the opt-in real-host harness:
 scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
 ```
 
-A completed isolated Hermes 0.19.0 Linux run proved that a denied shell marker
-did not execute, an allowed marker did execute, and the pre-tool audit record
-kept the originating tool identity. The run loaded only isolated model,
-provider, toolset, and authentication state; it did not load normal memories,
-sessions, rules, gateways, or MCP configuration. See
+Add `--gateway` to route both turns through an isolated localhost
+OpenAI-compatible Hermes API gateway. Gateway mode refuses `--copy-env`, so it
+cannot accidentally load source messaging-platform credentials:
+
+```bash
+scripts/compat-hermes-host.sh --yes --gateway --rampart-bin ./rampart
+```
+
+A completed isolated Hermes 0.19.0 Linux run proved those properties through
+both the direct CLI and a disposable localhost API gateway. The gateway run
+loaded only isolated model, provider, toolset, and authentication state; it did
+not load normal memories, sessions, rules, workspaces, messaging gateways, or
+MCP configuration. See
 [Security Assurance](../getting-started/security-assurance.md) for the evidence
 contract and remaining gaps.
 

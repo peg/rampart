@@ -200,6 +200,7 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 | Native hooks (Claude Code) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
 | Native hooks (Codex CLI/IDE/desktop) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
 | Native hooks (GitHub Copilot CLI/VS Code) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
+| Antigravity CLI/IDE plugin | ✅ | ✅ (via PreToolUse) | ❌ host omits result | ❌ |
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |

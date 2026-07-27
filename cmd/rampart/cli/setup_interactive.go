@@ -69,6 +69,11 @@ func detectAgents() []agentInfo {
 			SetupCmd: "copilot",
 		},
 		{
+			Name:     "Antigravity CLI / IDE",
+			HasSetup: true,
+			SetupCmd: "antigravity",
+		},
+		{
 			Name:      "Aider",
 			HasSetup:  false,
 			ManualCmd: "rampart wrap -- aider",
@@ -94,9 +99,11 @@ func detectAgents() []agentInfo {
 		_, geminiErr := execLookPath("gemini")
 		agents[4].Detected = geminiErr == nil
 		agents[5].Detected = copilotInstalledForHome(home)
-		agents[6].Detected = env.HasAider
-		agents[7].Detected = env.HasCursor
-		agents[8].Detected = env.HasWindsurf
+		_, antigravityErr := execLookPath("agy")
+		agents[6].Detected = antigravityErr == nil
+		agents[7].Detected = env.HasAider
+		agents[8].Detected = env.HasCursor
+		agents[9].Detected = env.HasWindsurf
 	}
 
 	return agents
@@ -247,6 +254,8 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 			fmt.Fprintf(out, "  • Gemini CLI: hooks in %s\n", filepath.Join(home, ".gemini", "settings.json"))
 		case "copilot":
 			fmt.Fprintf(out, "  • GitHub Copilot CLI / VS Code: hooks in %s\n", filepath.Join(copilotHomeDir(home), "hooks", copilotRampartHookFile))
+		case "antigravity":
+			fmt.Fprintf(out, "  • Antigravity CLI / IDE: plugin in %s\n", antigravityPluginDir(home))
 		}
 	}
 	fmt.Fprintf(out, "  • Policy: %s\n", filepath.Join(home, ".rampart", "policies", selectedProfile+".yaml"))

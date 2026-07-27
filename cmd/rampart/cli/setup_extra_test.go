@@ -279,15 +279,15 @@ func TestReadLine_Empty(t *testing.T) {
 
 func TestDetectAgents(t *testing.T) {
 	agents := detectAgents()
-	if len(agents) != 9 {
-		t.Errorf("expected 9 agents, got %d", len(agents))
+	if len(agents) != 10 {
+		t.Errorf("expected 10 agents, got %d", len(agents))
 	}
 	// Verify names
 	names := make([]string, len(agents))
 	for i, a := range agents {
 		names[i] = a.Name
 	}
-	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex", "Gemini CLI", "GitHub Copilot CLI / VS Code", "Aider", "Cursor", "Windsurf"} {
+	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex", "Gemini CLI", "GitHub Copilot CLI / VS Code", "Antigravity CLI / IDE", "Aider", "Cursor", "Windsurf"} {
 		found := false
 		for _, n := range names {
 			if n == want {

@@ -70,6 +70,7 @@ Supported AI Agents:
   • OpenClaw                  - Native plugin integration
   • Codex                     - Native lifecycle hook integration
   • Gemini CLI                - Experimental enterprise/API-key hooks
+  • Antigravity               - CLI and IDE native policy plugin
   • GitHub Copilot            - Copilot CLI and VS Code native hooks`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if flag := cmd.Flags().Lookup("remove"); flag != nil {
@@ -96,6 +97,7 @@ Supported AI Agents:
 	cmd.AddCommand(newSetupOpenClawCmd(opts))
 	cmd.AddCommand(newSetupCodexCmd(opts))
 	cmd.AddCommand(newSetupGeminiCmd())
+	cmd.AddCommand(newSetupAntigravityCmd())
 	cmd.AddCommand(newSetupCopilotCmd())
 
 	return cmd

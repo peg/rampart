@@ -77,6 +77,18 @@ func supportedIntegrationDrivers() []integrationDriver {
 			},
 		},
 		{
+			ID: "antigravity", Aliases: []string{"agy"}, DisplayName: "Antigravity CLI / IDE", Boundary: "native plugin hook", VerifyTarget: "antigravity",
+			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
+			Installed: func(_ string) bool {
+				_, err := execLookPath("agy")
+				return err == nil
+			},
+			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupAntigravityCmd() },
+			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
+				return []verificationCheck{verifyAntigravityPluginInstalled(), verifyAntigravityHookAdapter(ctx)}
+			},
+		},
+		{
 			ID: "copilot", Aliases: []string{"copilot-cli", "github-copilot"}, DisplayName: "GitHub Copilot CLI / VS Code", Boundary: "native hooks", VerifyTarget: "copilot",
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed:    func(home string) bool { return copilotInstalledForHome(home) },

@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v1
 baseline_release: v1.4.0
-reviewed_at: "2026-07-25"
+reviewed_at: "2026-07-27"
 
 # This manifest records the guarantees Rampart can support with evidence today.
 # "tested" means the Rampart adapter or mapping is exercised in isolation.
@@ -66,7 +66,7 @@ integrations:
       file_read: tested
       file_write: tested
       network: tested
-      mcp: tested
+      mcp: unknown
       subagents: partial
     degraded:
       policy_unavailable: local
@@ -228,11 +228,14 @@ integrations:
       - path: assurance/evidence/hermes-host-2026-07-24.json
         kind: live
         proves: A completed Linux host run records blocked deny execution, successful allow execution, pre-tool audit correlation, and isolated source-state use on Hermes Agent 0.19.0.
+      - path: assurance/evidence/hermes-gateway-2026-07-27.json
+        kind: live
+        proves: A completed Linux run sends deny and allow turns through an isolated localhost Hermes API gateway, records correlated audits, and loads no source memories, sessions, rules, workspaces, MCP servers, or messaging gateways.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.
       - Read-only tools may be configured fail-open when Rampart is unavailable.
-      - Gateway, delegated-agent, and approved-execution E2E are not yet present.
+      - Delegated-agent and approved-execution E2E are not yet present.
 
   - id: gemini_cli
     display_name: Gemini CLI
@@ -279,6 +282,50 @@ integrations:
       - Gemini hooks do not currently expose a native ask result, so approval actions require rampart serve and deny when that service is unavailable.
       - An unexpected hook crash or host timeout follows Gemini CLI behavior and is not claimed fail-closed.
       - Physical Windows host proof and completed authenticated live-host proof are still pending.
+
+  - id: antigravity
+    display_name: Antigravity CLI / IDE
+    support_tier: supported
+    setup_command: rampart setup antigravity
+    boundary: native_plugin
+    platforms: [linux, macos, windows]
+    service_required: false
+    upstream_ci: none
+    coverage:
+      shell: verified
+      file_read: tested
+      file_write: verified
+      network: tested
+      mcp: unknown
+      subagents: tested
+    degraded:
+      policy_unavailable: local
+      adapter_error: host_defined
+      timeout: host_defined
+    approval: native
+    verification:
+      level: active
+      command: rampart verify antigravity
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_antigravity_test.go
+        kind: unit
+        proves: The documented tool surface maps to Rampart policy classes, unknown future tools deny, and approval decisions use Antigravity force_ask.
+      - path: cmd/rampart/cli/setup_antigravity_test.go
+        kind: unit
+        proves: Setup creates the documented shared CLI/IDE plugin idempotently, validates ownership structurally, removes only Rampart-owned state, and refuses foreign plugin replacement by default.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification requires an installed managed plugin plus a structured destructive-command denial with conversation-correlated audit output.
+      - path: assurance/evidence/antigravity-host-2026-07-27.json
+        kind: live
+        proves: Antigravity CLI 1.1.7 loaded the generated global plugin; an allowed command was audited and a disposable sensitive-path write was denied before modification.
+    limitations:
+      - Antigravity's current PostToolUse payload does not include the completed tool call or result, so this integration does not provide post-result secret scanning.
+      - Rampart-handled parse and policy failures deny in enforce mode, but unexpected hook-process crashes and host timeouts follow Antigravity behavior and are not claimed fail-closed.
+      - The ordinary verifier exercises plugin installation and the live Rampart adapter without invoking a model; authenticated host proof is a maintainer-only opt-in check.
+      - A rolling-latest Antigravity compatibility job and physical Windows host proof are still pending.
 
   - id: github_copilot
     display_name: GitHub Copilot CLI / VS Code

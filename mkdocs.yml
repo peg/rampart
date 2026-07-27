@@ -154,6 +154,7 @@ nav:
     - Cursor: integrations/cursor.md
     - Codex CLI: integrations/codex-cli.md
     - Gemini CLI: integrations/gemini-cli.md
+    - Antigravity: integrations/antigravity.md
     - GitHub Copilot: integrations/github-copilot.md
     - OpenClaw: integrations/openclaw.md
     - Hermes Agent: integrations/hermes.md

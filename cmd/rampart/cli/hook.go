@@ -214,6 +214,7 @@ Supports multiple formats:
   --format codex: Codex CLI, IDE, and desktop lifecycle hooks
   --format cline: Cline (VS Code extension) integration
   --format gemini: Gemini CLI lifecycle hooks
+  --format antigravity: Antigravity CLI and IDE PreToolUse hooks
   --format copilot: GitHub Copilot CLI and VS Code agent hooks
 
 Claude Code setup (add to ~/.claude/settings.json):
@@ -250,8 +251,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
-			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "copilot" {
-				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, or copilot)", format)
+			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "antigravity" && format != "copilot" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, antigravity, or copilot)", format)
 			}
 
 			// Resolve serve-url and serve-token from standard config/env locations.
@@ -368,6 +369,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				parsed, err = parseClineInput(cmd.InOrStdin(), logger)
 			case "gemini":
 				parsed, err = parseGeminiInput(cmd.InOrStdin())
+			case "antigravity":
+				parsed, err = parseAntigravityInput(cmd.InOrStdin())
 			case "copilot":
 				parsed, err = parseCopilotInput(cmd.InOrStdin())
 			default:
@@ -754,7 +757,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
-	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini | copilot")
+	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini | antigravity | copilot")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover via url/config/state; env: RAMPART_URL or RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
@@ -1045,6 +1048,8 @@ func outputHookResultWithResponse(
 	switch format {
 	case "gemini":
 		return outputGeminiHookResult(cmd.OutOrStdout(), decision, reason)
+	case "antigravity":
+		return outputAntigravityHookResult(cmd.OutOrStdout(), decision, reason)
 	case "copilot":
 		return outputCopilotHookResult(cmd.OutOrStdout(), decision, reason)
 	case "cline":

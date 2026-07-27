@@ -76,7 +76,7 @@ func newVerifyCmd() *cobra.Command {
 	var timeout time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "verify [openclaw|claude-code|cline|codex|gemini|copilot|policy]",
+		Use:   "verify [openclaw|claude-code|cline|codex|gemini|antigravity|copilot|policy]",
 		Short: "Actively verify that agent safety boundaries really block",
 		Long: `Run non-destructive behavioral canaries against the live Rampart policy path.
 
@@ -101,7 +101,7 @@ implementation.`,
 			if target != "policy" {
 				driver, ok := findIntegrationDriver(target)
 				if !ok {
-					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, copilot, policy)", target)
+					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, antigravity, copilot, policy)", target)
 				}
 				target = driver.VerifyTarget
 			}
@@ -206,7 +206,7 @@ func behavioralCanaries(target string) []behavioralCanary {
 			canaries[i].Agent = "rampart-verification"
 			canaries[i].Params["rampart_integration"] = "openclaw"
 		}
-	} else if target == "claude-code" || target == "cline" || target == "codex" || target == "gemini" || target == "copilot" {
+	} else if target == "claude-code" || target == "cline" || target == "codex" || target == "gemini" || target == "antigravity" || target == "copilot" {
 		for i := range canaries {
 			canaries[i].Agent = target
 		}
@@ -468,6 +468,104 @@ func verifyGeminiHookAdapter(ctx context.Context) verificationCheck {
 		ID: "gemini-native-deny", Name: "Gemini CLI native deny response works",
 		Status: verificationPass, Expected: "structured deny and session-correlated audit", Actual: "deny + audit",
 		Message: "The live Rampart hook adapter returned Gemini CLI's deny schema and preserved session identity in audit",
+	}
+}
+
+func verifyAntigravityPluginInstalled() verificationCheck {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return verificationCheck{
+			ID: "antigravity-plugin-installation", Name: "Antigravity policy plugin is installed",
+			Status: verificationUnverified, Actual: "home unavailable",
+			Message: "Could not locate Antigravity's global plugin directory",
+			Hint:    "Run `rampart setup antigravity`, then rerun `rampart verify antigravity`",
+		}
+	}
+	if !antigravityPluginConfiguredForHome(home) {
+		return verificationCheck{
+			ID: "antigravity-plugin-installation", Name: "Antigravity policy plugin is installed",
+			Status: verificationFail, Expected: "managed global PreToolUse plugin", Actual: "missing or incomplete",
+			Message: "Antigravity is not configured to invoke Rampart before tool execution",
+			Hint:    "Run `rampart setup antigravity`, restart Antigravity, then rerun verification",
+		}
+	}
+	return verificationCheck{
+		ID: "antigravity-plugin-installation", Name: "Antigravity policy plugin is installed",
+		Status: verificationPass, Expected: "managed global PreToolUse plugin", Actual: "configured",
+		Message: "Antigravity's global Rampart plugin contains the native PreToolUse policy hook",
+	}
+}
+
+func verifyAntigravityHookAdapter(ctx context.Context) verificationCheck {
+	auditDir, err := os.MkdirTemp("", "rampart-verify-antigravity-*")
+	if err != nil {
+		return verificationCheck{
+			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+			Status: verificationUnverified, Actual: "temporary directory unavailable", Message: err.Error(),
+		}
+	}
+	defer os.RemoveAll(auditDir)
+
+	payload := `{
+		"toolCall":{"name":"run_command","args":{"CommandLine":"rm -rf /","Cwd":"."}},
+		"stepIdx":1,
+		"conversationId":"rampart-verification",
+		"workspacePaths":["."]
+	}`
+	var stdout, stderr bytes.Buffer
+	hookCmd := NewRootCmd(ctx, &stdout, &stderr)
+	hookCmd.SetIn(strings.NewReader(payload))
+	hookCmd.SetArgs([]string{"hook", "--format", "antigravity", "--audit-dir", auditDir})
+	if err := hookCmd.Execute(); err != nil {
+		return verificationCheck{
+			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+			Status: verificationFail, Expected: "structured deny", Actual: "hook error", Message: err.Error(),
+		}
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		return verificationCheck{
+			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+			Status: verificationFail, Expected: "structured deny", Actual: strings.TrimSpace(stdout.String()),
+			Message: "Rampart's Antigravity hook response was not valid JSON",
+		}
+	}
+	if output["decision"] != "deny" {
+		return verificationCheck{
+			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+			Status: verificationFail, Expected: "decision=deny", Actual: strings.TrimSpace(stdout.String()),
+			Message: "The live Rampart hook adapter did not block the destructive canary",
+		}
+	}
+	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
+	if len(auditMatches) != 1 {
+		return verificationCheck{
+			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+			Status: verificationFail, Expected: "deny audit", Actual: "audit record missing",
+			Message: "The Antigravity hook denied the canary but did not produce an audit record",
+		}
+	}
+	auditData, err := os.ReadFile(auditMatches[0])
+	if err != nil {
+		return verificationCheck{
+			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+			Status: verificationFail, Expected: "deny audit", Actual: "audit unreadable", Message: err.Error(),
+		}
+	}
+	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
+	var auditRecord map[string]any
+	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil ||
+		auditRecord["agent"] != "antigravity" || auditRecord["run_id"] != "rampart-verification" {
+		return verificationCheck{
+			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+			Status: verificationFail, Expected: "session-correlated deny audit", Actual: "correlation missing",
+			Message: "The Antigravity hook audit did not preserve the host conversation identity",
+		}
+	}
+	return verificationCheck{
+		ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
+		Status: verificationPass, Expected: "structured deny and session-correlated audit", Actual: "deny + audit",
+		Message: "The live Rampart hook adapter returned Antigravity's deny schema and preserved conversation identity in audit",
 	}
 }
 

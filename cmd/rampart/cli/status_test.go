@@ -204,6 +204,20 @@ func TestDetectProtectedAgents_CopilotHooks(t *testing.T) {
 	t.Fatalf("expected shared Copilot lifecycle hook detection, got %v", detectProtectedAgents())
 }
 
+func TestDetectProtectedAgents_AntigravityPlugin(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := installAntigravityPlugin(antigravityPluginDir(home), "rampart hook --format antigravity", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range detectProtectedAgents() {
+		if agent == "Antigravity CLI / IDE (plugin)" {
+			return
+		}
+	}
+	t.Fatalf("expected Antigravity plugin detection, got %v", detectProtectedAgents())
+}
+
 func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)

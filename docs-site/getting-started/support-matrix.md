@@ -53,6 +53,13 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Support tier"><strong>Experimental</strong><br>adapter-tested; authenticated host proof pending; not Antigravity</td>
     </tr>
     <tr class="tier-supported">
+      <td data-label="Surface"><strong>Antigravity CLI / IDE</strong></td>
+      <td data-label="Best path">Shared policy plugin<br><code>rampart setup antigravity</code></td>
+      <td data-label="rampart serve">Not required for local enforcement</td>
+      <td data-label="Approval UX">Native <code>force_ask</code> prompt</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>CLI 1.1.7 allow/deny host proof</td>
+    </tr>
+    <tr class="tier-supported">
       <td data-label="Surface"><strong>GitHub Copilot CLI / VS Code</strong></td>
       <td data-label="Best path">Shared native lifecycle hooks<br><code>rampart setup copilot</code></td>
       <td data-label="rampart serve">Not required for local enforcement</td>
@@ -121,6 +128,9 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
   `BeforeTool`/`AfterTool` hooks cover documented shell, file, network, MCP,
   memory, and delegated-agent calls; a real authenticated host proof is still
   pending, and this does not cover Antigravity
+- **Antigravity CLI / IDE** → one shared native plugin gates documented tool
+  calls before execution and uses `force_ask` for approvals; current
+  `PostToolUse` does not expose results, so response scanning is not claimed
 - **GitHub Copilot CLI / VS Code** → one shared user hook covers both hosts;
   Copilot CLI also supports a separate administrator-owned machine policy hook,
   while VS Code hooks remain an upstream Preview surface
@@ -133,7 +143,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline / Codex / GitHub Copilot native hooks**, plus the experimental Gemini CLI adapter: local allow/deny policy
+- **Claude Code / Cline / Codex / Antigravity / GitHub Copilot native hooks or plugins**, plus the experimental Gemini CLI adapter: local allow/deny policy
   evaluation works when `rampart serve` is down. Rampart-handled parse and
   policy errors deny in enforce mode, but an unexpected hook crash or host
   timeout follows the host's behavior. Dashboard features and external
@@ -156,6 +166,7 @@ It does not imply syscall, packet, or arbitrary subprocess inspection.
 ## Choosing the right path
 
 - Use **native hooks** when the agent supports them.
+- Use the **Antigravity shared policy plugin** for Antigravity CLI and IDE.
 - Use the **OpenClaw native plugin** on current OpenClaw builds.
 - Use the **Hermes Agent plugin** for conservative early Hermes testing.
 - Use **wrapper / preload** when the CLI agent has no hook system.
