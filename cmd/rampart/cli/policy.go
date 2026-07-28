@@ -389,13 +389,13 @@ func collectExplanations(cfg *engine.Config, call engine.ToolCall) []explanation
 			OverrideSummary: summarizeOverrideSource(policy),
 		}
 		for i, rule := range policy.Rules {
-			matched, detail := engine.ExplainCondition(rule.When, call)
-			if !matched {
-				continue
-			}
 			action, err := rule.ParseAction()
 			if err != nil {
 				action = engine.ActionDeny
+			}
+			matched, detail := engine.ExplainConditionForAction(rule.When, call, action)
+			if !matched {
+				continue
 			}
 			item.RuleMatched = true
 			item.RuleIndex = i

@@ -466,6 +466,20 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 	return false, ""
 }
 
+// ExplainConditionForAction keeps policy explanations aligned with the
+// action-aware enforcement path. ExplainCondition retains the conservative
+// restrictive-rule behavior for callers that do not know the action.
+func ExplainConditionForAction(cond Condition, call ToolCall, action Action) (bool, string) {
+	if !matchConditionForAction(cond, call, nil, action) {
+		return false, ""
+	}
+	if actionGrantsExecution(action) &&
+		(len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0) {
+		return matchGrantCommandField(cond, call.Command())
+	}
+	return ExplainCondition(cond, call)
+}
+
 // matchFirst returns the first pattern that matches value, or "".
 func matchFirst(patterns []string, value string) string {
 	for _, p := range patterns {
@@ -585,6 +599,155 @@ func appendEnvAssignmentName(name string, seen map[string]bool, names *[]string)
 	}
 	seen[name] = true
 	*names = append(*names, name)
+}
+
+// actionGrantsExecution reports whether a matching rule can permit the call to
+// run. These actions must cover the complete shell expression; matching one
+// harmless component must never authorize an unrelated sibling command.
+func actionGrantsExecution(action Action) bool {
+	return action == ActionAllow || action == ActionWatch || action == ActionWebhook
+}
+
+type grantCommandAnalysis struct {
+	normalized string
+	components []string
+	composite  bool
+}
+
+// analyzeGrantCommand returns every independently executed command represented
+// by a shell expression, including nested command substitutions.
+func analyzeGrantCommand(command string) grantCommandAnalysis {
+	normalized := NormalizeCommand(command)
+	if normalized == "" {
+		normalized = command
+	}
+	segments := SplitCompoundCommand(normalized)
+	subcommands := ExtractSubcommands(command)
+	analysis := grantCommandAnalysis{
+		normalized: normalized,
+		composite:  len(segments) > 1 || len(subcommands) > 0,
+	}
+	if !analysis.composite {
+		if component := strings.TrimSpace(normalized); component != "" {
+			analysis.components = []string{component}
+		}
+		return analysis
+	}
+
+	seen := make(map[string]bool)
+	appendComponent := func(component string) {
+		component = strings.TrimSpace(component)
+		if component == "" || seen[component] {
+			return
+		}
+		seen[component] = true
+		analysis.components = append(analysis.components, component)
+	}
+	for _, segment := range segments {
+		appendComponent(segment)
+	}
+	for _, subcommand := range subcommands {
+		normalizedSubcommand := NormalizeCommand(subcommand)
+		if normalizedSubcommand == "" {
+			normalizedSubcommand = subcommand
+		}
+		for _, segment := range SplitCompoundCommand(normalizedSubcommand) {
+			appendComponent(segment)
+		}
+	}
+	return analysis
+}
+
+func isCompositeCommand(command string) bool {
+	analysis := analyzeGrantCommand(command)
+	return analysis.composite
+}
+
+func matchGrantComponent(cond Condition, component string) (bool, string) {
+	if matched := matchFirst(cond.CommandMatches, component); matched != "" {
+		return true, fmt.Sprintf("command_matches [%q]", matched)
+	}
+	componentLower := strings.ToLower(component)
+	for _, substring := range cond.CommandContains {
+		// An empty substring is rejected for execution-granting rules even when
+		// a Condition is constructed programmatically instead of loaded.
+		if substring != "" && strings.Contains(componentLower, strings.ToLower(substring)) {
+			return true, fmt.Sprintf("command_contains [%q]", substring)
+		}
+	}
+	return false, ""
+}
+
+// matchGrantCommandField requires an allow/watch/webhook rule to either match
+// an explicitly composite pattern or cover every command the shell will run.
+func matchGrantCommandField(cond Condition, command string) (bool, string) {
+	analysis := analyzeGrantCommand(command)
+	if len(analysis.components) == 0 {
+		return false, ""
+	}
+
+	if matchAny(cond.CommandNotMatches, command) ||
+		(analysis.normalized != command && matchAny(cond.CommandNotMatches, analysis.normalized)) {
+		return false, ""
+	}
+	for _, component := range analysis.components {
+		if matchAny(cond.CommandNotMatches, component) {
+			return false, ""
+		}
+	}
+
+	if analysis.composite {
+		for _, pattern := range cond.CommandMatches {
+			if !isCompositeCommand(pattern) {
+				continue
+			}
+			if MatchGlob(pattern, command) ||
+				(analysis.normalized != command && MatchGlob(pattern, analysis.normalized)) {
+				return true, fmt.Sprintf("command_matches [%q] (explicit composite)", pattern)
+			}
+		}
+	}
+
+	detail := ""
+	for _, component := range analysis.components {
+		matched, componentDetail := matchGrantComponent(cond, component)
+		if !matched {
+			return false, ""
+		}
+		if detail == "" {
+			detail = componentDetail
+		}
+	}
+	if len(analysis.components) > 1 {
+		detail += " (all executed components)"
+	}
+	return true, detail
+}
+
+func matchConditionForAction(cond Condition, call ToolCall, counter CallCounter, action Action) bool {
+	if !actionGrantsExecution(action) ||
+		(len(cond.CommandMatches) == 0 && len(cond.CommandContains) == 0) {
+		return matchCondition(cond, call, counter)
+	}
+	if cond.Default || cond.IsEmpty() {
+		return matchCondition(cond, call, counter)
+	}
+	commandMatched, _ := matchGrantCommandField(cond, call.Command())
+	if !commandMatched {
+		return false
+	}
+
+	// The command fields were evaluated above with whole-call semantics. Match
+	// every remaining field once so counters and other stateful conditions are
+	// not evaluated per shell component.
+	remaining := cond
+	remaining.CommandMatches = nil
+	remaining.CommandContains = nil
+	remaining.CommandNotMatches = nil
+	if remaining.IsEmpty() {
+		return true
+	}
+	return matchCondition(remaining, call, counter)
 }
 
 func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {

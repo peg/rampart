@@ -242,6 +242,126 @@ func TestMatchCondition_CommandContains(t *testing.T) {
 	}
 }
 
+func TestMatchConditionForAction_RequiresWholeCommandCoverage(t *testing.T) {
+	tests := []struct {
+		name   string
+		cond   Condition
+		cmd    string
+		action Action
+		want   bool
+	}{
+		{
+			name:   "plain allow remains compatible",
+			cond:   Condition{CommandMatches: []string{"git *"}},
+			cmd:    "git status",
+			action: ActionAllow,
+			want:   true,
+		},
+		{
+			name:   "normalized wrapper remains compatible",
+			cond:   Condition{CommandMatches: []string{"git *"}},
+			cmd:    "bash -c 'git status'",
+			action: ActionAllow,
+			want:   true,
+		},
+		{
+			name:   "all compound components covered",
+			cond:   Condition{CommandMatches: []string{"git *"}},
+			cmd:    "git status && git log -1",
+			action: ActionAllow,
+			want:   true,
+		},
+		{
+			name:   "unrelated compound component rejected",
+			cond:   Condition{CommandMatches: []string{"git *"}},
+			cmd:    "git status && rm -rf /tmp/rampart-canary",
+			action: ActionAllow,
+			want:   false,
+		},
+		{
+			name:   "explicit composite pattern allowed",
+			cond:   Condition{CommandMatches: []string{"git status && rm -rf /tmp/rampart-*"}},
+			cmd:    "git status && rm -rf /tmp/rampart-canary",
+			action: ActionAllow,
+			want:   true,
+		},
+		{
+			name:   "nested substitution requires parent coverage",
+			cond:   Condition{CommandMatches: []string{"git *"}},
+			cmd:    "echo $(git status)",
+			action: ActionAllow,
+			want:   false,
+		},
+		{
+			name:   "contains requires every component",
+			cond:   Condition{CommandContains: []string{"git"}},
+			cmd:    "git status && rm -rf /tmp/rampart-canary",
+			action: ActionWatch,
+			want:   false,
+		},
+		{
+			name:   "empty contains cannot grant",
+			cond:   Condition{CommandContains: []string{""}},
+			cmd:    "anything",
+			action: ActionAllow,
+			want:   false,
+		},
+		{
+			name:   "deny still catches any dangerous component",
+			cond:   Condition{CommandMatches: []string{"rm -rf *"}},
+			cmd:    "git status && rm -rf /tmp/rampart-canary",
+			action: ActionDeny,
+			want:   true,
+		},
+		{
+			name:   "approval still catches any dangerous component",
+			cond:   Condition{CommandMatches: []string{"rm -rf *"}},
+			cmd:    "git status && rm -rf /tmp/rampart-canary",
+			action: ActionRequireApproval,
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": tt.cmd}}
+			if got := matchConditionForAction(tt.cond, call, nil, tt.action); got != tt.want {
+				t.Fatalf("matchConditionForAction(%q, %s) = %v, want %v", tt.cmd, tt.action, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExplainConditionForAction_RejectsPartialGrant(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"git *"}}
+	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "git status && rm -rf /tmp/rampart-canary"}}
+
+	matched, detail := ExplainConditionForAction(cond, call, ActionAllow)
+	if matched || detail != "" {
+		t.Fatalf("allow explanation reported partial grant: matched=%v detail=%q", matched, detail)
+	}
+	matched, detail = ExplainConditionForAction(cond, call, ActionDeny)
+	if !matched || detail == "" {
+		t.Fatalf("restrictive explanation lost component match: matched=%v detail=%q", matched, detail)
+	}
+}
+
+func TestMatchConditionForAction_ActionClasses(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"git *"}}
+	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "git status && rm -rf /tmp/rampart-canary"}}
+
+	for _, action := range []Action{ActionAllow, ActionWatch, ActionWebhook} {
+		if matchConditionForAction(cond, call, nil, action) {
+			t.Fatalf("%s must not grant a partially matched call", action)
+		}
+	}
+	for _, action := range []Action{ActionDeny, ActionAsk, ActionRequireApproval} {
+		if !matchConditionForAction(cond, call, nil, action) {
+			t.Fatalf("%s must retain any-component matching", action)
+		}
+	}
+}
+
 func TestMatchGlob_DoubleStarLimit(t *testing.T) {
 	// Two ** segments are fully supported.
 	if !MatchGlob("**/foo/**", "/a/b/foo/c/d") {

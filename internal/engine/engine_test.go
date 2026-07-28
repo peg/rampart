@@ -103,6 +103,30 @@ policies:
 	}
 }
 
+func TestEvaluate_AllowRuleDoesNotAuthorizeUnmatchedSibling(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: allow-git
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["git *"]
+`)
+
+	require.Equal(t, ActionAllow, e.Evaluate(execCall("main", "git status && git log -1")).Action)
+	require.Equal(t, ActionDeny, e.Evaluate(execCall("main", "git status && rm -rf /tmp/rampart-canary")).Action)
+}
+
+func TestMatchDurableAllowCondition_RequiresWholeCommandCoverage(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"git *"}}
+	require.True(t, matchDurableAllowCondition(cond, execCall("main", "git status && git log -1"), nil))
+	require.False(t, matchDurableAllowCondition(cond, execCall("main", "git status && rm -rf /tmp/rampart-canary"), nil))
+}
+
 func TestEvaluate_DenyWinsOverAllow(t *testing.T) {
 	e := setupEngine(t, `
 version: "1"

@@ -324,7 +324,7 @@ func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCount
 		return true
 	}
 	if len(cond.CommandMatches) == 0 && len(cond.CommandContains) == 0 && len(cond.CommandEnvAssignments) == 0 {
-		return matchCondition(cond, call, counter)
+		return matchConditionForAction(cond, call, counter, ActionAllow)
 	}
 	if !matchStrictCommandCondition(cond, call) {
 		return false
@@ -336,7 +336,7 @@ func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCount
 	if cond.IsEmpty() {
 		return true
 	}
-	return matchCondition(cond, call, counter)
+	return matchConditionForAction(cond, call, counter, ActionAllow)
 }
 
 func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
@@ -345,20 +345,8 @@ func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
 		return false
 	}
 	cmdMatch := false
-	if len(cond.CommandMatches) > 0 {
-		cmdMatch = matchAny(cond.CommandMatches, cmd)
-		if norm := NormalizeCommand(cmd); !cmdMatch && norm != cmd {
-			cmdMatch = matchAny(cond.CommandMatches, norm)
-		}
-	}
-	if !cmdMatch {
-		cmdLower := strings.ToLower(cmd)
-		for _, sub := range cond.CommandContains {
-			if strings.Contains(cmdLower, strings.ToLower(sub)) {
-				cmdMatch = true
-				break
-			}
-		}
+	if len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0 {
+		cmdMatch, _ = matchGrantCommandField(cond, cmd)
 	}
 	if !cmdMatch {
 		cmdMatch = matchFirstCommandEnvAssignment(cond.CommandEnvAssignments, cmd) != ""
@@ -732,12 +720,11 @@ func (e *Engine) evaluatePolicy(p Policy, call ToolCall) evaluatePolicyResult {
 			continue
 		}
 
-		if !matchCondition(rule.When, call, e.callCounter) {
-			continue
-		}
-
 		action, err := rule.ParseAction()
 		if err != nil {
+			if !matchConditionForAction(rule.When, call, e.callCounter, ActionDeny) {
+				continue
+			}
 			e.logger.Error("engine: invalid rule action",
 				"policy", p.Name,
 				"action", rule.Action,
@@ -745,6 +732,9 @@ func (e *Engine) evaluatePolicy(p Policy, call ToolCall) evaluatePolicyResult {
 			)
 			// Fail closed: invalid rule = deny.
 			return evaluatePolicyResult{ActionDeny, "invalid rule action; failing closed", nil, i, true}
+		}
+		if !matchConditionForAction(rule.When, call, e.callCounter, action) {
+			continue
 		}
 
 		return evaluatePolicyResult{action, rule.Message, &p.Rules[i], i, true}

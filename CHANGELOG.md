@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Execution-granting command rules now authorize the complete shell call** —
+  `allow`, `watch`, and `webhook` rules must explicitly match a compound command
+  or independently cover every executed segment and nested substitution. A
+  benign match such as `git *` can no longer authorize an unrelated sibling
+  command, while restrictive `deny`, `ask`, and approval rules retain their
+  any-dangerous-component behavior.
+
 ## [1.4.0] - 2026-07-25
 
 ### Added
