@@ -189,3 +189,23 @@ jobs:
           args: release --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ci-gate:
+    name: CI gate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [test, docker-smoke, release-dry-run]
+    steps:
+      - name: Require every CI job
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          DOCKER_RESULT: ${{ needs.docker-smoke.result }}
+          RELEASE_RESULT: ${{ needs.release-dry-run.result }}
+        run: |
+          for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT"; do
+            if [ "$result" != success ]; then
+              echo "Required CI job result: $result"
+              exit 1
+            fi
+          done
