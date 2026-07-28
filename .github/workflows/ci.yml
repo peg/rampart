@@ -9,22 +9,26 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.os }})
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2022]
-        go-version: ['1.25.12']
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: '1.25.12'
 
       - name: Download dependencies
         run: go mod download
@@ -32,8 +36,13 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
+      - name: Test with race detection and coverage
+        if: runner.os == 'Linux'
         run: go test -race "-coverprofile=coverage.out" ./...
+
+      - name: Test platform behavior
+        if: runner.os != 'Linux'
+        run: go test ./...
 
       - name: Build
         run: go build -v ./cmd/rampart
@@ -72,7 +81,7 @@ jobs:
         run: cmp -s docs-site/index.html docs/index.html
 
       - name: Linux lab runner contract
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         run: make lab-runner-test
 
       - name: OpenClaw plugin regression tests
@@ -92,38 +101,39 @@ jobs:
         if: runner.os == 'Linux'
         run: make security-assurance
 
-      - name: Policy check (standard)
-        run: go run ./cmd/rampart policy check --config policies/standard.yaml
-
-      - name: Policy check (paranoid)
-        run: go run ./cmd/rampart policy check --config policies/paranoid.yaml
-
-      - name: Policy check (yolo)
-        run: go run ./cmd/rampart policy check --config policies/yolo.yaml
+      - name: Policy checks
+        if: runner.os == 'Linux'
+        run: |
+          for policy in standard paranoid yolo; do
+            go run ./cmd/rampart policy check --config "policies/${policy}.yaml"
+          done
 
       - name: Vulnerability check
+        if: runner.os == 'Linux'
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0 && govulncheck ./...
 
       - name: Benchmark
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         run: go test -bench=. -benchmem ./internal/engine/ ./internal/audit/
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v7
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: coverage-${{ matrix.os }}
+          name: coverage-ubuntu
           path: coverage.out
+          retention-days: 7
 
   docker-smoke:
     name: docker smoke (amd64 runtime + arm64 build)
     runs-on: ubuntu-latest
-    needs: test
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Build amd64 image
         run: |
@@ -171,22 +181,42 @@ jobs:
   release-dry-run:
     name: goreleaser snapshot (cross-platform build check)
     runs-on: ubuntu-latest
-    needs: test
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.25.12'
 
       - name: GoReleaser snapshot (all platforms, no publish)
-        uses: goreleaser/goreleaser-action@v7
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           args: release --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ci-gate:
+    name: CI gate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [test, docker-smoke, release-dry-run]
+    steps:
+      - name: Require every CI job
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          DOCKER_RESULT: ${{ needs.docker-smoke.result }}
+          RELEASE_RESULT: ${{ needs.release-dry-run.result }}
+        run: |
+          for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT"; do
+            if [ "$result" != success ]; then
+              echo "Required CI job result: $result"
+              exit 1
+            fi
+          done

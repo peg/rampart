@@ -1,6 +1,7 @@
 name: Community Policy CI
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'policies/community/**'
@@ -10,13 +11,23 @@ on:
       - 'cmd/rampart/cli/policy_suggest.go'
       - 'scripts/generate-registry.go'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -57,10 +68,15 @@ jobs:
           done
 
       - name: Bench policies
-        if: contains(github.event.pull_request.changed_files_url, 'policies/community') || github.event_name == 'workflow_dispatch'
         run: |
-          # Only bench when community policy YAML files are actually changed.
-          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'policies/community/*.yaml' || true)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            changed=$(git diff --name-only \
+              "${{ github.event.pull_request.base.sha }}" \
+              "${{ github.event.pull_request.head.sha }}" \
+              -- 'policies/community/*.yaml')
+          else
+            changed=$(find policies/community -maxdepth 1 -name '*.yaml' -type f -print)
+          fi
           if [ -z "$changed" ]; then
             echo "No community policy YAML changes — skipping bench"
             exit 0
@@ -71,19 +87,16 @@ jobs:
             ./rampart bench --policy "$file" --min-coverage 60
           done
 
-      - name: Regenerate registry.json
-        run: go run scripts/generate-registry.go
-
       - name: Check registry.json is up to date
         run: |
-          # Compare everything except updated_at (which uses time.Now()).
-          jq 'del(.updated_at)' registry/registry.json > /tmp/before.json
+          # Compare the committed registry with a fresh generation while
+          # ignoring only updated_at, which intentionally uses time.Now().
+          jq 'del(.updated_at)' registry/registry.json > /tmp/committed.json
           go run scripts/generate-registry.go
-          jq 'del(.updated_at)' registry/registry.json > /tmp/after.json
-          if ! diff -q /tmp/before.json /tmp/after.json > /dev/null 2>&1; then
+          jq 'del(.updated_at)' registry/registry.json > /tmp/generated.json
+          if ! diff -u /tmp/committed.json /tmp/generated.json; then
             echo "ERROR: registry/registry.json is out of date."
             echo "Run 'go run scripts/generate-registry.go' and commit the result."
-            diff /tmp/before.json /tmp/after.json || true
             exit 1
           fi
           echo "✓ registry.json is up to date"
