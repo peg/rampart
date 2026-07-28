@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -40,7 +41,9 @@ func TestPersistentCallCounterSharesHistoryAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	// Windows does not implement POSIX permission bits; Go reports 0666 for
+	// regular files there regardless of the mode requested at creation time.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("state permissions = %o, want no group/other access", info.Mode().Perm())
 	}
 }
