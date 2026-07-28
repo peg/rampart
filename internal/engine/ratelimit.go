@@ -7,6 +7,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -93,6 +94,46 @@ type SlidingWindowCounter struct {
 // NewSlidingWindowCounter creates a new empty counter.
 func NewSlidingWindowCounter() *SlidingWindowCounter {
 	return &SlidingWindowCounter{calls: make(map[string]*timestampHeap)}
+}
+
+// RequiresCallCount reports whether recording this tool invocation can affect
+// an active call_count rule. Native hooks use it to avoid a durable file
+// transaction for unrelated tools. An explicit call_count.tool is global to
+// that tool; an implicit target applies only when the policy scope matches the
+// current call.
+func (e *Engine) RequiresCallCount(call ToolCall) bool {
+	if e == nil {
+		return false
+	}
+	e.mu.RLock()
+	cfg := e.config
+	e.mu.RUnlock()
+	if cfg == nil {
+		return false
+	}
+
+	for _, policy := range cfg.Policies {
+		if !policy.IsEnabled() {
+			continue
+		}
+		scopeMatches := e.matchesScope(policy.Match, call)
+		for _, rule := range policy.Rules {
+			if rule.IsExpired() || rule.When.CallCount == nil {
+				continue
+			}
+			target := strings.TrimSpace(rule.When.CallCount.Tool)
+			if target == "" {
+				if scopeMatches {
+					return true
+				}
+				continue
+			}
+			if target == call.Tool {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Increment records one tool invocation at time at.

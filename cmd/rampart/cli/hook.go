@@ -372,23 +372,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return fmt.Errorf("hook: create engine: %w", err)
 			}
 
-			// Native hooks are one-shot processes, so share call_count history
-			// through a locked, atomically replaced sidecar.
-			counterPath, counterErr := hookCallCountStatePath()
-			if counterErr == nil {
-				var counter *engine.PersistentCallCounter
-				counter, counterErr = engine.NewPersistentCallCounter(counterPath)
-				if counterErr == nil {
-					eng.SetCallCounter(counter)
-				}
-			}
-			if counterErr != nil {
-				logger.Warn("hook: persistent call counter unavailable", "error", counterErr)
-				if mode == "enforce" {
-					return outputHookResult(cmd, format, hookDeny, false, "Rampart call counter unavailable; refusing tool call", "")
-				}
-			}
-
 			// Audit: append to a daily file so watch can tail it.
 			today := time.Now().UTC().Format("2006-01-02")
 			auditPath := filepath.Join(auditDir, "audit-hook-"+today+".jsonl")
@@ -569,13 +552,37 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 
 			isPostToolUse := parsed.HookEventName == "PostToolUse" || parsed.Response != ""
+			requiresCallCount := !isPostToolUse && eng.RequiresCallCount(call)
+			var counterErr error
+			if requiresCallCount {
+				// Native hooks are one-shot processes. Only calls which can affect an
+				// active call_count rule need the locked, durable sidecar; unrelated
+				// shell and file calls stay on the ordinary no-I/O evaluation path.
+				var counterPath string
+				counterPath, counterErr = hookCallCountStatePath()
+				if counterErr == nil {
+					var counter *engine.PersistentCallCounter
+					counter, counterErr = engine.NewPersistentCallCounter(counterPath)
+					if counterErr == nil {
+						eng.SetCallCounter(counter)
+					}
+				}
+				if counterErr != nil {
+					logger.Warn("hook: persistent call counter unavailable", "error", counterErr)
+				}
+			}
 
 			// Evaluate: for PreToolUse, run command-side policy check.
 			// For PostToolUse, run response-side evaluation.
 			var decision engine.Decision
 			if isPostToolUse {
 				decision = eng.EvaluateResponse(call, parsed.Response)
-			} else {
+			} else if counterErr != nil && mode == "enforce" {
+				decision = engine.Decision{
+					Action:  engine.ActionDeny,
+					Message: "Rampart call counter unavailable; refusing tool call",
+				}
+			} else if requiresCallCount {
 				if err := eng.IncrementCallCount(call.Tool, arrivalTime); err != nil {
 					logger.Error("hook: call counter unavailable; failing closed", "tool", call.Tool, "error", err)
 					decision = engine.Decision{
@@ -585,6 +592,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				} else {
 					call, decision = evaluateHookCall(eng, call, parsed.PolicyPaths)
 				}
+			} else {
+				call, decision = evaluateHookCall(eng, call, parsed.PolicyPaths)
 			}
 
 			// Write audit event

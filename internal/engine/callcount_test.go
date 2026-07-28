@@ -205,3 +205,41 @@ func TestCallCountValidationBounds(t *testing.T) {
 		t.Fatal("expected oversized window to fail validation")
 	}
 }
+
+func TestRequiresCallCountScopesDurableTracking(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: fetch-limit
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          call_count:
+            gte: 2
+            window: 1h
+  - name: exec-observes-browser
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          call_count:
+            tool: browser
+            gte: 2
+            window: 1h
+`)
+
+	for _, tool := range []string{"fetch", "browser"} {
+		if !e.RequiresCallCount(ToolCall{Agent: "test", Tool: tool}) {
+			t.Errorf("RequiresCallCount(%q) = false, want true", tool)
+		}
+	}
+	for _, tool := range []string{"exec", "read", "write"} {
+		if e.RequiresCallCount(ToolCall{Agent: "test", Tool: tool}) {
+			t.Errorf("RequiresCallCount(%q) = true, want false", tool)
+		}
+	}
+}

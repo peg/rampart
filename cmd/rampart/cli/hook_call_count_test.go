@@ -76,3 +76,35 @@ policies:
 		t.Fatalf("persistent call-count sidecar: %v", err)
 	}
 }
+
+func TestHookSkipsPersistentCounterForUnrelatedTool(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	configPath := filepath.Join(home, "policy.yaml")
+	policy := `version: "1"
+default_action: allow
+policies:
+  - name: fetch-limit
+    match:
+      tool: ["fetch"]
+    rules:
+      - action: deny
+        when:
+          call_count:
+            gte: 2
+            window: "1h"
+`
+	if err := os.WriteFile(configPath, []byte(policy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"hook_event_name":"PreToolUse","session_id":"counter-scope","tool_use_id":"exec-1","tool_name":"Bash","tool_input":{"command":"printf safe"}}`
+	if _, stderr, err := runHookWithStdin(t, &rootOptions{configPath: configPath}, payload, "--mode", "enforce"); err != nil {
+		t.Fatalf("hook invocation: %v (stderr: %s)", err, stderr)
+	}
+
+	statePath := filepath.Join(home, ".rampart", "hook-call-counts.json")
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("unrelated exec created call-count state: %v", err)
+	}
+}

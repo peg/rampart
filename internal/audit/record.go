@@ -37,16 +37,25 @@ func marshalRecord(event Event) (Event, []byte, error) {
 		event.CompactedFields = fields
 	}
 
+	// Most records already fit. Encode them once and return the exact event
+	// whose hash appears in the serialized record. The compaction path may need
+	// additional trial encodes, but ordinary audit writes should not pay for a
+	// duplicate hash and JSON marshal.
+	encoded, line, err := marshalHashedRecord(event)
+	if err != nil {
+		return Event{}, nil, err
+	}
+	if len(line) <= MaxRecordBytes {
+		return encoded, line, nil
+	}
+
 	compacted, err := compactRecord(event)
 	if err != nil {
 		return Event{}, nil, err
 	}
-	if err := compacted.ComputeHash(); err != nil {
-		return Event{}, nil, fmt.Errorf("audit: compute hash: %w", err)
-	}
-	line, err := json.Marshal(compacted)
+	compacted, line, err = marshalHashedRecord(compacted)
 	if err != nil {
-		return Event{}, nil, fmt.Errorf("audit: marshal event: %w", err)
+		return Event{}, nil, err
 	}
 	if len(line) > MaxRecordBytes {
 		return Event{}, nil, errRecordTooLarge
@@ -54,20 +63,20 @@ func marshalRecord(event Event) (Event, []byte, error) {
 	return compacted, line, nil
 }
 
-func marshalHashedRecord(event Event) ([]byte, error) {
+func marshalHashedRecord(event Event) (Event, []byte, error) {
 	event.Hash = ""
 	if err := event.ComputeHash(); err != nil {
-		return nil, fmt.Errorf("audit: compute hash: %w", err)
+		return Event{}, nil, fmt.Errorf("audit: compute hash: %w", err)
 	}
 	line, err := json.Marshal(event)
 	if err != nil {
-		return nil, fmt.Errorf("audit: marshal event: %w", err)
+		return Event{}, nil, fmt.Errorf("audit: marshal event: %w", err)
 	}
-	return line, nil
+	return event, line, nil
 }
 
 func recordFits(event Event) (bool, error) {
-	line, err := marshalHashedRecord(event)
+	_, line, err := marshalHashedRecord(event)
 	if err != nil {
 		return false, err
 	}
@@ -75,10 +84,6 @@ func recordFits(event Event) (bool, error) {
 }
 
 func compactRecord(event Event) (Event, error) {
-	if ok, err := recordFits(event); err != nil || ok {
-		return event, err
-	}
-
 	requestJSON, err := json.Marshal(event.Request)
 	if err != nil {
 		return Event{}, fmt.Errorf("audit: marshal request for compaction: %w", err)
