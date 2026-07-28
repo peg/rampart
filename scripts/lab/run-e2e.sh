@@ -388,13 +388,31 @@ run_hermes() {
 }
 
 run_openclaw() {
-  if [[ ! -x "${artifact_dir}/rampart" ]]; then
-    run_step go-build-openclaw isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
-      _ "$worktree" "${artifact_dir}/rampart"
+  local container_binary="${artifact_dir}/rampart-openclaw-linux"
+  local docker_arch
+  local docker_machine
+  if ! docker_machine="$(docker info --format '{{.Architecture}}')"; then
+    echo "run-e2e: could not determine Docker architecture for OpenClaw suite" >&2
+    failed=1
+    return
+  fi
+  case "$docker_machine" in
+    aarch64|arm64) docker_arch="arm64" ;;
+    x86_64|amd64) docker_arch="amd64" ;;
+    *)
+      echo "run-e2e: unsupported Docker architecture for OpenClaw suite: ${docker_machine}" >&2
+      failed=1
+      return
+      ;;
+  esac
+  if [[ ! -x "$container_binary" ]]; then
+    run_step go-build-openclaw isolated env CGO_ENABLED=0 GOOS=linux GOARCH="$docker_arch" \
+      bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
+      _ "$worktree" "$container_binary"
   fi
   run_step openclaw-container \
     "${worktree}/scripts/lab/openclaw-container-acceptance.sh" \
-    --rampart "${artifact_dir}/rampart" \
+    --rampart "$container_binary" \
     --artifact-dir "${artifact_dir}/openclaw-container"
 }
 

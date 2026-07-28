@@ -65,6 +65,7 @@ fi
 grep -q 'exact 40-character hexadecimal commit SHA' "${tmp}/invalid.err"
 
 grep -q 'openclaw-container-acceptance.sh' "$runner"
+grep -q 'CGO_ENABLED=0 GOOS=linux GOARCH=' "$runner"
 "${repo_root}/scripts/lab/openclaw-container-acceptance.sh" --help >"${tmp}/openclaw-help"
 grep -q -- '--rampart' "${tmp}/openclaw-help"
 

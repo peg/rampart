@@ -40,7 +40,9 @@ Suites are cumulative only where stated:
 | `full` | Core, runtime, Hermes, and disposable OpenClaw coverage |
 
 The OpenClaw runtime suites run the official OpenClaw image in a new disposable
-container. Only the candidate Rampart binary is mounted read-only. The state,
+container. The controller cross-builds Rampart for the Docker daemon's Linux
+architecture, so this isolated suite can also run from a macOS controller.
+Only the candidate Rampart binary is mounted read-only. The state,
 workspace, plugin, policies, Rampart token, gateway, and policy service all live
 inside the container and are deleted after evidence is collected. No host
 OpenClaw configuration, credentials, memories, sessions, databases, workspaces,
