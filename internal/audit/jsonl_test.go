@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -470,7 +471,8 @@ func TestJSONLSink_RecoverSortsRotatedFilesNaturally(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), append(data, '\n'), 0o644))
 	}
 
-	state := recoverChainStateFromDir(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	state, err := recoverChainStateFromDir(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 	assert.EqualValues(t, len(names), state.eventCount)
 	assert.Equal(t, lastHash, state.lastHash)
 	assert.Equal(t, "2026-02-13.p10.jsonl", state.lastFile)
@@ -509,6 +511,140 @@ func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
 	assert.Equal(t, savedHash, sink2.lastHash)
 	require.NoError(t, sink2.Write(sampleEvent("exec")))
 	assertLastEventPrevHash(t, sink2.filePath(), savedHash)
+}
+
+func TestJSONLSink_RecoverLargeRecordContinuesHashChain(t *testing.T) {
+	dir := t.TempDir()
+
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0))
+	require.NoError(t, err)
+	large := sampleEvent("exec")
+	large.Request["command"] = strings.Repeat("x", 96*1024)
+	require.NoError(t, sink.Write(large))
+	savedHash := sink.lastHash
+	require.NoError(t, sink.Close())
+
+	sink2, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink2.Close()
+
+	assert.EqualValues(t, 1, sink2.eventCount)
+	assert.Equal(t, savedHash, sink2.lastHash)
+	require.NoError(t, sink2.Write(sampleEvent("write")))
+	assertLastEventPrevHash(t, sink2.filePath(), savedHash)
+}
+
+func TestJSONLSink_RecoveryRejectsOversizedRecord(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	record := append([]byte(strings.Repeat("x", MaxRecordBytes+1)), '\n')
+	require.NoError(t, os.WriteFile(path, record, 0o600))
+
+	sink, err := NewJSONLSink(dir, WithFsync(false),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.Nil(t, sink)
+	require.ErrorContains(t, err, "record exceeds")
+}
+
+func TestJSONLSink_RecoveryRejectsCorruptRecord(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte("{not-json}\n"), 0o600))
+
+	sink, err := NewJSONLSink(dir, WithFsync(false),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.Nil(t, sink)
+	require.ErrorContains(t, err, "parse")
+}
+
+func TestJSONLSink_RecoveryRejectsHashMismatch(t *testing.T) {
+	dir := t.TempDir()
+	event := sampleEvent("exec")
+	event.ID = NewEventID()
+	event.Hash = "sha256:not-the-event-hash"
+	record, err := json.Marshal(event)
+	require.NoError(t, err)
+	path := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	require.NoError(t, os.WriteFile(path, append(record, '\n'), 0o600))
+
+	sink, err := NewJSONLSink(dir, WithFsync(false),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.Nil(t, sink)
+	require.ErrorContains(t, err, "hash mismatch")
+}
+
+func TestJSONLSink_RecoveryIgnoresUnchainedHookLogs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit-hook-"+time.Now().UTC().Format("2006-01-02")+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte("{not-a-chained-event}\n"), 0o600))
+
+	sink, err := NewJSONLSink(dir, WithFsync(false),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.NoError(t, err)
+	defer sink.Close()
+	assert.Zero(t, sink.eventCount)
+	assert.Empty(t, sink.lastHash)
+}
+
+func TestJSONLSink_WriteCompactsEscapedNearMiBRequest(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	defer sink.Close()
+
+	event := sampleEvent("exec")
+	// encoding/json escapes '<' as six bytes. This is a realistic request below
+	// the proxy's 1 MiB input limit whose audit representation exceeds 2 MiB.
+	event.Request["command"] = strings.Repeat("<", 1024*1024-1024)
+	require.NoError(t, sink.Write(event))
+	assert.EqualValues(t, 1, sink.eventCount)
+	assert.NotEmpty(t, sink.lastHash)
+
+	events, _, err := ReadEventsFromOffset(sink.filePath(), 0)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	written := events[0]
+	metadata, ok := written.Request[compactedRequestKey].(map[string]any)
+	require.True(t, ok, "request should be replaced with compaction metadata")
+	assert.NotZero(t, metadata["original_json_bytes"])
+	assert.Regexp(t, `^sha256:[0-9a-f]{64}$`, metadata["sha256"])
+	assert.Equal(t, "replaced", written.CompactedFields["request"].Disposition)
+	valid, err := written.VerifyHash()
+	require.NoError(t, err)
+	assert.True(t, valid)
+
+	info, err := os.Stat(sink.filePath())
+	require.NoError(t, err)
+	assert.LessOrEqual(t, info.Size(), int64(MaxRecordBytes+1))
+}
+
+func TestJSONLSink_WriteCompactsOversizedDecisionFields(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	defer sink.Close()
+
+	event := sampleEvent("exec")
+	event.Decision.Message = strings.Repeat("<", 700*1024)
+	event.Decision.Suggestions = []string{
+		strings.Repeat("allow-", 250*1024),
+		strings.Repeat("deny-", 250*1024),
+	}
+	require.NoError(t, sink.Write(event))
+
+	events, _, err := ReadEventsFromOffset(sink.filePath(), 0)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	written := events[0]
+	assert.Empty(t, written.Decision.Suggestions)
+	assert.NotEmpty(t, written.Decision.Message)
+	assert.Less(t, len(written.Decision.Message), len(event.Decision.Message))
+	assert.Equal(t, "dropped", written.CompactedFields["decision.suggestions"].Disposition)
+	assert.Equal(t, "truncated", written.CompactedFields["decision.message"].Disposition)
+	valid, err := written.VerifyHash()
+	require.NoError(t, err)
+	assert.True(t, valid)
 }
 
 func TestJSONLSink_WriteErrorDoesNotUpdateHash(t *testing.T) {
@@ -579,6 +715,7 @@ func readJSONLLines(t *testing.T, path string) []string {
 
 	var lines []string
 	s := bufio.NewScanner(file)
+	s.Buffer(make([]byte, 64*1024), MaxRecordBytes+2)
 	for s.Scan() {
 		line := s.Text()
 		if line != "" {

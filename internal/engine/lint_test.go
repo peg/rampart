@@ -14,6 +14,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,6 +146,106 @@ policies:
 		if f.Severity == LintError && strings.Contains(f.Message, "call_count") {
 			t.Errorf("call_count should be a valid condition field, got lint error: %s", f.Message)
 		}
+	}
+}
+
+func TestLint_CallCountConditionBounds(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: unbounded-rate-limit
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          call_count:
+            gte: 1001
+            window: 721h
+`)
+	result := LintPolicyFile(path)
+	var found bool
+	for _, finding := range result.Findings {
+		if finding.Severity == LintError && strings.Contains(finding.Message, "call_count.gte") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected call_count bound error, findings: %#v", result.Findings)
+	}
+}
+
+func TestLint_DoubleStarPatternLengthBound(t *testing.T) {
+	pattern := "**" + strings.Repeat("a", maxDoubleGlobPatternLen)
+	path := writeTempPolicy(t, fmt.Sprintf(`
+version: "1"
+default_action: deny
+policies:
+  - name: oversized-glob
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: [%q]
+`, pattern))
+	result := LintPolicyFile(path)
+	var found bool
+	for _, finding := range result.Findings {
+		if finding.Severity == LintError && strings.Contains(finding.Message, "double-star pattern") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected double-star length error, findings: %#v", result.Findings)
+	}
+}
+
+func TestLint_DoubleStarOccurrencesInsideSegments(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: unsafe-glob
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["curl **-d @**/.ssh/**"]
+`)
+	result := LintPolicyFile(path)
+	found := false
+	for _, finding := range result.Findings {
+		if finding.Severity == LintError && strings.Contains(finding.Message, "3 ** occurrences") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected actual ** occurrence error, findings: %#v", result.Findings)
+	}
+}
+
+func TestConfigValidationRejectsExcessiveDoubleStar(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: unsafe-glob
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["aws s3 cp **/.aws/** s3://**"]
+`)
+	_, err := NewFileStore(path).Load()
+	if err == nil {
+		t.Fatal("policy containing three ** occurrences loaded successfully")
+	}
+	if !strings.Contains(err.Error(), "3 ** occurrences") {
+		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
 

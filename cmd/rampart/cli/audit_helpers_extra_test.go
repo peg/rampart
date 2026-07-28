@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/peg/rampart/internal/audit"
@@ -66,9 +67,23 @@ func TestReadAuditEventsFromOffset(t *testing.T) {
 	}
 }
 
+func TestScanAuditEventsRejectsOversizedRecord(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "oversized.jsonl")
+	record := append([]byte(strings.Repeat("x", audit.MaxRecordBytes+1)), '\n')
+	if err := os.WriteFile(f, record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := scanAuditEvents(f, func(audit.Event) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected oversized-record error, got %v", err)
+	}
+}
+
 func TestRenderAuditEventLine(t *testing.T) {
 	e := audit.Event{
-		Tool: "exec",
+		Tool:    "exec",
 		Request: map[string]any{"command": "ls -la"},
 		Decision: audit.EventDecision{
 			Action:          "deny",

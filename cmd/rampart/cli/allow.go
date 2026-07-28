@@ -205,20 +205,6 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		policyPath = overridesPath
 		usedUserOverride = true
 	} else {
-		// Load (or create) the custom policy file.
-		p, err := policy.LoadCustomPolicy(policyPath)
-		if err != nil {
-			return fmt.Errorf("load policy: %w", err)
-		}
-
-		// Check for duplicate pattern.
-		if exists, existingAction, existingTool := p.HasPattern(pattern); exists {
-			fmt.Fprintf(out, "\n  ⚠️  Pattern already exists: %s %s %q\n", existingAction, existingTool, pattern)
-			fmt.Fprintln(out, "  Use 'rampart rules' to view existing rules.")
-			return nil
-		}
-
-		// Add the rule with optional temporal constraints.
 		temporal := policy.TemporalOpts{Once: opts.once}
 		if opts.forDur != "" {
 			dur, err := time.ParseDuration(opts.forDur)
@@ -232,21 +218,34 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 			temporal.ExpiresAt = &exp
 		}
 
-		if temporal.ExpiresAt != nil || temporal.Once {
-			if err := p.AddRuleTemporal(action, pattern, msg, opts.tool, temporal); err != nil {
-				return fmt.Errorf("add rule: %w", err)
+		var duplicateAction, duplicateTool string
+		err := policy.UpdateCustomPolicy(policyPath, func(p *policy.CustomPolicy) error {
+			if exists, existingAction, existingTool := p.HasPattern(pattern); exists {
+				duplicateAction = existingAction
+				duplicateTool = existingTool
+				return nil
 			}
-		} else {
-			if err := p.AddRule(action, pattern, msg, opts.tool); err != nil {
-				return fmt.Errorf("add rule: %w", err)
-			}
-		}
 
-		// Save.
-		if err := policy.SaveCustomPolicy(policyPath, p); err != nil {
-			return fmt.Errorf("save policy: %w", err)
+			var addErr error
+			if temporal.ExpiresAt != nil || temporal.Once {
+				addErr = p.AddRuleTemporal(action, pattern, msg, opts.tool, temporal)
+			} else {
+				addErr = p.AddRule(action, pattern, msg, opts.tool)
+			}
+			if addErr != nil {
+				return fmt.Errorf("add rule: %w", addErr)
+			}
+			ruleCount = p.TotalRules()
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("update policy: %w", err)
 		}
-		ruleCount = p.TotalRules()
+		if duplicateAction != "" {
+			fmt.Fprintf(out, "\n  ⚠️  Pattern already exists: %s %s %q\n", duplicateAction, duplicateTool, pattern)
+			fmt.Fprintln(out, "  Use 'rampart rules' to view existing rules.")
+			return nil
+		}
 	}
 
 	// Print success (brief - details already shown in printRuleSummary).

@@ -72,18 +72,29 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		Timestamp:  time.Now().UTC(),
 	}
 
-	// Count every PreToolUse event regardless of policy outcome.
-	if s.engine != nil {
-		s.engine.IncrementCallCount(call.Tool, call.Timestamp)
-	}
-
 	if s.mode == "disabled" {
 		decision = engine.Decision{
 			Action:       engine.ActionAllow,
 			Message:      "policy evaluation disabled",
 			EvalDuration: 0,
 		}
+	} else if s.engine == nil {
+		decision = engine.Decision{
+			Action:  engine.ActionDeny,
+			Message: "policy engine unavailable; refusing tool call",
+		}
 	} else {
+		// Count every evaluated PreToolUse event regardless of policy outcome.
+		if err := s.engine.IncrementCallCount(call.Tool, call.Timestamp); err != nil {
+			s.logger.Error("proxy: call counter unavailable; failing closed", "tool", call.Tool, "error", err)
+			decision = engine.Decision{
+				Action:  engine.ActionDeny,
+				Message: "call counter capacity unavailable; refusing tool call",
+			}
+			s.writeAudit(req, toolName, decision)
+			writeError(w, http.StatusServiceUnavailable, "call counter capacity unavailable; refusing tool call")
+			return
+		}
 		// Per-agent tokens always default to deny for unmatched calls.
 		// If a policy filter is set, only that profile's policies are evaluated.
 		evalOpts := engine.EvalOptions{}
@@ -93,27 +104,12 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 				evalOpts.PolicyFilter = identity.Policy
 			}
 		}
-		decision = s.engine.EvaluateWith(call, evalOpts)
+		decision = s.engine.EvaluateAndConsume(call, evalOpts)
 		// Warn when policy filter matched no policies — helps debug silent denies.
 		if evalOpts.PolicyFilter != "" && decision.Message == "no matching policy; using default action" {
 			s.logger.Warn("proxy: per-agent token policy filter matched no policies — all calls denied",
 				"agent", call.Agent, "policy_filter", evalOpts.PolicyFilter, "tool", call.Tool)
 		}
-	}
-
-	// Consume once:true rules after they fire. This removes the rule from
-	// the policy file so it won't match again. Done asynchronously to avoid
-	// blocking the response.
-	if decision.ConsumedOnce && decision.ConsumedRulePolicy != "" {
-		go func(policyName string, ruleIdx int) {
-			if err := s.engine.ConsumeOnceRule(policyName, ruleIdx); err != nil {
-				s.logger.Error("proxy: failed to consume once rule",
-					"policy", policyName,
-					"rule_index", ruleIdx,
-					"error", err,
-				)
-			}
-		}(decision.ConsumedRulePolicy, decision.ConsumedRuleIndex)
 	}
 
 	if s.metricsEnabled {

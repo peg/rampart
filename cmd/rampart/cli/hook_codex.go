@@ -146,7 +146,7 @@ func extractCodexPatchPaths(patch string) ([]string, error) {
 // permitted for the host tool call to proceed.
 func evaluateHookCall(eng *engine.Engine, call engine.ToolCall, policyPaths []string) (engine.ToolCall, engine.Decision) {
 	if len(policyPaths) == 0 {
-		return call, eng.Evaluate(call)
+		return call, eng.EvaluateAndConsume(call, engine.EvalOptions{})
 	}
 
 	selectedCall := call
@@ -158,7 +158,10 @@ func evaluateHookCall(eng *engine.Engine, call engine.ToolCall, policyPaths []st
 		pathCall.Input = pathCall.Params
 		pathCall.Params["path"] = path
 
-		decision := eng.Evaluate(pathCall)
+		// Claim each one-time allowance before considering the next path. This
+		// can conservatively consume an earlier allowance when a later path is
+		// denied, but it can never over-authorize a batched write.
+		decision := eng.EvaluateAndConsume(pathCall, engine.EvalOptions{})
 		rank := hookDecisionRank(decision.Action)
 		if rank > selectedRank {
 			selectedCall = pathCall

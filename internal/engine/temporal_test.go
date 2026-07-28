@@ -1,15 +1,170 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEvaluateAndConsumeOnceRuleAcrossProcesses(t *testing.T) {
+	if os.Getenv("RAMPART_ONCE_PROCESS_HELPER") == "1" {
+		runOnceRuleProcessHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	require.NoError(t, os.WriteFile(policyPath, []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: one-shot
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["deploy prod"]
+        once: true
+`), 0o600))
+	startPath := filepath.Join(dir, "start")
+
+	const contenders = 12
+	type child struct {
+		cmd    *exec.Cmd
+		stderr bytes.Buffer
+	}
+	children := make([]child, contenders)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		children[i].cmd = exec.Command(os.Args[0], "-test.run=^TestEvaluateAndConsumeOnceRuleAcrossProcesses$")
+		children[i].cmd.Env = append(os.Environ(),
+			"RAMPART_ONCE_PROCESS_HELPER=1",
+			"RAMPART_ONCE_POLICY="+policyPath,
+			"RAMPART_ONCE_START="+startPath,
+			"RAMPART_ONCE_READY="+readyPath,
+		)
+		children[i].cmd.Stderr = &children[i].stderr
+		require.NoError(t, children[i].cmd.Start())
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		for {
+			if _, err := os.Stat(readyPath); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for helper %d", i)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	require.NoError(t, os.WriteFile(startPath, []byte("go"), 0o600))
+
+	allowed := 0
+	denied := 0
+	for i := range children {
+		err := children[i].cmd.Wait()
+		if err == nil {
+			allowed++
+			continue
+		}
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 10 {
+			denied++
+			continue
+		}
+		t.Fatalf("helper %d failed: %v\nstderr: %s", i, err, children[i].stderr.String())
+	}
+
+	assert.Equal(t, 1, allowed, "a once rule must authorize exactly one process")
+	assert.Equal(t, contenders-1, denied)
+}
+
+func runOnceRuleProcessHelper() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewFileStore(os.Getenv("RAMPART_ONCE_POLICY")), logger)
+	if err != nil {
+		os.Exit(20)
+	}
+	if err := os.WriteFile(os.Getenv("RAMPART_ONCE_READY"), []byte("ready"), 0o600); err != nil {
+		os.Exit(21)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("RAMPART_ONCE_START")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Exit(22)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	decision := eng.EvaluateAndConsume(execCall("test", "deploy prod"), EvalOptions{})
+	if decision.Action == ActionAllow {
+		os.Exit(0)
+	}
+	if decision.Action == ActionDeny {
+		os.Exit(10)
+	}
+	os.Exit(23)
+}
+
+func TestEvaluateAndConsumeOnceRuleIsAtomic(t *testing.T) {
+	eng := setupEngine(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: one-shot
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["deploy prod"]
+        once: true
+`)
+
+	const contenders = 32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var allowed atomic.Int32
+	var denied atomic.Int32
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			decision := eng.EvaluateAndConsume(execCall("test", "deploy prod"), EvalOptions{})
+			switch decision.Action {
+			case ActionAllow:
+				allowed.Add(1)
+			case ActionDeny:
+				denied.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int32(1), allowed.Load(), "a once rule must authorize exactly one contender")
+	assert.Equal(t, int32(contenders-1), denied.Load())
+	assert.Equal(t, ActionDeny, eng.Evaluate(execCall("test", "deploy prod")).Action)
+}
 
 func TestExpiredRuleIsSkipped(t *testing.T) {
 	past := time.Now().UTC().Add(-1 * time.Hour)

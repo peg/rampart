@@ -409,25 +409,7 @@ func runRulesRemove(cmd *cobra.Command, opts *rootOptions, indexStr string, forc
 		}
 	}
 
-	// Determine zero-based index within the source file.
-	var sourceIdx int
-	if target.Source == "global" {
-		for i, e := range globalEntries {
-			if e.Index == displayIdx {
-				sourceIdx = i
-				break
-			}
-		}
-	} else {
-		for i, e := range projectEntries {
-			if e.Index == displayIdx {
-				sourceIdx = i
-				break
-			}
-		}
-	}
-
-	if err := removeRuleFromSource(target.Source, sourceIdx); err != nil {
+	if err := removeRuleFromSource(*target); err != nil {
 		return err
 	}
 
@@ -455,9 +437,9 @@ func runRulesRemove(cmd *cobra.Command, opts *rootOptions, indexStr string, forc
 	return nil
 }
 
-func removeRuleFromSource(source string, sourceIdx int) error {
+func removeRuleFromSource(target rulesEntry) error {
 	var path string
-	if source == "global" {
+	if target.Source == "global" {
 		gPath, err := custompolicy.GlobalCustomPath()
 		if err != nil {
 			return err
@@ -467,14 +449,14 @@ func removeRuleFromSource(source string, sourceIdx int) error {
 		path = custompolicy.ProjectCustomPath()
 	}
 
-	cp, err := custompolicy.LoadCustomPolicy(path)
-	if err != nil {
-		return err
-	}
-	if err := custompolicy.RemoveRuleAt(cp, sourceIdx); err != nil {
-		return err
-	}
-	return custompolicy.SaveCustomPolicy(path, cp)
+	return custompolicy.UpdateCustomPolicy(path, func(cp *custompolicy.CustomPolicy) error {
+		for index, current := range cp.FlattenRules() {
+			if current.Action == target.Action && current.Tool == target.Tool && current.Pattern == target.Pattern {
+				return custompolicy.RemoveRuleAt(cp, index)
+			}
+		}
+		return fmt.Errorf("rules: selected rule changed before it could be removed")
+	})
 }
 
 // ─── Reset ───────────────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/filetxn"
 	"gopkg.in/yaml.v3"
 )
 
@@ -92,7 +93,33 @@ func SaveCustomPolicy(path string, p *CustomPolicy) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("policy: create dir %s: %w", dir, err)
 	}
+	return filetxn.WithLock(path, func() error {
+		return saveCustomPolicyLocked(path, p)
+	})
+}
 
+// UpdateCustomPolicy performs a locked load-mutate-save transaction. Callers
+// that derive a new policy from current contents must use this helper so a
+// concurrent once:true claim cannot be overwritten by a stale snapshot.
+func UpdateCustomPolicy(path string, mutate func(*CustomPolicy) error) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("policy: create dir %s: %w", dir, err)
+	}
+	return filetxn.WithLock(path, func() error {
+		p, err := LoadCustomPolicy(path)
+		if err != nil {
+			return err
+		}
+		if err := mutate(p); err != nil {
+			return err
+		}
+		return saveCustomPolicyLocked(path, p)
+	})
+}
+
+func saveCustomPolicyLocked(path string, p *CustomPolicy) error {
+	dir := filepath.Dir(path)
 	data, err := yaml.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("policy: marshal: %w", err)
@@ -114,13 +141,17 @@ func SaveCustomPolicy(path string, p *CustomPolicy) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("policy: write temp file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("policy: sync temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("policy: close temp file: %w", err)
 	}
 
-	// Atomic rename
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := filetxn.Replace(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("policy: rename %s -> %s: %w", tmpPath, path, err)
 	}
@@ -134,6 +165,7 @@ func SaveCustomPolicy(path string, p *CustomPolicy) error {
 //   - pattern: a glob pattern for the command or file path
 //   - message: a human-readable description (may be empty)
 //   - tool:    "exec", "read", "write", "edit", or "" for auto-detection
+//
 // TemporalOpts holds optional temporal parameters for rule creation.
 type TemporalOpts struct {
 	ExpiresAt *time.Time

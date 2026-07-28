@@ -513,6 +513,9 @@ func (cfg *Config) validate() error {
 			return fmt.Errorf("engine: duplicate policy name %q", p.Name)
 		}
 		seen[p.Name] = true
+		if err := validatePolicyGlobPatterns(p); err != nil {
+			return fmt.Errorf("engine: policy %q: %w", p.Name, err)
+		}
 
 		for j, r := range p.Rules {
 			action, err := r.ParseAction()
@@ -538,6 +541,51 @@ func (cfg *Config) validate() error {
 	}
 
 	cfg.responseRegexCache = cache
+	return nil
+}
+
+func validatePolicyGlobPatterns(policy Policy) error {
+	scopePatterns := []struct {
+		field    string
+		patterns []string
+	}{
+		{"match.agent", []string{policy.Match.Agent}},
+		{"match.session", []string{policy.Match.Session}},
+		{"match.tool", []string(policy.Match.Tool)},
+	}
+	for _, item := range scopePatterns {
+		if err := validateGlobPatterns(item.field, item.patterns); err != nil {
+			return err
+		}
+	}
+
+	for index, rule := range policy.Rules {
+		condition := rule.When
+		fields := []struct {
+			name     string
+			patterns []string
+		}{
+			{"command_matches", condition.CommandMatches},
+			{"command_not_matches", condition.CommandNotMatches},
+			{"command_env_assignments", condition.CommandEnvAssignments},
+			{"path_matches", condition.PathMatches},
+			{"path_not_matches", condition.PathNotMatches},
+			{"url_matches", condition.URLMatches},
+			{"domain_matches", condition.DomainMatches},
+			{"session_matches", condition.SessionMatches},
+			{"session_not_matches", condition.SessionNotMatches},
+		}
+		for _, item := range fields {
+			if err := validateGlobPatterns(fmt.Sprintf("rule %d %s", index, item.name), item.patterns); err != nil {
+				return err
+			}
+		}
+		for parameter, pattern := range condition.ToolParamMatches {
+			if err := validateGlobPatterns(fmt.Sprintf("rule %d tool_param_matches.%s", index, parameter), []string{pattern}); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -574,6 +622,9 @@ func validateCallCountCondition(cond *CallCountCondition) error {
 	if cond.Gte < 0 {
 		return fmt.Errorf("call_count.gte must be >= 0")
 	}
+	if cond.Gte > maxCallCountThreshold {
+		return fmt.Errorf("call_count.gte must be <= %d", maxCallCountThreshold)
+	}
 	if strings.TrimSpace(cond.Window) == "" {
 		return fmt.Errorf("call_count.window is required")
 	}
@@ -583,6 +634,9 @@ func validateCallCountCondition(cond *CallCountCondition) error {
 	}
 	if dur <= 0 {
 		return fmt.Errorf("call_count.window must be > 0")
+	}
+	if dur > maxCallCountWindow {
+		return fmt.Errorf("call_count.window must be <= %s", maxCallCountWindow)
 	}
 	return nil
 }

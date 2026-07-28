@@ -684,8 +684,7 @@ policies:
 	}
 }
 
-func TestEvaluateResponse_TruncatesLargeBody(t *testing.T) {
-	// Place a secret past the 1MB cap boundary — it should NOT be detected.
+func TestEvaluateResponse_FailsClosedOnLargeBody(t *testing.T) {
 	e := setupEngine(t, `
 version: "1"
 default_action: allow
@@ -715,14 +714,86 @@ policies:
 		Timestamp: time.Now(),
 	}
 
-	// Secret is past the cap, so it should be allowed (truncated before matching).
+	// A prefix-only scan could miss the secret, so oversized responses fail closed.
 	got := e.EvaluateResponse(call, largeResponse)
-	assert.Equal(t, ActionAllow, got.Action, "secret beyond 1MB cap should not be detected")
+	assert.Equal(t, ActionDeny, got.Action, "oversized response should fail closed")
+	assert.Contains(t, got.Message, "exceeds")
 
 	// Secret within the cap should still be detected.
 	smallResponse := "prefix AKIA1234567890ABCDEF suffix"
 	got2 := e.EvaluateResponse(call, smallResponse)
 	assert.Equal(t, ActionDeny, got2.Action, "secret within cap should be detected")
+}
+
+func TestEvaluateResponse_LargeBodyWithoutApplicableResponseRuleIsAllowed(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: command-only
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm *"]
+`)
+	call := execCall("main", "cat big.txt")
+	got := e.EvaluateResponse(call, strings.Repeat("x", maxResponseMatchSize+1))
+	assert.Equal(t, ActionAllow, got.Action)
+}
+
+func TestEvaluate_FailsClosedOnOversizedMatchInputs(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: durable-prefix
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["safe *"]
+`)
+
+	boundary := strings.Repeat("a", maxGlobInputLen)
+	assert.Equal(t, ActionAllow, e.Evaluate(execCall("main", boundary)).Action)
+
+	oversized := "safe " + strings.Repeat("a", maxGlobInputLen) + " && rm -rf /"
+	decision := e.Evaluate(execCall("main", oversized))
+	assert.Equal(t, ActionDeny, decision.Action)
+	assert.Contains(t, decision.Message, "exceeds")
+}
+
+func TestEvaluate_FailsClosedOnOversizedReferencedToolParameter(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: inspect-query
+    match:
+      tool: search
+    rules:
+      - action: deny
+        when:
+          tool_param_matches:
+            query: "**secret**"
+`)
+	call := ToolCall{
+		Agent: "main",
+		Tool:  "search",
+		Input: map[string]any{"query": strings.Repeat("x", maxGlobInputLen+1)},
+	}
+	assert.Equal(t, ActionDeny, e.Evaluate(call).Action)
+
+	// Large content that no policy matches is not rejected merely because it is
+	// carried alongside a bounded, policy-relevant parameter.
+	call.Input = map[string]any{
+		"query":   "ordinary",
+		"content": strings.Repeat("x", maxGlobInputLen+1),
+	}
+	assert.Equal(t, ActionAllow, e.Evaluate(call).Action)
 }
 
 func TestEvaluateResponse_RegexMatchTimeout(t *testing.T) {

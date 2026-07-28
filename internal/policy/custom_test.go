@@ -14,9 +14,11 @@
 package policy_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,6 +67,40 @@ func TestSaveCustomPolicy_ValidYAML(t *testing.T) {
 	var out map[string]interface{}
 	if err := yaml.Unmarshal(data, &out); err != nil {
 		t.Fatalf("saved file is not valid YAML: %v\n%s", err, data)
+	}
+}
+
+func TestUpdateCustomPolicyConcurrentWritersDoNotLoseRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "custom.yaml")
+	const writers = 24
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs <- policy.UpdateCustomPolicy(path, func(p *policy.CustomPolicy) error {
+				return p.AddRule("allow", fmt.Sprintf("tool-%d *", i), "", "exec")
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p, err := policy.LoadCustomPolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.TotalRules(); got != writers {
+		t.Fatalf("rules = %d, want %d", got, writers)
 	}
 }
 

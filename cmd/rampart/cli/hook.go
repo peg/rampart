@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,8 @@ import (
 	"github.com/peg/rampart/internal/session"
 	"github.com/spf13/cobra"
 )
+
+const maxHookInputBytes = 4 * 1024 * 1024
 
 // hookInput is the JSON sent by Claude Code on stdin for PreToolUse/PostToolUse hooks.
 // The base object (from oZ() in Claude Code source) includes session_id, transcript_path,
@@ -107,6 +110,17 @@ type gitContext struct {
 	root    string // absolute git root path e.g. "/home/user/projects/myapp"
 }
 
+func readBoundedHookInput(reader io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maxHookInputBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("hook: read stdin: %w", err)
+	}
+	if len(data) > maxHookInputBytes {
+		return nil, fmt.Errorf("hook: stdin exceeds %d-byte limit", maxHookInputBytes)
+	}
+	return data, nil
+}
+
 // deriveRunID returns the run ID for the current hook invocation, used to group
 // all tool calls from the same agent orchestration run.
 //
@@ -172,6 +186,16 @@ func sessionStateDir() string {
 		return ""
 	}
 	return filepath.Join(home, ".rampart", "session-state")
+}
+
+// hookCallCountStatePath returns the cross-process call-count sidecar used by
+// one-shot native hook invocations.
+func hookCallCountStatePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("hook: resolve home for call counter: %w", err)
+	}
+	return filepath.Join(home, ".rampart", "hook-call-counts.json"), nil
 }
 
 // isServeRunning checks if rampart serve is actually running by hitting the healthz endpoint.
@@ -348,6 +372,23 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return fmt.Errorf("hook: create engine: %w", err)
 			}
 
+			// Native hooks are one-shot processes, so share call_count history
+			// through a locked, atomically replaced sidecar.
+			counterPath, counterErr := hookCallCountStatePath()
+			if counterErr == nil {
+				var counter *engine.PersistentCallCounter
+				counter, counterErr = engine.NewPersistentCallCounter(counterPath)
+				if counterErr == nil {
+					eng.SetCallCounter(counter)
+				}
+			}
+			if counterErr != nil {
+				logger.Warn("hook: persistent call counter unavailable", "error", counterErr)
+				if mode == "enforce" {
+					return outputHookResult(cmd, format, hookDeny, false, "Rampart call counter unavailable; refusing tool call", "")
+				}
+			}
+
 			// Audit: append to a daily file so watch can tail it.
 			today := time.Now().UTC().Format("2006-01-02")
 			auditPath := filepath.Join(auditDir, "audit-hook-"+today+".jsonl")
@@ -357,27 +398,32 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}
 			defer auditFile.Close()
 
-			// Parse input based on format
+			// Read hook input through a bounded buffer before parsing. Hook payloads
+			// are single JSON objects; accepting an unbounded stream would let a
+			// malformed host exhaust memory before policy evaluation starts.
 			var parsed *hookParseResult
-
-			switch format {
-			case "claude-code":
-				parsed, err = parseClaudeCodeInput(cmd.InOrStdin(), logger)
-			case "codex":
-				parsed, err = parseCodexInput(cmd.InOrStdin())
-			case "cline":
-				parsed, err = parseClineInput(cmd.InOrStdin(), logger)
-			case "gemini":
-				parsed, err = parseGeminiInput(cmd.InOrStdin())
-			case "antigravity":
-				parsed, err = parseAntigravityInput(cmd.InOrStdin())
-			case "copilot":
-				parsed, err = parseCopilotInput(cmd.InOrStdin())
-			default:
-				// Should be unreachable — format is validated above.
-				// Explicit default prevents a nil parsed pointer reaching
-				// downstream code if the validation and switch ever diverge.
-				return fmt.Errorf("hook: unhandled format %q", format)
+			input, readErr := readBoundedHookInput(cmd.InOrStdin())
+			if readErr != nil {
+				err = readErr
+			} else {
+				inputReader := bytes.NewReader(input)
+				switch format {
+				case "claude-code":
+					parsed, err = parseClaudeCodeInput(inputReader, logger)
+				case "codex":
+					parsed, err = parseCodexInput(inputReader)
+				case "cline":
+					parsed, err = parseClineInput(inputReader, logger)
+				case "gemini":
+					parsed, err = parseGeminiInput(inputReader)
+				case "antigravity":
+					parsed, err = parseAntigravityInput(inputReader)
+				case "copilot":
+					parsed, err = parseCopilotInput(inputReader)
+				default:
+					// Should be unreachable — format is validated above.
+					return fmt.Errorf("hook: unhandled format %q", format)
+				}
 			}
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
@@ -414,7 +460,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						Message: fmt.Sprintf("parse failure (format=%s): %v", format, err),
 					},
 				}
-				if line, marshalErr := json.Marshal(parseFailureEvent); marshalErr == nil {
+				if line, marshalErr := audit.MarshalRecord(parseFailureEvent); marshalErr == nil {
 					line = append(line, '\n')
 					_, _ = auditFile.Write(line)
 				}
@@ -456,7 +502,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						Message: "PostToolUseFailure short-circuit: injecting denial guidance to stop retry loops",
 					},
 				}
-				if line, marshalErr := json.Marshal(postToolUseFailureEvent); marshalErr == nil {
+				if line, marshalErr := audit.MarshalRecord(postToolUseFailureEvent); marshalErr == nil {
 					line = append(line, '\n')
 					_, _ = auditFile.Write(line)
 				}
@@ -508,6 +554,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if parsed.Tool == "agent" {
 				depth++
 			}
+			arrivalTime := time.Now().UTC()
 			call := engine.ToolCall{
 				ID:         audit.NewEventID(),
 				Agent:      parsed.Agent,
@@ -518,7 +565,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Tool:       parsed.Tool,
 				Params:     parsed.Params,
 				Input:      parsed.Params,
-				Timestamp:  time.Now().UTC(),
+				Timestamp:  arrivalTime,
 			}
 
 			isPostToolUse := parsed.HookEventName == "PostToolUse" || parsed.Response != ""
@@ -529,8 +576,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if isPostToolUse {
 				decision = eng.EvaluateResponse(call, parsed.Response)
 			} else {
-				eng.IncrementCallCount(call.Tool, call.Timestamp)
-				call, decision = evaluateHookCall(eng, call, parsed.PolicyPaths)
+				if err := eng.IncrementCallCount(call.Tool, arrivalTime); err != nil {
+					logger.Error("hook: call counter unavailable; failing closed", "tool", call.Tool, "error", err)
+					decision = engine.Decision{
+						Action:  engine.ActionDeny,
+						Message: "call counter capacity unavailable; refusing tool call",
+					}
+				} else {
+					call, decision = evaluateHookCall(eng, call, parsed.PolicyPaths)
+				}
 			}
 
 			// Write audit event
@@ -552,7 +606,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Request:    parsed.Params,
 				Decision:   eventDecision,
 			}
-			line, err := json.Marshal(event)
+			line, err := audit.MarshalRecord(event)
 			if err != nil {
 				logger.Error("hook: marshal audit event", "error", err)
 			} else {
@@ -607,20 +661,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						_ = approvalClient.resolveAskAuditCtx(resolveCtx, ask.AuditApprovalID, true, "hook-posttooluse")
 						cancelResolve()
 					}
-				}
-			}
-
-			// Consume once:true rules after they fire. Unlike the proxy
-			// (eval_handlers.go) which uses a goroutine because the server
-			// keeps running, the hook is a one-shot process — must be
-			// synchronous or the process exits before completion.
-			if decision.ConsumedOnce && decision.ConsumedRulePolicy != "" && eng != nil {
-				if err := eng.ConsumeOnceRule(decision.ConsumedRulePolicy, decision.ConsumedRuleIndex); err != nil {
-					logger.Error("hook: failed to consume once rule",
-						"policy", decision.ConsumedRulePolicy,
-						"rule_index", decision.ConsumedRuleIndex,
-						"error", err,
-					)
 				}
 			}
 

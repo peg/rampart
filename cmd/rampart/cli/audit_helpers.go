@@ -77,9 +77,16 @@ func scanAuditEvents(file string, onEvent func(audit.Event) error) error {
 	defer handle.Close()
 
 	scanner := bufio.NewScanner(handle)
+	// Keep CLI audit readers aligned with the writer/recovery record-size
+	// contract. The default Scanner limit is only 64 KiB, while valid Rampart
+	// audit events may be larger than that.
+	scanner.Buffer(make([]byte, 64*1024), audit.MaxRecordBytes+2)
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
+		if len(scanner.Bytes()) > audit.MaxRecordBytes {
+			return fmt.Errorf("audit: record in %s line %d exceeds %d-byte limit", filepath.Base(file), lineNum, audit.MaxRecordBytes)
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue

@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-07-25 | Applies to: v1.4.0
+> Last reviewed: 2026-07-27 | Applies to: v1.4.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -69,6 +69,8 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 ### 2. Audit Log Rewrite
 
 The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
+
+Audit records are capped at 2 MiB. If JSON escaping or decision guidance would exceed that limit, Rampart replaces large fields with their original encoded size and SHA-256 digest, then computes the event hash over the compacted record. This preserves a bounded, correlatable decision record instead of silently dropping the audit event.
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](../README.md#security-recommendations) so the agent can't access audit files
@@ -147,9 +149,13 @@ Rampart imposes limits on regex patterns used for response matching to prevent R
 - **Maximum pattern length**: 500 characters
 - **Nested quantifiers**: Rejected at load time (patterns like `(a+)*`)
 - **Execution timeout**: 100ms per regex match
-- **Response cap**: 1MB maximum for response-side evaluation
+- **Response cap**: 1MB maximum for response-side evaluation; an oversized response fails closed when an applicable response rule exists
 
 These limits protect against both accidental performance degradation and malicious patterns. They prevent policy authors from creating DoS conditions, and prevent attackers from injecting malicious regex patterns via webhook-driven policy updates. Patterns exceeding these limits are rejected at policy load time with clear error messages.
+
+Glob matching is bounded separately: values used by glob conditions are limited to 8 KiB, ordinary patterns to 8 KiB, double-star patterns to 256 bytes, and each pattern to two `**` occurrences. Oversized match inputs are denied as whole values; Rampart never checks a truncated prefix. The policy loader and linter reject patterns outside these limits.
+
+`call_count` conditions retain at most 1,000 calls per tool, 1,024 active tool identities, and a 30-day window. Long-running proxy mode keeps this state in memory. One-shot native hooks share a locked state file at `~/.rampart/hook-call-counts.json`, so thresholds apply across separate hook processes. Corrupt, unavailable, or capacity-exhausted state fails closed in enforce mode.
 
 ### 8. TLS on HTTP API
 
@@ -174,6 +180,8 @@ Pending approvals are now persisted to a local JSONL journal in normal `rampart 
 - Keep the default approval persistence path intact
 - Avoid unnecessary restarts during active approval flows
 - Treat approvals as short-lived human decisions, not long-running queued work
+
+One-time (`once: true`) allow rules are claimed synchronously before an allow decision is returned. Rampart coordinates policy read-modify-write operations with a per-file cross-process lock and atomic replacement, including native hooks that run as separate processes. A failed claim is a denial; it is never allowed optimistically.
 
 ### 10. Project Policy Trust
 

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -174,6 +175,19 @@ func GenerateAllowRule(call ToolCall) Policy {
 // This migration is needed after the v0.9.7 GeneralizeCommand fix.
 // Safe to call multiple times — only rewrites if patterns are found.
 func MigrateAllowRuleGlobs(policyPath string) (int, error) {
+	if _, err := os.Stat(policyPath); os.IsNotExist(err) {
+		return 0, nil
+	}
+	var migrated int
+	err := withPolicyFileLock(policyPath, func() error {
+		var err error
+		migrated, err = migrateAllowRuleGlobsLocked(policyPath)
+		return err
+	})
+	return migrated, err
+}
+
+func migrateAllowRuleGlobsLocked(policyPath string) (int, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -213,13 +227,18 @@ func MigrateAllowRuleGlobs(policyPath string) (int, error) {
 // AppendAllowRule generates an allow rule from a ToolCall and appends it
 // to the auto-allowed policy file. Creates the file and directories if needed.
 func AppendAllowRule(policyPath string, call ToolCall) error {
-	policy := GenerateAllowRule(call)
-
 	// Ensure directory exists.
 	dir := filepath.Dir(policyPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("persist: create policy dir: %w", err)
 	}
+	return withPolicyFileLock(policyPath, func() error {
+		return appendAllowRuleLocked(policyPath, call)
+	})
+}
+
+func appendAllowRuleLocked(policyPath string, call ToolCall) error {
+	policy := GenerateAllowRule(call)
 
 	// Load existing config or create new one.
 	var cfg Config
@@ -387,6 +406,9 @@ func MatchesAutoAllowFile(policyPath string, call ToolCall) bool {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return false
 	}
+	if field, _ := oversizedMatchInput(&cfg, call); field != "" {
+		return false
+	}
 
 	for _, p := range cfg.Policies {
 		// Check tool match.
@@ -443,6 +465,19 @@ func MatchesAutoAllowFile(policyPath string, call ToolCall) bool {
 // CleanExpiredRules removes expired temporal rules from a policy file.
 // Returns the number of rules removed and any error.
 func CleanExpiredRules(policyPath string) (int, error) {
+	if _, err := os.Stat(policyPath); os.IsNotExist(err) {
+		return 0, nil
+	}
+	var removed int
+	err := withPolicyFileLock(policyPath, func() error {
+		var err error
+		removed, err = cleanExpiredRulesLocked(policyPath)
+		return err
+	})
+	return removed, err
+}
+
+func cleanExpiredRulesLocked(policyPath string) (int, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -486,6 +521,12 @@ func CleanExpiredRules(policyPath string) (int, error) {
 // RemoveRule removes a specific rule by policy name and rule index from
 // a policy file. Used to consume once:true rules after they fire.
 func RemoveRule(policyPath, policyName string, ruleIndex int) error {
+	return withPolicyFileLock(policyPath, func() error {
+		return removeRule(policyPath, policyName, ruleIndex, nil)
+	})
+}
+
+func removeRule(policyPath, policyName string, ruleIndex int, expected *Rule) error {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		return fmt.Errorf("persist: read policy for rule removal: %w", err)
@@ -500,10 +541,24 @@ func RemoveRule(policyPath, policyName string, ruleIndex int) error {
 		if p.Name != policyName {
 			continue
 		}
-		if ruleIndex < 0 || ruleIndex >= len(p.Rules) {
-			return fmt.Errorf("persist: rule index %d out of range for policy %q", ruleIndex, policyName)
+		removeIndex := ruleIndex
+		if expected != nil {
+			if removeIndex < 0 || removeIndex >= len(p.Rules) || !reflect.DeepEqual(p.Rules[removeIndex], *expected) {
+				removeIndex = -1
+				for candidate := range p.Rules {
+					if reflect.DeepEqual(p.Rules[candidate], *expected) {
+						removeIndex = candidate
+						break
+					}
+				}
+			}
+			if removeIndex < 0 {
+				return fmt.Errorf("persist: one-time rule no longer present in policy %q", policyName)
+			}
+		} else if removeIndex < 0 || removeIndex >= len(p.Rules) {
+			return fmt.Errorf("persist: rule index %d out of range for policy %q", removeIndex, policyName)
 		}
-		cfg.Policies[i].Rules = append(p.Rules[:ruleIndex], p.Rules[ruleIndex+1:]...)
+		cfg.Policies[i].Rules = append(p.Rules[:removeIndex], p.Rules[removeIndex+1:]...)
 		if len(cfg.Policies[i].Rules) == 0 {
 			cfg.Policies = append(cfg.Policies[:i], cfg.Policies[i+1:]...)
 		}
@@ -535,11 +590,16 @@ func writeConfigAtomic(policyPath string, cfg *Config) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("persist: write temp file: %w", err)
 	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("persist: sync temp file: %w", err)
+	}
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("persist: close temp file: %w", err)
 	}
-	if err := os.Rename(tmpPath, policyPath); err != nil {
+	if err := replaceFileAtomic(tmpPath, policyPath); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("persist: rename temp file: %w", err)
 	}

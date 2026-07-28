@@ -383,10 +383,8 @@ policies:
       - action: deny
         when:
           command_matches:
-            - "aws s3 cp **/.aws/** s3://**"
-            - "aws s3 cp ~/.aws/** s3://**"
-            - "aws s3 cp **/.ssh/** s3://**"
-            - "aws s3 cp ~/.ssh/** s3://**"
+            - "*aws s3 cp*.aws*s3://*"
+            - "*aws s3 cp*.ssh*s3://*"
         message: "Credential exfiltration to S3 blocked"
       - action: ask
         when:
@@ -725,18 +723,20 @@ policies:
       - action: deny
         when:
           command_matches:
-            - "curl **-d @**/.ssh/**"
-            - "curl **-d @**/.aws/**"
-            - "curl **-d @**/.gnupg/**"
-            - "curl **--data @**/.ssh/**"
-            - "curl **--data-binary @**/.ssh/**"
-            - "curl **--data-binary @**/.aws/**"
-            - "curl **--data-raw @**/.ssh/**"
-            - "curl **--data-raw @**/.aws/**"
-            - "curl **-T **/.ssh/**"
-            - "curl **-T **/.aws/**"
-            - "curl **--upload-file **/.ssh/**"
-            - "curl **--upload-file **/.aws/**"
+            # Leading-star matching crosses path separators while retaining
+            # the upload option, sensitive source, and their ordering.
+            - "*curl*-d @*.ssh*"
+            - "*curl*-d @*.aws*"
+            - "*curl*-d @*.gnupg*"
+            - "*curl*--data @*.ssh*"
+            - "*curl*--data-binary @*.ssh*"
+            - "*curl*--data-binary @*.aws*"
+            - "*curl*--data-raw @*.ssh*"
+            - "*curl*--data-raw @*.aws*"
+            - "*curl*-T *.ssh*"
+            - "*curl*-T *.aws*"
+            - "*curl*--upload-file *.ssh*"
+            - "*curl*--upload-file *.aws*"
         message: "Credential file upload via curl blocked"
       # Tar archive of credential directories
       - action: deny

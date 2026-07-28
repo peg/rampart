@@ -504,6 +504,59 @@ func TestLayeredStore_InvalidProjectPolicyNonFatal(t *testing.T) {
 	assert.Equal(t, "allow", cfg.DefaultAction)
 }
 
+func TestDirStore_SkipsPolicyWithExcessiveDoubleStar(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "policy.yaml"), `
+version: "1"
+default_action: deny
+policies:
+  - name: invalid-glob
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["curl **-d @**/.ssh/**"]
+`)
+	store := NewDirStore(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg, err := store.Load()
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Policies)
+}
+
+func TestLayeredStore_RejectsProjectPolicyWithExcessiveDoubleStar(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	project := filepath.Join(dir, "project.yaml")
+	writeTestFile(t, base, `
+version: "1"
+default_action: deny
+policies:
+  - name: base
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when: {default: true}
+`)
+	writeTestFile(t, project, `
+version: "1"
+policies:
+  - name: invalid-project-glob
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["curl **-d @**/.ssh/**"]
+`)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg, err := NewLayeredStore(NewFileStore(base), project, logger).Load()
+	require.NoError(t, err)
+	require.Len(t, cfg.Policies, 1)
+	assert.Equal(t, "base", cfg.Policies[0].Name)
+}
+
 func TestLayeredStore_DuplicatePolicyNameSkipped(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base.yaml")

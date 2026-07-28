@@ -22,7 +22,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 const responseRegexMatchTimeout = 100 * time.Millisecond
@@ -92,22 +91,51 @@ func cleanPaths(p string) (cleaned string, resolved string) {
 //	"cat ~/.ssh/*" matches "cat ~/.ssh/id_rsa"
 //
 // An empty pattern matches nothing. A "*" pattern matches everything.
-// maxGlobInputLen caps the input length for glob matching to prevent DoS
-// with pathological patterns like **a**b**c on very long strings.
+// MatchGlob is intentionally bounded. Enforcement entry points reject
+// oversized match inputs before evaluating any allow or deny rules; returning
+// false here keeps non-enforcement helpers bounded without partially matching
+// a truncated value.
 const maxGlobInputLen = 8192
 
+const (
+	// Ordinary filepath/segment patterns can safely remain large enough for
+	// generated exact command and path approvals. Double-star patterns use the
+	// NFA and receive a tighter product bound.
+	maxGlobPatternLen       = 8192
+	maxDoubleGlobPatternLen = 256
+)
+
+// maxDoubleStarOccurrences bounds the complexity and ambiguity of policy
+// patterns. MatchGlob also enforces this limit so callers which construct
+// patterns outside Config validation still fail safely.
+const maxDoubleStarOccurrences = 2
+
+func validateGlobPatterns(field string, patterns []string) error {
+	for _, pattern := range patterns {
+		if len(pattern) > maxGlobPatternLen {
+			return fmt.Errorf("%s pattern is %d bytes (max %d)", field, len(pattern), maxGlobPatternLen)
+		}
+		count := strings.Count(pattern, "**")
+		if count > 0 && len(pattern) > maxDoubleGlobPatternLen {
+			return fmt.Errorf("%s double-star pattern is %d bytes (max %d)", field, len(pattern), maxDoubleGlobPatternLen)
+		}
+		if count > maxDoubleStarOccurrences {
+			return fmt.Errorf("%s pattern %q has %d ** occurrences (max %d)", field, pattern, count, maxDoubleStarOccurrences)
+		}
+	}
+	return nil
+}
+
 func MatchGlob(pattern, name string) bool {
-	if pattern == "" {
+	if pattern == "" || len(pattern) > maxGlobPatternLen || len(name) > maxGlobInputLen {
+		return false
+	}
+	if strings.Contains(pattern, "**") && len(pattern) > maxDoubleGlobPatternLen {
 		return false
 	}
 	if pattern == "*" {
 		return true
 	}
-	// Cap input length to prevent DoS on pathological patterns.
-	if len(name) > maxGlobInputLen {
-		name = name[:maxGlobInputLen]
-	}
-
 	// Normalize path separators to forward slashes for cross-platform matching.
 	// Windows paths use backslashes, but policy patterns use forward slashes.
 	// This ensures "**/.ssh/id_*" matches "C:\Users\Trevor\.ssh\id_rsa".
@@ -116,10 +144,14 @@ func MatchGlob(pattern, name string) bool {
 	pattern = strings.ReplaceAll(pattern, "\\", "/")
 	name = strings.ReplaceAll(name, "\\", "/")
 
-	// Handle "**" as a recursive wildcard.
-	// matchDoubleGlob uses per-call memoization to keep complexity O(n·k)
-	// where n = len(name) and k = number of "**" segments in the pattern.
+	// Handle "**" with a bounded NFA-style matcher. Each input rune advances a
+	// fixed set of pattern states, so a non-match is O(len(pattern)*len(name))
+	// rather than recursively retrying every suffix. No suffix strings are
+	// allocated while matching.
 	if strings.Contains(pattern, "**") {
+		if strings.Count(pattern, "**") > maxDoubleStarOccurrences {
+			return false
+		}
 		return matchDoubleGlob(pattern, name)
 	}
 
@@ -150,17 +182,10 @@ func MatchGlob(pattern, name string) bool {
 	return matched
 }
 
-// matchDoubleGlob handles "**" patterns by splitting on the first double-star
-// and checking prefix matching + recursive suffix matching.
-//
-// Patterns with more than 2 "**" segments would require exponential
-// backtracking without memoization proportional to input²; they are rejected
-// at lint time and return false safely at runtime. Patterns with ≤2 segments
-// cover all practical policy use-cases.
-//
-// When recursing, we slice at valid UTF-8 rune boundaries (detected via
-// utf8.RuneStart) so the sub-string passed to each recursive call is always
-// well-formed, preventing false negatives for non-ASCII paths.
+// matchDoubleGlob matches a pattern containing at most two "**" wildcards.
+// It uses NFA-style state propagation: every token is visited at most once per
+// input rune and the state vectors are bounded by the pattern length. This is
+// deliberately index-based; it never constructs a string for an input suffix.
 //
 // Examples:
 //
@@ -170,90 +195,159 @@ func MatchGlob(pattern, name string) bool {
 //	"**pastebin.com**"  matches "https://pastebin.com/raw/abc"
 //	"**/café/**"        matches "/home/user/café/notes.txt"
 func matchDoubleGlob(pattern, name string) bool {
-	// Bail out on patterns with >2 "**" segments. The recursive algorithm is
-	// O(n^k) in the number of segments k; with k>2 on long inputs this becomes
-	// pathological. Policy lint catches this at load time; runtime returns false
-	// to fail safe rather than hang.
-	if strings.Count(pattern, "**") > 2 {
+	tokens, ok := tokenizeDoubleStarGlob(pattern)
+	if !ok {
 		return false
 	}
-
-	parts := strings.SplitN(pattern, "**", 2)
-	prefix := parts[0]
-	suffix := parts[1]
-
-	if prefix != "" && !strings.HasPrefix(name, prefix) {
-		return false
-	}
-
-	if suffix == "" {
+	if runGlobNFA(tokens, name) {
 		return true
 	}
 
-	// Strip the matched prefix from name.
-	remainder := name
-	if prefix != "" {
-		remainder = name[len(prefix):]
-	}
-
-	// If suffix contains more "**", recurse at each valid rune boundary.
-	// Using utf8.RuneStart to skip continuation bytes ensures remainder[i:]
-	// is always a valid UTF-8 string, avoiding false negatives for non-ASCII
-	// paths (e.g. accented characters, CJK, emoji). Slicing the original
-	// byte string at rune boundaries is O(1) and avoids the O(n²) allocation
-	// that would result from converting to []rune and back.
-	if strings.Contains(suffix, "**") {
-		for i := 0; i <= len(remainder); i++ {
-			// Skip continuation bytes of multi-byte runes so remainder[i:]
-			// is always a valid UTF-8 string. The final position i==len(remainder)
-			// is always a valid boundary (empty string), so only check when i>0
-			// and i<len(remainder).
-			if i > 0 && i < len(remainder) && !utf8.RuneStart(remainder[i]) {
-				continue
-			}
-			if matchDoubleGlob(suffix, remainder[i:]) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// When "**" is at the start (prefix is empty) and suffix starts with "/",
-	// also try matching without the leading "/" to handle zero-depth paths.
-	// This matches gitignore semantics: "**/.env" should match both
-	// "project/.env" and bare ".env" (zero directory segments).
-	if prefix == "" && strings.HasPrefix(suffix, "/") {
-		trimmed := suffix[1:]
-		if matched, _ := filepath.Match(trimmed, remainder); matched {
-			return true
-		}
-	}
-
-	return matchSuffixGlob(suffix, remainder)
-}
-
-// matchSuffixGlob checks if any tail of s matches the glob pattern.
-// The pattern must not contain "**" (use matchDoubleGlob for that).
-// Iterations are capped to prevent CPU exhaustion on long inputs.
-//
-// The string is converted to []rune before slicing so that each candidate
-// tail is always a valid UTF-8 string, regardless of the characters in s.
-// Slicing a UTF-8 string at an arbitrary byte offset can land in the middle
-// of a multi-byte rune and produce an invalid string that filepath.Match
-// will never match, causing false negatives for non-ASCII paths.
-func matchSuffixGlob(pattern, s string) bool {
-	const maxIter = 10000
-	runes := []rune(s)
-	limit := len(runes)
-	if limit > maxIter {
-		limit = maxIter
-	}
-	for i := 0; i <= limit; i++ {
-		if matched, _ := filepath.Match(pattern, string(runes[i:])); matched {
-			return true
-		}
+	// Preserve the established gitignore-style zero-depth behavior for a
+	// leading "**/": it matches both "project/.env" and bare ".env".
+	if strings.HasPrefix(pattern, "**/") {
+		trimmed, ok := tokenizeDoubleStarGlob(pattern[len("**/"):])
+		return ok && runGlobNFA(trimmed, name)
 	}
 	return false
+}
+
+type globTokenKind uint8
+
+const (
+	globLiteral globTokenKind = iota
+	globSingleStar
+	globDoubleStar
+	globQuestion
+	globClass
+)
+
+type globRange struct {
+	lo rune
+	hi rune
+}
+
+type globToken struct {
+	kind    globTokenKind
+	literal rune
+	ranges  []globRange
+	negated bool
+}
+
+func tokenizeDoubleStarGlob(pattern string) ([]globToken, bool) {
+	runes := []rune(pattern)
+	tokens := make([]globToken, 0, len(runes))
+	for i := 0; i < len(runes); i++ {
+		switch runes[i] {
+		case '*':
+			if i+1 < len(runes) && runes[i+1] == '*' {
+				tokens = append(tokens, globToken{kind: globDoubleStar})
+				i++
+			} else {
+				tokens = append(tokens, globToken{kind: globSingleStar})
+			}
+		case '?':
+			tokens = append(tokens, globToken{kind: globQuestion})
+		case '[':
+			token, next, ok := parseGlobClass(runes, i)
+			if !ok {
+				return nil, false
+			}
+			tokens = append(tokens, token)
+			i = next
+		default:
+			tokens = append(tokens, globToken{kind: globLiteral, literal: runes[i]})
+		}
+	}
+	return tokens, true
+}
+
+func parseGlobClass(pattern []rune, start int) (globToken, int, bool) {
+	i := start + 1
+	token := globToken{kind: globClass}
+	if i < len(pattern) && pattern[i] == '^' {
+		token.negated = true
+		i++
+	}
+	for i < len(pattern) && pattern[i] != ']' {
+		lo := pattern[i]
+		hi := lo
+		if i+2 < len(pattern) && pattern[i+1] == '-' && pattern[i+2] != ']' {
+			hi = pattern[i+2]
+			i += 3
+		} else {
+			i++
+		}
+		if lo > hi {
+			return globToken{}, 0, false
+		}
+		token.ranges = append(token.ranges, globRange{lo: lo, hi: hi})
+	}
+	if i >= len(pattern) || len(token.ranges) == 0 {
+		return globToken{}, 0, false
+	}
+	return token, i, true
+}
+
+func runGlobNFA(tokens []globToken, name string) bool {
+	current := make([]bool, len(tokens)+1)
+	next := make([]bool, len(tokens)+1)
+	current[0] = true
+	closeGlobStars(tokens, current)
+
+	for _, value := range name {
+		clear(next)
+		for i, token := range tokens {
+			if !current[i] {
+				continue
+			}
+			switch token.kind {
+			case globDoubleStar:
+				next[i] = true
+			case globSingleStar:
+				if value != '/' {
+					next[i] = true
+				}
+			case globQuestion:
+				if value != '/' {
+					next[i+1] = true
+				}
+			case globLiteral:
+				if value == token.literal {
+					next[i+1] = true
+				}
+			case globClass:
+				if value != '/' && token.matchesClass(value) {
+					next[i+1] = true
+				}
+			}
+		}
+		closeGlobStars(tokens, next)
+		current, next = next, current
+	}
+	return current[len(tokens)]
+}
+
+func closeGlobStars(tokens []globToken, states []bool) {
+	for i, token := range tokens {
+		if states[i] && (token.kind == globSingleStar || token.kind == globDoubleStar) {
+			states[i+1] = true
+		}
+	}
+}
+
+func (t globToken) matchesClass(value rune) bool {
+	matched := false
+	for _, item := range t.ranges {
+		if value >= item.lo && value <= item.hi {
+			matched = true
+			break
+		}
+	}
+	if t.negated {
+		return !matched
+	}
+	return matched
 }
 
 // matchAny reports whether name matches any of the given glob patterns.

@@ -5,10 +5,16 @@
 package engine
 
 import (
+	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -160,6 +166,135 @@ func TestAppendAllowRule(t *testing.T) {
 	if err := cfg2.validate(); err != nil {
 		t.Fatalf("generated config fails validation: %v", err)
 	}
+}
+
+func TestAppendAllowRuleConcurrentWritersDoNotLoseUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+
+	const writers = 32
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs <- AppendAllowRule(path, ToolCall{
+				Tool:   fmt.Sprintf("mcp.concurrent_%d", i),
+				Params: map[string]any{},
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent append failed: %v", err)
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("generated YAML is invalid: %v", err)
+	}
+	if len(cfg.Policies) != writers {
+		t.Fatalf("expected %d policies after concurrent appends, got %d", writers, len(cfg.Policies))
+	}
+}
+
+func TestAppendAllowRuleAcrossProcessesDoesNotLoseUpdates(t *testing.T) {
+	if os.Getenv("RAMPART_APPEND_PROCESS_HELPER") == "1" {
+		runAppendAllowRuleProcessHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "auto-allowed.yaml")
+	startPath := filepath.Join(dir, "start")
+	const writers = 12
+	type child struct {
+		cmd    *exec.Cmd
+		stderr bytes.Buffer
+	}
+	children := make([]child, writers)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		children[i].cmd = exec.Command(os.Args[0], "-test.run=^TestAppendAllowRuleAcrossProcessesDoesNotLoseUpdates$")
+		children[i].cmd.Env = append(os.Environ(),
+			"RAMPART_APPEND_PROCESS_HELPER=1",
+			"RAMPART_APPEND_POLICY="+policyPath,
+			"RAMPART_APPEND_START="+startPath,
+			"RAMPART_APPEND_READY="+readyPath,
+			"RAMPART_APPEND_INDEX="+strconv.Itoa(i),
+		)
+		children[i].cmd.Stderr = &children[i].stderr
+		if err := children[i].cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		for {
+			if _, err := os.Stat(readyPath); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for helper %d", i)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if err := os.WriteFile(startPath, []byte("go"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := range children {
+		if err := children[i].cmd.Wait(); err != nil {
+			t.Fatalf("helper %d failed: %v\nstderr: %s", i, err, children[i].stderr.String())
+		}
+	}
+
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Policies) != writers {
+		t.Fatalf("expected %d policies after process appends, got %d", writers, len(cfg.Policies))
+	}
+}
+
+func runAppendAllowRuleProcessHelper() {
+	if err := os.WriteFile(os.Getenv("RAMPART_APPEND_READY"), []byte("ready"), 0o600); err != nil {
+		os.Exit(20)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("RAMPART_APPEND_START")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Exit(21)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := AppendAllowRule(os.Getenv("RAMPART_APPEND_POLICY"), ToolCall{
+		Tool:   "mcp.process_" + os.Getenv("RAMPART_APPEND_INDEX"),
+		Params: map[string]any{},
+	}); err != nil {
+		os.Exit(22)
+	}
+	os.Exit(0)
 }
 
 func TestAppendAllowRule_CreatesDirectories(t *testing.T) {

@@ -373,6 +373,10 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 			}
 			seen[p.Name] = true
 			p.FilePath = f
+			if err := validatePolicyGlobPatterns(p); err != nil {
+				logger.Error("engine: skip policy with invalid glob", "policy", p.Name, "path", f, "error", err)
+				continue
+			}
 
 			// Validate rules.
 			valid := true
@@ -444,6 +448,12 @@ func (s *LayeredStore) Load() (*Config, error) {
 	if err := safeUnmarshal(data, &extraCfg); err != nil {
 		s.logger.Warn("project policy parse error, using global policy only", "path", s.extra, "error", err)
 		return cfg, nil
+	}
+	for _, policy := range extraCfg.Policies {
+		if err := validatePolicyGlobPatterns(policy); err != nil {
+			s.logger.Warn("project policy glob validation error, using global policy only", "path", s.extra, "policy", policy.Name, "error", err)
+			return cfg, nil
+		}
 	}
 	return mergeProjectPolicy(cfg, &extraCfg, s.extra, s.logger), nil
 }

@@ -208,6 +208,10 @@ func decodeRawPolicyMaps(rawRoot map[string]any) []map[string]any {
 }
 
 func lintPolicy(filename string, p Policy, rawPolicy map[string]any, allPolicies []Policy, result *LintResult) {
+	checkGlobDepth(filename, p.Name, -1, []string{p.Match.Agent}, "match.agent", result)
+	checkGlobDepth(filename, p.Name, -1, []string{p.Match.Session}, "match.session", result)
+	checkGlobDepth(filename, p.Name, -1, []string(p.Match.Tool), "match.tool", result)
+
 	if len(p.Rules) == 0 {
 		result.add(LintFinding{File: filename, Severity: LintWarning, Message: fmt.Sprintf("policy %q has no rules", p.Name)})
 		if rawPolicy != nil {
@@ -283,23 +287,56 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 
 	// Check glob patterns for excessive depth.
 	checkGlobDepth(filename, p.Name, ruleIdx, r.When.CommandMatches, "command_matches", result)
+	checkGlobDepth(filename, p.Name, ruleIdx, r.When.CommandNotMatches, "command_not_matches", result)
+	checkGlobDepth(filename, p.Name, ruleIdx, r.When.CommandEnvAssignments, "command_env_assignments", result)
 	checkGlobDepth(filename, p.Name, ruleIdx, r.When.PathMatches, "path_matches", result)
+	checkGlobDepth(filename, p.Name, ruleIdx, r.When.PathNotMatches, "path_not_matches", result)
+	checkGlobDepth(filename, p.Name, ruleIdx, r.When.URLMatches, "url_matches", result)
+	checkGlobDepth(filename, p.Name, ruleIdx, r.When.DomainMatches, "domain_matches", result)
+	checkGlobDepth(filename, p.Name, ruleIdx, r.When.SessionMatches, "session_matches", result)
+	checkGlobDepth(filename, p.Name, ruleIdx, r.When.SessionNotMatches, "session_not_matches", result)
+	for parameter, pattern := range r.When.ToolParamMatches {
+		checkGlobDepth(filename, p.Name, ruleIdx, []string{pattern}, "tool_param_matches."+parameter, result)
+	}
+	if err := validateCallCountCondition(r.When.CallCount); err != nil {
+		result.add(LintFinding{
+			File:     filename,
+			Severity: LintError,
+			Message:  fmt.Sprintf("policy %q rule %d: %v", p.Name, ruleIdx+1, err),
+		})
+	}
 }
 
 func checkGlobDepth(filename, policyName string, ruleIdx int, patterns []string, field string, result *LintResult) {
 	for _, pat := range patterns {
-		segments := strings.Split(pat, "/")
-		globStarCount := 0
-		for _, seg := range segments {
-			if seg == "**" {
-				globStarCount++
-			}
+		if pat == "" {
+			continue
 		}
-		if globStarCount > 2 {
+		ruleLabel := fmt.Sprintf(" rule %d", ruleIdx+1)
+		if ruleIdx < 0 {
+			ruleLabel = ""
+		}
+		if len(pat) > maxGlobPatternLen {
 			result.add(LintFinding{
 				File:     filename,
-				Severity: LintError, // Error, not warning — pattern will silently fail at runtime
-				Message:  fmt.Sprintf("policy %q rule %d: %s pattern %q has %d ** segments (max 2); pattern will not match at runtime", policyName, ruleIdx+1, field, pat, globStarCount),
+				Severity: LintError,
+				Message:  fmt.Sprintf("policy %q%s: %s pattern is %d bytes (max %d); policy loading rejects this pattern", policyName, ruleLabel, field, len(pat), maxGlobPatternLen),
+			})
+			continue
+		}
+		globStarCount := strings.Count(pat, "**")
+		if globStarCount > 0 && len(pat) > maxDoubleGlobPatternLen {
+			result.add(LintFinding{
+				File:     filename,
+				Severity: LintError,
+				Message:  fmt.Sprintf("policy %q%s: %s double-star pattern is %d bytes (max %d); policy loading rejects this pattern", policyName, ruleLabel, field, len(pat), maxDoubleGlobPatternLen),
+			})
+		}
+		if globStarCount > maxDoubleStarOccurrences {
+			result.add(LintFinding{
+				File:     filename,
+				Severity: LintError, // Error, not warning — policy loading rejects the pattern.
+				Message:  fmt.Sprintf("policy %q%s: %s pattern %q has %d ** occurrences (max %d); policy loading rejects this pattern", policyName, ruleLabel, field, pat, globStarCount, maxDoubleStarOccurrences),
 			})
 		}
 	}

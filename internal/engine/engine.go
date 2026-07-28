@@ -37,6 +37,7 @@ import (
 // Engine is safe for concurrent use.
 type Engine struct {
 	mu             sync.RWMutex
+	onceMu         sync.Mutex // serializes one-time rule claims with policy reloads
 	config         *Config
 	store          PolicyStore
 	defaultAction  Action
@@ -108,6 +109,14 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	cfg := e.config
 	defaultAction := e.defaultAction
 	e.mu.RUnlock()
+
+	if field, size := oversizedMatchInput(cfg, call); field != "" {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("%s is %d bytes and exceeds the %d-byte policy matching limit; failing closed", field, size, maxGlobInputLen),
+			EvalDuration: time.Since(start),
+		}
+	}
 
 	if opts.DefaultDeny {
 		defaultAction = ActionDeny
@@ -264,6 +273,79 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	}
 }
 
+// EvaluateAndConsume evaluates a tool call and atomically claims any matching
+// once:true allow before returning it. Ordinary evaluations stay lock-free;
+// only callers contending for a one-time allow are serialized.
+//
+// Enforcement paths should use this method. Preview and policy-test paths
+// should continue to use Evaluate or EvaluateWith because they must not mutate
+// policy state.
+func (e *Engine) EvaluateAndConsume(call ToolCall, opts EvalOptions) Decision {
+	decision := e.EvaluateWith(call, opts)
+	if !isOnceAllow(decision) {
+		return decision
+	}
+	filePath, _, err := e.onceRuleDetails(decision)
+	if err != nil {
+		return e.denyFailedOnceClaim(call, decision, err)
+	}
+
+	e.onceMu.Lock()
+	defer e.onceMu.Unlock()
+
+	err = withPolicyFileLock(filePath, func() error {
+		// Every hook invocation owns a separate Engine. Refresh only after the
+		// cross-process lock is held so a waiter observes the winner's removal.
+		if reloadErr := e.reloadLocked(true); reloadErr != nil {
+			return reloadErr
+		}
+		decision = e.EvaluateWith(call, opts)
+		if !isOnceAllow(decision) {
+			return nil
+		}
+
+		currentPath, expected, detailErr := e.onceRuleDetails(decision)
+		if detailErr != nil {
+			return detailErr
+		}
+		lockedCanonical, detailErr := canonicalPolicyPath(filePath)
+		if detailErr != nil {
+			return detailErr
+		}
+		currentCanonical, detailErr := canonicalPolicyPath(currentPath)
+		if detailErr != nil {
+			return detailErr
+		}
+		if currentCanonical != lockedCanonical {
+			return fmt.Errorf("engine: one-time rule source changed while claiming")
+		}
+		return e.consumeOnceRulePersistenceLocked(decision, currentPath, expected)
+	})
+	if err != nil {
+		return e.denyFailedOnceClaim(call, decision, err)
+	}
+	return decision
+}
+
+func isOnceAllow(decision Decision) bool {
+	return decision.Action == ActionAllow && decision.ConsumedOnce && decision.ConsumedRulePolicy != ""
+}
+
+func (e *Engine) denyFailedOnceClaim(call ToolCall, decision Decision, err error) Decision {
+	e.logger.Error("engine: failed to claim once rule; denying call",
+		"policy", decision.ConsumedRulePolicy,
+		"rule_index", decision.ConsumedRuleIndex,
+		"error", err,
+	)
+	decision.Action = ActionDeny
+	decision.Message = "one-time authorization could not be claimed; failing closed"
+	decision.Suggestions = GenerateSuggestions(call)
+	decision.ConsumedOnce = false
+	decision.ConsumedRulePolicy = ""
+	decision.ConsumedRuleIndex = 0
+	return decision
+}
+
 func (e *Engine) evaluateMatchingPolicy(p Policy, call ToolCall) evaluatePolicyResult {
 	if isDurableAllowPolicy(p) {
 		return e.evaluateDurableAllowPolicy(p, call)
@@ -392,28 +474,39 @@ func durableAllowMessage(p Policy) string {
 // EvaluateResponse runs response-side evaluation against matching policies.
 // Only response-specific conditions are considered.
 // maxResponseMatchSize is the maximum response body size (in bytes) that will
-// be evaluated against regex patterns. Larger responses are truncated to avoid
-// pathological backtracking on user-defined regexes.
+// be evaluated against regex patterns.
 const maxResponseMatchSize = 1 << 20 // 1 MB
 
 func (e *Engine) EvaluateResponse(call ToolCall, response string) Decision {
 	start := time.Now()
-
-	// Cap response size before regex matching to prevent ReDoS on large bodies.
-	if len(response) > maxResponseMatchSize {
-		response = response[:maxResponseMatchSize]
-	}
 
 	e.mu.RLock()
 	cfg := e.config
 	regexCache := e.responseRegex
 	e.mu.RUnlock()
 
+	if field, size := oversizedMatchInput(cfg, call); field != "" {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("%s is %d bytes and exceeds the %d-byte policy matching limit; failing closed", field, size, maxGlobInputLen),
+			EvalDuration: time.Since(start),
+		}
+	}
 	matching := e.collectMatching(cfg, call)
 	if len(matching) == 0 {
 		return Decision{
 			Action:       ActionAllow,
 			Message:      "no matching policy; response allowed",
+			EvalDuration: time.Since(start),
+		}
+	}
+	// Never scan only a prefix: a deny signature could be hidden beyond the
+	// boundary. Fail closed only when an applicable response rule exists; large
+	// ordinary tool output with no response policy remains unaffected.
+	if len(response) > maxResponseMatchSize && hasResponseRules(matching) {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("response exceeds the %d-byte policy matching limit; failing closed", maxResponseMatchSize),
 			EvalDuration: time.Since(start),
 		}
 	}
@@ -435,9 +528,72 @@ func (e *Engine) EvaluateResponse(call ToolCall, response string) Decision {
 	}
 }
 
+func hasResponseRules(policies []Policy) bool {
+	for _, policy := range policies {
+		for _, rule := range policy.Rules {
+			if len(rule.When.ResponseMatches) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// oversizedMatchInput identifies values that can reach a glob matcher. It is
+// checked once at enforcement entry points so oversized values cannot make a
+// deny pattern silently miss or an allow pattern evaluate only a prefix.
+func oversizedMatchInput(cfg *Config, call ToolCall) (string, int) {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"agent", call.Agent},
+		{"session", call.Session},
+		{"tool", call.Tool},
+		{"command", call.Command()},
+		{"path", call.Path()},
+		{"url", call.Param("url")},
+		{"domain", call.Param("domain")},
+	}
+	for _, field := range fields {
+		if len(field.value) > maxGlobInputLen {
+			return field.name, len(field.value)
+		}
+	}
+
+	if cfg == nil {
+		return "", 0
+	}
+	for _, policy := range cfg.Policies {
+		for _, rule := range policy.Rules {
+			for parameter := range rule.When.ToolParamMatches {
+				value, ok := call.Input[parameter]
+				if !ok {
+					continue
+				}
+				text := fmt.Sprintf("%v", value)
+				if len(text) > maxGlobInputLen {
+					return "tool parameter " + parameter, len(text)
+				}
+			}
+		}
+	}
+	return "", 0
+}
+
 // Reload re-reads the policy file and replaces the active configuration.
 // Returns an error if the new file is invalid; the old config remains active.
 func (e *Engine) Reload() error {
+	e.onceMu.Lock()
+	defer e.onceMu.Unlock()
+	return e.reloadLocked(false)
+}
+
+// reloadLocked reloads policy state while the caller holds onceMu. The
+// allowPolicyWipe exception is used only after Rampart has intentionally
+// consumed the last one-time policy from a file; public reload behavior stays
+// fail-closed for accidental empty/truncated edits.
+func (e *Engine) reloadLocked(allowPolicyWipe bool) error {
 	cfg, err := e.store.Load()
 	if err != nil {
 		return fmt.Errorf("engine: reload failed: %w", err)
@@ -455,7 +611,7 @@ func (e *Engine) Reload() error {
 	currentCount := len(e.config.Policies)
 	currentHash := e.lastConfigHash
 	e.mu.RUnlock()
-	if currentCount > 0 && len(cfg.Policies) == 0 {
+	if !allowPolicyWipe && currentCount > 0 && len(cfg.Policies) == 0 {
 		return fmt.Errorf("engine: reload rejected — policy count dropped from %d to 0", currentCount)
 	}
 	nextHash := configFingerprint(cfg)
@@ -553,11 +709,11 @@ func (e *Engine) GetDefaultAction() string {
 }
 
 // IncrementCallCount records one PreToolUse tool invocation.
-func (e *Engine) IncrementCallCount(tool string, at time.Time) {
+func (e *Engine) IncrementCallCount(tool string, at time.Time) error {
 	if e == nil || e.callCounter == nil {
-		return
+		return nil
 	}
-	e.callCounter.Increment(tool, at)
+	return e.callCounter.Increment(tool, at)
 }
 
 // CallCounts returns per-tool invocation counts for the provided window.
@@ -876,34 +1032,85 @@ func (e *Engine) StartPeriodicReload(interval time.Duration) {
 	e.logger.Info("engine: periodic reload started", "interval", interval)
 }
 
-// ConsumeOnceRule removes a once:true rule after it has been matched.
-// This is called by the proxy after a decision with ConsumedOnce=true.
-// The rule is removed from the on-disk policy file and the engine is reloaded.
+// ConsumeOnceRule removes a once:true rule after it has been matched. It is
+// retained for callers that deliberately separate preview evaluation from
+// consumption; enforcement paths should prefer EvaluateAndConsume.
 func (e *Engine) ConsumeOnceRule(policyName string, ruleIndex int) error {
-	// Look up the policy to find its source file path.
-	e.mu.RLock()
-	var filePath string
-	for _, p := range e.config.Policies {
-		if p.Name == policyName {
-			filePath = p.FilePath
-			break
-		}
+	decision := Decision{
+		Action:             ActionAllow,
+		ConsumedOnce:       true,
+		ConsumedRulePolicy: policyName,
+		ConsumedRuleIndex:  ruleIndex,
 	}
-	e.mu.RUnlock()
+	filePath, expected, err := e.onceRuleDetails(decision)
+	if err != nil {
+		return err
+	}
 
-	if filePath == "" {
-		return fmt.Errorf("engine: cannot consume once rule — policy %q has no file path", policyName)
+	e.onceMu.Lock()
+	defer e.onceMu.Unlock()
+	return withPolicyFileLock(filePath, func() error {
+		if reloadErr := e.reloadLocked(true); reloadErr != nil {
+			return reloadErr
+		}
+		return e.consumeOnceRulePersistenceLocked(decision, filePath, expected)
+	})
+}
+
+func (e *Engine) onceRuleDetails(decision Decision) (string, Rule, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	var (
+		filePath string
+		expected Rule
+		found    bool
+	)
+	for _, p := range e.config.Policies {
+		if p.Name != decision.ConsumedRulePolicy {
+			continue
+		}
+		if decision.ConsumedRuleIndex >= 0 && decision.ConsumedRuleIndex < len(p.Rules) {
+			filePath = p.FilePath
+			expected = p.Rules[decision.ConsumedRuleIndex]
+			found = true
+		}
+		break
 	}
-	if err := RemoveRule(filePath, policyName, ruleIndex); err != nil {
+
+	if !found {
+		return "", Rule{}, fmt.Errorf("engine: cannot consume once rule — rule %d not found in policy %q",
+			decision.ConsumedRuleIndex, decision.ConsumedRulePolicy)
+	}
+	if !expected.Once {
+		return "", Rule{}, fmt.Errorf("engine: cannot consume once rule — rule %d in policy %q is not one-time",
+			decision.ConsumedRuleIndex, decision.ConsumedRulePolicy)
+	}
+	if filePath == "" {
+		return "", Rule{}, fmt.Errorf("engine: cannot consume once rule — policy %q has no file path", decision.ConsumedRulePolicy)
+	}
+	return filePath, expected, nil
+}
+
+// consumeOnceRulePersistenceLocked persists removal of the exact rule and
+// refreshes engine state. The caller must hold both onceMu and the source
+// policy's cross-process lock.
+func (e *Engine) consumeOnceRulePersistenceLocked(decision Decision, filePath string, expected Rule) error {
+	if err := removeRule(filePath, decision.ConsumedRulePolicy, decision.ConsumedRuleIndex, &expected); err != nil {
 		return fmt.Errorf("engine: consume once rule: %w", err)
 	}
+
+	// A normal reload rejects a drop from one policy to zero because that can
+	// indicate a truncated file. Here the empty policy set is intentional.
+	if err := e.reloadLocked(true); err != nil {
+		return fmt.Errorf("engine: consume once rule reload: %w", err)
+	}
 	e.logger.Info("engine: consumed once rule",
-		"policy", policyName,
-		"rule_index", ruleIndex,
+		"policy", decision.ConsumedRulePolicy,
+		"rule_index", decision.ConsumedRuleIndex,
 		"file", filePath,
 	)
-	// Reload to pick up the change.
-	return e.Reload()
+	return nil
 }
 
 // CleanExpired removes expired temporal rules from all loaded policy files

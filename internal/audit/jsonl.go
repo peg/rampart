@@ -15,9 +15,12 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -38,18 +41,21 @@ type recoveredChainState struct {
 // valid event in existing JSONL audit files. Chain-continuation headers are
 // skipped. Anchors are checkpoints for verification, not the authority for the
 // next event's prev_hash.
-func recoverChainStateFromDir(dir string, logger *slog.Logger) recoveredChainState {
+func recoverChainStateFromDir(dir string, logger *slog.Logger) (recoveredChainState, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if logger != nil {
-			logger.Debug("audit: read audit dir during recovery", "error", err)
-		}
-		return recoveredChainState{}
+		return recoveredChainState{}, fmt.Errorf("read audit directory: %w", err)
 	}
 
 	files := make([]string, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		// The audit directory also contains hook and export JSONL files. They
+		// are valid audit data, but they are not part of this sink's hash chain
+		// and must not influence its recovered append position.
+		if _, managed := auditFileSortKey(entry.Name()); !managed {
 			continue
 		}
 		files = append(files, entry.Name())
@@ -61,49 +67,65 @@ func recoverChainStateFromDir(dir string, logger *slog.Logger) recoveredChainSta
 		path := filepath.Join(dir, name)
 		file, err := os.Open(path)
 		if err != nil {
-			if logger != nil {
-				logger.Debug("audit: open audit file during recovery", "file", name, "error", err)
-			}
-			continue
+			return recoveredChainState{}, fmt.Errorf("open %s: %w", name, err)
 		}
 
-		scanner := bufio.NewScanner(file)
+		reader := bufio.NewReaderSize(file, auditReaderBufferBytes)
 		lineNum := 0
-		for scanner.Scan() {
+		for {
+			record, complete, readErr := readRecord(reader)
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
 			lineNum++
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
+			if readErr != nil {
+				_ = file.Close()
+				return recoveredChainState{}, fmt.Errorf("read %s line %d: %w", name, lineNum, readErr)
+			}
+			if !complete {
+				_ = file.Close()
+				return recoveredChainState{}, fmt.Errorf("read %s line %d: unterminated audit record", name, lineNum)
+			}
+			line := bytes.TrimSpace(record)
+			if len(line) == 0 {
 				continue
 			}
 
 			var event Event
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				if logger != nil {
-					logger.Debug("audit: skip unparsable audit line during recovery", "file", name, "line", lineNum, "error", err)
-				}
-				continue
+			if err := json.Unmarshal(line, &event); err != nil {
+				_ = file.Close()
+				return recoveredChainState{}, fmt.Errorf("parse %s line %d: %w", name, lineNum, err)
 			}
 			if event.ID == "" {
-				continue
-			}
-			ok, err := event.VerifyHash()
-			if err != nil || !ok {
-				if logger != nil {
-					logger.Debug("audit: skip invalid audit event during recovery", "file", name, "line", lineNum, "event_id", event.ID, "error", err)
+				var header struct {
+					ChainContinue *string `json:"chain_continue"`
+					PrevFile      *string `json:"prev_file"`
 				}
-				continue
+				if err := json.Unmarshal(line, &header); err == nil && header.ChainContinue != nil && header.PrevFile != nil {
+					continue
+				}
+				_ = file.Close()
+				return recoveredChainState{}, fmt.Errorf("parse %s line %d: record has no event id", name, lineNum)
+			}
+			ok, verifyErr := event.VerifyHash()
+			if verifyErr != nil {
+				_ = file.Close()
+				return recoveredChainState{}, fmt.Errorf("verify %s line %d event %s: %w", name, lineNum, event.ID, verifyErr)
+			}
+			if !ok {
+				_ = file.Close()
+				return recoveredChainState{}, fmt.Errorf("verify %s line %d event %s: hash mismatch", name, lineNum, event.ID)
 			}
 
 			state.eventCount++
 			state.lastHash = event.Hash
 			state.lastFile = name
 		}
-		if err := scanner.Err(); err != nil && logger != nil {
-			logger.Debug("audit: scan audit file during recovery", "file", name, "error", err)
+		if err := file.Close(); err != nil {
+			return recoveredChainState{}, fmt.Errorf("close %s: %w", name, err)
 		}
-		_ = file.Close()
 	}
-	return state
+	return state, nil
 }
 
 // JSONLSink is an append-only JSONL audit sink with hash chaining.
@@ -154,7 +176,10 @@ func NewJSONLSink(dir string, opts ...SinkOption) (*JSONLSink, error) {
 
 	// Recover append state from existing JSONL events. Anchors are not trusted as
 	// the sole chain head because they can be absent, stale, or tampered with.
-	recovered := recoverChainStateFromDir(dir, logger)
+	recovered, err := recoverChainStateFromDir(dir, logger)
+	if err != nil {
+		return nil, fmt.Errorf("audit: recover chain state: %w", err)
+	}
 	sink.eventCount = recovered.eventCount
 	sink.lastHash = recovered.lastHash
 	if sink.eventCount > 0 {
@@ -214,16 +239,10 @@ func (s *JSONLSink) Write(event Event) error {
 	if s.closed {
 		return fmt.Errorf("audit: write on closed sink")
 	}
-	event = applyEventDefaults(event)
-
 	event.PrevHash = s.lastHash
-	if err := event.ComputeHash(); err != nil {
-		return fmt.Errorf("audit: compute hash: %w", err)
-	}
-
-	line, err := json.Marshal(event)
+	event, line, err := marshalRecord(event)
 	if err != nil {
-		return fmt.Errorf("audit: marshal event: %w", err)
+		return err
 	}
 	line = append(line, '\n')
 

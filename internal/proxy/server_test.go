@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -190,6 +191,70 @@ func TestToolCall_Allow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	body := decodeBody(t, resp)
 	assert.Equal(t, "allow", body["decision"])
+}
+
+func TestToolCall_OnceRuleAuthorizesExactlyOneConcurrentRequest(t *testing.T) {
+	srv, token, _ := setupTestServer(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: one-shot
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["deploy prod"]
+        once: true
+`, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	const contenders = 24
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var allowed atomic.Int32
+	var denied atomic.Int32
+	errs := make(chan error, contenders)
+
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec",
+				strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"deploy prod"}}`))
+			if err != nil {
+				errs <- err
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer resp.Body.Close()
+			switch resp.StatusCode {
+			case http.StatusOK:
+				allowed.Add(1)
+			case http.StatusForbidden:
+				denied.Add(1)
+			default:
+				errs <- fmt.Errorf("unexpected status %d", resp.StatusCode)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, int32(1), allowed.Load(), "a once rule must authorize exactly one request")
+	assert.Equal(t, int32(contenders-1), denied.Load())
 }
 
 func TestToolCall_Deny(t *testing.T) {

@@ -15,7 +15,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -303,7 +302,7 @@ type appendSink struct {
 }
 
 func (s *appendSink) Write(event audit.Event) error {
-	line, err := json.Marshal(event)
+	line, err := audit.MarshalRecord(event)
 	if err != nil {
 		return err
 	}

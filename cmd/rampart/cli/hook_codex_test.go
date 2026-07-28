@@ -197,6 +197,52 @@ policies:
 	}
 }
 
+func TestEvaluateHookCallClaimsOnceBeforeLaterBatchDeny(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(policyPath, []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: batch-policy
+    match:
+      agent: codex
+      tool: write
+    rules:
+      - action: allow
+        when:
+          path_matches: ["safe.txt"]
+        once: true
+      - action: deny
+        when:
+          path_matches: ["**/.env"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := engine.New(engine.NewFileStore(policyPath), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := engine.ToolCall{
+		Agent:  "codex",
+		Tool:   "write",
+		Params: map[string]any{},
+		Input:  map[string]any{},
+	}
+
+	_, decision := evaluateHookCall(eng, call, []string{"safe.txt", "secrets/.env"})
+	if decision.Action != engine.ActionDeny {
+		t.Fatalf("decision = %s, want deny", decision.Action)
+	}
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "safe.txt") {
+		t.Fatal("one-time allowance was not claimed before the later batch denial")
+	}
+}
+
 func TestParseCodexInputRejectsOversizedPatch(t *testing.T) {
 	var patch strings.Builder
 	patch.WriteString("*** Begin Patch\n")

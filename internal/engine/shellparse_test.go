@@ -218,10 +218,11 @@ func TestSplitCompoundCommand_Newlines(t *testing.T) {
 }
 
 func TestMatchGlob_LongInput(t *testing.T) {
-	// Verify glob matching doesn't hang on long inputs.
+	// Oversized inputs fail as a whole rather than matching a truncated prefix.
 	long := strings.Repeat("a", 20000)
-	// Should complete quickly due to maxGlobInputLen cap.
-	_ = MatchGlob("**a**b**c", long)
+	if MatchGlob("**a**", long) {
+		t.Fatal("oversized input must not match a truncated prefix")
+	}
 }
 
 func TestNormalizeCommand_EvasionVectors(t *testing.T) {
