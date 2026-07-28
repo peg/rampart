@@ -387,6 +387,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "  run 'rampart init --profile standard --force' to update manually\n")
 				}
 			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: run 'rampart protect' once to refresh managed agent integrations and verify detected boundaries.")
 			return nil
 		},
 	}

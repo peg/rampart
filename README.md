@@ -722,6 +722,7 @@ rampart log --deny                          # Recent denies
 
 # Upgrade
 rampart upgrade                             # New binary + refresh policies
+rampart protect                             # Refresh managed integrations + verify
 rampart upgrade --no-binary                 # Refresh policies only
 ```
 

@@ -57,8 +57,14 @@ sudo mv rampart /usr/local/bin/
 
 ```bash
 rampart version
-rampart doctor
+rampart protect
 ```
+
+Run `rampart protect` once after replacing the binary. It preserves user-owned
+configuration, refreshes Rampart-managed hooks and plugins for detected agents,
+migrates recognized legacy integrations, and runs the matching behavioral
+verification. This is especially important when a release adds a newer native
+host boundary.
 
 ## What Upgrades Preserve
 
@@ -69,9 +75,13 @@ Upgrades only replace the binary. Everything else stays:
 | Your policies | `~/.rampart/policies/` |
 | Audit logs | `~/.rampart/audit/` |
 | Signing key | `~/.rampart/signing.key` |
-| Agent hooks | `~/.claude/settings.json` etc. |
+| Agent configuration and non-Rampart hooks | `~/.claude/settings.json` etc. |
 
-No need to re-run `rampart setup` after upgrading — your hooks and policies carry over.
+Existing Rampart hooks keep calling the upgraded binary, so enforcement remains
+in place during the transition. Run `rampart protect` once to refresh only the
+managed integration entries and adopt any newer hook or plugin format. Custom
+policies, unrelated host hooks, memories, sessions, and credentials are not
+replaced.
 
 ## Breaking Changes
 

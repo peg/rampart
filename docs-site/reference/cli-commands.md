@@ -169,7 +169,7 @@ rampart upgrade --dry-run    # Preview without making changes
 rampart upgrade --no-policy-update  # Skip refreshing built-in policy profiles
 ```
 
-After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified.
+After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
 
 ### `rampart uninstall`
 

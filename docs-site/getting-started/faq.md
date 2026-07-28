@@ -11,7 +11,7 @@ Hermes can fail open only for explicitly configured lower-risk tools. See the
 
 ## How do I update Rampart?
 
-Same way you installed it. `brew upgrade rampart` for Homebrew, `go install github.com/peg/rampart/cmd/rampart@latest` for Go, or download the latest binary from [GitHub Releases](https://github.com/peg/rampart/releases). Your policies and audit logs are untouched.
+Same way you installed it. `brew upgrade rampart` for Homebrew, `go install github.com/peg/rampart/cmd/rampart@latest` for Go, or download the latest binary from [GitHub Releases](https://github.com/peg/rampart/releases). Your policies and audit logs are untouched. Then run `rampart protect` once to refresh Rampart-managed integrations and verify detected agent boundaries; unrelated hooks and agent state are preserved.
 
 ## How do I uninstall?
 

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -205,7 +206,9 @@ func installHookScript(path, content string, force bool) error {
 		if string(existing) == content {
 			return nil
 		}
-		return fmt.Errorf("hook script already exists at %s (use --force to overwrite)", path)
+		if !clineHookScriptManaged(existing) {
+			return fmt.Errorf("hook script already exists at %s and is not managed by Rampart (use --force to overwrite)", path)
+		}
 	}
 
 	// Write script with executable permissions
@@ -214,4 +217,10 @@ func installHookScript(path, content string, force bool) error {
 	}
 
 	return nil
+}
+
+func clineHookScriptManaged(content []byte) bool {
+	script := string(content)
+	return strings.Contains(script, "# Rampart PreToolUse hook for Cline") ||
+		strings.Contains(script, "# Rampart PostToolUse hook for Cline")
 }

@@ -281,29 +281,11 @@ try {
     Write-Warn "Installed but could not verify version"
 }
 
-# Offer to set up Claude Code
+# Offer one zero-configuration setup path for fresh installs and upgrades.
 Write-Host ""
-$claudeSettings = "$env:USERPROFILE\.claude\settings.json"
-if (Test-Path $claudeSettings) {
-    # Check if Rampart hooks already exist (upgrade scenario)
-    # Use specific pattern to avoid false positives from unrelated "rampart" text
-    # Match both Unix (rampart hook) and Windows (rampart.exe hook) paths
-    $existingHooks = (Get-Content $claudeSettings -Raw) -match '"command"\s*:\s*"[^"]*rampart(?:\.exe)?\s+hook'
-    if ($existingHooks) {
-        Write-Host "Claude Code detected with existing Rampart hooks." -ForegroundColor White
-        $setup = Read-Host "  Update hooks to latest version? [Y/n]"
-        if ($setup -eq "" -or $setup -match "^[Yy]") {
-            & $rampartExe setup claude-code --force
-        }
-    } else {
-        Write-Host "Claude Code detected!" -ForegroundColor White
-        $setup = Read-Host "  Set up Rampart hooks for Claude Code? [Y/n]"
-        if ($setup -eq "" -or $setup -match "^[Yy]") {
-            & $rampartExe setup claude-code
-        }
-    }
-} else {
-    Write-Status "Claude Code not detected. Run 'rampart setup claude-code' after installing Claude."
+$setup = Read-Host "  Detect, protect, and verify supported AI agents now? [Y/n]"
+if ($setup -eq "" -or $setup -match "^[Yy]") {
+    & $rampartExe protect
 }
 
 # Done
@@ -312,17 +294,12 @@ Write-Host "━━━━━━━━━━━━━━━━━━━━━━�
 Write-Success "Rampart installed successfully!"
 Write-Host ""
 Write-Host "  Get started:" -ForegroundColor White
-Write-Host "    rampart quickstart" -ForegroundColor Cyan
+Write-Host "    rampart protect" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Or try it now:" -ForegroundColor White
 Write-Host "    rampart version" -ForegroundColor Cyan
 Write-Host "    rampart test `"rm -rf /`"" -ForegroundColor Cyan
 Write-Host ""
-if (-not (Test-Path $claudeSettings)) {
-    Write-Host "  After installing Claude Code:" -ForegroundColor White
-    Write-Host "    rampart setup claude-code" -ForegroundColor Cyan
-    Write-Host ""
-}
 Write-Host "  Docs: https://docs.rampart.sh" -ForegroundColor DarkGray
 Write-Host "  Uninstall: rampart uninstall" -ForegroundColor DarkGray
 Write-Host ""

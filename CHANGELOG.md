@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Upgrade guidance refreshes managed integrations safely** — Existing hooks,
+  policies, audit logs, and credentials remain in place when the binary is
+  replaced. After upgrading, one idempotent `rampart protect` run adopts newer
+  native hook schemas, migrates recognized legacy integrations, and verifies
+  detected agent boundaries without requiring manual configuration.
 - **Integration status and setup use one source of truth** — Aliases,
   installation detection, setup, verification, interactive setup, and protected
   status reporting now resolve through the same integration-driver registry.

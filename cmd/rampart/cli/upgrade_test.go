@@ -390,6 +390,9 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 	if !strings.Contains(out.String(), "✓ rampart upgraded to v1.1.0") {
 		t.Fatalf("missing success line: %q", out.String())
 	}
+	if !strings.Contains(out.String(), "run 'rampart protect' once") {
+		t.Fatalf("missing managed-integration refresh guidance: %q", out.String())
+	}
 }
 
 func TestNewUpgradeCmdSystemdRestart(t *testing.T) {

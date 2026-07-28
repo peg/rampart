@@ -204,60 +204,13 @@ else
     warn "Could not verify installed binary at ${INSTALL_DIR}/${BINARY}"
 fi
 
-# Detect AI agents and suggest setup commands.
-detect_agents_and_suggest() {
-    printf "\n"
-
-    # Detect OpenClaw
-    OPENCLAW_FOUND=0
-    if command -v openclaw >/dev/null 2>&1; then
-        OPENCLAW_FOUND=1
-    elif [ -f "$HOME/.local/bin/openclaw" ] || [ -f "/usr/local/bin/openclaw" ] || [ -f "/usr/bin/openclaw" ]; then
-        OPENCLAW_FOUND=1
-    fi
-
-    # Detect Claude Code (claude CLI)
-    CLAUDE_FOUND=0
-    if command -v claude >/dev/null 2>&1; then
-        CLAUDE_FOUND=1
-    elif [ -f "$HOME/.claude/settings.json" ]; then
-        CLAUDE_FOUND=1
-    fi
-
-    if [ "$OPENCLAW_FOUND" -eq 1 ] || [ "$CLAUDE_FOUND" -eq 1 ]; then
-        printf "${GREEN}${BOLD}✓ AI agent(s) detected!${RESET}\n\n"
-    fi
-
-    if [ "$OPENCLAW_FOUND" -eq 1 ]; then
-        if [ "$AUTO_SETUP" = "1" ]; then
-            printf "${GREEN}▸${RESET} Auto-setup: protecting OpenClaw...\n"
-            "$RAMPART_BIN" setup openclaw 2>&1 || printf "${YELLOW}  ↳ Auto-setup failed — run manually: rampart setup openclaw${RESET}\n"
-        else
-            printf "  Run this to protect your OpenClaw agent:\n"
-            printf "    ${BOLD}rampart setup openclaw${RESET}\n"
-            printf "\n"
-        fi
-    fi
-
-    if [ "$CLAUDE_FOUND" -eq 1 ]; then
-        if [ "$AUTO_SETUP" = "1" ]; then
-            printf "${GREEN}▸${RESET} Auto-setup: protecting Claude Code...\n"
-            "$RAMPART_BIN" setup claude-code 2>&1 || printf "${YELLOW}  ↳ Auto-setup failed — run manually: rampart setup claude-code${RESET}\n"
-        else
-            printf "  Run this to protect Claude Code:\n"
-            printf "    ${BOLD}rampart setup claude-code${RESET}\n"
-            printf "\n"
-        fi
-    fi
-
-    if [ "$OPENCLAW_FOUND" -eq 0 ] && [ "$CLAUDE_FOUND" -eq 0 ]; then
-        printf "  To protect an AI agent, run:\n"
-        printf "    ${BOLD}rampart setup openclaw${RESET}      — for OpenClaw\n"
-        printf "    ${BOLD}rampart setup claude-code${RESET}   — for Claude Code\n"
-        printf "\n"
-    fi
-}
-
 if [ -x "$RAMPART_BIN" ]; then
-    detect_agents_and_suggest
+    printf "\n"
+    if [ "$AUTO_SETUP" = "1" ]; then
+        printf "${GREEN}▸${RESET} Auto-setup: detecting and protecting supported AI agents...\n"
+        "$RAMPART_BIN" protect 2>&1 || printf "${YELLOW}  ↳ Auto-setup failed — run manually: rampart protect${RESET}\n"
+    else
+        printf "  Detect, protect, and verify supported AI agents:\n"
+        printf "    ${BOLD}rampart protect${RESET}\n\n"
+    fi
 fi

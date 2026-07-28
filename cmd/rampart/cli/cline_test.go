@@ -76,9 +76,22 @@ func TestInstallHookScript(t *testing.T) {
 		t.Errorf("content = %q", string(data))
 	}
 
-	// Should fail without force
+	// Should fail without force when the existing file is user-owned.
 	if err := installHookScript(path, "new", false); err == nil {
 		t.Error("expected error for existing file without force")
+	}
+
+	// Recognized managed hooks are refreshed in place during protect/upgrade.
+	managed := []byte("#!/bin/bash\n# Rampart PreToolUse hook for Cline\nold")
+	if err := os.WriteFile(path, managed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := installHookScript(path, "refreshed", false); err != nil {
+		t.Fatalf("refresh managed hook: %v", err)
+	}
+	data, _ = os.ReadFile(path)
+	if string(data) != "refreshed" {
+		t.Errorf("after managed refresh = %q", string(data))
 	}
 
 	// Should succeed with force
