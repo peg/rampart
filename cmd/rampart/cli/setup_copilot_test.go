@@ -4,8 +4,6 @@
 package cli
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -20,9 +18,7 @@ func TestSetupCopilotInstallsSharedUserHooksIdempotently(t *testing.T) {
 	t.Setenv("COPILOT_HOME", "")
 
 	for i := 0; i < 2; i++ {
-		cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-		cmd.SetArgs([]string{"setup", "copilot"})
-		if err := cmd.Execute(); err != nil {
+		if err := testExecuteRoot(t, "setup", "copilot"); err != nil {
 			t.Fatalf("setup iteration %d: %v", i+1, err)
 		}
 	}
@@ -79,14 +75,10 @@ func TestSetupCopilotRefusesForeignFileWithoutForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "copilot"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+	if err := testExecuteRoot(t, "setup", "copilot"); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("error = %v, want --force guidance", err)
 	}
-	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "copilot", "--force"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "copilot", "--force"); err != nil {
 		t.Fatalf("force setup: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -98,14 +90,10 @@ func TestSetupCopilotRefusesForeignFileWithoutForce(t *testing.T) {
 func TestSetupCopilotRemoveOnlyDeletesManagedFile(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	setup := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	setup.SetArgs([]string{"setup", "copilot"})
-	if err := setup.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "copilot"); err != nil {
 		t.Fatal(err)
 	}
-	remove := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	remove.SetArgs([]string{"setup", "copilot", "--remove"})
-	if err := remove.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "copilot", "--remove"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
@@ -116,9 +104,7 @@ func TestSetupCopilotRemoveOnlyDeletesManagedFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	remove = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	remove.SetArgs([]string{"setup", "copilot", "--remove"})
-	if err := remove.Execute(); err == nil || !strings.Contains(err.Error(), "refusing") {
+	if err := testExecuteRoot(t, "setup", "copilot", "--remove"); err == nil || !strings.Contains(err.Error(), "refusing") {
 		t.Fatalf("foreign file removal error = %v", err)
 	}
 }

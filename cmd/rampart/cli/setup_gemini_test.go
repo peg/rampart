@@ -4,9 +4,6 @@
 package cli
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,14 +29,12 @@ func TestSetupGeminiPreservesSettingsAndIsIdempotent(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-		cmd.SetArgs([]string{"setup", "gemini"})
-		if err := cmd.Execute(); err != nil {
+		if err := testExecuteRoot(t, "setup", "gemini"); err != nil {
 			t.Fatalf("setup iteration %d: %v", i+1, err)
 		}
 	}
 
-	settings := readGeminiSettings(t, settingsPath)
+	settings := testReadJSONMap(t, settingsPath)
 	if settings["theme"] != "GitHub" {
 		t.Fatalf("theme was not preserved: %#v", settings["theme"])
 	}
@@ -60,14 +55,12 @@ func TestSetupGeminiPreservesSettingsAndIsIdempotent(t *testing.T) {
 func TestSetupGeminiRemovePreservesUnrelatedHooks(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	setup := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	setup.SetArgs([]string{"setup", "gemini"})
-	if err := setup.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "gemini"); err != nil {
 		t.Fatal(err)
 	}
 
 	settingsPath := filepath.Join(home, ".gemini", "settings.json")
-	settings := readGeminiSettings(t, settingsPath)
+	settings := testReadJSONMap(t, settingsPath)
 	hooks := settings["hooks"].(map[string]any)
 	hooks["BeforeTool"] = append(hooks["BeforeTool"].([]any), map[string]any{
 		"matcher": "run_shell_command",
@@ -77,12 +70,10 @@ func TestSetupGeminiRemovePreservesUnrelatedHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	remove := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	remove.SetArgs([]string{"setup", "gemini", "--remove"})
-	if err := remove.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "gemini", "--remove"); err != nil {
 		t.Fatal(err)
 	}
-	settings = readGeminiSettings(t, settingsPath)
+	settings = testReadJSONMap(t, settingsPath)
 	hooks = settings["hooks"].(map[string]any)
 	if _, exists := hooks["AfterTool"]; exists {
 		t.Fatal("Rampart-only AfterTool group remained")
@@ -104,30 +95,13 @@ func TestSetupGeminiInvalidJSONRequiresForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "gemini"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+	if err := testExecuteRoot(t, "setup", "gemini"); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("invalid JSON error = %v, want --force guidance", err)
 	}
-	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "gemini", "--force"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "gemini", "--force"); err != nil {
 		t.Fatalf("force setup: %v", err)
 	}
-	assertRampartGeminiHook(t, readGeminiSettings(t, settingsPath), "BeforeTool")
-}
-
-func readGeminiSettings(t *testing.T, path string) map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatal(err)
-	}
-	return settings
+	assertRampartGeminiHook(t, testReadJSONMap(t, settingsPath), "BeforeTool")
 }
 
 func assertRampartGeminiHook(t *testing.T, settings map[string]any, event string) {

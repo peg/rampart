@@ -6,7 +6,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +24,7 @@ func TestSetupCodexInstallsNativeHooksWithoutCodexOrPreload(t *testing.T) {
 		t.Fatalf("setup codex: %v", err)
 	}
 
-	settings := readCodexHookSettings(t, filepath.Join(home, ".codex", "hooks.json"))
+	settings := testReadJSONMap(t, filepath.Join(home, ".codex", "hooks.json"))
 	assertRampartCodexHook(t, settings, "PreToolUse")
 	assertRampartCodexHook(t, settings, "PostToolUse")
 	if !strings.Contains(stdout.String(), "Open `/hooks`") {
@@ -42,12 +41,10 @@ func TestSetupCodexHonorsCodexHome(t *testing.T) {
 	codexHome := filepath.Join(home, "isolated-codex")
 	t.Setenv("CODEX_HOME", codexHome)
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
 		t.Fatalf("setup codex: %v", err)
 	}
-	assertRampartCodexHook(t, readCodexHookSettings(t, filepath.Join(codexHome, "hooks.json")), "PreToolUse")
+	assertRampartCodexHook(t, testReadJSONMap(t, filepath.Join(codexHome, "hooks.json")), "PreToolUse")
 	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatalf("default Codex home should remain untouched: %v", err)
 	}
@@ -76,14 +73,12 @@ func TestSetupCodexPreservesOtherHooksAndIsIdempotent(t *testing.T) {
 	}
 
 	for iteration := 0; iteration < 2; iteration++ {
-		cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-		cmd.SetArgs([]string{"setup", "codex"})
-		if err := cmd.Execute(); err != nil {
+		if err := testExecuteRoot(t, "setup", "codex"); err != nil {
 			t.Fatalf("setup iteration %d: %v", iteration+1, err)
 		}
 	}
 
-	settings := readCodexHookSettings(t, hooksPath)
+	settings := testReadJSONMap(t, hooksPath)
 	if settings["description"] != "user hooks" {
 		t.Fatalf("description was overwritten: %#v", settings["description"])
 	}
@@ -136,19 +131,15 @@ func TestSetupCodexRemovePreservesUnrelatedHooks(t *testing.T) {
 	if err := os.WriteFile(hooksPath, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	setup := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	setup.SetArgs([]string{"setup", "codex"})
-	if err := setup.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
 		t.Fatal(err)
 	}
 
-	remove := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	remove.SetArgs([]string{"setup", "codex", "--remove"})
-	if err := remove.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex", "--remove"); err != nil {
 		t.Fatal(err)
 	}
 
-	settings := readCodexHookSettings(t, hooksPath)
+	settings := testReadJSONMap(t, hooksPath)
 	hooks := settings["hooks"].(map[string]any)
 	pre := hooks["PreToolUse"].([]any)
 	if len(pre) != 1 {
@@ -173,18 +164,14 @@ func TestSetupCodexInvalidJSONRequiresForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+	if err := testExecuteRoot(t, "setup", "codex"); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("invalid JSON error = %v, want --force guidance", err)
 	}
 
-	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex", "--force"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex", "--force"); err != nil {
 		t.Fatalf("force setup: %v", err)
 	}
-	assertRampartCodexHook(t, readCodexHookSettings(t, hooksPath), "PreToolUse")
+	assertRampartCodexHook(t, testReadJSONMap(t, hooksPath), "PreToolUse")
 }
 
 func TestSetupCodexInvalidHookShapeRequiresForce(t *testing.T) {
@@ -198,31 +185,14 @@ func TestSetupCodexInvalidHookShapeRequiresForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+	if err := testExecuteRoot(t, "setup", "codex"); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("invalid hook shape error = %v, want --force guidance", err)
 	}
 
-	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex", "--force"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex", "--force"); err != nil {
 		t.Fatalf("force setup: %v", err)
 	}
-	assertRampartCodexHook(t, readCodexHookSettings(t, hooksPath), "PreToolUse")
-}
-
-func readCodexHookSettings(t *testing.T, path string) map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatal(err)
-	}
-	return settings
+	assertRampartCodexHook(t, testReadJSONMap(t, hooksPath), "PreToolUse")
 }
 
 func assertRampartCodexHook(t *testing.T, settings map[string]any, event string) {
