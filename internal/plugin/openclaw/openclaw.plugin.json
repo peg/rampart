@@ -13,8 +13,7 @@
   "homepage": "https://rampart.sh",
   "repository": "https://github.com/peg/rampart",
   "hooks": [
-    "before_tool_call",
-    "after_tool_call"
+    "before_tool_call"
   ],
   "minHostVersion": "2026.3.28",
   "configSchema": {
@@ -37,18 +36,13 @@
       },
       "failOpen": {
         "type": "boolean",
-        "description": "Deprecated coarse degraded-mode switch. Set false to block every tool when Rampart serve is unavailable. Prefer failOpenTools for per-tool control.",
-        "default": true
+        "description": "Deprecated coarse degraded-mode switch. Set true only to opt lower-risk tools into degraded fail-open behavior. Prefer failOpenTools for per-tool control.",
+        "default": false
       },
       "failOpenTools": {
         "type": "array",
         "description": "Tool names that may proceed when Rampart serve is unavailable or returns an evaluation error. Sensitive tools should normally be omitted.",
-        "default": [
-          "read",
-          "web_fetch",
-          "web_search",
-          "image"
-        ],
+        "default": [],
         "items": {
           "type": "string"
         },

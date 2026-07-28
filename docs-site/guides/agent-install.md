@@ -111,7 +111,10 @@ Every shell command, file access, and network request your AI agent makes is now
 - `dd if=/dev/urandom of=/dev/sda` — disk destruction
 - Prompt injection patterns in tool responses — exfiltration directives, instruction overrides
 
-**Allowed by default**: everything else. The policy engine is deny-on-match, not deny-by-default — it only blocks what the rules explicitly cover.
+**Allowed by default**: ordinary calls that do not match a restriction. Destructive
+MCP tools are denied. Dangerous or unclassified MCP tools receive an `ask`
+decision; the standalone stdio proxy fails those calls closed until you replace
+that decision with an explicit `allow` or `deny` policy.
 
 ---
 

@@ -28,12 +28,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type policyTestCall struct {
-	Agent  string         `json:"agent"`
-	Tool   string         `json:"tool"`
-	Params map[string]any `json:"params"`
-}
-
 type explanation struct {
 	PolicyName      string
 	Priority        int
@@ -94,86 +88,6 @@ func newPolicyCheckCmd(opts *rootOptions) *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func newPolicyTestCmd(opts *rootOptions) *cobra.Command {
-	var input string
-
-	cmd := &cobra.Command{
-		Use:   "test --input <file>",
-		Short: "Evaluate a set of tool calls against policy",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			store := engine.NewFileStore(opts.configPath)
-			eng, err := engine.New(store, nil)
-			if err != nil {
-				return fmt.Errorf("policy: create engine: %w", err)
-			}
-
-			if strings.TrimSpace(input) == "" {
-				return fmt.Errorf("policy: --input is required")
-			}
-
-			var calls []policyTestCall
-			if err := readJSONFile(input, &calls); err != nil {
-				return fmt.Errorf("policy: read input file: %w", err)
-			}
-
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "TOOL     COMMAND              ACTION  POLICY        MESSAGE")
-			if err != nil {
-				return fmt.Errorf("policy: write test header: %w", err)
-			}
-
-			allowCount := 0
-			denyCount := 0
-			logCount := 0
-			for _, testCall := range calls {
-				decision := eng.Evaluate(engine.ToolCall{
-					Agent:     normalizeAgent(testCall.Agent),
-					Tool:      testCall.Tool,
-					Params:    defaultParams(testCall.Params),
-					Timestamp: time.Now().UTC(),
-				})
-
-				policyName := ""
-				if len(decision.MatchedPolicies) > 0 {
-					policyName = decision.MatchedPolicies[0]
-				}
-
-				command := renderCommand(testCall.Params)
-				actionText := decision.Action.String()
-				if decision.Action == engine.ActionDeny {
-					actionText = strings.ToUpper(actionText)
-				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-20s %-7s %-12s %s\n", testCall.Tool, command, actionText, policyName, decision.Message); err != nil {
-					return fmt.Errorf("policy: write test row: %w", err)
-				}
-
-				switch decision.Action {
-				case engine.ActionAllow:
-					allowCount++
-				case engine.ActionDeny:
-					denyCount++
-				case engine.ActionWatch:
-					logCount++
-				}
-			}
-
-			total := allowCount + denyCount + logCount
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nResults: %d allow, %d deny, %d log (%d total)\n", allowCount, denyCount, logCount, total); err != nil {
-				return fmt.Errorf("policy: write test summary: %w", err)
-			}
-
-			if denyCount > 0 {
-				return fmt.Errorf("policy: test found %d unexpected denials", denyCount)
-			}
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&input, "input", "", "Path to JSON test input file")
-	_ = cmd.MarkFlagRequired("input")
-
-	return cmd
 }
 
 func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
@@ -389,13 +303,13 @@ func collectExplanations(cfg *engine.Config, call engine.ToolCall) []explanation
 			OverrideSummary: summarizeOverrideSource(policy),
 		}
 		for i, rule := range policy.Rules {
-			matched, detail := engine.ExplainCondition(rule.When, call)
-			if !matched {
-				continue
-			}
 			action, err := rule.ParseAction()
 			if err != nil {
 				action = engine.ActionDeny
+			}
+			matched, detail := engine.ExplainConditionForAction(rule.When, call, action)
+			if !matched {
+				continue
 			}
 			item.RuleMatched = true
 			item.RuleIndex = i
@@ -430,28 +344,6 @@ func matchPolicyScope(match engine.Match, call engine.ToolCall) bool {
 		}
 	}
 	return false
-}
-
-func readJSONFile(path string, out any) error {
-	data, err := osReadFile(path)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("parse JSON: %w", err)
-	}
-	return nil
-}
-
-var osReadFile = func(name string) ([]byte, error) {
-	return os.ReadFile(name)
-}
-
-func defaultParams(params map[string]any) map[string]any {
-	if params == nil {
-		return map[string]any{}
-	}
-	return params
 }
 
 func normalizeAgent(agent string) string {

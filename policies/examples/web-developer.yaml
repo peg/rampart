@@ -45,7 +45,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "npm install -g *"
@@ -60,7 +60,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "npm publish*"
@@ -78,7 +78,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: watch
         when:
           command_matches:
             - "curl *"
@@ -148,7 +148,7 @@ tests:
   - name: "approves npm publish"
     tool: exec
     params: { command: "npm publish" }
-    expect: require_approval
+    expect: ask
   - name: "blocks .env read"
     tool: read
     params: { path: "/home/user/project/.env" }

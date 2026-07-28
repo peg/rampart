@@ -176,10 +176,7 @@ func (s *Server) handleAuditDates(w http.ResponseWriter, r *http.Request) {
 		}
 		// Extract date from filename: "2026-02-18.jsonl", "2026-02-18.p1.jsonl",
 		// or hook's "audit-hook-2026-02-18.jsonl".
-		name := e.Name()
-		if strings.HasPrefix(name, "audit-hook-") {
-			name = strings.TrimPrefix(name, "audit-hook-")
-		}
+		name := strings.TrimPrefix(e.Name(), "audit-hook-")
 		if len(name) >= 10 {
 			d := name[:10]
 			if _, err := time.Parse("2006-01-02", d); err == nil {
@@ -195,7 +192,7 @@ func (s *Server) handleAuditDates(w http.ResponseWriter, r *http.Request) {
 	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"dates":     dates,
+		"dates":      dates,
 		"configured": s.auditDir != "",
 	})
 }

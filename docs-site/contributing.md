@@ -33,7 +33,8 @@ PRs to `main` require one approving review.
 
 - Follow standard Go conventions (`gofmt`, `go vet`)
 - Keep the policy engine hot path allocation-free
-- New interceptors go in `internal/intercept/`
+- New host adapters belong beside the integration they normalize; shared
+  policy matching belongs in `internal/engine/`
 - New CLI commands go in `cmd/rampart/cli/`
 
 ## Testing

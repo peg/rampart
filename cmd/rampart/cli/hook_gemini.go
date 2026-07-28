@@ -42,10 +42,18 @@ func parseGeminiInput(reader io.Reader) (*hookParseResult, error) {
 		return nil, fmt.Errorf("hook: unsupported Gemini tool_name %q; update Rampart before allowing this tool", input.ToolName)
 	}
 
-	params := normalizeGeminiParams(input.ToolName, input.ToolInput)
+	params, policyPaths, err := normalizeGeminiParams(input.ToolName, input.ToolInput)
+	if err != nil {
+		return nil, err
+	}
+	if tool == "mcp" {
+		tool = classifyNativeMCPTool(input.ToolName, params)
+	}
 	result := &hookParseResult{
 		Tool:          tool,
 		Params:        params,
+		PolicyPaths:   policyPaths,
+		WorkDir:       strings.TrimSpace(input.CWD),
 		Agent:         "gemini-cli",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: event,
@@ -59,8 +67,8 @@ func parseGeminiInput(reader io.Reader) (*hookParseResult, error) {
 }
 
 func mapGeminiTool(toolName string) string {
-	if strings.HasPrefix(toolName, "mcp_") {
-		return "mcp"
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(toolName)), "mcp_") {
+		return classifyNativeMCPTool(toolName, nil)
 	}
 	switch toolName {
 	case "run_shell_command", "shell":
@@ -86,7 +94,7 @@ func mapGeminiTool(toolName string) string {
 	}
 }
 
-func normalizeGeminiParams(toolName string, input map[string]any) map[string]any {
+func normalizeGeminiParams(toolName string, input map[string]any) (map[string]any, []string, error) {
 	params := make(map[string]any, len(input)+1)
 	for key, value := range input {
 		params[key] = value
@@ -100,17 +108,47 @@ func normalizeGeminiParams(toolName string, input map[string]any) map[string]any
 		}
 	}
 	if toolName == "read_many_files" {
+		seen := make(map[string]struct{})
+		paths := make([]string, 0, 4)
+		add := func(path string) error {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				return nil
+			}
+			if _, exists := seen[path]; exists {
+				return nil
+			}
+			if len(paths) >= maxCodexPatchPaths {
+				return fmt.Errorf("hook: Gemini read_many_files includes more than %d paths; split it into smaller calls", maxCodexPatchPaths)
+			}
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+			return nil
+		}
 		switch includes := params["include"].(type) {
 		case string:
-			params["path"] = includes
+			if err := add(includes); err != nil {
+				return nil, nil, err
+			}
 		case []any:
 			for _, raw := range includes {
-				if path, ok := raw.(string); ok && strings.TrimSpace(path) != "" {
-					params["path"] = path
-					break
+				path, ok := raw.(string)
+				if !ok {
+					return nil, nil, fmt.Errorf("hook: Gemini read_many_files include entries must be strings")
+				}
+				if err := add(path); err != nil {
+					return nil, nil, err
 				}
 			}
+		default:
+			return nil, nil, fmt.Errorf("hook: Gemini read_many_files requires include paths")
 		}
+		if len(paths) == 0 {
+			return nil, nil, fmt.Errorf("hook: Gemini read_many_files requires at least one include path")
+		}
+		params["path"] = paths[0]
+		params["paths"] = append([]string(nil), paths...)
+		return params, paths, nil
 	}
 	if toolName == "web_fetch" {
 		if prompt, ok := params["prompt"].(string); ok {
@@ -122,7 +160,7 @@ func normalizeGeminiParams(toolName string, input map[string]any) map[string]any
 			params["url"] = query
 		}
 	}
-	return params
+	return params, nil, nil
 }
 
 func outputGeminiHookResult(cmdOutput io.Writer, decision hookDecisionType, reason string) error {

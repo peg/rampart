@@ -181,11 +181,11 @@ func TestIsSensitivePath(t *testing.T) {
 
 func TestGenerateSuggestions_ExecCommand(t *testing.T) {
 	tests := []struct {
-		name          string
-		command       string
-		wantExact     string
-		wantWildcard  string
-		wantNoWild    bool // true if no wildcard suggestion expected
+		name         string
+		command      string
+		wantExact    string
+		wantWildcard string
+		wantNoWild   bool // true if no wildcard suggestion expected
 	}{
 		{
 			name:         "npm install package",

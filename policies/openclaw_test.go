@@ -126,3 +126,37 @@ func TestOpenClawPolicyDecisions(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenClawCurrentControlToolDecisions(t *testing.T) {
+	store := engine.NewFileStore(filepath.Join("openclaw.yaml"))
+	eng, err := engine.New(store, nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		tool        string
+		consequence string
+		want        engine.Action
+	}{
+		{name: "allow process poll", tool: "process", consequence: "openclaw:control-read-only", want: engine.ActionAllow},
+		{name: "ask process write", tool: "process", consequence: "openclaw:control-mutation", want: engine.ActionAsk},
+		{name: "allow node status", tool: "nodes", consequence: "openclaw:control-read-only", want: engine.ActionAllow},
+		{name: "ask node invocation", tool: "nodes", consequence: "openclaw:control-mutation", want: engine.ActionAsk},
+		{name: "allow agent list", tool: "agents_list", consequence: "openclaw:control-read-only", want: engine.ActionAllow},
+		{name: "ask session history", tool: "sessions_history", consequence: "openclaw:control-sensitive-read-or-mutation", want: engine.ActionAsk},
+		{name: "allow status read", tool: "session_status", consequence: "openclaw:control-read-only", want: engine.ActionAllow},
+		{name: "ask status model change", tool: "session_status", consequence: "openclaw:control-mutation", want: engine.ActionAsk},
+		{name: "ask missing adapter classification", tool: "gateway", want: engine.ActionAsk},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := map[string]any{}
+			if tt.consequence != "" {
+				params["rampart_consequence"] = tt.consequence
+			}
+			got := eng.Evaluate(engine.ToolCall{Tool: tt.tool, Params: params, Input: params})
+			assert.Equal(t, tt.want, got.Action, "message: %s", got.Message)
+		})
+	}
+}

@@ -28,8 +28,13 @@ policies:
 | Value | When |
 |-------|------|
 | `deny` | A tool call was blocked |
-| `log` | A tool call was flagged for review |
+| `watch` | A tool call was flagged for review (`log` remains a legacy alias) |
 | `ask` | A tool call needs human approval |
+
+Long-running Rampart services deliver notifications asynchronously. Native
+one-shot hooks wait for delivery with a one-second network timeout so the hook
+process cannot exit before sending, while a slow webhook cannot consume the
+agent host's full hook timeout.
 
 ## Payload Format
 
@@ -78,7 +83,7 @@ Rampart sends a JSON POST to your webhook URL:
     ```yaml
     notify:
       url: "https://your-api.example.com/rampart-events"
-      on: ["deny", "log"]
+      on: ["deny", "watch"]
     ```
 
 ## Webhook Actions
@@ -104,6 +109,8 @@ The webhook receives the full tool call context and returns:
 {"decision": "deny", "reason": "Production deployment not approved"}
 ```
 
-**Fail-open by default** — a down webhook doesn't break your agent.
+Webhook actions **fail closed by default**: an unavailable, invalid, or timed-out
+decision endpoint denies the tool call. Set `fail_open: true` explicitly only
+when availability is more important than enforcing that rule.
 
 See [Semantic Verification](semantic-verification.md) for an LLM-powered webhook implementation.

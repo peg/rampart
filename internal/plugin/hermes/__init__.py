@@ -12,12 +12,13 @@ The plugin is intentionally conservative:
 * ``ask`` / ``require_approval`` decisions block with a clear message instead
   of polling or creating a second approval surface, and include Rampart's
   ``audit_id`` when available.
-* If Rampart serve is unavailable, mutating/high-risk tools fail closed and only
-  explicitly configured read-only tools fail open.
+* If Rampart serve is unavailable, every tool fails closed by default. Advanced
+  operators may explicitly opt selected tools into degraded fail-open behavior.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -27,7 +28,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 VERSION = "1.4.0"
 
@@ -37,19 +38,11 @@ DEFAULT_ENDPOINT_MODE = "preflight"
 DEFAULT_AGENT_NAME = "hermes"
 MAX_PATCH_PATHS = 100
 
-# Read-only tools that may proceed when Rampart is unavailable. Operators can
-# narrow this with plugins.entries.rampart.config.fail_open_tools or
-# RAMPART_HERMES_FAIL_OPEN_TOOLS. Sensitive tools are intentionally absent.
-DEFAULT_FAIL_OPEN_TOOLS = frozenset(
-    {
-        "read_file",
-        "search_files",
-        "browser_snapshot",
-        "browser_get_images",
-        "browser_vision",
-        "vision_analyze",
-    }
-)
+# The default integration is an enforcement boundary, so service outages deny
+# every tool. Advanced operators may explicitly opt selected read-only tools
+# into degraded fail-open behavior, but Rampart does not assume a file read is
+# harmless: it may target credentials or agent state.
+DEFAULT_FAIL_OPEN_TOOLS: frozenset[str] = frozenset()
 
 TOOL_MAP = {
     # Shell/code execution.
@@ -87,6 +80,7 @@ TOOL_MAP = {
     # Images/vision.
     "vision_analyze": "image",
 }
+SUPPORTED_HERMES_TOOLS = frozenset(TOOL_MAP)
 
 SENSITIVE_KEY_MARKERS = (
     "token",
@@ -250,7 +244,11 @@ def _line_count(value: Any) -> int:
 def _safe_scalar(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
-    return _preview(value)
+    if isinstance(value, Mapping):
+        return f"<mapping keys={len(value)}>"
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return f"<sequence items={len(value)}>"
+    return f"<{type(value).__name__}>"
 
 
 def _generic_metadata(args: Mapping[str, Any]) -> dict[str, Any]:
@@ -404,6 +402,54 @@ def normalize_tool_call(tool_name: str, args: Mapping[str, Any] | None) -> tuple
     return rampart_tool, params
 
 
+def _resolve_hermes_path(path: Any, task_id: str) -> str:
+    """Resolve a policy path through Hermes' own task-CWD path pipeline."""
+
+    if not isinstance(path, str) or not path.strip():
+        return ""
+    try:
+        # Hermes file tools use this helper immediately before filesystem I/O.
+        # Import lazily so Rampart's static/unit tests do not require Hermes.
+        from tools.file_tools import _resolve_path_for_task  # type: ignore
+
+        return str(_resolve_path_for_task(path, task_id or "default"))
+    except ImportError:
+        # Standalone tests and source inspection run without Hermes installed.
+        # Honor its documented terminal CWD fallback when one is available;
+        # otherwise preserve the path for compatibility with direct unit calls.
+        base = os.getenv("TERMINAL_CWD", "").strip()
+        if base and not Path(path).expanduser().is_absolute():
+            return str((Path(base).expanduser() / path).resolve(strict=False))
+        if Path(path).expanduser().is_absolute():
+            return str(Path(path).expanduser().resolve(strict=False))
+        return path
+
+
+def _resolve_policy_paths(
+    rampart_tool: str,
+    params: Mapping[str, Any],
+    task_id: str,
+) -> dict[str, Any]:
+    resolved = dict(params)
+    if rampart_tool not in {"read", "write", "edit"}:
+        return resolved
+
+    touched_paths = resolved.get("touched_paths")
+    if isinstance(touched_paths, list) and touched_paths:
+        resolved_paths = [_resolve_hermes_path(path, task_id) for path in touched_paths]
+        if any(not path for path in resolved_paths):
+            raise ValueError("Hermes supplied an invalid patch target")
+        resolved["touched_paths"] = resolved_paths
+        resolved["path"] = resolved_paths[0]
+        return resolved
+
+    path = _resolve_hermes_path(resolved.get("path"), task_id)
+    if not path:
+        raise ValueError("Hermes supplied a file tool without a valid path")
+    resolved["path"] = path
+    return resolved
+
+
 def _build_payload(
     config: PluginConfig,
     params: Mapping[str, Any],
@@ -420,12 +466,34 @@ def _build_payload(
     }
     if tool_call_id:
         payload["tool_call_id"] = tool_call_id
+    if config.endpoint_mode == "preflight":
+        # Hermes calls this hook at the actual execution boundary. Tell Rampart
+        # to consume once:true grants and record call_count state while retaining
+        # preflight's no-hidden-approval behavior.
+        payload["enforce"] = True
     return payload
 
 
 def _endpoint_url(config: PluginConfig, rampart_tool: str) -> str:
     endpoint = "tool" if config.endpoint_mode == "tool" else "preflight"
     return f"{config.serve_url}/v1/{endpoint}/{quote(rampart_tool, safe='')}"
+
+
+def _is_trusted_serve_url(value: str) -> bool:
+    """Return true only for loopback HTTP(S) policy endpoints."""
+
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
+            return False
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+        # Force port parsing now so malformed values cannot reach urlopen.
+        _ = parsed.port
+        if hostname == "localhost":
+            return True
+        return ipaddress.ip_address(hostname).is_loopback
+    except (ValueError, TypeError):
+        return False
 
 
 def _decode_http_error(exc: urllib.error.HTTPError) -> dict[str, Any]:
@@ -444,6 +512,8 @@ def _decode_http_error(exc: urllib.error.HTTPError) -> dict[str, Any]:
 
 
 def post_to_rampart(config: PluginConfig, rampart_tool: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    if not _is_trusted_serve_url(config.serve_url):
+        raise RampartUnavailable("Rampart serve URL must use a loopback HTTP(S) address")
     token = _load_token(config)
     headers = {"Content-Type": "application/json"}
     if token:
@@ -480,13 +550,18 @@ def _block(message: str) -> dict[str, str]:
 
 def _decision_from_result(result: Mapping[str, Any]) -> str:
     decision = result.get("decision")
-    if isinstance(decision, str) and decision:
-        return decision.lower()
     if result.get("error"):
         return "deny"
-    if result.get("allowed") is False:
+    if not isinstance(decision, str):
         return "deny"
-    return "allow"
+    decision = decision.strip().lower()
+    if decision not in {"allow", "watch", "log", "ask", "require_approval", "deny"}:
+        return "deny"
+    # A contradictory response is not a valid authorization. This also keeps a
+    # malformed/partially upgraded local service from accidentally failing open.
+    if result.get("allowed") is False and decision in {"allow", "watch", "log"}:
+        return "deny"
+    return decision
 
 
 def _decision_rank(result: Mapping[str, Any]) -> int:
@@ -532,8 +607,15 @@ def evaluate_pre_tool_call(
 ) -> dict[str, str] | None:
     """Evaluate a Hermes tool call and return a Hermes block directive or None."""
 
+    if not isinstance(tool_name, str) or tool_name not in SUPPORTED_HERMES_TOOLS:
+        display_name = tool_name if isinstance(tool_name, str) and tool_name else "unknown"
+        return _block(
+            f"rampart: unsupported Hermes tool {display_name} — update Rampart or add a typed integration before using this capability"
+        )
+
     config = load_config(config_overrides)
     rampart_tool, params = normalize_tool_call(tool_name, args)
+    params = _resolve_policy_paths(rampart_tool, params, task_id)
     caller = requester or post_to_rampart
 
     touched_paths = params.get("touched_paths")
@@ -561,6 +643,8 @@ def evaluate_pre_tool_call(
             return _block(
                 f"rampart: unavailable ({tool_name}→{rampart_tool}) — policy service could not be reached; refusing sensitive tool call"
             )
+        if not isinstance(candidate, Mapping):
+            return _block("rampart: invalid policy response — refusing tool call")
         rank = _decision_rank(candidate)
         if rank > selected_rank:
             result = candidate
@@ -603,12 +687,19 @@ def register(ctx: Any) -> None:
         tool_call_id: str = "",
         **_: Any,
     ) -> dict[str, str] | None:
-        return evaluate_pre_tool_call(
-            tool_name,
-            args,
-            task_id=task_id,
-            session_id=session_id,
-            tool_call_id=tool_call_id,
-        )
+        try:
+            return evaluate_pre_tool_call(
+                tool_name,
+                args,
+                task_id=task_id,
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+            )
+        except Exception as exc:
+            # Hermes currently skips a callback that raises and continues tool
+            # execution. Convert adapter faults into an explicit veto so ordinary
+            # malformed inputs cannot bypass Rampart through that host behavior.
+            logger.warning("Rampart Hermes adapter error (%s); blocking tool call", type(exc).__name__)
+            return _block("rampart: policy adapter error — refusing tool call")
 
     ctx.register_hook("pre_tool_call", _pre_tool_call)

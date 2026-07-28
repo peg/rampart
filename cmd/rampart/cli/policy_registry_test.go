@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/peg/rampart/policies"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -70,6 +73,18 @@ func TestVerifyPolicySHA256(t *testing.T) {
 	assert.Contains(t, err.Error(), "sha256 mismatch")
 }
 
+func TestFetchURLRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(maxPolicyRegistryResponseBytes+1))
+		_, _ = w.Write([]byte("oversized"))
+	}))
+	defer server.Close()
+
+	_, err := fetchURL(context.Background(), server.Client(), server.URL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "response exceeds")
+}
+
 func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
@@ -109,6 +124,28 @@ func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 	dest := filepath.Join(home, ".rampart", "policies", "test-bad-hash.yaml")
 	_, statErr := os.Stat(dest)
 	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestDownloadPolicyFallsBackToEmbeddedFirstPartyProfile(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	want, err := policies.Profile("mcp-server")
+	require.NoError(t, err)
+	sum := sha256.Sum256(want)
+	client := &policyRegistryClient{
+		httpClient: server.Client(),
+		warnWriter: io.Discard,
+	}
+	got, err := client.downloadPolicy(context.Background(), policyRegistryEntry{
+		Name:   "mcp-server",
+		URL:    server.URL + "/mcp-server.yaml",
+		SHA256: hex.EncodeToString(sum[:]),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 func TestPolicyList_UsesCacheAndRefresh(t *testing.T) {

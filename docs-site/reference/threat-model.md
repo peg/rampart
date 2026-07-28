@@ -176,7 +176,8 @@ Pending approvals are now persisted to a local JSONL journal in normal `rampart 
 Project-local `.rampart/policy.yaml` files are loaded automatically when present. A malicious repository could include a permissive project policy.
 
 **Mitigations (v0.6.9+):**
-- Project policies can only **add restrictions**, not weaken global policies (deny-wins)
+- Project policies cannot weaken global policies or restrictive global defaults;
+  repository webhook actions are rejected
 - Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading in untrusted repos
 - Project policy denials are prefixed with `[Project Policy]` for visibility
 
@@ -222,7 +223,7 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
 - **No LD_PRELOAD:** `rampart preload` is not available. Use native hooks or wrap mode instead.
 - **No POSIX file permissions:** `chmod 0600` is not enforced by the OS. Rampart protects its persisted token with an owner-only Windows DACL derived from the current process SID; other sensitive files need explicit Windows ACL hardening.
-- **Binary upgrade:** Windows forbids overwriting a running executable. `rampart upgrade` renames the current binary to `.rampart.exe.old` first, then installs the new one.
+- **Binary upgrade:** in-process self-upgrade is intentionally disabled on Windows. Rerun the signed PowerShell installer to verify and replace `rampart.exe`; `rampart upgrade --no-binary` remains available for policy-only refreshes.
 - **Path separators:** Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
 - **Service management:** automatic service installation is currently supported on Linux and macOS only. On Windows, run `rampart serve` directly or configure Task Scheduler/NSSM.
 

@@ -15,12 +15,15 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -229,6 +232,114 @@ func TestJSONLSinkWrite_ConcurrentNoCorruption(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, ok)
 	}
+}
+
+func TestJSONLSinkWrite_MultipleSinksShareOneChain(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	const sinkCount = 4
+	const eventsPerSink = 20
+
+	sinks := make([]*JSONLSink, sinkCount)
+	for i := range sinks {
+		var err error
+		sinks[i], err = NewJSONLSink(dir,
+			WithFsync(false),
+			WithRotateSize(1600),
+			WithAnchorInterval(7),
+			WithLogger(logger),
+		)
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		for _, sink := range sinks {
+			_ = sink.Close()
+		}
+	})
+
+	errs := make(chan error, sinkCount)
+	var wg sync.WaitGroup
+	for i, sink := range sinks {
+		wg.Add(1)
+		go func(worker int, sink *JSONLSink) {
+			defer wg.Done()
+			for j := 0; j < eventsPerSink; j++ {
+				event := sampleEvent("exec")
+				event.Request["worker"] = worker
+				event.Request["index"] = j
+				if err := sink.Write(event); err != nil {
+					errs <- err
+					return
+				}
+			}
+		}(i, sink)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	state, err := recoverChainStateFromDir(dir, logger)
+	require.NoError(t, err)
+	assert.EqualValues(t, sinkCount*eventsPerSink, state.eventCount)
+}
+
+const auditProcessHelperEnv = "RAMPART_AUDIT_PROCESS_HELPER"
+
+func TestJSONLSinkProcessWriter(t *testing.T) {
+	if os.Getenv(auditProcessHelperEnv) != "1" {
+		return
+	}
+	dir := os.Getenv("RAMPART_AUDIT_PROCESS_DIR")
+	count, err := strconv.Atoi(os.Getenv("RAMPART_AUDIT_PROCESS_COUNT"))
+	require.NoError(t, err)
+
+	sink, err := NewJSONLSink(dir,
+		WithFsync(false),
+		WithRotateSize(1600),
+		WithAnchorInterval(5),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	require.NoError(t, err)
+	for i := 0; i < count; i++ {
+		event := sampleEvent("exec")
+		event.Request["process"] = os.Getenv("RAMPART_AUDIT_PROCESS_ID")
+		event.Request["index"] = i
+		require.NoError(t, sink.Write(event))
+	}
+	require.NoError(t, sink.Close())
+}
+
+func TestJSONLSinkWrite_MultipleProcessesShareOneChain(t *testing.T) {
+	dir := t.TempDir()
+	const processCount = 3
+	const eventsPerProcess = 12
+
+	commands := make([]*exec.Cmd, processCount)
+	outputs := make([]bytes.Buffer, processCount)
+	for i := range commands {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestJSONLSinkProcessWriter$")
+		cmd.Env = append(os.Environ(),
+			auditProcessHelperEnv+"=1",
+			"RAMPART_AUDIT_PROCESS_DIR="+dir,
+			"RAMPART_AUDIT_PROCESS_COUNT="+strconv.Itoa(eventsPerProcess),
+			"RAMPART_AUDIT_PROCESS_ID="+strconv.Itoa(i),
+		)
+		cmd.Stdout = &outputs[i]
+		cmd.Stderr = &outputs[i]
+		require.NoError(t, cmd.Start())
+		commands[i] = cmd
+	}
+	for i, cmd := range commands {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("audit writer process %d failed: %v\n%s", i, err, outputs[i].String())
+		}
+	}
+
+	state, err := recoverChainStateFromDir(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	assert.EqualValues(t, processCount*eventsPerProcess, state.eventCount)
 }
 
 func TestJSONLSinkWrite_RotationCreatesNewFileWithChainContinuation(t *testing.T) {
@@ -478,6 +589,58 @@ func TestJSONLSink_RecoverSortsRotatedFilesNaturally(t *testing.T) {
 	assert.Equal(t, "2026-02-13.p10.jsonl", state.lastFile)
 }
 
+func TestJSONLSink_RecoverySupportsLegacyReopenAfterRotation(t *testing.T) {
+	dir := t.TempDir()
+	date := time.Now().UTC().Format("2006-01-02")
+	baseName := date + ".jsonl"
+	rotatedName := date + ".p1.jsonl"
+
+	first := sampleEvent("exec")
+	first.ID = NewEventID()
+	first.PrevHash = ""
+	require.NoError(t, first.ComputeHash())
+	second := sampleEvent("read")
+	second.ID = NewEventID()
+	second.PrevHash = first.Hash
+	require.NoError(t, second.ComputeHash())
+	third := sampleEvent("write")
+	third.ID = NewEventID()
+	third.PrevHash = second.Hash
+	require.NoError(t, third.ComputeHash())
+
+	firstLine, err := json.Marshal(first)
+	require.NoError(t, err)
+	secondLine, err := json.Marshal(second)
+	require.NoError(t, err)
+	thirdLine, err := json.Marshal(third)
+	require.NoError(t, err)
+	headerLine, err := json.Marshal(chainHeader{ChainContinue: first.Hash, PrevFile: baseName})
+	require.NoError(t, err)
+
+	// Older releases reopened the base daily file after rotating. The physical
+	// layout is A,C in the base and B in p1, while the hash chain is A -> B -> C.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, baseName),
+		bytes.Join([][]byte{firstLine, thirdLine, nil}, []byte{'\n'}), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, rotatedName),
+		bytes.Join([][]byte{headerLine, secondLine, nil}, []byte{'\n'}), 0o600))
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	state, err := recoverChainStateFromDir(dir, logger)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, state.eventCount)
+	assert.Equal(t, third.Hash, state.lastHash)
+	assert.Equal(t, baseName, state.lastEventFile)
+	assert.Equal(t, rotatedName, state.lastFile)
+
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithLogger(logger))
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(sampleEvent("exec")))
+	require.NoError(t, sink.Close())
+	state, err = recoverChainStateFromDir(dir, logger)
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, state.eventCount)
+}
+
 func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
 	dir := t.TempDir()
 
@@ -574,6 +737,176 @@ func TestJSONLSink_RecoveryRejectsHashMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "hash mismatch")
 }
 
+func TestJSONLSink_RecoveryRejectsValidHashWithBrokenContinuity(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithAnchorInterval(0))
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(sampleEvent("exec")))
+	require.NoError(t, sink.Write(sampleEvent("write")))
+	path := sink.filePath()
+	require.NoError(t, sink.Close())
+
+	lines := readJSONLLines(t, path)
+	require.Len(t, lines, 2)
+	var second Event
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &second))
+	second.PrevHash = "sha256:valid-but-not-the-previous-event"
+	require.NoError(t, second.ComputeHash())
+	encoded, err := json.Marshal(second)
+	require.NoError(t, err)
+	lines[1] = string(encoded)
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	reopened, err := NewJSONLSink(dir, WithFsync(false),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	require.Nil(t, reopened)
+	require.ErrorContains(t, err, "prev_hash")
+}
+
+func TestJSONLSink_RecoveryRejectsBrokenContinuationHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		tamper func(*chainHeader)
+		want   string
+	}{
+		{
+			name: "hash",
+			tamper: func(header *chainHeader) {
+				header.ChainContinue = "sha256:not-the-previous-event"
+			},
+			want: "chain continuation",
+		},
+		{
+			name: "previous file",
+			tamper: func(header *chainHeader) {
+				header.PrevFile = "unrelated.jsonl"
+			},
+			want: "prev_file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sink, err := NewJSONLSink(dir,
+				WithFsync(false),
+				WithRotateSize(500),
+				WithAnchorInterval(0),
+				WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+			)
+			require.NoError(t, err)
+			require.NoError(t, sink.Write(sampleEvent("exec")))
+			require.NoError(t, sink.Write(sampleEvent("write")))
+			require.NoError(t, sink.Close())
+
+			files, err := filepath.Glob(filepath.Join(dir, "*.p1.jsonl"))
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			lines := readJSONLLines(t, files[0])
+			require.GreaterOrEqual(t, len(lines), 2)
+			var header chainHeader
+			require.NoError(t, json.Unmarshal([]byte(lines[0]), &header))
+			tt.tamper(&header)
+			encoded, err := json.Marshal(header)
+			require.NoError(t, err)
+			lines[0] = string(encoded)
+			require.NoError(t, os.WriteFile(files[0], []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+			reopened, err := NewJSONLSink(dir, WithFsync(false),
+				WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+			require.Nil(t, reopened)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestJSONLSink_WriteRecoversFromTamperedSharedState(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	first, err := NewJSONLSink(dir, WithFsync(false), WithRotateSize(500), WithLogger(logger))
+	require.NoError(t, err)
+	defer first.Close()
+	second, err := NewJSONLSink(dir, WithFsync(false), WithRotateSize(500), WithLogger(logger))
+	require.NoError(t, err)
+	defer second.Close()
+
+	require.NoError(t, first.Write(sampleEvent("exec")))
+	basePath := first.filePath()
+	baseLines := readJSONLLines(t, basePath)
+	require.Len(t, baseLines, 1)
+	var firstEvent Event
+	require.NoError(t, json.Unmarshal([]byte(baseLines[0]), &firstEvent))
+	require.NoError(t, first.Write(sampleEvent("read")))
+	rotatedLines := readJSONLLines(t, first.filePath())
+	require.GreaterOrEqual(t, len(rotatedLines), 2)
+	var secondEvent Event
+	require.NoError(t, json.Unmarshal([]byte(rotatedLines[len(rotatedLines)-1]), &secondEvent))
+
+	statePath := filepath.Join(dir, sharedStateFilename)
+	data, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+	var state sharedChainState
+	require.NoError(t, json.Unmarshal(data, &state))
+	// Point the checkpoint at an older, individually valid event in another
+	// file. Tail verification must still reject this attempted rollback.
+	state.EventCount = 1
+	state.LastHash = firstEvent.Hash
+	state.LastEventFile = filepath.Base(basePath)
+	state.LastEventStart = 0
+	state.LastEventSize = int64(len(baseLines[0]) + 1)
+	tampered, err := json.Marshal(state)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statePath, append(tampered, '\n'), 0o600))
+
+	require.NoError(t, second.Write(sampleEvent("write")))
+	data, err = os.ReadFile(statePath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &state))
+	info, err := os.Stat(second.filePath())
+	require.NoError(t, err)
+	assert.Equal(t, info.Size(), state.CurrentSize)
+	assert.Equal(t, state.CurrentSize, state.LastEventStart+state.LastEventSize)
+
+	recovered, err := recoverChainStateFromDir(dir, logger)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, recovered.eventCount)
+
+	lines := readJSONLLines(t, second.filePath())
+	require.GreaterOrEqual(t, len(lines), 2)
+	var last Event
+	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &last))
+	assert.Equal(t, secondEvent.Hash, last.PrevHash)
+}
+
+func TestJSONLSink_WriteReopensExternallyReplacedCurrentFile(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithLogger(logger))
+	require.NoError(t, err)
+	defer sink.Close()
+
+	require.NoError(t, sink.Write(sampleEvent("exec")))
+	currentPath := sink.filePath()
+	original, err := os.ReadFile(currentPath)
+	require.NoError(t, err)
+	detachedPath := filepath.Join(dir, "externally-rotated.log")
+	require.NoError(t, os.Rename(currentPath, detachedPath))
+	require.NoError(t, os.WriteFile(currentPath, original, 0o600))
+
+	require.NoError(t, sink.Write(sampleEvent("write")))
+
+	recovered, err := recoverChainStateFromDir(dir, logger)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, recovered.eventCount)
+
+	managedEvents, _, err := ReadEventsFromOffset(currentPath, 0)
+	require.NoError(t, err)
+	require.Len(t, managedEvents, 2)
+	detachedEvents, _, err := ReadEventsFromOffset(detachedPath, 0)
+	require.NoError(t, err)
+	require.Len(t, detachedEvents, 1, "the stale descriptor must not receive the second event")
+}
+
 func TestJSONLSink_RecoveryIgnoresUnchainedHookLogs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit-hook-"+time.Now().UTC().Format("2006-01-02")+".jsonl")
@@ -585,6 +918,54 @@ func TestJSONLSink_RecoveryIgnoresUnchainedHookLogs(t *testing.T) {
 	defer sink.Close()
 	assert.Zero(t, sink.eventCount)
 	assert.Empty(t, sink.lastHash)
+}
+
+func TestJSONLSink_CheckpointStartupContinuesChain(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	require.NoError(t, first.Write(sampleEvent("exec")))
+	firstHash := first.lastHash
+	require.NoError(t, first.Close())
+
+	second, err := NewJSONLSink(dir, WithFsync(false), WithCheckpointStartup())
+	require.NoError(t, err)
+	require.NoError(t, second.Write(sampleEvent("write")))
+	require.NoError(t, second.Close())
+
+	events, _, err := ReadEventsFromOffset(filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl"), 0)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	assert.Equal(t, firstHash, events[1].PrevHash)
+	valid, err := events[1].VerifyHash()
+	require.NoError(t, err)
+	assert.True(t, valid)
+}
+
+func TestJSONLSink_CheckpointStartupDefersHistoricalVerification(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(sampleEvent("exec")))
+	require.NoError(t, sink.Write(sampleEvent("write")))
+	path := sink.filePath()
+	require.NoError(t, sink.Close())
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	tampered := bytes.Replace(data, []byte("echo hello"), []byte("echo hullo"), 1)
+	require.Equal(t, len(data), len(tampered))
+	require.NoError(t, os.WriteFile(path, tampered, 0o600))
+
+	// Short-lived writers validate the checkpoint, file size, and current tail;
+	// complete historical verification remains the job of service startup and
+	// `rampart audit verify`.
+	fast, err := NewJSONLSink(dir, WithFsync(false), WithCheckpointStartup())
+	require.NoError(t, err)
+	require.NoError(t, fast.Close())
+
+	_, err = NewJSONLSink(dir, WithFsync(false))
+	require.ErrorContains(t, err, "hash mismatch")
 }
 
 func TestJSONLSink_WriteCompactsEscapedNearMiBRequest(t *testing.T) {

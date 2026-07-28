@@ -35,15 +35,6 @@ function parseBody(call) {
   return JSON.parse(call.opts.body);
 }
 
-async function waitFor(predicate, message, { timeoutMs = 250, intervalMs = 5 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error(message);
-}
-
 function fetchJson(result) {
   return { ok: true, status: 200, json: async () => result, text: async () => JSON.stringify(result) };
 }
@@ -131,6 +122,120 @@ await runPolicyScenario({
 });
 scenarios.push('read-tool-policy-surface');
 
+let unknownToolPolicyCalls = 0;
+const unknownTool = await withPlugin({
+  name: 'unknown-tool-fails-closed',
+  fetchImpl: async () => {
+    unknownToolPolicyCalls += 1;
+    return fetchJson({ decision: 'allow', policy: 'allow-unmatched' });
+  },
+  invoke: async ({ handlers }) => handlers.before_tool_call(
+    { toolName: 'future_mutating_tool', params: { target: '/tmp/unsafe' } },
+    ctx,
+  ),
+});
+assert(unknownTool?.block === true, 'an unclassified future tool must be blocked locally');
+assert(unknownToolPolicyCalls === 0, 'an unclassified tool must not reach the permissive service fallback');
+scenarios.push('unknown-tool-fails-closed');
+
+const adapterFault = await withPlugin({
+  name: 'adapter-exception-fails-closed',
+  fetchImpl: async () => fetchJson({ decision: 'allow' }),
+  invoke: async ({ handlers }) => handlers.before_tool_call(
+    {
+      toolName: 'write',
+      params: new Proxy({}, {
+        ownKeys: () => { throw new TypeError('malformed host params'); },
+      }),
+    },
+    ctx,
+  ),
+});
+assert(adapterFault?.block === true, 'an internal adapter exception must become an explicit block');
+assert(adapterFault.blockReason.includes('policy adapter error'), `unexpected adapter block: ${adapterFault.blockReason}`);
+scenarios.push('adapter-exception-fails-closed');
+
+const patchCalls = [];
+const patchResult = await withPlugin({
+  name: 'apply-patch-evaluates-every-path',
+  fetchImpl: async (url, opts = {}) => {
+    const body = parseBody({ opts });
+    patchCalls.push({ url: String(url), body });
+    const denied = body.params.path === 'secrets/.env';
+    return fetchJson({
+      decision: denied ? 'deny' : 'allow',
+      policy: denied ? 'protected-environment' : 'workspace-write',
+      message: denied ? 'protected environment file' : 'workspace write allowed',
+    });
+  },
+  invoke: async ({ handlers }) => handlers.before_tool_call(
+    {
+      toolName: 'apply_patch',
+      params: {
+        input: [
+          '*** Begin Patch',
+          '*** Add File: safe.txt',
+          '+safe',
+          '*** Update File: secrets/.env',
+          '@@',
+          '-old',
+          '+new',
+          '*** End Patch',
+        ].join('\n'),
+      },
+      derivedPaths: ['safe.txt', 'secrets/.env'],
+    },
+    ctx,
+  ),
+});
+assert(patchResult?.block === true, 'one denied apply_patch target must block the whole patch');
+assert(patchCalls.length === 2, `expected both patch paths to be evaluated, got ${patchCalls.length}`);
+assert(patchCalls.every((call) => call.url.includes('/v1/tool/edit')), 'apply_patch must map to edit policy');
+assert(
+  patchCalls.map((call) => call.body.params.path).join(',') === 'safe.txt,secrets/.env',
+  `unexpected patch paths: ${JSON.stringify(patchCalls)}`,
+);
+scenarios.push('apply-patch-evaluates-every-path');
+
+const patchAskCalls = [];
+const patchAsk = await withPlugin({
+  name: 'apply-patch-approval-describes-winning-path',
+  fetchImpl: async (url, opts = {}) => {
+    const body = parseBody({ opts });
+    patchAskCalls.push({ url: String(url), body });
+    return fetchJson(body.params.path === 'production/config.yaml'
+      ? { decision: 'ask', policy: 'production-write', message: 'production change' }
+      : { decision: 'allow', policy: 'workspace-write' });
+  },
+  invoke: async ({ handlers }) => handlers.before_tool_call(
+    {
+      toolName: 'apply_patch',
+      params: {
+        input: [
+          '*** Begin Patch',
+          '*** Update File: safe.txt',
+          '@@',
+          '-old',
+          '+new',
+          '*** Update File: production/config.yaml',
+          '@@',
+          '-old',
+          '+new',
+          '*** End Patch',
+        ].join('\n'),
+      },
+    },
+    ctx,
+  ),
+});
+assert(patchAsk?.requireApproval, 'expected approval for the restrictive patch target');
+assert(
+  patchAsk.requireApproval.description.includes('production/config.yaml'),
+  `approval must identify the path that triggered ask: ${patchAsk.requireApproval.description}`,
+);
+assert(patchAskCalls.length === 2, `expected two policy checks, got ${patchAskCalls.length}`);
+scenarios.push('apply-patch-approval-describes-winning-path');
+
 for (const [name, params, context, expectedConsequence] of [
   [
     'message-reply-to-originating-channel',
@@ -147,6 +252,12 @@ for (const [name, params, context, expectedConsequence] of [
   [
     'message-suffix-collision-is-external',
     { action: 'send', target: 'channel:external:12345', message: 'Cross-channel suffix collision' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'openclaw:external-message',
+  ],
+  [
+    'message-provider-collision-is-external',
+    { action: 'send', target: 'telegram:channel:12345', message: 'Cross-provider send' },
     { ...ctx, channelId: '12345', messageProvider: 'discord' },
     'openclaw:external-message',
   ],
@@ -182,6 +293,82 @@ for (const [name, params, context, expectedConsequence] of [
   scenarios.push(name);
 }
 
+for (const [name, params, expectedConsequence, expectedDomain] of [
+  [
+    'browser-status-is-read-only',
+    { action: 'status' },
+    'openclaw:browser-read-only',
+    undefined,
+  ],
+  [
+    'browser-open-target-url-is-navigation',
+    { action: 'open', targetUrl: 'https://github.com/peg/rampart' },
+    'openclaw:browser-navigation',
+    'github.com',
+  ],
+  [
+    'browser-click-is-mutation-even-on-safe-domain',
+    { action: 'act', request: { kind: 'click', ref: 'button-1' }, targetUrl: 'https://github.com/peg/rampart' },
+    'openclaw:browser-mutation',
+    'github.com',
+  ],
+]) {
+  await runPolicyScenario({
+    name,
+    event: { toolName: 'browser', params },
+    expectedTool: 'browser',
+    assertResult: (_result, body) => {
+      assert(
+        body.params.rampart_consequence === expectedConsequence,
+        `expected ${expectedConsequence}, got ${JSON.stringify(body.params)}`,
+      );
+      if (expectedDomain !== undefined) {
+        assert(body.params.domain === expectedDomain, `expected domain ${expectedDomain}, got ${JSON.stringify(body.params)}`);
+      }
+      assert(
+        !Object.prototype.hasOwnProperty.call(params, 'rampart_consequence'),
+        'host-derived policy fields must not mutate executable browser params',
+      );
+    },
+  });
+  scenarios.push(name);
+}
+
+for (const [name, toolName, params, expectedTool, expectedConsequence] of [
+  ["grep-is-a-file-read", "grep", { path: "/tmp", pattern: "needle" }, "read", undefined],
+  ["process-poll-is-read-only", "process", { action: "poll", sessionId: "job-1" }, "process", "openclaw:control-read-only"],
+  ["gateway-config-change-is-mutation", "gateway", { action: "config.patch" }, "gateway", "openclaw:control-mutation"],
+  ["session-history-is-sensitive", "sessions_history", { sessionKey: "agent:main:main" }, "sessions_history", "openclaw:control-sensitive-read-or-mutation"],
+  ["session-status-model-change-is-mutation", "session_status", { model: "provider/model" }, "session_status", "openclaw:control-mutation"],
+]) {
+  await runPolicyScenario({
+    name,
+    event: { toolName, params },
+    expectedTool,
+    assertResult: (_result, body) => {
+      if (expectedConsequence !== undefined) {
+        assert(
+          body.params.rampart_consequence === expectedConsequence,
+          `expected ${expectedConsequence}, got ${JSON.stringify(body.params)}`,
+        );
+      }
+    },
+  });
+  scenarios.push(name);
+}
+
+await runPolicyScenario({
+  name: "sessions-send-uses-message-approval-surface",
+  event: { toolName: "sessions_send", params: { sessionKey: "agent:other:main", message: "hello" } },
+  expectedTool: "message",
+  assertResult: (_result, body) => {
+    assert(body.params.action === "send", `expected send action, got ${JSON.stringify(body.params)}`);
+    assert(body.params.target === "agent:other:main", `expected session target, got ${JSON.stringify(body.params)}`);
+    assert(body.params.rampart_consequence === "openclaw:external-message", `unexpected consequence: ${JSON.stringify(body.params)}`);
+  },
+});
+scenarios.push("sessions-send-uses-message-approval-surface");
+
 const ask = await runPolicyScenario({
   name: 'write-tool-hosted-approval',
   event: { toolName: 'write', params: { path: '/tmp/provider-fixture.txt', content: 'fixture' } },
@@ -208,30 +395,6 @@ const authError = await withPlugin({
 assert(authError?.block === true, '401 auth error should block sensitive tool calls');
 assert(authError.blockReason.includes('HTTP 401'), `auth block reason should mention HTTP 401: ${authError.blockReason}`);
 scenarios.push('auth-error-fail-closed');
-
-const auditCalls = [];
-await withPlugin({
-  name: 'after-tool-audit-canonical-exec',
-  fetchImpl: async (url, opts = {}) => {
-    auditCalls.push({ url: String(url), opts });
-    return fetchJson({ ok: true });
-  },
-  invoke: async ({ handlers }) => {
-    const after = handlers.after_tool_call;
-    assert(typeof after === 'function', 'after_tool_call handler missing');
-    await after({ toolName: 'terminal', params: { args: { command: 'echo audited-provider' } }, durationMs: 5 }, ctx);
-    await waitFor(
-      () => auditCalls.some((call) => call.url.includes('/v1/audit')),
-      'audit endpoint not called',
-    );
-  },
-});
-const auditCall = auditCalls.find((call) => call.url.includes('/v1/audit'));
-assert(auditCall, 'audit endpoint not called');
-const auditBody = parseBody(auditCall);
-assert(auditBody.tool === 'exec', `expected canonical audit tool exec, got ${auditBody.tool}`);
-assert(auditBody.params.command === 'echo audited-provider', `expected normalized audit command, got ${JSON.stringify(auditBody.params)}`);
-scenarios.push('after-tool-audit-canonical-exec');
 
 const liveVerification = await withPlugin({
   name: 'live-behavioral-verification',

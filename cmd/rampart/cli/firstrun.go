@@ -56,7 +56,7 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 	case !serverRunning:
 		// LD_PRELOAD/shim agents need serve running
 		if runtime.GOOS == "windows" {
-			fmt.Fprintln(w, "\n→ Next: rampart serve   (keep this terminal open, or use Task Scheduler for background)")
+			fmt.Fprintln(w, "\n→ Next: rampart serve --background   (use Task Scheduler for automatic startup)")
 		} else {
 			fmt.Fprintln(w, "\n→ Next: rampart serve")
 		}

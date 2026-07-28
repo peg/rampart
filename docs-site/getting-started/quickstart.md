@@ -66,7 +66,11 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
 
     ```bash
     rampart setup cline
+    rampart verify cline
     ```
+
+    Keep both hooks enabled in Cline. Legacy Cline CLI `--yolo` disables
+    runtime hooks and is not protected by this boundary.
 
 === "Codex"
 

@@ -10,7 +10,10 @@ Most endpoints require a bearer token:
 Authorization: Bearer <token>
 ```
 
-The token is printed on startup (`rampart serve`) and stored in `~/.rampart/token`. Tokens can also be passed via the `?token=` query parameter (avoid in production — leaks to logs).
+The token is printed on startup (`rampart serve`) and stored in `~/.rampart/token`.
+Use the `Authorization` header for API requests. The `?token=` compatibility
+form is accepted only by the SSE event stream, because browser `EventSource`
+cannot set request headers; URLs can leak through logs and should not be shared.
 
 **Auth levels used in this reference:**
 
@@ -60,6 +63,13 @@ Evaluate a tool call against loaded policies. The agent calls this before execut
 | `input` | object | Optional structured input (alternative to params) |
 | `response` | string | Optional — tool output to evaluate for response-side policy |
 
+When `response` is non-empty, Rampart writes a second, distinct audit event for
+the response-side decision. Its request includes
+`"rampart_phase":"response"`, `response_bytes`, and `request_audit_id` linking
+it to the preceding decision; the raw response is not copied into the audit
+log. In enforce mode, an audit-storage failure withholds the tool response and
+returns `503`.
+
 **Response — 200 Allow/Watch:**
 
 ```json
@@ -100,11 +110,17 @@ Evaluate a tool call against loaded policies. The agent calls this before execut
 
 ### POST /v1/preflight/{toolName}
 
-Check what decision Rampart would make without recording a full audit event. Agents use this to plan around restrictions before attempting blocked actions.
+Check what decision Rampart would make. Ordinary requests are non-mutating
+policy previews. A host calling from its actual pre-execution boundary can send
+`"enforce": true`; Rampart then records call-count state, atomically consumes a
+matching `once: true` grant, and writes the decision audit without creating a
+pending approval.
 
 **Auth:** Bearer
 
-**Request:** Same shape as `/v1/tool/{toolName}` (omit `response`).
+**Request:** Same shape as `/v1/tool/{toolName}` (omit `response`). `enforce` is
+optional and defaults to `false`. `verification: true` and `enforce: true`
+cannot be combined.
 
 **Response — 200:**
 
@@ -115,6 +131,7 @@ Check what decision Rampart would make without recording a full audit event. Age
   "message": "matched policy: exec-basic-tools",
   "matched_policies": ["exec-basic-tools"],
   "eval_duration_us": 180,
+  "enforced": false,
   "suggestions": []
 }
 ```
@@ -284,7 +301,7 @@ Fetch a single approval request by ID.
 
 ### POST /v1/approvals/{id}/resolve
 
-Approve or deny a pending approval. Resolving with `persist: true` adds a permanent auto-allow rule so future identical calls are allowed without prompting.
+Approve or deny a pending approval. Resolving with `persist: true` adds a permanent exact auto-allow rule so future identical calls are allowed without prompting. Rampart does not automatically broaden the approved command or path. Automatic persistence is available for `exec`, `read`, `write`, and `edit`; unsupported tools return `400` and remain pending so you can approve once or author an explicit policy.
 
 **Auth:** Admin token **or** valid HMAC signature (passed via `?sig=&exp=` from a dashboard link)
 
@@ -514,7 +531,7 @@ Aggregate event counts across a date range, grouped by action, tool, agent, and 
   "by_action": {
     "allow": 430,
     "deny": 62,
-    "require_approval": 20
+    "ask": 20
   },
   "by_tool": {
     "exec": 300,

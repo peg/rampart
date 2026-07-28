@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -30,6 +29,7 @@ import (
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/webhookaction"
 )
 
 const (
@@ -80,7 +80,9 @@ func WithFilterTools(enabled bool) Option {
 	}
 }
 
-// WithApprovalStore sets the approval store used for require_approval decisions.
+// WithApprovalStore sets an approval store used for require_approval decisions.
+// The embedding caller must expose a real resolver for this exact store; an
+// inaccessible private store would only make tool calls wait until expiry.
 func WithApprovalStore(store *approval.Store) Option {
 	return func(p *Proxy) {
 		p.approvals = store
@@ -350,8 +352,16 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		Timestamp: time.Now().UTC(),
 	}
 
-	decision := p.engine.Evaluate(call)
-	p.writeAudit(call, decision, requestData, nil)
+	decision := p.engine.Enforce(call, engine.EvalOptions{})
+	if err := p.writeAudit(call, decision, requestData, nil); err != nil {
+		p.logger.Error("mcp: audit write failed", "error", err)
+		if p.mode == "enforce" {
+			if HasID(req.ID) {
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: audit storage is unavailable; refusing tool call")
+			}
+			return nil
+		}
+	}
 
 	if p.mode == "enforce" && decision.Action == engine.ActionDeny {
 		message := strings.TrimSpace(decision.Message)
@@ -371,7 +381,7 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		}
 		if p.approvals == nil {
 			if HasID(req.ID) {
-				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: approval store is not configured")
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: approval required, but this MCP proxy has no approval resolver; refusing request")
 			}
 			return nil
 		}
@@ -409,7 +419,16 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 	}
 
 	if p.mode == "enforce" && decision.Action == engine.ActionWebhook {
-		webhookDecision := p.executeWebhookAction(call, decision)
+		webhookDecision := webhookaction.Execute(p.logger, call, decision)
+		webhookRequest := cloneMap(requestData)
+		webhookRequest["mcp_phase"] = "webhook_result"
+		if err := p.writeAudit(call, webhookDecision, webhookRequest, nil); err != nil {
+			p.logger.Error("mcp: webhook-result audit write failed", "error", err)
+			if HasID(req.ID) {
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: audit storage is unavailable; refusing tool call")
+			}
+			return nil
+		}
 		if webhookDecision.Action == engine.ActionDeny {
 			denyMsg := strings.TrimSpace(webhookDecision.Message)
 			if denyMsg == "" {
@@ -467,114 +486,6 @@ func (p *Proxy) evictStalePendingCalls() {
 	}
 }
 
-// webhookActionRequest is the payload POSTed to a webhook action endpoint.
-type webhookActionRequest struct {
-	Tool      string         `json:"tool"`
-	Params    map[string]any `json:"params"`
-	Agent     string         `json:"agent"`
-	Session   string         `json:"session"`
-	Policy    string         `json:"policy"`
-	Timestamp string         `json:"timestamp"`
-}
-
-// webhookActionResponse is the expected response from a webhook action endpoint.
-type webhookActionResponse struct {
-	Decision string `json:"decision"` // "allow" or "deny"
-	Reason   string `json:"reason"`
-}
-
-// executeWebhookAction calls the configured webhook URL and returns an allow or
-// deny decision based on the response. Mirrors proxy.Server.executeWebhookAction.
-func (p *Proxy) executeWebhookAction(call engine.ToolCall, decision engine.Decision) engine.Decision {
-	cfg := decision.WebhookConfig
-	if cfg == nil || cfg.URL == "" {
-		p.logger.Error("mcp: webhook action missing config")
-		return engine.Decision{
-			Action:  engine.ActionDeny,
-			Message: "webhook action misconfigured; denying for safety",
-		}
-	}
-
-	policyName := "unknown"
-	if len(decision.MatchedPolicies) > 0 {
-		policyName = decision.MatchedPolicies[0]
-	}
-
-	payload := webhookActionRequest{
-		Tool:      call.Tool,
-		Params:    call.Params,
-		Agent:     call.Agent,
-		Session:   call.Session,
-		Policy:    policyName,
-		Timestamp: call.Timestamp.Format(time.RFC3339),
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		p.logger.Error("mcp: webhook marshal failed", "error", err)
-		return p.webhookFallback(cfg, "marshal error")
-	}
-
-	client := &http.Client{Timeout: cfg.EffectiveTimeout()}
-	resp, err := client.Post(cfg.URL, "application/json", bytes.NewReader(body))
-	if err != nil {
-		p.logger.Error("mcp: webhook call failed", "url", cfg.URL, "error", err)
-		return p.webhookFallback(cfg, fmt.Sprintf("webhook error: %v", err))
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		p.logger.Error("mcp: webhook returned non-2xx", "url", cfg.URL, "status", resp.StatusCode)
-		return p.webhookFallback(cfg, fmt.Sprintf("webhook returned HTTP %d", resp.StatusCode))
-	}
-
-	var whResp webhookActionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&whResp); err != nil {
-		p.logger.Error("mcp: webhook response parse failed", "error", err)
-		return p.webhookFallback(cfg, "invalid webhook response")
-	}
-
-	switch strings.ToLower(whResp.Decision) {
-	case "allow":
-		p.logger.Info("mcp: webhook allowed", "url", cfg.URL, "tool", call.Tool)
-		return engine.Decision{
-			Action:          engine.ActionAllow,
-			MatchedPolicies: decision.MatchedPolicies,
-			Message:         "allowed by webhook",
-		}
-	case "deny":
-		reason := whResp.Reason
-		if reason == "" {
-			reason = "denied by webhook"
-		}
-		p.logger.Info("mcp: webhook denied", "url", cfg.URL, "tool", call.Tool, "reason", reason)
-		return engine.Decision{
-			Action:          engine.ActionDeny,
-			MatchedPolicies: decision.MatchedPolicies,
-			Message:         reason,
-		}
-	default:
-		p.logger.Error("mcp: webhook returned unknown decision", "decision", whResp.Decision)
-		return p.webhookFallback(cfg, fmt.Sprintf("unknown webhook decision: %q", whResp.Decision))
-	}
-}
-
-// webhookFallback returns the appropriate decision when a webhook call fails.
-func (p *Proxy) webhookFallback(cfg *engine.WebhookActionConfig, reason string) engine.Decision {
-	if cfg.EffectiveFailOpen() {
-		p.logger.Warn("mcp: webhook fail-open", "reason", reason)
-		return engine.Decision{
-			Action:  engine.ActionAllow,
-			Message: fmt.Sprintf("webhook unavailable, failing open: %s", reason),
-		}
-	}
-	p.logger.Warn("mcp: webhook fail-closed", "reason", reason)
-	return engine.Decision{
-		Action:  engine.ActionDeny,
-		Message: fmt.Sprintf("webhook unavailable, failing closed: %s", reason),
-	}
-}
-
 func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 	trimmed := bytes.TrimSpace(line)
 
@@ -613,7 +524,12 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 		result := p.engine.EvaluateResponse(pending.call, responseBody)
 		responseRequest := cloneMap(pending.request)
 		responseRequest["mcp_phase"] = "response"
-		p.writeAudit(pending.call, result, responseRequest, &audit.ToolResponse{DurationMS: result.EvalDuration.Milliseconds()})
+		if err := p.writeAudit(pending.call, result, responseRequest, &audit.ToolResponse{DurationMS: result.EvalDuration.Milliseconds()}); err != nil {
+			p.logger.Error("mcp: response audit write failed", "error", err)
+			if p.mode == "enforce" {
+				return p.writeErrorToClient(resp.ID, jsonRPCResponseDenyCode, "Rampart: audit storage is unavailable; refusing tool response")
+			}
+		}
 
 		if p.mode == "enforce" && result.Action == engine.ActionDeny {
 			message := strings.TrimSpace(result.Message)
@@ -672,7 +588,14 @@ func (p *Proxy) maybeFilterToolsList(resp Response) ([]byte, bool, error) {
 			Timestamp: time.Now().UTC(),
 		}
 		decision := p.engine.Evaluate(call)
-		p.writeAudit(call, decision, requestData, nil)
+		if err := p.writeAudit(call, decision, requestData, nil); err != nil {
+			p.logger.Error("mcp: tool-list audit write failed", "tool", name, "error", err)
+			if p.mode == "enforce" {
+				// If the enforcement record cannot be persisted, do not advertise the
+				// tool as available to the client.
+				continue
+			}
+		}
 
 		if p.mode == "enforce" && decision.Action == engine.ActionDeny {
 			continue
@@ -746,21 +669,22 @@ func extractResponseBody(resp Response) string {
 	return ""
 }
 
-func (p *Proxy) writeAudit(call engine.ToolCall, decision engine.Decision, request map[string]any, response *audit.ToolResponse) {
+func (p *Proxy) writeAudit(call engine.ToolCall, decision engine.Decision, request map[string]any, response *audit.ToolResponse) error {
 	if p.sink == nil {
-		return
+		return nil
 	}
 	if request == nil {
 		request = cloneMap(call.Params)
 	}
 
 	event := audit.Event{
-		ID:        audit.NewEventID(),
-		Timestamp: time.Now().UTC(),
-		Agent:     call.Agent,
-		Session:   call.Session,
-		Tool:      call.Tool,
-		Request:   request,
+		ID:         audit.NewEventID(),
+		Timestamp:  time.Now().UTC(),
+		Agent:      call.Agent,
+		Session:    call.Session,
+		ToolCallID: call.ID,
+		Tool:       call.Tool,
+		Request:    request,
 		Decision: audit.EventDecision{
 			Action:          decision.Action.String(),
 			MatchedPolicies: decision.MatchedPolicies,
@@ -770,9 +694,7 @@ func (p *Proxy) writeAudit(call engine.ToolCall, decision engine.Decision, reque
 		Response: response,
 	}
 
-	if err := p.sink.Write(event); err != nil {
-		p.logger.Error("mcp: audit write failed", "error", err)
-	}
+	return p.sink.Write(event)
 }
 
 func (p *Proxy) writeErrorToClient(id json.RawMessage, code int, message string) error {

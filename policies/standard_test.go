@@ -15,6 +15,7 @@ package policies
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -27,6 +28,10 @@ func TestStandardPolicyDecisions(t *testing.T) {
 	store := engine.NewFileStore(filepath.Join("standard.yaml"))
 	eng, err := engine.New(store, nil)
 	require.NoError(t, err)
+	lowercaseControlEnvAction := engine.ActionAllow
+	if runtime.GOOS == "windows" {
+		lowercaseControlEnvAction = engine.ActionDeny
+	}
 
 	tests := []struct {
 		name     string
@@ -75,7 +80,7 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny env ld_preload override", tool: "exec", command: "env LD_PRELOAD=/tmp/evil.so ls", expected: engine.ActionDeny},
 		{name: "deny export ld_preload override", tool: "exec", command: "export LD_PRELOAD=/tmp/evil.so", expected: engine.ActionDeny},
 		{name: "deny rampart control env override", tool: "exec", command: "RAMPART_MODE=disabled true", expected: engine.ActionDeny},
-		{name: "deny rampart control env override case-insensitive", tool: "exec", command: "rampart_mode=disabled true", expected: engine.ActionDeny},
+		{name: "rampart control env name follows host shell case rules", tool: "exec", command: "rampart_mode=disabled true", expected: lowercaseControlEnvAction},
 
 		// Must ask
 		{name: "ask before safe shred help probe", tool: "exec", command: "shred --help >/dev/null && printf '%s\\n' 'probe'", expected: engine.ActionAsk},

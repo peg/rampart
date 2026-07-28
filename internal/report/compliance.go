@@ -565,7 +565,7 @@ func expandHomePath(path string) (string, error) {
 	if trimmed == "" {
 		return "", nil
 	}
-	if trimmed == "~" || strings.HasPrefix(trimmed, "~/") {
+	if trimmed == "~" || strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, `~\`) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
@@ -573,7 +573,7 @@ func expandHomePath(path string) (string, error) {
 		if trimmed == "~" {
 			return home, nil
 		}
-		return filepath.Join(home, strings.TrimPrefix(trimmed, "~/")), nil
+		return filepath.Join(home, trimmed[2:]), nil
 	}
 	return trimmed, nil
 }

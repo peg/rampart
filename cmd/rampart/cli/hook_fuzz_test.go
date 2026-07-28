@@ -42,7 +42,7 @@ func FuzzParseClaudeCodeInput(f *testing.F) {
 	// Edge cases
 	f.Add(`{}`)
 	f.Add(`{"tool_name": ""}`)
-	f.Add(`{"tool_name": "Bash"}`) // missing tool_input
+	f.Add(`{"tool_name": "Bash"}`)               // missing tool_input
 	f.Add(`{"tool_input": {"command": "test"}}`) // missing tool_name
 	f.Add(`invalid json`)
 	f.Add(`null`)
@@ -112,7 +112,7 @@ func FuzzParseClineInput(f *testing.F) {
 	f.Add(`{}`)
 	f.Add(`{"clineVersion": "1.0.0"}`) // missing tool use
 	f.Add(`{"preToolUse": null, "postToolUse": null}`)
-	f.Add(`{"preToolUse": {"toolName": ""}}`) // empty tool name
+	f.Add(`{"preToolUse": {"toolName": ""}}`)     // empty tool name
 	f.Add(`{"preToolUse": {"parameters": null}}`) // missing tool name
 	f.Add(`invalid cline json`)
 	f.Add(`["array", "instead", "of", "object"]`)
@@ -157,7 +157,7 @@ func FuzzMapTools(f *testing.F) {
 		mapped := mapClaudeCodeTool(toolName)
 		_ = mapped
 
-		// Test Cline tool mapping  
+		// Test Cline tool mapping
 		mapped = mapClineTool(toolName)
 		_ = mapped
 	})
@@ -190,7 +190,7 @@ func FuzzHookInputStructures(f *testing.F) {
 		}()
 
 		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-		
+
 		// Test both parsers with the same data to see how they handle unexpected structures
 		reader1 := bytes.NewReader([]byte(jsonData))
 		parseClaudeCodeInput(reader1, logger)

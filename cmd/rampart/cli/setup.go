@@ -20,6 +20,7 @@ import (
 )
 
 var execLookPath = osexec.LookPath
+var osExecutable = os.Executable
 
 // resolveRampartHookBinary returns the executable that managed hook files
 // should invoke. Stable installations prefer the package-manager PATH entry so
@@ -66,7 +67,7 @@ Run without a subcommand to launch the interactive setup wizard.
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
   • Hermes Agent              - Experimental user plugin integration
-  • Cline (VS Code)           - Native hook integration
+  • Cline (editor and CLI)    - Native hook integration
   • OpenClaw                  - Native plugin integration
   • Codex                     - Native lifecycle hook integration
   • Gemini CLI                - Experimental enterprise/API-key hooks
@@ -116,8 +117,8 @@ func newSetupHermesCmd() *cobra.Command {
 
 The plugin uses Hermes' pre_tool_call hook, calls Rampart's policy API before
 sensitive tool calls execute, defaults to /v1/preflight/{tool}, blocks ask
-responses instead of creating hidden approvals, and fails closed for mutating
-or high-risk tools when Rampart serve is unavailable.
+responses instead of creating hidden approvals, and fails closed for every tool
+when Rampart serve is unavailable unless an operator explicitly opts a tool out.
 
 By default this command installs the plugin files only. Use --enable to run
 "hermes plugins enable rampart" after installation. Restart long-running Hermes
@@ -137,15 +138,16 @@ gateways after enabling so plugin discovery reloads cleanly.`,
 			}
 
 			if remove {
-				if err := os.Remove(filepath.Join(pluginDir, "__init__.py")); err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("setup hermes: remove plugin runtime: %w", err)
+				removed, err := removeHermesIntegration(pluginDir, hermesHomeDir(home))
+				if err != nil {
+					return err
 				}
-				if err := os.Remove(filepath.Join(pluginDir, "plugin.yaml")); err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("setup hermes: remove plugin manifest: %w", err)
+				if !removed {
+					fmt.Fprintln(cmd.OutOrStdout(), "No Rampart Hermes integration found. Nothing to remove.")
+					return nil
 				}
-				_ = os.Remove(pluginDir) // best-effort; succeeds only if the directory is empty
-				fmt.Fprintf(cmd.OutOrStdout(), "Removed Rampart Hermes plugin files from %s\n", pluginDir)
-				fmt.Fprintln(cmd.OutOrStdout(), "Run `hermes plugins disable rampart` if it is still enabled in Hermes config.")
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed Rampart Hermes plugin files and config references from %s\n", pluginDir)
+				fmt.Fprintln(cmd.OutOrStdout(), "Restart long-running Hermes gateways to unload the removed plugin.")
 				return nil
 			}
 
@@ -1014,6 +1016,26 @@ func removeOpenClaw(cmd *cobra.Command) error {
 	}
 
 	var removed []string
+	gatewayChanged := false
+
+	// Remove the current native plugin before cleaning legacy interception
+	// artifacts. Resolve the active state when OpenClaw is available and fall
+	// back to the default state directory so removal still works after the host
+	// binary itself has already been uninstalled.
+	stateDir, configPath, _ := resolveOpenClawStateDir("")
+	if openclawBin, findErr := findOpenClawBinary(); findErr == nil {
+		if resolvedState, resolvedConfig, resolveErr := resolveOpenClawStateDir(openclawBin); resolveErr == nil {
+			stateDir, configPath = resolvedState, resolvedConfig
+		}
+	}
+	nativeRemoved, err := removeOpenClawNativePluginAt(stateDir, configPath)
+	if err != nil {
+		return fmt.Errorf("setup openclaw: remove native plugin: %w", err)
+	}
+	if nativeRemoved {
+		removed = append(removed, filepath.Join(stateDir, openclawPluginDir)+" (native plugin)")
+		gatewayChanged = true
+	}
 
 	// Stop and disable service
 	if runtime.GOOS == "darwin" {
@@ -1036,6 +1058,7 @@ func removeOpenClaw(cmd *cobra.Command) error {
 				if err := os.WriteFile(orig, data, 0o600); err == nil {
 					_ = os.Remove(bak)
 					removed = append(removed, orig+" (restored)")
+					gatewayChanged = true
 				}
 			}
 		}
@@ -1057,6 +1080,7 @@ func removeOpenClaw(cmd *cobra.Command) error {
 		if _, err := os.Stat(dropinPath); err == nil {
 			if err := os.Remove(dropinPath); err == nil {
 				removed = append(removed, dropinPath)
+				gatewayChanged = true
 			}
 			// Remove dir if empty
 			dropinDir := filepath.Dir(dropinPath)
@@ -1079,6 +1103,7 @@ func removeOpenClaw(cmd *cobra.Command) error {
 				if err := os.WriteFile(target, data, 0o644); err == nil {
 					_ = os.Remove(backup)
 					removed = append(removed, target+" (restored)")
+					gatewayChanged = true
 				}
 			}
 		}
@@ -1095,6 +1120,14 @@ func removeOpenClaw(cmd *cobra.Command) error {
 	if len(removed) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No OpenClaw integration found. Nothing to remove.")
 		return nil
+	}
+	if gatewayChanged {
+		if err := restartOpenClawGateway(); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ OpenClaw integration was removed, but the gateway could not be restarted: %v\n", err)
+			fmt.Fprintln(cmd.ErrOrStderr(), "  Restart the OpenClaw gateway before relying on the changed configuration.")
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "✓ Restarted the OpenClaw gateway to unload Rampart")
+		}
 	}
 
 	for _, p := range removed {
@@ -1658,9 +1691,7 @@ func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error)
 	webFetchPatched := patchWebFetchInDist(cmd, distDir, url, tokenExpr)
 	browserPatched := patchBrowserInDist(cmd, distDir, url, tokenExpr)
 	messagePatched := patchMessageInDist(cmd, distDir, url, tokenExpr)
-	execPatched := patchExecInDist(cmd, distDir, url, tokenExpr)
-
-	if patched == 0 && !webFetchPatched && !browserPatched && !messagePatched && !execPatched {
+	if patched == 0 && !webFetchPatched && !browserPatched && !messagePatched {
 		return false, nil
 	}
 
@@ -1963,28 +1994,6 @@ func patchMessageInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool
 	}
 
 	return patched
-}
-
-// patchExecInDist previously short-circuited OpenClaw's native exec approval
-// manager by calling Rampart's /v1/tool/exec directly from processGatewayAllowlist.
-//
-// That design worked before native Discord approvals became the primary UX, but
-// it breaks modern OpenClaw approval delivery because no exec.approval.requested
-// event is ever created and the Discord runtime sees an empty approval queue.
-//
-// The correct integration path is now:
-//
-//	OpenClaw exec ask -> exec.approval.requested -> Rampart bridge evaluates ->
-//	Rampart auto-resolves allow/deny or escalates human review -> Discord sees
-//	the native OpenClaw approval request.
-//
-// So we intentionally no-op this dist patch for exec and rely on the bridge.
-func patchExecInDist(cmd *cobra.Command, distDir, url, tokenExpr string) bool {
-	_ = distDir
-	_ = url
-	_ = tokenExpr
-	fmt.Fprintln(cmd.OutOrStdout(), "  ✓ exec dist patch skipped (use native OpenClaw approval flow via Rampart bridge)")
-	return true
 }
 
 func hasRampartInMatcher(matcher map[string]any) bool {

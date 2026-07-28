@@ -317,6 +317,9 @@ func TestHasPattern(t *testing.T) {
 	if action != "allow" {
 		t.Errorf("action = %q, want allow", action)
 	}
+	if tool != "exec" {
+		t.Errorf("tool = %q, want exec", tool)
+	}
 
 	// Test another existing pattern
 	exists, action, tool = p.HasPattern("rm -rf /")
@@ -325,6 +328,9 @@ func TestHasPattern(t *testing.T) {
 	}
 	if action != "deny" {
 		t.Errorf("action = %q, want deny", action)
+	}
+	if tool != "exec" {
+		t.Errorf("tool = %q, want exec", tool)
 	}
 
 	// Test non-existent pattern

@@ -23,3 +23,14 @@ func Replace(sourcePath, destinationPath string) error {
 	defer dir.Close()
 	return dir.Sync()
 }
+
+// SyncDir persists directory-entry changes such as newly created durable
+// files. Callers should sync the file contents separately.
+func SyncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}

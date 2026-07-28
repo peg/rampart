@@ -14,7 +14,10 @@ Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
 
 ## Design Decisions
 
-**Fail-open by default.** If Rampart crashes or is unreachable, tool calls pass through. This is deliberate — fail-closed locks you out of your own machine. See the [threat model](THREAT-MODEL.md) for trade-offs and mitigations.
+**Boundary-specific failure behavior.** Managed native integrations fail closed
+when enforcement is unavailable. Optional compatibility boundaries such as the
+shell wrapper and preload library can be configured to fail open. See the
+[threat model](THREAT-MODEL.md) for the trade-offs and exact boundary guarantees.
 
 **Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call
 run?" — and doesn't need a general-purpose policy language. The custom engine's
@@ -38,21 +41,14 @@ Evaluation order:
 
 Policies hot-reload via fsnotify. Edit the YAML, Rampart picks it up.
 
-### Interceptors (`internal/intercept/`)
-
-Per-tool-type logic that normalizes parameters before they hit the engine:
-
-- **exec** — command pattern matching, binary extraction
-- **read/write** — path normalization, glob matching
-- **fetch** — URL parsing, domain extraction
-
 ### Audit Sink (`internal/audit/`)
 
 Append-only JSONL with hash chaining. Each event includes SHA-256 of the previous event's hash — tamper with any record and the chain breaks.
 
 - ULID event IDs (time-ordered, sortable)
-- External anchor every 100 events (prevents full-chain recomputation)
-- fsync on every write
+- External anchor every 100 events for independent integrity checkpoints
+- Validated local chain state avoids full-history scans in one-shot native hooks
+- fsync on long-running service writes; native hooks avoid per-call fsync latency
 - Log rotation with chain continuity across files
 
 ### Proxy Server (`internal/proxy/`)
@@ -62,7 +58,7 @@ HTTP server that accepts tool calls, evaluates them, and returns decisions. Bear
 | Endpoint | Purpose |
 |----------|---------|
 | `POST /v1/tool/{name}` | Evaluate and execute |
-| `POST /v1/preflight/{name}` | Dry-run check |
+| `POST /v1/preflight/{name}` | Policy preview, or host-owned execution check with `enforce: true` |
 | `GET /v1/approvals` | Pending approvals |
 | `POST /v1/approvals/{id}/resolve` | Approve/deny |
 | `GET /healthz` | Health check |
@@ -74,10 +70,6 @@ Thread-safe store for human approval decisions. ULID-keyed, configurable timeout
 ### Wrap Command (`cmd/rampart/cli/wrap.go`)
 
 `rampart wrap -- <command>` starts an embedded proxy, generates a shell shim, sets `$SHELL` to the shim, and execs the child process. Every shell command the child spawns goes through the shim, which checks the preflight API before executing. The agent doesn't need modification.
-
-### Daemon (`internal/daemon/`)
-
-WebSocket client that connects to an OpenClaw gateway. This is the older bridge-style integration path that listens for approval events and resolves them. It still exists, but it is no longer the preferred OpenClaw integration.
 
 ## Integration Patterns
 
@@ -110,7 +102,9 @@ not install a misleading post-result scanner.
 
 **OpenClaw Plugin** — Rampart evaluates the tool call first. Allow decisions pass through, deny decisions are blocked immediately, and matched exec `ask` decisions are routed into OpenClaw's native approval flow without turning on prompts for every exec. Best for: OpenClaw deployments that want native approval UX with selective policy-driven exec approvals.
 
-**OpenClaw Daemon** — Legacy bridge-style path for setups that still rely on approval-event interception. Useful for older deployments, but no longer the preferred integration.
+**OpenClaw compatibility bridge** — Older OpenClaw releases can use the
+approval-event bridge hosted by `rampart serve`. Current releases should use the
+native plugin installed by `rampart protect openclaw`.
 
 **SDK** (`pkg/sdk/`) — Embed the engine directly in Go code. Zero network overhead, nanosecond evaluation. Best for: Go agents, performance-critical paths.
 
@@ -125,10 +119,9 @@ cmd/rampart/         CLI (cobra)
 internal/
   engine/            Policy evaluation (the core)
   audit/             Hash-chained JSONL audit trail
-  intercept/         Tool-specific interceptors (exec, fs, http)
   proxy/             HTTP proxy server
   approval/          Human approval flow
-  daemon/            OpenClaw WebSocket integration
+  bridge/            Legacy OpenClaw compatibility bridge
   watch/             Terminal dashboard (bubbletea)
 pkg/sdk/             Public Go SDK
 policies/            Built-in profiles (standard, paranoid, yolo)

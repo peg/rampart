@@ -31,7 +31,8 @@ type Config struct {
 	Version string `yaml:"version"`
 
 	// DefaultAction determines what happens when no rule matches a tool call.
-	// Valid values: "allow", "deny". Default: "deny".
+	// Valid values: "allow", "deny", "ask", "watch", or the deprecated
+	// "log" alias. Default: "deny".
 	DefaultAction string `yaml:"default_action"`
 
 	// Policies is the ordered list of policy rules.
@@ -39,6 +40,10 @@ type Config struct {
 
 	// Notify configures webhook notifications for policy decisions.
 	Notify *NotifyConfig `yaml:"notify,omitempty"`
+
+	// Tests contains optional inline policy test cases. Tests are metadata for
+	// policy tooling and are not consulted during enforcement.
+	Tests []TestCase `yaml:"tests,omitempty"`
 
 	responseRegexCache map[string]*regexp.Regexp
 }
@@ -51,6 +56,10 @@ var responseRegexBackreferencePattern = regexp.MustCompile(`\\[1-9][0-9]*`)
 type Policy struct {
 	// Name uniquely identifies this policy.
 	Name string `yaml:"name"`
+
+	// Description documents the policy's purpose for operators. It does not
+	// affect matching or enforcement.
+	Description string `yaml:"description,omitempty"`
 
 	// Priority controls evaluation order. Lower number = higher priority.
 	// Default: 100. When multiple policies match, deny always wins
@@ -129,10 +138,10 @@ func (m Match) EffectiveSession() string {
 	return m.Session
 }
 
-// Rule is a single allow/deny/log rule within a policy.
+// Rule is a single policy rule.
 type Rule struct {
-	// Action is what to do when this rule matches: "allow", "deny", "log",
-	// "require_approval", or "webhook".
+	// Action is what to do when this rule matches: "allow", "deny", "watch",
+	// "ask", or "webhook". "log" is a deprecated alias for "watch".
 	Action string `yaml:"action"`
 
 	// Ask configures action: ask behavior.
@@ -145,6 +154,10 @@ type Rule struct {
 	// Message is a human-readable reason shown to the agent on denial
 	// and recorded in the audit trail.
 	Message string `yaml:"message"`
+
+	// Added records when a user-managed rule was created. It is metadata written
+	// by `rampart allow` and `rampart block` and does not affect enforcement.
+	Added time.Time `yaml:"added,omitempty"`
 
 	// Webhook configures the external webhook for action: webhook rules.
 	Webhook *WebhookActionConfig `yaml:"webhook,omitempty"`
@@ -180,7 +193,7 @@ type WebhookActionConfig struct {
 	Timeout Duration `yaml:"timeout,omitempty"`
 
 	// FailOpen determines behavior on webhook error or timeout.
-	// true = allow on failure (default), false = deny on failure.
+	// true = allow on failure, false = deny on failure (default).
 	FailOpen *bool `yaml:"fail_open,omitempty"`
 }
 
@@ -220,6 +233,13 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	}
 	d.Duration = dur
 	return nil
+}
+
+// MarshalYAML preserves the human-readable duration syntax accepted by
+// UnmarshalYAML. Without this method, yaml.v3 serializes the embedded
+// time.Duration as a nested mapping that cannot be read back by this type.
+func (d Duration) MarshalYAML() (any, error) {
+	return d.Duration.String(), nil
 }
 
 // ParseAction converts the rule's action string to an Action constant.
@@ -390,7 +410,9 @@ type NotifyConfig struct {
 	Platform string `yaml:"platform"`
 
 	// On specifies which decision types trigger notifications.
-	// Valid values: "deny", "log". Can be a string or list of strings.
+	// Valid values: "deny", "watch", or "ask". The deprecated "log" and
+	// removed policy action name "require_approval" remain notification-filter
+	// aliases for compatibility. Can be a string or list of strings.
 	On []string `yaml:"on"`
 }
 
@@ -484,8 +506,8 @@ func (s *FileStore) Load() (*Config, error) {
 		return nil, err
 	}
 
-	// Set FilePath on all policies so ConsumeOnceRule and policy scoping
-	// can find the source file to modify.
+	// Set FilePath on all policies so EvaluateAndConsume and policy scoping can
+	// find the source file to modify.
 	for i := range cfg.Policies {
 		if cfg.Policies[i].FilePath == "" {
 			cfg.Policies[i].FilePath = absPath
@@ -502,6 +524,16 @@ func (s *FileStore) Path() string {
 
 // validate checks a policy config for structural errors.
 func (cfg *Config) validate() error {
+	if version := strings.TrimSpace(cfg.Version); version != "" && version != "1" {
+		return fmt.Errorf("engine: unsupported policy version %q", cfg.Version)
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.DefaultAction)) {
+	case "", "allow", "deny", "ask", "watch", "log":
+		// Empty is the documented implicit fail-closed default.
+	default:
+		return fmt.Errorf("engine: invalid default_action %q", cfg.DefaultAction)
+	}
+
 	seen := make(map[string]bool)
 	cache := make(map[string]*regexp.Regexp)
 
@@ -513,34 +545,44 @@ func (cfg *Config) validate() error {
 			return fmt.Errorf("engine: duplicate policy name %q", p.Name)
 		}
 		seen[p.Name] = true
-		if err := validatePolicyGlobPatterns(p); err != nil {
+		if err := validatePolicy(p, cache); err != nil {
 			return fmt.Errorf("engine: policy %q: %w", p.Name, err)
-		}
-
-		for j, r := range p.Rules {
-			action, err := r.ParseAction()
-			if err != nil {
-				return fmt.Errorf("engine: policy %q rule %d: %w", p.Name, j, err)
-			}
-			if action == ActionWebhook {
-				if r.Webhook == nil || r.Webhook.URL == "" {
-					return fmt.Errorf("engine: policy %q rule %d: webhook action requires webhook.url", p.Name, j)
-				}
-				if r.Webhook != nil && strings.HasPrefix(r.Webhook.URL, "http://") {
-					slog.Warn("webhook URL uses insecure http:// scheme; use https:// in production",
-						"policy", p.Name, "rule", j, "url", r.Webhook.URL)
-				}
-			}
-			if err := compileResponseRegexes(r.When, cache); err != nil {
-				return fmt.Errorf("engine: policy %q rule %d: %w", p.Name, j, err)
-			}
-			if err := validateCallCountCondition(r.When.CallCount); err != nil {
-				return fmt.Errorf("engine: policy %q rule %d: %w", p.Name, j, err)
-			}
 		}
 	}
 
 	cfg.responseRegexCache = cache
+	return nil
+}
+
+// validatePolicy applies every policy-level validation and compiles response
+// regexes into cache. All policy stores use this helper so a policy has the
+// same validity and runtime behavior regardless of where it was loaded from.
+func validatePolicy(policy Policy, cache map[string]*regexp.Regexp) error {
+	if err := validatePolicyGlobPatterns(policy); err != nil {
+		return err
+	}
+
+	for index, rule := range policy.Rules {
+		action, err := rule.ParseAction()
+		if err != nil {
+			return fmt.Errorf("rule %d: %w", index, err)
+		}
+		if action == ActionWebhook {
+			if rule.Webhook == nil || strings.TrimSpace(rule.Webhook.URL) == "" {
+				return fmt.Errorf("rule %d: webhook action requires webhook.url", index)
+			}
+			if strings.HasPrefix(rule.Webhook.URL, "http://") {
+				slog.Warn("webhook URL uses insecure http:// scheme; use https:// in production",
+					"policy", policy.Name, "rule", index, "url", rule.Webhook.URL)
+			}
+		}
+		if err := compileResponseRegexes(rule.When, cache); err != nil {
+			return fmt.Errorf("rule %d: %w", index, err)
+		}
+		if err := validateCallCountCondition(rule.When.CallCount); err != nil {
+			return fmt.Errorf("rule %d: %w", index, err)
+		}
+	}
 	return nil
 }
 

@@ -123,7 +123,7 @@ Rampart works on Windows with some limitations:
 
 | Feature | Windows | macOS/Linux |
 |---------|---------|-------------|
-| `rampart serve` | ✅ Foreground only | ✅ Background supported |
+| `rampart serve` | ✅ Foreground and `--background` | ✅ Background supported |
 | `rampart setup claude-code` | ✅ | ✅ |
 | `rampart hook` | ✅ | ✅ |
 | `rampart watch` | ✅ | ✅ |

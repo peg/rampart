@@ -14,11 +14,11 @@
 package proxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/peg/rampart/internal/policy"
@@ -86,6 +86,7 @@ type userOverrideRule struct {
 
 type userOverrideWhen struct {
 	CommandMatches []string `yaml:"command_matches,omitempty,flow"`
+	PathMatches    []string `yaml:"path_matches,omitempty,flow"`
 }
 
 // learnRateLimit is the minimum interval between successful /v1/rules/learn writes.
@@ -98,12 +99,13 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req learnRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
-	if req.Tool == "" || req.Args == "" {
+	req.Tool = strings.TrimSpace(req.Tool)
+	if req.Tool == "" || strings.TrimSpace(req.Args) == "" {
 		writeError(w, http.StatusBadRequest, "tool and args are required")
 		return
 	}
@@ -113,10 +115,22 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "decision must be \"allow\" — use policy YAML for deny rules")
 		return
 	}
+	switch req.Tool {
+	case "exec", "read", "write", "edit":
+		// These tools have exact command/path conditions in the policy schema.
+	default:
+		writeError(w, http.StatusBadRequest, "automatic allow persistence supports exec, read, write, and edit only; use an explicit policy for other tools")
+		return
+	}
 
-	// Compute smart glob pattern.
-	pattern := policy.BuildAllowPattern(req.Args)
-	hash := policy.HashPattern(pattern)
+	// Persist exactly the approved invocation. Shell wildcard characters are
+	// escaped so an approval cannot silently authorize related commands.
+	pattern := policy.BuildExactAllowPattern(req.Args)
+	hashInput := pattern
+	if req.Tool != "exec" {
+		hashInput = req.Tool + "\x00" + pattern
+	}
+	hash := policy.HashPattern(hashInput)
 	ruleName := fmt.Sprintf("user-allow-%s", hash)
 
 	// Resolve overrides path.
@@ -162,17 +176,22 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	when := userOverrideWhen{}
+	if req.Tool == "exec" {
+		when.CommandMatches = []string{pattern}
+	} else {
+		when.PathMatches = []string{pattern}
+	}
+
 	// Build new entry.
 	entry := userOverrideEntry{
 		Name: ruleName,
 		Match: userOverrideMatch{
-			Tool: []string{req.Tool},
+			Tool: []string{policy.BuildExactAllowPattern(req.Tool)},
 		},
 		Rules: []userOverrideRule{
 			{
-				When: userOverrideWhen{
-					CommandMatches: []string{pattern},
-				},
+				When:    when,
 				Action:  req.Decision,
 				Message: fmt.Sprintf("User %s (always) via %s", req.Decision, req.Source),
 			},

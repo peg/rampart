@@ -50,6 +50,7 @@ var builtInProfileDescriptions = map[string]string{
 }
 
 const policyRegistryCacheFileName = "registry-cache.json"
+const maxPolicyRegistryResponseBytes = 2 << 20
 
 var (
 	defaultPolicyRegistryManifestURL = "https://raw.githubusercontent.com/peg/rampart/main/registry/registry.json"
@@ -113,7 +114,7 @@ type policyListEntry struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Tags        string `json:"tags"`
-	Source      string `json:"source,omitempty"` // "built-in" or "community" (shown in --extended mode)
+	Source      string `json:"source,omitempty"`    // "built-in" or "community" (shown in --extended mode)
 	Installed   bool   `json:"installed,omitempty"` // shown in --extended mode
 }
 
@@ -697,6 +698,9 @@ func (c *policyRegistryClient) downloadPolicy(ctx context.Context, entry policyR
 	}
 
 	// Fall back to embedded community policies.
+	if content, err := policies.Profile(entry.Name); err == nil {
+		return content, nil
+	}
 	if content, err := community.FS.ReadFile(entry.Name + ".yaml"); err == nil {
 		return content, nil
 	}
@@ -733,10 +737,16 @@ func fetchURL(ctx context.Context, client *http.Client, rawURL string) ([]byte, 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
+	if resp.ContentLength > maxPolicyRegistryResponseBytes {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", maxPolicyRegistryResponseBytes)
+	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPolicyRegistryResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if len(body) > maxPolicyRegistryResponseBytes {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", maxPolicyRegistryResponseBytes)
 	}
 	return body, nil
 }

@@ -300,7 +300,7 @@ func waitForTailer(ch <-chan tailerEvent) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return tailerMsg{event: evt.event, err: evt.err}
+		return tailerMsg(evt)
 	}
 }
 

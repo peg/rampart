@@ -304,11 +304,13 @@ func (s *Server) Serve(listener net.Listener) error {
 // newHTTPServer creates an *http.Server with standard timeouts.
 func (s *Server) newHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 }
 
@@ -373,7 +375,9 @@ func (s *Server) handler() http.Handler {
 	if s.metricsEnabled {
 		metricsHandler := MetricsHandler()
 		mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-			if !s.checkAuth(w, r) {
+			// Metrics contain global policy names and activity totals. Agent-scoped
+			// evaluation tokens must not gain cross-agent observability.
+			if !s.checkAdminAuth(w, r) {
 				return
 			}
 			metricsHandler.ServeHTTP(w, r)
@@ -398,6 +402,10 @@ type toolRequest struct {
 	OpenClawHosted      bool           `json:"openclaw_hosted,omitempty"`
 	SkipPendingApproval bool           `json:"skip_pending_approval,omitempty"`
 	Verification        bool           `json:"verification,omitempty"`
+	// Enforce marks a preflight request as the host's actual pre-execution
+	// authorization boundary. Unlike an ordinary preview, it records call-count
+	// state and atomically consumes a matching once:true allow.
+	Enforce bool `json:"enforce,omitempty"`
 
 	// Convenience fields: callers can pass "command" or "path" at the top level
 	// instead of nesting inside "params". These are promoted into Params by
@@ -526,40 +534,7 @@ type bulkResolveRequest struct {
 	ResolvedBy string `json:"resolved_by"` // e.g. "api", "cli"
 }
 
-func (s *Server) checkAuthOrTokenParam(r *http.Request) bool {
-	id, _ := s.identify(r)
-	return id != nil
-}
-
-// checkAuth validates the bearer token (admin or agent). Returns false if auth fails.
-// Used for read-only endpoints accessible to both admin and agent tokens.
-// For mutation endpoints, use checkAdminAuth instead.
-func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
-	id, errMsg := s.identify(r)
-	if id == nil {
-		writeError(w, http.StatusUnauthorized, errMsg)
-		return false
-	}
-	return true
-}
-
-// Approvals returns the approval store for external access (CLI, daemon).
+// Approvals returns the approval store for external CLI access.
 func (s *Server) Approvals() *approval.Store {
 	return s.approvals
-}
-
-// webhookActionRequest is the payload POSTed to a webhook action endpoint.
-type webhookActionRequest struct {
-	Tool      string         `json:"tool"`
-	Params    map[string]any `json:"params"`
-	Agent     string         `json:"agent"`
-	Session   string         `json:"session"`
-	Policy    string         `json:"policy"`
-	Timestamp string         `json:"timestamp"`
-}
-
-// webhookActionResponse is the expected response from a webhook action endpoint.
-type webhookActionResponse struct {
-	Decision string `json:"decision"` // "allow" or "deny"
-	Reason   string `json:"reason"`
 }

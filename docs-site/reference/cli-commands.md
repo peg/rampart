@@ -73,10 +73,19 @@ Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `
 Install native hooks into Cline.
 
 ```bash
-rampart setup cline           # Install hooks
-rampart setup cline --force   # Overwrite existing hooks
-rampart setup cline --remove  # Remove hooks
+rampart setup cline                              # Shared user hooks
+rampart setup cline --workspace                  # .clinerules/hooks
+rampart setup cline --hooks-dir /path/to/hooks   # Explicit runtime directory
+rampart setup cline --remove                     # Remove owned user hooks
 ```
+
+Rampart installs direct executable `PreToolUse`/`PostToolUse` files on Linux
+and macOS, or direct `.ps1` files on Windows. It upgrades the owned nested
+layout from older Rampart versions but never overwrites or removes another
+owner's hook, including with `--force`. `--data-dir` is accepted for Cline CLI
+parity, but current Cline source does not use `--data-dir` or `CLINE_DATA_DIR`
+for hook discovery. Do not use Cline CLI's legacy `--yolo` mode when relying on
+Rampart because current Cline disables runtime hooks in that mode.
 
 ### `rampart setup openclaw`
 
@@ -159,7 +168,7 @@ rampart setup --force        # Skip confirmations
 
 ### `rampart upgrade`
 
-Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and optionally restarts `rampart serve` if it was running.
+Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and restarts a running background, systemd, or launchd Rampart service so it uses the new executable. Homebrew-managed installations must use `brew upgrade rampart`; Windows installations must rerun `install.ps1`.
 
 ```bash
 rampart upgrade              # Upgrade to latest release
@@ -167,6 +176,7 @@ rampart upgrade v0.8.0       # Upgrade to a specific version
 rampart upgrade --yes        # Skip confirmation prompt
 rampart upgrade --dry-run    # Preview without making changes
 rampart upgrade --no-policy-update  # Skip refreshing built-in policy profiles
+rampart upgrade --no-binary # Refresh managed policies without replacing the binary
 ```
 
 After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
@@ -179,6 +189,12 @@ Remove Rampart from the system. Removes agent hooks, stops and removes the servi
 rampart uninstall            # Interactive (prompts for confirmation)
 rampart uninstall --yes      # Skip confirmation prompt
 ```
+
+The command removes only Rampart-owned integration artifacts and preserves
+agent credentials, histories, sessions, memories, workspaces, and unrelated
+configuration. It exits unsuccessfully if an owned integration cannot be
+removed completely. Rampart policies and audit logs remain under
+`~/.rampart/` until the operator deletes or archives them explicitly.
 
 After running, delete `~/.rampart/` manually and remove any `rampart`-related lines from your shell profile.
 
@@ -274,6 +290,11 @@ Only allowed events are used for rule generation — denied events represent beh
 
 Install `rampart serve` as a persistent system service. On macOS, creates a LaunchAgent plist. On Linux, creates a systemd user service (`rampart-serve.service`). Not supported on Windows.
 
+Package-manager installs use a stable executable symlink only after Rampart
+verifies that it resolves to the currently running binary. This keeps the
+service valid across Homebrew upgrades without trusting an unrelated PATH
+entry.
+
 ```bash
 rampart serve install                         # Install with defaults (port 9090)
 rampart serve install --port 8080             # Custom port
@@ -299,7 +320,9 @@ The token is saved to `~/.rampart/token` and embedded in the service file (mode 
 
 ### `rampart serve stop`
 
-Stop a `rampart serve` process that was started with `--background`. Reads the PID from `~/.rampart/serve.pid` and sends `SIGTERM`.
+Stop a `rampart serve` process that was started with `--background`. Rampart
+authenticates the PID from `~/.rampart/serve.pid` before terminating the process
+with the platform-appropriate mechanism.
 
 ```bash
 rampart serve stop
@@ -510,7 +533,7 @@ rampart allow "npm install *"                  # Auto-detect tool type
 rampart allow "go test ./..."                  # Commands with ./ detected as exec
 rampart allow "/tmp/**" --tool read            # Explicit tool type
 rampart allow "docker build *" --global        # Write to global overrides
-rampart allow "pytest *" --project             # Write to project policy
+rampart block "pytest *" --project             # Write a restriction to project policy
 rampart allow "git push *" --yes               # Skip confirmation
 rampart allow "docker *" --for 1h              # Expires after 1 hour
 rampart allow "npm publish" --once             # Single-use — consumed after first match
@@ -584,10 +607,13 @@ rampart policy explain --config ~/.rampart/policies/user-overrides.yaml "sudo tr
 
 ### `rampart policy test`
 
-Evaluate a set of tool calls from a JSON file against your policies.
+Alias for `rampart test`. Evaluate one command, or run a YAML test suite against
+your policies.
 
 ```bash
-rampart policy test --input test-cases.json
+rampart policy test "rm -rf /"
+rampart policy test tests.yaml
+rampart policy test --run "blocks-*" --verbose tests.yaml
 ```
 
 ## Policy Management

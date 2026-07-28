@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peg/rampart/internal/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,6 +55,87 @@ policies:
 	assert.Equal(t, "extra-policy", cfg.Policies[1].Name)
 }
 
+func TestPolicyStoresRejectUnknownFields(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "condition typo cannot broaden allow",
+			yaml: `
+version: "1"
+default_action: deny
+policies:
+  - name: typo-allow
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when:
+          command_match: ["git *"]
+`,
+			want: "command_match",
+		},
+		{
+			name: "scope typo cannot broaden policy",
+			yaml: `
+version: "1"
+default_action: deny
+policies:
+  - name: typo-scope
+    match:
+      agentt: trusted-agent
+      tool: exec
+    rules:
+      - action: allow
+        when: {default: true}
+`,
+			want: "agentt",
+		},
+		{
+			name: "top level typo is rejected",
+			yaml: `
+version: "1"
+default_action: deny
+policiez: []
+`,
+			want: "policiez",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewMemoryStore([]byte(test.yaml), "test").Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.want)
+		})
+	}
+}
+
+func TestStrictPolicyDecodeAcceptsDescriptionAndInlineTests(t *testing.T) {
+	cfg, err := NewMemoryStore([]byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: documented-policy
+    description: "Explains why this policy exists"
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["rm *"]}
+tests:
+  - name: blocks removal
+    tool: exec
+    params: {command: "rm file"}
+    expect: deny
+`), "test").Load()
+	require.NoError(t, err)
+	require.Len(t, cfg.Policies, 1)
+	assert.Equal(t, "Explains why this policy exists", cfg.Policies[0].Description)
+	require.Len(t, cfg.Tests, 1)
+	assert.Equal(t, "blocks removal", cfg.Tests[0].Name)
+}
+
 func TestDirStore_SortedOrder(t *testing.T) {
 	dir := t.TempDir()
 
@@ -89,7 +171,7 @@ policies:
 	assert.Equal(t, "z-policy", cfg.Policies[2].Name)
 }
 
-func TestDirStore_InvalidYAMLSkipped(t *testing.T) {
+func TestDirStore_InvalidYAMLFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 
 	writeTestFile(t, filepath.Join(dir, "01-good.yaml"), `
@@ -112,11 +194,9 @@ policies:
 `)
 
 	store := NewDirStore(dir, nil)
-	cfg, err := store.Load()
-	require.NoError(t, err)
-	assert.Len(t, cfg.Policies, 2)
-	assert.Equal(t, "good-policy", cfg.Policies[0].Name)
-	assert.Equal(t, "also-good", cfg.Policies[1].Name)
+	_, err := store.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "02-bad.yaml")
 }
 
 func TestDirStore_EmptyDir(t *testing.T) {
@@ -134,7 +214,7 @@ func TestDirStore_NonexistentDir(t *testing.T) {
 	assert.Empty(t, cfg.Policies)
 }
 
-func TestDirStore_DuplicatePolicyNamesSkipped(t *testing.T) {
+func TestDirStore_DuplicatePolicyNamesFailClosed(t *testing.T) {
 	dir := t.TempDir()
 
 	writeTestFile(t, filepath.Join(dir, "01-first.yaml"), `
@@ -153,11 +233,9 @@ policies:
 `)
 
 	store := NewDirStore(dir, nil)
-	cfg, err := store.Load()
-	require.NoError(t, err)
-	// First one wins.
-	require.Len(t, cfg.Policies, 1)
-	assert.Equal(t, "dupe-policy", cfg.Policies[0].Name)
+	_, err := store.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate policy name")
 }
 
 func TestMultiStore_FileAndDir(t *testing.T) {
@@ -489,7 +567,7 @@ policies:
 	assert.Equal(t, "allow", cfg.DefaultAction, "base default_action should win")
 }
 
-func TestLayeredStore_InvalidProjectPolicyNonFatal(t *testing.T) {
+func TestLayeredStore_InvalidProjectPolicyFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base.yaml")
 	os.WriteFile(base, []byte("version: \"1\"\ndefault_action: allow\n"), 0644)
@@ -499,12 +577,12 @@ func TestLayeredStore_InvalidProjectPolicyNonFatal(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := NewLayeredStore(NewFileStore(base), proj, logger)
-	cfg, err := store.Load()
-	require.NoError(t, err, "invalid project policy should be non-fatal")
-	assert.Equal(t, "allow", cfg.DefaultAction)
+	_, err := store.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse project policy")
 }
 
-func TestDirStore_SkipsPolicyWithExcessiveDoubleStar(t *testing.T) {
+func TestDirStore_RejectsPolicyWithExcessiveDoubleStar(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "policy.yaml"), `
 version: "1"
@@ -519,9 +597,9 @@ policies:
           command_matches: ["curl **-d @**/.ssh/**"]
 `)
 	store := NewDirStore(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	cfg, err := store.Load()
-	require.NoError(t, err)
-	assert.Empty(t, cfg.Policies)
+	_, err := store.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid policy")
 }
 
 func TestLayeredStore_RejectsProjectPolicyWithExcessiveDoubleStar(t *testing.T) {
@@ -551,10 +629,9 @@ policies:
           command_matches: ["curl **-d @**/.ssh/**"]
 `)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg, err := NewLayeredStore(NewFileStore(base), project, logger).Load()
-	require.NoError(t, err)
-	require.Len(t, cfg.Policies, 1)
-	assert.Equal(t, "base", cfg.Policies[0].Name)
+	_, err := NewLayeredStore(NewFileStore(base), project, logger).Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validate project policy")
 }
 
 func TestLayeredStore_DuplicatePolicyNameSkipped(t *testing.T) {
@@ -595,6 +672,41 @@ func TestLayeredStore_NoExtraFile(t *testing.T) {
 	cfg, err := store.Load()
 	require.NoError(t, err)
 	assert.Equal(t, "deny", cfg.DefaultAction)
+}
+
+func TestLayeredStore_MissingConfiguredProjectFileFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	writeTestFile(t, base, "version: \"1\"\ndefault_action: deny\n")
+
+	store := NewLayeredStore(NewFileStore(base), filepath.Join(dir, "missing-project.yaml"), nil)
+	_, err := store.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inspect project policy")
+}
+
+func TestLayeredStore_PresentUnreadableProjectPathFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	projectDir := filepath.Join(dir, "project-policy-directory")
+	writeTestFile(t, base, "version: \"1\"\ndefault_action: allow\n")
+	require.NoError(t, os.Mkdir(projectDir, 0o755))
+
+	_, err := NewLayeredStore(NewFileStore(base), projectDir, nil).Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read project policy")
+}
+
+func TestLayeredStore_OversizedProjectPolicyFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	project := filepath.Join(dir, "project.yaml")
+	writeTestFile(t, base, "version: \"1\"\ndefault_action: allow\n")
+	require.NoError(t, os.WriteFile(project, make([]byte, maxPolicyFileSize+1), 0o644))
+
+	_, err := NewLayeredStore(NewFileStore(base), project, nil).Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
 }
 
 // TestLayeredStore_ResponseRegexCacheDeepCopy verifies that the deep-copy fix for
@@ -654,6 +766,93 @@ policies:
 	assert.False(t, poisoned, "cfg2 cache should not be aliased to cfg1 cache after deep-copy fix")
 }
 
+func TestLayeredStore_ProjectResponseRuleIsCompiledAndEnforced(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.yaml")
+	project := filepath.Join(dir, "project.yaml")
+	writeTestFile(t, base, `
+version: "1"
+default_action: allow
+policies: []
+`)
+	writeTestFile(t, project, `
+version: "1"
+policies:
+  - name: project-response-deny
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when:
+          response_matches: ["secret-[0-9]+"]
+        message: "project response blocked"
+`)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewLayeredStore(NewFileStore(base), project, logger), logger)
+	require.NoError(t, err)
+
+	decision := eng.EvaluateResponse(ToolCall{Tool: "exec"}, "output contains secret-42")
+	assert.Equal(t, ActionDeny, decision.Action)
+	assert.Equal(t, "project response blocked", decision.Message)
+}
+
+func TestLayeredStore_ProjectUsesCompleteRuleValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		projectYML string
+	}{
+		{
+			name: "webhook requires URL",
+			projectYML: `
+version: "1"
+policies:
+  - name: invalid-webhook
+    match: {tool: exec}
+    rules:
+      - action: webhook
+        when: {default: true}
+`,
+		},
+		{
+			name: "call count requires valid window",
+			projectYML: `
+version: "1"
+policies:
+  - name: invalid-call-count
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when:
+          call_count: {gte: 2, window: "not-a-duration"}
+`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			base := filepath.Join(dir, "base.yaml")
+			project := filepath.Join(dir, "project.yaml")
+			writeTestFile(t, base, `
+version: "1"
+default_action: deny
+policies:
+  - name: base-only
+    match: {tool: exec}
+    rules:
+      - action: deny
+        when: {command_matches: ["base-command"]}
+`)
+			writeTestFile(t, project, test.projectYML)
+
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			_, err := NewLayeredStore(NewFileStore(base), project, logger).Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "validate project policy")
+		})
+	}
+}
+
 func TestSafeUnmarshal_OversizedRejected(t *testing.T) {
 	// Anything over maxPolicyFileSize (1MiB) must be rejected before parsing.
 	big := make([]byte, maxPolicyFileSize+1)
@@ -681,7 +880,7 @@ e: {a: *d, b: *d, c: *d, d: *d}
 	// The real test is that we got here without panicking.
 }
 
-func TestDirStore_OversizedFileSkipped(t *testing.T) {
+func TestDirStore_OversizedFileFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write one valid file and one oversized file.
@@ -701,9 +900,52 @@ policies:
 	f.Close()
 
 	store := NewDirStore(dir, nil)
-	cfg, err := store.Load()
+	_, err = store.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}
+
+func TestDirStore_RejectsInvalidTopLevelConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{
+			name:    "unknown schema version",
+			content: "version: \"2\"\ndefault_action: deny\n",
+			wantErr: "unsupported policy version",
+		},
+		{
+			name:    "unknown default action",
+			content: "version: \"1\"\ndefault_action: dney\n",
+			wantErr: "invalid default_action",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "policy.yaml"), test.content)
+
+			_, err := NewDirStore(dir, nil).Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.wantErr)
+		})
+	}
+}
+
+func TestDirStore_LoadsPolicyWrittenByCustomPolicyWriter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.yaml")
+
+	custom := &policy.CustomPolicy{Version: "1"}
+	require.NoError(t, custom.AddRule("deny", "rm *", "blocked by user rule", "exec"))
+	require.NoError(t, policy.SaveCustomPolicy(path, custom))
+
+	cfg, err := NewDirStore(dir, nil).Load()
 	require.NoError(t, err)
-	// Oversized file should be skipped; good policy should still load.
-	assert.Len(t, cfg.Policies, 1)
-	assert.Equal(t, "good-policy", cfg.Policies[0].Name)
+	require.Len(t, cfg.Policies, 1)
+	require.Len(t, cfg.Policies[0].Rules, 1)
+	assert.False(t, cfg.Policies[0].Rules[0].Added.IsZero())
 }

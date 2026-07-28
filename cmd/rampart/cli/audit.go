@@ -135,7 +135,11 @@ func newAuditVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Verify audit hash-chain integrity",
-		Long: `Verify the hash-chain integrity of audit log files.
+		Long: `Verify the current shared hash chain and legacy native-hook records.
+
+Current Rampart services, MCP adapters, and native hooks write one cross-file
+hash chain. Older releases wrote independently hashed audit-hook records;
+those legacy records are also checked for modification.
 
 Use --since to skip files before a given date (useful when older files have
 a known break in the chain from a previous dev session).
@@ -162,13 +166,8 @@ Example:
 				sinceDate = &parsedSinceDate
 				filtered := files[:0]
 				for _, f := range files {
-					base := filepath.Base(f)
-					datePart := strings.TrimSuffix(base, ".jsonl")
-					if len(datePart) >= len("2006-01-02") {
-						datePart = datePart[:len("2006-01-02")]
-					}
-					fileDate, dateErr := time.Parse("2006-01-02", datePart)
-					if dateErr != nil {
+					fileDate, found := auditDateFromFilename(filepath.Base(f))
+					if !found {
 						// Can't parse date from filename — include it to be safe.
 						filtered = append(filtered, f)
 						continue
@@ -183,16 +182,34 @@ Example:
 				}
 			}
 
-			count, hashesByID, err := verifyAuditChain(files, since != "")
+			chainFiles, standaloneFiles := partitionAuditFiles(files)
+			chainCount := 0
+			var hashesByID map[string]string
+			if len(chainFiles) > 0 {
+				chainCount, hashesByID, err = verifyAuditChain(chainFiles, since != "")
+				if err != nil {
+					return err
+				}
+				if err := verifyAnchorsWithSince(auditDir, hashesByID, since == "", sinceDate); err != nil {
+					return err
+				}
+			}
+
+			standaloneCount, err := verifyStandaloneAuditRecords(standaloneFiles)
 			if err != nil {
 				return err
 			}
 
-			if err := verifyAnchorsWithSince(auditDir, hashesByID, since == "", sinceDate); err != nil {
-				return err
+			var message string
+			switch {
+			case len(standaloneFiles) == 0:
+				message = fmt.Sprintf("✓ Chain verified: %d events across %d files, no tampering detected\n", chainCount, len(chainFiles))
+			case len(chainFiles) == 0:
+				message = fmt.Sprintf("✓ Record hashes verified: %d native-hook events across %d files, no modification detected\n", standaloneCount, len(standaloneFiles))
+			default:
+				message = fmt.Sprintf("✓ Audit verified: %d chained events across %d files and %d native-hook events across %d files, no modification detected\n", chainCount, len(chainFiles), standaloneCount, len(standaloneFiles))
 			}
-
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "✓ Chain verified: %d events across %d files, no tampering detected\n", count, len(files)); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), message); err != nil {
 				return fmt.Errorf("audit: write verify output: %w", err)
 			}
 			return nil
@@ -204,11 +221,70 @@ Example:
 	return cmd
 }
 
+func auditDateFromFilename(name string) (time.Time, bool) {
+	for i := 0; i+len("2006-01-02") <= len(name); i++ {
+		candidate := name[i : i+len("2006-01-02")]
+		if parsed, err := time.Parse("2006-01-02", candidate); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func partitionAuditFiles(files []string) (chainFiles, standaloneFiles []string) {
+	for _, file := range files {
+		if strings.HasPrefix(filepath.Base(file), "audit-hook-") {
+			standaloneFiles = append(standaloneFiles, file)
+			continue
+		}
+		chainFiles = append(chainFiles, file)
+	}
+	return chainFiles, standaloneFiles
+}
+
+func verifyStandaloneAuditRecords(files []string) (int, error) {
+	count := 0
+	seenIDs := make(map[string]string)
+	for _, file := range files {
+		if err := scanAuditEvents(file, func(event audit.Event) error {
+			if previousFile, exists := seenIDs[event.ID]; exists {
+				return fmt.Errorf("audit: duplicate native-hook event ID %s in %s and %s", event.ID, previousFile, filepath.Base(file))
+			}
+			ok, err := event.VerifyHash()
+			if err != nil {
+				return fmt.Errorf("audit: verify hash for native-hook event %s in file %s: %w", event.ID, filepath.Base(file), err)
+			}
+			if !ok {
+				return fmt.Errorf("audit: RECORD MODIFIED at native-hook event %s in file %s: hash verification failed", event.ID, filepath.Base(file))
+			}
+			seenIDs[event.ID] = filepath.Base(file)
+			count++
+			return nil
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return count, nil
+}
+
 func verifyAuditChain(files []string, allowInitialPrev ...bool) (int, map[string]string, error) {
 	partialChain := len(allowInitialPrev) > 0 && allowInitialPrev[0]
+	if !partialChain && allManagedChainFiles(files) {
+		count, err := audit.VerifyManagedChain(filepath.Dir(files[0]))
+		if err != nil {
+			return 0, nil, fmt.Errorf("audit: CHAIN BROKEN: %w", err)
+		}
+		hashesByID, err := collectAuditHashes(files)
+		if err != nil {
+			return 0, nil, err
+		}
+		return int(count), hashesByID, nil
+	}
+
 	prevHash := ""
 	eventCount := 0
 	hashesByID := map[string]string{}
+	seenIDs := map[string]string{}
 
 	for _, file := range files {
 		scanErr := scanAuditEvents(file, func(event audit.Event) error {
@@ -228,8 +304,12 @@ func verifyAuditChain(files []string, allowInitialPrev ...bool) (int, map[string
 				return fmt.Errorf("audit: CHAIN BROKEN at event %s in file %s: hash verification failed", event.ID, filepath.Base(file))
 			}
 
+			if previousFile, duplicate := seenIDs[event.ID]; duplicate {
+				return fmt.Errorf("audit: duplicate event ID %s in %s and %s", event.ID, previousFile, filepath.Base(file))
+			}
 			prevHash = event.Hash
 			hashesByID[event.ID] = event.Hash
+			seenIDs[event.ID] = filepath.Base(file)
 			return nil
 		})
 		if scanErr != nil {
@@ -238,6 +318,37 @@ func verifyAuditChain(files []string, allowInitialPrev ...bool) (int, map[string
 	}
 
 	return eventCount, hashesByID, nil
+}
+
+func allManagedChainFiles(files []string) bool {
+	if len(files) == 0 {
+		return false
+	}
+	dir := filepath.Dir(files[0])
+	for _, file := range files {
+		if filepath.Dir(file) != dir || !audit.IsManagedChainFile(file) {
+			return false
+		}
+	}
+	return true
+}
+
+func collectAuditHashes(files []string) (map[string]string, error) {
+	hashesByID := make(map[string]string)
+	seenIDs := make(map[string]string)
+	for _, file := range files {
+		if err := scanAuditEvents(file, func(event audit.Event) error {
+			if previousFile, duplicate := seenIDs[event.ID]; duplicate {
+				return fmt.Errorf("audit: duplicate event ID %s in %s and %s", event.ID, previousFile, filepath.Base(file))
+			}
+			hashesByID[event.ID] = event.Hash
+			seenIDs[event.ID] = filepath.Base(file)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return hashesByID, nil
 }
 
 func newAuditStatsCmd() *cobra.Command {
@@ -399,5 +510,21 @@ func findLatestAuditFile(auditDir string) (string, error) {
 	if len(files) == 0 {
 		return "", fmt.Errorf("audit: no .jsonl files found in %s", auditDir)
 	}
+	files = preferManagedAuditFiles(files)
 	return files[len(files)-1], nil
+}
+
+// preferManagedAuditFiles preserves legacy-only behavior but prevents frozen
+// audit-hook files from shadowing the unified chain after an upgrade.
+func preferManagedAuditFiles(files []string) []string {
+	managed := make([]string, 0, len(files))
+	for _, file := range files {
+		if audit.IsManagedChainFile(file) {
+			managed = append(managed, file)
+		}
+	}
+	if len(managed) > 0 {
+		return managed
+	}
+	return files
 }

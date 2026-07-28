@@ -27,15 +27,6 @@ function parseBody(call) {
   return JSON.parse(call.opts.body);
 }
 
-async function waitFor(predicate, message, { timeoutMs = 250, intervalMs = 5 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error(message);
-}
-
 async function runWithFetch({ name, fetchImpl, pluginConfig = {}, invoke }) {
   const { api, handlers, logs } = createApi(pluginConfig);
   const originalFetch = global.fetch;
@@ -122,39 +113,11 @@ const unreachableResult = await runWithFetch({
 assert(unreachableResult?.block === true, 'bash/exec alias should fail closed when Rampart is unreachable');
 assert(unreachableResult.blockReason.includes('bash→exec'), `block reason should show alias mapping: ${unreachableResult.blockReason}`);
 
-const auditCalls = [];
-await runWithFetch({
-  name: 'bash-after-audit-canonical-exec',
-  fetchImpl: async (url, opts = {}) => {
-    auditCalls.push({ url: String(url), opts });
-    return { ok: true, status: 200, json: async () => ({ ok: true }) };
-  },
-  invoke: async ({ handlers }) => {
-    const after = handlers.after_tool_call;
-    assert(typeof after === 'function', 'after_tool_call handler missing');
-    await after({ toolName: 'bash', params: { command: 'echo hi' }, durationMs: 7 }, {
-      agentId: 'main',
-      sessionKey: 'agent:main:test',
-      runId: 'bash-after-run',
-    });
-    await waitFor(
-      () => auditCalls.some((call) => call.url.includes('/v1/audit')),
-      'audit endpoint not called',
-    );
-  },
-});
-const auditCall = auditCalls.find((call) => call.url.includes('/v1/audit'));
-assert(auditCall, 'audit endpoint not called');
-const auditBody = parseBody(auditCall);
-assert(auditBody.tool === 'exec', `audit tool = ${auditBody.tool}, want exec`);
-assert(auditBody.params.command === 'echo hi', `audit command missing: ${JSON.stringify(auditBody.params)}`);
-
 console.log(JSON.stringify({
   ok: true,
   scenarios: [
     'bash-allow-maps-to-exec',
     'bash-ask-learns-canonical-exec',
     'bash-unreachable-blocks-as-exec',
-    'bash-after-audit-canonical-exec',
   ],
 }, null, 2));

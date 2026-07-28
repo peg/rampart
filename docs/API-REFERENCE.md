@@ -64,7 +64,7 @@ Common decision/action values across responses:
 Evaluates a tool call against active policy. In `enforce` mode, deny decisions are blocked; approval-required decisions are queued.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-token>` (agent-scoped evaluation tokens are rejected)
 - `Content-Type: application/json`
 
 ### Request Body Schema
@@ -164,7 +164,13 @@ Approval required (Rampart-native approval flow):
 - `400 Bad Request` invalid JSON body
 - `401 Unauthorized` missing/invalid bearer token
 - `403 Forbidden` denied in enforce mode
-- `503 Service Unavailable` approval queue full
+- `503 Service Unavailable` approval queue full or required audit storage unavailable
+
+A non-empty `response` produces a separate response-phase audit event. The
+event sets `request.rampart_phase` to `response`, links to the preceding event
+with `request.request_audit_id`, records `response_bytes`, and does not store the
+raw response. In enforce mode, Rampart withholds the response if that audit
+event cannot be persisted.
 
 ### curl
 ```bash
@@ -175,27 +181,33 @@ curl -X POST "http://127.0.0.1:9090/v1/tool/exec" \
 ```
 
 ## POST /v1/preflight/{toolName}
-Dry-run policy evaluation. Does not create/resolve approvals or execute the tool.
+Policy preview or host-owned pre-execution enforcement. By default this is a
+non-mutating preview. Set `"enforce": true` only when the caller is at the
+actual tool execution boundary; Rampart then records call-count state,
+atomically consumes a matching `once: true` grant, and writes the audit record.
+It still does not create/resolve approvals or execute the tool.
 
 ### Request Headers
 - `Authorization: Bearer <token>`
 - `Content-Type: application/json`
 
 ### Request Body Schema
-Same schema as `POST /v1/tool/{toolName}`.
+Same schema as `POST /v1/tool/{toolName}`. Optional `enforce` defaults to
+`false`. `verification: true` cannot be combined with `enforce: true`.
 
 ### Response Body Schema
 
 ```json
 {
   "type": "object",
-  "required": ["allowed", "decision", "message", "matched_policies", "eval_duration_us"],
+  "required": ["allowed", "decision", "message", "matched_policies", "eval_duration_us", "enforced"],
   "properties": {
     "allowed": { "type": "boolean" },
     "decision": { "type": "string" },
     "message": { "type": "string" },
     "matched_policies": { "type": "array", "items": { "type": "string" } },
     "eval_duration_us": { "type": "integer" },
+    "enforced": { "type": "boolean" },
     "suggestions": { "type": "array", "items": { "type": "string" } }
   }
 }
@@ -209,7 +221,8 @@ Same schema as `POST /v1/tool/{toolName}`.
   "decision": "deny",
   "message": "destructive command blocked",
   "matched_policies": ["block-destructive"],
-  "eval_duration_us": 8
+  "eval_duration_us": 8,
+  "enforced": false
 }
 ```
 
@@ -390,6 +403,10 @@ curl -H "Authorization: Bearer $TOKEN" \
 ## POST /v1/approvals/{id}/resolve
 Approves or denies a pending approval.
 
+`persist: true` stores an exact rule for `exec`, `read`, `write`, or `edit`.
+Unsupported tool types return `400` and leave the approval pending so the
+operator can approve once or author an explicit policy.
+
 ### Request Headers
 - `Authorization: Bearer <token>` (not required if valid signed `sig` + `exp` query params are provided)
 - `Content-Type: application/json`
@@ -528,7 +545,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 ## POST /v1/rules/learn
-Writes a permanent allow rule to `~/.rampart/policies/user-overrides.yaml`. Used by the OpenClaw plugin for "Always Allow" writeback. Rate-limited to ~5 writes/sec.
+Writes a permanent, exact allow rule to `~/.rampart/policies/user-overrides.yaml`. Used by the OpenClaw plugin for "Always Allow" writeback. Rampart preserves the full approved command or file path and escapes literal glob metacharacters rather than generalizing it. Automatic persistence supports `exec`, `read`, `write`, and `edit`; use an explicit policy for tools whose complete input cannot yet be represented exactly. Rate-limited to ~5 writes/sec.
 
 ### Request Headers
 - `Authorization: Bearer <token>` (admin scope required)
@@ -541,8 +558,8 @@ Writes a permanent allow rule to `~/.rampart/policies/user-overrides.yaml`. Used
   "type": "object",
   "required": ["tool", "args", "decision"],
   "properties": {
-    "tool":     { "type": "string", "example": "exec" },
-    "args":     { "type": "string", "description": "Command or path — a smart glob pattern is computed automatically", "example": "sudo apt-get install nmap" },
+    "tool":     { "type": "string", "enum": ["exec", "read", "write", "edit"], "example": "exec" },
+    "args":     { "type": "string", "description": "Literal command or path to persist exactly", "example": "sudo apt-get install nmap" },
     "decision": { "type": "string", "enum": ["allow"], "description": "Only 'allow' is accepted — use policy YAML for deny rules" },
     "source":   { "type": "string", "description": "Optional origin label for audit trail", "example": "openclaw-approval" }
   }
@@ -556,7 +573,7 @@ Writes a permanent allow rule to `~/.rampart/policies/user-overrides.yaml`. Used
   "type": "object",
   "properties": {
     "rule_name": { "type": "string", "example": "user-allow-a3f2b1c4" },
-    "pattern":   { "type": "string", "example": "sudo apt-get install *" },
+    "pattern":   { "type": "string", "example": "sudo apt-get install nmap" },
     "created":   { "type": "boolean" }
   }
 }

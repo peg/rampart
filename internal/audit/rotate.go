@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/peg/rampart/internal/filetxn"
 )
 
 const anchorFilename = "audit-anchor.json"
@@ -29,32 +31,6 @@ func (s *JSONLSink) shouldRotateLocked(incoming int) bool {
 		return false
 	}
 	return s.currentSize+int64(incoming) > s.rotateSize
-}
-
-func (s *JSONLSink) openNewFileLocked(withHeader bool, prevFile string) error {
-	name := s.nextFilenameLocked()
-	path := filepath.Join(s.dir, name)
-
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("audit: open jsonl file: %w", err)
-	}
-
-	// Get current file size (file may already exist from earlier today).
-	info, statErr := file.Stat()
-	if statErr != nil {
-		file.Close()
-		return fmt.Errorf("audit: stat jsonl file: %w", statErr)
-	}
-
-	s.file = file
-	s.currentFile = name
-	s.currentSize = info.Size()
-
-	if !withHeader {
-		return nil
-	}
-	return s.writeChainContinuationLocked(prevFile)
 }
 
 func (s *JSONLSink) rotateLocked() error {
@@ -93,23 +69,40 @@ func (s *JSONLSink) openRotatedFileLocked(prevFile string) error {
 		name = s.nextFilenameLocked()
 	}
 
+	if err := s.openNamedFileLocked(name); err != nil {
+		return err
+	}
+	return s.writeChainContinuationLocked(prevFile)
+}
+
+func (s *JSONLSink) openNamedFileLocked(name string) error {
 	path := filepath.Join(s.dir, name)
+	created := false
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		created = true
+	} else if err != nil {
+		return fmt.Errorf("audit: inspect jsonl file: %w", err)
+	}
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("audit: open jsonl file: %w", err)
 	}
-
-	info, statErr := file.Stat()
-	if statErr != nil {
-		file.Close()
-		return fmt.Errorf("audit: stat jsonl file: %w", statErr)
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return fmt.Errorf("audit: stat jsonl file: %w", err)
 	}
 
+	if created && s.fsync {
+		if err := filetxn.SyncDir(s.dir); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("audit: persist jsonl directory entry: %w", err)
+		}
+	}
 	s.file = file
 	s.currentFile = name
 	s.currentSize = info.Size()
-
-	return s.writeChainContinuationLocked(prevFile)
+	return nil
 }
 
 func (s *JSONLSink) writeChainContinuationLocked(prevFile string) error {

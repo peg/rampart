@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 )
 
 type sseHub struct {
@@ -80,6 +81,13 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
+	}
+	// The server's ordinary WriteTimeout protects finite API responses. SSE is
+	// intentionally long-lived, so clear its per-response deadline after auth;
+	// disconnects are still driven by request cancellation and server shutdown.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil &&
+		err != http.ErrNotSupported {
+		s.logger.Debug("proxy: could not clear SSE write deadline", "error", err)
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")

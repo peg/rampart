@@ -1287,12 +1287,19 @@ policies:
       - action: deny
         message: "Destructive MCP operation blocked (delete/destroy/remove/drop)"
 
-  - name: log-mcp-dangerous
+  - name: ask-mcp-dangerous
     match:
       tool: ["mcp-dangerous"]
     rules:
-      - action: watch
-        message: "Dangerous MCP operation logged (stop/restart/execute/modify)"
+      - action: ask
+        message: "Dangerous MCP operation requires approval (stop/restart/execute/modify)"
+
+  - name: ask-mcp-unclassified
+    match:
+      tool: ["mcp"]
+    rules:
+      - action: ask
+        message: "Unclassified MCP operation requires approval"
 
   - name: block-credential-leaks
     match:
@@ -1328,12 +1335,13 @@ policies:
         message: "Sensitive credential detected in response"
 
   - name: watch-prompt-injection
-    description: "Detect high-confidence prompt injection attempts in tool responses and require approval"
+    description: "Block high-confidence prompt injection attempts in tool responses"
     match:
       tool: ["fetch", "web_search", "read", "exec", "mcp"]
     rules:
-        # High-confidence injection markers — require approval before continuing.
-      - action: ask
+        # Response evaluation runs after the tool, so there is no safe approval
+        # boundary left; block matching content before it reaches the model.
+      - action: deny
         when:
           response_matches:
             # Classic instruction override attempts
@@ -1352,7 +1360,7 @@ policies:
             # Explicit exfiltration instructions embedded in content
             - "(?i)(send|POST|exfiltrate|transmit) (this|the following|these|it) to (https?://|the server)"
             - "(?i)leak the (following|contents|file)"
-        message: "Possible prompt injection detected in tool response — approval required"
+        message: "Possible prompt injection blocked in tool response"
 
 # ---------------------------------------------------------------------------
 # APPROVAL EXAMPLES (uncomment and customize)

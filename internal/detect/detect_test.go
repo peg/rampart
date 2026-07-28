@@ -248,6 +248,48 @@ func TestEnvironmentDetectsAgentsAndToolsFromSignals(t *testing.T) {
 	}
 }
 
+func TestClineExtensionInstalledCurrentVSCodePaths(t *testing.T) {
+	for _, relative := range []string{
+		filepath.Join(".vscode", "extensions", "saoudrizwan.claude-dev-4.19.0"),
+		filepath.Join(".vscode-insiders", "extensions", "saoudrizwan.claude-dev-4.19.0"),
+		filepath.Join(".vscode-server", "extensions", "saoudrizwan.claude-dev-4.19.0"),
+		filepath.Join(".vscode-server-insiders", "extensions", "saoudrizwan.claude-dev-4.19.0"),
+	} {
+		t.Run(relative, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(home, relative), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if !ClineExtensionInstalled(home) {
+				t.Fatalf("current Cline extension at %s was not detected", relative)
+			}
+		})
+	}
+}
+
+func TestClineExtensionInstalledPreservesLegacyIDsAndRejectsFiles(t *testing.T) {
+	home := t.TempDir()
+	legacy := filepath.Join(home, ".vscode", "extensions", "saoud-m.vscode-claude-dev-3.0.0")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !ClineExtensionInstalled(home) {
+		t.Fatal("legacy Cline extension ID was not detected")
+	}
+
+	fileOnlyHome := t.TempDir()
+	file := filepath.Join(fileOnlyHome, ".vscode", "extensions", "saoudrizwan.claude-dev-4.19.0")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("not an extension directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ClineExtensionInstalled(fileOnlyHome) {
+		t.Fatal("a matching regular file must not be treated as an installed extension")
+	}
+}
+
 func TestDetectedAgentsAndToolsOrder(t *testing.T) {
 	r := &DetectResult{
 		ClaudeCode:   true,

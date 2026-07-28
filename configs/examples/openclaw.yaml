@@ -171,7 +171,7 @@ policies:
     match:
       tool: "exec"
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "sudo *"
@@ -186,7 +186,7 @@ policies:
     match:
       tool: "exec"
     rules:
-      - action: log
+      - action: watch
         when:
           command_matches:
             - "curl *"

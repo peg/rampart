@@ -465,14 +465,24 @@ policies:
           default: true
         message: "Web search allowed"
 
-  # ── browser: allow known-safe + watch unknown domains ─────────────────
-  - name: allow-safe-browser
-    description: "Allow browser navigation to known-safe domains"
+  # ── browser: classify reads, navigation, and state-changing actions ───
+  # The native adapter derives rampart_consequence from OpenClaw's documented
+  # action field. Domain allowlists apply only to navigation; they must never
+  # turn clicks, typing, uploads, or other state changes into implicit allows.
+  - name: openclaw-browser-consequences
+    description: "Allow browser reads and safe navigation; require approval for state-changing actions"
     match:
       tool: ["browser"]
     rules:
       - action: allow
         when:
+          tool_param_matches:
+            rampart_consequence: "openclaw:browser-read-only"
+        message: "Read-only browser inspection allowed"
+      - action: allow
+        when:
+          tool_param_matches:
+            rampart_consequence: "openclaw:browser-navigation"
           domain_matches:
             # Discord / Telegram for OpenClaw message plugin UIs
             - "discord.com"
@@ -487,18 +497,20 @@ policies:
             - "127.0.0.1"
             - "*.local"
         message: "Browser navigation to known-safe domain allowed"
-
-  # ── watch-browser-navigation: audit unknown domain visits ─────────────
-  # Log browser tool calls to unknown/unclassified domains for audit visibility.
-  - name: watch-browser-navigation
-    description: "Audit browser navigation to unknown domains"
-    match:
-      tool: ["browser"]
-    rules:
-      - action: watch
+      - action: ask
+        when:
+          tool_param_matches:
+            rampart_consequence: "openclaw:browser-navigation"
+        message: "Browser navigation to an unclassified domain requires approval"
+      - action: ask
+        when:
+          tool_param_matches:
+            rampart_consequence: "openclaw:browser-mutation"
+        message: "State-changing browser action requires approval"
+      - action: ask
         when:
           default: true
-        message: "Browser navigation to unclassified domain logged for audit"
+        message: "Unclassified browser action requires approval"
 
   # ── message: allow read actions, ask for sends to unknown targets ──────
   # ── message: allow all message operations ─────────────────────────────
@@ -527,6 +539,26 @@ policies:
           default: true
         message: "Canvas operation allowed"
 
+  # ── Current OpenClaw control and orchestration tools ──────────────────
+  # The adapter recognizes OpenClaw's current built-in catalog separately
+  # from plugin/MCP tools. Low-risk status/list operations are allowed;
+  # transcript access, scheduling, model changes, process control, device
+  # actions, gateway changes, and other mutations require host approval.
+  - name: openclaw-control-consequences
+    description: "Allow safe host introspection while requiring approval for stateful control actions"
+    match:
+      tool: ["process", "nodes", "cron", "gateway", "agents_list", "sessions_list", "sessions_history", "sessions_yield", "subagents", "session_status"]
+    rules:
+      - action: allow
+        when:
+          tool_param_matches:
+            rampart_consequence: "openclaw:control-read-only"
+        message: "Read-only OpenClaw control operation allowed"
+      - action: ask
+        when:
+          default: true
+        message: "OpenClaw control operation requires human approval"
+
   # ── sessions_spawn: subagent spawning guard ───────────────────────────
   # Agents can spawn subagents but not into unrestricted agent IDs.
   # Subagents themselves cannot spawn further agents (depth limit).
@@ -537,7 +569,11 @@ policies:
     rules:
       - action: deny
         when:
-          session_matches: ["subagent:*"]
+          session_matches:
+            - "agent:*:subagent:*"
+            - "agent:*:acp:*"
+            - "subagent:*" # legacy OpenClaw session key
+            - "acp:*"      # standalone/legacy ACP session key
         message: "Subagents cannot spawn further agents (depth limit enforced)"
       - action: allow
         when:
@@ -554,7 +590,12 @@ policies:
     rules:
       - action: deny
         when:
-          session_matches: ["subagent:*", "cron:*"]
+          session_matches:
+            - "agent:*:subagent:*"
+            - "agent:*:acp:*"
+            - "subagent:*" # legacy OpenClaw session key
+            - "acp:*"      # standalone/legacy ACP session key
+            - "cron:*"
           path_matches:
             - "**/SOUL.md"
             - "**/IDENTITY.md"
@@ -563,25 +604,6 @@ policies:
             - "**/.openclaw/openclaw.json"
         message: "Subagents cannot modify identity or config files"
 
-  # ── Response scanning ──────────────────────────────────────────────────
-  # Block credentials from leaking into agent context.
-  - name: block-credential-in-response
-    description: "Block secrets in tool responses before they enter agent context"
-    match:
-      tool: ["read", "exec", "web_fetch"]
-    rules:
-      - action: deny
-        when:
-          response_matches:
-            - "AKIA[0-9A-Z]{16}"
-            - "ASIA[0-9A-Z]{16}"
-            - "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
-            - "ghp_[a-zA-Z0-9]{36}"
-            - "github_pat_[a-zA-Z0-9_]{80,}"
-            - "sk-[a-zA-Z0-9]{20,}"
-        message: "Response blocked: contains credentials"
-
-  # NOTE: default_action: ask means any unmatched tool call surfaces for
-  # human review rather than silently failing. This is intentional — it
-  # reduces false positives for novel tools and operations not yet in the
-  # allowlist while maintaining oversight.
+  # OpenClaw's current after_tool_call hook is observational and cannot block
+  # the completed result before it reaches the model. Response-side rules live
+  # only on integrations with a real result-rewrite or continuation boundary.

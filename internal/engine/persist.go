@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	policyutil "github.com/peg/rampart/internal/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -107,12 +108,13 @@ func GeneralizeCommand(cmd string) string {
 	return tokens[0] + " " + tokens[1] + "*"
 }
 
-// GenerateAllowRule creates a Policy from a ToolCall that would allow
-// similar future calls.
-func GenerateAllowRule(call ToolCall) Policy {
-	tool := call.Tool
+// GenerateAllowRule creates a narrowly scoped Policy from a ToolCall. Automatic
+// approval persistence is exact by default: it never inserts wildcards, and
+// literal glob metacharacters in commands and paths are escaped.
+func GenerateAllowRule(call ToolCall) (Policy, error) {
+	tool := strings.TrimSpace(call.Tool)
 	if tool == "" {
-		tool = "*"
+		return Policy{}, fmt.Errorf("persist: allow rule requires a tool")
 	}
 
 	now := time.Now().UTC()
@@ -121,8 +123,11 @@ func GenerateAllowRule(call ToolCall) Policy {
 
 	switch tool {
 	case "exec":
-		cmd := call.Command()
-		generalized := GeneralizeCommand(cmd)
+		cmd := strings.TrimSpace(call.Command())
+		if cmd == "" {
+			return Policy{}, fmt.Errorf("persist: exec allow rule requires a command")
+		}
+		pattern := policyutil.BuildExactAllowPattern(cmd)
 		tokens := strings.Fields(cmd)
 		nameParts := tokens
 		if len(nameParts) > 2 {
@@ -132,42 +137,35 @@ func GenerateAllowRule(call ToolCall) Policy {
 		rule = Rule{
 			Action: "allow",
 			When: Condition{
-				CommandMatches: []string{generalized},
+				CommandMatches: []string{pattern},
 			},
 		}
 
-	case "read", "write":
+	case "read", "write", "edit":
 		path := call.Path()
-		if path == "" {
-			path = "*"
+		if strings.TrimSpace(path) == "" {
+			return Policy{}, fmt.Errorf("persist: %s allow rule requires a path", tool)
 		}
 		action := tool
 		ruleName = fmt.Sprintf("auto-allow-%s-%s", action, sanitizeName(path))
 		rule = Rule{
 			Action: "allow",
 			When: Condition{
-				PathMatches: []string{path},
+				PathMatches: []string{policyutil.BuildExactAllowPattern(path)},
 			},
 		}
 
 	default:
-		// MCP or other tools: match on tool name.
-		ruleName = fmt.Sprintf("auto-allow-%s", sanitizeName(tool))
-		rule = Rule{
-			Action: "allow",
-			When: Condition{
-				Default: true,
-			},
-		}
+		return Policy{}, fmt.Errorf("persist: automatic allow is unsupported for tool %q; author an explicit policy instead", tool)
 	}
 
 	return Policy{
 		Name: fmt.Sprintf("%s-%s", ruleName, now.Format("20060102T150405Z")),
 		Match: Match{
-			Tool: StringOrSlice{tool},
+			Tool: StringOrSlice{policyutil.BuildExactAllowPattern(tool)},
 		},
 		Rules: []Rule{rule},
-	}
+	}, nil
 }
 
 // MigrateAllowRuleGlobs rewrites old-format command_matches patterns that
@@ -197,7 +195,7 @@ func migrateAllowRuleGlobsLocked(policyPath string) (int, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeUnmarshal(data, &cfg); err != nil {
 		return 0, fmt.Errorf("persist: parse %s: %w", policyPath, err)
 	}
 
@@ -227,24 +225,26 @@ func migrateAllowRuleGlobsLocked(policyPath string) (int, error) {
 // AppendAllowRule generates an allow rule from a ToolCall and appends it
 // to the auto-allowed policy file. Creates the file and directories if needed.
 func AppendAllowRule(policyPath string, call ToolCall) error {
+	policy, err := GenerateAllowRule(call)
+	if err != nil {
+		return err
+	}
 	// Ensure directory exists.
 	dir := filepath.Dir(policyPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("persist: create policy dir: %w", err)
 	}
 	return withPolicyFileLock(policyPath, func() error {
-		return appendAllowRuleLocked(policyPath, call)
+		return appendAllowRuleLocked(policyPath, policy)
 	})
 }
 
-func appendAllowRuleLocked(policyPath string, call ToolCall) error {
-	policy := GenerateAllowRule(call)
-
+func appendAllowRuleLocked(policyPath string, policy Policy) error {
 	// Load existing config or create new one.
 	var cfg Config
 	data, err := os.ReadFile(policyPath)
 	if err == nil {
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
+		if err := safeUnmarshal(data, &cfg); err != nil {
 			return fmt.Errorf("persist: parse existing policy: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
@@ -326,142 +326,6 @@ func slicesEqual(a, b []string) bool {
 	return true
 }
 
-// cleanRule is a minimal YAML representation that omits empty fields.
-type cleanRule struct {
-	Action    string     `yaml:"action"`
-	When      cleanWhen  `yaml:"when"`
-	ExpiresAt *time.Time `yaml:"expires_at,omitempty"`
-	Once      bool       `yaml:"once,omitempty"`
-}
-
-type cleanWhen struct {
-	CommandMatches        []string `yaml:"command_matches,omitempty"`
-	CommandNotMatches     []string `yaml:"command_not_matches,omitempty"`
-	CommandContains       []string `yaml:"command_contains,omitempty"`
-	CommandEnvAssignments []string `yaml:"command_env_assignments,omitempty"`
-	PathMatches           []string `yaml:"path_matches,omitempty"`
-	Default               bool     `yaml:"default,omitempty"`
-}
-
-type cleanPolicy struct {
-	Name  string      `yaml:"name"`
-	Match cleanMatch  `yaml:"match"`
-	Rules []cleanRule `yaml:"rules"`
-}
-
-type cleanMatch struct {
-	Tool []string `yaml:"tool"`
-}
-
-type cleanConfig struct {
-	Version       string        `yaml:"version"`
-	DefaultAction string        `yaml:"default_action"`
-	Policies      []cleanPolicy `yaml:"policies"`
-}
-
-// marshalCleanYAML converts a Config to clean YAML without empty fields.
-func marshalCleanYAML(cfg *Config) ([]byte, error) {
-	clean := cleanConfig{
-		Version:       cfg.Version,
-		DefaultAction: cfg.DefaultAction,
-	}
-	for _, p := range cfg.Policies {
-		cp := cleanPolicy{
-			Name:  p.Name,
-			Match: cleanMatch{Tool: []string(p.Match.Tool)},
-		}
-		for _, r := range p.Rules {
-			cp.Rules = append(cp.Rules, cleanRule{
-				Action: r.Action,
-				When: cleanWhen{
-					CommandMatches:        r.When.CommandMatches,
-					CommandNotMatches:     r.When.CommandNotMatches,
-					CommandContains:       r.When.CommandContains,
-					CommandEnvAssignments: r.When.CommandEnvAssignments,
-					PathMatches:           r.When.PathMatches,
-					Default:               r.When.Default,
-				},
-				ExpiresAt: r.ExpiresAt,
-				Once:      r.Once,
-			})
-		}
-		clean.Policies = append(clean.Policies, cp)
-	}
-	return yaml.Marshal(&clean)
-}
-
-// MatchesAutoAllowFile checks if a ToolCall matches any rule in the auto-allow
-// policy file. Returns true if the call should be allowed immediately without
-// going through the approval queue.
-//
-// This is checked at the serve level BEFORE creating a pending approval, so
-// that user "Always Allow" decisions override require_approval policies.
-func MatchesAutoAllowFile(policyPath string, call ToolCall) bool {
-	data, err := os.ReadFile(policyPath)
-	if err != nil {
-		return false // no file = no auto-allow rules
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-	if field, _ := oversizedMatchInput(&cfg, call); field != "" {
-		return false
-	}
-
-	for _, p := range cfg.Policies {
-		// Check tool match.
-		if len(p.Match.Tool) > 0 {
-			matched := false
-			for _, t := range p.Match.Tool {
-				if t == "*" || t == call.Tool {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-
-		// Check rules.
-		for _, r := range p.Rules {
-			if r.Action != "allow" {
-				continue
-			}
-			// Skip expired temporal rules.
-			if r.ExpiresAt != nil && time.Now().UTC().After(*r.ExpiresAt) {
-				continue
-			}
-			// Default: matches anything for this tool.
-			if r.When.Default {
-				return true
-			}
-			// Exec: command_matches.
-			if len(r.When.CommandMatches) > 0 {
-				cmd := call.Command()
-				for _, pattern := range r.When.CommandMatches {
-					if MatchGlob(pattern, cmd) {
-						return true
-					}
-				}
-			}
-			// Write/read: path_matches.
-			if len(r.When.PathMatches) > 0 {
-				path := call.Path()
-				for _, pattern := range r.When.PathMatches {
-					if MatchGlob(pattern, path) {
-						return true
-					}
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // CleanExpiredRules removes expired temporal rules from a policy file.
 // Returns the number of rules removed and any error.
 func CleanExpiredRules(policyPath string) (int, error) {
@@ -487,7 +351,7 @@ func cleanExpiredRulesLocked(policyPath string) (int, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeUnmarshal(data, &cfg); err != nil {
 		return 0, fmt.Errorf("persist: parse policy for cleanup: %w", err)
 	}
 
@@ -533,7 +397,7 @@ func removeRule(policyPath, policyName string, ruleIndex int, expected *Rule) er
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeUnmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("persist: parse policy for rule removal: %w", err)
 	}
 
@@ -570,7 +434,7 @@ func removeRule(policyPath, policyName string, ruleIndex int, expected *Rule) er
 
 // writeConfigAtomic writes a Config to a YAML file atomically.
 func writeConfigAtomic(policyPath string, cfg *Config) error {
-	out, err := marshalCleanYAML(cfg)
+	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("persist: marshal policy: %w", err)
 	}

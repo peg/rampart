@@ -30,7 +30,7 @@ This command:
 
 Use --yes to skip confirmation prompts.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runUninstall(cmd, yes)
+			return runUninstall(cmd, opts, yes)
 		},
 	}
 
@@ -38,7 +38,7 @@ Use --yes to skip confirmation prompts.`,
 	return cmd
 }
 
-func runUninstall(cmd *cobra.Command, yes bool) error {
+func runUninstall(cmd *cobra.Command, opts *rootOptions, yes bool) error {
 	w := cmd.OutOrStdout()
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -63,66 +63,40 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	var removed []string
 	var failed []string
 
-	// Get current executable path (don't resolve "rampart" from PATH — could be malicious)
-	exe, err := os.Executable()
-	if err != nil {
-		exe = "rampart" // fallback, but prefer current binary
-	}
+	// Remove every Rampart-managed agent boundary in-process so the same
+	// ownership checks used by each setup --remove command protect unrelated
+	// agent configuration and state.
+	integrationRemoved, integrationFailed := removeManagedAgentIntegrations(cmd, opts, home)
+	removed = append(removed, integrationRemoved...)
+	failed = append(failed, integrationFailed...)
 
-	// 1. Remove hooks from Claude Code
-	claudeSettings := filepath.Join(home, ".claude", "settings.json")
-	if _, err := os.Stat(claudeSettings); err == nil {
-		fmt.Fprintln(w, "Removing Claude Code hooks...")
-		if err := runSilent(exe, "setup", "claude-code", "--remove"); err == nil {
-			removed = append(removed, "Claude Code hooks")
-		} else {
-			failed = append(failed, "Claude Code hooks")
-		}
-	}
-
-	// 2. Remove hooks from Cline
-	clineDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if _, err := os.Stat(clineDir); err == nil {
-		fmt.Fprintln(w, "Removing Cline hooks...")
-		if err := runSilent(exe, "setup", "cline", "--remove"); err == nil {
-			removed = append(removed, "Cline hooks")
-		} else {
-			failed = append(failed, "Cline hooks")
-		}
-	}
-
-	// 3. Stop and remove service
+	// Stop and remove service
 	fmt.Fprintln(w, "Stopping rampart serve...")
 	switch runtime.GOOS {
 	case "darwin":
 		// Kill any running rampart serve process
 		_ = runSilent("pkill", "-f", "rampart serve")
-		
-		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.rampart.serve.plist")
-		if _, err := os.Stat(plistPath); err == nil {
-			_ = runSilent("launchctl", "unload", plistPath)
-			if err := os.Remove(plistPath); err == nil {
-				removed = append(removed, "LaunchAgent service")
-			}
-		}
-		// Also try the proxy plist name
-		proxyPlist := filepath.Join(home, "Library", "LaunchAgents", "com.rampart.proxy.plist")
-		if _, err := os.Stat(proxyPlist); err == nil {
-			_ = runSilent("launchctl", "unload", proxyPlist)
-			if err := os.Remove(proxyPlist); err == nil {
-				removed = append(removed, "LaunchAgent proxy service")
+
+		// Remove the current serve label, the managed proxy label, and the
+		// legacy serve label used by older installations.
+		for _, plistPath := range rampartLaunchdServicePaths(home) {
+			if _, err := os.Stat(plistPath); err == nil {
+				_ = runSilent("launchctl", "unload", plistPath)
+				if err := os.Remove(plistPath); err == nil {
+					removed = append(removed, "LaunchAgent service")
+				}
 			}
 		}
 	case "linux":
 		// Kill any running rampart serve process
 		_ = runSilent("pkill", "-f", "rampart serve")
-		
+
 		// Try user service first
 		_ = runSilent("systemctl", "--user", "stop", "rampart-serve")
 		_ = runSilent("systemctl", "--user", "disable", "rampart-serve")
 		_ = runSilent("systemctl", "--user", "stop", "rampart-proxy")
 		_ = runSilent("systemctl", "--user", "disable", "rampart-proxy")
-		
+
 		serviceFiles := []string{
 			filepath.Join(home, ".config", "systemd", "user", "rampart-serve.service"),
 			filepath.Join(home, ".config", "systemd", "user", "rampart-proxy.service"),
@@ -138,13 +112,14 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	case "windows":
 		// Kill any running rampart.exe serve process
 		// taskkill /F /IM rampart.exe only kills by image name, which would kill
-		// the uninstall process too. Use wmic to find serve processes.
+		// the uninstall process too. Query Win32_Process so CommandLine is
+		// actually available (Get-Process does not expose it reliably).
 		_ = runSilent("powershell", "-Command",
-			"Get-Process rampart -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like '*serve*'} | Stop-Process -Force")
+			windowsStopServeScript(os.Getpid()))
 		removed = append(removed, "running serve process (if any)")
 	}
 
-	// 4. Remove from PATH (Windows only)
+	// Remove from PATH (Windows only)
 	if runtime.GOOS == "windows" {
 		fmt.Fprintln(w, "Removing from PATH...")
 		if removeFromWindowsPath(home) {
@@ -152,44 +127,12 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 		}
 	}
 
-	// 5. Remove shell shim if present
+	// Remove a legacy shell shim if present.
 	shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")
 	if _, err := os.Stat(shimPath); err == nil {
 		if err := os.Remove(shimPath); err == nil {
 			removed = append(removed, "shell shim")
 		}
-	}
-
-	// 6. Remove OpenClaw gateway drop-in (LD_PRELOAD + RAMPART_URL injection)
-	dropIn := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
-	if _, err := os.Stat(dropIn); err == nil {
-		if err := os.Remove(dropIn); err == nil {
-			removed = append(removed, "OpenClaw gateway drop-in (rampart.conf)")
-			// Reload systemd so the removed drop-in takes effect
-			_ = runSilent("systemctl", "--user", "daemon-reload")
-			_ = runSilent("systemctl", "--user", "restart", "openclaw-gateway.service")
-		} else {
-			failed = append(failed, fmt.Sprintf("OpenClaw gateway drop-in (%s)", dropIn))
-		}
-	}
-
-	// 7. Restore patched OpenClaw file tools from backups
-	toolCandidates := openclawToolsCandidates()
-	toolNames := []string{"read", "write", "edit", "grep"}
-	for _, dir := range toolCandidates {
-		if _, err := os.Stat(dir); err != nil {
-			continue
-		}
-		for _, tool := range toolNames {
-			backup := filepath.Join(dir, tool+".js.rampart-backup")
-			target := filepath.Join(dir, tool+".js")
-			if _, err := os.Stat(backup); err == nil {
-				if err := os.Rename(backup, target); err == nil {
-					removed = append(removed, fmt.Sprintf("restored %s.js", tool))
-				}
-			}
-		}
-		break // only restore from the first found dir
 	}
 
 	// Summary
@@ -214,7 +157,7 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Almost done! To complete uninstallation, delete the Rampart directory:")
 	fmt.Fprintln(w, "")
-	
+
 	rampartDir := filepath.Join(home, ".rampart")
 	switch runtime.GOOS {
 	case "windows":
@@ -239,7 +182,26 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	}
 
 	fmt.Fprintln(w, "")
+	if len(failed) > 0 {
+		return fmt.Errorf("uninstall incomplete: %d Rampart-managed integration(s) could not be removed", len(failed))
+	}
 	return nil
+}
+
+func rampartLaunchdServicePaths(home string) []string {
+	services := rampartLaunchdServices(home)
+	paths := make([]string, 0, len(services))
+	for _, service := range services {
+		paths = append(paths, service.PlistPath)
+	}
+	return paths
+}
+
+func windowsStopServeScript(uninstallPID int) string {
+	return fmt.Sprintf(
+		`$uninstallPid=%d; Get-CimInstance Win32_Process -Filter "Name = 'rampart.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $uninstallPid -and $_.CommandLine -like '*serve*' } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate -ErrorAction SilentlyContinue | Out-Null }`,
+		uninstallPID,
+	)
 }
 
 // removeFromWindowsPath removes ~/.rampart/bin from the user PATH on Windows.
@@ -249,7 +211,7 @@ func removeFromWindowsPath(home string) bool {
 	}
 
 	rampartBin := filepath.Join(home, ".rampart", "bin")
-	
+
 	// Get current user PATH
 	cmd := exec.Command("powershell", "-Command",
 		"[Environment]::GetEnvironmentVariable('PATH', 'User')")
@@ -260,7 +222,7 @@ func removeFromWindowsPath(home string) bool {
 
 	currentPath := strings.TrimSpace(string(out))
 	paths := strings.Split(currentPath, ";")
-	
+
 	// Filter out rampart bin
 	var newPaths []string
 	found := false

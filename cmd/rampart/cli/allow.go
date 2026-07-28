@@ -51,7 +51,7 @@ Examples:
   rampart %s "%s"
   rampart %s "%s"
 
-Run 'rampart %s --help' for more options.`,
+Run 'rampart %s --help' for more options`,
 				cmdName, cmdName, exs[0], cmdName, exs[1], cmdName, exs[2], cmdName)
 		}
 		if len(args) > 1 {
@@ -134,6 +134,17 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 			return fmt.Errorf("invalid --tool value %q; valid values are: exec, read, write, edit", opts.tool)
 		}
 	}
+	if opts.global && opts.project {
+		return fmt.Errorf("--global and --project are mutually exclusive")
+	}
+	if action == "allow" && opts.project {
+		return fmt.Errorf("project policies are restriction-only; use --global for allow rules")
+	}
+	if action == "allow" && !opts.global {
+		// Allow rules grant authority. Keep them in the user-owned global tier
+		// instead of a repository-controlled file.
+		opts.global = true
+	}
 
 	// Auto-detect tool from pattern.
 	detectedTool := opts.tool
@@ -146,7 +157,7 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 	}
 
 	// Resolve target policy file.
-	policyPath, scope, err := resolvePolicyPath(cmd, opts)
+	policyPath, scope, err := resolvePolicyPath(opts)
 	if err != nil {
 		return err
 	}
@@ -285,7 +296,7 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 }
 
 // resolvePolicyPath determines where to write the rule based on flags and context.
-func resolvePolicyPath(cmd *cobra.Command, opts *allowBlockOptions) (path, scope string, err error) {
+func resolvePolicyPath(opts *allowBlockOptions) (path, scope string, err error) {
 	if opts.global && opts.project {
 		return "", "", fmt.Errorf("--global and --project are mutually exclusive")
 	}
@@ -299,14 +310,11 @@ func resolvePolicyPath(cmd *cobra.Command, opts *allowBlockOptions) (path, scope
 	}
 
 	if opts.project {
-		// suppress unused parameter warning
-		_ = cmd
 		return ".rampart" + string(filepath.Separator) + "policy.yaml", "project", nil
 	}
 
 	// Auto-detect: prefer project if we're in a git repo, else global.
 	if inGitRepo() {
-		_ = cmd
 		return ".rampart" + string(filepath.Separator) + "policy.yaml", "project", nil
 	}
 

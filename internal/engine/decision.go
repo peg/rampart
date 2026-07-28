@@ -24,6 +24,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -112,6 +113,12 @@ type ToolCall struct {
 	// Tool is the tool being invoked (e.g., "exec", "read", "write").
 	Tool string
 
+	// WorkDir is the host-reported directory against which relative filesystem
+	// paths are resolved. Hook processes and policy services can run from a
+	// different directory than the agent, so using the Rampart process CWD here
+	// would evaluate a different file from the one the tool will touch.
+	WorkDir string
+
 	// Params contains tool-specific parameters.
 	// For exec: {"command": "git push", "workdir": "/home/user/project"}
 	// For read: {"path": "/etc/passwd"}
@@ -122,6 +129,18 @@ type ToolCall struct {
 
 	// Timestamp is when the tool call was initiated.
 	Timestamp time.Time
+}
+
+// WorkingDirectory returns the explicit host working directory, falling back
+// to common structured parameter names used by SDK and HTTP callers.
+func (tc ToolCall) WorkingDirectory() string {
+	if workDir := strings.TrimSpace(tc.WorkDir); workDir != "" {
+		return workDir
+	}
+	if workDir := strings.TrimSpace(tc.Param("workdir")); workDir != "" {
+		return workDir
+	}
+	return strings.TrimSpace(tc.Param("cwd"))
 }
 
 // Param returns a string value from Params, falling back to Input.

@@ -48,6 +48,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	policyutil "github.com/peg/rampart/internal/policy"
 )
 
 const openClawGatewayProtocolVersion = 4
@@ -394,7 +395,7 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	}
 
 	start := time.Now()
-	decision := b.engine.Evaluate(call)
+	decision := b.engine.Enforce(call, engine.EvalOptions{})
 	evalDuration := time.Since(start)
 
 	b.logger.Info("bridge: evaluated approval request",
@@ -538,6 +539,12 @@ func (b *OpenClawBridge) cleanPendingCommand(id string) {
 // ~/.rampart/policies/user-overrides.yaml and hot-reloads the engine.
 // This is called when a human clicks "Always Allow" in the OpenClaw approval UI.
 func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
+	command = strings.TrimSpace(command)
+	pattern := policyutil.BuildExactAllowPattern(command)
+	if pattern == "" {
+		b.logger.Error("bridge: allow-always: refusing empty command")
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		b.logger.Error("bridge: allow-always: resolve home dir", "error", err)
@@ -547,12 +554,12 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
 
 	// Hash the command for a stable rule name using SHA-256 (first 8 hex chars).
-	hb := commandHash(command)
+	hb := commandHash(pattern)
 	ruleName := fmt.Sprintf("user-allow-%s", hb)
 
 	// Build the rule block to append.
 	rule := fmt.Sprintf("\n- name: %s\n  match:\n    tool: exec\n  rules:\n    - when:\n        command_matches:\n          - %q\n      action: allow\n      message: \"User allowed (always)\"\n",
-		ruleName, command)
+		ruleName, pattern)
 
 	// Read existing file or create with header.
 	var existing string

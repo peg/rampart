@@ -73,7 +73,7 @@ func (s *SDK) Wrap(toolName string, fn ToolFunc) ToolFunc {
 	return func(ctx context.Context, params map[string]any) (any, error) {
 		start := time.Now()
 		call := buildToolCall(ctx, toolName, params)
-		decision := s.engine.Evaluate(call)
+		decision := s.engine.Enforce(call, engine.EvalOptions{})
 
 		s.logger.Info("sdk: tool evaluated",
 			"tool", toolName,
@@ -83,7 +83,7 @@ func (s *SDK) Wrap(toolName string, fn ToolFunc) ToolFunc {
 			"eval_duration", decision.EvalDuration,
 		)
 
-		if decision.Action == engine.ActionDeny {
+		if decision.Action != engine.ActionAllow && decision.Action != engine.ActionWatch {
 			return nil, &ErrDenied{Tool: toolName, Policy: firstPolicy(decision), Message: decision.Message}
 		}
 
@@ -107,11 +107,11 @@ func (s *SDK) Preflight(ctx context.Context, toolName string, params map[string]
 	decision := s.engine.Evaluate(call)
 
 	return PreflightResult{
-		Allowed:   decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch,
-		Action:    decision.Action.String(),
-		Message:   decision.Message,
-		Policies:  decision.MatchedPolicies,
-		EvalTime:  decision.EvalDuration,
+		Allowed:  decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch,
+		Action:   decision.Action.String(),
+		Message:  decision.Message,
+		Policies: decision.MatchedPolicies,
+		EvalTime: decision.EvalDuration,
 	}
 }
 

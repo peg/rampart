@@ -91,7 +91,7 @@ func TestNewInitCmd_DetectEnv(t *testing.T) {
 	}
 }
 
-// --- newPolicyTestCmd (test_cmd.go / policy.go) ---
+// --- policy test command alias ---
 
 func TestPolicyTestCmd_Basic(t *testing.T) {
 	dir := t.TempDir()

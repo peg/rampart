@@ -373,9 +373,9 @@ func detectProtectedAgents() []string {
 		}
 	}
 
-	// Cline hooks
-	clineDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if entries, err := os.ReadDir(clineDir); err == nil && len(entries) > 0 {
+	// Cline hooks: require the complete owned, platform-native pair. Merely
+	// finding an unrelated file in Cline's hook directory is not protection.
+	if clineHooksConfiguredForHome(home) {
 		agents = append(agents, "Cline (hooks)")
 	}
 
@@ -561,7 +561,7 @@ func detectMode() (string, string) {
 }
 
 // todayEvents returns today's allow/deny/pending counts and the most recent deny event.
-// "pending" counts require_approval and webhook actions.
+// "pending" counts current ask, legacy require_approval, and webhook actions.
 func todayEvents() (allow, deny, pending int, lastDeny *audit.Event) {
 	return todayEventsAt(time.Now().UTC())
 }
@@ -607,7 +607,7 @@ func todayEventsAt(now time.Time) (allow, deny, pending int, lastDeny *audit.Eve
 				if lastDeny == nil || ev.Timestamp.After(lastDeny.Timestamp) {
 					lastDeny = ev
 				}
-			case "require_approval", "webhook":
+			case "ask", "require_approval", "webhook":
 				pending++
 			}
 		}

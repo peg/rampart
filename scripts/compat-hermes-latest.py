@@ -64,13 +64,15 @@ class RampartStub(BaseHTTPRequestHandler):
             "agent": payload.get("agent") if isinstance(payload, dict) else None,
             "session": payload.get("session") if isinstance(payload, dict) else None,
             "tool_call_id_present": bool(payload.get("tool_call_id")) if isinstance(payload, dict) else False,
+            "enforce": payload.get("enforce") if isinstance(payload, dict) else None,
             "command_marker": _marker_from_command(command),
             "policy_path": str(params.get("path") or ""),
         }
         self.requests_seen.append(record)
 
         status = 200
-        if params.get("path") == "secrets/.env":
+        policy_path = str(params.get("path") or "").replace("\\", "/")
+        if policy_path == "secrets/.env" or policy_path.endswith("/secrets/.env"):
             body = {
                 "decision": "deny",
                 "message": "protected compatibility path",
@@ -385,6 +387,8 @@ def main() -> int:
             paths = {entry["path"] for entry in RampartStub.requests_seen}
             if "/v1/preflight/exec" not in paths:
                 raise RuntimeError(f"expected /v1/preflight/exec request, saw {sorted(paths)}")
+            if any(entry["enforce"] is not True for entry in RampartStub.requests_seen):
+                raise RuntimeError("every Hermes pre-tool policy request must carry enforce=true")
             markers = {entry["command_marker"] for entry in RampartStub.requests_seen}
             expected = {"rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker", "rampart-auth-error-marker"}
             if not expected.issubset(markers):
@@ -394,7 +398,15 @@ def main() -> int:
                 for entry in RampartStub.requests_seen
                 if entry["path"] == "/v1/preflight/edit"
             ]
-            if patch_paths != ["safe.txt", "secrets/.env"]:
+            normalized_patch_paths = [path.replace("\\", "/") for path in patch_paths]
+            if (
+                len(normalized_patch_paths) != 2
+                or not (normalized_patch_paths[0] == "safe.txt" or normalized_patch_paths[0].endswith("/safe.txt"))
+                or not (
+                    normalized_patch_paths[1] == "secrets/.env"
+                    or normalized_patch_paths[1].endswith("/secrets/.env")
+                )
+            ):
                 raise RuntimeError(f"expected both patch targets in order, saw {patch_paths}")
 
             print(

@@ -15,7 +15,6 @@ package cli
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"bufio"
 	"bytes"
 	"compress/gzip"
@@ -40,6 +39,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/build"
+	"github.com/peg/rampart/internal/filetxn"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -48,6 +48,10 @@ import (
 const (
 	upgradeLatestReleaseURL = "https://api.github.com/repos/peg/rampart/releases/latest"
 	upgradeReleaseBaseURL   = "https://github.com/peg/rampart/releases/download"
+	maxUpgradeDownloadBytes = int64(256 << 20)
+	maxUpgradeBinaryBytes   = int64(200 << 20)
+	maxUpgradeExpandedBytes = int64(512 << 20)
+	maxUpgradeArchiveFiles  = 1024
 )
 
 type upgradeDeps struct {
@@ -69,11 +73,17 @@ type upgradeDeps struct {
 	restartServe          func(commandRunner, string, io.Writer, io.Writer) error
 	detectSystemdService  func(commandRunner) string
 	restartSystemdService func(commandRunner, string, io.Writer) error
+	detectLaunchdServices func(commandRunner, func() (string, error)) []launchdService
+	restartLaunchdService func(commandRunner, launchdService, io.Writer) error
 	sleep                 func(time.Duration)
 	pathEnv               func() string
 	stat                  func(string) (os.FileInfo, error)
 	lstat                 func(string) (os.FileInfo, error)
 	evalSymlinks          func(string) (string, error)
+	updatePolicies        func(io.Writer, bool) error
+	refreshPolicies       func(commandRunner, string, io.Writer, io.Writer) error
+	goos                  string
+	goarch                string
 }
 
 func defaultUpgradeDeps() upgradeDeps {
@@ -96,13 +106,19 @@ func defaultUpgradeDeps() upgradeDeps {
 		restartServe:          restartServe,
 		detectSystemdService:  detectActiveSystemdService,
 		restartSystemdService: restartSystemdUserService,
+		detectLaunchdServices: detectActiveLaunchdServices,
+		restartLaunchdService: restartLaunchdUserService,
 		sleep:                 time.Sleep,
 		pathEnv: func() string {
 			return os.Getenv("PATH")
 		},
-		stat:         os.Stat,
-		lstat:        os.Lstat,
-		evalSymlinks: filepath.EvalSymlinks,
+		stat:            os.Stat,
+		lstat:           os.Lstat,
+		evalSymlinks:    filepath.EvalSymlinks,
+		updatePolicies:  upgradeStandardPolicies,
+		refreshPolicies: refreshPoliciesWithInstalledBinary,
+		goos:            runtime.GOOS,
+		goarch:          runtime.GOARCH,
 	}
 }
 
@@ -167,6 +183,12 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		if deps.restartSystemdService != nil {
 			resolved.restartSystemdService = deps.restartSystemdService
 		}
+		if deps.detectLaunchdServices != nil {
+			resolved.detectLaunchdServices = deps.detectLaunchdServices
+		}
+		if deps.restartLaunchdService != nil {
+			resolved.restartLaunchdService = deps.restartLaunchdService
+		}
 		if deps.sleep != nil {
 			resolved.sleep = deps.sleep
 		}
@@ -182,6 +204,18 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		if deps.evalSymlinks != nil {
 			resolved.evalSymlinks = deps.evalSymlinks
 		}
+		if deps.updatePolicies != nil {
+			resolved.updatePolicies = deps.updatePolicies
+		}
+		if deps.refreshPolicies != nil {
+			resolved.refreshPolicies = deps.refreshPolicies
+		}
+		if deps.goos != "" {
+			resolved.goos = deps.goos
+		}
+		if deps.goarch != "" {
+			resolved.goarch = deps.goarch
+		}
 	}
 
 	var assumeYes bool
@@ -191,8 +225,11 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "upgrade [version]",
-		Short: "Upgrade rampart to the latest or specified release",
-		Args:  cobra.MaximumNArgs(1),
+		Short: "Upgrade Rampart on macOS/Linux, or refresh built-in policies",
+		Long: "Upgrade Rampart to the latest or specified release on macOS and Linux.\n" +
+			"On Windows, rerun the official install.ps1 installer. Policy-only refreshes\n" +
+			"remain available on every platform with --no-binary.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -204,10 +241,13 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				if skipPolicyUpdate {
 					return fmt.Errorf("--no-binary and --no-policy-update are mutually exclusive")
 				}
-				if err := upgradeStandardPolicies(cmd.OutOrStdout(), dryRun); err != nil {
+				if err := resolved.updatePolicies(cmd.OutOrStdout(), dryRun); err != nil {
 					return fmt.Errorf("policy refresh: %w", err)
 				}
 				return nil
+			}
+			if resolved.goos == "windows" {
+				return fmt.Errorf("upgrade: self-upgrade is not supported on Windows; rerun the official installer: irm https://rampart.sh/install.ps1 | iex")
 			}
 
 			current, err := resolved.currentVersion(ctx, resolved.commandRunner, resolved.executablePath)
@@ -228,33 +268,32 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				}
 			}
 
+			// Current releases reject the removed require_approval policy action.
+			// Scan on every upgrade/check against a modern target so users who
+			// carried an old custom policy past the original transition still get
+			// actionable guidance instead of a surprising policy-load failure.
+			if compareSemver(target, "v0.9.9") >= 0 {
+				if err := maybeWarnRequireApprovalMigration(cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin(), assumeYes, resolved.userHomeDir); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ migration policy scan failed: %v\n", err)
+				}
+			}
+
 			if current != "" && compareSemver(current, target) >= 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "Already on latest (%s)\n", target)
 				if !skipPolicyUpdate {
-					if err := upgradeStandardPolicies(cmd.OutOrStdout(), dryRun); err != nil {
+					if err := resolved.updatePolicies(cmd.OutOrStdout(), dryRun); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed: %v\n", err)
 					}
 				}
 				return nil
 			}
 
-			// Only show v0.6.6 migration warning when upgrading FROM a version older than v0.6.6.
-			if current != "" && compareSemver(current, "v0.6.6") < 0 && compareSemver(target, "v0.6.6") >= 0 {
-				if err := maybeWarnRequireApprovalMigration(cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin(), assumeYes, resolved.userHomeDir); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ migration policy scan failed: %v\n", err)
-				}
-			}
-
-			assetOS, assetArch, err := upgradePlatform(runtime.GOOS, runtime.GOARCH)
+			assetOS, assetArch, err := upgradePlatform(resolved.goos, resolved.goarch)
 			if err != nil {
 				return err
 			}
 			versionNoV := strings.TrimPrefix(target, "v")
-			archiveExt := "tar.gz"
-			if assetOS == "windows" {
-				archiveExt = "zip"
-			}
-			archiveName := fmt.Sprintf("rampart_%s_%s_%s.%s", versionNoV, assetOS, assetArch, archiveExt)
+			archiveName := fmt.Sprintf("rampart_%s_%s_%s.tar.gz", versionNoV, assetOS, assetArch)
 			archiveURL := fmt.Sprintf("%s/%s/%s", upgradeReleaseBaseURL, target, archiveName)
 			checksumsURL := fmt.Sprintf("%s/%s/checksums.txt", upgradeReleaseBaseURL, target)
 
@@ -266,15 +305,27 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("upgrade: resolve executable path: %w", err)
 			}
+			if err := validateSelfUpgradePath(exePath, resolved); err != nil {
+				return err
+			}
 
 			servePID, serveRunning, err := resolved.inspectServePID(resolved.userHomeDir, resolved.readFile)
 			if err != nil {
 				return err
 			}
 
-			// Systemd service takes priority over PID-file management.
-			activeSvc := resolved.detectSystemdService(resolved.commandRunner)
-			pidServeRunning := serveRunning && activeSvc == ""
+			// A platform service takes priority over PID-file management. Service
+			// processes do not write ~/.rampart/serve.pid, and must be restarted
+			// explicitly so they load the newly replaced executable.
+			activeSvc := ""
+			var activeLaunchd []launchdService
+			switch resolved.goos {
+			case "linux":
+				activeSvc = resolved.detectSystemdService(resolved.commandRunner)
+			case "darwin":
+				activeLaunchd = resolved.detectLaunchdServices(resolved.commandRunner, resolved.userHomeDir)
+			}
+			pidServeRunning := serveRunning && activeSvc == "" && len(activeLaunchd) == 0
 
 			if dryRun {
 				fmt.Fprintf(cmd.OutOrStdout(), "Dry run:\n")
@@ -286,8 +337,15 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "- would atomically replace %s\n", exePath)
 				fmt.Fprintf(cmd.OutOrStdout(), "- would scan PATH and auto-fix stale rampart copies (symlink to new binary)\n")
+				if !skipPolicyUpdate {
+					fmt.Fprintf(cmd.OutOrStdout(), "- would refresh managed built-in policies with the new binary\n")
+				}
 				if activeSvc != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "- would restart systemd service: %s\n", activeSvc)
+				} else if len(activeLaunchd) > 0 {
+					for _, service := range activeLaunchd {
+						fmt.Fprintf(cmd.OutOrStdout(), "- would restart launchd service: %s\n", service.Label)
+					}
 				} else if pidServeRunning {
 					fmt.Fprintf(cmd.OutOrStdout(), "- would restart rampart serve in background\n")
 				}
@@ -330,12 +388,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return fmt.Errorf("upgrade: checksum mismatch for %s (expected %s, got %s)", archiveName, expectedHash, actualHashHex)
 			}
 
-			var newBinary []byte
-			if assetOS == "windows" {
-				newBinary, err = extractRampartBinaryFromZip(archiveBytes)
-			} else {
-				newBinary, err = extractRampartBinary(archiveBytes)
-			}
+			newBinary, err := extractRampartBinary(archiveBytes)
 			if err != nil {
 				return err
 			}
@@ -357,6 +410,14 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			installSpin.Stop(fmt.Sprintf("Installed %s", target))
 
 			fixStalePathCopies(cmd.OutOrStdout(), exePath, resolved)
+			if !skipPolicyUpdate {
+				if err := resolved.refreshPolicies(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+					// Non-fatal: the verified binary is installed, and the user can retry
+					// the policy-only migration with that binary.
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed (binary upgrade succeeded): %v\n", err)
+					fmt.Fprintf(cmd.ErrOrStderr(), "  run '%s upgrade --no-binary' to retry\n", exePath)
+				}
+			}
 
 			serveRestarted := false
 			if activeSvc != "" {
@@ -364,6 +425,14 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %v\n  run manually: systemctl --user restart %s\n", err, activeSvc)
 				} else {
 					serveRestarted = true
+				}
+			} else if len(activeLaunchd) > 0 {
+				serveRestarted = true
+				for _, service := range activeLaunchd {
+					if err := resolved.restartLaunchdService(resolved.commandRunner, service, cmd.OutOrStdout()); err != nil {
+						serveRestarted = false
+						fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %v\n  reload manually: launchctl unload %q && launchctl load %q\n", err, service.PlistPath, service.PlistPath)
+					}
 				}
 			} else if pidServeRunning {
 				if err := resolved.restartServe(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
@@ -377,16 +446,6 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Reminder: restart rampart serve to ensure it uses the new binary.")
 			}
 
-			// Refresh standard.yaml so security fixes reach existing users.
-			// Only updates the named profile files (standard.yaml, paranoid.yaml, yolo.yaml).
-			// Custom user policies (custom.yaml, anything else) are never touched.
-			if !skipPolicyUpdate {
-				if err := upgradeStandardPolicies(cmd.OutOrStdout(), dryRun); err != nil {
-					// Non-fatal — binary is already upgraded.
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed (binary upgrade succeeded): %v\n", err)
-					fmt.Fprintf(cmd.ErrOrStderr(), "  run 'rampart init --profile standard --force' to update manually\n")
-				}
-			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Next: run 'rampart protect' once to refresh managed agent integrations and verify detected boundaries.")
 			return nil
 		},
@@ -455,55 +514,166 @@ func normalizeVersion(v string) (string, error) {
 	if strings.TrimSpace(base) == "" {
 		return "", fmt.Errorf("invalid version")
 	}
+	if _, ok := parseStrictSemver(v); !ok {
+		return "", fmt.Errorf("must be a valid semantic version")
+	}
 	return v, nil
 }
 
 func compareSemver(a, b string) int {
-	ap, aok := parseSemver(a)
-	bp, bok := parseSemver(b)
-	if !aok || !bok {
-		ac := strings.TrimPrefix(a, "v")
-		bc := strings.TrimPrefix(b, "v")
-		switch {
-		case ac > bc:
-			return 1
-		case ac < bc:
-			return -1
-		default:
-			return 0
-		}
+	if comparison, ok := compareStrictSemver(a, b); ok {
+		return comparison
 	}
-	for i := 0; i < 3; i++ {
-		if ap[i] > bp[i] {
-			return 1
-		}
-		if ap[i] < bp[i] {
-			return -1
-		}
+	ac := strings.TrimPrefix(a, "v")
+	bc := strings.TrimPrefix(b, "v")
+	switch {
+	case ac > bc:
+		return 1
+	case ac < bc:
+		return -1
+	default:
+		return 0
 	}
-	return 0
 }
 
-func parseSemver(v string) ([3]int, bool) {
-	var out [3]int
-	base := strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if base == "" {
+type strictSemver struct {
+	core       [3]string
+	prerelease []string
+}
+
+func compareStrictSemver(a, b string) (int, bool) {
+	av, aok := parseStrictSemver(a)
+	bv, bok := parseStrictSemver(b)
+	if !aok || !bok {
+		return 0, false
+	}
+	for i := range av.core {
+		if comparison := compareNumericIdentifiers(av.core[i], bv.core[i]); comparison != 0 {
+			return comparison, true
+		}
+	}
+	return compareStrictPrerelease(av.prerelease, bv.prerelease), true
+}
+
+func parseStrictSemver(v string) (strictSemver, bool) {
+	var out strictSemver
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if v == "" || strings.Contains(v, " ") {
 		return out, false
 	}
-	base = strings.SplitN(base, "+", 2)[0]
-	base = strings.SplitN(base, "-", 2)[0]
-	parts := strings.Split(base, ".")
-	if len(parts) < 3 {
-		return out, false
-	}
-	for i := 0; i < 3; i++ {
-		n, err := strconv.Atoi(parts[i])
-		if err != nil {
+
+	main, buildMetadata, hasBuild := strings.Cut(v, "+")
+	if hasBuild {
+		if buildMetadata == "" || strings.Contains(buildMetadata, "+") || !validSemverIdentifiers(buildMetadata, false) {
 			return out, false
 		}
-		out[i] = n
+	}
+	core, prerelease, hasPrerelease := strings.Cut(main, "-")
+	parts := strings.Split(core, ".")
+	if len(parts) != len(out.core) {
+		return out, false
+	}
+	for i, part := range parts {
+		if !isASCIIDigits(part) || (len(part) > 1 && part[0] == '0') {
+			return out, false
+		}
+		out.core[i] = part
+	}
+	if hasPrerelease {
+		if prerelease == "" || !validSemverIdentifiers(prerelease, true) {
+			return out, false
+		}
+		out.prerelease = strings.Split(prerelease, ".")
 	}
 	return out, true
+}
+
+func validSemverIdentifiers(value string, rejectNumericLeadingZero bool) bool {
+	for _, identifier := range strings.Split(value, ".") {
+		if identifier == "" {
+			return false
+		}
+		allNumeric := true
+		for _, r := range identifier {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-') {
+				return false
+			}
+			if r < '0' || r > '9' {
+				allNumeric = false
+			}
+		}
+		if rejectNumericLeadingZero && allNumeric && len(identifier) > 1 && identifier[0] == '0' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func compareNumericIdentifiers(a, b string) int {
+	switch {
+	case len(a) < len(b):
+		return -1
+	case len(a) > len(b):
+		return 1
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func compareStrictPrerelease(a, b []string) int {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	if len(a) == 0 {
+		return 1
+	}
+	if len(b) == 0 {
+		return -1
+	}
+	for i := 0; i < len(a) && i < len(b); i++ {
+		aNumeric := isASCIIDigits(a[i])
+		bNumeric := isASCIIDigits(b[i])
+		var comparison int
+		switch {
+		case aNumeric && bNumeric:
+			comparison = compareNumericIdentifiers(a[i], b[i])
+		case aNumeric:
+			comparison = -1
+		case bNumeric:
+			comparison = 1
+		case a[i] < b[i]:
+			comparison = -1
+		case a[i] > b[i]:
+			comparison = 1
+		}
+		if comparison != 0 {
+			return comparison
+		}
+	}
+	switch {
+	case len(a) < len(b):
+		return -1
+	case len(a) > len(b):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func fetchLatestRelease(ctx context.Context, client *http.Client, latestReleaseURL string) (string, error) {
@@ -546,12 +716,29 @@ func downloadURL(ctx context.Context, client *http.Client, url string) ([]byte, 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("upgrade: fetch %s: unexpected status %s", url, resp.Status)
 	}
+	if resp.ContentLength > maxUpgradeDownloadBytes {
+		return nil, fmt.Errorf("upgrade: fetch %s: response exceeds %d bytes", url, maxUpgradeDownloadBytes)
+	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readAllBounded(resp.Body, maxUpgradeDownloadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("upgrade: read %s: %w", url, err)
 	}
 	return body, nil
+}
+
+func readAllBounded(r io.Reader, limit int64) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("invalid size limit %d", limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("payload exceeds %d bytes", limit)
+	}
+	return data, nil
 }
 
 func isNetworkError(err error) bool {
@@ -586,6 +773,13 @@ func lookupSHA256(checksums []byte, filename string) (string, error) {
 }
 
 func extractRampartBinary(archive []byte) ([]byte, error) {
+	return extractRampartBinaryWithLimits(archive, maxUpgradeBinaryBytes, maxUpgradeExpandedBytes)
+}
+
+func extractRampartBinaryWithLimits(archive []byte, maxBinaryBytes, maxExpandedBytes int64) ([]byte, error) {
+	if maxBinaryBytes < 0 || maxExpandedBytes < 0 {
+		return nil, fmt.Errorf("upgrade: invalid archive size limits")
+	}
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return nil, fmt.Errorf("upgrade: open archive: %w", err)
@@ -594,8 +788,10 @@ func extractRampartBinary(archive []byte) ([]byte, error) {
 
 	tr := tar.NewReader(gz)
 	var (
-		count   int
-		payload []byte
+		count         int
+		expandedBytes int64
+		payload       []byte
+		found         bool
 	)
 	for {
 		hdr, err := tr.Next()
@@ -605,48 +801,38 @@ func extractRampartBinary(archive []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("upgrade: read archive: %w", err)
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		count++
+		if count > maxUpgradeArchiveFiles {
+			return nil, fmt.Errorf("upgrade: archive contains more than %d entries", maxUpgradeArchiveFiles)
+		}
+		if hdr.Size < 0 || hdr.Size > maxExpandedBytes-expandedBytes {
+			return nil, fmt.Errorf("upgrade: expanded archive exceeds %d bytes", maxExpandedBytes)
+		}
+		expandedBytes += hdr.Size
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		count++
 		if filepath.Base(hdr.Name) != "rampart" {
 			continue
 		}
-		bin, err := io.ReadAll(tr)
+		if found {
+			return nil, fmt.Errorf("upgrade: archive contains multiple rampart binaries")
+		}
+		if hdr.Size > maxBinaryBytes {
+			return nil, fmt.Errorf("upgrade: rampart binary exceeds %d bytes", maxBinaryBytes)
+		}
+		bin, err := readAllBounded(tr, maxBinaryBytes)
 		if err != nil {
 			return nil, fmt.Errorf("upgrade: read archive payload: %w", err)
 		}
 		payload = bin
+		found = true
 	}
 
-	if len(payload) == 0 {
-		return nil, fmt.Errorf("upgrade: rampart binary not found in archive (archive had %d regular files)", count)
+	if !found || len(payload) == 0 {
+		return nil, fmt.Errorf("upgrade: rampart binary not found in archive (archive had %d entries)", count)
 	}
 	return payload, nil
-}
-
-func extractRampartBinaryFromZip(archive []byte) ([]byte, error) {
-	zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
-	if err != nil {
-		return nil, fmt.Errorf("upgrade: open zip archive: %w", err)
-	}
-	for _, f := range zr.File {
-		if filepath.Base(f.Name) != "rampart.exe" {
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			return nil, fmt.Errorf("upgrade: open rampart.exe in archive: %w", err)
-		}
-		defer rc.Close()
-		const maxBinaryBytes = 200 << 20 // 200 MiB decompression limit
-		bin, err := io.ReadAll(io.LimitReader(rc, maxBinaryBytes))
-		if err != nil {
-			return nil, fmt.Errorf("upgrade: read rampart.exe from archive: %w", err)
-		}
-		return bin, nil
-	}
-	return nil, fmt.Errorf("upgrade: rampart.exe not found in zip archive (%d files)", len(zr.File))
 }
 
 func inspectServePID(userHomeDir func() (string, error), readFile func(string) ([]byte, error)) (int, bool, error) {
@@ -735,6 +921,105 @@ func restartSystemdUserService(runner commandRunner, svc string, out io.Writer) 
 	return nil
 }
 
+type launchdService struct {
+	Label     string
+	PlistPath string
+}
+
+// detectActiveLaunchdServices returns Rampart LaunchAgents that launchctl
+// reports as loaded. This includes the current general/proxy labels and the
+// legacy com.rampart.serve label so upgrades restart older installations too.
+func detectActiveLaunchdServices(runner commandRunner, userHomeDir func() (string, error)) []launchdService {
+	home, err := userHomeDir()
+	if err != nil {
+		return nil
+	}
+	candidates := rampartLaunchdServices(home)
+
+	active := make([]launchdService, 0, len(candidates))
+	for _, service := range candidates {
+		if _, err := os.Stat(service.PlistPath); err != nil {
+			continue
+		}
+		if err := runner("launchctl", "list", service.Label).Run(); err == nil {
+			active = append(active, service)
+		}
+	}
+	return active
+}
+
+func rampartLaunchdServices(home string) []launchdService {
+	agentDir := filepath.Join(home, "Library", "LaunchAgents")
+	return []launchdService{
+		{
+			Label:     plistLabel,
+			PlistPath: filepath.Join(agentDir, plistLabel+".plist"),
+		},
+		{
+			Label:     "com.rampart.proxy",
+			PlistPath: filepath.Join(agentDir, "com.rampart.proxy.plist"),
+		},
+		{
+			Label:     "com.rampart.serve",
+			PlistPath: filepath.Join(agentDir, "com.rampart.serve.plist"),
+		},
+	}
+}
+
+// restartLaunchdUserService unloads the running job and reloads its existing
+// plist. This is the same lifecycle used by `rampart serve install --force`
+// and ensures launchd starts the newly installed Rampart executable.
+func restartLaunchdUserService(runner commandRunner, service launchdService, out io.Writer) error {
+	if output, err := runner("launchctl", "unload", service.PlistPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("restart %s (unload): %w\n%s", service.Label, err, strings.TrimSpace(string(output)))
+	}
+	if output, err := runner("launchctl", "load", service.PlistPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("restart %s (load): %w\n%s", service.Label, err, strings.TrimSpace(string(output)))
+	}
+	fmt.Fprintf(out, "✓ restarted %s\n", service.Label)
+	return nil
+}
+
+func refreshPoliciesWithInstalledBinary(runner commandRunner, binary string, stdout, stderr io.Writer) error {
+	cmd := runner(binary, "upgrade", "--no-binary")
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("run newly installed binary for policy refresh: %w", err)
+	}
+	return nil
+}
+
+func validateSelfUpgradePath(path string, deps upgradeDeps) error {
+	info, err := deps.lstat(path)
+	if err != nil {
+		return fmt.Errorf("upgrade: inspect current executable %s: %w", path, err)
+	}
+
+	resolved := path
+	if info.Mode()&os.ModeSymlink != 0 {
+		if target, resolveErr := deps.evalSymlinks(path); resolveErr == nil {
+			resolved = target
+		}
+		if isHomebrewManagedPath(path) || isHomebrewManagedPath(resolved) {
+			return fmt.Errorf("upgrade: %s is managed by Homebrew; run `brew upgrade peg/tap/rampart` instead", path)
+		}
+		return fmt.Errorf("upgrade: refusing to replace symlinked executable %s; upgrade Rampart through the installer or package manager that owns this link", path)
+	}
+	if isHomebrewManagedPath(path) || isHomebrewManagedPath(resolved) {
+		return fmt.Errorf("upgrade: %s is managed by Homebrew; run `brew upgrade peg/tap/rampart` instead", path)
+	}
+	return nil
+}
+
+func isHomebrewManagedPath(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
+	return strings.HasPrefix(path, "/opt/homebrew/") ||
+		strings.Contains(path, "/usr/local/cellar/") ||
+		strings.Contains(path, "/homebrew/cellar/") ||
+		strings.Contains(path, "/.linuxbrew/cellar/")
+}
+
 func replaceExecutableAtomically(path string, payload []byte, deps upgradeDeps) error {
 	dir := filepath.Dir(path)
 	tmp, err := deps.createTemp(dir, ".rampart-upgrade-*")
@@ -753,23 +1038,15 @@ func replaceExecutableAtomically(path string, payload []byte, deps upgradeDeps) 
 		_ = tmp.Close()
 		return fmt.Errorf("upgrade: write temporary binary: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("upgrade: sync temporary binary: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("upgrade: finalize temporary binary: %w", err)
 	}
 	if err := deps.chmod(tmpPath, 0o755); err != nil {
 		return fmt.Errorf("upgrade: chmod temporary binary: %w", err)
-	}
-
-	// On Windows, the OS holds a lock on the running executable and won't allow
-	// a rename-over. The workaround: rename the current binary to .old first
-	// (Windows permits renaming a running exe), then rename the new binary into
-	// place. The .old file is cleaned up at the start of the next upgrade.
-	if runtime.GOOS == "windows" {
-		oldPath := path + ".old"
-		_ = deps.remove(oldPath) // best-effort cleanup from a previous upgrade
-		if err := deps.rename(path, oldPath); err != nil {
-			return fmt.Errorf("upgrade: rename current binary before replacement: %w", err)
-		}
 	}
 
 	if err := deps.rename(tmpPath, path); err != nil {
@@ -809,10 +1086,21 @@ func fixStalePathCopies(out io.Writer, installedBinary string, deps upgradeDeps)
 		if err != nil {
 			continue
 		}
+		if !lfi.Mode().IsRegular() && lfi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		candidateResolved := candidate
 		if lfi.Mode()&os.ModeSymlink != 0 {
-			if resolved, err := deps.evalSymlinks(candidate); err == nil && samePath(resolved, installedResolved) {
-				continue
+			if resolved, err := deps.evalSymlinks(candidate); err == nil {
+				candidateResolved = resolved
+				if samePath(resolved, installedResolved) {
+					continue
+				}
 			}
+		}
+		if isHomebrewManagedPath(candidate) || isHomebrewManagedPath(candidateResolved) {
+			fmt.Fprintf(out, "⚠ left package-managed rampart unchanged at %s; use brew upgrade instead\n", candidate)
+			continue
 		}
 		cfi, err := deps.stat(candidate)
 		if err != nil {
@@ -843,7 +1131,7 @@ func fixStalePathCopies(out io.Writer, installedBinary string, deps upgradeDeps)
 func upgradePlatform(goos, goarch string) (string, string, error) {
 	var assetOS string
 	switch goos {
-	case "darwin", "linux", "windows":
+	case "darwin", "linux":
 		assetOS = goos
 	default:
 		return "", "", fmt.Errorf("upgrade: unsupported OS %q", goos)
@@ -887,15 +1175,15 @@ func maybeWarnRequireApprovalMigration(out io.Writer, errOut io.Writer, in io.Re
 		return nil
 	}
 
-	fmt.Fprintln(out, "⚠️  Migration notice for v0.6.6:")
+	fmt.Fprintln(out, "⚠️  Policy migration required:")
 	fmt.Fprintln(out, "   Found policies using `action: require_approval`:")
 	for _, u := range usages {
 		fmt.Fprintf(out, "     - %s (policy: %q)\n", u.FilePath, u.PolicyName)
 	}
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "   In v0.6.6, require_approval now shows a native Claude Code prompt instead")
-	fmt.Fprintln(out, "   of blocking for dashboard approval. CI pipelines that rely on blocking")
-	fmt.Fprintln(out, "   approvals should migrate to: action: ask + ask.headless_only: true")
+	fmt.Fprintln(out, "   `require_approval` was removed in v0.9.9 and prevents these policies from loading.")
+	fmt.Fprintln(out, "   Replace it with `action: ask`. For service-backed/headless approvals, use:")
+	fmt.Fprintln(out, "   action: ask + ask.headless_only: true")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "   See https://rampart.sh/docs/migration/v0.6.6 for full migration steps.")
 	fmt.Fprintln(out, "")
@@ -982,6 +1270,10 @@ func findRequireApprovalUsages(userHomeDir func() (string, error)) ([]requireApp
 // Only files whose names exactly match a known built-in profile are updated.
 // Custom user files (custom.yaml, org.yaml, etc.) are never touched.
 func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
+	return upgradeStandardPoliciesForVersion(out, dryRun, build.Version)
+}
+
+func upgradeStandardPoliciesForVersion(out io.Writer, dryRun bool, currentVersion string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("locate home dir: %w", err)
@@ -999,13 +1291,23 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 	updated := 0
 	seenBuiltIn := 0
 	preserved := make([]string, 0)
-	reviewNeeded := make([]string, 0)
+	backedUp := make([]string, 0)
 	updatedNames := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !builtInProfiles[e.Name()] {
 			continue
 		}
 		seenBuiltIn++
+		info, err := e.Info()
+		if err != nil {
+			fmt.Fprintf(out, "  ⚠ skip %s: inspect policy path: %v\n", e.Name(), err)
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			fmt.Fprintf(out, "  preserved non-regular policy path: %s\n", filepath.Join(policyDir, e.Name()))
+			preserved = append(preserved, e.Name())
+			continue
+		}
 		profileName := strings.TrimSuffix(e.Name(), ".yaml")
 		content, err := policies.Profile(profileName)
 		if err != nil {
@@ -1013,53 +1315,66 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 			continue
 		}
 		destPath := filepath.Join(policyDir, e.Name())
-		state, err := builtInPolicyState(destPath)
+		state, err := builtInPolicyStateForVersion(destPath, currentVersion)
 		if err != nil {
 			fmt.Fprintf(out, "  ⚠ skip %s: %v\n", e.Name(), err)
 			continue
 		}
-		if state.StaleMessage != "" {
-			fmt.Fprintf(out, "  review stale built-in policy before refreshing: %s\n", destPath)
-			reviewNeeded = append(reviewNeeded, e.Name())
+		if state.VersionNewer {
+			fmt.Fprintf(out, "  preserved newer policy: %s\n", destPath)
+			preserved = append(preserved, e.Name())
 			continue
 		}
-		if !state.MatchesCurrent {
+
+		// A matching content hash proves that Rampart wrote the installed payload.
+		// Without a hash, only migrate an old version-stamped policy after preserving
+		// the original, because legacy stamps cannot distinguish stock from edited files.
+		managedByHash := state.HasContentHash && state.ContentHashMatches
+		legacyStale := state.HasVersionStamp && !state.HasContentHash && state.VersionOlder
+		if state.HasContentHash && !state.ContentHashMatches {
 			fmt.Fprintf(out, "  preserved modified policy: %s\n", destPath)
 			preserved = append(preserved, e.Name())
 			continue
 		}
-		if state.HasVersionStamp {
+		if !managedByHash && !legacyStale && !state.MatchesCurrent {
+			fmt.Fprintf(out, "  preserved modified policy: %s\n", destPath)
+			preserved = append(preserved, e.Name())
 			continue
 		}
+		if managedByHash && state.MatchesCurrent && state.VersionCurrent {
+			continue
+		}
+
+		var backupPath string
+		if legacyStale {
+			backupPath = legacyPolicyBackupBase(destPath, state.VersionStamp)
+		}
 		if dryRun {
+			if backupPath != "" {
+				fmt.Fprintf(out, "  would back up legacy stamped policy: %s -> %s\n", destPath, backupPath)
+				backedUp = append(backedUp, e.Name())
+			}
 			fmt.Fprintf(out, "  would update policy: %s\n", destPath)
 			updated++
 			updatedNames = append(updatedNames, e.Name())
 			continue
 		}
-		// Atomic write: temp file + rename.
-		tmp, err := os.CreateTemp(policyDir, ".rampart-policy-upgrade-*.yaml.tmp")
+		currentInstalled, err := os.ReadFile(destPath)
 		if err != nil {
-			return fmt.Errorf("create temp file: %w", err)
+			return fmt.Errorf("re-read %s before replacement: %w", e.Name(), err)
 		}
-		tmpPath := tmp.Name()
-		versionStamp := fmt.Sprintf("# rampart-policy-version: %s\n", build.Version)
-		if _, err := tmp.WriteString(versionStamp); err != nil {
-			tmp.Close()
-			os.Remove(tmpPath)
-			return fmt.Errorf("write version stamp: %w", err)
+		if !bytes.Equal(currentInstalled, state.Installed) {
+			return fmt.Errorf("policy %s changed while upgrade was running; retry to avoid overwriting concurrent edits", e.Name())
 		}
-		if _, err := tmp.Write(content); err != nil {
-			tmp.Close()
-			os.Remove(tmpPath)
-			return fmt.Errorf("write temp policy: %w", err)
+		if backupPath != "" {
+			backupPath, err = backupLegacyManagedPolicy(destPath, state.VersionStamp, state.Installed)
+			if err != nil {
+				return fmt.Errorf("back up legacy policy %s: %w", e.Name(), err)
+			}
+			fmt.Fprintf(out, "✓ legacy policy backup: %s\n", backupPath)
+			backedUp = append(backedUp, e.Name())
 		}
-		if err := tmp.Close(); err != nil {
-			os.Remove(tmpPath)
-			return fmt.Errorf("close temp policy: %w", err)
-		}
-		if err := os.Rename(tmpPath, destPath); err != nil {
-			os.Remove(tmpPath)
+		if err := writeManagedPolicyAtomically(policyDir, destPath, versionStampedPolicyContentForVersion(content, currentVersion)); err != nil {
 			return fmt.Errorf("replace %s: %w", e.Name(), err)
 		}
 		fmt.Fprintf(out, "✓ policy updated: %s\n", destPath)
@@ -1071,13 +1386,13 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 		fmt.Fprintf(out, "  (no built-in policy files found in %s — skipped)\n", policyDir)
 		return nil
 	}
-	if updated == 0 && len(preserved) == 0 && len(reviewNeeded) == 0 {
+	if updated == 0 && len(preserved) == 0 {
 		fmt.Fprintf(out, "  (built-in policy files already current in %s — skipped)\n", policyDir)
 		return nil
 	}
 	sort.Strings(updatedNames)
 	sort.Strings(preserved)
-	sort.Strings(reviewNeeded)
+	sort.Strings(backedUp)
 	if dryRun {
 		if len(updatedNames) > 0 {
 			fmt.Fprintf(out, "  Would update: %s\n", strings.Join(updatedNames, ", "))
@@ -1088,8 +1403,102 @@ func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
 	if len(preserved) > 0 {
 		fmt.Fprintf(out, "Preserved modified: %s\n", strings.Join(preserved, ", "))
 	}
-	if len(reviewNeeded) > 0 {
-		fmt.Fprintf(out, "Review stale built-ins: %s\n", strings.Join(reviewNeeded, ", "))
+	if len(backedUp) > 0 {
+		fmt.Fprintf(out, "Backed up legacy: %s\n", strings.Join(backedUp, ", "))
 	}
 	return nil
+}
+
+func writeManagedPolicyAtomically(policyDir, destPath string, content []byte) error {
+	tmp, err := os.CreateTemp(policyDir, ".rampart-policy-upgrade-*.yaml.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		cleanup()
+		return fmt.Errorf("write temp policy: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync temp policy: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp policy: %w", err)
+	}
+	if err := filetxn.Replace(tmpPath, destPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func legacyPolicyBackupBase(path, version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = "unknown"
+	}
+	var safe strings.Builder
+	for _, r := range version {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			safe.WriteRune(r)
+		} else {
+			safe.WriteByte('_')
+		}
+	}
+	return path + ".rampart-backup-" + safe.String()
+}
+
+func backupLegacyManagedPolicy(path, version string, content []byte) (string, error) {
+	base := legacyPolicyBackupBase(path, version)
+	for attempt := 0; attempt < 1000; attempt++ {
+		candidate := base
+		if attempt > 0 {
+			candidate = fmt.Sprintf("%s.%d", base, attempt)
+		}
+		if info, err := os.Lstat(candidate); err == nil {
+			if info.Mode().IsRegular() {
+				existing, readErr := os.ReadFile(candidate)
+				if readErr != nil {
+					return "", readErr
+				}
+				if bytes.Equal(existing, content) {
+					return candidate, nil
+				}
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+
+		backup, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if _, err := backup.Write(content); err != nil {
+			_ = backup.Close()
+			_ = os.Remove(candidate)
+			return "", err
+		}
+		if err := backup.Sync(); err != nil {
+			_ = backup.Close()
+			_ = os.Remove(candidate)
+			return "", err
+		}
+		if err := backup.Close(); err != nil {
+			_ = os.Remove(candidate)
+			return "", err
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("could not allocate a unique backup path for %s", path)
 }

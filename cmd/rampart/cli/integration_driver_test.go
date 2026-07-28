@@ -73,15 +73,27 @@ func TestIntegrationDriverPlatformEligibility(t *testing.T) {
 		return integrationDriver{}
 	}
 
-	if integrationDriverSupportsPlatform(find("cline"), "windows") {
-		t.Fatal("Cline's Bash hook integration must not be auto-protected on Windows")
+	if !integrationDriverSupportsPlatform(find("cline"), "windows") {
+		t.Fatal("Cline should install its current PowerShell hook artifacts on Windows")
 	}
 	if integrationDriverSupportsPlatform(find("openclaw"), "windows") {
 		t.Fatal("OpenClaw must not be auto-protected on Windows")
 	}
-	for _, id := range []string{"claude-code", "codex", "antigravity", "copilot"} {
+	for _, id := range []string{"claude-code", "codex", "antigravity", "copilot", "cline"} {
 		if !integrationDriverSupportsPlatform(find(id), "windows") {
 			t.Fatalf("%s should support Windows", id)
 		}
+	}
+}
+
+func TestClineIntegrationDriverDetectsCurrentVSCodeExtension(t *testing.T) {
+	home := t.TempDir()
+	extension := filepath.Join(home, ".vscode", "extensions", "saoudrizwan.claude-dev-4.19.0")
+	if err := os.MkdirAll(extension, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	driver, ok := findIntegrationDriver("cline")
+	if !ok || driver.Installed == nil || !driver.Installed(home) {
+		t.Fatal("Cline driver did not detect the current VS Code extension")
 	}
 }

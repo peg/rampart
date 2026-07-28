@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -75,6 +76,38 @@ func TestAntigravityUnknownToolEmitsStructuredDeny(t *testing.T) {
 	}
 	if output["decision"] != "deny" {
 		t.Fatalf("decision = %#v, want deny", output["decision"])
+	}
+}
+
+func TestParseAntigravityInputRejectsOversizedWriteBatch(t *testing.T) {
+	paths := make([]any, maxCodexPatchPaths+1)
+	for i := range paths {
+		paths[i] = filepath.Join("src", "file-"+strconv.Itoa(i))
+	}
+	payload, err := json.Marshal(map[string]any{
+		"toolCall": map[string]any{
+			"name": "multi_replace_file_content",
+			"args": map[string]any{"TargetFiles": paths},
+		},
+		"conversationId": "s",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = parseAntigravityInput(bytes.NewReader(payload))
+	if err == nil || !strings.Contains(err.Error(), "more than 100 paths") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseAntigravityInputClassifiesDestructiveMCPTool(t *testing.T) {
+	payload := `{"toolCall":{"name":"mcp_filesystem_delete_file","args":{"path":"important.txt"}},"conversationId":"s"}`
+	result, err := parseAntigravityInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
 	}
 }
 

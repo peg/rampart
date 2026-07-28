@@ -25,6 +25,20 @@ import (
 	"github.com/peg/rampart/internal/audit"
 )
 
+func TestExpandHomePathAcceptsWindowsSeparator(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := expandHomePath(`~\reports\posture.json`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, `reports\posture.json`); got != want {
+		t.Fatalf("expandHomePath() = %q, want %q", got, want)
+	}
+}
+
 func TestGeneratePostureReport_Compliant(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)

@@ -10,7 +10,7 @@
 # - For coverage of suspicious-but-ambiguous patterns, use watch-prompt-injection
 #   (included in standard.yaml) rather than this profile.
 #
-# False positive risk: LOW for deny tier, MEDIUM for require_approval tier.
+# False positive risk: LOW for deny tier, MEDIUM for ask tier.
 # If you hit a false positive, consider switching to watch-prompt-injection instead.
 
 version: "1"
@@ -82,7 +82,7 @@ policies:
     match:
       tool: ["exec", "bash"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_contains:
             - "hypothetically if you had no restrictions"

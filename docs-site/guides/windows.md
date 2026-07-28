@@ -45,7 +45,9 @@ Run `rampart serve` if you want:
 rampart serve
 ```
 
-> **Note:** On Windows, `rampart serve` runs in the foreground. Keep the terminal window open, or use Task Scheduler/NSSM to run it at startup.
+> **Note:** On Windows, use `rampart serve --background` for the current login
+> session and `rampart serve stop` to stop it. Automatic boot-service
+> installation is not available; use Task Scheduler or NSSM for startup.
 
 ## Verify Installation
 
@@ -66,7 +68,7 @@ rampart test "rm -rf /"
 
 | Feature | Status |
 |---------|--------|
-| `rampart serve` | ✅ Works (foreground only) |
+| `rampart serve` | ✅ Foreground or `--background` |
 | `rampart setup claude-code` | ✅ Works |
 | `rampart hook` | ✅ Works |
 | `rampart test` | ✅ Works |
@@ -78,13 +80,14 @@ rampart test "rm -rf /"
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `rampart serve --background` | ❌ Unix only | Uses fork/exec |
-| `rampart serve stop` | ❌ Unix only | Uses SIGTERM |
-| `rampart upgrade` | ⚠️ Re-run installer | Required when upgrading affected v1.2.x installations |
+| `rampart serve install` | ❌ | Use Task Scheduler or NSSM for automatic startup |
+| `rampart upgrade` | ❌ Re-run installer | Binary self-upgrade is intentionally disabled; `--no-binary` can refresh policies |
 | `rampart wrap` | ❌ Unix only | Uses `$SHELL` |
 | `rampart preload` | ❌ Linux only | Uses LD_PRELOAD |
 
-For the v1.2.x to v1.3.0 upgrade, rerun `irm https://rampart.sh/install.ps1 | iex`. The installer repairs the affected legacy `~\.rampart` ACL before replacing the binary. If that directory is locked, the existing `rampart.exe` may not be able to start `rampart upgrade`.
+For every binary upgrade, rerun `irm https://rampart.sh/install.ps1 | iex`.
+The installer verifies and replaces the executable and also repairs the legacy
+`~\.rampart` ACL found on affected v1.2.x installations.
 
 ### Path Matching
 

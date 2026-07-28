@@ -21,7 +21,6 @@ for the evidence and known limitations of that path.
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
 | **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Antigravity, Hermes Agent (experimental) |
 | **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
-| **WebSocket Daemon** | WebSocket integration for real-time agents | OpenClaw (legacy / alternative) |
 
 ## Ask Behavior
 
@@ -47,7 +46,7 @@ When a policy action is `ask`, behavior varies by integration:
 | Agent | Method | Command | Platforms |
 |-------|--------|---------|-----------|
 | [Claude Code](claude-code.md) | Native hooks | `rampart setup claude-code` | All |
-| [Cline](cline.md) | Native hooks | `rampart setup cline` | Linux, macOS |
+| [Cline](cline.md) | Native hooks | `rampart setup cline` | Linux, macOS, Windows* |
 | [Cursor](cursor.md) | MCP proxy | `rampart mcp --` | All |
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI, IDE, desktop](codex-cli.md) | Native hooks | `rampart setup codex` | All |
@@ -55,9 +54,13 @@ When a policy action is `ask`, behavior varies by integration:
 | [Antigravity CLI / IDE](antigravity.md) | Shared native policy plugin | `rampart setup antigravity` | All |
 | [GitHub Copilot CLI / VS Code](github-copilot.md) | Shared native hooks | `rampart setup copilot` | All |
 | [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw` | Linux, macOS |
-| [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | All |
+| [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | Linux, macOS |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
+
+\* Cline's Windows `.ps1` contract is source-reviewed and cross-build tested;
+physical Windows host E2E remains pending. See the Cline guide for activation
+and legacy `--yolo` limitations.
 
 ## Choosing an Integration
 

@@ -53,7 +53,7 @@ server: "MCP Server" {shape: oval}
 error: "Error Response" {
   style.fill: "#2d1b1b"; style.stroke: "#da3633"; style.font-color: "#f85149"; style.border-radius: 6
 }
-pending: "Pending Approval" {
+approval: "Approval Required\n(fail closed)" {
   style.fill: "#2d2508"; style.stroke: "#d29922"; style.font-color: "#d29922"; style.border-radius: 6
 }
 
@@ -61,14 +61,20 @@ client -> rampart: "tools/call"
 rampart -> engine: "evaluate"
 engine -> server: "allow"
 engine -> error: "deny"
-engine -> pending: "ask"
-pending -> server: "approved"
-pending -> error: "denied / timeout"
+engine -> approval: "ask"
+approval -> error: "no standalone resolver"
 server -> rampart: "response"
 rampart -> client: "response"
 ```
 
 Rampart speaks the MCP protocol natively. The client and server don't know it's there. Denied tool calls return a standard JSON-RPC error — the MCP server never sees them.
+
+In enforce mode, a policy decision is not forwarded unless its audit record is
+persisted. Webhook actions also write a second final-decision event with
+`request.mcp_phase` set to `webhook_result`; failure to persist that result
+blocks the call. Request, webhook-result, and response events share a generated
+`tool_call_id` for correlation. Monitor mode logs storage errors but remains
+non-blocking.
 
 ## Auto-Generate Policies
 
@@ -87,7 +93,8 @@ Rampart automatically categorizes MCP tools based on keywords in their names:
 | Category | Keywords | Default Action |
 |----------|----------|---------------|
 | `mcp-destructive` | delete, destroy, remove, drop | `deny` |
-| `mcp-dangerous` | stop, restart, execute, modify | `log` |
+| `mcp-dangerous` | stop, restart, execute, modify | `ask` (blocked by the standalone proxy) |
+| `mcp` | Any tool name Rampart cannot classify | `ask` (blocked by the standalone proxy) |
 
 ## MCP Proxy vs Shell Hook
 
@@ -196,15 +203,22 @@ policies:
           command_matches: ["delete_file*"]
         message: "File deletion blocked"
 
-  - name: log-all-mcp
+  - name: approve-unclassified-mcp
     match:
       tool: ["mcp"]
     rules:
-      - action: log # Renamed to action: watch in v0.9.x.
-        message: "MCP tool call logged"
+      - action: ask
+        message: "Unclassified MCP tool call — approve?"
 ```
 
 See [`configs/examples/mcp-server.yaml`](https://github.com/peg/rampart/blob/main/configs/examples/mcp-server.yaml) for a ready-to-use template.
+
+!!! warning "Approval-required rules"
+    The standalone stdio proxy does not expose a resolver through `rampart
+    serve`. An `ask` decision therefore fails closed immediately instead of
+    creating an unreachable pending request. Use explicit `allow` or `deny`
+    rules for this path until a service-backed exact-call approval owner is
+    available.
 
 ## Example: Proxmox MCP Policy
 
@@ -224,7 +238,7 @@ policies:
     match:
       tool: ["mcp__proxmox__vm_stop", "mcp__proxmox__vm_shutdown"]
     rules:
-      - action: log # Renamed to action: watch in v0.9.x.
+      - action: watch
         message: "VM power operation logged"
 
   - name: block-disk-resize

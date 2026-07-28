@@ -16,6 +16,7 @@ package engine
 import (
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"unicode"
 )
@@ -198,10 +199,18 @@ func extractEval(cmd string) []string {
 	return results
 }
 
-// SplitCompoundCommand splits a shell command on unquoted &&, ||, ;, and |
+// SplitCompoundCommand splits a shell command on unquoted &, &&, ||, ;, and |
 // operators, returning each segment trimmed. Escaped or quoted delimiters
 // are not split on.
 func SplitCompoundCommand(cmd string) []string {
+	return splitCompoundCommandForOS(cmd, runtime.GOOS)
+}
+
+// splitCompoundCommandForOS exposes shell-specific parsing to cross-platform
+// tests. cmd.exe uses caret (not backslash) escaping, does not treat single
+// quotes as quoting, and parses &> as a command separator followed by an output
+// redirect. POSIX shells treat &> as a combined redirection operator.
+func splitCompoundCommandForOS(cmd, goos string) []string {
 	var segments []string
 	var cur strings.Builder
 	i := 0
@@ -219,14 +228,25 @@ func SplitCompoundCommand(cmd string) []string {
 			continue
 		}
 
-		if ch == '\\' && !inSingle {
+		if goos == "windows" && ch == '^' {
+			cur.WriteByte(ch)
+			if i+1 < len(cmd) {
+				cur.WriteByte(cmd[i+1])
+				i += 2
+			} else {
+				i++
+			}
+			continue
+		}
+
+		if goos != "windows" && ch == '\\' && !inSingle {
 			cur.WriteByte(ch)
 			escaped = true
 			i++
 			continue
 		}
 
-		if ch == '\'' && !inDouble {
+		if goos != "windows" && ch == '\'' && !inDouble {
 			inSingle = !inSingle
 			cur.WriteByte(ch)
 			i++
@@ -258,6 +278,20 @@ func SplitCompoundCommand(cmd string) []string {
 				i += 2
 				continue
 			}
+		}
+
+		// A single ampersand is a command separator in POSIX shells and cmd.exe.
+		// Descriptor redirects such as 2>&1 and <&0 are not separators. POSIX
+		// combined redirects (&> and &>>) stay intact; cmd.exe treats their
+		// ampersand as a separator.
+		if ch == '&' && !isAmpersandRedirect(cmd, i, goos) {
+			s := strings.TrimSpace(cur.String())
+			if s != "" {
+				segments = append(segments, s)
+			}
+			cur.Reset()
+			i++
+			continue
 		}
 
 		// Check for ; and |
@@ -304,6 +338,13 @@ func SplitCompoundCommand(cmd string) []string {
 	return segments
 }
 
+func isAmpersandRedirect(cmd string, i int, goos string) bool {
+	if i > 0 && (cmd[i-1] == '>' || cmd[i-1] == '<') {
+		return true
+	}
+	return goos != "windows" && i+1 < len(cmd) && cmd[i+1] == '>'
+}
+
 // NormalizeCommand takes a raw shell command string and returns a normalized
 // version with shell metacharacter obfuscation removed. This handles the
 // common evasion techniques:
@@ -315,20 +356,24 @@ func SplitCompoundCommand(cmd string) []string {
 // This is intentionally not a full bash parser — it handles the 90% case
 // to prevent trivial policy evasion.
 func NormalizeCommand(cmd string) string {
+	return normalizeCommandForOS(cmd, runtime.GOOS)
+}
+
+func normalizeCommandForOS(cmd, goos string) string {
 	cmd = SanitizeCommand(cmd)
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return ""
 	}
 
-	segments := SplitCompoundCommand(cmd)
+	segments := splitCompoundCommandForOS(cmd, goos)
 	if len(segments) == 0 {
 		return ""
 	}
 
 	normalized := make([]string, 0, len(segments))
 	for _, seg := range segments {
-		n := normalizeSegment(seg)
+		n := normalizeSegmentForOS(seg, goos)
 		if n != "" {
 			normalized = append(normalized, n)
 		}
@@ -337,19 +382,26 @@ func NormalizeCommand(cmd string) string {
 	return strings.Join(normalized, " && ")
 }
 
-// normalizeSegment normalizes a single command (no compound operators).
-func normalizeSegment(seg string) string {
+func normalizeSegmentForOS(seg, goos string) string {
 	seg = strings.TrimSpace(seg)
 	if seg == "" {
 		return ""
 	}
 
-	tokens := tokenize(seg)
+	tokenOS := goos
+	if looksLikeCmdWrapper(seg) {
+		tokenOS = "windows"
+	}
+	tokens := tokenizeForOS(seg, tokenOS)
 	if len(tokens) == 0 {
 		return ""
 	}
+	if goos == "windows" {
+		tokens = removeCmdCarets(tokens)
+	}
 
 	tokens = unwrapCommandTokens(tokens)
+	tokens = stripLeadingRedirections(tokens)
 	if len(tokens) == 0 {
 		return ""
 	}
@@ -378,6 +430,28 @@ var shellBasenames = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "ash": true, "ksh": true,
 }
 
+var (
+	cmdBasenames = map[string]bool{
+		"cmd": true, "cmd.exe": true,
+	}
+	powerShellBasenames = map[string]bool{
+		"powershell": true, "powershell.exe": true, "pwsh": true, "pwsh.exe": true,
+	}
+)
+
+func looksLikeCmdWrapper(command string) bool {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return false
+	}
+	end := strings.IndexFunc(command, unicode.IsSpace)
+	if end < 0 {
+		end = len(command)
+	}
+	head := strings.Trim(command[:end], `"'`)
+	return cmdBasenames[shellWrapperBasename(head)]
+}
+
 // isShellBinary checks if a token is a known shell binary, matching by basename
 // to handle arbitrary paths (/bin/bash, /usr/local/bin/bash, etc.).
 func isShellBinary(token string) bool {
@@ -385,6 +459,10 @@ func isShellBinary(token string) bool {
 		return true
 	}
 	return shellBasenames[filepath.Base(token)]
+}
+
+func shellWrapperBasename(token string) string {
+	return strings.ToLower(filepath.Base(strings.ReplaceAll(token, "\\", "/")))
 }
 
 // hasCFlag checks if a flag token contains -c, either standalone or combined
@@ -439,31 +517,168 @@ func stripShellWrapperOnce(tokens []string) []string {
 	if len(tokens) < 2 {
 		return tokens
 	}
-	if !isShellBinary(tokens[0]) {
-		return tokens
-	}
-	// Scan for -c flag (or combined flag containing c) in positions 1+.
-	// Skip other flags like --norc, -l, etc.
-	for i := 1; i < len(tokens); i++ {
-		tok := tokens[i]
-		if !strings.HasPrefix(tok, "-") {
-			// Reached a non-flag token without finding -c — not a wrapper.
-			return tokens
-		}
-		if hasCFlag(tok) {
-			inner := tokens[i+1:]
-			if len(inner) == 0 {
+
+	basename := shellWrapperBasename(tokens[0])
+	switch {
+	case isShellBinary(tokens[0]):
+		// Scan for -c flag (or combined flag containing c) in positions 1+.
+		// Skip other flags like --norc, -l, etc.
+		for i := 1; i < len(tokens); i++ {
+			tok := tokens[i]
+			if !strings.HasPrefix(tok, "-") {
+				// Reached a non-flag token without finding -c — not a wrapper.
 				return tokens
 			}
-			// If the shell got a single quoted string, re-tokenize it.
-			if len(inner) == 1 {
-				re := tokenize(inner[0])
-				if len(re) > 0 {
-					return re
-				}
+			if hasCFlag(tok) {
+				return unwrapInnerTokens(tokens, i+1)
 			}
-			return inner
 		}
+	case cmdBasenames[basename]:
+		// cmd.exe options are case-insensitive. /c executes and exits; /k
+		// executes and remains open. Both wrap the remaining command string.
+		for i := 1; i < len(tokens); i++ {
+			tok := strings.ToLower(tokens[i])
+			if tok == "/c" || tok == "/k" {
+				return removeCmdCarets(unwrapInnerTokensForOS(tokens, i+1, "windows"))
+			}
+			if (strings.HasPrefix(tok, "/c") || strings.HasPrefix(tok, "/k")) && len(tok) > 2 {
+				attached := tokens[i][2:]
+				inner := append([]string{attached}, tokens[i+1:]...)
+				if len(inner) == 1 {
+					inner = unwrapInnerTokensForOS(inner, 0, "windows")
+				}
+				return removeCmdCarets(inner)
+			}
+			if !strings.HasPrefix(tok, "/") {
+				return tokens
+			}
+		}
+	case powerShellBasenames[basename]:
+		// PowerShell parameter names are case-insensitive. -Command and its
+		// -c alias wrap the remaining command string.
+		for i := 1; i < len(tokens); i++ {
+			tok := strings.ToLower(tokens[i])
+			if tok == "-command" || tok == "-c" {
+				return unwrapInnerTokens(tokens, i+1)
+			}
+			if !strings.HasPrefix(tok, "-") {
+				return tokens
+			}
+		}
+	}
+	return tokens
+}
+
+// removeCmdCarets removes cmd.exe's escape marker. It is intentionally
+// conservative: a caret-obfuscated executable such as d^el must be evaluated
+// as the command cmd.exe will run. Removing every caret is idempotent, which
+// keeps nested wrapper normalization safe.
+func removeCmdCarets(tokens []string) []string {
+	for i := range tokens {
+		tokens[i] = strings.ReplaceAll(tokens[i], "^", "")
+	}
+	return tokens
+}
+
+// stripLeadingRedirections removes redirect prefixes that may legally precede
+// a command (for example cmd.exe's `>nul del file`). Leaving the prefix in
+// place would hide the executable from command_matches rules.
+func stripLeadingRedirections(tokens []string) []string {
+	for len(tokens) > 0 {
+		token := tokens[0]
+		if token == ">" || token == ">>" || token == "<" || token == "<<" {
+			if len(tokens) < 2 {
+				return nil
+			}
+			tokens = tokens[2:]
+			continue
+		}
+		if isAttachedRedirection(token) {
+			tokens = tokens[1:]
+			continue
+		}
+		return tokens
+	}
+	return tokens
+}
+
+func isAttachedRedirection(token string) bool {
+	i := 0
+	for i < len(token) && token[i] >= '0' && token[i] <= '9' {
+		i++
+	}
+	if i >= len(token) || (token[i] != '>' && token[i] != '<') {
+		return false
+	}
+	i++
+	if i < len(token) && token[i] == token[i-1] {
+		i++
+	}
+	return i < len(token)
+}
+
+func unwrapInnerTokens(tokens []string, start int) []string {
+	return unwrapInnerTokensForOS(tokens, start, runtime.GOOS)
+}
+
+func unwrapInnerTokensForOS(tokens []string, start int, goos string) []string {
+	if start >= len(tokens) {
+		return tokens
+	}
+	inner := tokens[start:]
+	// If the wrapper got a single quoted command string, re-tokenize it so
+	// nested wrappers and compound operators remain visible to matching.
+	if len(inner) == 1 {
+		if retokenized := tokenizeForOS(inner[0], goos); len(retokenized) > 0 {
+			return retokenized
+		}
+	}
+	return inner
+}
+
+func tokenizeForOS(cmd, goos string) []string {
+	if goos == "windows" {
+		return tokenizeWindows(cmd)
+	}
+	return tokenize(cmd)
+}
+
+// tokenizeWindows handles the cmd.exe lexical rules relevant to policy
+// matching. Backslashes and single quotes are ordinary characters; double
+// quotes group whitespace; and caret escapes the following character outside
+// double quotes.
+func tokenizeWindows(cmd string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inDouble := false
+	tokenStarted := false
+
+	for i := 0; i < len(cmd); i++ {
+		ch := cmd[i]
+		if ch == '^' && !inDouble && i+1 < len(cmd) {
+			i++
+			cur.WriteByte(cmd[i])
+			tokenStarted = true
+			continue
+		}
+		if ch == '"' {
+			inDouble = !inDouble
+			tokenStarted = true
+			continue
+		}
+		if (ch == ' ' || ch == '\t') && !inDouble {
+			if tokenStarted {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+				tokenStarted = false
+			}
+			continue
+		}
+		cur.WriteByte(ch)
+		tokenStarted = true
+	}
+	if tokenStarted {
+		tokens = append(tokens, cur.String())
 	}
 	return tokens
 }

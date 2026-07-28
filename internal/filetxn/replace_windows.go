@@ -20,3 +20,10 @@ func Replace(sourcePath, destinationPath string) error {
 	return windows.MoveFileEx(source, destination,
 		windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
 }
+
+// SyncDir is a no-op on Windows, which has no portable directory-fsync
+// equivalent. File.Sync flushes newly created file metadata and contents, and
+// Replace uses MoveFileEx with MOVEFILE_WRITE_THROUGH for atomic replacements.
+func SyncDir(string) error {
+	return nil
+}

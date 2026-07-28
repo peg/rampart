@@ -4,7 +4,6 @@
 package proxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -25,7 +24,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createApprovalRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
 		return
 	}
@@ -235,7 +234,7 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 	}
 authorized:
 	var req resolveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid body: %v", err))
 		return
 	}
@@ -250,6 +249,17 @@ authorized:
 	if hmacAuthed && req.Persist {
 		writeError(w, http.StatusForbidden, "persist=true requires admin token authentication, not a signed approval URL")
 		return
+	}
+	if req.Approved && req.Persist {
+		pending, ok := s.approvals.Get(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "approval not found")
+			return
+		}
+		if _, persistErr := engine.GenerateAllowRule(pending.Call); persistErr != nil {
+			writeError(w, http.StatusBadRequest, persistErr.Error())
+			return
+		}
 	}
 
 	if err := s.approvals.Resolve(id, req.Approved, req.ResolvedBy, req.Persist); err != nil {
@@ -338,7 +348,7 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req bulkResolveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
 		return
 	}
@@ -454,7 +464,7 @@ func (s *Server) handleResolveHostedApproval(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req hostedApprovalResolveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
 		return
 	}

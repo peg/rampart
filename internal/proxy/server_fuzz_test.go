@@ -39,10 +39,10 @@ func FuzzToolRequest(f *testing.F) {
 	}`)
 
 	// Edge cases
-	f.Add(`{}`) // empty object
-	f.Add(`{"agent": ""}`) // empty agent
-	f.Add(`{"params": null}`) // null params
-	f.Add(`{"agent": null, "session": null, "params": null}`) // all null
+	f.Add(`{}`)                                                  // empty object
+	f.Add(`{"agent": ""}`)                                       // empty agent
+	f.Add(`{"params": null}`)                                    // null params
+	f.Add(`{"agent": null, "session": null, "params": null}`)    // all null
 	f.Add(`{"params": {"nested": {"very": {"deep": "value"}}}}`) // deeply nested params
 
 	// Invalid JSON
@@ -51,7 +51,7 @@ func FuzzToolRequest(f *testing.F) {
 	f.Add(`null`)
 	f.Add(`"string instead of object"`)
 	f.Add(`[1, 2, 3]`) // array instead of object
-	f.Add(`42`) // number instead of object
+	f.Add(`42`)        // number instead of object
 
 	// Large payloads
 	largeParams := `{"agent": "test", "params": {"data": "`
@@ -99,7 +99,7 @@ func FuzzEnrichParams(f *testing.F) {
 	f.Add("read", `{"path": "/etc/passwd"}`)
 	f.Add("write", `{"path": "/tmp/test", "content": "data"}`)
 	f.Add("exec", `{"command_b64": "Y3VybCBodHRwczovL2V2aWwuY29t"}`) // base64 encoded
-	f.Add("", `{}`) // empty params
+	f.Add("", `{}`)                                                  // empty params
 
 	f.Fuzz(func(t *testing.T, toolName, paramsJson string) {
 		defer func() {
@@ -153,7 +153,7 @@ func FuzzStripLeadingComments(f *testing.F) {
 func FuzzDecodeBase64Command(f *testing.F) {
 	f.Add("ZWNobyBoZWxsbw==") // "echo hello"
 	f.Add("cm0gLXJmIC8=")     // "rm -rf /"
-	f.Add("")                  // empty
+	f.Add("")                 // empty
 	f.Add("invalid_base64")   // invalid
 	f.Add("////")             // valid base64, garbage binary
 
@@ -175,13 +175,13 @@ func FuzzToolRequestStructures(f *testing.F) {
 	f.Add(`{"agent": 12345, "session": true, "params": "not an object"}`)
 	f.Add(`{"agent": {"nested": "object"}, "params": [1,2,3]}`)
 	f.Add(`{"params": {"command": null, "path": false, "url": 123}}`)
-	
+
 	// Very large nested structures
 	f.Add(`{"params": {"a": {"b": {"c": {"d": {"e": {"f": {"g": "deep"}}}}}}}}`)
-	
+
 	// Array of objects instead of single object
 	f.Add(`[{"agent": "test"}, {"agent": "test2"}]`)
-	
+
 	// Binary data in strings
 	f.Add(`{"agent": "\u0000\u0001\u0002", "params": {"command": "\xff\xfe\xfd"}}`)
 

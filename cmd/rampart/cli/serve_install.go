@@ -18,19 +18,20 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"html/template"
+	htmltemplate "html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	texttemplate "text/template"
 
 	"github.com/spf13/cobra"
 )
 
 const plistLabel = "sh.rampart.serve"
 
-var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
+var plistTmpl = htmltemplate.Must(htmltemplate.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -61,20 +62,57 @@ var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" e
 </plist>
 `))
 
-var systemdTmpl = template.Must(template.New("unit").Parse(`[Unit]
+var systemdTmpl = texttemplate.Must(texttemplate.New("unit").Funcs(texttemplate.FuncMap{
+	"systemdQuote": systemdQuote,
+}).Parse(`[Unit]
 Description=Rampart Approval Server
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={{.Binary}} serve{{range .Args}} {{.}}{{end}}
-Environment=RAMPART_TOKEN={{.Token}}
+ExecStart={{systemdQuote .Binary}} serve{{range .Args}} {{systemdQuote .}}{{end}}
+Environment={{systemdQuote (printf "RAMPART_TOKEN=%s" .Token)}}
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=default.target
 `))
+
+// systemdQuote renders one systemd command/environment word without allowing
+// whitespace, control characters, quotes, backslashes, or '%' specifiers to
+// change the generated unit. Quoting every word also supports install paths
+// and policy directories containing spaces.
+func systemdQuote(value string) string {
+	var b strings.Builder
+	b.Grow(len(value) + 2)
+	b.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '%':
+			// systemd expands % specifiers even in quoted strings.
+			b.WriteString("%%")
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\x%02x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
 
 // serviceConfig holds template data for service file generation.
 type serviceConfig struct {
@@ -217,6 +255,30 @@ func logPath() string {
 	return filepath.Join(home, ".rampart", "serve.log")
 }
 
+// stableServiceBinary prefers the PATH entry that resolves to the exact binary
+// currently running. Package managers such as Homebrew expose a stable symlink
+// while os.Executable can return a versioned Cellar path that is removed by the
+// next upgrade. Identity checking prevents an unrelated PATH binary from being
+// persisted into a trusted service definition.
+func stableServiceBinary(binary string) string {
+	name := filepath.Base(binary)
+	candidate, err := execLookPath(name)
+	if err != nil {
+		return binary
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil || samePath(candidate, binary) {
+		return binary
+	}
+
+	currentInfo, currentErr := os.Stat(binary)
+	candidateInfo, candidateErr := os.Stat(candidate)
+	if currentErr != nil || candidateErr != nil || !os.SameFile(currentInfo, candidateInfo) {
+		return binary
+	}
+	return candidate
+}
+
 // generatePlist returns the plist XML as a string.
 func generatePlist(cfg serviceConfig) (string, error) {
 	var b strings.Builder
@@ -256,7 +318,7 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS == "windows" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Windows service installation is not supported.")
-				fmt.Fprintln(cmd.ErrOrStderr(), "Run 'rampart serve' in a terminal, or use Task Scheduler or NSSM to run it at startup.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Use 'rampart serve --background' for this login, or Task Scheduler/NSSM for automatic startup.")
 				return nil
 			}
 
@@ -265,6 +327,7 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 				return fmt.Errorf("find rampart binary: %w", err)
 			}
 			binary, _ = filepath.Abs(binary)
+			binary = stableServiceBinary(binary)
 
 			token, generated, err := resolveServiceToken(tokenFlag)
 			if err != nil {
@@ -345,7 +408,9 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return err
 	}
 	// Ensure log directory exists.
-	_ = os.MkdirAll(filepath.Dir(cfg.LogPath), 0o755)
+	if err := os.MkdirAll(filepath.Dir(cfg.LogPath), 0o700); err != nil {
+		return fmt.Errorf("create service log directory: %w", err)
+	}
 
 	// 0o600: plist contains RAMPART_TOKEN — must not be world-readable.
 	// Chmod after write because os.WriteFile only applies the mode on creation;
@@ -402,8 +467,6 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	// Ensure log directory exists.
-	_ = os.MkdirAll(filepath.Dir(cfg.LogPath), 0o755)
 
 	// 0o600: unit file contains RAMPART_TOKEN — must not be world-readable.
 	// Chmod after write because os.WriteFile only applies the mode on creation.
@@ -454,11 +517,19 @@ func launchctlServiceLoaded(runner commandRunner) (bool, error) {
 
 func printSuccess(cmd *cobra.Command, token string, generated bool, port int, path string) {
 	w := cmd.ErrOrStderr()
+	interactive := false
+	if file, ok := w.(*os.File); ok {
+		interactive = isTerminal(file)
+	}
 	fmt.Fprintf(w, "\n✅ Rampart service installed: %s\n", path)
 	fmt.Fprintf(w, "   Dashboard: http://localhost:%d/dashboard/\n", port)
-	fmt.Fprintf(w, "   Token:     %s\n", token)
-	fmt.Fprintf(w, "   (token also saved to ~/.rampart/token — hooks read it automatically)\n")
-	if generated {
+	if interactive {
+		fmt.Fprintf(w, "   Token:     %s\n", token)
+		fmt.Fprintf(w, "   (token also saved to ~/.rampart/token — hooks read it automatically)\n")
+	} else {
+		fmt.Fprintln(w, "   Token:     saved to ~/.rampart/token")
+	}
+	if generated && interactive {
 		fmt.Fprintf(w, "\n   To persist across shell sessions:\n")
 		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc\n", token)
 	}

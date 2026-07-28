@@ -24,7 +24,10 @@ The plugin maps common Hermes tools to Rampart policy classes:
 | `send_message`, `text_to_speech` | `message` | Sends target and message size/preview. |
 | `process`, `cronjob` | `process` | Sends action and job/session metadata. |
 
-Unknown tools are still sent to Rampart using their Hermes tool name with sensitive-looking values redacted.
+Unknown Hermes, plugin, and MCP tool names are blocked locally before a policy
+request is sent. This prevents a newly introduced mutating capability from
+falling through Rampart's generic policy defaults. Add a typed mapping and
+tests before enabling a new tool surface.
 
 For Hermes patch calls that carry multiple file updates, Rampart evaluates
 every represented path and applies the most restrictive decision to the whole
@@ -55,6 +58,8 @@ rampart setup hermes --enable
 ## Start Rampart serve
 
 The plugin defaults to `http://127.0.0.1:9090` and reads `RAMPART_TOKEN` or `~/.rampart/token` when present.
+It refuses non-loopback service URLs so that local bearer credentials cannot be
+sent to an unintended remote endpoint.
 
 ```bash
 rampart serve --addr 127.0.0.1 --port 9090
@@ -78,9 +83,6 @@ plugins:
         serve_url: http://127.0.0.1:9090
         timeout_ms: 3000
         endpoint_mode: preflight
-        fail_open_tools:
-          - read_file
-          - search_files
 ```
 
 ## Decision behavior
@@ -89,10 +91,15 @@ plugins:
 | --- | --- |
 | `allow`, `watch`, `log` | Tool call continues. |
 | `deny` | Tool call is blocked with the policy reason. |
-| `ask`, `require_approval` | Tool call is blocked with an approval-required message. No hidden Rampart approval is created by default. When Rampart returns an `audit_id`, the block message includes it for correlation. |
-| Rampart unavailable | Mutating/high-risk tools fail closed; configured read-only tools may fail open. |
+| `ask` | Tool call is blocked with an approval-required message. No hidden Rampart approval is created by default. When Rampart returns an `audit_id`, the block message includes it for correlation. |
+| Rampart unavailable | Every tool fails closed by default. Advanced operators can explicitly configure selected tools to fail open. |
 
-The default endpoint mode is `preflight`, which calls `POST /v1/preflight/{tool}`. This is deliberate: it avoids creating pending Rampart approvals that Hermes cannot yet resume from a plugin hook. Rampart records the evaluation audit ID, and the plugin sends Hermes' top-level `tool_call_id` when Hermes provides one.
+The default endpoint mode is `preflight`, which calls `POST /v1/preflight/{tool}` with `enforce: true`. This is deliberate: it consumes one-time grants and records call-count state at Hermes' actual pre-execution boundary without creating pending Rampart approvals that Hermes cannot yet resume from a plugin hook. Rampart records the evaluation audit ID, and the plugin sends Hermes' top-level `tool_call_id` when Hermes provides one.
+
+For an availability-first deployment, `fail_open_tools` can explicitly list
+individual Hermes names such as `web_search`. This weakens the enforcement
+boundary and is never enabled by default; credential-bearing reads should stay
+fail closed.
 
 Rampart's hosted approval API is ready for hosts that can create a single user-facing approval and resume the exact tool call. This plugin does not request hosted approvals yet because current Hermes plugin hooks do not expose that exact approval/resume contract as a stable plugin primitive.
 
@@ -137,11 +144,13 @@ MCP configuration. See
 contract and remaining gaps.
 
 !!! warning "Why this remains experimental"
-    Hermes currently documents that a crashing plugin callback is skipped and
-    agent execution continues. Its plugin hooks also do not expose a stable
-    exact-call approval/resume primitive. Rampart can conservatively block an
-    `ask` decision, but it cannot honestly promise a first-class pause and
-    resume flow or fail-closed behavior after every host-level plugin failure.
+    Rampart converts ordinary adapter exceptions into explicit blocks, but
+    Hermes currently documents that a plugin callback which fails outside that
+    wrapper can be skipped while agent execution continues. Its plugin hooks
+    also do not expose a stable exact-call approval/resume primitive. Rampart
+    can conservatively block an `ask` decision, but it cannot honestly promise
+    a first-class pause and resume flow or fail-closed behavior after every
+    host-level plugin failure.
 
 For manual verification, use a deny rule for a harmless command and confirm Hermes blocks it before execution:
 

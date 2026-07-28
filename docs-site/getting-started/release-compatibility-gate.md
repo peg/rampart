@@ -72,14 +72,23 @@ Gemini CLI remains **experimental** because consumer Google sign-in is retired, 
      Windows unit tests do not prove a live Windows Codex host boundary.
 
 6. **Validate Cline without overstating it**
-   - Exercise Cline setup and hook payload regression tests on the candidate.
-   - Review the latest documented hook payloads for shell, file, web, and MCP
-     changes.
+   - Exercise direct POSIX and `.ps1` setup, ownership/migration, current editor
+     and CLI payload, batched command/path, and adapter regression tests.
+   - Review the latest source-level hook discovery, payloads, and tool catalog
+     for shell, file, web, agent/team, plugin, and MCP changes.
+   - Confirm POSIX executable-bit activation, Windows PowerShell/file-presence
+     behavior, `--data-dir` independence, and whether upstream `--hooks-dir`
+     is actually consumed.
+   - Confirm legacy CLI `--yolo` still disables runtime hooks and document it
+     as incompatible with this boundary while that remains true.
+   - Recheck whether CLI pre-hook failures/timeouts still continue and whether
+     post-tool hook control responses are still ignored; do not claim
+     fail-closed or CLI response blocking while those behaviors remain.
    - Do not claim rolling-latest or real-host verification until a current Cline
      installation invokes the candidate hooks and harmless allow/deny behavior
      is recorded.
-   - Do not claim native Windows Cline coverage while the installed Rampart hook
-     scripts require Bash.
+   - Keep physical Windows host proof separate from source review, unit tests,
+     and cross-compilation.
 
 7. **Validate experimental enterprise Gemini CLI without conflating adapter and host proof**
    - Run `node scripts/compat-gemini-latest.mjs` to install the latest published

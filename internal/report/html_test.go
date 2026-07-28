@@ -121,9 +121,9 @@ func TestFilterEventsByTime(t *testing.T) {
 
 func TestPrepareTopCommands(t *testing.T) {
 	counts := map[string]int{
-		"rm -rf /":    5,
+		"rm -rf /":        5,
 		"cat /etc/shadow": 3,
-		"ls":          1,
+		"ls":              1,
 	}
 	top := prepareTopCommands(counts)
 	if len(top) == 0 {

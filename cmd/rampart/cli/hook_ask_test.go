@@ -160,8 +160,9 @@ func TestParseClaudeCodeInput_SessionAndToolUseID(t *testing.T) {
 // tool_use_id do not cause errors — they remain empty strings.
 func TestParseClaudeCodeInput_SessionIDEmpty(t *testing.T) {
 	payload := map[string]any{
-		"tool_name":  "Bash",
-		"tool_input": map[string]any{"command": "echo hi"},
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "echo hi"},
 	}
 	data, _ := json.Marshal(payload)
 

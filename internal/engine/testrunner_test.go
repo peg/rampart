@@ -199,6 +199,26 @@ tests:
 	}
 }
 
+func TestLoadTestSuiteExpandsWindowsHomeSeparator(t *testing.T) {
+	dir := t.TempDir()
+	suiteFile := filepath.Join(dir, "tests.yaml")
+	if err := os.WriteFile(suiteFile, []byte("policy: '~\\policy.yaml'\ntests:\n  - name: test1\n    tool: exec\n    params:\n      command: echo ok\n    expect: allow\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	suite, err := LoadTestSuite(suiteFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, `policy.yaml`); suite.Policy != want {
+		t.Fatalf("policy path = %q, want %q", suite.Policy, want)
+	}
+}
+
 func TestLoadInlineTests(t *testing.T) {
 	dir := t.TempDir()
 	policyFile := filepath.Join(dir, "policy.yaml")

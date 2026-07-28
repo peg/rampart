@@ -13,7 +13,10 @@
 
 package notify
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // DetectPlatform detects the webhook platform based on the URL.
 // Returns "slack", "discord", "teams", "openclaw", or "webhook".
@@ -42,21 +45,44 @@ func DetectPlatform(url string) string {
 // NewNotifier creates a notifier for the specified platform.
 // If platform is "auto" or empty, it will auto-detect based on the URL.
 func NewNotifier(url, platform string) Notifier {
+	return NewNotifierWithTimeout(url, platform, 0)
+}
+
+// NewNotifierWithTimeout creates a notifier and optionally overrides its HTTP
+// timeout. A non-positive duration keeps the platform's default timeout.
+func NewNotifierWithTimeout(url, platform string, timeout time.Duration) Notifier {
 	platform = strings.ToLower(strings.TrimSpace(platform))
 	if platform == "auto" || platform == "" {
 		platform = DetectPlatform(url)
 	}
 
+	var notifier Notifier
 	switch platform {
 	case "slack":
-		return NewSlackNotifier(url)
+		notifier = NewSlackNotifier(url)
 	case "discord":
-		return NewDiscordNotifier(url)
+		notifier = NewDiscordNotifier(url)
 	case "teams":
-		return NewTeamsNotifier(url)
+		notifier = NewTeamsNotifier(url)
 	case "openclaw":
-		return NewOpenClawNotifier(url)
+		notifier = NewOpenClawNotifier(url)
 	default:
-		return NewGenericNotifier(url)
+		notifier = NewGenericNotifier(url)
 	}
+	if timeout <= 0 {
+		return notifier
+	}
+	switch typed := notifier.(type) {
+	case *SlackNotifier:
+		typed.client.Timeout = timeout
+	case *DiscordNotifier:
+		typed.client.Timeout = timeout
+	case *TeamsNotifier:
+		typed.client.Timeout = timeout
+	case *OpenClawNotifier:
+		typed.client.Timeout = timeout
+	case *GenericNotifier:
+		typed.client.Timeout = timeout
+	}
+	return notifier
 }

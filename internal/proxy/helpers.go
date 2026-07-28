@@ -8,11 +8,33 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// decodeJSONBody accepts exactly one JSON value plus optional trailing
+// whitespace. Keeping this check in one place prevents request smuggling by
+// concatenating a second object that individual handlers would otherwise
+// silently ignore.
+func decodeJSONBody(r io.Reader, dst any) error {
+	dec := json.NewDecoder(r)
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain exactly one JSON value")
+		}
+		return fmt.Errorf("invalid trailing data: %w", err)
+	}
+	return nil
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

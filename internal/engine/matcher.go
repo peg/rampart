@@ -17,11 +17,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const responseRegexMatchTimeout = 100 * time.Millisecond
@@ -54,15 +57,23 @@ func regexMatchString(re *regexp.Regexp, value string) bool {
 
 // cleanPath canonicalizes a file path for policy matching. It applies
 // filepath.Clean to resolve ".." and "." segments, then attempts
-// filepath.EvalSymlinks to resolve symlinks (falling back to the
-// cleaned path if the file doesn't exist yet). This ensures that
+// filepath.EvalSymlinks to resolve symlinks. If the leaf does not exist yet,
+// it resolves the longest existing ancestor and restores the missing suffix.
+// This ensures that
 // traversal tricks like "/etc/../etc/shadow" are normalized before
 // glob matching, regardless of which entry point (proxy, interceptor,
 // MCP, SDK) produced the path.
 // cleanPaths returns both the cleaned path and the symlink-resolved path.
 // On macOS, /etc -> /private/etc, so policies matching "/etc/**" need to
-// check both forms. For non-existent files, both values are the same.
+// check both forms.
 func cleanPaths(p string) (cleaned string, resolved string) {
+	return cleanPathsAt(p, "")
+}
+
+// cleanPathsAt canonicalizes p relative to the directory used by the host
+// tool. Rampart often runs in a long-lived service or one-shot hook whose own
+// process CWD is unrelated to the agent workspace.
+func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 	if p == "" {
 		return p, p
 	}
@@ -73,12 +84,69 @@ func cleanPaths(p string) (cleaned string, resolved string) {
 	// This also enables cross-platform policy matching (Windows paths match
 	// forward-slash patterns like "**/.ssh/id_*").
 	p = strings.ReplaceAll(p, "\\", "/")
-	cleaned = filepath.Clean(p)
-	r, err := filepath.EvalSymlinks(cleaned)
-	if err != nil {
-		return cleaned, cleaned
+	workDir = strings.ReplaceAll(strings.TrimSpace(workDir), "\\", "/")
+	if workDir != "" && !filepath.IsAbs(p) {
+		p = filepath.Join(workDir, p)
 	}
-	return cleaned, r
+	cleaned = filepath.Clean(p)
+
+	// Resolve the full path when it exists. For a not-yet-created leaf, walk
+	// upward until EvalSymlinks can resolve an existing ancestor, then append
+	// the missing components. This prevents writes through a symlinked parent
+	// directory from bypassing policy matching.
+	candidate := cleaned
+	var missing []string
+	for {
+		r, err := filepath.EvalSymlinks(candidate)
+		if err == nil {
+			resolved = r
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return cleaned, resolved
+		}
+		if !os.IsNotExist(err) {
+			return cleaned, cleaned
+		}
+
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return cleaned, cleaned
+		}
+		missing = append(missing, filepath.Base(candidate))
+		candidate = parent
+	}
+}
+
+// pathCandidates returns canonical host-resolved forms first, followed by the
+// normalized relative spelling when a host CWD was supplied. Keeping the
+// latter preserves compatibility with project policies such as `secrets/**`,
+// while absolute and symlink-resolved candidates ensure system-path denies see
+// the file the host will actually access.
+func pathCandidates(call ToolCall) []string {
+	path := call.Path()
+	workDir := call.WorkingDirectory()
+	cleaned, resolved := cleanPathsAt(path, workDir)
+	candidates := make([]string, 0, 3)
+	appendUnique := func(value string) {
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+	appendUnique(cleaned)
+	appendUnique(resolved)
+
+	raw := strings.ReplaceAll(path, "\\", "/")
+	if workDir != "" && raw != "" && !filepath.IsAbs(raw) {
+		appendUnique(filepath.Clean(raw))
+	}
+	return candidates
 }
 
 // MatchGlob reports whether name matches the glob pattern.
@@ -370,6 +438,80 @@ func matchAnyFold(patterns []string, name string) bool {
 	return false
 }
 
+func matchAnyForOS(patterns []string, name, goos string) bool {
+	if matchAny(patterns, name) {
+		return true
+	}
+	return platformUsesCaseInsensitiveNames(goos) && matchAnyFold(patterns, name)
+}
+
+func matchCommandHeadFoldFirst(patterns []string, command string) string {
+	foldedCommand := foldCommandHead(command)
+	for _, pattern := range patterns {
+		if MatchGlob(foldCommandHead(pattern), foldedCommand) {
+			return pattern
+		}
+	}
+	return ""
+}
+
+// foldCommandHead normalizes only the executable/cmdlet token. Command names
+// follow host case rules, while arguments may identify case-sensitive remote
+// resources such as URL paths and Git refs and must retain their exact bytes.
+func foldCommandHead(command string) string {
+	end := strings.IndexFunc(command, unicode.IsSpace)
+	if end < 0 {
+		return strings.ToLower(command)
+	}
+	return strings.ToLower(command[:end]) + command[end:]
+}
+
+// Windows and the default macOS filesystem resolve command and path names
+// case-insensitively. Matching must be at least as conservative as the host
+// filesystem or mixed-case spellings can bypass a lowercase deny pattern.
+// Case-sensitive macOS volumes may consequently over-match, which is the safe
+// failure mode for an enforcement boundary.
+func platformUsesCaseInsensitiveNames(goos string) bool {
+	return goos == "windows" || goos == "darwin"
+}
+
+func matchCommandAnyForAction(patterns []string, command string, action Action) bool {
+	return matchCommandAnyForActionOS(patterns, command, runtime.GOOS, action)
+}
+
+func matchCommandAnyForActionOS(patterns []string, command, goos string, action Action) bool {
+	return matchCommandFirstForActionOS(patterns, command, goos, action) != ""
+}
+
+func matchCommandFirstForAction(patterns []string, command string, action Action) string {
+	return matchCommandFirstForActionOS(patterns, command, runtime.GOOS, action)
+}
+
+func matchCommandFirstForActionOS(patterns []string, command, goos string, action Action) string {
+	if matched := matchFirst(patterns, command); matched != "" {
+		return matched
+	}
+	if !platformUsesCaseInsensitiveNames(goos) {
+		return ""
+	}
+	if actionRestrictsExecution(action) {
+		// A restrictive false positive fails safely, so match the complete command
+		// conservatively on hosts whose command lookup is case-insensitive.
+		return matchFirstFold(patterns, command)
+	}
+	// Allow/watch/webhook matches can grant execution. Normalize only the
+	// executable or cmdlet and preserve potentially case-sensitive arguments.
+	return matchCommandHeadFoldFirst(patterns, command)
+}
+
+func actionRestrictsExecution(action Action) bool {
+	return action == ActionDeny || action == ActionAsk || action == ActionRequireApproval
+}
+
+func matchPathAny(patterns []string, path string) bool {
+	return matchAnyForOS(patterns, path, runtime.GOOS)
+}
+
 func matchDomainAny(patterns []string, domain string) bool {
 	return matchDomainFirst(patterns, domain) != ""
 }
@@ -401,10 +543,18 @@ func matchDomainFirst(patterns []string, domain string) string {
 //   - CommandNotMatches/PathNotMatches exclude matches.
 //   - Multiple field types are AND (e.g., CommandMatches AND PathMatches).
 //
-// ExplainCondition checks if a condition matches a tool call, returning
-// a human-readable detail string explaining what matched. Used by the
-// `policy explain` CLI command.
+// ExplainCondition checks a condition using restrictive-action semantics and
+// returns a human-readable detail string. Callers that know the rule action
+// should use ExplainConditionForAction so explanations cannot claim that an
+// execution-granting rule matched more broadly than enforcement.
 func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
+	return ExplainConditionForAction(cond, call, ActionDeny)
+}
+
+// ExplainConditionForAction mirrors the enforcement match for action before
+// rendering the first useful match detail. The upfront check is important for
+// conditions with multiple fields, which are ANDed by enforcement.
+func ExplainConditionForAction(cond Condition, call ToolCall, action Action) (bool, string) {
 	if cond.Default {
 		return true, "default: true"
 	}
@@ -412,6 +562,9 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		// Empty when: block is unconditional — matches all tool calls.
 		// This mirrors matchCondition which also returns true for empty conditions.
 		return true, "unconditional (empty when:)"
+	}
+	if !matchConditionForAction(cond, call, nil, action) {
+		return false, ""
 	}
 
 	if len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0 {
@@ -423,45 +576,41 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		// command_matches (glob) — mirror matchCondition: try raw, normalized,
 		// compound segments, and subcommands.
 		if len(cond.CommandMatches) > 0 {
-			if matched := matchFirst(cond.CommandMatches, cmd); matched != "" {
-				if !matchAny(cond.CommandNotMatches, cmd) {
-					return true, fmt.Sprintf("command_matches [%q]", matched)
-				}
+			if matched := matchCommandFirstForAction(cond.CommandMatches, cmd, action); matched != "" {
+				return true, fmt.Sprintf("command_matches [%q]", matched)
 			}
 			// Try normalized form.
 			norm := NormalizeCommand(cmd)
 			if norm != cmd {
-				if matched := matchFirst(cond.CommandMatches, norm); matched != "" {
-					if !matchAny(cond.CommandNotMatches, cmd) && !matchAny(cond.CommandNotMatches, norm) {
-						return true, fmt.Sprintf("command_matches [%q] (normalized)", matched)
-					}
+				if matched := matchCommandFirstForAction(cond.CommandMatches, norm, action); matched != "" {
+					return true, fmt.Sprintf("command_matches [%q] (normalized)", matched)
 				}
 				for _, seg := range SplitCompoundCommand(norm) {
-					if matched := matchFirst(cond.CommandMatches, seg); matched != "" {
+					if matched := matchCommandFirstForAction(cond.CommandMatches, seg, action); matched != "" {
 						return true, fmt.Sprintf("command_matches [%q] (normalized compound segment)", matched)
 					}
 				}
 			}
 			// Try each segment of compound commands.
 			for _, seg := range SplitCompoundCommand(cmd) {
-				if matched := matchFirst(cond.CommandMatches, seg); matched != "" {
+				if matched := matchCommandFirstForAction(cond.CommandMatches, seg, action); matched != "" {
 					return true, fmt.Sprintf("command_matches [%q] (compound segment)", matched)
 				}
 				nseg := NormalizeCommand(seg)
 				if nseg != seg {
-					if matched := matchFirst(cond.CommandMatches, nseg); matched != "" {
+					if matched := matchCommandFirstForAction(cond.CommandMatches, nseg, action); matched != "" {
 						return true, fmt.Sprintf("command_matches [%q] (normalized compound segment)", matched)
 					}
 				}
 			}
 			// Check subcommands (command substitution, backticks, eval).
 			for _, sub := range ExtractSubcommands(cmd) {
-				if matched := matchFirst(cond.CommandMatches, sub); matched != "" {
+				if matched := matchCommandFirstForAction(cond.CommandMatches, sub, action); matched != "" {
 					return true, fmt.Sprintf("command_matches [%q] (subcommand)", matched)
 				}
 				nsub := NormalizeCommand(sub)
 				if nsub != sub {
-					if matched := matchFirst(cond.CommandMatches, nsub); matched != "" {
+					if matched := matchCommandFirstForAction(cond.CommandMatches, nsub, action); matched != "" {
 						return true, fmt.Sprintf("command_matches [%q] (normalized subcommand)", matched)
 					}
 				}
@@ -471,9 +620,12 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		// command_contains (case-insensitive substring) — catches patterns glob can't
 		// express, e.g. bash <(curl URL) where the URL's / breaks glob * matching.
 		// Case-insensitive so BASH <(CURL URL) doesn't bypass.
-		cmdLower := strings.ToLower(cmd)
 		for _, sub := range cond.CommandContains {
-			if strings.Contains(cmdLower, strings.ToLower(sub)) {
+			contains := strings.Contains(cmd, sub)
+			if actionRestrictsExecution(action) {
+				contains = strings.Contains(strings.ToLower(cmd), strings.ToLower(sub))
+			}
+			if contains {
 				return true, fmt.Sprintf("command_contains [%q]", sub)
 			}
 		}
@@ -492,18 +644,14 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 	}
 
 	if len(cond.PathMatches) > 0 {
-		cleaned, resolved := cleanPaths(call.Path())
-		if cleaned == "" {
+		candidates := pathCandidates(call)
+		if len(candidates) == 0 {
 			return false, ""
 		}
-		matched := matchFirst(cond.PathMatches, cleaned)
-		if matched == "" {
-			matched = matchFirstFold(cond.PathMatches, cleaned)
-		}
-		if matched == "" && resolved != cleaned {
-			matched = matchFirst(cond.PathMatches, resolved)
-			if matched == "" {
-				matched = matchFirstFold(cond.PathMatches, resolved)
+		matched := ""
+		for _, candidate := range candidates {
+			if matched = matchPathFirst(cond.PathMatches, candidate); matched != "" {
+				break
 			}
 		}
 		if matched == "" {
@@ -557,6 +705,13 @@ func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
 		return false, ""
 	}
 
+	if len(cond.SessionMatches) > 0 {
+		return true, fmt.Sprintf("session_matches [%q]", matchFirst(cond.SessionMatches, call.Session))
+	}
+	if len(cond.SessionNotMatches) > 0 {
+		return true, "session_not_matches (no exclusion matched)"
+	}
+
 	return false, ""
 }
 
@@ -580,13 +735,34 @@ func matchFirstFold(patterns []string, value string) string {
 	return ""
 }
 
+func matchFirstForOS(patterns []string, value, goos string) string {
+	if matched := matchFirst(patterns, value); matched != "" {
+		return matched
+	}
+	if platformUsesCaseInsensitiveNames(goos) {
+		return matchFirstFold(patterns, value)
+	}
+	return ""
+}
+
+func matchPathFirst(patterns []string, path string) string {
+	return matchFirstForOS(patterns, path, runtime.GOOS)
+}
+
 func matchFirstCommandEnvAssignment(patterns []string, cmd string) string {
+	return matchFirstCommandEnvAssignmentForOS(patterns, cmd, runtime.GOOS)
+}
+
+func matchFirstCommandEnvAssignmentForOS(patterns []string, cmd, goos string) string {
 	for _, name := range commandEnvAssignmentNames(cmd) {
-		nameFold := strings.ToLower(name)
-		for _, pattern := range patterns {
-			if MatchGlob(strings.ToLower(pattern), nameFold) {
-				return pattern
-			}
+		matched := matchFirst(patterns, name)
+		// Environment variable names are case-insensitive on Windows, but remain
+		// case-sensitive in macOS and Unix shells regardless of filesystem rules.
+		if matched == "" && goos == "windows" {
+			matched = matchFirstFold(patterns, name)
+		}
+		if matched != "" {
+			return matched
 		}
 	}
 	return ""
@@ -682,6 +858,10 @@ func appendEnvAssignmentName(name string, seen map[string]bool, names *[]string)
 }
 
 func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
+	return matchConditionForAction(cond, call, counter, ActionDeny)
+}
+
+func matchConditionForAction(cond Condition, call ToolCall, counter CallCounter, action Action) bool {
 	if cond.Default {
 		return true
 	}
@@ -702,17 +882,28 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 			return false
 		}
 		cmdMatch := false
+		positiveCommandMatch := func(patterns []string, command string) bool {
+			return matchCommandAnyForAction(patterns, command, action)
+		}
+		negativeAction := ActionDeny
+		if actionRestrictsExecution(action) {
+			// Exclusions weaken a restrictive rule, so preserve argument casing.
+			negativeAction = ActionAllow
+		}
+		negativeCommandMatch := func(patterns []string, command string) bool {
+			return matchCommandAnyForAction(patterns, command, negativeAction)
+		}
 
 		if len(cond.CommandMatches) > 0 {
-			cmdMatch = matchAny(cond.CommandMatches, cmd)
+			cmdMatch = positiveCommandMatch(cond.CommandMatches, cmd)
 			if !cmdMatch {
 				// Try normalized form.
 				norm := NormalizeCommand(cmd)
 				if norm != cmd {
-					cmdMatch = matchAny(cond.CommandMatches, norm)
+					cmdMatch = positiveCommandMatch(cond.CommandMatches, norm)
 					if !cmdMatch {
 						for _, seg := range SplitCompoundCommand(norm) {
-							if matchAny(cond.CommandMatches, seg) {
+							if positiveCommandMatch(cond.CommandMatches, seg) {
 								cmdMatch = true
 								break
 							}
@@ -722,12 +913,12 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 				// Try each segment of compound commands.
 				if !cmdMatch {
 					for _, seg := range SplitCompoundCommand(cmd) {
-						if matchAny(cond.CommandMatches, seg) {
+						if positiveCommandMatch(cond.CommandMatches, seg) {
 							cmdMatch = true
 							break
 						}
 						nseg := NormalizeCommand(seg)
-						if nseg != seg && matchAny(cond.CommandMatches, nseg) {
+						if nseg != seg && positiveCommandMatch(cond.CommandMatches, nseg) {
 							cmdMatch = true
 							break
 						}
@@ -736,12 +927,12 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 				// Check subcommands (command substitution, backticks, eval).
 				if !cmdMatch {
 					for _, sub := range ExtractSubcommands(cmd) {
-						if matchAny(cond.CommandMatches, sub) {
+						if positiveCommandMatch(cond.CommandMatches, sub) {
 							cmdMatch = true
 							break
 						}
 						nsub := NormalizeCommand(sub)
-						if nsub != sub && matchAny(cond.CommandMatches, nsub) {
+						if nsub != sub && positiveCommandMatch(cond.CommandMatches, nsub) {
 							cmdMatch = true
 							break
 						}
@@ -750,14 +941,18 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 			}
 		}
 
-		// command_contains: OR with command_matches — case-insensitive substring match.
+		// command_contains is ORed with command_matches. Restrictive actions use
+		// conservative case-insensitive matching; execution-granting actions keep
+		// argument bytes exact so case-sensitive remote resources are not widened.
 		// Useful for patterns that globs can't express (e.g. bash <(curl URL)
 		// where the URL's / prevents glob * from matching across separators).
-		// Case-insensitive so adversarially-prompted agents can't bypass via CURL/BASH.
 		if !cmdMatch {
-			cmdLower := strings.ToLower(cmd)
 			for _, sub := range cond.CommandContains {
-				if strings.Contains(cmdLower, strings.ToLower(sub)) {
+				contains := strings.Contains(cmd, sub)
+				if actionRestrictsExecution(action) {
+					contains = strings.Contains(strings.ToLower(cmd), strings.ToLower(sub))
+				}
+				if contains {
 					cmdMatch = true
 					break
 				}
@@ -768,11 +963,11 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 			return false
 		}
 		// Exclusions: check raw, normalized, and segments.
-		if matchAny(cond.CommandNotMatches, cmd) {
+		if negativeCommandMatch(cond.CommandNotMatches, cmd) {
 			return false
 		}
 		norm := NormalizeCommand(cmd)
-		if norm != cmd && matchAny(cond.CommandNotMatches, norm) {
+		if norm != cmd && negativeCommandMatch(cond.CommandNotMatches, norm) {
 			return false
 		}
 		matched = true
@@ -786,10 +981,14 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 		if matchFirstCommandEnvAssignment(cond.CommandEnvAssignments, cmd) == "" {
 			return false
 		}
-		if matchAny(cond.CommandNotMatches, cmd) {
+		negativeAction := ActionDeny
+		if actionRestrictsExecution(action) {
+			negativeAction = ActionAllow
+		}
+		if matchCommandAnyForAction(cond.CommandNotMatches, cmd, negativeAction) {
 			return false
 		}
-		if norm := NormalizeCommand(cmd); norm != cmd && matchAny(cond.CommandNotMatches, norm) {
+		if norm := NormalizeCommand(cmd); norm != cmd && matchCommandAnyForAction(cond.CommandNotMatches, norm, negativeAction) {
 			return false
 		}
 		matched = true
@@ -798,29 +997,25 @@ func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
 	// Path matching (for read/write tool calls).
 	// Canonicalize path to prevent traversal bypasses (e.g. /etc/../etc/shadow).
 	if len(cond.PathMatches) > 0 {
-		cleaned, resolved := cleanPaths(call.Path())
-		if cleaned == "" {
+		candidates := pathCandidates(call)
+		if len(candidates) == 0 {
 			return false
 		}
-		pathMatch := matchAny(cond.PathMatches, cleaned)
-		if !pathMatch {
-			pathMatch = matchAnyFold(cond.PathMatches, cleaned)
-		}
-		if !pathMatch && resolved != cleaned {
-			pathMatch = matchAny(cond.PathMatches, resolved)
-			if !pathMatch {
-				pathMatch = matchAnyFold(cond.PathMatches, resolved)
+		pathMatch := false
+		for _, candidate := range candidates {
+			if matchPathAny(cond.PathMatches, candidate) {
+				pathMatch = true
+				break
 			}
 		}
 		if !pathMatch {
 			return false
 		}
 		// Check exclusions against both forms too.
-		if matchAny(cond.PathNotMatches, cleaned) ||
-			matchAnyFold(cond.PathNotMatches, cleaned) ||
-			(resolved != cleaned &&
-				(matchAny(cond.PathNotMatches, resolved) || matchAnyFold(cond.PathNotMatches, resolved))) {
-			return false
+		for _, candidate := range candidates {
+			if matchPathAny(cond.PathNotMatches, candidate) {
+				return false
+			}
 		}
 		matched = true
 	}

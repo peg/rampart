@@ -37,9 +37,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quickstart, architecture, threat model, landing page, and integration guides
   distinguish CLI, editor, Preview, service-dependent, and administrator-owned
   enforcement paths.
+- **Stateful policy limits now work across Rampart processes** — One-time grants
+  and call-count rules use locked, durable state so parallel hooks, plugins, and
+  proxy requests cannot each consume the same allowance independently.
+- **Managed uninstall is integration-aware and idempotent** — `rampart uninstall`
+  removes only Rampart-owned Claude Code, Cline, Codex, Copilot, Antigravity,
+  Gemini CLI, Hermes, and OpenClaw configuration while preserving unrelated host
+  settings, histories, memories, sessions, and credentials.
+- **Release gates exercise the supported operating-system boundaries** — CI now
+  checks formatting, module tidiness, static analysis, race behavior, Linux and
+  Windows builds, installers, preload contracts, Python SDK compatibility,
+  Docker packaging, and release snapshots before a release can proceed.
+
+### Fixed
+
+- **Windows background service lifecycle is reliable** — Detached serving uses
+  the Windows process model, records the child PID, and can be stopped or
+  restarted without relying on Unix process-group behavior.
+- **Concurrent session and token updates no longer overwrite each other** —
+  Stores use cross-process locking, bounded reads, durable replacement, and
+  stricter identifier validation, including Windows-safe file replacement.
+- **Installer and container validation match published artifacts** — Installers
+  fail closed on checksum mismatches, Homebrew resolves the exact stable
+  version, and the Docker build context excludes development and test output.
+- **Policy explanations match enforcement semantics** — `policy explain` now
+  respects rule actions and ANDed fields, and environment-variable assignment
+  names are folded only on Windows rather than on macOS shells.
 
 ### Security
 
+- **Required audit records are durable enforcement state** — Policy decisions
+  fail closed when their audit record cannot be persisted; response decisions
+  are separately correlated, recovery links survive rotation, and verification
+  detects truncated, reordered, or broken audit chains.
+- **Native adapters fail closed on unclassified or malformed actions** —
+  OpenClaw, Hermes, MCP, Copilot, Gemini CLI, and Antigravity adapters validate
+  structured input, evaluate every path in batched changes, and deny ambiguous
+  future tool surfaces in enforce mode.
+- **The preload boundary has bounded, structural response parsing** — The native
+  library rejects oversized or malformed policy responses, covers spawned
+  processes consistently, and never treats HTTP 4xx policy errors as an
+  availability failure eligible for fail-open behavior.
+- **HTTP and webhook boundaries are more defensive** — The server rejects
+  trailing JSON documents, limits headers, restricts query-string bearer tokens
+  to SSE connections, keeps global metrics administrator-only, and sends
+  signed webhooks with bounded requests and redacted error handling.
+- **Windows system dependency is on the patched release** — Updated
+  `golang.org/x/sys` to remove GO-2026-5024 from Rampart's module graph, even
+  though the vulnerable symbol was not reachable from Rampart.
 - **Gemini and Copilot adapters deny unknown future pre-call tools** — New tool
   names cannot silently bypass classification in enforce mode. Allowed calls
   still pass through each host's native permission and sandbox checks, and
@@ -58,6 +103,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disposable Hermes harness now compares the installed distribution with
   PyPI's current release and fails when an unsupported Python version causes
   pip to select an older Hermes build.
+
+### Removed
+
+- **Unused legacy enforcement paths** — Removed the unreferenced daemon and
+  intercept packages, the brittle OpenClaw source-patching scripts, and the old
+  fail-open Node filesystem preload hook. Supported integrations now use the
+  maintained native hook, plugin, proxy, wrapper, or preload boundaries.
 
 ## [1.4.0] - 2026-07-25
 

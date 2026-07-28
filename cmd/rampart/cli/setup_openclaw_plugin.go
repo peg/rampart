@@ -901,6 +901,156 @@ func isOpenClawPluginInstalled() bool {
 	return getOpenClawPluginState().Installed
 }
 
+// openClawPluginManaged verifies ownership before an integration directory is
+// removed. The directory name alone is insufficient: a user could have a
+// different plugin named rampart. Older Rampart releases consistently shipped
+// the manifest identity and this runtime banner even when their versions
+// differed from the current binary.
+func openClawPluginManaged(pluginDir string) bool {
+	manifestData, err := os.ReadFile(filepath.Join(pluginDir, "openclaw.plugin.json"))
+	if err != nil {
+		return false
+	}
+	var manifest struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		Author     string `json:"author"`
+		Homepage   string `json:"homepage"`
+		Repository string `json:"repository"`
+	}
+	if json.Unmarshal(manifestData, &manifest) != nil || manifest.ID != "rampart" || manifest.Name != "Rampart" {
+		return false
+	}
+	identity := strings.ToLower(strings.Join([]string{manifest.Author, manifest.Homepage, manifest.Repository}, " "))
+	if !strings.Contains(identity, "peg") && !strings.Contains(identity, "rampart.sh") && !strings.Contains(identity, "peg/rampart") {
+		return false
+	}
+	runtimeData, err := os.ReadFile(filepath.Join(pluginDir, "index.js"))
+	return err == nil && strings.Contains(string(runtimeData), "Rampart OpenClaw Plugin")
+}
+
+// removeOpenClawRampartConfig removes only Rampart-owned plugin records. When
+// native plugin setup had disabled OpenClaw's exec prompt, restore on-miss so
+// removing Rampart cannot silently leave commands with no approval boundary.
+func removeOpenClawRampartConfig(configPath string, restoreExecAsk bool) (bool, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read OpenClaw config %s: %w", configPath, err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false, fmt.Errorf("parse OpenClaw config %s: %w", configPath, err)
+	}
+
+	changed := false
+	if plugins, ok := cfg["plugins"].(map[string]any); ok {
+		for _, key := range []string{"entries", "installs"} {
+			if records, ok := plugins[key].(map[string]any); ok {
+				if _, exists := records["rampart"]; exists {
+					delete(records, "rampart")
+					changed = true
+				}
+			}
+		}
+		if allow, ok := plugins["allow"].([]any); ok {
+			kept := make([]any, 0, len(allow))
+			for _, value := range allow {
+				if id, ok := value.(string); ok && id == "rampart" {
+					changed = true
+					continue
+				}
+				kept = append(kept, value)
+			}
+			// Preserve an explicitly configured allowlist even when Rampart was
+			// its only entry. Deleting the key would widen plugin discovery.
+			plugins["allow"] = kept
+		}
+	}
+	if restoreExecAsk {
+		if tools, ok := cfg["tools"].(map[string]any); ok {
+			if execConfig, ok := tools["exec"].(map[string]any); ok && execConfig["ask"] == "off" {
+				execConfig["ask"] = "on-miss"
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return false, fmt.Errorf("marshal OpenClaw config %s: %w", configPath, err)
+	}
+	out = append(out, '\n')
+	if err := atomicWritePrivateFile(configPath, out); err != nil {
+		return false, fmt.Errorf("write OpenClaw config %s: %w", configPath, err)
+	}
+	return true, nil
+}
+
+func openClawConfigHasRampart(configPath string) bool {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	plugins, _ := cfg["plugins"].(map[string]any)
+	if plugins == nil {
+		return false
+	}
+	for _, key := range []string{"entries", "installs"} {
+		if records, ok := plugins[key].(map[string]any); ok {
+			if _, exists := records["rampart"]; exists {
+				return true
+			}
+		}
+	}
+	if allow, ok := plugins["allow"].([]any); ok {
+		for _, value := range allow {
+			if id, ok := value.(string); ok && id == "rampart" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func removeOpenClawNativePluginAt(stateDir, configPath string) (bool, error) {
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	configOwned := openClawConfigHasRampart(configPath)
+	pluginOwned := false
+	if _, err := os.Stat(pluginDir); err == nil {
+		if !openClawPluginManaged(pluginDir) {
+			return false, fmt.Errorf("refusing to remove non-Rampart OpenClaw plugin directory %s", pluginDir)
+		}
+		pluginOwned = true
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("inspect OpenClaw plugin directory %s: %w", pluginDir, err)
+	}
+	if !pluginOwned && !configOwned {
+		return false, nil
+	}
+
+	// Remove executable plugin content first. If the subsequent config write
+	// fails, stale metadata is safer than a still-loadable policy plugin whose
+	// local service may already be removed.
+	if pluginOwned {
+		if err := os.RemoveAll(pluginDir); err != nil {
+			return false, fmt.Errorf("remove Rampart OpenClaw plugin %s: %w", pluginDir, err)
+		}
+	}
+	if _, err := removeOpenClawRampartConfig(configPath, pluginOwned || configOwned); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func isOpenClawPluginConfigured() bool {
 	state := getOpenClawPluginState()
 	if !state.Installed {

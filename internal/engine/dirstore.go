@@ -14,7 +14,9 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -30,10 +32,12 @@ import (
 // 1MB is orders of magnitude larger than any reasonable policy file.
 const maxPolicyFileSize = 1 << 20 // 1 MiB
 
-// safeUnmarshal wraps yaml.Unmarshal with two protections:
+// safeUnmarshal wraps strict YAML decoding with three protections:
 //  1. Input size cap — rejects data larger than maxPolicyFileSize.
 //  2. Panic recovery — catches panics from malformed/adversarial YAML and
 //     returns them as errors instead of crashing the process.
+//  3. Known-field validation — rejects misspelled policy fields instead of
+//     silently broadening a rule when an unknown condition decodes as empty.
 func safeUnmarshal(data []byte, v any) (retErr error) {
 	if len(data) > maxPolicyFileSize {
 		return fmt.Errorf("policy file too large (%d bytes, max %d)", len(data), maxPolicyFileSize)
@@ -43,7 +47,18 @@ func safeUnmarshal(data []byte, v any) (retErr error) {
 			retErr = fmt.Errorf("yaml parse panic: %v", r)
 		}
 	}()
-	return yaml.Unmarshal(data, v)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return fmt.Errorf("policy must contain exactly one YAML document")
+	} else if err != io.EOF {
+		return err
+	}
+	return nil
 }
 
 // PolicyStore is the interface for loading policy configurations.
@@ -68,9 +83,9 @@ func NewDirStore(dir string, logger *slog.Logger) *DirStore {
 	return &DirStore{dir: dir, logger: logger}
 }
 
-// Load reads all *.yaml files from the directory, merges them into a single Config.
-// Invalid files are logged and skipped. Returns error only if the directory
-// cannot be read at all.
+// Load reads all *.yaml files from the directory and merges them into a single
+// Config. A present but invalid policy is an error: silently skipping a broken
+// deny file would widen the effective policy.
 func (s *DirStore) Load() (*Config, error) {
 	absDir, err := filepath.Abs(s.dir)
 	if err != nil {
@@ -264,9 +279,7 @@ func (s *MixedStore) Load() (*Config, error) {
 
 	dirCfg, err := mergeYAMLFiles(dirFiles, s.logger)
 	if err != nil {
-		// Log and return primary only; directory errors are non-fatal.
-		s.logger.Warn("engine: failed to load config dir, using primary only", "dir", absDir, "error", err)
-		return merged, nil
+		return nil, fmt.Errorf("engine: load config dir %q: %w", absDir, err)
 	}
 
 	if merged.DefaultAction == "" && dirCfg.DefaultAction != "" {
@@ -324,7 +337,8 @@ func (s *MixedStore) Path() string {
 }
 
 // mergeYAMLFiles reads and merges multiple YAML policy files into one Config.
-// The first file that specifies default_action wins. Invalid files are skipped.
+// The first file that specifies default_action wins. Present invalid files fail
+// the load so malformed restrictions are never silently omitted.
 func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 	merged := &Config{
 		Version:            "1",
@@ -336,19 +350,19 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 	for _, f := range files {
 		// Check file size before reading to avoid loading huge files into memory.
 		if info, statErr := os.Stat(f); statErr == nil && info.Size() > maxPolicyFileSize {
-			logger.Error("engine: skip oversized policy file", "path", f, "size", info.Size(), "max", maxPolicyFileSize)
-			continue
+			return nil, fmt.Errorf("engine: policy %q is too large (%d bytes, max %d)", f, info.Size(), maxPolicyFileSize)
 		}
 		data, err := os.ReadFile(f)
 		if err != nil {
-			logger.Error("engine: skip unreadable file", "path", f, "error", err)
-			continue
+			return nil, fmt.Errorf("engine: read policy %q: %w", f, err)
 		}
 
 		var cfg Config
 		if err := safeUnmarshal(data, &cfg); err != nil {
-			logger.Error("engine: skip invalid yaml", "path", f, "error", err)
-			continue
+			return nil, fmt.Errorf("engine: parse policy %q: %w", f, err)
+		}
+		if err := cfg.validate(); err != nil {
+			return nil, fmt.Errorf("engine: invalid policy file %q: %w", f, err)
 		}
 
 		// Take default_action from first file that specifies one.
@@ -364,37 +378,17 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 		// Merge policies, skipping duplicates.
 		for _, p := range cfg.Policies {
 			if p.Name == "" {
-				logger.Error("engine: skip unnamed policy", "path", f)
-				continue
+				return nil, fmt.Errorf("engine: policy in %q has no name", f)
 			}
 			if seen[p.Name] {
-				logger.Debug("engine: skip duplicate policy", "name", p.Name, "path", f)
-				continue
+				return nil, fmt.Errorf("engine: duplicate policy name %q in %q", p.Name, f)
 			}
-			seen[p.Name] = true
 			p.FilePath = f
-			if err := validatePolicyGlobPatterns(p); err != nil {
-				logger.Error("engine: skip policy with invalid glob", "policy", p.Name, "path", f, "error", err)
-				continue
-			}
-
-			// Validate rules.
-			valid := true
-			for j, r := range p.Rules {
-				if _, err := r.ParseAction(); err != nil {
-					logger.Error("engine: skip policy with invalid rule", "policy", p.Name, "rule", j, "path", f, "error", err)
-					valid = false
-					break
-				}
-				if err := compileResponseRegexes(r.When, merged.responseRegexCache); err != nil {
-					logger.Error("engine: skip policy with invalid regex", "policy", p.Name, "rule", j, "path", f, "error", err)
-					valid = false
-					break
-				}
-			}
-			if valid {
-				merged.Policies = append(merged.Policies, p)
-			}
+			seen[p.Name] = true
+			merged.Policies = append(merged.Policies, p)
+		}
+		for pattern, compiled := range cfg.responseRegexCache {
+			merged.responseRegexCache[pattern] = compiled
 		}
 
 		loadedFiles = append(loadedFiles, f)
@@ -410,7 +404,9 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 
 // LayeredStore wraps a base PolicyStore and layers an optional extra policy file on top.
 // The base store's DefaultAction and Notify take precedence. Deny wins across both layers.
-// If the extra file fails to load, the base store is used alone (non-fatal degradation).
+// An empty extra path disables layering. Once a path is configured, every load
+// failure is an error so repository restrictions cannot disappear through
+// malformed input or a file-removal race.
 type LayeredStore struct {
 	base   PolicyStore
 	extra  string // path to extra policy file; empty = disabled
@@ -425,8 +421,9 @@ func NewLayeredStore(base PolicyStore, extraPath string, logger *slog.Logger) *L
 	return &LayeredStore{base: base, extra: extraPath, logger: logger}
 }
 
-// Load loads the base config and merges the extra project policy on top.
-// If the extra file is missing or invalid, the base config is returned unchanged (non-fatal).
+// Load loads the base config and merges the extra project policy on top. An
+// empty project path is optional, but a configured path must remain readable
+// and valid so enforcement callers fail closed.
 func (s *LayeredStore) Load() (*Config, error) {
 	cfg, err := s.base.Load()
 	if err != nil {
@@ -435,24 +432,30 @@ func (s *LayeredStore) Load() (*Config, error) {
 	if s.extra == "" {
 		return cfg, nil
 	}
-	if info, statErr := os.Stat(s.extra); statErr == nil && info.Size() > maxPolicyFileSize {
-		s.logger.Warn("project policy too large, using global policy only", "path", s.extra, "size", info.Size())
-		return cfg, nil
+	info, err := os.Stat(s.extra)
+	if err != nil {
+		return nil, fmt.Errorf("engine: inspect project policy %q: %w", s.extra, err)
+	}
+	if info.Size() > maxPolicyFileSize {
+		return nil, fmt.Errorf("engine: project policy %q is too large (%d bytes, max %d)", s.extra, info.Size(), maxPolicyFileSize)
 	}
 	data, err := os.ReadFile(s.extra)
 	if err != nil {
-		s.logger.Warn("project policy unreadable, using global policy only", "path", s.extra, "error", err)
-		return cfg, nil
+		return nil, fmt.Errorf("engine: read project policy %q: %w", s.extra, err)
 	}
 	var extraCfg Config
 	if err := safeUnmarshal(data, &extraCfg); err != nil {
-		s.logger.Warn("project policy parse error, using global policy only", "path", s.extra, "error", err)
-		return cfg, nil
+		return nil, fmt.Errorf("engine: parse project policy %q: %w", s.extra, err)
+	}
+	if err := extraCfg.validate(); err != nil {
+		return nil, fmt.Errorf("engine: validate project policy %q: %w", s.extra, err)
 	}
 	for _, policy := range extraCfg.Policies {
-		if err := validatePolicyGlobPatterns(policy); err != nil {
-			s.logger.Warn("project policy glob validation error, using global policy only", "path", s.extra, "policy", policy.Name, "error", err)
-			return cfg, nil
+		for index, rule := range policy.Rules {
+			action, _ := rule.ParseAction()
+			if action == ActionWebhook {
+				return nil, fmt.Errorf("engine: project policy %q contains forbidden webhook action in policy %q rule %d", s.extra, policy.Name, index)
+			}
 		}
 	}
 	return mergeProjectPolicy(cfg, &extraCfg, s.extra, s.logger), nil

@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/peg/rampart/internal/filetxn"
 )
 
 func (s *JSONLSink) shouldAnchorLocked() bool {
@@ -48,7 +50,7 @@ func (s *JSONLSink) writeAnchorLocked(event Event) error {
 	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("audit: write anchor tmp: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := filetxn.Replace(tmpPath, path); err != nil {
 		return fmt.Errorf("audit: replace anchor: %w", err)
 	}
 

@@ -33,8 +33,26 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Module files are tidy
+        if: runner.os == 'Linux'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Go files are formatted
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
+
+      - name: Workflow files are valid
+        if: runner.os == 'Linux'
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
       - name: Vet
         run: go vet ./...
+
+      - name: Staticcheck
+        if: runner.os == 'Linux'
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 
       - name: Test with race detection and coverage
         if: runner.os == 'Linux'
@@ -46,6 +64,16 @@ jobs:
 
       - name: Build
         run: go build -v ./cmd/rampart
+
+      - name: Build and test preload library
+        if: runner.os != 'Windows'
+        working-directory: preload
+        run: make clean test
+
+      - name: Test live LD_PRELOAD contract
+        if: runner.os == 'Linux'
+        working-directory: preload
+        run: bash test_preload.sh
 
       - name: PowerShell installers parse
         if: runner.os == 'Windows'
@@ -65,6 +93,16 @@ jobs:
             }
           }
 
+      - name: PowerShell installers are synced
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ((Get-FileHash install.ps1 -Algorithm SHA256).Hash -ne
+              (Get-FileHash docs/install.ps1 -Algorithm SHA256).Hash) {
+            Write-Error "install.ps1 and docs/install.ps1 differ"
+            exit 1
+          }
+
       - name: Installer scripts are synced
         if: runner.os == 'Linux'
         run: |
@@ -75,6 +113,7 @@ jobs:
           sh -n docs/install
           sh -n docs/install.sh
           sh -n scripts/install.sh
+          bash scripts/test-installers.sh
 
       - name: Landing page sources are synced
         if: runner.os == 'Linux'
@@ -97,10 +136,6 @@ jobs:
       - name: Hermes plugin regression tests
         run: python -m unittest internal/plugin/hermes/test_hermes_plugin.py
 
-      - name: Security assurance contract
-        if: runner.os == 'Linux'
-        run: make security-assurance
-
       - name: Policy checks
         if: runner.os == 'Linux'
         run: |
@@ -114,7 +149,7 @@ jobs:
 
       - name: Benchmark
         if: runner.os == 'Linux'
-        run: go test -bench=. -benchmem ./internal/engine/ ./internal/audit/
+        run: go test -run '^$' -bench=. -benchmem ./internal/engine/ ./internal/audit/
 
       - name: Upload coverage
         if: runner.os == 'Linux'
@@ -148,24 +183,7 @@ jobs:
             .
 
       - name: Smoke test amd64 image
-        run: |
-          set -euo pipefail
-
-          docker run --rm rampart:ci-smoke version | tee /tmp/rampart-docker-version.txt
-          grep -F "rampart ci-smoke" /tmp/rampart-docker-version.txt
-
-          cid="$(docker run -d -p 19090:9090 rampart:ci-smoke)"
-          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-
-          for _ in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:19090/healthz >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 1
-          done
-
-          docker logs "$cid"
-          exit 1
+        run: bash scripts/docker-smoke.sh rampart:ci-smoke ci-smoke
 
       - name: Build arm64 image
         run: |
@@ -197,24 +215,69 @@ jobs:
       - name: GoReleaser snapshot (all platforms, no publish)
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
+          # v2.16+ rejects the legacy Formula publisher. Keep existing
+          # Homebrew users upgradeable until the tap migration is coordinated.
+          version: "v2.15.3"
           args: release --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  python-sdk:
+    name: Python SDK (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: sdks/python/pyproject.toml
+
+      - name: Install SDK and test dependencies
+        working-directory: sdks/python
+        run: python -m pip install '.[dev]'
+
+      - name: Test SDK
+        working-directory: sdks/python
+        run: python -m pytest
+
+      - name: Check SDK quality
+        if: matrix.python-version == '3.9'
+        working-directory: sdks/python
+        run: |
+          python -m black --check rampart tests
+          python -m isort --check-only rampart tests
+          python -m flake8 rampart tests
+          python -m mypy rampart
+
+      - name: Build SDK wheel
+        if: matrix.python-version == '3.12'
+        working-directory: sdks/python
+        run: python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/rampart-sdk-dist" .
 
   ci-gate:
     name: CI gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [test, docker-smoke, release-dry-run]
+    needs: [test, docker-smoke, release-dry-run, python-sdk]
     steps:
       - name: Require every CI job
         env:
           TEST_RESULT: ${{ needs.test.result }}
           DOCKER_RESULT: ${{ needs.docker-smoke.result }}
           RELEASE_RESULT: ${{ needs.release-dry-run.result }}
+          PYTHON_SDK_RESULT: ${{ needs.python-sdk.result }}
         run: |
-          for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT"; do
+          for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT" "$PYTHON_SDK_RESULT"; do
             if [ "$result" != success ]; then
               echo "Required CI job result: $result"
               exit 1

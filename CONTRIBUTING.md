@@ -202,7 +202,7 @@ This is a security product. Every PR should be reviewed through an adversarial l
 | `github.com/charmbracelet/bubbletea` | TUI (watch command) |
 | `github.com/charmbracelet/huh` | Interactive prompts |
 | `github.com/charmbracelet/lipgloss` | Terminal styling |
-| `github.com/gorilla/websocket` | WebSocket client (daemon mode) |
+| `github.com/gorilla/websocket` | Legacy OpenClaw gateway compatibility bridge |
 | `github.com/prometheus/client_golang` | Metrics endpoint |
 
 ### Not allowed
@@ -254,12 +254,11 @@ chore: update Go to 1.24
 ```
 cmd/rampart/cli/     CLI command handlers (cobra wiring + flags)
 internal/engine/     Policy evaluation core (HOT PATH — <10µs)
-internal/intercept/  Tool-type normalizers (exec/fs/http)
 internal/proxy/      HTTP server, SSE hub, approval flow
 internal/audit/      Hash-chained JSONL audit trail
 internal/approval/   Human approval queue
 internal/mcp/        MCP JSON-RPC proxy
-internal/daemon/     OpenClaw WebSocket integration
+internal/bridge/     Legacy OpenClaw compatibility bridge
 internal/tlsutil/    TLS certificate management
 internal/policy/     Custom policy file management
 pkg/sdk/             Public Go SDK

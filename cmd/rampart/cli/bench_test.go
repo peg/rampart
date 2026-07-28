@@ -1,5 +1,3 @@
-//go:build bench
-
 // Copyright 2026 The Rampart Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -108,8 +106,8 @@ entries:
 	if cases[0].Expected != "deny" {
 		t.Fatalf("first case expected = %q, want deny", cases[0].Expected)
 	}
-	if cases[1].Expected != "require_approval" {
-		t.Fatalf("second case expected = %q, want require_approval", cases[1].Expected)
+	if cases[1].Expected != "ask" {
+		t.Fatalf("second case expected = %q, want ask", cases[1].Expected)
 	}
 }
 
@@ -258,7 +256,7 @@ policies:
     match:
       tool: "exec"
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "rm -rf *"

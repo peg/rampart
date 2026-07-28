@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -78,6 +79,37 @@ func TestParseCopilotInputEvaluatesEveryWritePath(t *testing.T) {
 	}
 	if len(result.PolicyPaths) != 2 || result.PolicyPaths[0] != "safe.txt" || result.PolicyPaths[1] != ".env" {
 		t.Fatalf("PolicyPaths = %#v", result.PolicyPaths)
+	}
+}
+
+func TestParseCopilotInputRejectsOversizedWriteBatch(t *testing.T) {
+	files := make([]any, maxCodexPatchPaths+1)
+	for i := range files {
+		files[i] = map[string]any{"filePath": filepath.Join("src", "file-"+strconv.Itoa(i))}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"session_id":      "s",
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "editFiles",
+		"tool_input":      map[string]any{"files": files},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = parseCopilotInput(bytes.NewReader(payload))
+	if err == nil || !strings.Contains(err.Error(), "more than 100 paths") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseCopilotInputClassifiesDestructiveMCPTool(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"mcp_filesystem_delete_file","tool_input":{"path":"important.txt"}}`
+	result, err := parseCopilotInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
 	}
 }
 

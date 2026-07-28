@@ -240,6 +240,77 @@ func TestEndToEnd_PreflightFlatFormat(t *testing.T) {
 	assert.Equal(t, "deny", result["decision"])
 }
 
+func TestEndToEnd_PreflightEnforceConsumesOnceGrant(t *testing.T) {
+	srv, token, _ := setupTestServer(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: one-shot
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["deploy prod"]
+        once: true
+`, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	post := func(enforce, verification bool) map[string]any {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{
+			"agent":        "hermes",
+			"session":      "s1",
+			"enforce":      enforce,
+			"verification": verification,
+			"params":       map[string]any{"command": "deploy prod"},
+		})
+		require.NoError(t, err)
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/preflight/exec", bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		return result
+	}
+
+	// Ordinary preflight is still a non-mutating preview.
+	firstPreview := post(false, false)
+	secondPreview := post(false, false)
+	require.Equal(t, "allow", firstPreview["decision"])
+	require.Equal(t, "allow", secondPreview["decision"])
+	require.Equal(t, false, firstPreview["enforced"])
+
+	// A host at its real execution boundary atomically claims the grant.
+	firstExecution := post(true, false)
+	secondExecution := post(true, false)
+	require.Equal(t, "allow", firstExecution["decision"])
+	require.Equal(t, true, firstExecution["enforced"])
+	require.Equal(t, "deny", secondExecution["decision"])
+}
+
+func TestEndToEnd_PreflightRejectsVerificationWithEnforce(t *testing.T) {
+	srv := setupStandardProxy(t)
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := bytes.NewBufferString(`{"agent":"test","verification":true,"enforce":true,"params":{"command":"pwd"}}`)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/preflight/exec", body)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+srv.Token())
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestEndToEnd_AuthRequired(t *testing.T) {
 	srv := setupStandardProxy(t)
 	ts := httptest.NewServer(srv.handler())

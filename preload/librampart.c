@@ -4,14 +4,13 @@
  *
  * librampart.c — LD_PRELOAD interceptor for Rampart policy engine
  *
- * Intercepts exec-family syscalls and consults rampart serve before execution.
- * Fails open if the policy server is unreachable.
+ * Intercepts exec-family libc calls and consults rampart serve before execution.
+ * Transport and server failures follow the configured degraded-mode behavior;
+ * authentication, protocol, and local safety failures deny in enforce mode.
  *
  * Design constraints:
  *   - Single dependency: libcurl (+ pthreads, libc, libdl)
- *   - < 600 lines, auditable in one sitting
  *   - Thread-safe: mutex-protected curl handle, pthread_once init
- *   - Fail-open on every error path
  *   - Persistent HTTP keep-alive connection for < 3ms p99 latency
  */
 
@@ -24,12 +23,24 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <pthread.h>
 #include <curl/curl.h>
 
 #include <spawn.h>
+
+#define DEFAULT_RAMPART_URL "http://127.0.0.1:9090"
+#define MAX_HTTP_RESPONSE_BYTES (64U * 1024U)
+#define MAX_JSON_PAYLOAD_BYTES (1024U * 1024U)
+#define MAX_AUTH_TOKEN_BYTES 4096U
+
+#ifdef __APPLE__
+#define PRELOAD_ENV_NAME "DYLD_INSERT_LIBRARIES"
+#else
+#define PRELOAD_ENV_NAME "LD_PRELOAD"
+#endif
 
 // Configuration from environment variables
 static struct {
@@ -46,12 +57,15 @@ static struct {
 struct http_response {
     char *data;
     size_t size;
+    int too_large;
+    int allocation_failed;
 };
 
 // Global state
 static CURL *curl_handle = NULL;
 static pthread_mutex_t curl_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+static int curl_global_initialized = 0;
 static char preload_lib_path[PATH_MAX];
 static int preload_anchor;
 
@@ -65,8 +79,8 @@ static int (*real_system)(const char *) = NULL;
 static FILE *(*real_popen)(const char *, const char *) = NULL;
 static int (*real_posix_spawn)(pid_t *, const char *, const posix_spawn_file_actions_t *,
                                const posix_spawnattr_t *, char *const[], char *const[]) = NULL;
-extern char **environ;
-
+static int (*real_posix_spawnp)(pid_t *, const char *, const posix_spawn_file_actions_t *,
+                                const posix_spawnattr_t *, char *const[], char *const[]) = NULL;
 // Per-function interception toggles (1 = pass-through mode).
 static int disable_execve_intercept = 0;
 static int disable_execvp_intercept = 0;
@@ -76,6 +90,7 @@ static int disable_execvpe_intercept = 0;
 static int disable_system_intercept = 0;
 static int disable_popen_intercept = 0;
 static int disable_posix_spawn_intercept = 0;
+static int disable_posix_spawnp_intercept = 0;
 
 // One-time warning guards for missing symbols.
 static int warned_execve_missing = 0;
@@ -86,6 +101,7 @@ static int warned_execvpe_missing = 0;
 static int warned_system_missing = 0;
 static int warned_popen_missing = 0;
 static int warned_posix_spawn_missing = 0;
+static int warned_posix_spawnp_missing = 0;
 
 static void warn_once_missing_symbol(int *warned, const char *func_name, const char *phase) {
     if (__sync_lock_test_and_set(warned, 1) != 0) return;
@@ -170,6 +186,19 @@ static int ensure_real_posix_spawn(void) {
     return 1;
 }
 
+static int ensure_real_posix_spawnp(void) {
+    if (real_posix_spawnp) return 1;
+    union { void *p; int (*posix_spawnp)(pid_t *, const char *, const posix_spawn_file_actions_t *,
+                                        const posix_spawnattr_t *, char *const[], char *const[]); } u;
+    u.p = dlsym(RTLD_NEXT, "posix_spawnp");
+    real_posix_spawnp = u.posix_spawnp;
+    if (!real_posix_spawnp) {
+        warn_once_missing_symbol(&warned_posix_spawnp_missing, "posix_spawnp", "runtime");
+        return 0;
+    }
+    return 1;
+}
+
 static void debug_log(const char *fmt, ...) {
     if (!config.debug) return;
     
@@ -183,9 +212,20 @@ static void debug_log(const char *fmt, ...) {
 
 /* libcurl write callback — appends chunk to a growable http_response buffer. */
 static size_t write_callback(void *contents, size_t size, size_t nmemb, struct http_response *response) {
+    if (nmemb != 0 && size > SIZE_MAX / nmemb) {
+        response->too_large = 1;
+        return 0;
+    }
     size_t total_size = size * nmemb;
+    if (response->size > MAX_HTTP_RESPONSE_BYTES ||
+        total_size > MAX_HTTP_RESPONSE_BYTES - response->size) {
+        response->too_large = 1;
+        return 0;
+    }
+    if (total_size == 0) return 0;
     char *ptr = realloc(response->data, response->size + total_size + 1);
     if (!ptr) {
+        response->allocation_failed = 1;
         debug_log("Failed to allocate memory for HTTP response");
         return 0;
     }
@@ -200,7 +240,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, struct h
 
 static void init_config(void) {
     config.url = getenv("RAMPART_URL");
-    if (!config.url) config.url = "http://127.0.0.1:19090";
+    if (!config.url || !config.url[0]) config.url = DEFAULT_RAMPART_URL;
     
     config.token = getenv("RAMPART_TOKEN");
     config.mode = getenv("RAMPART_MODE");
@@ -213,7 +253,7 @@ static void init_config(void) {
     config.debug = (debug_str && strcmp(debug_str, "1") == 0) ? 1 : 0;
     
     config.agent = getenv("RAMPART_AGENT");
-    if (!config.agent) config.agent = "";
+    if (!config.agent || !config.agent[0]) config.agent = "preload";
     
     config.session = getenv("RAMPART_SESSION");
     if (!config.session) {
@@ -234,21 +274,31 @@ static void init_library(void) {
     }
     
     // Initialize libcurl
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        debug_log("Failed to initialize libcurl globally");
+        return;
+    }
+    curl_global_initialized = 1;
     curl_handle = curl_easy_init();
     if (!curl_handle) {
         debug_log("Failed to initialize curl handle");
         return;
     }
     
-    // Configure persistent keep-alive connection
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 2L);
-    curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 1L);
-    curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPIDLE, 30L);
-    curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPINTVL, 10L);
-    curl_easy_setopt(curl_handle, CURLOPT_FORBID_REUSE, 0L);
+    // Configure persistent keep-alive connection.
+    if (curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 2L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_NOSIGNAL, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPALIVE, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPIDLE, 30L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPINTVL, 10L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_FORBID_REUSE, 0L) != CURLE_OK) {
+        debug_log("Failed to configure curl handle");
+        curl_easy_cleanup(curl_handle);
+        curl_handle = NULL;
+        return;
+    }
     
     // Load original function pointers using union to avoid pedantic warnings
     union { void *p; int (*execve)(const char *, char *const[], char *const[]); } u_execve;
@@ -260,6 +310,8 @@ static void init_library(void) {
     union { void *p; FILE *(*popen)(const char *, const char *); } u_popen;
     union { void *p; int (*posix_spawn)(pid_t *, const char *, const posix_spawn_file_actions_t *,
                                        const posix_spawnattr_t *, char *const[], char *const[]); } u_posix_spawn;
+    union { void *p; int (*posix_spawnp)(pid_t *, const char *, const posix_spawn_file_actions_t *,
+                                        const posix_spawnattr_t *, char *const[], char *const[]); } u_posix_spawnp;
     
     u_execve.p = dlsym(RTLD_NEXT, "execve");
     real_execve = u_execve.execve;
@@ -304,11 +356,18 @@ static void init_library(void) {
     if (disable_posix_spawn_intercept) {
         warn_once_missing_symbol(&warned_posix_spawn_missing, "posix_spawn", "library initialization");
     }
+
+    u_posix_spawnp.p = dlsym(RTLD_NEXT, "posix_spawnp");
+    real_posix_spawnp = u_posix_spawnp.posix_spawnp;
+    disable_posix_spawnp_intercept = (real_posix_spawnp == NULL);
+    if (disable_posix_spawnp_intercept) {
+        warn_once_missing_symbol(&warned_posix_spawnp_missing, "posix_spawnp", "library initialization");
+    }
     
     debug_log("Library initialized successfully");
 }
 
-static int ld_preload_contains(const char *value) {
+static int preload_env_contains(const char *value) {
     if (!value || !*value || !*preload_lib_path) return 0;
     size_t n = strlen(preload_lib_path);
     const char *p = value;
@@ -328,205 +387,552 @@ static void free_modified_envp(char **env) {
     free(env);
 }
 
-static char **ensure_preload_env(char *const envp[], int *modified) {
+static char **ensure_preload_env(char *const envp[], int *modified, int *failed) {
     *modified = 0;
+    *failed = 0;
     if (!*preload_lib_path) return (char **)envp;
-    char *const *src = envp ? envp : (char *const *)environ;
-    size_t n = 0, ld_idx = (size_t)-1;
-    for (; src && src[n]; n++) if (strncmp(src[n], "LD_PRELOAD=", 11) == 0) ld_idx = n;
-    if (ld_idx != (size_t)-1 && ld_preload_contains(src[ld_idx] + 11)) return (char **)envp;
+    char *const *src = envp;
+    const size_t name_len = strlen(PRELOAD_ENV_NAME);
+    size_t n = 0, preload_idx = (size_t)-1;
+    for (; src && src[n]; n++) {
+        if (strncmp(src[n], PRELOAD_ENV_NAME, name_len) == 0 && src[n][name_len] == '=') {
+            preload_idx = n;
+        }
+    }
+    if (preload_idx != (size_t)-1 &&
+        preload_env_contains(src[preload_idx] + name_len + 1)) {
+        return (char **)envp;
+    }
     char **out = calloc(n + 2, sizeof(char *));
-    if (!out) return (char **)envp;
+    if (!out) { *failed = 1; return (char **)envp; }
     for (size_t i = 0; i < n; i++) {
-        if (i == ld_idx) {
-            const char *cur = src[i] + 11;
+        if (i == preload_idx) {
+            const char *cur = src[i] + name_len + 1;
             size_t cur_len = strlen(cur), lib_len = strlen(preload_lib_path);
-            out[i] = malloc(11 + cur_len + (cur_len ? 1 : 0) + lib_len + 1);
-            if (!out[i]) { free_modified_envp(out); return (char **)envp; }
-            snprintf(out[i], 11 + cur_len + (cur_len ? 1 : 0) + lib_len + 1,
-                     "LD_PRELOAD=%s%s%s", cur, cur_len ? ":" : "", preload_lib_path);
+            size_t entry_len = name_len + 1 + cur_len + (cur_len ? 1 : 0) + lib_len + 1;
+            out[i] = malloc(entry_len);
+            if (!out[i]) { free_modified_envp(out); *failed = 1; return (char **)envp; }
+            snprintf(out[i], entry_len, "%s=%s%s%s", PRELOAD_ENV_NAME,
+                     cur, cur_len ? ":" : "", preload_lib_path);
             continue;
         }
         out[i] = strdup(src[i]);
-        if (!out[i]) { free_modified_envp(out); return (char **)envp; }
+        if (!out[i]) { free_modified_envp(out); *failed = 1; return (char **)envp; }
     }
-    if (ld_idx == (size_t)-1) {
+    if (preload_idx == (size_t)-1) {
         size_t lib_len = strlen(preload_lib_path);
-        out[n] = malloc(11 + lib_len + 1);
-        if (!out[n]) { free_modified_envp(out); return (char **)envp; }
-        snprintf(out[n], 11 + lib_len + 1, "LD_PRELOAD=%s", preload_lib_path);
+        size_t entry_len = name_len + 1 + lib_len + 1;
+        out[n] = malloc(entry_len);
+        if (!out[n]) { free_modified_envp(out); *failed = 1; return (char **)envp; }
+        snprintf(out[n], entry_len, "%s=%s", PRELOAD_ENV_NAME, preload_lib_path);
     }
     *modified = 1;
     return out;
 }
 
-/* Wrap str in quotes with JSON escaping.  Returns a malloc'd string.
- * Allocation: len*2 (worst case: every char needs a backslash) + 2 (quotes) + 1 (NUL). */
+static int checked_add_size(size_t *total, size_t amount) {
+    if (*total > SIZE_MAX - amount) return 0;
+    *total += amount;
+    return 1;
+}
+
+/* Return the byte length of a valid UTF-8 sequence, or zero for an invalid
+ * leading byte/sequence. Keeping valid UTF-8 intact preserves command names;
+ * invalid path bytes are encoded as JSON \u00XX escapes instead of producing
+ * a request that Go's JSON decoder would reject. */
+static size_t utf8_sequence_length(const unsigned char *s, size_t remaining) {
+    if (remaining == 0) return 0;
+    if (s[0] < 0x80) return 1;
+    if (s[0] >= 0xc2 && s[0] <= 0xdf && remaining >= 2 &&
+        s[1] >= 0x80 && s[1] <= 0xbf) return 2;
+    if (s[0] == 0xe0 && remaining >= 3 && s[1] >= 0xa0 && s[1] <= 0xbf &&
+        s[2] >= 0x80 && s[2] <= 0xbf) return 3;
+    if (((s[0] >= 0xe1 && s[0] <= 0xec) || (s[0] >= 0xee && s[0] <= 0xef)) &&
+        remaining >= 3 && s[1] >= 0x80 && s[1] <= 0xbf &&
+        s[2] >= 0x80 && s[2] <= 0xbf) return 3;
+    if (s[0] == 0xed && remaining >= 3 && s[1] >= 0x80 && s[1] <= 0x9f &&
+        s[2] >= 0x80 && s[2] <= 0xbf) return 3;
+    if (s[0] == 0xf0 && remaining >= 4 && s[1] >= 0x90 && s[1] <= 0xbf &&
+        s[2] >= 0x80 && s[2] <= 0xbf && s[3] >= 0x80 && s[3] <= 0xbf) return 4;
+    if (s[0] >= 0xf1 && s[0] <= 0xf3 && remaining >= 4 &&
+        s[1] >= 0x80 && s[1] <= 0xbf && s[2] >= 0x80 && s[2] <= 0xbf &&
+        s[3] >= 0x80 && s[3] <= 0xbf) return 4;
+    if (s[0] == 0xf4 && remaining >= 4 && s[1] >= 0x80 && s[1] <= 0x8f &&
+        s[2] >= 0x80 && s[2] <= 0xbf && s[3] >= 0x80 && s[3] <= 0xbf) return 4;
+    return 0;
+}
+
+/* Wrap str in quotes with strict JSON escaping. Returns a malloc'd string. */
 static char *escape_json_string(const char *str) {
     if (!str) return strdup("null");
 
     size_t len = strlen(str);
-    char *escaped = malloc(len * 2 + 3);
+    size_t encoded_len = 2;
+    for (size_t i = 0; i < len;) {
+        unsigned char c = (unsigned char)str[i];
+        size_t amount = 1;
+        size_t sequence_len = utf8_sequence_length((const unsigned char *)str + i, len - i);
+        if (c == '"' || c == '\\') amount = 2;
+        else if (c < 0x20 || sequence_len == 0) amount = 6;
+        else if (c >= 0x80) amount = sequence_len;
+        if (!checked_add_size(&encoded_len, amount)) return NULL;
+        i += (c >= 0x80 && sequence_len > 0) ? sequence_len : 1;
+    }
+    if (!checked_add_size(&encoded_len, 1)) return NULL;
+    char *escaped = malloc(encoded_len);
     if (!escaped) return NULL;
-    
+
+    static const char hex[] = "0123456789abcdef";
     char *p = escaped;
     *p++ = '"';
-    
-    for (size_t i = 0; i < len; i++) {
-        switch (str[i]) {
+
+    for (size_t i = 0; i < len;) {
+        unsigned char c = (unsigned char)str[i];
+        size_t sequence_len = utf8_sequence_length((const unsigned char *)str + i, len - i);
+        switch (c) {
             case '"': *p++ = '\\'; *p++ = '"'; break;
             case '\\': *p++ = '\\'; *p++ = '\\'; break;
-            case '\n': *p++ = '\\'; *p++ = 'n'; break;
-            case '\r': *p++ = '\\'; *p++ = 'r'; break;
-            case '\t': *p++ = '\\'; *p++ = 't'; break;
-            default: *p++ = str[i]; break;
+            default:
+                if (c < 0x20 || sequence_len == 0) {
+                    *p++ = '\\'; *p++ = 'u'; *p++ = '0'; *p++ = '0';
+                    *p++ = hex[c >> 4]; *p++ = hex[c & 0x0f];
+                } else if (c >= 0x80) {
+                    memcpy(p, str + i, sequence_len);
+                    p += sequence_len;
+                    i += sequence_len - 1;
+                } else {
+                    *p++ = (char)c;
+                }
+                break;
         }
+        i++;
     }
-    
+
     *p++ = '"';
     *p = '\0';
-    
+
     return escaped;
 }
 
-/* Build a single command string from argv by joining with spaces.
- * Uses pointer arithmetic instead of strcat to avoid O(n²) rescanning. */
-static char *build_command_string(char *const argv[]) {
-    if (!argv || !argv[0]) return strdup("");
+static int shell_safe_byte(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || strchr("_@%+=:,./-", (int)c) != NULL;
+}
 
-    /* First pass: measure total length. */
-    size_t total_len = 0;
-    for (int i = 0; argv[i]; i++) {
-        if (i > 0) total_len++;          /* space separator */
-        total_len += strlen(argv[i]);
+static size_t shell_word_size(const char *word) {
+    if (!word || !word[0]) return 2;
+    size_t size = 0;
+    int needs_quotes = 0;
+    for (const unsigned char *p = (const unsigned char *)word; *p; p++) {
+        if (!shell_safe_byte(*p)) needs_quotes = 1;
+        if (!checked_add_size(&size, *p == '\'' ? 4 : 1)) return SIZE_MAX;
     }
+    if (!needs_quotes) return strlen(word);
+    if (!checked_add_size(&size, 2)) return SIZE_MAX;
+    return size;
+}
 
-    char *cmd = malloc(total_len + 1);
+static char *append_shell_word(char *out, const char *word) {
+    if (!word || !word[0]) {
+        *out++ = '\''; *out++ = '\'';
+        return out;
+    }
+    int needs_quotes = 0;
+    for (const unsigned char *p = (const unsigned char *)word; *p; p++) {
+        if (!shell_safe_byte(*p)) { needs_quotes = 1; break; }
+    }
+    if (!needs_quotes) {
+        size_t len = strlen(word);
+        memcpy(out, word, len);
+        return out + len;
+    }
+    *out++ = '\'';
+    for (const char *p = word; *p; p++) {
+        if (*p == '\'') {
+            memcpy(out, "'\\''", 4);
+            out += 4;
+        } else {
+            *out++ = *p;
+        }
+    }
+    *out++ = '\'';
+    return out;
+}
+
+static const char *command_name(const char *executable, char *const argv[]) {
+    if (!executable || !executable[0]) return (argv && argv[0]) ? argv[0] : "";
+    if (!argv || !argv[0] || !argv[0][0]) return executable;
+    const char *base = strrchr(executable, '/');
+    base = base ? base + 1 : executable;
+    /* Preserve the familiar argv[0] form ("git", not "/usr/bin/git") when it
+     * truthfully names the executable, so existing command policies keep
+     * matching. Use the real path when argv[0] tries to disguise the binary. */
+    if (strcmp(argv[0], executable) == 0 || strcmp(argv[0], base) == 0) return argv[0];
+    return executable;
+}
+
+/* Represent argv as an unambiguous POSIX shell-like command. */
+static char *build_exec_command(const char *executable, char *const argv[]) {
+    const char *first = command_name(executable, argv);
+    size_t total_len = shell_word_size(first);
+    if (total_len == SIZE_MAX) return NULL;
+    for (size_t i = 1; argv && argv[0] && argv[i]; i++) {
+        size_t word_len = shell_word_size(argv[i]);
+        if (word_len == SIZE_MAX || !checked_add_size(&total_len, 1) ||
+            !checked_add_size(&total_len, word_len)) return NULL;
+    }
+    if (total_len >= MAX_JSON_PAYLOAD_BYTES || !checked_add_size(&total_len, 1)) return NULL;
+
+    char *cmd = malloc(total_len);
     if (!cmd) return NULL;
 
-    /* Second pass: copy with a running pointer. */
-    char *p = cmd;
-    for (int i = 0; argv[i]; i++) {
-        if (i > 0) *p++ = ' ';
-        size_t len = strlen(argv[i]);
-        memcpy(p, argv[i], len);
-        p += len;
+    char *p = append_shell_word(cmd, first);
+    for (size_t i = 1; argv && argv[0] && argv[i]; i++) {
+        *p++ = ' ';
+        p = append_shell_word(p, argv[i]);
     }
     *p = '\0';
-
     return cmd;
+}
+
+static const char *skip_json_ws(const char *p, const char *end) {
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
+    return p;
+}
+
+static int is_hex_digit(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+           (c >= 'A' && c <= 'F');
+}
+
+static const char *skip_json_string(const char *p, const char *end) {
+    if (p >= end || *p != '"') return NULL;
+    p++;
+    while (p < end) {
+        unsigned char c = (unsigned char)*p++;
+        if (c == '"') return p;
+        if (c < 0x20) return NULL;
+        if (c != '\\') continue;
+        if (p >= end) return NULL;
+        char escaped = *p++;
+        if (strchr("\"\\/bfnrt", escaped)) continue;
+        if (escaped != 'u' || end - p < 4 || !is_hex_digit(p[0]) ||
+            !is_hex_digit(p[1]) || !is_hex_digit(p[2]) || !is_hex_digit(p[3])) return NULL;
+        p += 4;
+    }
+    return NULL;
+}
+
+static const char *skip_json_value(const char *p, const char *end, unsigned depth);
+
+static const char *skip_json_container(const char *p, const char *end, unsigned depth,
+                                       char close, int object) {
+    if (depth > 32) return NULL;
+    p = skip_json_ws(p + 1, end);
+    if (p < end && *p == close) return p + 1;
+    for (;;) {
+        if (object) {
+            p = skip_json_string(p, end);
+            if (!p) return NULL;
+            p = skip_json_ws(p, end);
+            if (p >= end || *p++ != ':') return NULL;
+        }
+        p = skip_json_value(skip_json_ws(p, end), end, depth + 1);
+        if (!p) return NULL;
+        p = skip_json_ws(p, end);
+        if (p >= end) return NULL;
+        if (*p == close) return p + 1;
+        if (*p++ != ',') return NULL;
+        p = skip_json_ws(p, end);
+    }
+}
+
+static const char *skip_json_number(const char *p, const char *end) {
+    if (p < end && *p == '-') p++;
+    if (p >= end) return NULL;
+    if (*p == '0') p++;
+    else {
+        if (*p < '1' || *p > '9') return NULL;
+        while (p < end && *p >= '0' && *p <= '9') p++;
+    }
+    if (p < end && *p == '.') {
+        p++;
+        if (p >= end || *p < '0' || *p > '9') return NULL;
+        while (p < end && *p >= '0' && *p <= '9') p++;
+    }
+    if (p < end && (*p == 'e' || *p == 'E')) {
+        p++;
+        if (p < end && (*p == '+' || *p == '-')) p++;
+        if (p >= end || *p < '0' || *p > '9') return NULL;
+        while (p < end && *p >= '0' && *p <= '9') p++;
+    }
+    return p;
+}
+
+static const char *skip_json_value(const char *p, const char *end, unsigned depth) {
+    if (p >= end) return NULL;
+    if (*p == '"') return skip_json_string(p, end);
+    if (*p == '{') return skip_json_container(p, end, depth, '}', 1);
+    if (*p == '[') return skip_json_container(p, end, depth, ']', 0);
+    if (end - p >= 4 && memcmp(p, "true", 4) == 0) return p + 4;
+    if (end - p >= 5 && memcmp(p, "false", 5) == 0) return p + 5;
+    if (end - p >= 4 && memcmp(p, "null", 4) == 0) return p + 4;
+    return skip_json_number(p, end);
+}
+
+/* Parse exactly one top-level allowed boolean. This avoids substring tricks
+ * such as an error message containing \"allowed\":true. */
+static int parse_allowed_response(const char *data, size_t size, int *allowed) {
+    if (!data || !allowed) return 0;
+    const char *p = skip_json_ws(data, data + size);
+    const char *end = data + size;
+    if (p >= end || *p++ != '{') return 0;
+    p = skip_json_ws(p, end);
+    int found = 0;
+    if (p < end && *p == '}') return 0;
+    for (;;) {
+        const char *key_start = p;
+        const char *key_end = skip_json_string(p, end);
+        if (!key_end) return 0;
+        int is_allowed = key_end - key_start == 9 && memcmp(key_start, "\"allowed\"", 9) == 0;
+        p = skip_json_ws(key_end, end);
+        if (p >= end || *p++ != ':') return 0;
+        p = skip_json_ws(p, end);
+        if (is_allowed) {
+            if (found) return 0;
+            if (end - p >= 4 && memcmp(p, "true", 4) == 0) {
+                *allowed = 1;
+                p += 4;
+            } else if (end - p >= 5 && memcmp(p, "false", 5) == 0) {
+                *allowed = 0;
+                p += 5;
+            } else {
+                return 0;
+            }
+            found = 1;
+        } else {
+            p = skip_json_value(p, end, 0);
+            if (!p) return 0;
+        }
+        p = skip_json_ws(p, end);
+        if (p >= end) return 0;
+        if (*p == '}') {
+            p = skip_json_ws(p + 1, end);
+            return found && p == end;
+        }
+        if (*p++ != ',') return 0;
+        p = skip_json_ws(p, end);
+    }
+}
+
+static int monitor_mode(void) {
+    return config.mode && strcmp(config.mode, "monitor") == 0;
+}
+
+static int recoverable_failure_result(void) {
+    return monitor_mode() || config.fail_open;
+}
+
+static int safety_failure_result(void) {
+    return monitor_mode() || (config.mode && strcmp(config.mode, "disabled") == 0);
+}
+
+static int is_transport_failure(CURLcode result) {
+    switch (result) {
+        case CURLE_COULDNT_RESOLVE_PROXY:
+        case CURLE_COULDNT_RESOLVE_HOST:
+        case CURLE_COULDNT_CONNECT:
+        case CURLE_PARTIAL_FILE:
+        case CURLE_OPERATION_TIMEDOUT:
+        case CURLE_SSL_CONNECT_ERROR:
+        case CURLE_GOT_NOTHING:
+        case CURLE_SEND_ERROR:
+        case CURLE_RECV_ERROR:
+        case CURLE_PEER_FAILED_VERIFICATION:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 static int check_policy(const char *command) {
     pthread_once(&init_once, init_library);
-    
-    if (!curl_handle || !command) {
-        debug_log("Curl handle not initialized or command is null");
-        return config.fail_open;
-    }
-    
+
     if (strcmp(config.mode, "disabled") == 0) {
         debug_log("Rampart disabled, allowing command");
         return 1;
     }
-    
-    // If RAMPART_AGENT is not set, this process is not an agent session.
-    // Skip policy check to avoid intercepting system processes (tailscaled,
-    // networkd, etc.) that inherit LD_PRELOAD but aren't agent-controlled.
-    if (!config.agent[0]) {
-        return 1;
+
+    if (!curl_handle) {
+        debug_log("Curl handle is unavailable");
+        return recoverable_failure_result();
     }
-    
-    // Build JSON payload manually
-    char *escaped_cmd = escape_json_string(command);
-    if (!escaped_cmd) {
-        debug_log("Failed to escape command string");
-        return config.fail_open;
+    if (!command) {
+        debug_log("Command is null");
+        return safety_failure_result();
     }
-    
-    /* Payload: {"agent":"<agent>","session":"<session>","params":{"command":<escaped>}}
-     * Fixed overhead: ~50 bytes of JSON skeleton + agent + session strings. */
-    size_t payload_size = strlen(escaped_cmd) + strlen(config.agent)
-                        + strlen(config.session) + 64;
-    char *json_payload = malloc(payload_size);
-    if (!json_payload) {
-        free(escaped_cmd);
-        debug_log("Failed to allocate memory for JSON payload");
-        return config.fail_open;
+    if (strlen(command) >= MAX_JSON_PAYLOAD_BYTES ||
+        strlen(config.agent) >= MAX_JSON_PAYLOAD_BYTES ||
+        strlen(config.session) >= MAX_JSON_PAYLOAD_BYTES) {
+        debug_log("Policy request input exceeds the maximum payload size");
+        return safety_failure_result();
     }
 
-    snprintf(json_payload, payload_size,
-        "{\"agent\":\"%s\",\"session\":\"%s\",\"params\":{\"command\":%s}}",
-        config.agent, config.session, escaped_cmd);
-    
+    char *escaped_cmd = escape_json_string(command);
+    char *escaped_agent = escape_json_string(config.agent);
+    char *escaped_session = escape_json_string(config.session);
+    if (!escaped_cmd || !escaped_agent || !escaped_session) {
+        free(escaped_cmd);
+        free(escaped_agent);
+        free(escaped_session);
+        debug_log("Failed to encode policy request");
+        return safety_failure_result();
+    }
+
+    static const char payload_format[] =
+        "{\"agent\":%s,\"session\":%s,\"params\":{\"command\":%s},\"enforce\":true}";
+    int payload_len = snprintf(NULL, 0, payload_format,
+                               escaped_agent, escaped_session, escaped_cmd);
+    if (payload_len < 0 || (size_t)payload_len >= MAX_JSON_PAYLOAD_BYTES) {
+        free(escaped_cmd);
+        free(escaped_agent);
+        free(escaped_session);
+        debug_log("Encoded policy request exceeds the maximum payload size");
+        return safety_failure_result();
+    }
+    char *json_payload = malloc((size_t)payload_len + 1);
+    if (!json_payload) {
+        free(escaped_cmd);
+        free(escaped_agent);
+        free(escaped_session);
+        debug_log("Failed to allocate policy request");
+        return safety_failure_result();
+    }
+    snprintf(json_payload, (size_t)payload_len + 1, payload_format,
+             escaped_agent, escaped_session, escaped_cmd);
     free(escaped_cmd);
-    
-    struct http_response response = { .data = NULL, .size = 0 };
-    char url[512];
-    snprintf(url, sizeof(url), "%s/v1/preflight/exec", config.url);
-    
+    free(escaped_agent);
+    free(escaped_session);
+
+    const char endpoint[] = "/v1/preflight/exec";
+    size_t base_len = strlen(config.url);
+    while (base_len > 0 && config.url[base_len - 1] == '/') base_len--;
+    size_t url_len = base_len;
+    if (!checked_add_size(&url_len, sizeof(endpoint))) {
+        free(json_payload);
+        return safety_failure_result();
+    }
+    char *url = malloc(url_len);
+    if (!url) {
+        free(json_payload);
+        return safety_failure_result();
+    }
+    memcpy(url, config.url, base_len);
+    memcpy(url + base_len, endpoint, sizeof(endpoint));
+
+    struct http_response response = { .data = NULL, .size = 0,
+                                      .too_large = 0, .allocation_failed = 0 };
     struct curl_slist *headers = NULL;
-    char auth_header[512] = {0};
-    
-    if (config.token) {
-        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", config.token);
-        headers = curl_slist_append(headers, auth_header);
+    char *auth_header = NULL;
+
+    if (config.token && config.token[0]) {
+        static const char auth_prefix[] = "Authorization: Bearer ";
+        size_t token_len = strlen(config.token);
+        if (token_len > MAX_AUTH_TOKEN_BYTES || strchr(config.token, '\r') ||
+            strchr(config.token, '\n')) {
+            debug_log("Invalid RAMPART_TOKEN value");
+            free(url);
+            free(json_payload);
+            return safety_failure_result();
+        }
+        size_t auth_len = sizeof(auth_prefix) - 1 + token_len + 1;
+        auth_header = malloc(auth_len);
+        if (!auth_header) {
+            free(url);
+            free(json_payload);
+            return safety_failure_result();
+        }
+        snprintf(auth_header, auth_len, "%s%s", auth_prefix, config.token);
+        headers = curl_slist_append(NULL, auth_header);
+        if (!headers) {
+            free(auth_header);
+            free(url);
+            free(json_payload);
+            return safety_failure_result();
+        }
     }
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
+    struct curl_slist *new_headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (!new_headers) {
+        curl_slist_free_all(headers);
+        free(auth_header);
+        free(url);
+        free(json_payload);
+        return safety_failure_result();
+    }
+    headers = new_headers;
+
     pthread_mutex_lock(&curl_mutex);
-    
-    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, json_payload);
-    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, strlen(json_payload));
-    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &response);
-    
-    debug_log("Checking policy for command: %s", command);
-    
-    CURLcode res = curl_easy_perform(curl_handle);
-    
-    pthread_mutex_unlock(&curl_mutex);
-    
-    curl_slist_free_all(headers);
-    free(json_payload);
-    
-    if (res != CURLE_OK) {
-        debug_log("HTTP request failed: %s", curl_easy_strerror(res));
-        if (response.data) free(response.data);
-        return config.fail_open;
+    CURLcode setup_result = CURLE_OK;
+    if (curl_easy_setopt(curl_handle, CURLOPT_URL, url) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, json_payload) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, (long)payload_len) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &response) != CURLE_OK) {
+        setup_result = CURLE_FAILED_INIT;
     }
-    
-    long response_code;
-    curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &response_code);
-    
+
+    debug_log("Checking policy for command: %s", command);
+    CURLcode result = setup_result == CURLE_OK ? curl_easy_perform(curl_handle) : setup_result;
+    long response_code = 0;
+    if (result == CURLE_OK && curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE,
+                                                &response_code) != CURLE_OK) {
+        result = CURLE_FAILED_INIT;
+    }
+    /* libcurl retains these pointers; clear them before releasing the shared
+     * handle and freeing request-local storage. */
+    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, NULL);
+    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, 0L);
+    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, NULL);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, NULL);
+    pthread_mutex_unlock(&curl_mutex);
+
+    curl_slist_free_all(headers);
+    free(auth_header);
+    free(url);
+    free(json_payload);
+
+    if (result != CURLE_OK) {
+        debug_log("HTTP request failed: %s", curl_easy_strerror(result));
+        free(response.data);
+        if (response.too_large || response.allocation_failed || !is_transport_failure(result)) {
+            return safety_failure_result();
+        }
+        return recoverable_failure_result();
+    }
+
     if (response_code != 200) {
         debug_log("HTTP request returned %ld", response_code);
-        if (response.data) free(response.data);
-        return config.fail_open;
-    }
-    
-    /* Parse response — look for "allowed":true / "allowed":false.
-     * Also handles "allowed": true (with whitespace) for robustness. */
-    int allowed = config.fail_open;
-    if (response.data) {
-        if (strstr(response.data, "\"allowed\":true")
-         || strstr(response.data, "\"allowed\": true")) {
-            allowed = 1;
-        } else if (strstr(response.data, "\"allowed\":false")
-                || strstr(response.data, "\"allowed\": false")) {
-            allowed = 0;
-        }
         free(response.data);
+        if (response_code >= 500 && response_code <= 599) {
+            return recoverable_failure_result();
+        }
+        return safety_failure_result();
     }
-    
+
+    int allowed = 0;
+    if (!parse_allowed_response(response.data, response.size, &allowed)) {
+        debug_log("Policy response did not contain one valid top-level allowed boolean");
+        free(response.data);
+        return safety_failure_result();
+    }
+    free(response.data);
     debug_log("Policy check result: %s", allowed ? "ALLOW" : "DENY");
-    
-    if (strcmp(config.mode, "monitor") == 0) {
+
+    if (monitor_mode()) {
         debug_log("Monitor mode - logging but not blocking");
         return 1;
     }
-    
+
     return allowed;
 }
 
@@ -540,9 +946,10 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     }
     if (disable_execve_intercept) return real_execve(path, argv, envp);
     
-    char *cmd = build_command_string(argv);
-    if (cmd && !check_policy(cmd)) {
-        debug_log("Blocking execve: %s", cmd);
+    char *cmd = build_exec_command(path, argv);
+    int allowed = cmd ? check_policy(cmd) : safety_failure_result();
+    if (!allowed) {
+        debug_log("Blocking execve: %s", cmd ? cmd : "command encoding failed");
         free(cmd);
         errno = EPERM;
         return -1;
@@ -550,8 +957,13 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     
     debug_log("Allowing execve: %s", cmd ? cmd : "(null)");
     if (cmd) free(cmd);
-    int modified = 0;
-    char **effective_envp = ensure_preload_env(envp, &modified);
+    int modified = 0, cascade_failed = 0;
+    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    if (cascade_failed && !safety_failure_result()) {
+        debug_log("Blocking execve because preload cascade could not be preserved");
+        errno = EPERM;
+        return -1;
+    }
     int rc = real_execve(path, argv, effective_envp);
     if (modified) free_modified_envp(effective_envp);
     return rc;
@@ -566,9 +978,10 @@ int execvp(const char *file, char *const argv[]) {
     }
     if (disable_execvp_intercept) return real_execvp(file, argv);
     
-    char *cmd = build_command_string(argv);
-    if (cmd && !check_policy(cmd)) {
-        debug_log("Blocking execvp: %s", cmd);
+    char *cmd = build_exec_command(file, argv);
+    int allowed = cmd ? check_policy(cmd) : safety_failure_result();
+    if (!allowed) {
+        debug_log("Blocking execvp: %s", cmd ? cmd : "command encoding failed");
         free(cmd);
         errno = EPERM;
         return -1;
@@ -589,9 +1002,10 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
     }
     if (disable_execvpe_intercept) return real_execvpe(file, argv, envp);
     
-    char *cmd = build_command_string(argv);
-    if (cmd && !check_policy(cmd)) {
-        debug_log("Blocking execvpe: %s", cmd);
+    char *cmd = build_exec_command(file, argv);
+    int allowed = cmd ? check_policy(cmd) : safety_failure_result();
+    if (!allowed) {
+        debug_log("Blocking execvpe: %s", cmd ? cmd : "command encoding failed");
         free(cmd);
         errno = EPERM;
         return -1;
@@ -599,8 +1013,13 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
     
     debug_log("Allowing execvpe: %s", cmd ? cmd : "(null)");
     if (cmd) free(cmd);
-    int modified = 0;
-    char **effective_envp = ensure_preload_env(envp, &modified);
+    int modified = 0, cascade_failed = 0;
+    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    if (cascade_failed && !safety_failure_result()) {
+        debug_log("Blocking execvpe because preload cascade could not be preserved");
+        errno = EPERM;
+        return -1;
+    }
     int rc = real_execvpe(file, argv, effective_envp);
     if (modified) free_modified_envp(effective_envp);
     return rc;
@@ -658,18 +1077,55 @@ int posix_spawn(pid_t *pid, const char *path,
         return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
     }
     
-    char *cmd = build_command_string(argv);
-    if (cmd && !check_policy(cmd)) {
-        debug_log("Blocking posix_spawn: %s", cmd);
+    char *cmd = build_exec_command(path, argv);
+    int allowed = cmd ? check_policy(cmd) : safety_failure_result();
+    if (!allowed) {
+        debug_log("Blocking posix_spawn: %s", cmd ? cmd : "command encoding failed");
         free(cmd);
         return EPERM;
     }
     
     debug_log("Allowing posix_spawn: %s", cmd ? cmd : "(null)");
     if (cmd) free(cmd);
-    int modified = 0;
-    char **effective_envp = ensure_preload_env(envp, &modified);
+    int modified = 0, cascade_failed = 0;
+    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    if (cascade_failed && !safety_failure_result()) {
+        debug_log("Blocking posix_spawn because preload cascade could not be preserved");
+        return EPERM;
+    }
     int rc = real_posix_spawn(pid, path, file_actions, attrp, argv, effective_envp);
+    if (modified) free_modified_envp(effective_envp);
+    return rc;
+}
+
+int posix_spawnp(pid_t *pid, const char *file,
+                 const posix_spawn_file_actions_t *file_actions,
+                 const posix_spawnattr_t *attrp,
+                 char *const argv[], char *const envp[]) {
+    pthread_once(&init_once, init_library);
+
+    if (!ensure_real_posix_spawnp()) return EIO;
+    if (disable_posix_spawnp_intercept) {
+        return real_posix_spawnp(pid, file, file_actions, attrp, argv, envp);
+    }
+
+    char *cmd = build_exec_command(file, argv);
+    int allowed = cmd ? check_policy(cmd) : safety_failure_result();
+    if (!allowed) {
+        debug_log("Blocking posix_spawnp: %s", cmd ? cmd : "command encoding failed");
+        free(cmd);
+        return EPERM;
+    }
+
+    debug_log("Allowing posix_spawnp: %s", cmd);
+    free(cmd);
+    int modified = 0, cascade_failed = 0;
+    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    if (cascade_failed && !safety_failure_result()) {
+        debug_log("Blocking posix_spawnp because preload cascade could not be preserved");
+        return EPERM;
+    }
+    int rc = real_posix_spawnp(pid, file, file_actions, attrp, argv, effective_envp);
     if (modified) free_modified_envp(effective_envp);
     return rc;
 }
@@ -682,9 +1138,14 @@ static void load_library(void) {
 // Cleanup function (called at library unload)
 __attribute__((destructor))
 void cleanup_library(void) {
+    pthread_mutex_lock(&curl_mutex);
     if (curl_handle) {
         curl_easy_cleanup(curl_handle);
         curl_handle = NULL;
     }
-    curl_global_cleanup();
+    pthread_mutex_unlock(&curl_mutex);
+    if (curl_global_initialized) {
+        curl_global_cleanup();
+        curl_global_initialized = 0;
+    }
 }

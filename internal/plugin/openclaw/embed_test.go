@@ -89,10 +89,19 @@ func TestManifestDeclaresDegradedModeConfig(t *testing.T) {
 	if err := json.Unmarshal(failOpenTools.Default, &defaults); err != nil {
 		t.Fatalf("failOpenTools default must be a string array: %v", err)
 	}
-	for _, tool := range []string{"read", "web_fetch", "web_search", "image"} {
-		if !contains(defaults, tool) {
-			t.Fatalf("failOpenTools default missing %q: %v", tool, defaults)
-		}
+	if len(defaults) != 0 {
+		t.Fatalf("failOpenTools must default to fail closed, got %v", defaults)
+	}
+	failOpen, ok := manifest.ConfigSchema.Properties["failOpen"]
+	if !ok {
+		t.Fatal("manifest configSchema must retain the deprecated failOpen compatibility switch")
+	}
+	var failOpenDefault bool
+	if err := json.Unmarshal(failOpen.Default, &failOpenDefault); err != nil {
+		t.Fatalf("failOpen default must be boolean: %v", err)
+	}
+	if failOpenDefault {
+		t.Fatal("failOpen must default to false")
 	}
 }
 

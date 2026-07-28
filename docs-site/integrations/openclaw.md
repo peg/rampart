@@ -88,15 +88,39 @@ With the native plugin, **supported OpenClaw tool calls are intercepted**. Polic
 | `exec` | ✅ Native plugin | All commands evaluated |
 | `read` | ✅ Native plugin | Path-based policy matching |
 | `write` / `edit` | ✅ Native plugin | Path-based policy matching |
+| `apply_patch` | ✅ Native plugin | Maps to `edit`; every represented path is evaluated and deny/ask wins for the batch |
+| `grep` / `find` / `ls` | ✅ Native plugin | Maps to the same path-aware `read` policy surface |
 | `web_fetch` | ✅ Native plugin | Domain allowlist/blocklist |
 | `web_search` | ✅ Native plugin | Always allowed by default |
-| `browser` | ✅ Native plugin | Domain-based rules |
+| `browser` | ✅ Native plugin | Read-only inspection is allowed; navigation uses domain rules; clicks, typing, uploads, and other mutations require approval |
 | `message` | ✅ Native plugin | Read actions always allowed; sends to unknown channels require approval |
 | `canvas` | ✅ Native plugin | Always allowed (UI only) |
 | `sessions_spawn` | ✅ Native plugin | Subagents cannot spawn further agents |
+| `process` / `nodes` / `gateway` / `subagents` | ✅ Native plugin | Known read-only status operations are allowed; mutations require approval |
+| `sessions_list` / `sessions_history` / `sessions_send` / `session_status` | ✅ Native plugin | Session metadata/history and cross-session actions are classified explicitly; sensitive or mutating calls require approval |
+| `cron` | ✅ Native plugin | Scheduling and job inspection require approval |
+| `image_generate` | ✅ Native plugin | Maps to the approval-gated image policy surface |
+
+Unknown OpenClaw, plugin, and MCP tool names are blocked locally before they
+can reach the service's permissive generic fallback. New capabilities require
+an explicit typed mapping and tests before Rampart allows them.
+
+Other OpenClaw plugins that rewrite tool parameters share the trusted host
+boundary. Current OpenClaw hook composition does not give Rampart an
+authoritative post-composition view of the final parameters, so do not combine
+Rampart with an untrusted parameter-mutating plugin.
+
+Current OpenClaw `before_tool_call` context does not expose the host working
+directory. Rampart evaluates each file path and `apply_patch` derived path as
+OpenClaw supplies it. Prefer absolute paths or recursive policy patterns such
+as `**/.ssh/**` when a rule must also cover relative host paths.
+
+OpenClaw's current `after_tool_call` hook is observational rather than a
+blocking result-rewrite boundary. Rampart therefore does not claim that this
+plugin can redact a completed tool response before the model receives it.
 
 !!! note "Sub-agents"
-    The `before_tool_call` hook fires for tool calls from subagents too. The `openclaw.yaml` profile uses `session_matches: ["subagent:*"]` to apply stricter rules to subagent sessions.
+    The `before_tool_call` hook fires for tool calls from subagents too. The `openclaw.yaml` profile recognizes current `agent:*:subagent:*` and `agent:*:acp:*` session keys plus their legacy forms to apply stricter rules to child sessions.
 
 !!! success "Enforcement verified"
     `before_tool_call` is properly awaited and blocking in OpenClaw 2026.3.28+. Deny decisions are enforced end-to-end, not just logged.
@@ -122,7 +146,11 @@ rampart init --profile openclaw
 
 When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a durable rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
 
-For example, approving `sudo true` writes an exact rule, while broader commands may be generalized into a smart glob when appropriate.
+Automatic approvals are exact by default. Rampart never inserts a wildcard or
+strips arguments, pipes, or redirects when persisting an approved command.
+Literal wildcard characters are escaped as policy literals. Exact automatic
+persistence supports exec commands and read/write/edit paths; other tool types
+require an explicit operator-authored policy.
 
 For example, approving `sudo apt-get install nmap` always writes:
 ```yaml
@@ -131,7 +159,7 @@ For example, approving `sudo apt-get install nmap` always writes:
     tool: exec
   rules:
     - when:
-        command_matches: ["sudo apt-get install *"]
+        command_matches: ["sudo apt-get install nmap"]
       action: allow
 ```
 

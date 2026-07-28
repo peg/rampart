@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -101,6 +102,88 @@ func TestMatchGlob(t *testing.T) {
 	}
 }
 
+func TestPlatformMatchingCaseRules(t *testing.T) {
+	commandPatterns := []string{"Stop-Service *"}
+	if !matchCommandAnyForActionOS(commandPatterns, "sToP-sErViCe WinDefend", "windows", ActionDeny) {
+		t.Fatal("Windows command matching must be case-insensitive")
+	}
+	if matchCommandAnyForActionOS(commandPatterns, "sToP-sErViCe WinDefend", "linux", ActionDeny) {
+		t.Fatal("Linux command matching must remain case-sensitive")
+	}
+	if !matchCommandAnyForActionOS([]string{"rm -rf *"}, "RM -RF /", "darwin", ActionDeny) {
+		t.Fatal("macOS command matching must account for case-insensitive executable lookup")
+	}
+
+	pathPatterns := []string{"C:/Users/Alice/.ssh/**"}
+	if !matchAnyForOS(pathPatterns, "c:/users/alice/.SSH/id_rsa", "windows") {
+		t.Fatal("Windows path matching must be case-insensitive")
+	}
+	if !matchAnyForOS([]string{"/Users/Alice/.ssh/**"}, "/users/alice/.SSH/id_rsa", "darwin") {
+		t.Fatal("macOS path matching must account for the default case-insensitive filesystem")
+	}
+	if matchAnyForOS([]string{"/Home/Alice/**"}, "/home/alice/file", "linux") {
+		t.Fatal("Linux path matching must remain case-sensitive")
+	}
+}
+
+func TestCommandCaseMatchingPreservesGrantArgumentCase(t *testing.T) {
+	pattern := []string{"curl https://example.test/SafeToken"}
+	for _, goos := range []string{"darwin", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			if !matchCommandAnyForActionOS(pattern, "CURL https://example.test/SafeToken", goos, ActionAllow) {
+				t.Fatal("allow matching should honor case-insensitive executable lookup")
+			}
+			if matchCommandAnyForActionOS(pattern, "CURL https://example.test/safetoken", goos, ActionAllow) {
+				t.Fatal("allow matching must preserve case-sensitive command arguments")
+			}
+			if !matchCommandAnyForActionOS(pattern, "CURL https://example.test/safetoken", goos, ActionDeny) {
+				t.Fatal("restrictive matching should conservatively reject mixed-case evasion")
+			}
+		})
+	}
+}
+
+func TestActionAwareCommandMatchingDoesNotBroadenAllow(t *testing.T) {
+	if !platformUsesCaseInsensitiveNames(runtime.GOOS) {
+		t.Skip("case-insensitive host behavior is covered on macOS and Windows CI")
+	}
+	eng := setupEngine(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: exact-remote-resource
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when:
+          command_matches: ["curl https://example.test/SafeToken"]
+`)
+
+	allowed := eng.Evaluate(ToolCall{Tool: "exec", Params: map[string]any{
+		"command": "CURL https://example.test/SafeToken",
+	}})
+	if allowed.Action != ActionAllow {
+		t.Fatalf("uppercase executable with exact argument = %s, want allow", allowed.Action)
+	}
+
+	denied := eng.Evaluate(ToolCall{Tool: "exec", Params: map[string]any{
+		"command": "CURL https://example.test/safetoken",
+	}})
+	if denied.Action != ActionDeny {
+		t.Fatalf("case-changed remote argument = %s, want default deny", denied.Action)
+	}
+}
+
+func TestWindowsRuntimeCommandMatchingIsCaseInsensitive(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows runtime behavior is exercised by the Windows CI job")
+	}
+	cond := Condition{CommandMatches: []string{"Stop-Service *"}}
+	if !matchCondition(cond, ToolCall{Tool: "exec", Params: map[string]any{"command": "sToP-sErViCe WinDefend"}}, NewSlidingWindowCounter()) {
+		t.Fatal("mixed-case Windows command bypassed command_matches")
+	}
+}
+
 func TestMatchGlob_BoundsAreWholeInputAndPattern(t *testing.T) {
 	if !MatchGlob("*", strings.Repeat("a", maxGlobInputLen)) {
 		t.Fatal("input exactly at the limit should match")
@@ -147,6 +230,125 @@ func TestCleanPaths(t *testing.T) {
 			cleaned, _ := cleanPaths(tt.input)
 			if cleaned != tt.want {
 				t.Errorf("cleanPaths(%q) cleaned = %q, want %q", tt.input, cleaned, tt.want)
+			}
+		})
+	}
+}
+
+func TestCleanPathsResolvesLongestExistingSymlinkAncestor(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks are unavailable on this host: %v", err)
+	}
+
+	input := filepath.Join(link, "not-created", "child.txt")
+	cleaned, resolved := cleanPaths(input)
+	if cleaned != filepath.Clean(input) {
+		t.Fatalf("cleaned path = %q, want %q", cleaned, filepath.Clean(input))
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResolved := filepath.Join(resolvedTarget, "not-created", "child.txt")
+	if resolved != wantResolved {
+		t.Fatalf("resolved path = %q, want %q", resolved, wantResolved)
+	}
+
+	cond := Condition{PathMatches: []string{filepath.Join(resolvedTarget, "**")}}
+	call := ToolCall{Tool: "write", Params: map[string]interface{}{"path": input}}
+	if !matchCondition(cond, call, nil) {
+		t.Fatal("write through a symlinked parent must match the resolved target policy")
+	}
+}
+
+func TestRelativeToolPathUsesHostWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "workspace", "nested")
+	protectedDir := filepath.Join(root, "protected")
+	if err := os.MkdirAll(workDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(protectedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	call := ToolCall{
+		Tool:    "read",
+		WorkDir: workDir,
+		Params:  map[string]any{"path": "../../protected/credential.txt"},
+	}
+	cond := Condition{PathMatches: []string{filepath.ToSlash(filepath.Join(protectedDir, "**"))}}
+	if !matchCondition(cond, call, nil) {
+		t.Fatalf("relative path %q was not resolved against host cwd %q", call.Path(), workDir)
+	}
+}
+
+func TestRelativeToolPathKeepsProjectPolicyCompatibility(t *testing.T) {
+	call := ToolCall{
+		Tool:    "read",
+		WorkDir: filepath.Join(t.TempDir(), "workspace"),
+		Params:  map[string]any{"path": "secrets/credential.txt"},
+	}
+	condition := Condition{PathMatches: []string{"secrets/**"}}
+	if !matchCondition(condition, call, nil) {
+		t.Fatal("relative project policy should still match after host-CWD resolution")
+	}
+}
+
+func TestRelativeToolPathResolvesSymlinkFromHostWorkingDirectory(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "protected")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workDir := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(workDir, "link")); err != nil {
+		t.Skipf("symlinks are unavailable on this host: %v", err)
+	}
+
+	call := ToolCall{
+		Tool:    "write",
+		WorkDir: workDir,
+		Params:  map[string]any{"path": "link/not-created/child.txt"},
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cond := Condition{PathMatches: []string{filepath.ToSlash(filepath.Join(resolvedTarget, "**"))}}
+	if !matchCondition(cond, call, nil) {
+		t.Fatal("relative write through a workspace symlink must match the resolved target policy")
+	}
+}
+
+func TestMatchCondition_WindowsShellWrappers(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		pattern string
+	}{
+		{
+			name:    "cmd ampersand chain",
+			command: `cmd.exe /c "echo safe & rm -rf /"`,
+			pattern: "rm -rf *",
+		},
+		{
+			name:    "powershell command",
+			command: `pwsh.exe -NoProfile -Command "Write-Output safe; Remove-Item secret.txt"`,
+			pattern: "Remove-Item *",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cond := Condition{CommandMatches: []string{tt.pattern}}
+			call := ToolCall{Tool: "exec", Params: map[string]interface{}{"command": tt.command}}
+			if !matchCondition(cond, call, nil) {
+				t.Fatalf("wrapped command %q did not match %q", tt.command, tt.pattern)
 			}
 		})
 	}
@@ -572,5 +774,66 @@ func TestMatchGlob_SelfModificationPatterns(t *testing.T) {
 				t.Errorf("MatchGlob(%q, %q) = %v, want %v", tc.pattern, tc.value, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestMatchCommandFirstForActionOSPreservesGrantArgumentCase(t *testing.T) {
+	patterns := []string{"CURL https://example.com/CaseSensitive"}
+	command := "curl https://example.com/casesensitive"
+
+	if got := matchCommandFirstForActionOS(patterns, command, "darwin", ActionAllow); got != "" {
+		t.Fatalf("macOS allow match widened case-sensitive arguments: %q", got)
+	}
+	if got := matchCommandFirstForActionOS(patterns, command, "windows", ActionWatch); got != "" {
+		t.Fatalf("Windows watch match widened case-sensitive arguments: %q", got)
+	}
+	if got := matchCommandFirstForActionOS(patterns, command, "darwin", ActionDeny); got != patterns[0] {
+		t.Fatalf("macOS deny match = %q, want conservative match %q", got, patterns[0])
+	}
+}
+
+func TestCommandEnvAssignmentNamesFollowShellCaseRules(t *testing.T) {
+	patterns := []string{"PATH"}
+	command := "path=/tmp command"
+	for _, goos := range []string{"linux", "darwin"} {
+		if got := matchFirstCommandEnvAssignmentForOS(patterns, command, goos); got != "" {
+			t.Fatalf("%s environment match = %q, want case-sensitive non-match", goos, got)
+		}
+	}
+	if got := matchFirstCommandEnvAssignmentForOS(patterns, command, "windows"); got != "PATH" {
+		t.Fatalf("Windows environment match = %q, want %q", got, "PATH")
+	}
+}
+
+func TestExplainConditionForActionRequiresEveryConditionField(t *testing.T) {
+	cond := Condition{
+		CommandMatches: []string{"echo *"},
+		PathMatches:    []string{"/approved/**"},
+	}
+	call := ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo safe", "path": "/other/file"},
+	}
+
+	matched, detail := ExplainConditionForAction(cond, call, ActionAllow)
+	if matched || detail != "" {
+		t.Fatalf("explanation reported a partial AND match: matched=%v detail=%q", matched, detail)
+	}
+}
+
+func TestExplainConditionForActionMatchesGrantCaseSemantics(t *testing.T) {
+	if !platformUsesCaseInsensitiveNames(runtime.GOOS) {
+		t.Skip("host command-name folding is exercised on macOS and Windows")
+	}
+	cond := Condition{CommandMatches: []string{"CURL https://example.com/CaseSensitive"}}
+	call := ToolCall{Tool: "exec", Params: map[string]any{
+		"command": "curl https://example.com/casesensitive",
+	}}
+
+	if matched, detail := ExplainConditionForAction(cond, call, ActionAllow); matched || detail != "" {
+		t.Fatalf("allow explanation widened argument case: matched=%v detail=%q", matched, detail)
+	}
+	if matched, _ := ExplainConditionForAction(cond, call, ActionDeny); !matched {
+		t.Fatal("deny explanation did not use conservative host case matching")
 	}
 }

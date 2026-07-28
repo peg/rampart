@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"time"
 	"unicode"
+
+	"github.com/peg/rampart/internal/filetxn"
 )
 
 // Manager handles loading, updating, and cleanup of session state files.
@@ -70,6 +72,9 @@ func validateSessionID(id string) error {
 	if id == "" {
 		return errors.New("session: sessionID is required")
 	}
+	if len(id) > 200 {
+		return errors.New("session: sessionID exceeds 200 bytes")
+	}
 	for _, r := range id {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '_' {
 			return fmt.Errorf("session: invalid character %q in session_id", r)
@@ -93,6 +98,9 @@ func (m *Manager) statePath() (string, error) {
 // load reads and deserialises the session state file.
 // Returns a new empty State if the file does not yet exist.
 func (m *Manager) load(path string) (*State, error) {
+	if info, err := os.Stat(path); err == nil && info.Size() > maxStateSize {
+		return nil, fmt.Errorf("session: state file exceeds %d-byte limit", maxStateSize)
+	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		now := time.Now().UTC()
@@ -110,6 +118,9 @@ func (m *Manager) load(path string) (*State, error) {
 	var s State
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("session: parse %s: %w", path, err)
+	}
+	if s.SessionID != m.sessionID {
+		return nil, fmt.Errorf("session: state file ID %q does not match requested session %q", s.SessionID, m.sessionID)
 	}
 	// Ensure maps are non-nil after unmarshal.
 	if s.PendingAsks == nil {
@@ -161,15 +172,27 @@ func (m *Manager) save(path string, s *State) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("session: write temp file: %w", err)
 	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("session: sync temp file: %w", err)
+	}
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("session: close temp file: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := filetxn.Replace(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("session: rename temp file: %w", err)
+		return fmt.Errorf("session: replace state file: %w", err)
 	}
 	return nil
+}
+
+// withStateLock serializes load-modify-save operations across hook processes.
+// A single directory lock also prevents cleanup from deleting a session while
+// another hook is updating it, without leaving one sidecar per session ID.
+func (m *Manager) withStateLock(path string, fn func() error) error {
+	return filetxn.WithLock(filepath.Join(filepath.Dir(path), ".session-state"), fn)
 }
 
 // trimOldest removes the single oldest PendingAsk or SessionApproval to
@@ -214,23 +237,23 @@ func (m *Manager) RecordAskWithAudit(toolUseID, tool, command, pattern, policyNa
 	if err != nil {
 		return err
 	}
-	s, err := m.load(path)
-	if err != nil {
-		return err
-	}
-
-	s.PendingAsks[toolUseID] = PendingAsk{
-		Tool:               tool,
-		Command:            command,
-		GeneralizedPattern: pattern,
-		AskedAt:            time.Now().UTC(),
-		PolicyName:         policyName,
-		DecisionMessage:    message,
-		Audit:              audit,
-		AuditApprovalID:    auditApprovalID,
-	}
-
-	if err := m.save(path, s); err != nil {
+	if err := m.withStateLock(path, func() error {
+		s, err := m.load(path)
+		if err != nil {
+			return err
+		}
+		s.PendingAsks[toolUseID] = PendingAsk{
+			Tool:               tool,
+			Command:            command,
+			GeneralizedPattern: pattern,
+			AskedAt:            time.Now().UTC(),
+			PolicyName:         policyName,
+			DecisionMessage:    message,
+			Audit:              audit,
+			AuditApprovalID:    auditApprovalID,
+		}
+		return m.save(path, s)
+	}); err != nil {
 		return err
 	}
 	m.logger.Debug("session: recorded ask",
@@ -259,40 +282,40 @@ func (m *Manager) ObserveApprovalWithAsk(toolUseID string) (*PendingAsk, *Approv
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := m.load(path)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	ask, ok := s.PendingAsks[toolUseID]
-	if !ok {
-		return nil, nil, fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
-	}
-
-	// Key for the approval record: "{tool}:{generalized_pattern}".
-	approvalKey := ask.Tool + ":" + ask.GeneralizedPattern
-
-	now := time.Now().UTC()
-	existing, exists := s.SessionApprovals[approvalKey]
+	var ask PendingAsk
 	var record ApprovalRecord
-	if exists {
-		record = existing
-		record.LastApproved = now
-		record.ApprovalCount++
-	} else {
-		record = ApprovalRecord{
-			Pattern:       ask.GeneralizedPattern,
-			Tool:          ask.Tool,
-			FirstApproved: now,
-			LastApproved:  now,
-			ApprovalCount: 1,
+	if err := m.withStateLock(path, func() error {
+		s, err := m.load(path)
+		if err != nil {
+			return err
 		}
-	}
+		var ok bool
+		ask, ok = s.PendingAsks[toolUseID]
+		if !ok {
+			return fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
+		}
 
-	s.SessionApprovals[approvalKey] = record
-	delete(s.PendingAsks, toolUseID)
+		// Key for the approval record: "{tool}:{generalized_pattern}".
+		approvalKey := ask.Tool + ":" + ask.GeneralizedPattern
+		now := time.Now().UTC()
+		if existing, exists := s.SessionApprovals[approvalKey]; exists {
+			record = existing
+			record.LastApproved = now
+			record.ApprovalCount++
+		} else {
+			record = ApprovalRecord{
+				Pattern:       ask.GeneralizedPattern,
+				Tool:          ask.Tool,
+				FirstApproved: now,
+				LastApproved:  now,
+				ApprovalCount: 1,
+			}
+		}
 
-	if err := m.save(path, s); err != nil {
+		s.SessionApprovals[approvalKey] = record
+		delete(s.PendingAsks, toolUseID)
+		return m.save(path, s)
+	}); err != nil {
 		return nil, nil, err
 	}
 	m.logger.Debug("session: observed approval",
@@ -331,18 +354,20 @@ func (m *Manager) DismissAsk(toolUseID string) (*PendingAsk, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := m.load(path)
-	if err != nil {
-		return nil, err
-	}
-
-	ask, ok := s.PendingAsks[toolUseID]
-	if !ok {
-		return nil, fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
-	}
-	delete(s.PendingAsks, toolUseID)
-
-	if err := m.save(path, s); err != nil {
+	var ask PendingAsk
+	if err := m.withStateLock(path, func() error {
+		s, err := m.load(path)
+		if err != nil {
+			return err
+		}
+		var ok bool
+		ask, ok = s.PendingAsks[toolUseID]
+		if !ok {
+			return fmt.Errorf("session: no pending ask for tool_use_id %q", toolUseID)
+		}
+		delete(s.PendingAsks, toolUseID)
+		return m.save(path, s)
+	}); err != nil {
 		return nil, err
 	}
 	askCopy := ask
@@ -380,37 +405,42 @@ func (m *Manager) Cleanup(maxAge time.Duration) error {
 		}
 
 		fp := filepath.Join(d, name)
-		data, err := os.ReadFile(fp)
-		if err != nil {
-			m.logger.Debug("session: cleanup cannot read file", "path", fp, "error", err)
-			failed++
-			continue
-		}
-
-		var s State
-		if err := json.Unmarshal(data, &s); err != nil {
-			// Unparseable file — remove it.
-			m.logger.Debug("session: cleanup removing unparseable file", "path", fp)
-			if removeErr := os.Remove(fp); removeErr != nil {
-				m.logger.Debug("session: cleanup remove failed", "path", fp, "error", removeErr)
-				failed++
-			} else {
-				removed++
+		fileRemoved := false
+		if err := m.withStateLock(fp, func() error {
+			data, err := os.ReadFile(fp)
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
 			}
-			continue
-		}
+			if err != nil {
+				return fmt.Errorf("read: %w", err)
+			}
 
-		if s.LastActive.Before(cutoff) {
-			if removeErr := os.Remove(fp); removeErr != nil {
-				m.logger.Debug("session: cleanup remove failed", "path", fp, "error", removeErr)
-				failed++
-			} else {
+			var s State
+			if err := json.Unmarshal(data, &s); err != nil {
+				m.logger.Debug("session: cleanup removing unparseable file", "path", fp)
+				if err := os.Remove(fp); err != nil {
+					return fmt.Errorf("remove unparseable file: %w", err)
+				}
+				fileRemoved = true
+				return nil
+			}
+
+			if s.LastActive.Before(cutoff) {
+				if err := os.Remove(fp); err != nil {
+					return fmt.Errorf("remove stale file: %w", err)
+				}
 				m.logger.Debug("session: cleanup removed stale session file",
 					"session_id", s.SessionID,
 					"last_active", s.LastActive,
 				)
-				removed++
+				fileRemoved = true
 			}
+			return nil
+		}); err != nil {
+			m.logger.Debug("session: cleanup failed", "path", fp, "error", err)
+			failed++
+		} else if fileRemoved {
+			removed++
 		}
 	}
 

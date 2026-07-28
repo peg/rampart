@@ -289,7 +289,7 @@ func TestAuditEvents_SessionFilter(t *testing.T) {
 
 	events := []map[string]any{
 		{"id": "01", "agent": "claude", "session": "rampart/staging", "tool": "exec", "decision": map[string]any{"action": "allow"}},
-		{"id": "02", "agent": "claude", "session": "myrepo/main",    "tool": "exec", "decision": map[string]any{"action": "deny"}},
+		{"id": "02", "agent": "claude", "session": "myrepo/main", "tool": "exec", "decision": map[string]any{"action": "deny"}},
 		{"id": "03", "agent": "claude", "session": "rampart/staging", "tool": "read", "decision": map[string]any{"action": "allow"}},
 	}
 	writeAuditFile(t, dir, today, events)
@@ -316,7 +316,7 @@ func TestAuditStats_BySession(t *testing.T) {
 
 	events := []map[string]any{
 		{"id": "01", "agent": "claude", "session": "rampart/staging", "tool": "exec", "decision": map[string]any{"action": "allow"}},
-		{"id": "02", "agent": "claude", "session": "myrepo/main",    "tool": "exec", "decision": map[string]any{"action": "deny"}},
+		{"id": "02", "agent": "claude", "session": "myrepo/main", "tool": "exec", "decision": map[string]any{"action": "deny"}},
 		{"id": "03", "agent": "claude", "session": "rampart/staging", "tool": "read", "decision": map[string]any{"action": "allow"}},
 	}
 	writeAuditFile(t, dir, today, events)

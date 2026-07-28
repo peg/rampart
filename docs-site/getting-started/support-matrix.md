@@ -43,7 +43,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Native hooks<br><code>rampart setup cline</code></td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>adapter-tested; no current host proof</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>current editor/CLI source contract + adapter/setup tests; no current host proof</td>
     </tr>
     <tr class="tier-experimental">
       <td data-label="Surface"><strong>Gemini CLI (enterprise/API key)</strong></td>
@@ -137,9 +137,11 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
 - **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
 - **Hermes Agent** → experimental plugin path with a completed isolated
   Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than resume
-- **Cline** → supported adapter path on Linux/macOS, but without a rolling
-  latest-Cline job or completed current-host proof; the installed hook scripts
-  require Bash and native Windows behavior is not currently claimed
+- **Cline** → current editor and CLI payloads plus POSIX and Windows discovery
+  artifacts are covered by adapter/setup tests; physical Windows and rolling
+  latest-Cline host proof remain pending. Legacy CLI `--yolo` disables hooks,
+  and the currently advertised custom `--hooks-dir` override is not consumed
+  reliably by upstream file-hook discovery
 
 ## Degraded behavior notes
 
@@ -153,8 +155,14 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
   CLI `PreToolUse` command errors deny, but CLI hook timeouts always fail open,
   even for administrator policy hooks. VS Code blocks exit code 2 but treats
   other hook errors as warnings; unexpected crashes are not claimed fail-closed.
+- **Cline**: Rampart enables POSIX files with executable permissions; Cline's
+  Hooks UI can disable them. Windows uses `.ps1` file presence and PowerShell.
+  `--data-dir`/`CLINE_DATA_DIR` do not currently relocate hook discovery, and
+  legacy CLI `--yolo` bypasses runtime hooks entirely. Current Cline CLI logs
+  and continues after pre-hook errors/timeouts/invalid control output, and runs
+  post-tool hooks asynchronously without consuming their control response.
 - **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed.
-- **Hermes Agent plugin**: depends on `rampart serve`; mutating/high-risk tools fail closed when unavailable, while explicitly configured read-only tools may fail open.
+- **Hermes Agent plugin**: depends on `rampart serve`; all tools fail closed when unavailable by default. Operators may explicitly opt selected tools into degraded fail-open behavior.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.
 - **Wrapper / preload / API paths**: behavior depends on integration settings and fail-open/fail-closed configuration.
 

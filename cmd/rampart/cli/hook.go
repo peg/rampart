@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,19 +69,35 @@ type hookDecision struct {
 
 // clineHookInput is the JSON sent by Cline on stdin for PreToolUse hooks.
 type clineHookInput struct {
-	ClineVersion   string        `json:"clineVersion"`
-	HookName       string        `json:"hookName"`
-	Timestamp      string        `json:"timestamp"`
-	TaskID         string        `json:"taskId"`
-	WorkspaceRoots []string      `json:"workspaceRoots"`
-	PreToolUse     *clineToolUse `json:"preToolUse"`
-	PostToolUse    *clineToolUse `json:"postToolUse"`
+	ClineVersion   string           `json:"clineVersion"`
+	HookName       string           `json:"hookName"`
+	Timestamp      string           `json:"timestamp"`
+	TaskID         string           `json:"taskId"`
+	WorkspaceRoots []string         `json:"workspaceRoots"`
+	PreToolUse     *clineToolUse    `json:"preToolUse"`
+	PostToolUse    *clineToolUse    `json:"postToolUse"`
+	ToolCall       *clineToolRecord `json:"tool_call"`
+	ToolResult     *clineToolRecord `json:"tool_result"`
 }
 
 // clineToolUse represents tool usage in Cline's format.
 type clineToolUse struct {
+	// ToolName is emitted by current Cline editor and CLI hosts. Tool is kept
+	// for compatibility with releases that used the shorter field name.
+	Tool       string         `json:"tool"`
 	ToolName   string         `json:"toolName"`
 	Parameters map[string]any `json:"parameters"`
+	Result     any            `json:"result,omitempty"`
+}
+
+// clineToolRecord is the lossless current Cline CLI tool_call/tool_result
+// record. The parallel preToolUse/postToolUse parameters stringify nested
+// values, so Rampart prefers this record when both representations are present.
+type clineToolRecord struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Input  any    `json:"input,omitempty"`
+	Output any    `json:"output,omitempty"`
 }
 
 // clineHookOutput is the JSON response for Cline hooks.
@@ -95,6 +112,7 @@ type hookParseResult struct {
 	Tool          string
 	Params        map[string]any
 	PolicyPaths   []string // every independently evaluated path in a batched write
+	WorkDir       string   // host-reported working directory for project policy discovery
 	Agent         string
 	Response      string // non-empty for PostToolUse events
 	RawResponse   map[string]any
@@ -119,6 +137,41 @@ func readBoundedHookInput(reader io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("hook: stdin exceeds %d-byte limit", maxHookInputBytes)
 	}
 	return data, nil
+}
+
+func hookEventIsPost(event string) bool {
+	switch strings.TrimSpace(event) {
+	case "PostToolUse", "AfterTool":
+		return true
+	default:
+		return false
+	}
+}
+
+func hookPayloadPhase(format string, input []byte) (bool, any) {
+	var payload map[string]any
+	if len(input) == 0 || json.Unmarshal(input, &payload) != nil {
+		return false, nil
+	}
+	event, _ := payload["hook_event_name"].(string)
+	if event == "" {
+		event, _ = payload["hookName"].(string)
+	}
+	isPost := hookEventIsPost(event) || (format == "cline" && event == "tool_result")
+	if !isPost {
+		return false, nil
+	}
+	for _, key := range []string{"tool_response", "tool_result"} {
+		if response, ok := payload[key]; ok {
+			return true, response
+		}
+	}
+	if post, ok := payload["postToolUse"].(map[string]any); ok {
+		if response, exists := post["result"]; exists {
+			return true, response
+		}
+	}
+	return true, nil
 }
 
 // deriveRunID returns the run ID for the current hook invocation, used to group
@@ -147,18 +200,22 @@ func deriveRunID(sessionID string) string {
 // The RAMPART_SESSION env var overrides the session name if set (root is still detected).
 // Returns an empty gitContext if not in a git repo or git is unavailable.
 func deriveGitContext() gitContext {
+	return deriveGitContextAt("")
+}
+
+func deriveGitContextAt(workDir string) gitContext {
 	if s := strings.TrimSpace(os.Getenv("RAMPART_SESSION")); s != "" {
-		root, _ := gitRevParseTopLevel()
+		root, _ := gitRevParseTopLevelAt(workDir)
 		return gitContext{session: s, root: root}
 	}
-	root, err := gitRevParseTopLevel()
+	root, err := gitRevParseTopLevelAt(workDir)
 	if err != nil || root == "" {
 		return gitContext{}
 	}
 	repo := filepath.Base(root)
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel2()
-	branchOut, _ := exec.CommandContext(ctx2, "git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	branchOut, _ := exec.CommandContext(ctx2, "git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD").Output()
 	branch := strings.TrimSpace(string(branchOut))
 	if branch == "" || branch == "HEAD" {
 		branch = "detached"
@@ -166,12 +223,14 @@ func deriveGitContext() gitContext {
 	return gitContext{session: repo + "/" + branch, root: root}
 }
 
-// gitRevParseTopLevel returns the absolute path to the top-level git repository.
-// Returns ("", err) if not in a git repo or git is unavailable.
-func gitRevParseTopLevel() (string, error) {
+func gitRevParseTopLevelAt(workDir string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	args := []string{"rev-parse", "--show-toplevel"}
+	if workDir = strings.TrimSpace(workDir); workDir != "" {
+		args = append([]string{"-C", workDir}, args...)
+	}
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil || len(out) == 0 {
 		return "", err
 	}
@@ -236,7 +295,7 @@ func newHookCmd(opts *rootOptions) *cobra.Command {
 Supports multiple formats:
   --format claude-code (default): Claude Code integration
   --format codex: Codex CLI, IDE, and desktop lifecycle hooks
-  --format cline: Cline (VS Code extension) integration
+  --format cline: Cline editor and CLI integration
   --format gemini: Gemini CLI lifecycle hooks
   --format antigravity: Antigravity CLI and IDE PreToolUse hooks
   --format copilot: GitHub Copilot CLI and VS Code agent hooks
@@ -261,9 +320,36 @@ Claude Code setup (add to ~/.claude/settings.json):
 
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if mode != "enforce" && mode != "monitor" && mode != "audit" {
+				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
+			}
+			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "antigravity" && format != "copilot" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, antigravity, or copilot)", format)
+			}
+
+			// Read the protocol payload before any local setup which might fail. That
+			// lets enforce mode return the host's correct pre- or post-tool control
+			// shape even when Rampart state or policy files are unavailable.
+			input, readErr := readBoundedHookInput(cmd.InOrStdin())
+			inputIsPost, inputRawResponse := hookPayloadPhase(format, input)
+			outputEnforceFailure := func(reason string) error {
+				if inputIsPost {
+					return outputHookResultWithResponse(
+						cmd,
+						format,
+						hookBlock,
+						true,
+						reason,
+						"",
+						redactClaudeToolOutput(inputRawResponse),
+					)
+				}
+				return outputHookResult(cmd, format, hookDeny, false, reason, "")
+			}
+
 			if err := ensureDefaultRampartDirAccessible(); err != nil {
 				if mode == "enforce" {
-					return outputHookResult(cmd, format, hookDeny, false, "Rampart data directory is inaccessible; refusing tool call until permissions are repaired", "")
+					return outputEnforceFailure("Rampart data directory is inaccessible; refusing host data until permissions are repaired")
 				}
 				return fmt.Errorf("hook: prepare Rampart data directory: %w", err)
 			}
@@ -272,19 +358,12 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			gitCtx := deriveGitContext()
 			hookSession := gitCtx.session
 
-			if mode != "enforce" && mode != "monitor" && mode != "audit" {
-				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
-			}
-			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "antigravity" && format != "copilot" {
-				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, antigravity, or copilot)", format)
-			}
-
 			// Resolve serve-url and serve-token from standard config/env locations.
 			serveAutoDiscovered := serveURL == ""
 			resolvedServeURL, resolveErr := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
 			if resolveErr != nil {
 				if mode == "enforce" {
-					return outputHookResult(cmd, format, hookDeny, false, "Rampart config error; refusing tool call until configuration is fixed", "")
+					return outputEnforceFailure("Rampart config error; refusing host data until configuration is fixed")
 				}
 				return fmt.Errorf("hook: resolve serve URL: %w", resolveErr)
 			}
@@ -295,11 +374,17 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if auditDir == "" {
 				home, err := os.UserHomeDir()
 				if err != nil {
+					if mode == "enforce" {
+						return outputEnforceFailure("Rampart cannot resolve its data directory; refusing host data")
+					}
 					return fmt.Errorf("hook: resolve home: %w", err)
 				}
 				auditDir = filepath.Join(home, ".rampart", "audit")
 			}
 			if err := os.MkdirAll(auditDir, 0o700); err != nil {
+				if mode == "enforce" {
+					return outputEnforceFailure("Rampart audit storage is unavailable; refusing host data")
+				}
 				return fmt.Errorf("hook: create audit dir: %w", err)
 			}
 
@@ -326,66 +411,28 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			}()
 			defer cleanupWg.Wait()
 
-			// Load policies
-			policyPath, cleanupPolicy, err := resolveWrapPolicyPath(opts.configPath)
+			// Native hooks are one-shot processes, but their decisions still join the
+			// same hash chain as service and MCP events. The validated checkpoint
+			// avoids rescanning the complete trail on every host tool call.
+			auditSink, err := audit.NewJSONLSink(
+				auditDir,
+				audit.WithFsync(false),
+				audit.WithCheckpointStartup(),
+				audit.WithLogger(logger),
+			)
 			if err != nil {
-				return err
-			}
-			defer cleanupPolicy()
-
-			// Build policy store: file, dir, or both.
-			var store engine.PolicyStore
-			effectiveDir := configDir
-			if effectiveDir == "" {
-				if home, hErr := os.UserHomeDir(); hErr == nil {
-					defaultDir := filepath.Join(home, ".rampart", "policies")
-					if _, sErr := os.Stat(defaultDir); sErr == nil {
-						effectiveDir = defaultDir
-					}
-				}
-			}
-			if effectiveDir != "" {
-				store = engine.NewMultiStore(policyPath, effectiveDir, logger)
-			} else {
-				store = engine.NewFileStore(policyPath)
-			}
-
-			// Project policy: auto-load .rampart/policy.yaml from git root if present.
-			if gitCtx.root != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
-				candidate := filepath.Join(gitCtx.root, ".rampart", "policy.yaml")
-				if _, statErr := os.Stat(candidate); statErr == nil {
-					logger.Debug("hook: loading project policy", "path", candidate)
-					store = engine.NewLayeredStore(store, candidate, logger)
-				}
-			}
-
-			eng, err := engine.New(store, logger)
-			if err != nil {
-				// Agent hook runners often treat any stderr output or non-zero exit as a
-				// scary hook failure. In enforce mode, fail closed through the hook
-				// protocol instead: the agent sees a normal policy block, not a broken
-				// Bash/PreToolUse hook.
 				if mode == "enforce" {
-					logger.Warn("hook: create engine", "error", err)
-					return outputHookResult(cmd, format, hookDeny, false, "Rampart policy configuration error; refusing tool call until policy is fixed", "")
+					return outputEnforceFailure("Rampart audit storage is unavailable; refusing host data")
 				}
-				return fmt.Errorf("hook: create engine: %w", err)
+				return fmt.Errorf("hook: open audit trail: %w", err)
 			}
-
-			// Audit: append to a daily file so watch can tail it.
-			today := time.Now().UTC().Format("2006-01-02")
-			auditPath := filepath.Join(auditDir, "audit-hook-"+today+".jsonl")
-			auditFile, err := os.OpenFile(auditPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-			if err != nil {
-				return fmt.Errorf("hook: open audit file: %w", err)
-			}
-			defer auditFile.Close()
+			defer auditSink.Close()
+			appendAudit := auditSink.Write
 
 			// Read hook input through a bounded buffer before parsing. Hook payloads
 			// are single JSON objects; accepting an unbounded stream would let a
 			// malformed host exhaust memory before policy evaluation starts.
 			var parsed *hookParseResult
-			input, readErr := readBoundedHookInput(cmd.InOrStdin())
 			if readErr != nil {
 				err = readErr
 			} else {
@@ -425,12 +472,17 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				// agent is never blocked by a Rampart bug.
 				outcome := "allow"
 				hookOutcome := hookAllow
+				isPost, rawResponse := hookPayloadPhase(format, input)
 				if mode == "enforce" {
 					outcome = "deny"
-					hookOutcome = hookDeny
+					if isPost {
+						hookOutcome = hookBlock
+					} else {
+						hookOutcome = hookDeny
+					}
 				}
-				// Best-effort audit entry for parse failure. Written directly to
-				// the hook's audit file (not hash-chained).
+				// Best-effort audit entry for parse failure. Native-hook records join
+				// the shared audit chain under its cross-process writer lock.
 				parseFailureEvent := audit.Event{
 					ID:        audit.NewEventID(),
 					Timestamp: time.Now().UTC(),
@@ -443,11 +495,80 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						Message: fmt.Sprintf("parse failure (format=%s): %v", format, err),
 					},
 				}
-				if line, marshalErr := audit.MarshalRecord(parseFailureEvent); marshalErr == nil {
-					line = append(line, '\n')
-					_, _ = auditFile.Write(line)
+				if auditErr := appendAudit(parseFailureEvent); auditErr != nil {
+					logger.Error("hook: audit parse failure", "error", auditErr)
 				}
-				return outputHookResult(cmd, format, hookOutcome, false, fmt.Sprintf("parse failure: %v", err), "")
+				return outputHookResultWithResponse(
+					cmd,
+					format,
+					hookOutcome,
+					isPost,
+					fmt.Sprintf("parse failure: %v", err),
+					"",
+					redactClaudeToolOutput(rawResponse),
+				)
+			}
+
+			// Use the host-reported working directory for repository identity and
+			// project-policy discovery. Hook processes are not guaranteed to inherit
+			// the agent's working directory on every host or editor platform.
+			if parsed.WorkDir != "" {
+				gitCtx = deriveGitContextAt(parsed.WorkDir)
+				hookSession = gitCtx.session
+			}
+
+			// Load policies only after parsing the host context, so a project policy
+			// is selected from the tool call's repository rather than Rampart's
+			// process working directory.
+			policyPath, cleanupPolicy, err := resolveWrapPolicyPath(opts.configPath)
+			if err != nil {
+				if mode == "enforce" {
+					return outputEnforceFailure("Rampart policy configuration is unavailable; refusing host data")
+				}
+				return err
+			}
+			defer cleanupPolicy()
+
+			var store engine.PolicyStore
+			effectiveDir := configDir
+			if effectiveDir == "" {
+				if home, hErr := os.UserHomeDir(); hErr == nil {
+					defaultDir := filepath.Join(home, ".rampart", "policies")
+					if _, sErr := os.Stat(defaultDir); sErr == nil {
+						effectiveDir = defaultDir
+					}
+				}
+			}
+			if effectiveDir != "" {
+				store = engine.NewMultiStore(policyPath, effectiveDir, logger)
+			} else {
+				store = engine.NewFileStore(policyPath)
+			}
+
+			if gitCtx.root != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
+				candidate := filepath.Join(gitCtx.root, ".rampart", "policy.yaml")
+				if _, statErr := os.Stat(candidate); statErr == nil {
+					logger.Debug("hook: loading project policy", "path", candidate)
+					store = engine.NewLayeredStore(store, candidate, logger)
+				} else if !os.IsNotExist(statErr) {
+					if mode == "enforce" {
+						return outputEnforceFailure("Rampart cannot inspect the repository policy; refusing host data")
+					}
+					return fmt.Errorf("hook: inspect project policy %s: %w", candidate, statErr)
+				}
+			}
+
+			eng, err := engine.New(store, logger)
+			if err != nil {
+				// Agent hook runners often treat any stderr output or non-zero exit as a
+				// scary hook failure. In enforce mode, fail closed through the hook
+				// protocol instead: the agent sees a normal policy block, not a broken
+				// Bash/PreToolUse hook.
+				if mode == "enforce" {
+					logger.Warn("hook: create engine", "error", err)
+					return outputEnforceFailure("Rampart policy configuration error; refusing host data until policy is fixed")
+				}
+				return fmt.Errorf("hook: create engine: %w", err)
 			}
 
 			// PostToolUseFailure: only inject policy guidance when the failure appears to
@@ -455,8 +576,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// failures should not be mislabeled as security blocks.
 			if parsed.HookEventName == "PostToolUseFailure" {
 				failedCall := engine.ToolCall{
-					Tool:   parsed.Tool,
-					Params: parsed.Params,
+					Tool:    parsed.Tool,
+					WorkDir: parsed.WorkDir,
+					Params:  parsed.Params,
 				}
 				decision := eng.Evaluate(failedCall)
 
@@ -485,9 +607,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						Message: "PostToolUseFailure short-circuit: injecting denial guidance to stop retry loops",
 					},
 				}
-				if line, marshalErr := audit.MarshalRecord(postToolUseFailureEvent); marshalErr == nil {
-					line = append(line, '\n')
-					_, _ = auditFile.Write(line)
+				if auditErr := appendAudit(postToolUseFailureEvent); auditErr != nil {
+					logger.Error("hook: audit post-tool failure", "error", auditErr)
 				}
 
 				explainCmd := "rampart policy explain '" + parsed.Tool + "'"
@@ -546,12 +667,13 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				RunID:      parsed.RunID,
 				ToolCallID: parsed.ToolUseID,
 				Tool:       parsed.Tool,
+				WorkDir:    parsed.WorkDir,
 				Params:     parsed.Params,
 				Input:      parsed.Params,
 				Timestamp:  arrivalTime,
 			}
 
-			isPostToolUse := parsed.HookEventName == "PostToolUse" || parsed.Response != ""
+			isPostToolUse := hookEventIsPost(parsed.HookEventName) || parsed.Response != ""
 			requiresCallCount := !isPostToolUse && eng.RequiresCallCount(call)
 			var counterErr error
 			if requiresCallCount {
@@ -575,7 +697,16 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Evaluate: for PreToolUse, run command-side policy check.
 			// For PostToolUse, run response-side evaluation.
 			var decision engine.Decision
-			if isPostToolUse {
+			if isPostToolUse && parsed.Tool == "unknown" {
+				// A newly introduced host tool cannot safely skip tool-scoped
+				// response policies merely because it did not exist when this
+				// Rampart version shipped. The tool has already run, so block and
+				// redact its output until the adapter knows its consequences.
+				decision = engine.Decision{
+					Action:  engine.ActionDeny,
+					Message: "unsupported host tool response; update Rampart before exposing its output",
+				}
+			} else if isPostToolUse {
 				decision = eng.EvaluateResponse(call, parsed.Response)
 			} else if counterErr != nil && mode == "enforce" {
 				decision = engine.Decision{
@@ -595,6 +726,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			} else {
 				call, decision = evaluateHookCall(eng, call, parsed.PolicyPaths)
 			}
+			decision = failClosedUnsupportedNativeHookAction(decision)
 
 			// Write audit event
 			eventDecision := audit.EventDecision{
@@ -615,13 +747,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				Request:    parsed.Params,
 				Decision:   eventDecision,
 			}
-			line, err := audit.MarshalRecord(event)
-			if err != nil {
-				logger.Error("hook: marshal audit event", "error", err)
-			} else {
-				line = append(line, '\n')
-				if _, err := auditFile.Write(line); err != nil {
-					logger.Error("hook: audit write failed", "error", err)
+			if auditErr := appendAudit(event); auditErr != nil {
+				logger.Error("hook: audit write failed", "error", auditErr)
+				if mode == "enforce" {
+					return outputEnforceFailure("Rampart audit storage is unavailable; refusing host data")
 				}
 			}
 
@@ -630,7 +759,11 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if err != nil {
 				logger.Error("hook: failed to reload config for notifications", "error", err)
 			} else if config.Notify != nil && config.Notify.URL != "" {
-				go sendNotification(config.Notify, call, decision, logger)
+				// Hook processes exit immediately after writing their protocol result;
+				// an unjoined goroutine is routinely terminated before the request is
+				// sent. Keep notification delivery bounded so a slow endpoint cannot
+				// consume the host's hook timeout budget.
+				sendNotificationWithTimeout(config.Notify, call, decision, logger, time.Second)
 			}
 
 			// PostToolUse: observe approval for any pending ask entries in session state.
@@ -799,8 +932,13 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
-			default:
+			case engine.ActionAllow, engine.ActionWatch:
 				return outputHookResult(cmd, format, hookAllow, isPostToolUse, reasonMsg, cmdStr)
+			case engine.ActionWebhook:
+				// Defensive fallback: webhook is normalized to deny before audit.
+				return outputHookResult(cmd, format, hookDeny, isPostToolUse, "Rampart native hook cannot safely enforce webhook; refusing tool call", cmdStr)
+			default:
+				return outputHookResult(cmd, format, hookDeny, isPostToolUse, "Rampart received an unsupported policy action; refusing tool call", cmdStr)
 			}
 		},
 	}
@@ -821,6 +959,13 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	if err := json.NewDecoder(reader).Decode(&input); err != nil {
 		return nil, err
 	}
+	event := strings.TrimSpace(input.HookEventName)
+	if event != "PreToolUse" && event != "PostToolUse" && event != "PostToolUseFailure" {
+		return nil, fmt.Errorf("hook: unsupported Claude Code hook_event_name %q", input.HookEventName)
+	}
+	if strings.TrimSpace(input.ToolName) == "" {
+		return nil, fmt.Errorf("hook: Claude Code tool_name is required")
+	}
 
 	// Validate tool_use_id format to prevent injection attacks
 	if err := validateToolUseID(input.ToolUseID); err != nil {
@@ -833,7 +978,7 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	// its security consequence. Match the Codex adapter's fail-closed behavior
 	// for unknown pre-call tools; post-call payloads remain available for
 	// response scanning and audit compatibility.
-	if input.HookEventName == "PreToolUse" && toolType == "unknown" {
+	if event == "PreToolUse" && toolType == "unknown" {
 		return nil, fmt.Errorf(
 			"hook: unsupported Claude Code tool_name %q; update Rampart before allowing this tool",
 			input.ToolName,
@@ -860,9 +1005,10 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	result := &hookParseResult{
 		Tool:          toolType,
 		Params:        params,
+		WorkDir:       strings.TrimSpace(input.CWD),
 		Agent:         "claude-code",
 		RunID:         deriveRunID(input.SessionID),
-		HookEventName: input.HookEventName,
+		HookEventName: event,
 		SessionID:     input.SessionID,
 		ToolUseID:     input.ToolUseID,
 	}
@@ -876,26 +1022,57 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	return result, nil
 }
 
-// extractToolResponse extracts string values from the tool_response map.
-// The schema varies by tool (Bash has stdout/stderr, Write has filePath/success, etc.)
-// so we check well-known fields first, then fall back to all string values.
+// extractToolResponse extracts every string leaf from the tool_response map.
+// Host response schemas vary and frequently nest model-visible content inside
+// arrays and result objects. Traversing the complete value prevents a nested
+// credential or prompt-injection marker from bypassing response policies.
 func extractToolResponse(resp map[string]any) string {
-	var parts []string
-	for _, key := range []string{"stdout", "stderr", "content", "output"} {
-		if v, ok := resp[key]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				parts = append(parts, s)
+	parts := make([]string, 0, 4)
+	stack := []any{resp}
+	for len(stack) > 0 {
+		value := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch typed := value.(type) {
+		case string:
+			if typed != "" {
+				parts = append(parts, typed)
 			}
-		}
-	}
-	if len(parts) == 0 {
-		for _, v := range resp {
-			if s, ok := v.(string); ok && s != "" {
-				parts = append(parts, s)
+		case []any:
+			for index := len(typed) - 1; index >= 0; index-- {
+				stack = append(stack, typed[index])
+			}
+		case []string:
+			for index := len(typed) - 1; index >= 0; index-- {
+				stack = append(stack, typed[index])
+			}
+		case map[string]any:
+			keys := orderedResponseKeys(typed)
+			for index := len(keys) - 1; index >= 0; index-- {
+				stack = append(stack, typed[keys[index]])
 			}
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func orderedResponseKeys(value map[string]any) []string {
+	priority := []string{"stdout", "stderr", "content", "output"}
+	keys := make([]string, 0, len(value))
+	seen := make(map[string]struct{}, len(priority))
+	for _, key := range priority {
+		if _, ok := value[key]; ok {
+			keys = append(keys, key)
+			seen[key] = struct{}{}
+		}
+	}
+	rest := make([]string, 0, len(value)-len(keys))
+	for key := range value {
+		if _, ok := seen[key]; !ok {
+			rest = append(rest, key)
+		}
+	}
+	sort.Strings(rest)
+	return append(keys, rest...)
 }
 
 const redactedToolOutput = "[blocked by Rampart response policy]"
@@ -932,47 +1109,466 @@ func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog
 		return nil, err
 	}
 
-	// Extract tool info from PreToolUse or PostToolUse
+	// Cline's editor uses PreToolUse/PostToolUse hook names. Current Cline CLI
+	// file hooks use tool_call/tool_result while retaining the nested
+	// preToolUse/postToolUse compatibility objects. Normalize both protocols.
 	var toolUse *clineToolUse
+	var record *clineToolRecord
 	isPost := false
-	if input.PreToolUse != nil {
+	event := ""
+	switch {
+	case input.PreToolUse != nil && input.PostToolUse != nil:
+		return nil, fmt.Errorf("hook: Cline payload contains both preToolUse and postToolUse")
+	case input.PreToolUse != nil:
+		if input.HookName != "PreToolUse" && input.HookName != "tool_call" {
+			return nil, fmt.Errorf("hook: Cline preToolUse payload has hookName %q", input.HookName)
+		}
 		toolUse = input.PreToolUse
-	} else if input.PostToolUse != nil {
+		record = input.ToolCall
+		event = "PreToolUse"
+	case input.PostToolUse != nil:
+		if input.HookName != "PostToolUse" && input.HookName != "tool_result" {
+			return nil, fmt.Errorf("hook: Cline postToolUse payload has hookName %q", input.HookName)
+		}
 		toolUse = input.PostToolUse
+		record = input.ToolResult
 		isPost = true
-	} else {
+		event = "PostToolUse"
+	default:
 		return nil, fmt.Errorf("no tool use found in input")
 	}
+	if !isPost && input.ToolResult != nil {
+		return nil, fmt.Errorf("hook: Cline preToolUse payload contains tool_result")
+	}
+	if isPost && input.ToolCall != nil {
+		return nil, fmt.Errorf("hook: Cline postToolUse payload contains tool_call")
+	}
 
-	toolType := mapClineTool(toolUse.ToolName)
-	params := toolUse.Parameters
-	if params == nil {
-		params = map[string]any{}
+	toolName := strings.TrimSpace(toolUse.ToolName)
+	compatToolName := strings.TrimSpace(toolUse.Tool)
+	if toolName != "" && compatToolName != "" && toolName != compatToolName {
+		return nil, fmt.Errorf("hook: Cline payload has conflicting tool and toolName values")
+	}
+	if toolName == "" {
+		toolName = compatToolName
+	}
+	if record != nil {
+		recordName := strings.TrimSpace(record.Name)
+		if recordName != "" && toolName != "" && recordName != toolName {
+			return nil, fmt.Errorf("hook: Cline payload has conflicting nested and record tool names")
+		}
+		if toolName == "" {
+			toolName = recordName
+		}
+	}
+	if toolName == "" {
+		return nil, fmt.Errorf("hook: Cline tool name is required")
+	}
+
+	params := cloneHookParams(toolUse.Parameters)
+	if record != nil && record.Input != nil {
+		params = clineParamsFromRecordInput(record.Input)
+	}
+	toolType := mapClineTool(toolName)
+	var policyPaths []string
+	var err error
+	params, policyPaths, err = normalizeClineParams(toolName, toolType, params, !isPost)
+	if err != nil {
+		return nil, err
+	}
+	if toolType == "mcp" {
+		if _, exists := params["tool_name"]; !exists {
+			parts := strings.Split(toolName, "__")
+			if len(parts) > 1 && strings.TrimSpace(parts[len(parts)-1]) != "" {
+				params["tool_name"] = parts[len(parts)-1]
+			}
+		}
+		toolType = classifyNativeMCPTool(toolName, params)
+	}
+	if !isPost && toolType == "unknown" {
+		return nil, fmt.Errorf("hook: unsupported Cline tool %q; update Rampart before allowing this tool", toolName)
+	}
+	toolUseID := ""
+	if record != nil {
+		toolUseID = strings.TrimSpace(record.ID)
+		if err := validateToolUseID(toolUseID); err != nil {
+			return nil, err
+		}
 	}
 
 	result := &hookParseResult{
-		Tool:   toolType,
-		Params: params,
-		Agent:  "cline",
+		Tool:          toolType,
+		Params:        params,
+		PolicyPaths:   policyPaths,
+		WorkDir:       firstNonEmptyString(input.WorkspaceRoots),
+		Agent:         "cline",
+		HookEventName: event,
+		SessionID:     input.TaskID,
+		ToolUseID:     toolUseID,
 		// Cline's taskId is scoped to a single task/conversation — equivalent
 		// to Claude Code's session_id for run grouping purposes.
 		RunID: deriveRunID(input.TaskID),
 	}
 
-	// For PostToolUse, extract output from parameters if present
+	// The editor emits result inside postToolUse; the current CLI retains the
+	// lossless output in tool_result. Keep parameters.output as a legacy fallback.
 	if isPost {
-		if output, ok := params["output"].(string); ok {
+		var response any
+		if record != nil {
+			response = record.Output
+		}
+		if response == nil {
+			response = toolUse.Result
+		}
+		if response != nil {
+			encoded, err := json.Marshal(response)
+			if err != nil {
+				return nil, fmt.Errorf("hook: encode Cline postToolUse result: %w", err)
+			}
+			if text, ok := response.(string); ok {
+				result.Response = text
+			} else {
+				result.Response = string(encoded)
+			}
+			result.RawResponse = map[string]any{"result": response}
+		} else if output, ok := params["output"].(string); ok {
 			result.Response = output
+			result.RawResponse = map[string]any{"output": output}
 		}
 	}
 
 	return result, nil
 }
 
+func firstNonEmptyString(values []string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func clineParamsFromRecordInput(input any) map[string]any {
+	if params, ok := input.(map[string]any); ok {
+		return cloneHookParams(params)
+	}
+	if input == nil {
+		return map[string]any{}
+	}
+	return map[string]any{"input": input}
+}
+
+func normalizeClineParams(toolName, toolType string, input map[string]any, enforce bool) (map[string]any, []string, error) {
+	params := cloneHookParams(input)
+	name := strings.ToLower(strings.TrimSpace(toolName))
+	copyAlias := func(destination string, aliases ...string) {
+		if _, exists := params[destination]; exists {
+			return
+		}
+		for _, alias := range aliases {
+			if value, exists := params[alias]; exists {
+				params[destination] = value
+				return
+			}
+		}
+	}
+	copyAlias("command", "cmd", "script")
+	copyAlias("path", "file_path", "filePath", "uri", "directory", "dir_path", "dirPath")
+	copyAlias("url", "uri", "href")
+	if name == "web_search" {
+		copyAlias("url", "query")
+	}
+
+	if name == "run_commands" || name == "bash" {
+		commands, err := collectClineCommands(params)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(commands) == 0 && enforce {
+			return nil, nil, fmt.Errorf("hook: Cline %s requires at least one command", toolName)
+		}
+		if len(commands) > 0 {
+			params["command"] = strings.Join(commands, " && ")
+			params["commands"] = append([]string(nil), commands...)
+		}
+	}
+
+	var policyPaths []string
+	if name == "read_files" || toolType == "write" {
+		var err error
+		policyPaths, err = collectClinePaths(params)
+		if err != nil {
+			return nil, nil, err
+		}
+		if name == "apply_patch" {
+			patch, _ := params["input"].(string)
+			if strings.TrimSpace(patch) == "" {
+				patch, _ = params["command"].(string)
+			}
+			if strings.TrimSpace(patch) != "" {
+				patchPaths, patchErr := extractCodexPatchPaths(patch)
+				if patchErr != nil {
+					return nil, nil, fmt.Errorf("%s", strings.ReplaceAll(patchErr.Error(), "Codex", "Cline"))
+				}
+				policyPaths = mergeClinePaths(policyPaths, patchPaths)
+				if len(policyPaths) > maxCodexPatchPaths {
+					return nil, nil, fmt.Errorf("hook: Cline apply_patch touches more than %d paths; split it into smaller calls", maxCodexPatchPaths)
+				}
+			}
+		}
+		if len(policyPaths) == 0 && enforce && (name == "read_files" || toolType == "write") {
+			return nil, nil, fmt.Errorf("hook: Cline %s requires at least one file path", toolName)
+		}
+		if len(policyPaths) > 0 {
+			params["path"] = policyPaths[0]
+			params["paths"] = append([]string(nil), policyPaths...)
+		}
+	}
+
+	if name == "fetch_web_content" || name == "fetch_web" || name == "web_fetch" {
+		urls, err := collectClineURLs(params)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(urls) == 0 && enforce {
+			return nil, nil, fmt.Errorf("hook: Cline %s requires a URL", toolName)
+		}
+		if len(urls) > 1 && enforce {
+			return nil, nil, fmt.Errorf("hook: Cline %s includes multiple URLs; split it into smaller calls", toolName)
+		}
+		if len(urls) > 0 {
+			params["url"] = urls[0]
+		}
+	}
+
+	return params, policyPaths, nil
+}
+
+func decodeClineNestedValue(value any) any {
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || (trimmed[0] != '[' && trimmed[0] != '{') || !json.Valid([]byte(trimmed)) {
+		return value
+	}
+	var decoded any
+	if json.Unmarshal([]byte(trimmed), &decoded) == nil {
+		return decoded
+	}
+	return value
+}
+
+func collectClineCommands(params map[string]any) ([]string, error) {
+	root, exists := params["commands"]
+	if !exists {
+		for _, key := range []string{"command", "cmd", "input"} {
+			if value, ok := params[key]; ok {
+				root = value
+				exists = true
+				break
+			}
+		}
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	commands := make([]string, 0, 4)
+	var visit func(any) error
+	visit = func(value any) error {
+		value = decodeClineNestedValue(value)
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) == "" {
+				return nil
+			}
+			if len(commands) >= maxCodexPatchPaths {
+				return fmt.Errorf("hook: Cline run_commands includes more than %d commands; split it into smaller calls", maxCodexPatchPaths)
+			}
+			commands = append(commands, typed)
+			return nil
+		case []any:
+			for _, item := range typed {
+				if err := visit(item); err != nil {
+					return err
+				}
+			}
+			return nil
+		case []string:
+			for _, item := range typed {
+				if err := visit(item); err != nil {
+					return err
+				}
+			}
+			return nil
+		case map[string]any:
+			if nested, ok := typed["commands"]; ok {
+				return visit(nested)
+			}
+			command, _ := typed["command"].(string)
+			if strings.TrimSpace(command) == "" {
+				if alias, ok := typed["cmd"].(string); ok {
+					command = alias
+				}
+			}
+			if strings.TrimSpace(command) == "" {
+				return fmt.Errorf("hook: Cline run_commands contains an entry without a command")
+			}
+			if rawArgs, ok := typed["args"]; ok {
+				args, ok := decodeClineNestedValue(rawArgs).([]any)
+				if !ok {
+					return fmt.Errorf("hook: Cline structured command args must be an array")
+				}
+				for _, rawArg := range args {
+					arg, ok := rawArg.(string)
+					if !ok {
+						return fmt.Errorf("hook: Cline structured command args must be strings")
+					}
+					command += " " + shellQuoteCodexHookArg(arg)
+				}
+			}
+			return visit(command)
+		default:
+			return fmt.Errorf("hook: Cline run_commands has an unsupported command envelope")
+		}
+	}
+	if err := visit(root); err != nil {
+		return nil, err
+	}
+	return commands, nil
+}
+
+func collectClinePaths(params map[string]any) ([]string, error) {
+	paths := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+	add := func(path string) error {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return nil
+		}
+		if strings.IndexByte(path, 0) >= 0 {
+			return fmt.Errorf("hook: Cline file path contains a NUL byte")
+		}
+		if _, exists := seen[path]; exists {
+			return nil
+		}
+		if len(paths) >= maxCodexPatchPaths {
+			return fmt.Errorf("hook: Cline file operation includes more than %d paths; split it into smaller calls", maxCodexPatchPaths)
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+		return nil
+	}
+	var visit func(any) error
+	visit = func(value any) error {
+		value = decodeClineNestedValue(value)
+		switch typed := value.(type) {
+		case string:
+			return add(typed)
+		case []any:
+			for _, item := range typed {
+				if err := visit(item); err != nil {
+					return err
+				}
+			}
+		case []string:
+			for _, item := range typed {
+				if err := add(item); err != nil {
+					return err
+				}
+			}
+		case map[string]any:
+			for _, key := range []string{"path", "file_path", "filePath", "uri"} {
+				if nested, ok := typed[key]; ok {
+					if err := visit(nested); err != nil {
+						return err
+					}
+				}
+			}
+		default:
+			return fmt.Errorf("hook: Cline file path has an unsupported value")
+		}
+		return nil
+	}
+	for _, key := range []string{"path", "file_path", "filePath", "files", "file_paths", "paths"} {
+		if value, ok := params[key]; ok {
+			if err := visit(value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return paths, nil
+}
+
+func mergeClinePaths(left, right []string) []string {
+	seen := make(map[string]struct{}, len(left)+len(right))
+	merged := make([]string, 0, len(left)+len(right))
+	for _, paths := range [][]string{left, right} {
+		for _, path := range paths {
+			if _, exists := seen[path]; exists {
+				continue
+			}
+			seen[path] = struct{}{}
+			merged = append(merged, path)
+		}
+	}
+	return merged
+}
+
+func collectClineURLs(params map[string]any) ([]string, error) {
+	urls := make([]string, 0, 2)
+	seen := make(map[string]struct{})
+	add := func(url string) {
+		url = strings.TrimSpace(url)
+		if url == "" {
+			return
+		}
+		if _, exists := seen[url]; exists {
+			return
+		}
+		seen[url] = struct{}{}
+		urls = append(urls, url)
+	}
+	var visit func(any) error
+	visit = func(value any) error {
+		value = decodeClineNestedValue(value)
+		switch typed := value.(type) {
+		case string:
+			add(typed)
+		case []any:
+			for _, item := range typed {
+				if err := visit(item); err != nil {
+					return err
+				}
+			}
+		case map[string]any:
+			value, ok := typed["url"]
+			if !ok {
+				return fmt.Errorf("hook: Cline web request is missing a URL")
+			}
+			return visit(value)
+		default:
+			return fmt.Errorf("hook: Cline web request has an unsupported value")
+		}
+		return nil
+	}
+	for _, key := range []string{"url", "requests"} {
+		if value, ok := params[key]; ok {
+			if err := visit(value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return urls, nil
+}
+
 // mapClaudeCodeTool maps Claude Code tool names to Rampart tool types.
 func mapClaudeCodeTool(toolName string) string {
-	if strings.HasPrefix(toolName, "mcp__") {
-		return "mcp"
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(toolName)), "mcp__") {
+		return classifyNativeMCPTool(toolName, nil)
 	}
 	switch toolName {
 	case "Bash", "PowerShell", "Monitor":
@@ -1011,24 +1607,58 @@ func mapClaudeCodeTool(toolName string) string {
 	}
 }
 
+func failClosedUnsupportedNativeHookAction(decision engine.Decision) engine.Decision {
+	switch decision.Action {
+	case engine.ActionAllow, engine.ActionWatch, engine.ActionDeny, engine.ActionAsk, engine.ActionRequireApproval:
+		return decision
+	case engine.ActionWebhook:
+		decision.Action = engine.ActionDeny
+		decision.Message = "Rampart native hooks do not execute webhook policy actions; refusing tool call"
+		return decision
+	default:
+		action := decision.Action.String()
+		decision.Action = engine.ActionDeny
+		decision.Message = fmt.Sprintf("Rampart received unsupported policy action %s; refusing tool call", action)
+		return decision
+	}
+}
+
 // mapClineTool maps Cline tool names to Rampart tool types.
 func mapClineTool(toolName string) string {
-	switch toolName {
-	case "execute_command":
+	name := strings.ToLower(strings.TrimSpace(toolName))
+	switch name {
+	case "execute_command", "run_commands", "bash":
 		return "exec"
-	case "read_file":
+	case "read_file", "read_files":
 		return "read"
-	case "write_to_file":
+	case "write_to_file", "replace_in_file", "apply_patch", "editor", "new_rule":
 		return "write"
-	case "search_files", "list_files", "list_code_definition_names":
+	case "search_files", "list_files", "list_code_definition_names", "search_codebase", "search":
 		return "read"
-	case "browser_action":
+	case "browser_action", "web_fetch", "web_search", "fetch_web_content", "fetch_web":
 		return "fetch"
 	case "use_mcp_tool", "access_mcp_resource":
 		return "mcp"
-	case "ask_followup_question", "attempt_completion", "new_task", "fetch_instructions", "plan_mode_respond":
+	case "spawn_agent", "use_subagents", "new_task",
+		"team_spawn_teammate", "team_shutdown_teammate", "team_status", "team_task",
+		"team_run_task", "team_cancel_run", "team_list_runs", "team_await_runs",
+		"team_read_mailbox", "team_mission_log", "team_cleanup", "team_create_outcome",
+		"team_attach_outcome_fragment", "team_review_outcome_fragment", "team_finalize_outcome",
+		"team_list_outcomes":
+		return "agent"
+	case "team_send_message", "team_broadcast", "report_bug":
+		return "message"
+	case "ask_followup_question", "ask_question", "attempt_completion", "fetch_instructions",
+		"plan_mode_respond", "act_mode_respond", "switch_to_act_mode", "focus_chain",
+		"load_mcp_documentation", "condense", "summarize_task", "skills", "use_skill",
+		"submit_and_exit":
 		return "interact"
 	default:
+		// Current Cline SDK MCP tool names are server__tool. The full name is
+		// retained so the shared MCP classifier can conservatively infer risk.
+		if strings.Contains(name, "__") || strings.HasPrefix(name, "mcp_") || strings.HasPrefix(name, "mcp.") {
+			return "mcp"
+		}
 		// NOTE: Don't log here - any stderr output causes the agent to report "hook error".
 		return "unknown"
 	}

@@ -537,6 +537,33 @@ policies:
 	}
 }
 
+func TestEvaluateResponseApprovalActionFailsClosed(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: suspicious-response
+    match:
+      tool: fetch
+    rules:
+      - action: ask
+        when:
+          response_matches: ["ignore previous instructions"]
+        message: "suspicious response"
+`)
+
+	got := e.EvaluateResponse(
+		ToolCall{Agent: "test", Tool: "fetch"},
+		"ignore previous instructions",
+	)
+	if got.Action != ActionDeny {
+		t.Fatalf("response action = %s, want deny", got.Action)
+	}
+	if got.Message != "suspicious response" {
+		t.Fatalf("response message = %q", got.Message)
+	}
+}
+
 func TestValidation_InvalidResponseRegex(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")
@@ -1094,12 +1121,12 @@ func TestConfigFingerprintChangesOnRuleEdit(t *testing.T) {
 		}},
 	}
 	// Same policy name, same rule count, different rule content.
-	fp1 := configFingerprint(cfg1)
-	fp2 := configFingerprint(cfg2)
+	fp1 := mustConfigFingerprint(t, cfg1)
+	fp2 := mustConfigFingerprint(t, cfg2)
 	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when rule content changes")
 
 	// Same config should produce identical fingerprint.
-	fp1b := configFingerprint(cfg1)
+	fp1b := mustConfigFingerprint(t, cfg1)
 	assert.Equal(t, fp1, fp1b, "same config should produce identical fingerprint")
 }
 
@@ -1118,8 +1145,8 @@ func TestConfigFingerprintChangesOnActionChange(t *testing.T) {
 			Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}},
 		}},
 	}
-	fp1 := configFingerprint(cfg1)
-	fp2 := configFingerprint(cfg2)
+	fp1 := mustConfigFingerprint(t, cfg1)
+	fp2 := mustConfigFingerprint(t, cfg2)
 	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when action changes")
 }
 
@@ -1138,7 +1165,54 @@ func TestConfigFingerprintChangesOnDefaultAction(t *testing.T) {
 			Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}},
 		}},
 	}
-	fp1 := configFingerprint(cfg1)
-	fp2 := configFingerprint(cfg2)
+	fp1 := mustConfigFingerprint(t, cfg1)
+	fp2 := mustConfigFingerprint(t, cfg2)
 	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when default action changes")
+}
+
+func TestConfigFingerprintCoversAllPolicyBehavior(t *testing.T) {
+	enabled := false
+	expires := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	failOpen := true
+	base := func() *Config {
+		return &Config{
+			Version:       "1",
+			DefaultAction: "deny",
+			Policies: []Policy{{
+				Name:  "test",
+				Match: Match{Agent: "*", Session: "*", Tool: StringOrSlice{"exec"}},
+				Rules: []Rule{{Action: "ask", When: Condition{Default: true}}},
+			}},
+		}
+	}
+	baseline := mustConfigFingerprint(t, base())
+
+	tests := map[string]func(*Config){
+		"policy match": func(cfg *Config) { cfg.Policies[0].Match.Agent = "codex" },
+		"priority":     func(cfg *Config) { cfg.Policies[0].Priority = 10 },
+		"enabled":      func(cfg *Config) { cfg.Policies[0].Enabled = &enabled },
+		"expiry":       func(cfg *Config) { cfg.Policies[0].Rules[0].ExpiresAt = &expires },
+		"ask config":   func(cfg *Config) { cfg.Policies[0].Rules[0].Ask.Audit = true },
+		"webhook": func(cfg *Config) {
+			cfg.Policies[0].Rules[0].Action = "webhook"
+			cfg.Policies[0].Rules[0].Webhook = &WebhookActionConfig{URL: "https://example.invalid/hook", FailOpen: &failOpen}
+		},
+		"notifications": func(cfg *Config) {
+			cfg.Notify = &NotifyConfig{URL: "https://example.invalid/notify", Platform: "webhook", On: []string{"deny"}}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := base()
+			mutate(cfg)
+			assert.NotEqual(t, baseline, mustConfigFingerprint(t, cfg))
+		})
+	}
+}
+
+func mustConfigFingerprint(t *testing.T, cfg *Config) string {
+	t.Helper()
+	fingerprint, err := configFingerprint(cfg)
+	require.NoError(t, err)
+	return fingerprint
 }

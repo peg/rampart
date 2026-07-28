@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/detect"
 	"github.com/spf13/cobra"
 )
 
@@ -99,9 +100,10 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "cline", DisplayName: "Cline", Boundary: "native hooks", VerifyTarget: "cline",
-			AutoProtect: true, Platforms: []string{"linux", "darwin"},
+			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
-				return integrationBinaryOrPathInstalled("cline", filepath.Join(home, "Documents", "Cline"))
+				return integrationBinaryOrPathInstalled("cline", filepath.Join(home, "Documents", "Cline"), filepath.Join(home, ".cline")) ||
+					detect.ClineExtensionInstalled(home)
 			},
 			SetupCommand: func(opts *rootOptions) *cobra.Command { return newSetupClineCmd(opts) },
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {

@@ -12,9 +12,9 @@
 // limitations under the License.
 
 // Package approval manages pending approval requests for tool calls
-// that match a require_approval policy rule.
+// that match an ask policy rule.
 //
-// When the policy engine returns require_approval, the proxy creates
+// When the policy engine returns ask, the proxy creates
 // a pending approval with a unique ID. The approval is held until
 // a human resolves it via CLI or HTTP API, or it times out.
 package approval

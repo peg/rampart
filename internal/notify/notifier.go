@@ -25,7 +25,7 @@ import (
 // NotifyEvent contains the data for a webhook notification.
 // Breaking change: JSON field names are now snake_case for all fields.
 type NotifyEvent struct {
-	Action    string `json:"action"`    // "deny", "log", or "require_approval"
+	Action    string `json:"action"`    // "deny", "watch", "ask", or legacy "require_approval"
 	Tool      string `json:"tool"`      // e.g. "exec", "read", "write"
 	Command   string `json:"command"`   // the command or path
 	Policy    string `json:"policy"`    // policy name that matched
@@ -36,6 +36,10 @@ type NotifyEvent struct {
 	ApprovalID string `json:"approval_id,omitempty"` // pending approval ID
 	ExpiresAt  string `json:"expires_at,omitempty"`  // approval expiry timestamp (ISO 8601)
 	ResolveURL string `json:"resolve_url,omitempty"` // direct URL to resolve the approval
+}
+
+func isApprovalAction(action string) bool {
+	return action == "ask" || action == "require_approval"
 }
 
 // Notifier sends notifications.

@@ -40,7 +40,7 @@ Good community policies should:
 
 1. **Have clear comments** explaining what each rule does and why
 2. **Start permissive** — block the dangerous stuff, allow everything else
-3. **Use `require_approval`** for risky-but-legitimate operations
+3. **Use `ask`** for risky-but-legitimate operations
 4. **Include `log` rules** for audit trail on read-only operations
 5. **Not assume a specific setup** — work across cloud providers, cluster configs, etc.
 

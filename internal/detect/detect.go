@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -112,23 +111,7 @@ func Environment() (*DetectResult, error) {
 			result.HasWindsurf = true
 		}
 
-		// Detect Cline extension installs.
-		clinePatterns := []string{
-			filepath.Join(homeDir, ".vscode", "extensions", "saoud-m.vscode-claude-dev-*"),
-			filepath.Join(homeDir, ".vscode", "extensions", "cline-*"),
-		}
-		if runtime.GOOS != "windows" {
-			clinePatterns = append(clinePatterns,
-				filepath.Join(homeDir, ".vscode-server", "extensions", "saoud-m.vscode-claude-dev-*"),
-				filepath.Join(homeDir, ".vscode-server", "extensions", "cline-*"),
-			)
-		}
-		for _, pattern := range clinePatterns {
-			if matches, err := filepath.Glob(pattern); err == nil && len(matches) > 0 {
-				result.HasCline = true
-				break
-			}
-		}
+		result.HasCline = ClineExtensionInstalled(homeDir)
 	}
 
 	// Env-based agent signals.
@@ -160,6 +143,41 @@ func Environment() (*DetectResult, error) {
 
 	// Always return results, even if we couldn't access home directory
 	return result, nil
+}
+
+// ClineExtensionInstalled reports whether a Cline VS Code extension directory
+// exists in a standard desktop, Insiders, or remote-server extension root.
+// The current Marketplace identifier is saoudrizwan.claude-dev; older IDs are
+// retained so upgrades remain detectable.
+func ClineExtensionInstalled(homeDir string) bool {
+	if strings.TrimSpace(homeDir) == "" {
+		return false
+	}
+	extensionRoots := []string{
+		filepath.Join(homeDir, ".vscode", "extensions"),
+		filepath.Join(homeDir, ".vscode-insiders", "extensions"),
+		filepath.Join(homeDir, ".vscode-server", "extensions"),
+		filepath.Join(homeDir, ".vscode-server-insiders", "extensions"),
+	}
+	extensionNames := []string{
+		"saoudrizwan.claude-dev-*",
+		"saoud-m.vscode-claude-dev-*",
+		"cline-*",
+	}
+	for _, root := range extensionRoots {
+		for _, name := range extensionNames {
+			matches, err := filepath.Glob(filepath.Join(root, name))
+			if err != nil {
+				continue
+			}
+			for _, match := range matches {
+				if info, statErr := os.Stat(match); statErr == nil && info.IsDir() {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func hasBinary(name string) bool {

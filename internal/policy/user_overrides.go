@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/peg/rampart/internal/filetxn"
 	"gopkg.in/yaml.v3"
@@ -31,6 +32,7 @@ type UserOverrideRule struct {
 
 type UserOverrideWhen struct {
 	CommandMatches []string `yaml:"command_matches,omitempty,flow"`
+	PathMatches    []string `yaml:"path_matches,omitempty,flow"`
 }
 
 func LoadUserOverridesPolicy(path string) (*UserOverridesPolicy, error) {
@@ -95,17 +97,36 @@ func saveUserOverridesPolicyLocked(path string, p *UserOverridesPolicy) error {
 	return nil
 }
 
-func AddUserOverrideAllow(path, tool, rawCommand, message string) (string, error) {
+// AddUserOverrideAllow stores an explicit glob pattern supplied by a policy
+// author. Automatic approval flows must call BuildExactAllowPattern first.
+func AddUserOverrideAllow(path, tool, pattern, message string) (string, error) {
+	tool = strings.TrimSpace(tool)
+	pattern = strings.TrimSpace(pattern)
+	if tool == "" {
+		return "", fmt.Errorf("policy: allow rule requires a tool")
+	}
+	if pattern == "" {
+		return "", fmt.Errorf("policy: allow rule requires a non-empty pattern")
+	}
+	switch tool {
+	case "exec", "read", "write", "edit":
+		// Supported by exact command/path conditions below.
+	default:
+		return "", fmt.Errorf("policy: automatic allow is unsupported for tool %q; author an explicit policy instead", tool)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("policy: create dir: %w", err)
 	}
-	pattern := BuildAllowPattern(rawCommand)
 	err := filetxn.WithLock(path, func() error {
 		p, err := LoadUserOverridesPolicy(path)
 		if err != nil {
 			return err
 		}
-		ruleName := fmt.Sprintf("user-allow-%s", HashPattern(pattern))
+		hashInput := pattern
+		if tool != "exec" {
+			hashInput = tool + "\x00" + pattern
+		}
+		ruleName := fmt.Sprintf("user-allow-%s", HashPattern(hashInput))
 		for _, entry := range p.Policies {
 			if entry.Name == ruleName {
 				return nil
@@ -114,11 +135,17 @@ func AddUserOverrideAllow(path, tool, rawCommand, message string) (string, error
 		if message == "" {
 			message = "User allowed (always)"
 		}
+		when := UserOverrideWhen{}
+		if tool == "exec" {
+			when.CommandMatches = []string{pattern}
+		} else {
+			when.PathMatches = []string{pattern}
+		}
 		p.Policies = append(p.Policies, UserOverrideEntry{
 			Name:  ruleName,
-			Match: UserOverrideMatch{Tool: []string{tool}},
+			Match: UserOverrideMatch{Tool: []string{BuildExactAllowPattern(tool)}},
 			Rules: []UserOverrideRule{{
-				When:    UserOverrideWhen{CommandMatches: []string{pattern}},
+				When:    when,
 				Action:  "allow",
 				Message: message,
 			}},

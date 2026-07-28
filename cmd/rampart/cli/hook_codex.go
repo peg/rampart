@@ -74,6 +74,7 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 	result := &hookParseResult{
 		Tool:          mappedTool,
 		Params:        params,
+		WorkDir:       strings.TrimSpace(input.CWD),
 		Agent:         "codex",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: input.HookEventName,
@@ -198,7 +199,10 @@ func hookDecisionRank(action engine.Action) int {
 	case engine.ActionAllow:
 		return 1
 	default:
-		return 0
+		// Unknown future actions must win a batched evaluation so the caller can
+		// normalize them to deny. Ranking them below allow would silently discard
+		// the unsupported decision when a later path is permitted.
+		return 7
 	}
 }
 
@@ -240,7 +244,8 @@ func decodeCodexToolResponse(raw json.RawMessage) (string, error) {
 }
 
 func mapCodexTool(toolName string) string {
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	normalized := strings.ToLower(strings.TrimSpace(toolName))
+	switch normalized {
 	case "bash", "shell", "shell_command", "exec_command", "code_execution":
 		return "exec"
 	case "apply_patch", "edit", "write", "write_file":
@@ -252,8 +257,8 @@ func mapCodexTool(toolName string) string {
 	case "spawn_agent", "agent":
 		return "agent"
 	}
-	if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
-		return "mcp"
+	if strings.HasPrefix(normalized, "mcp__") {
+		return classifyNativeMCPTool(toolName, nil)
 	}
 	return "unknown"
 }

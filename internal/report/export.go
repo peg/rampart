@@ -52,18 +52,18 @@ type ExportReport struct {
 
 // ExportTotals summarizes action counts.
 type ExportTotals struct {
-	Allow      int `json:"allow"`
-	Deny       int `json:"deny"`
-	Ask        int `json:"ask"`
-	AutoAllow  int `json:"auto_allowed"`
-	Total      int `json:"total"`
+	Allow     int `json:"allow"`
+	Deny      int `json:"deny"`
+	Ask       int `json:"ask"`
+	AutoAllow int `json:"auto_allowed"`
+	Total     int `json:"total"`
 }
 
 // ExportRule is a rule with its hit count and sample commands.
 type ExportRule struct {
-	Name     string   `json:"name"`
-	Count    int      `json:"count"`
-	Samples  []string `json:"samples"` // up to 5 example commands
+	Name    string   `json:"name"`
+	Count   int      `json:"count"`
+	Samples []string `json:"samples"` // up to 5 example commands
 }
 
 // GenerateExport reads audit logs and produces an export report.
@@ -289,5 +289,3 @@ func aggToSorted(m map[string]*ruleAgg) []ExportRule {
 	})
 	return rules
 }
-
-

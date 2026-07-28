@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,13 +33,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/peg/rampart/internal/filetxn"
 )
 
 const (
 	// Prefix for all rampart tokens.
 	Prefix = "rampart_"
 
-	// ScopeEval allows tool call evaluation (POST /v1/eval).
+	// ScopeEval allows tool-call evaluation and enforcement through the
+	// /v1/preflight/{tool} endpoint.
 	// Audit reads, status checks, approvals, and rule management require ScopeAdmin.
 	ScopeEval = "eval"
 
@@ -47,6 +51,8 @@ const (
 
 	// tokenBytes is the number of random bytes in a generated token.
 	tokenBytes = 24
+
+	maxStoreBytes = 16 << 20
 )
 
 // validName matches agent and policy names: alphanumeric, dash, underscore, 1-64 chars.
@@ -197,15 +203,12 @@ func (s *Store) Create(agent, policy, note string, scopes []string, expiresAt *t
 		MaskedPrefix: masked,
 	}
 
-	s.mu.Lock()
-	s.data.Tokens = append(s.data.Tokens, tok)
-	if saveErr := s.save(); saveErr != nil {
-		// Rollback: remove the token we just appended.
-		s.data.Tokens = s.data.Tokens[:len(s.data.Tokens)-1]
-		s.mu.Unlock()
+	if saveErr := s.update(func(data *storeData) error {
+		data.Tokens = append(data.Tokens, tok)
+		return nil
+	}); saveErr != nil {
 		return "", Token{}, fmt.Errorf("token: persist: %w", saveErr)
 	}
-	s.mu.Unlock()
 
 	return id, tok, nil
 }
@@ -237,6 +240,7 @@ func (s *Store) Lookup(id string) LookupResult {
 
 // List returns all tokens (including revoked/expired for display purposes).
 func (s *Store) List() []Token {
+	s.maybeReload()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -248,57 +252,68 @@ func (s *Store) List() []Token {
 // Revoke marks a token as revoked by hash prefix match.
 // Returns the number of tokens revoked.
 func (s *Store) Revoke(prefix string) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// Match against masked ID (rampart_XXXXXXXX...), masked prefix, or hash prefix.
 	// Strip trailing "..." from display format if present.
-	cleanPrefix := strings.TrimSuffix(prefix, "...")
-	var revokedIndices []int
-	for i := range s.data.Tokens {
-		t := &s.data.Tokens[i]
-		fullMasked := Prefix + t.MaskedPrefix
-		matched := strings.HasPrefix(fullMasked, cleanPrefix) ||
-			strings.HasPrefix(t.Hash, cleanPrefix)
-		if matched && !t.Revoked {
-			t.Revoked = true
-			revokedIndices = append(revokedIndices, i)
-		}
+	cleanPrefix := strings.TrimSpace(strings.TrimSuffix(prefix, "..."))
+	if cleanPrefix == "" {
+		return 0, errors.New("token: token ID or prefix is required")
 	}
 
-	if len(revokedIndices) == 0 {
-		return 0, fmt.Errorf("token: no active token matching prefix %q", prefix)
-	}
-
-	if err := s.save(); err != nil {
-		// Rollback: restore revoked tokens to active.
-		for _, idx := range revokedIndices {
-			s.data.Tokens[idx].Revoked = false
+	revoked := 0
+	err := s.update(func(data *storeData) error {
+		matches := make([]int, 0, 1)
+		for i := range data.Tokens {
+			if !data.Tokens[i].Revoked && tokenMatchesPrefix(data.Tokens[i], cleanPrefix) {
+				matches = append(matches, i)
+			}
 		}
-		return 0, fmt.Errorf("token: persist revocation: %w", err)
+		if len(matches) == 0 {
+			return fmt.Errorf("token: no active token matching prefix %q", prefix)
+		}
+		if len(matches) > 1 {
+			return fmt.Errorf("token: prefix %q matches %d active tokens; be more specific", prefix, len(matches))
+		}
+		data.Tokens[matches[0]].Revoked = true
+		revoked = 1
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
-	return len(revokedIndices), nil
+	return revoked, nil
 }
 
 // FindByPrefix returns all tokens matching the given masked ID prefix or hash prefix.
 func (s *Store) FindByPrefix(prefix string) []Token {
+	s.maybeReload()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	clean := strings.TrimSuffix(prefix, "...")
+	clean := strings.TrimSpace(strings.TrimSuffix(prefix, "..."))
+	if clean == "" {
+		return nil
+	}
 	var matches []Token
 	for _, t := range s.data.Tokens {
-		fullMasked := Prefix + t.MaskedPrefix
-		if strings.HasPrefix(fullMasked, clean) ||
-			strings.HasPrefix(t.Hash, clean) {
+		if tokenMatchesPrefix(t, clean) {
 			matches = append(matches, t)
 		}
 	}
 	return matches
 }
 
+func tokenMatchesPrefix(t Token, prefix string) bool {
+	if strings.HasPrefix(prefix, Prefix) && len(prefix) == len(Prefix)+tokenBytes*2 {
+		return subtle.ConstantTimeCompare([]byte(t.Hash), []byte(hashToken(prefix))) == 1
+	}
+	return strings.HasPrefix(Prefix+t.MaskedPrefix, prefix) ||
+		strings.HasPrefix(t.MaskedPrefix, prefix) ||
+		strings.HasPrefix(t.Hash, prefix)
+}
+
 // Count returns the number of active (non-revoked, non-expired) tokens.
 func (s *Store) Count() int {
+	s.maybeReload()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -312,19 +327,32 @@ func (s *Store) Count() int {
 }
 
 func (s *Store) load() error {
-	info, err := os.Stat(s.path)
+	data, modTime, err := readStoreFile(s.path)
 	if err != nil {
 		return err
 	}
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(data, &s.data); err != nil {
-		return err
-	}
-	s.modTime = info.ModTime()
+	s.data = data
+	s.modTime = modTime
 	return nil
+}
+
+func readStoreFile(path string) (storeData, time.Time, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return storeData{}, time.Time{}, err
+	}
+	if info.Size() > maxStoreBytes {
+		return storeData{}, time.Time{}, fmt.Errorf("token store exceeds %d-byte limit", maxStoreBytes)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return storeData{}, time.Time{}, err
+	}
+	var data storeData
+	if err := json.Unmarshal(content, &data); err != nil {
+		return storeData{}, time.Time{}, err
+	}
+	return data, info.ModTime(), nil
 }
 
 // maybeReload checks if the file on disk has changed and reloads if so.
@@ -332,10 +360,16 @@ func (s *Store) load() error {
 func (s *Store) maybeReload() {
 	info, err := os.Stat(s.path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.mu.Lock()
+			s.data = storeData{}
+			s.modTime = time.Time{}
+			s.mu.Unlock()
+		}
 		return
 	}
 	s.mu.RLock()
-	stale := info.ModTime().After(s.modTime)
+	stale := !info.ModTime().Equal(s.modTime)
 	s.mu.RUnlock()
 
 	if !stale {
@@ -349,30 +383,63 @@ func (s *Store) maybeReload() {
 	if err != nil {
 		return
 	}
-	if !info2.ModTime().After(s.modTime) {
+	if info2.ModTime().Equal(s.modTime) {
 		return
 	}
-	data, err := os.ReadFile(s.path)
+	newData, modTime, err := readStoreFile(s.path)
 	if err != nil {
-		return
-	}
-	var newData storeData
-	if err := json.Unmarshal(data, &newData); err != nil {
+		// A changed but unreadable/corrupt authentication store must not leave
+		// previously cached credentials active indefinitely.
+		s.data = storeData{}
+		s.modTime = info2.ModTime()
 		return
 	}
 	s.data = newData
-	s.modTime = info2.ModTime()
+	s.modTime = modTime
 }
 
-func (s *Store) save() error {
+// update serializes a read-modify-write transaction across Store instances
+// and processes, so concurrent CLI token operations cannot lose each other.
+func (s *Store) update(fn func(*storeData) error) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return filetxn.WithLock(s.path, func() error {
+		diskData, modTime, err := readStoreFile(s.path)
+		if errors.Is(err, os.ErrNotExist) {
+			diskData = storeData{}
+			modTime = time.Time{}
+		} else if err != nil {
+			return err
+		}
+		s.data = diskData
+		s.modTime = modTime
+		if err := fn(&s.data); err != nil {
+			return err
+		}
+		if err := s.saveLocked(); err != nil {
+			s.data = diskData
+			s.modTime = modTime
+			return err
+		}
+		return nil
+	})
+}
+
+// saveLocked persists s.data. The caller must hold s.mu and the cross-process
+// file transaction lock.
+func (s *Store) saveLocked() error {
 	data, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
+	if len(data) > maxStoreBytes {
+		return fmt.Errorf("token store exceeds %d-byte limit", maxStoreBytes)
+	}
 
 	// Atomic write via temp file + rename.
 	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".tokens-*.json")
@@ -391,11 +458,23 @@ func (s *Store) save() error {
 		os.Remove(tmpPath)
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
 		return err
 	}
-	return os.Rename(tmpPath, s.path)
+	if err := filetxn.Replace(tmpPath, s.path); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if info, err := os.Stat(s.path); err == nil {
+		s.modTime = info.ModTime()
+	}
+	return nil
 }
 
 func generateID() (string, error) {

@@ -26,7 +26,7 @@ This wires an agent to use the daemon. What it does depends on the agent:
 |-------|-------------------|
 | **Claude Code** | Writes native hooks in `~/.claude/settings.json` |
 | **Codex** | Installs native lifecycle hooks in `$CODEX_HOME/hooks.json` for CLI, IDE, and desktop |
-| **Cline** | Installs hook scripts under `~/Documents/Cline/Hooks/` |
+| **Cline** | Installs direct platform-native hook files under `~/Documents/Cline/Hooks/` |
 | **OpenClaw** | Installs native `before_tool_call` plugin on >= 2026.3.28; uses legacy shim/bridge only on older versions |
 | **MCP servers** | Use `rampart mcp --` prefix instead of setup |
 

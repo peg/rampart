@@ -42,7 +42,7 @@ The preload library is a thin HTTP client. All policy logic stays in `rampart se
 
 ## Components
 
-### 1. `librampart.so` / `librampart.dylib` (~500 lines C)
+### 1. `librampart.so` / `librampart.dylib`
 
 Intercepts:
 - `execve` — primary exec syscall
@@ -50,14 +50,16 @@ Intercepts:
 - `system` — libc shell wrapper
 - `popen` — pipe to shell command
 - `posix_spawn` — modern spawn API (macOS uses this heavily)
+- `posix_spawnp` — PATH-resolved modern spawn API
 
 Each intercepted call:
 1. Extracts the command + arguments
-2. Builds JSON payload: `{"agent":"preload","session":"<id>","params":{"command":"<cmd>"}}`
+2. Builds JSON payload: `{"agent":"preload","session":"<id>","params":{"command":"<cmd>"},"enforce":true}`
 3. HTTP POST to `$RAMPART_URL/v1/preflight/exec` with `$RAMPART_TOKEN`
 4. If `allowed: true` → call original function via `dlsym(RTLD_NEXT, "execve")`
 5. If `allowed: false` → set `errno = EPERM`, return -1
-6. If HTTP fails → fail-open (configurable via `$RAMPART_FAIL_OPEN`)
+6. If a transport or HTTP 5xx failure occurs → use `$RAMPART_FAIL_OPEN`
+7. If authentication, request construction, response bounds, or JSON validation fails → deny in enforce mode
 
 Dependencies: libcurl (HTTP), no JSON library needed (hand-build the simple payload).
 
@@ -100,7 +102,7 @@ The library reads from env (set by `rampart preload` command):
 | `RAMPART_URL` | `http://127.0.0.1:9090` | Policy server URL |
 | `RAMPART_TOKEN` | (none) | Bearer auth token |
 | `RAMPART_MODE` | `enforce` | enforce / monitor / disabled |
-| `RAMPART_FAIL_OPEN` | `1` | Fail-open when serve unreachable |
+| `RAMPART_FAIL_OPEN` | `1` | Allow transport/HTTP 5xx failures; authentication, protocol, and local safety failures still deny in enforce mode |
 | `RAMPART_AGENT` | `preload` | Agent name for audit |
 | `RAMPART_SESSION` | `preload-<pid>` | Session ID |
 | `RAMPART_DEBUG` | `0` | Log to stderr |
@@ -150,7 +152,7 @@ Optimization strategy (in order of implementation):
 2. **Unix domain socket** — `rampart serve` listens on `~/.rampart/rampart.sock` in addition to TCP. The preload library connects via UDS, eliminating the TCP stack entirely. Target: ~0.3ms round-trip.
 3. **Connection pooling** — if the agent spawns child processes that inherit LD_PRELOAD, each process gets its own persistent connection.
 
-Fallback path (if serve is unreachable): return immediately with allow. No retries, no blocking, no timeout. Fail-open must be instant.
+Fallback path (if serve is unreachable): honor `RAMPART_FAIL_OPEN` after the bounded connection attempt. There are no retries. Authentication failures, malformed or oversized responses, and client-side safety failures never use this fallback in enforce mode.
 
 **What we do NOT do:**
 - No in-process policy evaluation (keeps library minimal and auditable)
@@ -165,7 +167,7 @@ Fallback path (if serve is unreachable): return immediately with allow. No retri
 
 ## Implementation History
 
-LD_PRELOAD interception shipped in v0.1.5 with full coverage of `execve`, `execvp`, `execvpe`, `system`, `popen`, and `posix_spawn`. The macOS `librampart.dylib` (DYLD_INSERT_LIBRARIES) shipped alongside the Linux build via goreleaser. Performance targets (sub-1ms via Unix domain socket, sub-3ms via TCP) were met and validated in CI benchmarks.
+LD_PRELOAD interception shipped in v0.1.5 with coverage of `execve`, `execvp`, `execvpe`, `system`, `popen`, `posix_spawn`, and `posix_spawnp`. The macOS `librampart.dylib` uses `DYLD_INSERT_LIBRARIES`; Linux uses `LD_PRELOAD`.
 
 ## Example Policy (works with existing format)
 
@@ -191,4 +193,4 @@ LD_PRELOAD is the only approach that works cross-platform with reasonable effort
 - Fails open instantly when serve is down (no user-visible delay)
 - Zero crashes, zero memory leaks, zero UB in C code
 - Passes Valgrind and AddressSanitizer clean
-- Library is small enough to audit in one sitting (< 600 lines)
+- The C boundary and its dependency surface remain directly auditable

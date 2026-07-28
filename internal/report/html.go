@@ -15,10 +15,10 @@
 package report
 
 import (
-	"encoding/json"
-	"fmt"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"io"
 	"os"
@@ -80,13 +80,13 @@ type PolicyCount struct {
 
 // ReportEvent represents an event formatted for display in the report.
 type ReportEvent struct {
-	Time      string
-	Tool      string
-	Command   string
-	Decision  string
-	Policy    string
-	Message   string
-	CSSClass  string
+	Time     string
+	Tool     string
+	Command  string
+	Decision string
+	Policy   string
+	Message  string
+	CSSClass string
 }
 
 // GenerateHTMLReport generates a self-contained HTML report from audit events.

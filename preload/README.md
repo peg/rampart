@@ -30,7 +30,7 @@ The Rampart preload library (`librampart.so` / `librampart.dylib`) works by:
 
 1. Intercepting exec-family system calls (`execve`, `execvp`, `system`, `popen`, etc.)
 2. Consulting the Rampart policy server via HTTP before allowing execution
-3. Failing open (allowing execution) if the policy server is unreachable
+3. Applying the configured degraded behavior if the policy server is unreachable
 4. Providing comprehensive logging and debugging capabilities
 
 ```
@@ -38,7 +38,8 @@ Agent Process → calls execve() → librampart.so intercepts
   → HTTP POST to rampart serve /v1/preflight/exec
   → allowed:true → call real execve via dlsym(RTLD_NEXT)
   → allowed:false → errno=EPERM, return -1
-  → HTTP fails → fail-open (exec through)
+  → transport/5xx failure → RAMPART_FAIL_OPEN decides
+  → auth/protocol/client failure → deny in enforce mode
 ```
 
 ## Building
@@ -95,7 +96,7 @@ make all
 **Linux:**
 ```bash
 export LD_PRELOAD="./librampart.so"
-export RAMPART_URL="http://127.0.0.1:19090"
+export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token-here"
 
 # Run any command with protection
@@ -107,7 +108,7 @@ node agent.js
 **macOS:**
 ```bash
 export DYLD_INSERT_LIBRARIES="./librampart.dylib"
-export RAMPART_URL="http://127.0.0.1:19090"
+export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token-here"
 
 # Run any command with protection
@@ -127,10 +128,10 @@ rampart preload --mode monitor -- risky_tool
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAMPART_URL` | `http://127.0.0.1:19090` | Policy server URL |
+| `RAMPART_URL` | `http://127.0.0.1:9090` | Policy server URL |
 | `RAMPART_TOKEN` | (none) | Bearer auth token |
 | `RAMPART_MODE` | `enforce` | `enforce` / `monitor` / `disabled` |
-| `RAMPART_FAIL_OPEN` | `1` | Fail-open when server unreachable (1=yes, 0=no) |
+| `RAMPART_FAIL_OPEN` | `1` | Allow transport and HTTP 5xx failures (1=yes, 0=no); never bypasses auth, malformed-response, or local safety failures in enforce mode |
 | `RAMPART_AGENT` | `preload` | Agent name for audit logs |
 | `RAMPART_SESSION` | `preload-<pid>` | Session ID for tracking |
 | `RAMPART_DEBUG` | `0` | Debug logging to stderr (1=on, 0=off) |
@@ -151,6 +152,7 @@ The library intercepts these libc functions:
 - `system(command)` — Shell command execution
 - `popen(command, type)` — Pipe to shell command
 - `posix_spawn(...)` — Modern spawn API (heavily used on macOS)
+- `posix_spawnp(...)` — PATH-resolved modern spawn API
 
 ## Testing
 
@@ -170,7 +172,9 @@ make test
 - Library loading without crashes
 - Debug output functionality
 - Policy enforcement (when `rampart serve` is running)
-- Fail-open behavior (when server is unreachable)
+- Fail-open/fail-closed behavior for transport and server failures
+- Fail-closed behavior for authentication, malformed, and oversized responses
+- `posix_spawn` and `posix_spawnp` interception
 - `system()` and `popen()` interception
 - Monitor and disabled modes
 - Child process inheritance
@@ -192,7 +196,7 @@ RAMPART_URL=http://127.0.0.1:99999 LD_PRELOAD=./librampart.so echo "should work"
 **Policy enforcement (requires `rampart serve` running):**
 ```bash
 export LD_PRELOAD="./librampart.so"
-export RAMPART_URL="http://127.0.0.1:19090"
+export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token"
 
 # Should work (typically allowed)
@@ -224,7 +228,7 @@ The library is optimized for minimal latency:
 
 - **Persistent HTTP keep-alive connection** — One connection per process, reused for all policy checks
 - **Manual JSON parsing** — No external JSON library dependencies
-- **Fail-fast on errors** — Immediate fail-open if server unreachable
+- **Bounded degraded behavior** — Transport/5xx failures follow `RAMPART_FAIL_OPEN`; unsafe client/protocol failures deny in enforce mode
 - **Thread-safe** — Uses pthread mutex for curl handle protection
 
 **Target performance:**
@@ -289,9 +293,9 @@ This library is designed to protect against **hallucinating/manipulated AI agent
 
 ### Code Quality
 
-- **Zero undefined behavior** — Clean compilation with `-Wall -Wextra -Werror -pedantic`
-- **Thread-safe** — All global state protected by mutexes
-- **Memory leak free** — Every `malloc()` has matching `free()`
+- **Strict compilation** — Built with `-Wall -Wextra -Werror -pedantic`
+- **Thread-safe HTTP reuse** — Every shared easy-handle operation is serialized
+- **Bounded inputs** — Request and response sizes are capped; malformed JSON fails closed in enforce mode
 - **Minimal dependencies** — Only libcurl and pthreads
 
 ### Debugging
@@ -310,8 +314,8 @@ RAMPART_DEBUG=1 LD_PRELOAD=./librampart.so your_command
 
 ### Contributing
 
-1. Maintain < 600 lines in `librampart.c`
-2. All changes must pass `make test`
+1. Keep the security boundary auditable and avoid unnecessary dependencies
+2. All changes must pass `make test` and the Linux `test_preload.sh` contract suite
 3. Test on both Linux and macOS
 4. Run AddressSanitizer builds before submitting
 5. Update tests for new functionality

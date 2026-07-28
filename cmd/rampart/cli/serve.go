@@ -144,13 +144,22 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if err := child.Start(); err != nil {
 					return fmt.Errorf("serve: start background process: %w", err)
 				}
+				childPID := child.Process.Pid
 
 				pidPath := filepath.Join(rampartDir, "serve.pid")
-				if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o600); err != nil {
+				if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", childPID)), 0o600); err != nil {
+					_ = child.Process.Kill()
+					_, _ = child.Process.Wait()
 					return fmt.Errorf("serve: write pid file: %w", err)
 				}
+				if err := child.Process.Release(); err != nil {
+					_ = os.Remove(pidPath)
+					_ = child.Process.Kill()
+					_, _ = child.Process.Wait()
+					return fmt.Errorf("serve: release background process handle: %w", err)
+				}
 
-				fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=~/.rampart/serve.log)\n", child.Process.Pid)
+				fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=~/.rampart/serve.log)\n", childPID)
 				printNextStep(cmd.OutOrStdout(), "rampart status")
 				return nil
 			}
@@ -607,7 +616,7 @@ func newServeStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop a background rampart serve process",
-		Long:  `Stop a rampart serve process started with --background by reading the PID from ~/.rampart/serve.pid and sending SIGTERM.`,
+		Long:  `Stop a rampart serve process started with --background by reading and authenticating the PID in ~/.rampart/serve.pid before terminating it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return stopBackgroundServe(cmd.OutOrStdout(), false)
 		},
@@ -653,43 +662,13 @@ func stopBackgroundServe(w io.Writer, missingOK bool) error {
 	if err != nil {
 		return fmt.Errorf("serve stop: find process %d: %w", pid, err)
 	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := terminateRampartServeProcess(proc); err != nil {
 		_ = os.Remove(pidPath)
 		return fmt.Errorf("serve stop: signal pid %d: %w (process may have already exited)", pid, err)
 	}
 	_ = os.Remove(pidPath)
 	fmt.Fprintf(w, "✓ rampart serve (pid=%d) stopped\n", pid)
 	return nil
-}
-
-// isRampartServeProcess authenticates a PID before stop/uninstall sends a
-// signal. PID files can outlive their process, and operating systems reuse
-// numeric PIDs; checking only that a PID exists can therefore terminate an
-// unrelated user process. `ps` is available on the Unix platforms where
-// service uninstallation uses this helper. On platforms without `ps`, stop
-// fails safely instead of signaling an unverified process.
-func isRampartServeProcess(pid int) (bool, string, error) {
-	pidArg := fmt.Sprintf("%d", pid)
-	commOut, err := exec.Command("ps", "-p", pidArg, "-o", "comm=").CombinedOutput()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return false, strings.TrimSpace(string(commOut)), nil
-		}
-		return false, "", err
-	}
-	argsOut, err := exec.Command("ps", "-p", pidArg, "-o", "args=").CombinedOutput()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return false, strings.TrimSpace(string(argsOut)), nil
-		}
-		return false, "", err
-	}
-
-	comm := strings.TrimSpace(string(commOut))
-	args := strings.TrimSpace(string(argsOut))
-	return isRampartServeCommand(comm, args), strings.TrimSpace(comm + " " + args), nil
 }
 
 func isRampartServeCommand(comm, args string) bool {

@@ -5,7 +5,7 @@ policies:
     match:
       tool: ["exec", "read", "write"]
     rules:
-      - action: log
+      - action: watch
         when:
           default: true
         message: "Audit-only mode: all actions logged"

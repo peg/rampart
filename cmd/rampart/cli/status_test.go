@@ -94,6 +94,17 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 		PrevHash:  allowEvent.Hash,
 		Hash:      "sha256:deny",
 	}
+	askEvent := audit.Event{
+		ID:        "01JTEST000000000000000003",
+		Timestamp: now.Add(time.Second),
+		Agent:     "agent-1",
+		Session:   "session-1",
+		Tool:      "exec",
+		Request:   map[string]any{"command": "git push origin main"},
+		Decision:  audit.EventDecision{Action: "ask", EvalTimeUS: 1},
+		PrevHash:  denyEvent.Hash,
+		Hash:      "sha256:ask",
+	}
 	allowLine, err := json.Marshal(allowEvent)
 	if err != nil {
 		t.Fatal(err)
@@ -102,8 +113,12 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	askLine, err := json.Marshal(askEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
 	logPath := filepath.Join(auditDir, now.Format("2006-01-02")+".jsonl")
-	content := string(allowLine) + "\n" + string(denyLine) + "\n"
+	content := string(allowLine) + "\n" + string(denyLine) + "\n" + string(askLine) + "\n"
 	if err := os.WriteFile(logPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +148,7 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 	if got.DefaultAction != "allow" {
 		t.Fatalf("default_action=%q, want allow", got.DefaultAction)
 	}
-	if got.Today.Allow != 1 || got.Today.Deny != 1 || got.Today.Pending != 0 {
+	if got.Today.Allow != 1 || got.Today.Deny != 1 || got.Today.Pending != 1 {
 		t.Fatalf("today counts mismatch: %+v", got.Today)
 	}
 	if got.LastDeny == nil {

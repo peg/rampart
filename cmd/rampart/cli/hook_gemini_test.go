@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,51 @@ func TestParseGeminiInputFailsClosedForUnknownBeforeTool(t *testing.T) {
 	_, err := parseGeminiInput(strings.NewReader(`{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"future_mutator","tool_input":{}}`))
 	if err == nil || !strings.Contains(err.Error(), "unsupported Gemini tool_name") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseGeminiReadManyFilesEvaluatesEveryInclude(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"read_many_files","tool_input":{"include":["safe/**",".env"]}}`
+	result, err := parseGeminiInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.PolicyPaths) != 2 || result.PolicyPaths[0] != "safe/**" || result.PolicyPaths[1] != ".env" {
+		t.Fatalf("PolicyPaths = %#v", result.PolicyPaths)
+	}
+	if paths, ok := result.Params["paths"].([]string); !ok || len(paths) != 2 {
+		t.Fatalf("params.paths = %#v", result.Params["paths"])
+	}
+}
+
+func TestParseGeminiReadManyFilesRejectsOversizedIncludeBatch(t *testing.T) {
+	includes := make([]any, maxCodexPatchPaths+1)
+	for i := range includes {
+		includes[i] = filepath.Join("src", "file-"+strconv.Itoa(i))
+	}
+	payload, err := json.Marshal(map[string]any{
+		"session_id":      "s",
+		"hook_event_name": "BeforeTool",
+		"tool_name":       "read_many_files",
+		"tool_input":      map[string]any{"include": includes},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = parseGeminiInput(bytes.NewReader(payload))
+	if err == nil || !strings.Contains(err.Error(), "more than 100 paths") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseGeminiInputClassifiesDestructiveMCPTool(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"mcp_filesystem_delete_file","tool_input":{"path":"important.txt"}}`
+	result, err := parseGeminiInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
 	}
 }
 

@@ -51,11 +51,19 @@ assert(unreachableExec.result?.block === true, 'unreachable exec must block');
 assert(unreachableExec.result.blockReason.includes('policy service down'), 'unreachable exec reason should mention service down');
 
 const unreachableRead = await runScenario({
-  name: 'unreachable-read',
+  name: 'unreachable-read-explicit-fail-open',
+  toolName: 'read',
+  pluginConfig: { failOpenTools: ['read'] },
+  fetchImpl: async () => { throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } }); },
+});
+assert(unreachableRead.result === undefined, 'unreachable read should use an explicit fail-open override');
+
+const unreachableReadDefault = await runScenario({
+  name: 'unreachable-read-default-closed',
   toolName: 'read',
   fetchImpl: async () => { throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } }); },
 });
-assert(unreachableRead.result === undefined, 'unreachable read should use configured fail-open default');
+assert(unreachableReadDefault.result?.block === true, 'unreachable read must fail closed by default');
 
 const serverErrorWrite = await runScenario({
   name: 'server-error-write',
@@ -107,4 +115,4 @@ const untrustedServeUrl = await runScenario({
 });
 assert(untrustedServeUrl.result?.block === true, 'untrusted serveUrl must fail closed');
 
-console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read', 'server-error-write', 'timeout-edit', 'server-error-read-strict', 'empty-object-response', 'array-response', 'unknown-decision', 'untrusted-serve-url'] }, null, 2));
+console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read-explicit-fail-open', 'unreachable-read-default-closed', 'server-error-write', 'timeout-edit', 'server-error-read-strict', 'empty-object-response', 'array-response', 'unknown-decision', 'untrusted-serve-url'] }, null, 2));

@@ -138,7 +138,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .badge.always-allowed{background:rgba(255,99,146,.12);color:var(--accent)}
 .badge.allow{background:rgba(34,197,94,.15);color:var(--green)}
 .badge.deny{background:rgba(239,68,68,.12);color:var(--red)}
-.badge.require_approval{background:rgba(245,158,11,.12);color:var(--orange)}
+.badge.require_approval,.badge.ask{background:rgba(245,158,11,.12);color:var(--orange)}
 .badge.blocked{background:rgba(239,68,68,.12);color:var(--red)}
 .badge.watch{background:var(--surface-3);color:var(--text)}
 
@@ -237,7 +237,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .policy-test-result{margin-top:10px;padding:8px 10px;border-radius:4px;font-size:13px;font-family:monospace}
 .policy-test-result.allow{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#4ade80}
 .policy-test-result.deny{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#f87171}
-.policy-test-result.require_approval{background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.3);color:#fb923c}
+.policy-test-result.require_approval,.policy-test-result.ask{background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.3);color:#fb923c}
 .policy-test-result.watch{background:rgba(161,161,170,.1);border:1px solid rgba(161,161,170,.3);color:#a1a1aa}
 
 /* Denial feed — compact, no table */
@@ -1204,9 +1204,9 @@ function matchesHistFilter(ev,f,q){
     if(!cmd.includes(q)&&!(ev.agent||'').toLowerCase().includes(q)&&!(ev.session||'').toLowerCase().includes(q))return false;
   }
   const a=extractAction(ev);
-  // require_approval = the initial "pending" event; its resolution (denied/approved)
+  // ask/require_approval = the initial "pending" event; its resolution (denied/approved)
   // already appears as a separate entry. Hide pending noise from History.
-  if(a==='require_approval')return false;
+  if(a==='ask'||a==='require_approval')return false;
   if(f==='all')return true;
   if(f==='approved')return a==='approved'||a==='allow';
   if(f==='denied')return a==='denied';
@@ -1245,7 +1245,7 @@ function appendHistRow(ev,tbody){
   tr.className='row'+(danger?' dangerous':'');
   // Normalize action labels for display
   // Normalise legacy 'log' alias → 'watch'; normalise 'blocked'/'denied' → 'deny'
-  const normAction=action==='log'?'watch':action==='blocked'?'deny':action==='denied'?'deny':action||'';
+  const normAction=action==='log'?'watch':action==='ask'?'require_approval':action==='blocked'?'deny':action==='denied'?'deny':action||'';
   const actionLabel=normAction==='deny'?'blocked':normAction==='allow'?'allow':normAction==='approved'?'approved':normAction==='watch'?'watch':normAction==='require_approval'?'pending':normAction||'—';
   const badgeCls=normAction==='allow'?'allow':normAction==='deny'?'deny':normAction==='approved'?'approved':normAction==='require_approval'?'require_approval':normAction==='watch'?'watch':'';
   tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
@@ -1337,8 +1337,8 @@ async function runPolicyTest(){
       body: JSON.stringify(payload)
     })).json();
     const action = data.action || 'allow';
-    const icons = {allow:'✓', deny:'✗', require_approval:'⏸', watch:'○'};
-    const labels = {allow:'Allow', deny:'Deny', require_approval:'Require Approval', watch:'Watch'};
+    const icons = {allow:'✓', deny:'✗', ask:'⏸', require_approval:'⏸', watch:'○'};
+    const labels = {allow:'Allow', deny:'Deny', ask:'Ask', require_approval:'Require Approval', watch:'Watch'};
     const fieldLabel = isPath ? 'path' : 'command';
     let text = `${icons[action]||'?'} ${labels[action]||action}`;
     if(data.message) text += ` — ${data.message}`;

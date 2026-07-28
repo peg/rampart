@@ -14,7 +14,7 @@ policies:
     match:
       tool: ["mcp__proxmox__vm_stop", "mcp__proxmox__vm_shutdown", "mcp__proxmox__vm_reboot"]
     rules:
-      - action: log
+      - action: watch
         message: "VM power operation logged"
 
   # Log migrations (risky in production)
@@ -22,7 +22,7 @@ policies:
     match:
       tool: ["mcp__proxmox__vm_migrate"]
     rules:
-      - action: log
+      - action: watch
         message: "VM migration logged for review"
 
   # Block disk resize (irreversible growth)

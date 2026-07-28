@@ -16,6 +16,8 @@ import (
 
 const copilotRampartHookFile = "rampart.json"
 
+var copilotPolicyHookPathForRuntime = copilotPolicyHookPath
+
 func newSetupCopilotCmd() *cobra.Command {
 	var force bool
 	var remove bool
@@ -38,7 +40,7 @@ Run 'rampart setup copilot --remove' to uninstall the user hook.`,
 			}
 			path := filepath.Join(copilotHomeDir(home), "hooks", copilotRampartHookFile)
 			if policy {
-				path = copilotPolicyHookPath()
+				path = copilotPolicyHookPathForRuntime()
 			}
 
 			if remove {

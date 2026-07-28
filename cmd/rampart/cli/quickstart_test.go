@@ -290,23 +290,19 @@ func TestQuickstartHooksConfigured_Cline(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 
-	pre := filepath.Join(home, "Documents", "Cline", "Hooks", "PreToolUse", "rampart-policy")
-	post := filepath.Join(home, "Documents", "Cline", "Hooks", "PostToolUse", "rampart-audit")
-	if err := os.MkdirAll(filepath.Dir(pre), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(post), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(pre, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(post, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	hookDir := filepath.Join(home, "Documents", "Cline", "Hooks")
+	if _, _, err := installClineHooks(hookDir, "rampart", runtime.GOOS, false); err != nil {
 		t.Fatal(err)
 	}
 
 	if !quickstartHooksConfigured("cline") {
 		t.Fatal("expected cline hooks to be detected")
+	}
+	if err := os.WriteFile(clineHookPath(hookDir, "PreToolUse", runtime.GOOS), []byte("user hook"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if quickstartHooksConfigured("cline") {
+		t.Fatal("non-Rampart Cline hook must not be reported as protection")
 	}
 }
 

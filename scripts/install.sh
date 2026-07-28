@@ -138,29 +138,38 @@ if ! fetch "$TARBALL_URL" "${TMP_DIR}/${TARBALL}"; then
     error "Download failed. Check that ${VERSION} exists at:\n  ${TARBALL_URL}"
 fi
 
-# Download and verify checksum.
+# Download and verify checksum. Installation fails closed if release integrity
+# cannot be established; a security tool must never silently install an
+# unverified binary.
 info "Verifying checksum..."
-if fetch "$CHECKSUM_URL" "${TMP_DIR}/checksums.txt" 2>/dev/null; then
-    EXPECTED=$(grep "${TARBALL}" "${TMP_DIR}/checksums.txt" | awk '{print $1}')
-    if command -v sha256sum >/dev/null 2>&1; then
-        ACTUAL=$(sha256sum "${TMP_DIR}/${TARBALL}" | awk '{print $1}')
-    elif command -v shasum >/dev/null 2>&1; then
-        ACTUAL=$(shasum -a 256 "${TMP_DIR}/${TARBALL}" | awk '{print $1}')
-    else
-        warn "No sha256sum or shasum found — skipping verification"
-        ACTUAL="$EXPECTED"
-    fi
-
-    if [ -z "$EXPECTED" ]; then
-        warn "No checksum entry found for ${TARBALL} — skipping verification"
-    elif [ "$EXPECTED" != "$ACTUAL" ]; then
-        error "Checksum mismatch!\n  Expected: ${EXPECTED}\n  Got:      ${ACTUAL}"
-    else
-        info "Checksum verified ✓"
-    fi
-else
-    warn "No checksums.txt found — skipping verification"
+if ! fetch "$CHECKSUM_URL" "${TMP_DIR}/checksums.txt" 2>/dev/null; then
+    error "Could not download checksums.txt; refusing to install an unverified binary."
 fi
+
+EXPECTED=$(awk -v file="$TARBALL" '$2 == file { print $1 }' "${TMP_DIR}/checksums.txt")
+EXPECTED_COUNT=$(printf '%s\n' "$EXPECTED" | awk 'NF { count++ } END { print count+0 }')
+if [ "$EXPECTED_COUNT" -ne 1 ]; then
+    error "Expected exactly one checksum entry for ${TARBALL}; refusing unverified install."
+fi
+case "$EXPECTED" in
+    *[!0-9a-fA-F]*|'') error "Invalid SHA-256 checksum for ${TARBALL}." ;;
+esac
+if [ "${#EXPECTED}" -ne 64 ]; then
+    error "Invalid SHA-256 checksum length for ${TARBALL}."
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum "${TMP_DIR}/${TARBALL}" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 "${TMP_DIR}/${TARBALL}" | awk '{print $1}')
+else
+    error "No SHA-256 tool found (need sha256sum or shasum); refusing unverified install."
+fi
+
+if [ "$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTUAL" | tr '[:upper:]' '[:lower:]')" ]; then
+    error "Checksum mismatch!\n  Expected: ${EXPECTED}\n  Got:      ${ACTUAL}"
+fi
+info "Checksum verified ✓"
 
 tar -xzf "${TMP_DIR}/${TARBALL}" -C "$TMP_DIR"
 

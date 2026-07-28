@@ -54,24 +54,7 @@ jobs:
         env:
           IMAGE: rampart:release-smoke
           VERSION: ${{ steps.build.outputs.version }}
-        run: |
-          set -euo pipefail
-
-          docker run --rm "$IMAGE" version | tee /tmp/rampart-docker-version.txt
-          grep -F "rampart ${VERSION}" /tmp/rampart-docker-version.txt
-
-          cid="$(docker run -d -p 19090:9090 "$IMAGE")"
-          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-
-          for _ in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:19090/healthz >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 1
-          done
-
-          docker logs "$cid"
-          exit 1
+        run: bash scripts/docker-smoke.sh "$IMAGE" "$VERSION"
 
       - uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4
         with:

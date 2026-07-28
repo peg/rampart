@@ -17,6 +17,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type webhookActionRequest struct {
+	Tool      string         `json:"tool"`
+	Params    map[string]any `json:"params"`
+	Agent     string         `json:"agent"`
+	Session   string         `json:"session"`
+	Policy    string         `json:"policy"`
+	Timestamp string         `json:"timestamp"`
+}
+
+type webhookActionResponse struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
 func setupWebhookServer(t *testing.T, webhookURL string, failOpen bool) (*Server, string) {
 	t.Helper()
 
@@ -81,6 +95,31 @@ func TestWebhookActionAllow(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "allow", resp["decision"])
+}
+
+func TestWebhookAction_FinalAuditFailureFailsClosed(t *testing.T) {
+	webhookCalls := 0
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		webhookCalls++
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(webhookActionResponse{Decision: "allow"}))
+	}))
+	defer webhook.Close()
+
+	srv, token := setupWebhookServer(t, webhook.URL, true)
+	failing := &failOnWriteSink{failAt: 2}
+	srv.sink = failing
+
+	body := `{"agent":"test-agent","session":"s1","params":{"command":"dangerous deploy"}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "audit storage is unavailable")
+	assert.Equal(t, 1, webhookCalls)
+	assert.Equal(t, 2, failing.count(), "initial webhook and final allow decisions should both be attempted")
 }
 
 func TestWebhookActionDeny(t *testing.T) {

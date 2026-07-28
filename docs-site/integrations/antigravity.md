@@ -39,7 +39,7 @@ task, subagent, messaging, and permission tools into its policy classes.
 | --- | --- |
 | `allow`, `watch`, `log` | `allow`; execution continues |
 | `deny` | `deny`; execution stops with the Rampart reason |
-| `ask`, `require_approval` | `force_ask`; Antigravity prompts even if a permission was cached as Always Allow |
+| `ask` | `force_ask`; Antigravity prompts even if a permission was cached as Always Allow |
 | Unknown future tool | `deny` until Rampart maps its policy surface |
 
 Local allow/deny evaluation does not require `rampart serve`. The service is

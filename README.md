@@ -42,7 +42,7 @@ go install github.com/peg/rampart/cmd/rampart@latest
 irm https://rampart.sh/install.ps1 | iex
 ```
 
-> **Upgrading from Rampart 1.2.x on Windows?** Rerun the PowerShell installer above. It repairs the affected legacy `~\.rampart` ACL before replacing the binary. If that directory is locked, `rampart upgrade` may be unable to start and cannot perform the repair itself.
+> **Upgrading on Windows?** Rerun the PowerShell installer above; binary self-upgrade is intentionally disabled on Windows. The installer also repairs the affected legacy `~\.rampart` ACL found on v1.2.x installations.
 
 To detect and protect every installed supported agent with managed defaults:
 
@@ -130,7 +130,7 @@ If you do not want to keep exporting environment variables, Rampart also support
 ```yaml
 url: http://127.0.0.1:9090
 # serve_url: http://127.0.0.1:9090   # compatibility alias for url
-# api: http://127.0.0.1:9091         # optional advanced override for daemon/split-topology API setups
+# api: http://127.0.0.1:9091         # optional advanced override for split control-service setups
 ```
 
 | Setting | Use it for | Notes |
@@ -141,8 +141,8 @@ url: http://127.0.0.1:9090
 
 Notes:
 - `url` is the main knob; use this unless you have a specific reason not to.
-- `api` is **not** the normal setting for `rampart serve`; it is for advanced daemon/split-topology setups.
-- Client-side `--api` flags expect an **API base URL** (`http://127.0.0.1:9091`), while daemon/server `--api` flags refer to an **API listen address** (`127.0.0.1:9091`).
+- `api` is **not** the normal setting for `rampart serve`; it is for advanced split control-service setups.
+- Client-side `--api` flags expect an **API base URL** (`http://127.0.0.1:9091`), while server `--api` flags refer to an **API listen address** (`127.0.0.1:9091`).
 
 Resolution order is: flag → environment → config file → auto-discovered state → default.
 
@@ -175,7 +175,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 | **Claude Code** | `rampart setup claude-code` | Native pre/post tool hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart protect openclaw` | Zero-config native guard + active verification |
 | **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
-| **Cline** | `rampart setup cline` | Native hooks via settings |
+| **Cline** | `rampart setup cline` | Platform-native editor/CLI hook files |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Gemini CLI** | `rampart setup gemini` | Experimental enterprise/API-key `BeforeTool`/`AfterTool` hooks |
 | **Antigravity** | `rampart setup antigravity` | Shared CLI/IDE `PreToolUse` policy plugin with native `force_ask` |
@@ -318,7 +318,7 @@ rampart setup hermes
 hermes plugins enable rampart
 ```
 
-The plugin registers a Hermes `pre_tool_call` hook and sends sanitized tool metadata to Rampart before execution. It defaults to `/v1/preflight/{tool}` so early tests do not create hidden approvals that Hermes cannot resume. `ask` decisions block with an approval-required message until Hermes has a first-class plugin approval/resume flow.
+The plugin registers a Hermes `pre_tool_call` hook and sends sanitized tool metadata to Rampart before execution. It defaults to `/v1/preflight/{tool}` with execution intent, so one-time grants and call counters are enforced without creating hidden approvals that Hermes cannot resume. `ask` decisions block with an approval-required message until Hermes has a first-class plugin approval/resume flow. Service outages deny every Hermes tool by default.
 
 ---
 
@@ -347,7 +347,7 @@ rampart preload -- node agent.js
 rampart preload --mode monitor -- risky-tool
 ```
 
-Intercepts `execve`, `execvp`, `system()`, `popen()`, and `posix_spawn()`. Denied calls return `EPERM`.
+Intercepts `execve`, `execvp`, `system()`, `popen()`, `posix_spawn()`, and `posix_spawnp()`. Denied calls return `EPERM`.
 
 **Platform notes:** Preload mode covers supported exec-family calls made through
 the dynamic loader on Linux and in non-SIP-protected macOS processes. Static or
@@ -425,7 +425,9 @@ policies:
         message: "Exfiltration domain blocked"
 ```
 
-Use `command_contains` for substring matching (case-insensitive):
+Use `command_contains` for substring matching. Restrictive actions (`deny` and
+approval gates) match case-insensitively; execution-granting actions preserve
+argument casing so an allow cannot widen a case-sensitive URL path or Git ref:
 
 ```yaml
   - name: block-dangerous-substrings
@@ -734,7 +736,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 |-------|--------|-----------|
 | Claude Code | `rampart setup claude-code` | Linux, macOS, Windows |
 | OpenClaw | `rampart protect openclaw` | Linux, macOS |
-| Cline | `rampart setup cline` | Linux, macOS |
+| Cline | `rampart setup cline` | Linux, macOS, Windows* |
 | Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
 | Gemini CLI (enterprise/API key) | `rampart setup gemini` | Experimental; Linux, macOS |
 | Antigravity CLI / IDE | `rampart setup antigravity` | Linux, macOS, Windows |
@@ -746,6 +748,12 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Command-launched MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Supported dynamically linked processes | `rampart preload` | Linux, macOS |
 | Custom agents | HTTP API at `localhost:9090` | Linux, macOS, Windows |
+
+\* Cline's Windows `.ps1` contract is source-reviewed and cross-build tested;
+physical Windows host E2E remains pending. Legacy Cline CLI `--yolo` disables
+runtime hooks. The current CLI also continues after hook infrastructure failure
+and treats post-tool hooks as asynchronous audit only. See the
+[Cline integration guide](docs-site/integrations/cline.md).
 
 ---
 

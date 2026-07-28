@@ -18,6 +18,7 @@ func TestExpandHome(t *testing.T) {
 		err   bool
 	}{
 		{"~/foo", filepath.Join(home, "foo"), false},
+		{`~\foo`, filepath.Join(home, "foo"), false},
 		{"~", home, false},
 		{"/absolute/path", "/absolute/path", false},
 		{"relative/path", "relative/path", false},
@@ -63,6 +64,30 @@ func TestLatestAuditFile_WithFiles(t *testing.T) {
 	}
 	if got != f2 {
 		t.Errorf("latestAuditFile = %q, want %q", got, f2)
+	}
+}
+
+func TestLatestAuditFile_PrefersManagedChainOverNewerLegacyFile(t *testing.T) {
+	dir := t.TempDir()
+	managed := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	legacy := filepath.Join(dir, "audit-hook-2099-12-31.jsonl")
+	if err := os.WriteFile(managed, []byte("managed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("legacy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(legacy, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := latestAuditFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != managed {
+		t.Errorf("latestAuditFile = %q, want managed chain %q", got, managed)
 	}
 }
 

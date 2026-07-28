@@ -157,8 +157,8 @@ func TestRemoveClineHooks_WithHooks(t *testing.T) {
 	postDir := filepath.Join(hookDir, "PostToolUse")
 	os.MkdirAll(preDir, 0o755)
 	os.MkdirAll(postDir, 0o755)
-	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte("#!/bin/bash\n"), 0o755)
-	os.WriteFile(filepath.Join(postDir, "rampart-audit"), []byte("#!/bin/bash\n"), 0o755)
+	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte(createLegacyClineHookForTest("PreToolUse")), 0o755)
+	os.WriteFile(filepath.Join(postDir, "rampart-audit"), []byte(createLegacyClineHookForTest("PostToolUse")), 0o755)
 
 	opts := &rootOptions{}
 	cmd := newSetupClineCmd(opts)
@@ -170,7 +170,7 @@ func TestRemoveClineHooks_WithHooks(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "Removed 2 Rampart hook(s)") {
+	if !strings.Contains(out.String(), "Removed 2 Rampart Cline hook(s)") {
 		t.Errorf("expected removal message, got: %s", out.String())
 	}
 }
@@ -203,7 +203,7 @@ func TestRemoveClineHooks_Workspace(t *testing.T) {
 	hookDir := filepath.Join(tmpDir, ".clinerules", "hooks")
 	preDir := filepath.Join(hookDir, "PreToolUse")
 	os.MkdirAll(preDir, 0o755)
-	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte("#!/bin/bash\n"), 0o755)
+	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte(createLegacyClineHookForTest("PreToolUse")), 0o755)
 
 	opts := &rootOptions{}
 	cmd := newSetupClineCmd(opts)
@@ -215,7 +215,7 @@ func TestRemoveClineHooks_Workspace(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "Removed 1 Rampart hook(s)") {
+	if !strings.Contains(out.String(), "Removed 1 Rampart Cline hook(s)") {
 		t.Errorf("expected removal message, got: %s", out.String())
 	}
 }

@@ -48,7 +48,7 @@ func TestHookAuditCompactsEscapedNearMiBRequest(t *testing.T) {
 		t.Fatalf("run hook: %v", err)
 	}
 
-	path := filepath.Join(auditDir, "audit-hook-"+time.Now().UTC().Format("2006-01-02")+".jsonl")
+	path := filepath.Join(auditDir, time.Now().UTC().Format("2006-01-02")+".jsonl")
 	events, _, err := audit.ReadEventsFromOffset(path, 0)
 	if err != nil {
 		t.Fatalf("read hook audit: %v", err)

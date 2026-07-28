@@ -74,10 +74,14 @@ func parseCopilotInput(reader io.Reader) (*hookParseResult, error) {
 		return nil, fmt.Errorf("hook: unsupported Copilot tool_name %q; update Rampart before allowing this tool", input.ToolName)
 	}
 	normalizeCopilotParams(params)
+	if tool == "mcp" {
+		tool = classifyNativeMCPTool(input.ToolName, params)
+	}
 
 	result := &hookParseResult{
 		Tool:          tool,
 		Params:        params,
+		WorkDir:       strings.TrimSpace(input.CWD),
 		Agent:         "github-copilot",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: event,
@@ -85,7 +89,10 @@ func parseCopilotInput(reader io.Reader) (*hookParseResult, error) {
 		ToolUseID:     input.ToolUseID,
 	}
 	if tool == "write" {
-		result.PolicyPaths = collectCopilotPaths(params)
+		result.PolicyPaths, err = collectCopilotPaths(params)
+		if err != nil {
+			return nil, err
+		}
 		if len(result.PolicyPaths) > 0 {
 			params["path"] = result.PolicyPaths[0]
 			params["paths"] = append([]string(nil), result.PolicyPaths...)
@@ -165,7 +172,7 @@ func mapCopilotTool(toolName string) string {
 	}
 	switch {
 	case strings.Contains(compact, "mcp"):
-		return "mcp"
+		return classifyNativeMCPTool(toolName, nil)
 	case strings.Contains(compact, "terminal") || strings.Contains(compact, "shell") || strings.HasSuffix(compact, "command"):
 		return "exec"
 	case strings.Contains(compact, "create") || strings.Contains(compact, "write") || strings.Contains(compact, "edit") || strings.Contains(compact, "replace") || strings.Contains(compact, "delete") || strings.Contains(compact, "patch"):
@@ -203,23 +210,29 @@ func normalizeCopilotParams(params map[string]any) {
 	}
 }
 
-func collectCopilotPaths(params map[string]any) []string {
+func collectCopilotPaths(params map[string]any) ([]string, error) {
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
-	add := func(value string) {
+	add := func(value string) error {
 		value = strings.TrimSpace(value)
-		if value == "" || len(paths) >= maxCodexPatchPaths {
-			return
+		if value == "" {
+			return nil
 		}
 		if _, exists := seen[value]; exists {
-			return
+			return nil
+		}
+		if len(paths) >= maxCodexPatchPaths {
+			return fmt.Errorf("hook: Copilot write touches more than %d paths; split it into smaller calls", maxCodexPatchPaths)
 		}
 		seen[value] = struct{}{}
 		paths = append(paths, value)
+		return nil
 	}
 	for _, key := range []string{"path", "filePath", "file_path", "uri"} {
 		if value, ok := params[key].(string); ok {
-			add(value)
+			if err := add(value); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, key := range []string{"files", "paths"} {
@@ -227,17 +240,21 @@ func collectCopilotPaths(params map[string]any) []string {
 		for _, item := range items {
 			switch typed := item.(type) {
 			case string:
-				add(typed)
+				if err := add(typed); err != nil {
+					return nil, err
+				}
 			case map[string]any:
 				for _, nestedKey := range []string{"path", "filePath", "file_path", "uri"} {
 					if value, ok := typed[nestedKey].(string); ok {
-						add(value)
+						if err := add(value); err != nil {
+							return nil, err
+						}
 					}
 				}
 			}
 		}
 	}
-	return paths
+	return paths, nil
 }
 
 func outputCopilotHookResult(writer io.Writer, decision hookDecisionType, reason string) error {

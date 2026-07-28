@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"encoding/json"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,16 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 )
-
-func TestDefaultParams(t *testing.T) {
-	if got := defaultParams(nil); got == nil {
-		t.Error("nil input should return empty map")
-	}
-	m := map[string]any{"key": "val"}
-	if got := defaultParams(m); got["key"] != "val" {
-		t.Error("non-nil input should pass through")
-	}
-}
 
 func TestNormalizeAgent(t *testing.T) {
 	tests := []struct{ input, want string }{
@@ -64,33 +54,6 @@ func TestRenderCommand(t *testing.T) {
 				t.Errorf("renderCommand() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestReadJSONFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "test.json")
-	data := []policyTestCall{{Agent: "test", Tool: "exec", Params: map[string]any{"command": "ls"}}}
-	raw, _ := json.Marshal(data)
-	os.WriteFile(p, raw, 0o644)
-
-	var got []policyTestCall
-	if err := readJSONFile(p, &got); err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Tool != "exec" {
-		t.Errorf("got %+v", got)
-	}
-
-	// Non-existent file
-	if err := readJSONFile("/nonexistent", &got); err == nil {
-		t.Error("expected error for missing file")
-	}
-
-	// Invalid JSON
-	os.WriteFile(filepath.Join(dir, "bad.json"), []byte("{invalid"), 0o644)
-	if err := readJSONFile(filepath.Join(dir, "bad.json"), &got); err == nil {
-		t.Error("expected error for bad JSON")
 	}
 }
 
@@ -223,7 +186,7 @@ func TestResolveExplainPolicyPath_ExplicitConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root := NewRootCmd(nil, &strings.Builder{}, &strings.Builder{})
+	root := NewRootCmd(context.Background(), &strings.Builder{}, &strings.Builder{})
 	root.SetArgs([]string{"policy", "explain", "echo hi", "--config", p})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("expected explain to load explicit config, got: %v", err)

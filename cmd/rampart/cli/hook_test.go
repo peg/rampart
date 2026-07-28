@@ -64,7 +64,7 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			payload := map[string]any{"tool_name": tt.toolName}
+			payload := map[string]any{"hook_event_name": "PreToolUse", "tool_name": tt.toolName}
 			if tt.withInput {
 				payload["tool_input"] = map[string]any{"command": "echo hi"}
 			}
@@ -111,6 +111,28 @@ func TestParseClaudeCodeInput_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseClaudeCodeInput_RejectsUnknownEvent(t *testing.T) {
+	input := `{"hook_event_name":"SessionStart","tool_name":"Bash","tool_input":{}}`
+	_, err := parseClaudeCodeInput(strings.NewReader(input), testLogger())
+	if err == nil || !strings.Contains(err.Error(), "unsupported Claude Code hook_event_name") {
+		t.Fatalf("expected unsupported-event error, got %v", err)
+	}
+}
+
+func TestExtractToolResponseIncludesNestedStringsDeterministically(t *testing.T) {
+	response := map[string]any{
+		"metadata": "tail",
+		"content": []any{
+			map[string]any{"text": "nested secret"},
+			"second",
+		},
+		"stdout": "first",
+	}
+	if got, want := extractToolResponse(response), "first\nnested secret\nsecond\ntail"; got != want {
+		t.Fatalf("response = %q, want %q", got, want)
+	}
+}
+
 func TestParseClaudeCodeInput_MonitorWebSocketUsesNetworkPolicy(t *testing.T) {
 	input := `{
 		"hook_event_name":"PreToolUse",
@@ -149,10 +171,9 @@ func TestParseClineInput_Mappings(t *testing.T) {
 		{name: "access_mcp_resource", toolName: "access_mcp_resource", wantTool: "mcp", withParam: false},
 		{name: "ask_followup_question", toolName: "ask_followup_question", wantTool: "interact", withParam: false},
 		{name: "attempt_completion", toolName: "attempt_completion", wantTool: "interact", withParam: false},
-		{name: "new_task", toolName: "new_task", wantTool: "interact", withParam: false},
+		{name: "new_task", toolName: "new_task", wantTool: "agent", withParam: false},
 		{name: "fetch_instructions", toolName: "fetch_instructions", wantTool: "interact", withParam: false},
 		{name: "plan_mode_respond", toolName: "plan_mode_respond", wantTool: "interact", withParam: false},
-		{name: "default", toolName: "unknown", wantTool: "unknown", withParam: false},
 		{name: "post_tool_use", toolName: "read_file", wantTool: "read", usePost: true, withParam: true},
 	}
 
@@ -170,6 +191,7 @@ func TestParseClineInput_Mappings(t *testing.T) {
 				"taskId":       "task-1",
 			}
 			if tt.usePost {
+				payload["hookName"] = "PostToolUse"
 				payload["postToolUse"] = toolUse
 			} else {
 				payload["preToolUse"] = toolUse
@@ -194,6 +216,157 @@ func TestParseClineInput_Mappings(t *testing.T) {
 				t.Fatal("params is nil")
 			}
 		})
+	}
+}
+
+func TestParseClineInput_CurrentAndLegacyToolFields(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "current toolName field",
+			payload: `{"clineVersion":"3.17.0","hookName":"PreToolUse","taskId":"task-current","preToolUse":{"toolName":"execute_command","parameters":{"command":"pwd"}}}`,
+		},
+		{
+			name:    "compatibility tool field",
+			payload: `{"clineVersion":"1.0","hookName":"PreToolUse","taskId":"task-legacy","preToolUse":{"tool":"execute_command","parameters":{"command":"pwd"}}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := parseClineInput(strings.NewReader(test.payload), testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Tool != "exec" || result.HookEventName != "PreToolUse" || result.SessionID == "" {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestParseClineInput_CurrentCLIToolCallEnvelope(t *testing.T) {
+	payload := `{"clineVersion":"4.0.0","hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"run_commands","parameters":{"commands":"[\"pwd\",\"rm -rf /\"]"}},"tool_call":{"id":"call_123","name":"run_commands","input":{"commands":["pwd","rm -rf /"]}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "exec" || result.HookEventName != "PreToolUse" || result.ToolUseID != "call_123" {
+		t.Fatalf("result = %#v", result)
+	}
+	if got := result.Params["command"]; got != "pwd && rm -rf /" {
+		t.Fatalf("normalized command = %#v", got)
+	}
+}
+
+func TestParseClineInput_CurrentCLIToolResultEnvelope(t *testing.T) {
+	payload := `{"clineVersion":"4.0.0","hookName":"tool_result","taskId":"task-cli","postToolUse":{"toolName":"read_files","parameters":{"files":"[{\"path\":\"README.md\"}]"},"success":true},"tool_result":{"id":"call_123","name":"read_files","input":{"files":[{"path":"README.md"}]},"output":{"content":"credential-shaped output"}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "read" || result.HookEventName != "PostToolUse" || result.ToolUseID != "call_123" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Response != `{"content":"credential-shaped output"}` {
+		t.Fatalf("response = %q", result.Response)
+	}
+}
+
+func TestParseClineInput_CurrentCLIBatchedFilePaths(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"read_files","parameters":{}},"tool_call":{"id":"call_paths","name":"read_files","input":{"files":[{"path":"safe.txt"},{"path":".env"}]}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(result.PolicyPaths, "\x00"), "safe.txt\x00.env"; got != want {
+		t.Fatalf("policy paths = %#v, want %#v", result.PolicyPaths, want)
+	}
+}
+
+func TestParseClineInput_CurrentCLIApplyPatchPaths(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"apply_patch","parameters":{}},"tool_call":{"id":"call_patch","name":"apply_patch","input":{"input":"*** Begin Patch\n*** Update File: safe.txt\n@@\n-old\n+new\n*** Delete File: .env\n*** End Patch"}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "write" || strings.Join(result.PolicyPaths, "\x00") != "safe.txt\x00.env" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestParseClineInput_CurrentCLIMultiURLFailsClosed(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"fetch_web_content","parameters":{}},"tool_call":{"id":"call_web","name":"fetch_web_content","input":{"requests":[{"url":"https://example.com","prompt":"read"},{"url":"https://other.example","prompt":"read"}]}}}`
+	if _, err := parseClineInput(strings.NewReader(payload), testLogger()); err == nil || !strings.Contains(err.Error(), "multiple URLs") {
+		t.Fatalf("expected multi-URL rejection, got %v", err)
+	}
+}
+
+func TestMapClineToolCurrentEditorAndCLISurfaces(t *testing.T) {
+	for name, want := range map[string]string{
+		"execute_command": "exec", "run_commands": "exec", "bash": "exec",
+		"read_file": "read", "read_files": "read", "search_codebase": "read",
+		"replace_in_file": "write", "editor": "write", "apply_patch": "write",
+		"fetch_web_content": "fetch", "spawn_agent": "agent", "ask_question": "interact",
+		"team_send_message": "message", "filesystem__delete_file": "mcp",
+	} {
+		if got := mapClineTool(name); got != want {
+			t.Fatalf("mapClineTool(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestParseClineInput_CurrentPostResult(t *testing.T) {
+	payload := `{"clineVersion":"3.17.0","hookName":"PostToolUse","taskId":"task-1","postToolUse":{"tool":"read_file","parameters":{"path":"README.md"},"result":"credential-shaped output","success":true,"durationMs":12}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.HookEventName != "PostToolUse" || result.Response != "credential-shaped output" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestParseClineInput_FailsClosedForUnknownPreTool(t *testing.T) {
+	payload := `{"clineVersion":"3.17.0","hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"future_remote_mutator","parameters":{}}}`
+	_, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err == nil || !strings.Contains(err.Error(), "unsupported Cline tool") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseClineInput_ValidatesHookIdentity(t *testing.T) {
+	for _, payload := range []string{
+		`{"hookName":"PostToolUse","taskId":"task-1","preToolUse":{"tool":"read_file","parameters":{}}}`,
+		`{"hookName":"PreToolUse","taskId":"task-1","postToolUse":{"tool":"read_file","parameters":{},"result":"ok"}}`,
+		`{"hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"read_file"},"postToolUse":{"tool":"read_file"}}`,
+		`{"hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"read_file","toolName":"execute_command"}}`,
+	} {
+		if _, err := parseClineInput(strings.NewReader(payload), testLogger()); err == nil {
+			t.Fatalf("expected identity error for %s", payload)
+		}
+	}
+}
+
+func TestParseClineInput_ClassifiesWrappedMCPTool(t *testing.T) {
+	payload := `{"clineVersion":"3.17.0","hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"use_mcp_tool","parameters":{"server_name":"filesystem","tool_name":"delete_file","arguments":{"path":"important.txt"}}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
+	}
+}
+
+func TestParseClineInput_ClassifiesCurrentCLIMCPToolName(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"filesystem__delete_file","parameters":{}},"tool_call":{"id":"call_mcp","name":"filesystem__delete_file","input":{"path":"important.txt"}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
 	}
 }
 

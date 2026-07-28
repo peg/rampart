@@ -258,8 +258,8 @@ func TestLoadLogEvents_AllFilesForDenyView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(latestOnly) != 1 || latestOnly[0].ID != "allow-sidecar" {
-		t.Fatalf("expected default latest-file view to read sidecar allow, got %#v", latestOnly)
+	if len(latestOnly) != 1 || latestOnly[0].ID != "deny-older-file" {
+		t.Fatalf("expected default latest-file view to prefer the managed chain over a legacy sidecar, got %#v", latestOnly)
 	}
 
 	allEvents, err := loadLogEvents(dir, false, true)

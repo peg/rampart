@@ -7,15 +7,19 @@
 
 $ErrorActionPreference = "Stop"
 
+# Ensure UTF-8 output for Unicode characters
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
 $RepoOwner = "peg"
 $RepoName = "rampart"
 $RampartDir = "$env:USERPROFILE\.rampart"
 $InstallDir = "$env:USERPROFILE\.rampart\bin"
+$RestartBackgroundServe = $false
 
 function Write-Status($msg) { Write-Host "  $msg" -ForegroundColor Cyan }
-function Write-Success($msg) { Write-Host "✓ $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "⚠ $msg" -ForegroundColor Yellow }
-function Write-Err($msg) { Write-Host "✗ $msg" -ForegroundColor Red }
+function Write-Success($msg) { Write-Host "[OK] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
+function Write-Err($msg) { Write-Host "[X] $msg" -ForegroundColor Red }
 
 function Test-IsUnauthorizedAccess($errorRecord) {
     $exception = $errorRecord.Exception
@@ -97,7 +101,7 @@ function Repair-LegacyRampartDirectoryAcl {
 }
 
 Write-Host ""
-Write-Host "🛡️  Rampart Installer" -ForegroundColor White
+Write-Host "Rampart Installer" -ForegroundColor White
 Write-Host ""
 
 try {
@@ -157,33 +161,57 @@ try {
     exit 1
 }
 
-# Verify checksum (goreleaser produces checksums.txt with each release)
+# Verify checksum (GoReleaser produces checksums.txt with each release). Fail
+# closed if integrity cannot be established; never install an unverified
+# security binary.
 Write-Status "Verifying checksum..."
 $checksumAsset = $release.assets | Where-Object { $_.name -eq "checksums.txt" }
-if ($checksumAsset) {
-    try {
-        $checksums = Invoke-RestMethod -Uri $checksumAsset.browser_download_url
-        $expectedLine = $checksums -split "`n" | Where-Object { $_ -match [regex]::Escape($assetName) }
-        if ($expectedLine) {
-            $expected = ($expectedLine -split "\s+")[0].Trim().ToLower()
-            $actual = (Get-FileHash $tempZip -Algorithm SHA256).Hash.ToLower()
-            if ($actual -ne $expected) {
-                Write-Err "Checksum mismatch!"
-                Write-Err "  Expected: $expected"
-                Write-Err "  Got:      $actual"
-                Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
-                exit 1
-            }
-            Write-Success "Checksum verified"
-        } else {
-            Write-Warn "Checksum for $assetName not found in checksums.txt (skipping verification)"
-        }
-    } catch {
-        Write-Warn "Could not verify checksum: $_"
-    }
-} else {
-    Write-Warn "No checksums.txt in release (skipping verification)"
+if (-not $checksumAsset) {
+    Write-Err "No checksums.txt asset in release; refusing to install an unverified binary."
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+    exit 1
 }
+
+try {
+    $checksums = Invoke-RestMethod -Uri $checksumAsset.browser_download_url
+} catch {
+    Write-Err "Could not download checksums.txt; refusing to install an unverified binary: $_"
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+
+$expectedLines = @($checksums -split "`r?`n" | Where-Object {
+    $fields = $_.Trim() -split "\s+"
+    $fields.Count -ge 2 -and $fields[$fields.Count - 1].TrimStart([char]'*') -ceq $assetName
+})
+if ($expectedLines.Count -ne 1) {
+    Write-Err "Expected exactly one checksum entry for $assetName; refusing unverified install."
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+
+$expected = (($expectedLines[0].Trim() -split "\s+")[0]).ToLowerInvariant()
+if ($expected -notmatch '^[0-9a-f]{64}$') {
+    Write-Err "Invalid SHA-256 checksum for $assetName; refusing unverified install."
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+
+try {
+    $actual = (Get-FileHash $tempZip -Algorithm SHA256).Hash.ToLowerInvariant()
+} catch {
+    Write-Err "Could not calculate SHA-256; refusing unverified install: $_"
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+if ($actual -ne $expected) {
+    Write-Err "Checksum mismatch!"
+    Write-Err "  Expected: $expected"
+    Write-Err "  Got:      $actual"
+    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+Write-Success "Checksum verified"
 
 # Create install directory (clear existing to avoid conflicts)
 if (Test-Path $InstallDir) {
@@ -191,10 +219,14 @@ if (Test-Path $InstallDir) {
     $rampartExe = "$InstallDir\rampart.exe"
     if (Test-Path $rampartExe) {
         Write-Status "Stopping any running Rampart processes..."
-        # Try graceful shutdown first
-        try {
-            & $rampartExe serve stop 2>$null
-        } catch { }
+        # Preserve the common background-service lifecycle across installer
+        # upgrades. A successful stop proves the PID file belonged to Rampart.
+        if (Test-Path "$RampartDir\serve.pid") {
+            try {
+                & $rampartExe serve stop 2>$null
+                if ($LASTEXITCODE -eq 0) { $RestartBackgroundServe = $true }
+            } catch { }
+        }
         # Kill any remaining processes
         Get-Process -Name "rampart" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 500  # Give Windows time to release file handles
@@ -281,6 +313,16 @@ try {
     Write-Warn "Installed but could not verify version"
 }
 
+if ($RestartBackgroundServe) {
+    Write-Status "Restarting the Rampart background server..."
+    & $rampartExe serve --background
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Rampart was upgraded, but its background server did not restart. Run: rampart serve --background"
+    } else {
+        Write-Success "Restarted Rampart background server"
+    }
+}
+
 # Offer one zero-configuration setup path for fresh installs and upgrades.
 Write-Host ""
 $setup = Read-Host "  Detect, protect, and verify supported AI agents now? [Y/n]"
@@ -290,7 +332,7 @@ if ($setup -eq "" -or $setup -match "^[Yy]") {
 
 # Done
 Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
+Write-Host "----------------------------------------------------" -ForegroundColor DarkGray
 Write-Success "Rampart installed successfully!"
 Write-Host ""
 Write-Host "  Get started:" -ForegroundColor White

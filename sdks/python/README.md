@@ -22,7 +22,7 @@ import rampart
 # Create a client (reads RAMPART_URL and RAMPART_TOKEN from environment)
 client = rampart.RampartClient()
 
-# Check if an exec command would be allowed
+# Preview whether an exec command would be allowed (does not consume stateful rules)
 decision = client.check_exec("rm -rf /")
 if not decision.allowed:
     print(f"Command blocked: {decision.message}")
@@ -63,7 +63,9 @@ def write_file(path: str, content: str) -> None:
     with open(path, 'w') as f:
         f.write(content)
 
-# Functions will automatically check policies before executing
+# Functions use the enforcement endpoint before executing. This records
+# call-count state and consumes matching once:true authorizations.
+# The built-in decorator client also fails closed if Rampart is unavailable.
 try:
     result = run_command("git status")
     print(result)
@@ -137,7 +139,7 @@ client = rampart.RampartClient(
     timeout=30.0,    # Request timeout in seconds
 )
 
-# Fail-closed mode (deny calls if server is unreachable)
+# Fail-closed mode (recommended for security boundaries)
 strict_client = rampart.RampartClient(fail_open=False)
 ```
 
@@ -148,13 +150,17 @@ strict_client = rampart.RampartClient(fail_open=False)
 #### Methods
 
 - `health() -> bool`: Check server health
-- `preflight(tool, params, agent=None, session=None) -> Decision`: Generic policy check
+- `preflight(tool, params, agent=None, session=None) -> Decision`: Preview a policy decision without consuming state
+- `enforce(tool, params, agent=None, session=None) -> Decision`: Authorize an actual invocation and consume stateful rules
 - `check_exec(command, agent=None, session=None, use_b64=False) -> Decision`: Check exec command
 - `check_read(path, agent=None, session=None) -> Decision`: Check file read
 - `check_write(path, content=None, agent=None, session=None) -> Decision`: Check file write  
 - `check_fetch(url, agent=None, session=None) -> Decision`: Check URL fetch
 
-All methods have async equivalents prefixed with `a` (e.g., `ahealth()`, `apreflight()`).
+All methods have async equivalents prefixed with `a` (for example,
+`ahealth()`, `apreflight()`, and `aenforce()`). The convenience `check_*`
+methods are previews; the decorators call `enforce`/`aenforce` because they sit
+on the actual execution boundary.
 
 ### Decision Object
 
@@ -162,7 +168,7 @@ All methods have async equivalents prefixed with `a` (e.g., `ahealth()`, `aprefl
 @dataclass
 class Decision:
     allowed: bool              # Whether the call is allowed
-    action: str               # Policy action: allow, deny, log, require_approval
+    action: str               # Policy action: allow, deny, watch, ask
     message: str              # Human-readable reason
     policies: List[str]       # Names of matched policies
     eval_duration_ms: float   # Evaluation time in milliseconds
@@ -190,6 +196,10 @@ class Decision:
 - `agent`: Agent identifier for policy context
 - `session`: Session identifier for policy context
 - `raise_on_deny`: Whether to raise exception on denial (default: True)
+
+When no custom client is supplied, decorators create a fail-closed client.
+Pass an explicitly configured client only if your application has made a
+deliberate availability-versus-enforcement choice.
 
 ## Examples
 

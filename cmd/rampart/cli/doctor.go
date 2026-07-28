@@ -14,7 +14,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -740,50 +739,6 @@ func doctorHermesPlugin(emit emitFn, serveURL string) (warnings int) {
 // doctorServer checks if rampart serve is running on defaultServePort.
 // Returns (issue count, serve URL for subsequent API checks).
 
-// checkPolicyVersionStamp reads the first line of a policy file looking for
-// "# rampart-policy-version: X.Y.Z". Returns a warning message if the stamp
-// version is older than the running binary, or "" if current/no stamp.
-func checkPolicyVersionStamp(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	if !scanner.Scan() {
-		return ""
-	}
-	line := scanner.Text()
-
-	const prefix = "# rampart-policy-version: "
-	if !strings.HasPrefix(line, prefix) {
-		// No stamp — policy predates version stamping (pre-v0.9.0).
-		// Don't warn: the user may have never run upgrade, or manually edited the file.
-		return ""
-	}
-
-	stampVer := strings.TrimSpace(line[len(prefix):])
-	if stampVer == build.Version || build.Version == "dev" || stampVer == "dev" {
-		return ""
-	}
-
-	// Normalize for comparison
-	stampNorm := stampVer
-	if !strings.HasPrefix(stampNorm, "v") {
-		stampNorm = "v" + stampNorm
-	}
-	binaryNorm := build.Version
-	if !strings.HasPrefix(binaryNorm, "v") {
-		binaryNorm = "v" + binaryNorm
-	}
-
-	if compareSemver(stampNorm, binaryNorm) < 0 {
-		return fmt.Sprintf("from %s, binary is %s", stampVer, build.Version)
-	}
-	return ""
-}
-
 func doctorServer(emit emitFn, protected []string) (int, string) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	serveURL := resolveServeURL("")
@@ -971,29 +926,21 @@ func doctorHooks(emit emitFn) int {
 		}
 	}
 
-	// Cline hooks — only check if ~/Documents/Cline/ exists
+	// Cline editor and CLI share the Documents hook root; the CLI also
+	// discovers ~/.cline/hooks and workspace roots. Validate owned content and
+	// activation rather than treating any directory entry as protection.
 	clineBaseDir := filepath.Join(home, "Documents", "Cline")
-	if _, err := os.Stat(clineBaseDir); err == nil {
-		clineDir := filepath.Join(clineBaseDir, "Hooks")
-		if entries, err := os.ReadDir(clineDir); err == nil {
-			hookCount := 0
-			for _, e := range entries {
-				if strings.HasPrefix(e.Name(), "rampart-") {
-					hookCount++
-				}
-			}
-			if hookCount > 0 {
-				emit("Hooks", "ok", fmt.Sprintf("Cline (%d hook scripts)", hookCount))
-			} else {
-				emit("Hooks", "fail",
-					fmt.Sprintf("Cline hook not installed (expected Rampart hook scripts in %s)", clineDir)+
-						hintSep+"rampart setup cline")
-				issues++
-			}
+	clineCLIBaseDir := filepath.Dir(clineCLIHooksDir(home))
+	_, clineBaseErr := os.Stat(clineBaseDir)
+	_, clineCLIBaseErr := os.Stat(clineCLIBaseDir)
+	clineBinary, _ := exec.LookPath("cline")
+	if clineBaseErr == nil || clineCLIBaseErr == nil || clineBinary != "" {
+		if clineHooksConfiguredForHome(home) {
+			emit("Hooks", "ok", "Cline (owned PreToolUse and PostToolUse hook files)")
 		} else {
 			emit("Hooks", "fail",
-				fmt.Sprintf("Cline hook not installed (expected Rampart hook scripts in %s)", clineDir)+
-					hintSep+"rampart setup cline")
+				fmt.Sprintf("Cline hook not installed or disabled (expected platform-native Rampart hook files in %s)", clineUserHooksDir(home))+
+					hintSep+"rampart setup cline && rampart verify cline")
 			issues++
 		}
 	}
@@ -2112,6 +2059,7 @@ type hermesDoctorConfig struct {
 type hermesPluginManifest struct {
 	Name          string   `yaml:"name"`
 	Version       string   `yaml:"version"`
+	Author        string   `yaml:"author"`
 	ProvidesHooks []string `yaml:"provides_hooks"`
 }
 
@@ -2322,7 +2270,10 @@ func hermesConfigString(config map[string]any, defaultValue string, keys ...stri
 }
 
 func hermesFailOpenTools(config map[string]any) []string {
-	defaultTools := []string{"read_file", "search_files", "browser_snapshot", "browser_get_images", "browser_vision", "vision_analyze"}
+	// The bundled plugin is fail-closed for every tool by default. Keep doctor
+	// aligned with the runtime so it never reports a fail-open exception that
+	// the operator did not explicitly configure.
+	var defaultTools []string
 	if config == nil {
 		return defaultTools
 	}

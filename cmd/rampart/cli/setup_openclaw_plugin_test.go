@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,127 @@ export const version = "1.0.0";
 `)
 	if got != "1.0.0" {
 		t.Fatalf("runtime version = %q, want 1.0.0", got)
+	}
+}
+
+func TestRemoveOpenClawNativePluginPreservesUnrelatedStateAndIsIdempotent(t *testing.T) {
+	stateDir := t.TempDir()
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"id":"rampart","name":"Rampart","author":"peg","repository":"https://github.com/peg/rampart"}`
+	if err := os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "index.js"), []byte("/** Rampart OpenClaw Plugin */\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherPlugin := filepath.Join(stateDir, "extensions", "other", "state.json")
+	if err := os.MkdirAll(filepath.Dir(otherPlugin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(otherPlugin, []byte(`{"memory":"keep"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	config := `{
+  "identity": {"name": "keep-me"},
+  "plugins": {
+    "allow": ["other", "rampart"],
+    "entries": {"other": {"enabled": true}, "rampart": {"enabled": true}},
+    "installs": {"other": {"source": "npm"}, "rampart": {"source": "path"}}
+  },
+  "tools": {"exec": {"ask": "off", "security": "allowlist"}}
+}`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := removeOpenClawNativePluginAt(stateDir, configPath)
+	if err != nil || !removed {
+		t.Fatalf("removeOpenClawNativePluginAt() = (%v, %v), want (true, nil)", removed, err)
+	}
+	if _, err := os.Stat(pluginDir); !os.IsNotExist(err) {
+		t.Fatalf("Rampart plugin directory still exists: %v", err)
+	}
+	if data, err := os.ReadFile(otherPlugin); err != nil || string(data) != `{"memory":"keep"}` {
+		t.Fatalf("unrelated plugin state changed: data=%q err=%v", data, err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	plugins := got["plugins"].(map[string]any)
+	for _, key := range []string{"entries", "installs"} {
+		records := plugins[key].(map[string]any)
+		if _, exists := records["rampart"]; exists {
+			t.Fatalf("plugins.%s.rampart was not removed: %#v", key, records)
+		}
+		if _, exists := records["other"]; !exists {
+			t.Fatalf("plugins.%s.other was removed: %#v", key, records)
+		}
+	}
+	allow := plugins["allow"].([]any)
+	if len(allow) != 1 || allow[0] != "other" {
+		t.Fatalf("plugins.allow = %#v, want [other]", allow)
+	}
+	execConfig := got["tools"].(map[string]any)["exec"].(map[string]any)
+	if execConfig["ask"] != "on-miss" || execConfig["security"] != "allowlist" {
+		t.Fatalf("tools.exec was not safely restored: %#v", execConfig)
+	}
+	if got["identity"].(map[string]any)["name"] != "keep-me" {
+		t.Fatalf("unrelated config changed: %#v", got)
+	}
+
+	afterFirst, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err = removeOpenClawNativePluginAt(stateDir, configPath)
+	if err != nil || removed {
+		t.Fatalf("second remove = (%v, %v), want (false, nil)", removed, err)
+	}
+	afterSecond, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterFirst, afterSecond) {
+		t.Fatal("idempotent removal rewrote OpenClaw config")
+	}
+}
+
+func TestRemoveOpenClawNativePluginRefusesUnmanagedDirectory(t *testing.T) {
+	stateDir := t.TempDir()
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(`{"id":"rampart","name":"Personal plugin"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "index.js"), []byte("user code"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	before := []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"ask":"off"}}}`)
+	if err := os.WriteFile(configPath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := removeOpenClawNativePluginAt(stateDir, configPath); err == nil || !strings.Contains(err.Error(), "refusing") {
+		t.Fatalf("expected ownership refusal, got %v", err)
+	}
+	if _, err := os.Stat(pluginDir); err != nil {
+		t.Fatalf("unmanaged directory was removed: %v", err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("config changed after refusal: data=%q err=%v", after, err)
 	}
 }
 

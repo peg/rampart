@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -40,6 +42,28 @@ type mockSink struct {
 	mu     sync.Mutex
 	events []audit.Event
 }
+
+type failingSink struct{}
+
+func (*failingSink) Write(audit.Event) error { return fmt.Errorf("disk unavailable") }
+func (*failingSink) Flush() error            { return nil }
+func (*failingSink) Close() error            { return nil }
+
+type failOnNthSink struct {
+	writes int
+	failAt int
+}
+
+func (s *failOnNthSink) Write(audit.Event) error {
+	s.writes++
+	if s.writes == s.failAt {
+		return fmt.Errorf("disk unavailable")
+	}
+	return nil
+}
+
+func (*failOnNthSink) Flush() error { return nil }
+func (*failOnNthSink) Close() error { return nil }
 
 func (m *mockSink) Write(event audit.Event) error {
 	m.mu.Lock()
@@ -151,6 +175,87 @@ func TestHandleToolsCall_Allow(t *testing.T) {
 	p.pendingMu.Unlock()
 }
 
+func TestHandleToolsCall_AuditFailureFailsClosedInEnforceMode(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &failingSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"}) + "\n"))
+	if err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("request with an unpersisted enforcement decision reached the child")
+	}
+	if !strings.Contains(parentOut.String(), "audit storage is unavailable") {
+		t.Fatalf("unexpected client response: %s", parentOut.String())
+	}
+}
+
+func TestHandleToolsCall_AuditFailureRemainsObservableInMonitorMode(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	p := NewProxy(eng, &failingSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("monitor"), WithLogger(silentLogger()))
+	p.parentOut = &bytes.Buffer{}
+
+	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"}) + "\n"))
+	if err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() == 0 {
+		t.Fatal("monitor mode should not block on audit storage failure")
+	}
+}
+
+func TestHandleToolsCall_WebhookResultAuditFailureFailsClosed(t *testing.T) {
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"decision":"allow"}`)
+	}))
+	defer webhook.Close()
+
+	eng := buildTestEngine(t, fmt.Sprintf(`
+version: "1"
+default_action: allow
+policies:
+  - name: webhook-check
+    match:
+      tool: exec
+    rules:
+      - action: webhook
+        when:
+          command_matches: ["deploy prod"]
+        webhook:
+          url: %q
+          timeout: 2s
+          fail_open: false
+`, webhook.URL))
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	sink := &failOnNthSink{failAt: 2}
+	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "execute_command", map[string]any{"command": "deploy prod"}) + "\n"))
+	if err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("request with an unpersisted webhook result reached the child")
+	}
+	if !strings.Contains(parentOut.String(), "audit storage is unavailable") {
+		t.Fatalf("unexpected client response: %s", parentOut.String())
+	}
+	if sink.writes != 2 {
+		t.Fatalf("audit writes = %d, want initial webhook and final result", sink.writes)
+	}
+}
+
 func TestHandleToolsCall_Deny(t *testing.T) {
 	eng := buildDenyAllEngine(t)
 	childIn := &bytes.Buffer{}
@@ -244,6 +349,34 @@ func TestHandleToolsCall_RequireApproval(t *testing.T) {
 	}
 	if parentOut.Len() != 0 {
 		t.Fatal("approved require_approval request should not return an error")
+	}
+}
+
+func TestHandleToolsCall_RequireApprovalWithoutResolverFailsImmediately(t *testing.T) {
+	eng := buildAskEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	line := []byte(makeToolsCallJSON(22, "exec_command", map[string]any{"command": "ls"}) + "\n")
+	if err := p.handleClientLine(line); err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("approval-required call must not reach the MCP server")
+	}
+
+	var response Response
+	if err := json.Unmarshal(bytes.TrimSpace(parentOut.Bytes()), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Error == nil {
+		t.Fatal("expected JSON-RPC error")
+	}
+	if !strings.Contains(response.Error.Message, "no approval resolver") {
+		t.Fatalf("unexpected error message: %s", response.Error.Message)
 	}
 }
 
@@ -385,6 +518,10 @@ func TestHandleChildLine_AllowedResponse(t *testing.T) {
 	if parentOut.Len() == 0 {
 		t.Fatal("expected response forwarded to parent")
 	}
+	events := sink.getEvents()
+	if len(events) != 1 || events[0].ToolCallID != "test-id" {
+		t.Fatalf("response audit correlation = %#v, want tool_call_id test-id", events)
+	}
 
 	// Pending call should be consumed
 	p.pendingMu.Lock()
@@ -392,6 +529,32 @@ func TestHandleChildLine_AllowedResponse(t *testing.T) {
 		t.Error("pending call should be consumed after response")
 	}
 	p.pendingMu.Unlock()
+}
+
+func TestHandleChildLine_AuditFailureBlocksResponseInEnforceMode(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &failingSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+	p.pendingCalls["1"] = pendingCall{
+		call: engine.ToolCall{
+			ID: "test-id", Agent: "mcp-client", Session: "mcp-proxy", Tool: "read_file",
+		},
+		request: map[string]any{"mcp_method": "tools/call", "mcp_tool": "read_file"},
+	}
+
+	respLine := []byte(makeResponseJSON(1, map[string]any{"content": "hello"}) + "\n")
+	if err := p.handleChildLine(respLine, parentOut); err != nil {
+		t.Fatalf("handleChildLine: %v", err)
+	}
+	var resp Response
+	if err := json.Unmarshal(bytes.TrimSpace(parentOut.Bytes()), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Error == nil || !strings.Contains(resp.Error.Message, "audit storage is unavailable") {
+		t.Fatalf("expected audit-storage denial, got %#v", resp.Error)
+	}
 }
 
 func TestHandleChildLine_DeniedResponse(t *testing.T) {

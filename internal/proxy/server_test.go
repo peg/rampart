@@ -31,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/signing"
@@ -96,6 +97,32 @@ type mockSink struct {
 	events []audit.Event
 }
 
+type failOnWriteSink struct {
+	mu     sync.Mutex
+	writes int
+	failAt int
+}
+
+func (s *failOnWriteSink) Write(audit.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writes++
+	if s.writes == s.failAt {
+		return fmt.Errorf("audit storage unavailable")
+	}
+	return nil
+}
+
+func (s *failOnWriteSink) Flush() error { return nil }
+
+func (s *failOnWriteSink) Close() error { return nil }
+
+func (s *failOnWriteSink) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writes
+}
+
 func (m *mockSink) Write(e audit.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -120,6 +147,14 @@ func (m *mockSink) lastEvent() audit.Event {
 		return audit.Event{}
 	}
 	return m.events[len(m.events)-1]
+}
+
+func (m *mockSink) snapshot() []audit.Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	events := make([]audit.Event, len(m.events))
+	copy(events, m.events)
+	return events
 }
 
 func setupTestServer(t *testing.T, configYAML, mode string) (*Server, string, *mockSink) {
@@ -380,8 +415,115 @@ func TestToolCall_AuditWritten(t *testing.T) {
 	assert.Equal(t, "allow", evt.Decision.Action)
 }
 
+func TestToolCall_AuditFailureFailsClosedInEnforceMode(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	failing := &failOnWriteSink{failAt: 1}
+	srv.sink = failing
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"git push"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "audit storage is unavailable")
+	assert.Equal(t, 1, failing.count())
+}
+
+func TestToolCall_AuditFailureDoesNotBlockMonitorMode(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "monitor")
+	failing := &failOnWriteSink{failAt: 1}
+	srv.sink = failing
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"git push"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "allow", response["decision"])
+	assert.Equal(t, 1, failing.count())
+}
+
+func TestToolCall_AutoApprovalAuditFailureFailsClosed(t *testing.T) {
+	srv, token, _ := setupTestServer(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: approve-deploy
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches: ["deploy prod"]
+`, "enforce")
+	failing := &failOnWriteSink{failAt: 2}
+	srv.sink = failing
+	srv.approvals.AutoApproveRun("approved-run", time.Minute)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","run_id":"approved-run","params":{"command":"deploy prod"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "audit storage is unavailable")
+	assert.Equal(t, 2, failing.count(), "initial ask and final auto-allow decisions should both be attempted")
+}
+
+func TestToolCall_AutoApprovalStillEvaluatesResponse(t *testing.T) {
+	srv, token, sink := setupTestServer(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: approve-deploy
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches: ["deploy prod"]
+  - name: block-credential-leaks
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          response_matches: ["AKIA[0-9A-Z]{16}"]
+`, "enforce")
+	srv.approvals.AutoApproveRun("approved-run", time.Minute)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(
+		`{"agent":"main","session":"s1","run_id":"approved-run","params":{"command":"deploy prod"},"response":"leaked AKIA1234567890ABCDEF"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "deny", response["decision"])
+	assert.Equal(t, redactedResponse, response["response"])
+
+	events := sink.snapshot()
+	require.Len(t, events, 3, "initial ask, auto-allow, and response decisions must all be audited")
+	assert.Equal(t, "allow", events[1].Decision.Action)
+	assert.Equal(t, "deny", events[2].Decision.Action)
+	assert.Equal(t, events[1].ID, events[2].Request["request_audit_id"])
+}
+
 func TestToolCall_ResponseDeniedAndRedacted(t *testing.T) {
-	srv, token, _ := setupTestServer(t, responsePolicyYAML, "enforce")
+	srv, token, sink := setupTestServer(t, responsePolicyYAML, "enforce")
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
@@ -394,10 +536,19 @@ func TestToolCall_ResponseDeniedAndRedacted(t *testing.T) {
 	assert.Equal(t, "Sensitive credential detected in response", data["message"])
 	assert.Equal(t, redactedResponse, data["response"])
 	assert.Equal(t, "block-credential-leaks", data["policy"])
+	require.Equal(t, 2, sink.count())
+	events := sink.snapshot()
+	responseEvent := events[1]
+	assert.Equal(t, "response", responseEvent.Request["rampart_phase"])
+	assert.Equal(t, len("leaked AKIA1234567890ABCDEF"), responseEvent.Request["response_bytes"])
+	assert.Equal(t, events[0].ID, responseEvent.Request["request_audit_id"])
+	assert.Equal(t, "deny", responseEvent.Decision.Action)
+	require.NotNil(t, responseEvent.Response)
+	assert.Contains(t, responseEvent.Response.Flags, "response-redacted")
 }
 
 func TestToolCall_ResponseAllowed(t *testing.T) {
-	srv, token, _ := setupTestServer(t, responsePolicyYAML, "enforce")
+	srv, token, sink := setupTestServer(t, responsePolicyYAML, "enforce")
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
@@ -408,6 +559,52 @@ func TestToolCall_ResponseAllowed(t *testing.T) {
 	data := decodeBody(t, resp)
 	assert.Equal(t, "allow", data["decision"])
 	assert.Equal(t, "all clear", data["response"])
+	require.Equal(t, 2, sink.count())
+	events := sink.snapshot()
+	responseEvent := events[1]
+	assert.Equal(t, "response", responseEvent.Request["rampart_phase"])
+	assert.Equal(t, len("all clear"), responseEvent.Request["response_bytes"])
+	assert.Equal(t, events[0].ID, responseEvent.Request["request_audit_id"])
+	assert.Equal(t, "allow", responseEvent.Decision.Action)
+	require.NotNil(t, responseEvent.Response)
+	assert.Equal(t, []string{"response-evaluated"}, responseEvent.Response.Flags)
+}
+
+func TestToolCall_ResponseAuditFailureFailsClosedInEnforceMode(t *testing.T) {
+	srv, token, _ := setupTestServer(t, responsePolicyYAML, "enforce")
+	failing := &failOnWriteSink{failAt: 2}
+	srv.sink = failing
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"echo"},"response":"all clear"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "audit storage is unavailable")
+	assert.Equal(t, 2, failing.count())
+}
+
+func TestToolCall_ResponseAuditFailureDoesNotBlockMonitorMode(t *testing.T) {
+	srv, token, _ := setupTestServer(t, responsePolicyYAML, "monitor")
+	failing := &failOnWriteSink{failAt: 2}
+	srv.sink = failing
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"echo"},"response":"leaked AKIA1234567890ABCDEF"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "deny", response["decision"])
+	assert.Equal(t, redactedResponse, response["response"])
+	assert.Equal(t, 2, failing.count())
 }
 
 func TestServerTimeouts(t *testing.T) {
@@ -595,6 +792,31 @@ func TestResolveApproval_NoSigFallsThroughToBearerAuth(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code, "Bearer token should still work without sig")
+}
+
+func TestResolveApproval_RejectsUnsupportedAutomaticPersistence(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"))
+	handler := srv.handler()
+
+	pending, err := srv.approvals.Create(engine.ToolCall{
+		Tool:  "mcp.custom",
+		Input: map[string]any{"target": "production"},
+	}, engine.Decision{Action: engine.ActionAsk})
+	require.NoError(t, err)
+
+	body := `{"approved":true,"resolved_by":"operator","persist":true}`
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Contains(t, rr.Body.String(), "explicit policy")
+	unchanged, ok := srv.approvals.Get(pending.ID)
+	require.True(t, ok)
+	assert.Equal(t, approval.StatusPending, unchanged.Status, "rejected persistence must not consume the pending approval")
 }
 
 func TestResolveURLBaseEmptyAddr(t *testing.T) {
@@ -939,7 +1161,7 @@ policies:
         - exec
     rules:
       - when:
-          command_matches: ['curl -fsS http://100.94.29.8:8989/api/v3/system/status']
+          command_matches: ['curl -fsS http://192.0.2.10:8989/api/v3/system/status']
         action: allow
         message: User allowed (always)
 `), 0o644))
@@ -962,7 +1184,7 @@ policies:
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
-	body := `{"agent":"main","session":"discord/direct/test","params":{"command":"curl -fsS http://100.94.29.8:8989/api/v3/system/status"}}`
+	body := `{"agent":"main","session":"discord/direct/test","params":{"command":"curl -fsS http://192.0.2.10:8989/api/v3/system/status"}}`
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/tool/exec", bytes.NewBufferString(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -1505,4 +1727,24 @@ policies: []`
 	second := runGroups[1].(map[string]any)["run_id"].(string)
 	assert.Equal(t, "run-B", first, "group created first should sort first")
 	assert.Equal(t, "run-A", second)
+}
+
+func TestNotificationActionMatchesApprovalAliases(t *testing.T) {
+	for _, configured := range []string{"ask", "require_approval"} {
+		for _, actual := range []string{"ask", "require_approval"} {
+			if !notificationActionMatches(configured, actual) {
+				t.Errorf("notificationActionMatches(%q, %q) = false, want true", configured, actual)
+			}
+		}
+	}
+	if notificationActionMatches("deny", "ask") {
+		t.Fatal("deny notification filter must not match ask")
+	}
+	for _, configured := range []string{"watch", "log"} {
+		for _, actual := range []string{"watch", "log"} {
+			if !notificationActionMatches(configured, actual) {
+				t.Errorf("notificationActionMatches(%q, %q) = false, want true", configured, actual)
+			}
+		}
+	}
 }

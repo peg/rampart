@@ -532,11 +532,7 @@ func quickstartHooksConfigured(env string) bool {
 		}
 		return hasRampartHook(settings)
 	case "cline":
-		pre := filepath.Join(home, "Documents", "Cline", "Hooks", "PreToolUse", "rampart-policy")
-		post := filepath.Join(home, "Documents", "Cline", "Hooks", "PostToolUse", "rampart-audit")
-		_, preErr := os.Stat(pre)
-		_, postErr := os.Stat(post)
-		return preErr == nil && postErr == nil
+		return clineHooksConfiguredForHome(home)
 	case "codex":
 		return codexHooksConfiguredForHome(home)
 	default:

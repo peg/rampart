@@ -259,9 +259,9 @@ func patternForCall(call engine.ToolCall) string {
 // Enabled, Source, Webhook, Ask, etc). Same pattern as marshalCleanYAML
 // in persist.go.
 type policyEntry struct {
-	Name  string        `yaml:"name"`
-	Match policyMatch   `yaml:"match"`
-	Rules []policyRule  `yaml:"rules"`
+	Name  string       `yaml:"name"`
+	Match policyMatch  `yaml:"match"`
+	Rules []policyRule `yaml:"rules"`
 }
 
 type policyMatch struct {

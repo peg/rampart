@@ -4,7 +4,6 @@
 package proxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -21,7 +20,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req toolRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
 		return
 	}
@@ -84,17 +83,6 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			Message: "policy engine unavailable; refusing tool call",
 		}
 	} else {
-		// Count every evaluated PreToolUse event regardless of policy outcome.
-		if err := s.engine.IncrementCallCount(call.Tool, call.Timestamp); err != nil {
-			s.logger.Error("proxy: call counter unavailable; failing closed", "tool", call.Tool, "error", err)
-			decision = engine.Decision{
-				Action:  engine.ActionDeny,
-				Message: "call counter capacity unavailable; refusing tool call",
-			}
-			s.writeAudit(req, toolName, decision)
-			writeError(w, http.StatusServiceUnavailable, "call counter capacity unavailable; refusing tool call")
-			return
-		}
 		// Per-agent tokens always default to deny for unmatched calls.
 		// If a policy filter is set, only that profile's policies are evaluated.
 		evalOpts := engine.EvalOptions{}
@@ -104,7 +92,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 				evalOpts.PolicyFilter = identity.Policy
 			}
 		}
-		decision = s.engine.EvaluateAndConsume(call, evalOpts)
+		decision = s.engine.Enforce(call, evalOpts)
 		// Warn when policy filter matched no policies — helps debug silent denies.
 		if evalOpts.PolicyFilter != "" && decision.Message == "no matching policy; using default action" {
 			s.logger.Warn("proxy: per-agent token policy filter matched no policies — all calls denied",
@@ -123,7 +111,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		SetUptime(time.Since(s.startedAt))
 	}
 
-	auditID := s.writeAudit(req, toolName, decision)
+	auditID, auditErr := s.writeAudit(req, toolName, decision)
+	if auditErr != nil && s.mode == "enforce" {
+		writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool call")
+		return
+	}
 
 	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
 	resp := map[string]any{
@@ -156,14 +148,26 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		resp["decision"] = webhookDecision.Action.String()
 		resp["message"] = webhookDecision.Message
 
-		s.writeAudit(req, toolName, webhookDecision)
+		webhookAuditID, err := s.writeAudit(req, toolName, webhookDecision)
+		if err != nil && s.mode == "enforce" {
+			writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool call")
+			return
+		}
+		if webhookAuditID != "" {
+			auditID = webhookAuditID
+		}
 
 		if webhookDecision.Action == engine.ActionDeny {
 			writeJSON(w, http.StatusForbidden, resp)
 			return
 		}
 
-		if blocked := s.applyResponseEvaluation(call, req.Response, resp); blocked {
+		blocked, responseAuditErr := s.evaluateAndAuditResponse(req, call, toolName, resp, auditID)
+		if responseAuditErr != nil && s.mode == "enforce" {
+			writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool response")
+			return
+		}
+		if blocked {
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
@@ -216,7 +220,20 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			resp["decision"] = decision.Action.String()
 			resp["message"] = decision.Message
 			resp["policy"] = "auto-approved"
-			s.writeAudit(req, toolName, decision)
+			finalAuditID, err := s.writeAudit(req, toolName, decision)
+			if err != nil && s.mode == "enforce" {
+				writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool call")
+				return
+			}
+			blocked, responseAuditErr := s.evaluateAndAuditResponse(req, call, toolName, resp, finalAuditID)
+			if responseAuditErr != nil && s.mode == "enforce" {
+				writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool response")
+				return
+			}
+			if blocked {
+				writeJSON(w, http.StatusOK, resp)
+				return
+			}
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
@@ -247,7 +264,12 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if blocked := s.applyResponseEvaluation(call, req.Response, resp); blocked {
+	blocked, responseAuditErr := s.evaluateAndAuditResponse(req, call, toolName, resp, auditID)
+	if responseAuditErr != nil && s.mode == "enforce" {
+		writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool response")
+		return
+	}
+	if blocked {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -255,19 +277,34 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) evaluateAndAuditResponse(
+	req toolRequest,
+	call engine.ToolCall,
+	toolName string,
+	resp map[string]any,
+	requestAuditID string,
+) (bool, error) {
+	blocked, decision := s.applyResponseEvaluation(call, req.Response, resp)
+	if decision == nil {
+		return blocked, nil
+	}
+	_, err := s.writeResponseAudit(req, toolName, *decision, req.Response, requestAuditID)
+	return blocked, err
+}
+
 func (s *Server) applyResponseEvaluation(
 	call engine.ToolCall,
 	output string,
 	resp map[string]any,
-) bool {
-	if output == "" || s.mode == "disabled" {
-		return false
+) (bool, *engine.Decision) {
+	if output == "" || s.mode == "disabled" || s.engine == nil {
+		return false, nil
 	}
 
 	resp["response"] = output
 	result := s.engine.EvaluateResponse(call, output)
 	if result.Action != engine.ActionDeny {
-		return false
+		return false, &result
 	}
 
 	resp["decision"] = result.Action.String()
@@ -278,12 +315,46 @@ func (s *Server) applyResponseEvaluation(
 		resp["policy"] = result.MatchedPolicies[0]
 	}
 
-	return true
+	return true, &result
 }
 
-func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.Decision) string {
+func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.Decision) (string, error) {
+	return s.writeAuditRecord(req, toolName, decision, req.Params, nil)
+}
+
+func (s *Server) writeResponseAudit(
+	req toolRequest,
+	toolName string,
+	decision engine.Decision,
+	output string,
+	requestAuditID string,
+) (string, error) {
+	request := make(map[string]any, len(req.Params)+3)
+	for key, value := range req.Params {
+		request[key] = value
+	}
+	request["rampart_phase"] = "response"
+	request["response_bytes"] = len(output)
+	if requestAuditID != "" {
+		request["request_audit_id"] = requestAuditID
+	}
+
+	flags := []string{"response-evaluated"}
+	if decision.Action == engine.ActionDeny {
+		flags = append(flags, "response-redacted")
+	}
+	return s.writeAuditRecord(req, toolName, decision, request, &audit.ToolResponse{Flags: flags})
+}
+
+func (s *Server) writeAuditRecord(
+	req toolRequest,
+	toolName string,
+	decision engine.Decision,
+	request map[string]any,
+	response *audit.ToolResponse,
+) (string, error) {
 	if s.sink == nil {
-		return ""
+		return "", nil
 	}
 
 	eventID := audit.NewEventID()
@@ -296,7 +367,7 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 		ToolCallID:    req.ToolCallID,
 		ApprovalOwner: req.hostedApprovalOwnerMap(),
 		Tool:          toolName,
-		Request:       req.Params,
+		Request:       request,
 		Decision: audit.EventDecision{
 			Action:          decision.Action.String(),
 			MatchedPolicies: decision.MatchedPolicies,
@@ -304,11 +375,12 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 			Message:         decision.Message,
 			Suggestions:     decision.Suggestions,
 		},
+		Response: response,
 	}
 
 	if err := s.sink.Write(event); err != nil {
 		s.logger.Error("proxy: audit write failed", "error", err)
-		return ""
+		return "", fmt.Errorf("write audit event: %w", err)
 	}
 	s.broadcastSSE(map[string]any{"type": "audit", "event": event})
 
@@ -322,14 +394,14 @@ func (s *Server) writeAudit(req toolRequest, toolName string, decision engine.De
 			s.shouldNotify(actionStr) {
 			call := engine.ToolCall{
 				Tool:      toolName,
-				Params:    req.Params,
+				Params:    request,
 				Agent:     req.Agent,
 				Timestamp: time.Now().UTC(),
 			}
 			go s.sendWebhook(call, decision)
 		}
 	}
-	return eventID
+	return eventID, nil
 }
 
 func (s *Server) hostedApprovalDescriptor(req toolRequest, decision engine.Decision) map[string]any {
@@ -361,11 +433,23 @@ func (s *Server) shouldNotify(actionStr string) bool {
 		return actionStr == "deny" || actionStr == "require_approval" || actionStr == "ask"
 	}
 	for _, on := range s.notifyConfig.On {
-		if on == actionStr {
+		if notificationActionMatches(on, actionStr) {
 			return true
 		}
 	}
 	return false
+}
+
+func notificationActionMatches(configured, actual string) bool {
+	if configured == actual {
+		return true
+	}
+	if (configured == "ask" || configured == "require_approval") &&
+		(actual == "ask" || actual == "require_approval") {
+		return true
+	}
+	return (configured == "watch" || configured == "log") &&
+		(actual == "watch" || actual == "log")
 }
 
 // handlePreflight evaluates a tool call against policies without executing it.
@@ -378,7 +462,7 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req toolRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
 		return
 	}
@@ -393,6 +477,10 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Verification && !identity.IsAdmin {
 		writeError(w, http.StatusForbidden, "verification mode requires the local admin token")
+		return
+	}
+	if req.Verification && req.Enforce {
+		writeError(w, http.StatusBadRequest, "verification and enforce modes cannot be combined")
 		return
 	}
 
@@ -417,11 +505,25 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 			evalOpts.PolicyFilter = identity.Policy
 		}
 	}
-	decision := s.engine.EvaluateWith(call, evalOpts)
+	decision := engine.Decision{}
+	if s.mode == "disabled" {
+		decision = engine.Decision{Action: engine.ActionAllow, Message: "policy evaluation disabled"}
+	} else if s.engine == nil {
+		decision = engine.Decision{Action: engine.ActionDeny, Message: "policy engine unavailable; refusing tool call"}
+	} else if req.Enforce {
+		decision = s.engine.Enforce(call, evalOpts)
+	} else {
+		decision = s.engine.EvaluateWith(call, evalOpts)
+	}
 	allowed := decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch
 	auditID := ""
 	if !req.Verification {
-		auditID = s.writeAudit(req, toolName, decision)
+		var auditErr error
+		auditID, auditErr = s.writeAudit(req, toolName, decision)
+		if auditErr != nil && req.Enforce && s.mode == "enforce" {
+			writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool call")
+			return
+		}
 	}
 
 	preflightResp := map[string]any{
@@ -430,6 +532,7 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		"message":          decision.Message,
 		"matched_policies": decision.MatchedPolicies,
 		"eval_duration_us": decision.EvalDuration.Microseconds(),
+		"enforced":         req.Enforce,
 	}
 	if auditID != "" {
 		preflightResp["audit_id"] = auditID
@@ -459,7 +562,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		Agent   string `json:"agent"`             // optional
 		Session string `json:"session,omitempty"` // optional; used for session_matches evaluation
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

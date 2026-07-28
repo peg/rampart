@@ -222,3 +222,25 @@ func TestExtractCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestNotificationActionMatchesCompatibilityAliases(t *testing.T) {
+	tests := []struct {
+		configured string
+		actual     string
+		want       bool
+	}{
+		{configured: "deny", actual: "deny", want: true},
+		{configured: " DENY ", actual: "deny", want: true},
+		{configured: "log", actual: "watch", want: true},
+		{configured: "watch", actual: "log", want: true},
+		{configured: "require_approval", actual: "ask", want: true},
+		{configured: "ask", actual: "require_approval", want: true},
+		{configured: "allow", actual: "deny", want: false},
+	}
+
+	for _, tc := range tests {
+		if got := notificationActionMatches(tc.configured, tc.actual); got != tc.want {
+			t.Errorf("notificationActionMatches(%q, %q) = %t, want %t", tc.configured, tc.actual, got, tc.want)
+		}
+	}
+}

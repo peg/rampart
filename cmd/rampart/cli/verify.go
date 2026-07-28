@@ -13,9 +13,11 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/audit"
 	"github.com/spf13/cobra"
 )
 
@@ -44,6 +46,24 @@ type verificationSummary struct {
 	Passed     int `json:"passed"`
 	Failed     int `json:"failed"`
 	Unverified int `json:"unverified"`
+}
+
+func latestAuditEvent(auditDir string) (audit.Event, error) {
+	files, err := listAuditFiles(auditDir)
+	if err != nil {
+		return audit.Event{}, err
+	}
+	files = preferManagedAuditFiles(files)
+	for i := len(files) - 1; i >= 0; i-- {
+		events, readErr := readAuditEvents(files[i])
+		if readErr != nil {
+			return audit.Event{}, readErr
+		}
+		if len(events) > 0 {
+			return events[len(events)-1], nil
+		}
+	}
+	return audit.Event{}, fmt.Errorf("audit record missing")
 }
 
 type verificationReport struct {
@@ -288,29 +308,62 @@ func verifyClineHooksInstalled() verificationCheck {
 			Hint: "Run `rampart setup cline`, then rerun `rampart verify cline`",
 		}
 	}
-	base := filepath.Join(home, "Documents", "Cline", "Hooks")
-	pre := filepath.Join(base, "PreToolUse", "rampart-policy")
-	post := filepath.Join(base, "PostToolUse", "rampart-audit")
-	if _, preErr := os.Stat(pre); preErr != nil {
-		return verificationCheck{
-			ID: "cline-hook-installation", Name: "Cline lifecycle hooks are installed",
-			Status: verificationFail, Expected: "PreToolUse and PostToolUse", Actual: "missing or incomplete",
-			Message: "Cline is not configured to invoke Rampart for both lifecycle events",
-			Hint:    "Run `rampart setup cline`, then rerun verification",
+	var firstIssue string
+	for _, hookDir := range clineKnownHookDirs(home) {
+		if err := validateClineHookPair(hookDir, runtime.GOOS); err == nil {
+			message := fmt.Sprintf("Rampart-managed Cline hooks are present at %s", hookDir)
+			if runtime.GOOS == "windows" {
+				message += "; Cline activates .ps1 hooks by file presence and requires PowerShell, but physical Windows host E2E remains pending"
+			} else {
+				message += "; both files are executable, but Cline's Hooks UI can still disable them"
+			}
+			return verificationCheck{
+				ID: "cline-hook-installation", Name: "Cline lifecycle hook files are valid",
+				Status: verificationPass, Expected: "direct Rampart-managed PreToolUse and PostToolUse files", Actual: hookDir,
+				Message: message,
+				Hint:    "Keep Cline hooks enabled. Cline CLI's legacy --yolo mode disables runtime hooks.",
+			}
+		} else if firstIssue == "" {
+			for _, event := range clineHookEvents {
+				if _, statErr := os.Lstat(clineHookPath(hookDir, event, runtime.GOOS)); statErr == nil {
+					firstIssue = err.Error()
+					break
+				}
+			}
 		}
 	}
-	if _, postErr := os.Stat(post); postErr != nil {
-		return verificationCheck{
-			ID: "cline-hook-installation", Name: "Cline lifecycle hooks are installed",
-			Status: verificationFail, Expected: "PreToolUse and PostToolUse", Actual: "missing or incomplete",
-			Message: "Cline is not configured to invoke Rampart for both lifecycle events",
-			Hint:    "Run `rampart setup cline`, then rerun verification",
+	if explicit := strings.TrimSpace(os.Getenv("CLINE_HOOKS_DIR")); explicit != "" {
+		if expanded, expandErr := expandClineHomePath(explicit, home); expandErr == nil {
+			expanded = filepath.Clean(expanded)
+			if err := validateClineHookPair(expanded, runtime.GOOS); err == nil {
+				return verificationCheck{
+					ID: "cline-hook-installation", Name: "Cline lifecycle hook files are valid",
+					Status: verificationUnverified, Expected: "hooks in a directory consumed by the current Cline host", Actual: expanded,
+					Message: "Rampart-managed hooks exist in CLINE_HOOKS_DIR, but current upstream Cline advertises this override without consuming it reliably in file-hook discovery",
+					Hint:    "Confirm a real Cline process invokes both hooks, or install in a standard user/workspace hook directory",
+				}
+			}
+		}
+	}
+	actual := "missing"
+	message := "No complete Rampart-managed Cline hook pair was found in Cline's current user, CLI, or workspace hook directories"
+	if firstIssue != "" {
+		actual = firstIssue
+		message = "Cline hook files exist but do not match the current owned, platform-native, enabled Rampart installation"
+	} else {
+		legacyBase := clineUserHooksDir(home)
+		preState, _ := inspectClineDestination(filepath.Join(legacyBase, "PreToolUse"), "PreToolUse")
+		postState, _ := inspectClineDestination(filepath.Join(legacyBase, "PostToolUse"), "PostToolUse")
+		if preState == clineDestinationManagedLegacyDir || postState == clineDestinationManagedLegacyDir {
+			actual = "legacy directory layout"
+			message = "Rampart's old nested Cline hook layout is present, but current Cline discovers direct hook files"
 		}
 	}
 	return verificationCheck{
-		ID: "cline-hook-installation", Name: "Cline lifecycle hooks are installed",
-		Status: verificationPass, Expected: "PreToolUse and PostToolUse", Actual: "configured",
-		Message: "Cline's global hook directory contains both Rampart lifecycle scripts",
+		ID: "cline-hook-installation", Name: "Cline lifecycle hook files are valid",
+		Status: verificationFail, Expected: "direct Rampart-managed PreToolUse and PostToolUse files", Actual: actual,
+		Message: message,
+		Hint:    "Run `rampart setup cline`, keep both hooks enabled in Cline, and do not use Cline CLI's legacy --yolo mode",
 	}
 }
 
@@ -325,7 +378,7 @@ func verifyNativeHookAdapter(ctx context.Context, target string) verificationChe
 		payload = `{"session_id":"rampart-verification","cwd":".","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"rampart-verification","tool_input":{"command":"rm -rf /"}}`
 	case "cline":
 		agent = "cline"
-		payload = `{"clineVersion":"3","hookName":"PreToolUse","taskId":"rampart-verification","preToolUse":{"toolName":"execute_command","parameters":{"command":"rm -rf /"}}}`
+		payload = `{"clineVersion":"4","hookName":"tool_call","taskId":"rampart-verification","preToolUse":{"toolName":"run_commands","parameters":{"commands":"[\"rm -rf /\"]"}},"tool_call":{"id":"rampart-verification","name":"run_commands","input":{"commands":["rm -rf /"]}}}`
 	default:
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationUnverified, Message: "unsupported adapter verifier"}
 	}
@@ -356,17 +409,11 @@ func verifyNativeHookAdapter(ctx context.Context, target string) verificationChe
 	if !denied {
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationFail, Expected: "structured deny", Actual: strings.TrimSpace(stdout.String()), Message: "The live Rampart hook adapter did not block the destructive canary"}
 	}
-	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
-	if len(auditMatches) != 1 {
-		return verificationCheck{ID: checkID, Name: checkName, Status: verificationFail, Expected: "deny audit", Actual: "audit record missing", Message: "The hook denied the canary but did not produce an audit record"}
-	}
-	auditData, err := os.ReadFile(auditMatches[0])
+	auditRecord, err := latestAuditEvent(auditDir)
 	if err != nil {
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationFail, Expected: "deny audit", Actual: "audit unreadable", Message: err.Error()}
 	}
-	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
-	var auditRecord map[string]any
-	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil || auditRecord["agent"] != agent {
+	if auditRecord.Agent != agent {
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationFail, Expected: "correlated deny audit", Actual: "correlation missing", Message: "The hook audit did not preserve host identity"}
 	}
 	return verificationCheck{ID: checkID, Name: checkName, Status: verificationPass, Expected: "structured deny and audit", Actual: "deny + audit", Message: "The live Rampart hook adapter blocked the destructive canary and recorded its decision"}
@@ -439,25 +486,14 @@ func verifyGeminiHookAdapter(ctx context.Context) verificationCheck {
 			Message: "The live Rampart hook adapter did not block the destructive canary",
 		}
 	}
-	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
-	if len(auditMatches) != 1 {
-		return verificationCheck{
-			ID: "gemini-native-deny", Name: "Gemini CLI native deny response works",
-			Status: verificationFail, Expected: "deny audit", Actual: "audit record missing",
-			Message: "The Gemini CLI hook denied the canary but did not produce an audit record",
-		}
-	}
-	auditData, err := os.ReadFile(auditMatches[0])
+	auditRecord, err := latestAuditEvent(auditDir)
 	if err != nil {
 		return verificationCheck{
 			ID: "gemini-native-deny", Name: "Gemini CLI native deny response works",
 			Status: verificationFail, Expected: "deny audit", Actual: "audit unreadable", Message: err.Error(),
 		}
 	}
-	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
-	var auditRecord map[string]any
-	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil ||
-		auditRecord["agent"] != "gemini-cli" || auditRecord["run_id"] != "rampart-verification" {
+	if auditRecord.Agent != "gemini-cli" || auditRecord.RunID != "rampart-verification" {
 		return verificationCheck{
 			ID: "gemini-native-deny", Name: "Gemini CLI native deny response works",
 			Status: verificationFail, Expected: "session-correlated deny audit", Actual: "correlation missing",
@@ -537,25 +573,14 @@ func verifyAntigravityHookAdapter(ctx context.Context) verificationCheck {
 			Message: "The live Rampart hook adapter did not block the destructive canary",
 		}
 	}
-	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
-	if len(auditMatches) != 1 {
-		return verificationCheck{
-			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
-			Status: verificationFail, Expected: "deny audit", Actual: "audit record missing",
-			Message: "The Antigravity hook denied the canary but did not produce an audit record",
-		}
-	}
-	auditData, err := os.ReadFile(auditMatches[0])
+	auditRecord, err := latestAuditEvent(auditDir)
 	if err != nil {
 		return verificationCheck{
 			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
 			Status: verificationFail, Expected: "deny audit", Actual: "audit unreadable", Message: err.Error(),
 		}
 	}
-	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
-	var auditRecord map[string]any
-	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil ||
-		auditRecord["agent"] != "antigravity" || auditRecord["run_id"] != "rampart-verification" {
+	if auditRecord.Agent != "antigravity" || auditRecord.RunID != "rampart-verification" {
 		return verificationCheck{
 			ID: "antigravity-native-deny", Name: "Antigravity native deny response works",
 			Status: verificationFail, Expected: "session-correlated deny audit", Actual: "correlation missing",
@@ -647,25 +672,14 @@ func verifyCopilotHookAdapter(ctx context.Context) verificationCheck {
 			Message: "The live adapter did not return both Copilot CLI and VS Code deny controls",
 		}
 	}
-	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
-	if len(auditMatches) != 1 {
-		return verificationCheck{
-			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
-			Status: verificationFail, Expected: "deny audit", Actual: "audit record missing",
-			Message: "The Copilot hook denied the canary but did not produce an audit record",
-		}
-	}
-	auditData, err := os.ReadFile(auditMatches[0])
+	auditRecord, err := latestAuditEvent(auditDir)
 	if err != nil {
 		return verificationCheck{
 			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
 			Status: verificationFail, Expected: "deny audit", Actual: "audit unreadable", Message: err.Error(),
 		}
 	}
-	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
-	var auditRecord map[string]any
-	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil ||
-		auditRecord["agent"] != "github-copilot" || auditRecord["run_id"] != "rampart-verification" {
+	if auditRecord.Agent != "github-copilot" || auditRecord.RunID != "rampart-verification" {
 		return verificationCheck{
 			ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
 			Status: verificationFail, Expected: "session-correlated deny audit", Actual: "correlation missing",
@@ -751,15 +765,7 @@ func verifyCodexHookAdapter(ctx context.Context) verificationCheck {
 			Message: "The live Rampart hook adapter did not block the destructive canary",
 		}
 	}
-	auditMatches, _ := filepath.Glob(filepath.Join(auditDir, "audit-hook-*.jsonl"))
-	if len(auditMatches) != 1 {
-		return verificationCheck{
-			ID: "codex-native-deny", Name: "Codex native deny response works",
-			Status: verificationFail, Expected: "correlated deny audit", Actual: "audit record missing",
-			Message: "The Codex hook denied the canary but did not produce its correlated audit record",
-		}
-	}
-	auditData, err := os.ReadFile(auditMatches[0])
+	auditRecord, err := latestAuditEvent(auditDir)
 	if err != nil {
 		return verificationCheck{
 			ID: "codex-native-deny", Name: "Codex native deny response works",
@@ -767,10 +773,7 @@ func verifyCodexHookAdapter(ctx context.Context) verificationCheck {
 			Message: err.Error(),
 		}
 	}
-	auditLines := bytes.Split(bytes.TrimSpace(auditData), []byte{'\n'})
-	var auditRecord map[string]any
-	if len(auditLines) == 0 || json.Unmarshal(auditLines[len(auditLines)-1], &auditRecord) != nil ||
-		auditRecord["agent"] != "codex" || auditRecord["tool_call_id"] != "rampart-verification" {
+	if auditRecord.Agent != "codex" || auditRecord.ToolCallID != "rampart-verification" {
 		return verificationCheck{
 			ID: "codex-native-deny", Name: "Codex native deny response works",
 			Status: verificationFail, Expected: "correlated deny audit", Actual: "correlation missing",

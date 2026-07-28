@@ -110,8 +110,6 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	reportCmd := newReportCmd(opts)
 	watchCmd := newWatchCmd(opts)
 	openClawCmd := newOpenClawCmd(opts)
-	// daemonCmd removed in v0.9 cleanup — use `rampart serve` instead
-	// daemonCmd := newDaemonCmd(opts)
 	approveCmd := newApproveCmd(opts)
 	denyCmd := newDenyCmd(opts)
 	pendingCmd := newPendingCmd(opts)
@@ -126,8 +124,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	inventoryCmd := newInventoryCmd(opts)
 	tokenCmd := newTokenShowCmd()
 	testCmd := newTestCmd(opts)
-	// benchCmd removed in v0.9 cleanup — use `go test -bench` instead
-	// benchCmd := newBenchCmd(opts)
+	benchCmd := newBenchCmd(opts)
 	quickstartCmd := newQuickstartCmd()
 	protectCmd := newProtectCmd(opts)
 	verifyCmd := newVerifyCmd()
@@ -148,7 +145,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 
 	policyCmd.GroupID = groupPolicy
 	testCmd.GroupID = groupPolicy
-	// benchCmd.GroupID = groupPolicy
+	benchCmd.GroupID = groupPolicy
 	watchCmd.GroupID = groupPolicy
 	allowCmd.GroupID = groupPolicy
 	blockRuleCmd.GroupID = groupPolicy
@@ -184,7 +181,6 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(watchCmd)
 	cmd.AddCommand(newConvertCmd())
 	cmd.AddCommand(openClawCmd)
-	// cmd.AddCommand(daemonCmd)
 	cmd.AddCommand(approveCmd)
 	cmd.AddCommand(denyCmd)
 	cmd.AddCommand(pendingCmd)
@@ -199,7 +195,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(inventoryCmd)
 	cmd.AddCommand(tokenCmd)
 	cmd.AddCommand(testCmd)
-	// cmd.AddCommand(benchCmd)
+	cmd.AddCommand(benchCmd)
 	cmd.AddCommand(quickstartCmd)
 	cmd.AddCommand(protectCmd)
 	cmd.AddCommand(verifyCmd)

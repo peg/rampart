@@ -24,7 +24,7 @@ If you do not want to keep exporting environment variables, Rampart can load per
 ```yaml
 url: http://127.0.0.1:9090
 # serve_url: http://127.0.0.1:9090   # compatibility alias for url
-# api: http://127.0.0.1:9091         # optional advanced override for daemon/split-topology API setups
+# api: http://127.0.0.1:9091         # optional advanced override for split control-service setups
 ```
 
 | Setting | Use it for | Notes |
@@ -261,7 +261,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log       # Renamed to action: watch in v0.9.x.
+      - action: watch
         when:
           command_matches: ["curl *"]
 ```
@@ -301,7 +301,9 @@ policies:
 How you'll see the approval prompt depends on your setup:
 
 - **Claude Code** — native permission dialog (the same one Claude uses for `ask`)
-- **MCP clients** — the proxy blocks until you approve via CLI or API
+- **Standalone MCP clients** — `ask` fails closed immediately because the stdio
+  proxy has no safely reachable approval resolver; use an explicit allow/deny
+  rule for now
 - **OpenClaw** — sends a chat message you can approve inline
 - **Webhooks** — sends a notification with a signed approve/deny link
 

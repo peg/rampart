@@ -175,17 +175,10 @@ func TestCreateShellShim_Coverage(t *testing.T) {
 	}
 }
 
-// --- formatDenyMessage / formatApprovalRequiredMessage (color.go) ---
+// --- formatDenyMessage (color.go) ---
 
 func TestFormatDenyMessage(t *testing.T) {
 	msg := formatDenyMessage("rm -rf /", "too dangerous", nil)
-	if msg == "" {
-		t.Error("expected non-empty message")
-	}
-}
-
-func TestFormatApprovalRequiredMessage(t *testing.T) {
-	msg := formatApprovalRequiredMessage("sudo reboot", "needs approval")
 	if msg == "" {
 		t.Error("expected non-empty message")
 	}

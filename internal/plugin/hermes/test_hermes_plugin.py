@@ -130,6 +130,27 @@ class HermesPluginTests(unittest.TestCase):
         self.assertEqual(config.endpoint_mode, "preflight")
         self.assertEqual(plugin._endpoint_url(config, "exec"), "http://example.invalid/base/v1/preflight/exec")
 
+    def test_policy_token_is_never_sent_to_non_loopback_service(self) -> None:
+        config = plugin.load_config({"serve_url": "https://policy.example.invalid"})
+        with mock.patch.object(plugin.urllib.request, "urlopen") as urlopen:
+            with self.assertRaises(plugin.RampartUnavailable):
+                plugin.post_to_rampart(config, "exec", {"params": {"command": "pwd"}})
+        urlopen.assert_not_called()
+
+        self.assertTrue(plugin._is_trusted_serve_url("http://127.0.0.1:9090"))
+        self.assertTrue(plugin._is_trusted_serve_url("http://[::1]:9090"))
+        self.assertFalse(plugin._is_trusted_serve_url("http://127.0.0.1@example.invalid:9090"))
+
+    def test_generic_metadata_does_not_serialize_nested_secrets(self) -> None:
+        _, params = plugin.normalize_tool_call(
+            "vision_analyze",
+            {"headers": {"Authorization": "Bearer plaintext-secret"}, "items": ["plaintext-secret"]},
+        )
+        encoded = json.dumps(params)
+        self.assertNotIn("plaintext-secret", encoded)
+        self.assertEqual(params["headers"], "<mapping keys=1>")
+        self.assertEqual(params["items"], "<sequence items=1>")
+
     def test_deny_decision_blocks(self) -> None:
         captured = {}
 
@@ -163,6 +184,7 @@ class HermesPluginTests(unittest.TestCase):
     def test_ask_decision_blocks_without_hidden_approval(self) -> None:
         def requester(config, rampart_tool, payload):
             self.assertEqual(config.endpoint_mode, "preflight")
+            self.assertIs(payload["enforce"], True)
             self.assertNotIn("openclaw_hosted", payload)
             self.assertNotIn("skip_pending_approval", payload)
             self.assertEqual(payload["tool_call_id"], "call-ask-1")
@@ -212,7 +234,53 @@ class HermesPluginTests(unittest.TestCase):
         self.assertEqual(result["action"], "block")
         self.assertIn("invalid authorization token", result["message"])
 
-    def test_unavailable_allows_configured_read_only_tool(self) -> None:
+    def test_unknown_tool_fails_closed_without_policy_request(self) -> None:
+        requester = mock.Mock(return_value={"decision": "allow"})
+
+        result = plugin.evaluate_pre_tool_call(
+            "future_mutating_tool",
+            {"target": "/tmp/unsafe"},
+            requester=requester,
+        )
+
+        requester.assert_not_called()
+        self.assertEqual(result["action"], "block")
+        self.assertIn("unsupported Hermes tool future_mutating_tool", result["message"])
+
+    def test_malformed_policy_responses_fail_closed(self) -> None:
+        for response in (
+            {},
+            {"decision": "future-decision"},
+            {"decision": "allow", "allowed": False},
+            ["allow"],
+        ):
+            with self.subTest(response=response):
+                result = plugin.evaluate_pre_tool_call(
+                    "terminal",
+                    {"command": "printf safe"},
+                    requester=mock.Mock(return_value=response),
+                )
+
+                self.assertEqual(result["action"], "block")
+
+    def test_registered_hook_converts_adapter_exception_to_block(self) -> None:
+        class Ctx:
+            def __init__(self):
+                self.hooks = {}
+
+            def register_hook(self, name, callback):
+                self.hooks[name] = callback
+
+        ctx = Ctx()
+        plugin.register(ctx)
+
+        with mock.patch.object(plugin, "evaluate_pre_tool_call", side_effect=ValueError("bad input")):
+            result = ctx.hooks["pre_tool_call"]("terminal", {"command": "printf safe"})
+
+        self.assertEqual(result["action"], "block")
+        self.assertIn("policy adapter error", result["message"])
+
+    def test_unavailable_blocks_read_by_default(self) -> None:
         def requester(config, rampart_tool, payload):
             raise plugin.RampartUnavailable("connection refused")
 
@@ -222,7 +290,38 @@ class HermesPluginTests(unittest.TestCase):
             requester=requester,
         )
 
+        self.assertEqual(result["action"], "block")
+        self.assertIn("unavailable", result["message"])
+
+    def test_unavailable_allows_explicitly_configured_read_only_tool(self) -> None:
+        def requester(config, rampart_tool, payload):
+            raise plugin.RampartUnavailable("connection refused")
+
+        result = plugin.evaluate_pre_tool_call(
+            "read_file",
+            {"path": "/tmp/a"},
+            config_overrides={"fail_open_tools": ["read_file"]},
+            requester=requester,
+        )
+
         self.assertIsNone(result)
+
+    def test_relative_file_path_uses_hermes_task_working_directory(self) -> None:
+        captured = {}
+
+        def requester(config, rampart_tool, payload):
+            captured["path"] = payload["params"]["path"]
+            return {"decision": "deny", "message": "fixture"}
+
+        with mock.patch.dict(os.environ, {"TERMINAL_CWD": "/tmp/hermes-workspace"}):
+            plugin.evaluate_pre_tool_call(
+                "read_file",
+                {"path": "../protected/credential.txt"},
+                task_id="task-cwd",
+                requester=requester,
+            )
+
+        self.assertEqual(captured["path"], str(Path("/tmp/protected/credential.txt").resolve()))
 
     def test_register_installs_pre_tool_call_hook(self) -> None:
         class Ctx:

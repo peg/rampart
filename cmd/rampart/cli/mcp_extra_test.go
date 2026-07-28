@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/peg/rampart/internal/audit"
 )
 
 func TestResolveMCPPolicyPath_ExistingFile(t *testing.T) {
@@ -61,38 +59,5 @@ func TestResolveTestPolicyPath_Fallback(t *testing.T) {
 	defer cleanup()
 	if got == "" {
 		t.Fatal("expected temp file path")
-	}
-}
-
-func TestAppendSink(t *testing.T) {
-	dir := t.TempDir()
-	f, err := os.CreateTemp(dir, "audit-*.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	sink := &appendSink{file: f}
-
-	event := audit.Event{
-		ID:   "test-1",
-		Tool: "exec",
-		Decision: audit.EventDecision{
-			Action:  "allow",
-			Message: "test",
-		},
-	}
-	if err := sink.Write(event); err != nil {
-		t.Fatal(err)
-	}
-	if err := sink.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if err := sink.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	data, _ := os.ReadFile(f.Name())
-	if len(data) == 0 {
-		t.Fatal("expected non-empty audit file")
 	}
 }

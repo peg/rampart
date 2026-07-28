@@ -1,10 +1,12 @@
 # Build
 /rampart
 /bin/
+/dist/
 *.exe
 
 # Go build/test cache
 .cache/
+*.test
 
 # Python cache
 __pycache__/
@@ -26,7 +28,6 @@ coverage.out
 
 # Runtime audit logs (top-level only, not internal/audit/)
 /audit/
-.cache/
 .wrangler/
 site/
 reddit-post.md
@@ -36,3 +37,5 @@ rampart-export-*.json
 # Preload library build artifacts (build from source with: cd preload && make)
 preload/librampart.so
 preload/librampart.dylib
+preload/librampart_test
+preload/spawn_probe

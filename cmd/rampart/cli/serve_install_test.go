@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,14 +64,37 @@ func TestGenerateSystemdUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/rampart serve --port 18275",
-		"Environment=RAMPART_TOKEN=tok456",
+		`ExecStart="/usr/local/bin/rampart" serve "--port" "18275"`,
+		`Environment="RAMPART_TOKEN=tok456"`,
 		"Restart=on-failure",
 		"WantedBy=default.target",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("unit missing %q\n%s", want, out)
 		}
+	}
+}
+
+func TestGenerateSystemdUnitQuotesPathsAndDoesNotHTMLEscape(t *testing.T) {
+	cfg := serviceConfig{
+		Binary: `/home/A & B/rampart`,
+		Args:   []string{"--config", "/home/A & B/policy\nname.yaml", `100%\done"`},
+		Token:  `token&100%"\value`,
+	}
+	out, err := generateSystemdUnit(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`ExecStart="/home/A & B/rampart" serve "--config" "/home/A & B/policy\nname.yaml" "100%%\\done\""`,
+		`Environment="RAMPART_TOKEN=token&100%%\"\\value"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("unit missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "&amp;") || strings.Contains(out, "&#") {
+		t.Fatalf("systemd unit was HTML-escaped:\n%s", out)
 	}
 }
 
@@ -143,6 +167,70 @@ func TestPersistAndReadToken(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestPrintServiceInstallSuccessRedactsTokenForNonInteractiveWriter(t *testing.T) {
+	const secret = "service-secret-token"
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&out)
+
+	printSuccess(cmd, secret, true, 9090, "/tmp/rampart.plist")
+	if strings.Contains(out.String(), secret) {
+		t.Fatalf("non-interactive service output leaked token: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "saved to ~/.rampart/token") {
+		t.Fatalf("non-interactive output omitted token location: %q", out.String())
+	}
+}
+
+func TestStableServiceBinaryPrefersVerifiedPathSymlink(t *testing.T) {
+	skipOnWindows(t, "serve install is not supported on Windows")
+	dir := t.TempDir()
+	versioned := filepath.Join(dir, "Cellar", "rampart", "1.4.0", "bin", "rampart")
+	stable := filepath.Join(dir, "bin", "rampart")
+	if err := os.MkdirAll(filepath.Dir(versioned), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(versioned, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(versioned, stable); err != nil {
+		t.Fatal(err)
+	}
+
+	originalLookPath := execLookPath
+	execLookPath = func(string) (string, error) { return stable, nil }
+	t.Cleanup(func() { execLookPath = originalLookPath })
+
+	if got := stableServiceBinary(versioned); got != stable {
+		t.Fatalf("stableServiceBinary() = %q, want verified symlink %q", got, stable)
+	}
+}
+
+func TestStableServiceBinaryRejectsDifferentPathBinary(t *testing.T) {
+	dir := t.TempDir()
+	current := filepath.Join(dir, "current", "rampart")
+	candidate := filepath.Join(dir, "bin", "rampart")
+	for _, path := range []string{current, candidate} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("same bytes are not the same installed file"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	originalLookPath := execLookPath
+	execLookPath = func(string) (string, error) { return candidate, nil }
+	t.Cleanup(func() { execLookPath = originalLookPath })
+
+	if got := stableServiceBinary(current); got != current {
+		t.Fatalf("stableServiceBinary() = %q, want current executable %q", got, current)
 	}
 }
 
@@ -293,6 +381,31 @@ func TestInstallDarwinRotatesTokenBetweenUnloadAndLoad(t *testing.T) {
 	}
 	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("service/token ordering:\n got: %q\nwant: %q", calls, want)
+	}
+}
+
+func TestInstallDarwinReportsLogDirectoryFailure(t *testing.T) {
+	skipOnWindows(t, "Unix service runner")
+	home := t.TempDir()
+	testSetHome(t, home)
+	blocker := filepath.Join(home, "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+	cfg := serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   "token",
+		LogPath: filepath.Join(blocker, "serve.log"),
+	}
+	cmd := &cobra.Command{}
+	err := installDarwin(cmd, cfg, true, false, defaultServePort, mockRunner(&calls))
+	if err == nil || !strings.Contains(err.Error(), "create service log directory") {
+		t.Fatalf("installDarwin error = %v, want log-directory error", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("service runner called after filesystem failure: %v", calls)
 	}
 }
 

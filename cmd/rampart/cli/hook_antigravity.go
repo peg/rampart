@@ -48,16 +48,24 @@ func parseAntigravityInput(reader io.Reader) (*hookParseResult, error) {
 	}
 
 	params := normalizeAntigravityParams(input.ToolCall.Args)
+	if tool == "mcp" {
+		tool = classifyNativeMCPTool(toolName, params)
+	}
 	result := &hookParseResult{
 		Tool:          tool,
 		Params:        params,
+		WorkDir:       firstNonEmptyString(input.WorkspacePaths),
 		Agent:         "antigravity",
 		RunID:         deriveRunID(input.ConversationID),
 		HookEventName: "PreToolUse",
 		SessionID:     input.ConversationID,
 	}
 	if tool == "write" {
-		result.PolicyPaths = collectAntigravityPaths(params)
+		policyPaths, err := collectAntigravityPaths(params)
+		if err != nil {
+			return nil, err
+		}
+		result.PolicyPaths = policyPaths
 		if len(result.PolicyPaths) > 0 {
 			params["path"] = result.PolicyPaths[0]
 			params["paths"] = append([]string(nil), result.PolicyPaths...)
@@ -69,7 +77,7 @@ func parseAntigravityInput(reader io.Reader) (*hookParseResult, error) {
 func mapAntigravityTool(toolName string) string {
 	name := strings.ToLower(strings.TrimSpace(toolName))
 	if strings.HasPrefix(name, "mcp_") || strings.HasPrefix(name, "mcp.") {
-		return "mcp"
+		return classifyNativeMCPTool(toolName, nil)
 	}
 	switch name {
 	case "run_command":
@@ -116,23 +124,29 @@ func normalizeAntigravityParams(input map[string]any) map[string]any {
 	return params
 }
 
-func collectAntigravityPaths(params map[string]any) []string {
+func collectAntigravityPaths(params map[string]any) ([]string, error) {
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
-	add := func(value string) {
+	add := func(value string) error {
 		value = strings.TrimSpace(value)
-		if value == "" || len(paths) >= maxCodexPatchPaths {
-			return
+		if value == "" {
+			return nil
 		}
 		if _, exists := seen[value]; exists {
-			return
+			return nil
+		}
+		if len(paths) >= maxCodexPatchPaths {
+			return fmt.Errorf("hook: Antigravity write touches more than %d paths; split it into smaller calls", maxCodexPatchPaths)
 		}
 		seen[value] = struct{}{}
 		paths = append(paths, value)
+		return nil
 	}
 	for _, key := range []string{"path", "AbsolutePath", "TargetFile", "FilePath", "filePath", "file_path", "Path"} {
 		if value, ok := params[key].(string); ok {
-			add(value)
+			if err := add(value); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, key := range []string{"paths", "TargetFiles", "Files"} {
@@ -140,16 +154,20 @@ func collectAntigravityPaths(params map[string]any) []string {
 		case []any:
 			for _, raw := range values {
 				if value, ok := raw.(string); ok {
-					add(value)
+					if err := add(value); err != nil {
+						return nil, err
+					}
 				}
 			}
 		case []string:
 			for _, value := range values {
-				add(value)
+				if err := add(value); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
-	return paths
+	return paths, nil
 }
 
 func outputAntigravityHookResult(writer io.Writer, decision hookDecisionType, reason string) error {
