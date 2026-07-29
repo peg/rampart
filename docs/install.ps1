@@ -223,12 +223,13 @@ function Split-WindowsCommandLineArguments($commandLine) {
     return $arguments.ToArray()
 }
 
-function Test-ManagedServeArguments($arguments) {
-    for ($index = 0; $index -lt $arguments.Count; $index++) {
-        $argument = "$($arguments[$index])"
+function Test-ManagedServeArguments($commandLine) {
+    $parsedArguments = @(Split-WindowsCommandLineArguments $commandLine)
+    for ($index = 0; $index -lt $parsedArguments.Count; $index++) {
+        $argument = "$($parsedArguments[$index])"
         if ($argument -eq "--config") {
             # --config is the only supported root flag with a separate value.
-            if ($index + 1 -ge $arguments.Count) { return $false }
+            if ($index + 1 -ge $parsedArguments.Count) { return $false }
             $index++
             continue
         }
@@ -276,8 +277,7 @@ function Test-ManagedServeProcess($process, $managedExe) {
         # Authenticate the same supported root-flag forms as Rampart itself.
         # This recognizes e.g. `rampart --config policy.yaml serve
         # --background` without accepting `serve` as an unrelated flag value.
-        $managedArguments = @(Split-WindowsCommandLineArguments $remainder)
-        return (Test-ManagedServeArguments $managedArguments)
+        return (Test-ManagedServeArguments $remainder)
     } catch {
         return $false
     }

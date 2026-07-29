@@ -161,8 +161,7 @@ try {
         @{ Input = 'doctor --output serve'; Want = $false }
     )
     foreach ($case in $managedCases) {
-        $parsed = @(Split-WindowsCommandLineArguments $case.Input)
-        $actual = Test-ManagedServeArguments $parsed
+        $actual = Test-ManagedServeArguments $case.Input
         Assert-True ($actual -eq $case.Want) "managed serve parser returned $actual for '$($case.Input)'"
     }
 

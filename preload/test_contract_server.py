@@ -37,7 +37,11 @@ class Handler(BaseHTTPRequestHandler):
             and payload.get("agent") == "preload-contract"
             and payload.get("session") == "preload-contract"
             and payload.get("enforce") is True
-            and command in {"/bin/true", "true"}
+            and command in {
+                "/bin/true",
+                "true",
+                "/bin/true rampart-debug-secret-canary",
+            }
         )
         if not valid_contract:
             self.send(400, b'{"error":"bad preload request contract"}')
