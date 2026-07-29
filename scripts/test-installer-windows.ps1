@@ -161,8 +161,13 @@ try {
         @{ Input = 'doctor --output serve'; Want = $false }
     )
     foreach ($case in $managedCases) {
+        $parsed = @(Split-WindowsCommandLineArguments $case.Input)
         $actual = Test-ManagedServeArguments $case.Input
-        Assert-True ($actual -eq $case.Want) "managed serve parser returned $actual for '$($case.Input)'"
+        $parsedSummary = ($parsed | ForEach-Object { "<$($_.GetType().FullName):$_>" }) -join ", "
+        Assert-True ($actual -eq $case.Want) (
+            "managed serve parser returned $actual for '$($case.Input)' " +
+            "(tokens=$($parsed.Count): $parsedSummary)"
+        )
     }
 
     $installerText = [System.IO.File]::ReadAllText($Installer)

@@ -220,7 +220,11 @@ function Split-WindowsCommandLineArguments($commandLine) {
         [void]$arguments.Add($value.ToString())
     }
 
-    return $arguments.ToArray()
+    # Emit one token at a time to keep the output shape stable across Windows
+    # PowerShell 5.1 and newer PowerShell hosts.
+    foreach ($argument in $arguments) {
+        Write-Output $argument
+    }
 }
 
 function Test-ManagedServeArguments($commandLine) {
