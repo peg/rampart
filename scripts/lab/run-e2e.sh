@@ -304,7 +304,11 @@ print(json.dumps({
 PY
 
 run_core() {
-  run_step go-test isolated bash -c 'cd "$1" && go test ./...' _ "$worktree"
+  # Never let a test that forgets to provide a fixture discover or control the
+  # lab host's live OpenClaw installation. Tests that exercise binary discovery
+  # explicitly replace this override with their own temporary executable.
+  run_step go-test isolated env RAMPART_OPENCLAW_BIN="${run_root}/missing-openclaw" \
+    bash -c 'cd "$1" && go test ./...' _ "$worktree"
   run_step go-vet isolated bash -c 'cd "$1" && go vet ./...' _ "$worktree"
   run_step go-build isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' _ "$worktree" "${artifact_dir}/rampart"
   run_step policy-standard isolated "${artifact_dir}/rampart" --config "${worktree}/policies/standard.yaml" policy check

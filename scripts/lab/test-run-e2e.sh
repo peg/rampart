@@ -66,6 +66,7 @@ grep -q 'exact 40-character hexadecimal commit SHA' "${tmp}/invalid.err"
 
 grep -q 'openclaw-container-acceptance.sh' "$runner"
 grep -q 'CGO_ENABLED=0 GOOS=linux GOARCH=' "$runner"
+grep -q 'run_step go-test isolated env RAMPART_OPENCLAW_BIN=' "$runner"
 if grep -Eq '\$\{controller_repo\}/(preload/test_preload\.sh|scripts/test-approval-flow\.sh|scripts/compat-hermes-latest\.py)' "$runner"; then
   echo "test-run-e2e: candidate harnesses must run from the detached worktree" >&2
   exit 1
