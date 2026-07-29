@@ -16,6 +16,7 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -49,6 +50,7 @@ type Server struct {
 	logger              *slog.Logger
 	resolveBaseURL      string
 	listenAddr          string
+	tlsEnabled          bool
 	signer              *signing.Signer
 	mu                  sync.Mutex
 	policyWriteMu       sync.Mutex
@@ -61,6 +63,8 @@ type Server struct {
 	lastReloadAPI       time.Time // Rate limiting for /v1/policy/reload
 	lastLearnAPI        time.Time // Rate limiting for /v1/rules/learn
 	stopCleanup         chan struct{}
+	startCleanupOnce    sync.Once
+	stopCleanupOnce     sync.Once
 	approvalPersistFile string
 }
 
@@ -108,6 +112,17 @@ func WithLogger(logger *slog.Logger) Option {
 func WithResolveBaseURL(url string) Option {
 	return func(s *Server) {
 		s.resolveBaseURL = strings.TrimSpace(url)
+	}
+}
+
+// WithTLS marks an externally created listener as TLS-protected. Serve cannot
+// reliably infer this from the net.Listener interface, so callers that wrap a
+// listener before passing it to Serve must set this option. It is used only for
+// generated approval URLs; TLS termination and verification remain the
+// listener's responsibility.
+func WithTLS(enabled bool) Option {
+	return func(s *Server) {
+		s.tlsEnabled = enabled
 	}
 }
 
@@ -167,7 +182,11 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 		}
 	}
 
+	s.mode = strings.ToLower(strings.TrimSpace(s.mode))
 	if s.mode == "" {
+		s.mode = defaultMode
+	} else if s.mode != "enforce" && s.mode != "monitor" && s.mode != "disabled" {
+		s.logger.Warn("proxy: invalid mode; defaulting to enforce", "mode", s.mode)
 		s.mode = defaultMode
 	}
 
@@ -185,11 +204,13 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 		// Write audit event so expired approvals appear in History as denied.
 		if s.sink != nil {
 			ev := audit.Event{
-				ID:        audit.NewEventID(),
-				Timestamp: time.Now().UTC(),
-				Agent:     req.Call.Agent,
-				Session:   req.Call.Session,
-				Tool:      req.Call.Tool,
+				ID:         audit.NewEventID(),
+				Timestamp:  time.Now().UTC(),
+				Agent:      req.Call.Agent,
+				Session:    req.Call.Session,
+				RunID:      req.Call.RunID,
+				ToolCallID: req.Call.ToolCallID,
+				Tool:       req.Call.Tool,
 				Request: map[string]any{
 					"action":  "approval_expired",
 					"tool":    req.Call.Tool,
@@ -222,29 +243,34 @@ func (s *Server) Token() string {
 	return s.token
 }
 
-// ListenAndServe starts serving HTTP requests at addr.
 // startExpiredRuleCleanup runs a background goroutine that periodically removes
 // expired temporal rules (--for) from policy files. Runs every 60 seconds.
 func (s *Server) startExpiredRuleCleanup() {
-	go func() {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				removed, err := s.engine.CleanExpired()
-				if err != nil {
-					s.logger.Error("proxy: expired rule cleanup failed", "error", err)
-				} else if removed > 0 {
-					s.logger.Info("proxy: expired rules cleaned", "removed", removed)
-				}
-			case <-s.stopCleanup:
-				return
-			}
+	s.startCleanupOnce.Do(func() {
+		if s.engine == nil {
+			return
 		}
-	}()
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					removed, err := s.engine.CleanExpired()
+					if err != nil {
+						s.logger.Error("proxy: expired rule cleanup failed", "error", err)
+					} else if removed > 0 {
+						s.logger.Info("proxy: expired rules cleaned", "removed", removed)
+					}
+				case <-s.stopCleanup:
+					return
+				}
+			}
+		}()
+	})
 }
 
+// ListenAndServe starts serving HTTP requests at addr.
 func (s *Server) ListenAndServe(addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -257,8 +283,12 @@ func (s *Server) ListenAndServe(addr string) error {
 	s.mu.Lock()
 	s.server = srv
 	s.mu.Unlock()
+	s.startExpiredRuleCleanup()
 
 	if err := srv.Serve(listener); err != nil {
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return fmt.Errorf("proxy: listen and serve: %w", err)
 	}
 	return nil
@@ -266,6 +296,7 @@ func (s *Server) ListenAndServe(addr string) error {
 
 // ListenAndServeTLS starts serving HTTPS requests at addr with the given TLS config.
 func (s *Server) ListenAndServeTLS(addr string, tlsCfg *tls.Config) error {
+	s.tlsEnabled = true
 	listener, err := tls.Listen("tcp", addr, tlsCfg)
 	if err != nil {
 		return fmt.Errorf("proxy: tls listen: %w", err)
@@ -277,8 +308,12 @@ func (s *Server) ListenAndServeTLS(addr string, tlsCfg *tls.Config) error {
 	s.mu.Lock()
 	s.server = srv
 	s.mu.Unlock()
+	s.startExpiredRuleCleanup()
 
 	if err := srv.Serve(listener); err != nil {
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return fmt.Errorf("proxy: tls serve: %w", err)
 	}
 	return nil
@@ -296,6 +331,9 @@ func (s *Server) Serve(listener net.Listener) error {
 	s.startExpiredRuleCleanup()
 
 	if err := srv.Serve(listener); err != nil {
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return fmt.Errorf("proxy: serve: %w", err)
 	}
 	return nil
@@ -320,28 +358,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	srv := s.server
 	s.mu.Unlock()
 
-	if srv == nil {
-		return nil
-	}
-
-	// Stop the expired rule cleanup goroutine.
-	select {
-	case <-s.stopCleanup:
-		// Already closed.
-	default:
-		close(s.stopCleanup)
-	}
+	// Stop background resources even when listen failed before the HTTP server
+	// was installed, and do so before waiting for active handlers to drain.
+	s.stopCleanupOnce.Do(func() { close(s.stopCleanup) })
 
 	// Close SSE connections first so they don't block server shutdown.
 	// Without this, long-lived SSE clients keep the server alive past the deadline.
 	s.sse.Close()
+	// Stop the approval store's background cleanup goroutine and unblock any
+	// watchExpiry goroutines waiting on pending approvals.
+	s.approvals.Close()
 
+	if srv == nil {
+		return nil
+	}
 	if err := srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("proxy: shutdown: %w", err)
 	}
-	// Stop the approval store's background cleanup goroutine and
-	// unblock any watchExpiry goroutines waiting on pending approvals.
-	s.approvals.Close()
 	return nil
 }
 
@@ -407,11 +440,14 @@ type toolRequest struct {
 	// state and atomically consumes a matching once:true allow.
 	Enforce bool `json:"enforce,omitempty"`
 
-	// Convenience fields: callers can pass "command" or "path" at the top level
-	// instead of nesting inside "params". These are promoted into Params by
-	// promoteTopLevelParams if Params doesn't already contain them.
+	// Convenience aliases may appear here or in Params/Input. prepareToolRequest
+	// rejects conflicting non-empty values, then writes one canonical value into
+	// the policy-visible maps.
 	Command string `json:"command,omitempty"`
 	Path    string `json:"path,omitempty"`
+	URL     string `json:"url,omitempty"`
+	WorkDir string `json:"workdir,omitempty"`
+	CWD     string `json:"cwd,omitempty"`
 
 	// Response is the tool's output for response-side policy evaluation.
 	// The caller executes the tool and submits the output here for scanning
@@ -529,6 +565,8 @@ type hostedApprovalResolveRequest struct {
 
 // bulkResolveRequest is the JSON body for POST /v1/approvals/bulk-resolve.
 type bulkResolveRequest struct {
+	Agent      string `json:"agent"`
+	Session    string `json:"session"`
 	RunID      string `json:"run_id"`
 	Action     string `json:"action"`      // "approve" or "deny"
 	ResolvedBy string `json:"resolved_by"` // e.g. "api", "cli"

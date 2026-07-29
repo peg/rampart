@@ -1,10 +1,13 @@
 # Rampart Preload Library
 
-A production-quality LD_PRELOAD interceptor library that provides universal agent protection by intercepting exec-family syscalls and consulting the Rampart policy server before execution.
+An optional native interposition library that asks Rampart before compatible
+dynamically linked processes call supported libc exec/spawn functions. It is a
+defense-in-depth fallback, not a universal or system-wide sandbox.
 
 ## Building
 
-The compiled library is not distributed in the repository. Build it from source:
+The compiled library is not included in GitHub release archives or the Homebrew
+package. Build it from the same Rampart source revision as your CLI:
 
 ```bash
 cd preload
@@ -22,13 +25,14 @@ sudo apt install build-essential libcurl4-openssl-dev
 brew install curl
 ```
 
-`rampart setup` runs `make install` automatically when it detects the preload integration mode.
+`rampart setup` does not compile native code. Run `make install` explicitly;
+the CLI will then find the library in `~/.rampart/lib/`.
 
 ## Overview
 
 The Rampart preload library (`librampart.so` / `librampart.dylib`) works by:
 
-1. Intercepting exec-family system calls (`execve`, `execvp`, `system`, `popen`, etc.)
+1. Intercepting supported libc entry points (`execve`, `execvp`, `system`, `popen`, etc.)
 2. Consulting the Rampart policy server via HTTP before allowing execution
 3. Applying the configured degraded behavior if the policy server is unreachable
 4. Providing comprehensive logging and debugging capabilities
@@ -99,7 +103,7 @@ export LD_PRELOAD="./librampart.so"
 export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token-here"
 
-# Run any command with protection
+# Run a compatible dynamically linked process tree
 python my_agent.py
 node agent.js
 ./my_binary
@@ -111,7 +115,7 @@ export DYLD_INSERT_LIBRARIES="./librampart.dylib"
 export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token-here"
 
-# Run any command with protection
+# Run a compatible dynamically linked process tree
 python my_agent.py
 ```
 
@@ -136,6 +140,11 @@ rampart preload --mode monitor -- risky_tool
 | `RAMPART_SESSION` | `preload-<pid>` | Session ID for tracking |
 | `RAMPART_DEBUG` | `0` | Debug logging to stderr (1=on, 0=off) |
 
+These values and the initial loader chain are snapshotted when the library is
+loaded. For APIs that accept an explicit child environment (`execve`,
+`execvpe`, and `posix_spawn*`), Rampart removes caller-supplied replacements
+for those control variables and passes the trusted snapshots to the child.
+
 ### Mode Behavior
 
 - **enforce**: Block denied commands, allow approved commands
@@ -146,7 +155,7 @@ rampart preload --mode monitor -- risky_tool
 
 The library intercepts these libc functions:
 
-- `execve(path, argv, envp)` — Primary exec syscall
+- `execve(path, argv, envp)` — Primary libc exec entry point
 - `execvp(file, argv)` — PATH-resolved exec
 - `execvpe(file, argv, envp)` — PATH-resolved with environment (Linux only)
 - `system(command)` — Shell command execution
@@ -158,7 +167,7 @@ The library intercepts these libc functions:
 
 ### Integration Tests
 
-Run the comprehensive test suite:
+Run the native-library test suite:
 
 ```bash
 # Run all tests
@@ -229,25 +238,18 @@ The library is optimized for minimal latency:
 - **Persistent HTTP keep-alive connection** — One connection per process, reused for all policy checks
 - **Manual JSON parsing** — No external JSON library dependencies
 - **Bounded degraded behavior** — Transport/5xx failures follow `RAMPART_FAIL_OPEN`; unsafe client/protocol failures deny in enforce mode
-- **Thread-safe** — Uses pthread mutex for curl handle protection
-
-**Target performance:**
-- < 1ms per policy check (Unix domain socket)
-- < 3ms per policy check (TCP to localhost)
-- < 0.01ms fail-open path (server unreachable)
+- **Thread/fork-safe transport state** — Uses a pthread mutex for the persistent curl handle and resets inherited connection state across `fork()` before the child performs policy checks
 
 ## Platform Support
 
 ### Linux ✅
-- **Coverage:** ~95% of dynamically-linked binaries
 - **Mechanism:** `LD_PRELOAD`
-- **Works with:** Most user-installed software, Python, Node.js, Go binaries
-- **Limitations:** Static binaries cannot be intercepted
+- **Works with:** compatible dynamically linked programs that call the intercepted libc symbols
+- **Limitations:** static binaries, direct syscalls, secure-execution contexts, and runtimes that bypass those symbols are not intercepted
 
 ### macOS ✅
-- **Coverage:** ~70-85% in typical developer environments
 - **Mechanism:** `DYLD_INSERT_LIBRARIES`
-- **Works with:** Homebrew packages, nvm/Node.js, pyenv/Python, Go binaries
+- **Works with:** compatible non-hardened user software that calls the intercepted libc symbols
 - **System Integrity Protection (SIP)** blocks system binaries but allows user software
 - **Limitations:** 
   - `/usr/bin/*` and `/System/*` binaries are protected
@@ -267,19 +269,19 @@ This library is designed to protect against **hallucinating/manipulated AI agent
 - AI agent executing `rm -rf /`
 - Malicious skills/plugins running credential theft commands
 - Unintended network exfiltration via `curl`/`wget`
-- Any exec call from the protected process tree
+- Calls through the supported interposed libc functions while the library remains loaded
 
 **What it does NOT catch:**
-- Agent explicitly unsetting `LD_PRELOAD` before exec (deliberate bypass)
-- Direct syscalls bypassing libc (requires assembly knowledge)
+- Direct syscalls or runtimes that bypass the interposed libc functions
 - Statically-linked binaries (no dynamic linker)
+- Secure-execution/SIP/hardened contexts that discard or reject loader injection
 - Non-exec file operations (`open()`, `connect()`)
 
 ### Bypass Resistance
 
 - **Low** against determined human attackers
-- **High** against AI agents (they don't know to bypass preload)
-- **Perfect** against accidental/hallucinated dangerous commands
+- Useful against accidental or model-generated commands that remain inside the
+  compatible process boundary; native host hooks remain preferred
 
 ## Known Limitations
 
@@ -340,7 +342,6 @@ RAMPART_DEBUG=1 LD_PRELOAD=./librampart.so your_command
 **Performance issues:**
 - Check if keep-alive connections are working (server logs)
 - Monitor network latency to policy server
-- Consider using Unix domain socket (future enhancement)
 
 ## License
 

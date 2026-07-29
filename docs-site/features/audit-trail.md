@@ -107,6 +107,6 @@ integrity check.
 
 For stronger guarantees:
 
-- Run `rampart serve` as a [separate user](../deployment/user-separation.md) so the agent can't access audit files
+- For centralized HTTP/SDK deployments, run `rampart serve` as a [separate user](../deployment/user-separation.md) so the agent cannot access service-owned audit files; native hooks need an external sink for an independent trust boundary
 - Enable [SIEM export](siem-integration.md) for an external trust anchor
 - Use [webhook notifications](webhooks.md) for real-time alerts to an external system

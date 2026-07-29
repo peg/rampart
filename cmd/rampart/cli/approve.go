@@ -97,14 +97,6 @@ are blocked until someone approves or denies them (or they expire).`,
 	return cmd
 }
 
-func resolveToken(token string) string {
-	if token != "" {
-		return token
-	}
-	resolved, _ := resolveTokenValue()
-	return resolved
-}
-
 func resolveAddr(addr string) (string, error) {
 	if addr == "" {
 		if env := strings.TrimSpace(os.Getenv("RAMPART_API")); env != "" {
@@ -124,7 +116,10 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 	if err != nil {
 		return fmt.Errorf("resolve approval API address: %w", err)
 	}
-	token = resolveToken(token)
+	token, _, err = resolveTokenForEndpoint(resolvedAddr, token)
+	if err != nil {
+		return fmt.Errorf("resolve approval API credentials: %w", err)
+	}
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
 	}
@@ -167,7 +162,10 @@ func listPending(cmd *cobra.Command, addr, token string) error {
 	if err != nil {
 		return fmt.Errorf("resolve approval API address: %w", err)
 	}
-	token = resolveToken(token)
+	token, _, err = resolveTokenForEndpoint(resolvedAddr, token)
+	if err != nil {
+		return fmt.Errorf("resolve approval API credentials: %w", err)
+	}
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
 	}

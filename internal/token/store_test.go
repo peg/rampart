@@ -252,6 +252,44 @@ func TestFilePermissions(t *testing.T) {
 	}
 }
 
+func TestExistingStoreIsHardenedOnLoad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode assertion")
+	}
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(path, []byte("{\"tokens\":[]}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("permissions = %04o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestNewStoreRefusesSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix symlink semantics")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	if err := os.WriteFile(target, []byte("{\"tokens\":[]}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "tokens.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(link); err == nil {
+		t.Fatal("NewStore accepted a symlinked authentication store")
+	}
+}
+
 func TestList(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewStore(filepath.Join(dir, "tokens.json"))
@@ -335,6 +373,39 @@ func TestAutoReload(t *testing.T) {
 	result = store1.Lookup(plaintext)
 	if !result.Revoked {
 		t.Error("token should be revoked after auto-reload")
+	}
+}
+
+func TestAutoReloadDetectsAtomicReplacementWithPreservedMtime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+
+	serverStore, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, tok, err := serverStore.Create("codex", "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cliStore, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cliStore.Revoke(tok.MaskedID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, originalInfo.ModTime(), originalInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	if result := serverStore.Lookup(plaintext); !result.Revoked {
+		t.Fatal("atomic replacement with preserved mtime did not invalidate cached credentials")
 	}
 }
 

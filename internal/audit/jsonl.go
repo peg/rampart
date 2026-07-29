@@ -74,7 +74,7 @@ func recoverChainStateInFileOrder(dir string, files []string) (recoveredChainSta
 	previousFile := ""
 	for _, name := range files {
 		path := filepath.Join(dir, name)
-		file, err := os.Open(path)
+		file, err := openAuditRegular(path, os.O_RDONLY)
 		if err != nil {
 			return recoveredChainState{}, fmt.Errorf("open %s: %w", name, err)
 		}
@@ -167,6 +167,9 @@ func recoverChainStateInFileOrder(dir string, files []string) (recoveredChainSta
 }
 
 func managedAuditFiles(dir string) ([]string, error) {
+	if err := validateAuditDirectory(dir); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read audit directory: %w", err)
@@ -174,8 +177,15 @@ func managedAuditFiles(dir string) ([]string, error) {
 
 	files := make([]string, 0)
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+		if !strings.HasSuffix(entry.Name(), ".jsonl") {
 			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, fmt.Errorf("inspect audit file %s: %w", entry.Name(), err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("audit: path is not a regular non-symlink file: %s", filepath.Join(dir, entry.Name()))
 		}
 		// The audit directory also contains hook and export JSONL files. They
 		// are valid audit data, but they are not part of this sink's hash chain.
@@ -214,6 +224,9 @@ func NewJSONLSink(dir string, opts ...SinkOption) (*JSONLSink, error) {
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit: create sink dir: %w", err)
+	}
+	if err := validateAuditDirectory(dir); err != nil {
+		return nil, err
 	}
 
 	cfg := defaultSinkConfig()
@@ -297,7 +310,12 @@ func NewJSONLSink(dir string, opts ...SinkOption) (*JSONLSink, error) {
 	// Inspect the current anchor for diagnostics only. The next event always
 	// continues from the latest valid JSONL event recovered above.
 	anchorPath := filepath.Join(dir, anchorFilename)
-	if data, err := os.ReadFile(anchorPath); err == nil {
+	data, exists, err := readAuditMetadata(anchorPath)
+	if err != nil {
+		_ = sink.Close()
+		return nil, fmt.Errorf("audit: inspect chain anchor: %w", err)
+	}
+	if exists {
 		var anchor ChainAnchor
 		if err := json.Unmarshal(data, &anchor); err == nil && anchor.EventID != "" {
 			if anchor.Hash == sink.lastHash && anchor.EventCount == sink.eventCount {
@@ -441,5 +459,18 @@ func (s *JSONLSink) filePath() string {
 }
 
 func (s *JSONLSink) withDirectoryLock(fn func() error) error {
-	return filetxn.WithLock(filepath.Join(s.dir, sharedStateFilename), fn)
+	if err := validateAuditDirectory(s.dir); err != nil {
+		return err
+	}
+	statePath := filepath.Join(s.dir, sharedStateFilename)
+	lockPath := statePath + ".rampart.lock"
+	if _, _, err := inspectAuditRegularPath(lockPath); err != nil {
+		return fmt.Errorf("audit: unsafe directory lock: %w", err)
+	}
+	return filetxn.WithLock(statePath, func() error {
+		if _, _, err := inspectAuditRegularPath(lockPath); err != nil {
+			return fmt.Errorf("audit: unsafe directory lock: %w", err)
+		}
+		return fn()
+	})
 }

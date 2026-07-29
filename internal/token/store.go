@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,6 +36,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/securefile"
 )
 
 const (
@@ -130,10 +132,10 @@ type LookupResult struct {
 
 // Store manages per-agent tokens with file-backed persistence.
 type Store struct {
-	path    string
-	mu      sync.RWMutex
-	data    storeData
-	modTime time.Time // last known file mtime for auto-reload
+	path     string
+	mu       sync.RWMutex
+	data     storeData
+	fileInfo os.FileInfo // identity and metadata of the last successfully loaded file
 }
 
 type storeData struct {
@@ -327,49 +329,76 @@ func (s *Store) Count() int {
 }
 
 func (s *Store) load() error {
-	data, modTime, err := readStoreFile(s.path)
+	data, fileInfo, err := readStoreFile(s.path)
 	if err != nil {
 		return err
 	}
 	s.data = data
-	s.modTime = modTime
+	s.fileInfo = fileInfo
 	return nil
 }
 
-func readStoreFile(path string) (storeData, time.Time, error) {
-	info, err := os.Stat(path)
+func readStoreFile(path string) (storeData, os.FileInfo, error) {
+	before, err := os.Lstat(path)
 	if err != nil {
-		return storeData{}, time.Time{}, err
+		return storeData{}, nil, err
 	}
-	if info.Size() > maxStoreBytes {
-		return storeData{}, time.Time{}, fmt.Errorf("token store exceeds %d-byte limit", maxStoreBytes)
+	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
+		return storeData{}, nil, fmt.Errorf("token store is not a regular non-symlink file: %s", path)
 	}
-	content, err := os.ReadFile(path)
+	if before.Size() > maxStoreBytes {
+		return storeData{}, nil, fmt.Errorf("token store exceeds %d-byte limit", maxStoreBytes)
+	}
+	if err := securefile.OwnerOnly(path); err != nil {
+		return storeData{}, nil, fmt.Errorf("secure token store: %w", err)
+	}
+	file, err := os.Open(path)
 	if err != nil {
-		return storeData{}, time.Time{}, err
+		return storeData{}, nil, err
+	}
+	defer file.Close()
+
+	opened, err := file.Stat()
+	if err != nil {
+		return storeData{}, nil, err
+	}
+	after, err := os.Lstat(path)
+	if err != nil {
+		return storeData{}, nil, err
+	}
+	if after.Mode()&os.ModeSymlink != 0 || !after.Mode().IsRegular() ||
+		!os.SameFile(before, after) || !os.SameFile(opened, after) {
+		return storeData{}, nil, fmt.Errorf("token store changed while opening: %s", path)
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxStoreBytes+1))
+	if err != nil {
+		return storeData{}, nil, err
+	}
+	if len(content) > maxStoreBytes {
+		return storeData{}, nil, fmt.Errorf("token store exceeds %d-byte limit", maxStoreBytes)
 	}
 	var data storeData
 	if err := json.Unmarshal(content, &data); err != nil {
-		return storeData{}, time.Time{}, err
+		return storeData{}, nil, err
 	}
-	return data, info.ModTime(), nil
+	return data, opened, nil
 }
 
 // maybeReload checks if the file on disk has changed and reloads if so.
 // This allows CLI operations (create, revoke) to take effect without server restart.
 func (s *Store) maybeReload() {
-	info, err := os.Stat(s.path)
+	info, err := os.Lstat(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			s.mu.Lock()
 			s.data = storeData{}
-			s.modTime = time.Time{}
+			s.fileInfo = nil
 			s.mu.Unlock()
 		}
 		return
 	}
 	s.mu.RLock()
-	stale := !info.ModTime().Equal(s.modTime)
+	stale := storeFileChanged(s.fileInfo, info)
 	s.mu.RUnlock()
 
 	if !stale {
@@ -379,23 +408,31 @@ func (s *Store) maybeReload() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Double-check after acquiring write lock.
-	info2, err := os.Stat(s.path)
+	info2, err := os.Lstat(s.path)
 	if err != nil {
 		return
 	}
-	if info2.ModTime().Equal(s.modTime) {
+	if !storeFileChanged(s.fileInfo, info2) {
 		return
 	}
-	newData, modTime, err := readStoreFile(s.path)
+	newData, fileInfo, err := readStoreFile(s.path)
 	if err != nil {
 		// A changed but unreadable/corrupt authentication store must not leave
 		// previously cached credentials active indefinitely.
 		s.data = storeData{}
-		s.modTime = info2.ModTime()
+		s.fileInfo = info2
 		return
 	}
 	s.data = newData
-	s.modTime = modTime
+	s.fileInfo = fileInfo
+}
+
+func storeFileChanged(cached, current os.FileInfo) bool {
+	if cached == nil || current == nil {
+		return cached != current
+	}
+	return !os.SameFile(cached, current) || cached.Size() != current.Size() ||
+		!cached.ModTime().Equal(current.ModTime()) || cached.Mode() != current.Mode()
 }
 
 // update serializes a read-modify-write transaction across Store instances
@@ -408,21 +445,21 @@ func (s *Store) update(fn func(*storeData) error) error {
 	defer s.mu.Unlock()
 
 	return filetxn.WithLock(s.path, func() error {
-		diskData, modTime, err := readStoreFile(s.path)
+		diskData, fileInfo, err := readStoreFile(s.path)
 		if errors.Is(err, os.ErrNotExist) {
 			diskData = storeData{}
-			modTime = time.Time{}
+			fileInfo = nil
 		} else if err != nil {
 			return err
 		}
 		s.data = diskData
-		s.modTime = modTime
+		s.fileInfo = fileInfo
 		if err := fn(&s.data); err != nil {
 			return err
 		}
 		if err := s.saveLocked(); err != nil {
 			s.data = diskData
-			s.modTime = modTime
+			s.fileInfo = fileInfo
 			return err
 		}
 		return nil
@@ -448,12 +485,14 @@ func (s *Store) saveLocked() error {
 	}
 	tmpPath := tmp.Name()
 
-	if _, err := tmp.Write(data); err != nil {
+	// Harden the temporary before writing token metadata so Windows never
+	// exposes it through an inherited directory ACL, even briefly.
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err
 	}
-	if err := tmp.Chmod(0o600); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err
@@ -472,7 +511,7 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	if info, err := os.Stat(s.path); err == nil {
-		s.modTime = info.ModTime()
+		s.fileInfo = info
 	}
 	return nil
 }

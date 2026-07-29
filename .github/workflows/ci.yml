@@ -5,6 +5,7 @@ on:
     branches: [main, staging]
   pull_request:
     branches: [main, staging]
+  workflow_call:
 
 permissions:
   contents: read
@@ -24,11 +25,24 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.25.12'
+
+      - name: Set up Node
+        if: runner.os != 'Windows'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
 
       - name: Download dependencies
         run: go mod download
@@ -103,7 +117,12 @@ jobs:
             exit 1
           }
 
-      - name: Installer scripts are synced
+      - name: Test Windows installer behavior
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\scripts\test-installer-windows.ps1
+
+      - name: Installer scripts are valid and synced
         if: runner.os == 'Linux'
         run: |
           cmp -s install.sh docs/install
@@ -113,11 +132,18 @@ jobs:
           sh -n docs/install
           sh -n docs/install.sh
           sh -n scripts/install.sh
-          bash scripts/test-installers.sh
+
+      - name: Test Unix installer integrity handling
+        if: runner.os != 'Windows'
+        run: bash scripts/test-installers.sh
 
       - name: Landing page sources are synced
         if: runner.os == 'Linux'
         run: cmp -s docs-site/index.html docs/index.html
+
+      - name: API reference uses one canonical source
+        if: runner.os == 'Linux'
+        run: sh scripts/check-api-reference.sh
 
       - name: Linux lab runner contract
         if: runner.os == 'Linux'
@@ -136,6 +162,10 @@ jobs:
       - name: Hermes plugin regression tests
         run: python -m unittest internal/plugin/hermes/test_hermes_plugin.py
 
+      - name: Hermes compatibility harness isolation
+        if: runner.os == 'Linux'
+        run: python -m unittest scripts/test_compat_hermes_env.py
+
       - name: Policy checks
         if: runner.os == 'Linux'
         run: |
@@ -146,10 +176,6 @@ jobs:
       - name: Vulnerability check
         if: runner.os == 'Linux'
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0 && govulncheck ./...
-
-      - name: Benchmark
-        if: runner.os == 'Linux'
-        run: go test -run '^$' -bench=. -benchmem ./internal/engine/ ./internal/audit/
 
       - name: Upload coverage
         if: runner.os == 'Linux'
@@ -167,6 +193,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
@@ -177,8 +205,8 @@ jobs:
             --platform linux/amd64 \
             --load \
             --build-arg VERSION=ci-smoke \
-            --build-arg COMMIT=${GITHUB_SHA::12} \
-            --build-arg DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            --build-arg COMMIT="${GITHUB_SHA::12}" \
+            --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -t rampart:ci-smoke \
             .
 
@@ -191,8 +219,8 @@ jobs:
           docker buildx build \
             --platform linux/arm64 \
             --build-arg VERSION=ci-smoke \
-            --build-arg COMMIT=${GITHUB_SHA::12} \
-            --build-arg DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            --build-arg COMMIT="${GITHUB_SHA::12}" \
+            --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --output=type=cacheonly \
             .
 
@@ -206,6 +234,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -234,6 +263,8 @@ jobs:
         python-version: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -257,6 +288,12 @@ jobs:
           python -m isort --check-only rampart tests
           python -m flake8 rampart tests
           python -m mypy rampart
+
+      - name: Test integrations on minimum Python
+        if: matrix.python-version == '3.9'
+        run: |
+          python -m unittest internal/plugin/hermes/test_hermes_plugin.py
+          python -m unittest scripts/test_compat_hermes_env.py
 
       - name: Build SDK wheel
         if: matrix.python-version == '3.12'

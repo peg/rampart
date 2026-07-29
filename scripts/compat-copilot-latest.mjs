@@ -4,19 +4,24 @@
  * latest published Copilot CLI package.
  *
  * This gate is credential-free and state-isolated. It proves the latest CLI
- * binary starts with an isolated COPILOT_HOME, validates the generated hook
- * file against the documented shared schema, and exercises Rampart's adapter.
- * It does not make a model request or claim authenticated host execution.
+ * package starts with an isolated COPILOT_HOME, then separately validates the
+ * generated hook file against the documented shared schema and exercises
+ * Rampart's adapter. The version command is not evidence that Copilot loaded or
+ * dispatched the hooks; this does not make a model request or claim
+ * authenticated host execution.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { buildCompatProcessEnv } from './compat-process-env.mjs';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-copilot-compat-'));
 const tempHome = join(tempRoot, 'home');
+const childTemp = join(tempRoot, 'tmp');
 const copilotHome = join(tempHome, '.copilot');
 const rampartBin = join(tempRoot, process.platform === 'win32' ? 'rampart.exe' : 'rampart');
 const args = process.argv.slice(2);
@@ -25,20 +30,20 @@ const packageArg = args.find((arg) => arg.startsWith('--copilot-package='));
 const copilotPackage = packageArg ? packageArg.split('=', 2)[1] : '@github/copilot@latest';
 
 function compatEnv() {
-  const inherited = {};
-  for (const key of [
-    'PATH', 'SystemRoot', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR',
-    'LANG', 'LC_ALL', 'CI', 'NO_COLOR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
-  ]) {
-    if (process.env[key]) inherited[key] = process.env[key];
-  }
-  return {
-    ...inherited,
+  mkdirSync(childTemp, { recursive: true });
+  return buildCompatProcessEnv(process.env, {
     HOME: tempHome,
     USERPROFILE: tempHome,
+    TMPDIR: childTemp,
+    TMP: childTemp,
+    TEMP: childTemp,
     COPILOT_HOME: copilotHome,
     XDG_CONFIG_HOME: join(tempHome, '.config'),
-  };
+    XDG_CACHE_HOME: join(tempHome, '.cache'),
+    XDG_DATA_HOME: join(tempHome, '.local', 'share'),
+    XDG_STATE_HOME: join(tempHome, '.local', 'state'),
+    NO_COLOR: '1',
+  });
 }
 
 function run(command, commandArgs, { input = undefined, env = compatEnv(), cwd = tempRoot } = {}) {
@@ -63,6 +68,24 @@ function run(command, commandArgs, { input = undefined, env = compatEnv(), cwd =
   };
 }
 
+function runNpm(npmArgs) {
+  if (process.platform !== 'win32') {
+    return run('npm', npmArgs);
+  }
+
+  // Windows cannot execute npm.cmd directly without a command shell. Resolve
+  // npm's JavaScript entry point instead so package arguments never pass
+  // through cmd.exe.
+  const searchPath = (process.env.PATH || '').split(';').filter(Boolean);
+  for (const directory of searchPath) {
+    const npmCLI = join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    if (existsSync(npmCLI)) {
+      return run(process.execPath, [npmCLI, ...npmArgs]);
+    }
+  }
+  throw new Error('could not locate node_modules/npm/bin/npm-cli.js on PATH');
+}
+
 function assertGeneratedHooks() {
   const path = join(copilotHome, 'hooks', 'rampart.json');
   const config = JSON.parse(readFileSync(path, 'utf8'));
@@ -82,11 +105,11 @@ function assertGeneratedHooks() {
 }
 
 function main() {
-  run('go', ['build', '-o', rampartBin, './cmd/rampart'], { env: process.env, cwd: repoRoot });
+  run('go', ['build', '-o', rampartBin, './cmd/rampart'], { cwd: repoRoot });
   run(rampartBin, ['setup', 'copilot']);
   assertGeneratedHooks();
 
-  const version = run('npm', ['exec', '--yes', '--package', copilotPackage, '--', 'copilot', '--version']);
+  const version = runNpm(['exec', '--yes', '--package', copilotPackage, '--', 'copilot', '--version']);
   const hostDiagnostics = `${version.stdout}\n${version.stderr}`;
   if (/invalid.*(config|hook)|failed to load.*(config|hook)/i.test(hostDiagnostics)) {
     throw new Error(`latest Copilot CLI rejected Rampart configuration: ${hostDiagnostics}`);

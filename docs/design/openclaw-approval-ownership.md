@@ -1,6 +1,6 @@
 # OpenClaw Approval Ownership
 
-Status: proposed
+Status: accepted
 
 ## Problem
 

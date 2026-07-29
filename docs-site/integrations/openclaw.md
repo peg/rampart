@@ -127,7 +127,8 @@ plugin can redact a completed tool response before the model receives it.
 
 ## The `openclaw.yaml` profile
 
-The default profile installed by `rampart setup openclaw`. Key behaviors:
+The default profile installed by `rampart protect openclaw` (and by advanced
+manual setup). Key behaviors:
 
 - **`default_action: ask`** — any tool call not matched by an explicit rule surfaces for human approval (no silent failures)
 - **Safe exec commands allowed** — `go build`, `npm install`, `git commit`, `docker build`, etc.
@@ -203,7 +204,7 @@ RAMPART_OPENCLAW_RESTART_SERVICES= \
 node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-Use a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses primary-state paths and service restarts. It requires real Codex app-server turns with correlated trajectory and Rampart canonical `exec` audit evidence, including a native plugin approval, `allow-once`, exact resume, and successful execution.
+Use a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses primary-state paths and service restarts. It requires real Codex app-server turns with correlated trajectory and Rampart canonical `exec` audit evidence, including a native plugin approval with `allow-once` exact resume and successful execution, plus a denied disposable canary that remains unchanged.
 
 Or check plugin status directly:
 
@@ -222,18 +223,17 @@ rampart doctor                # shows plugin check status
 openclaw doctor               # check for plugin warnings
 ```
 
-If missing, re-run setup:
+If missing, reinstall the managed guard:
 
 ```bash
-rampart setup openclaw
-systemctl --user restart openclaw-gateway
+rampart protect openclaw --reinstall
 ```
 
 **OpenClaw version too old:**
 
 ```bash
 npm install -g openclaw@latest
-rampart setup openclaw   # auto-detects new version
+rampart protect openclaw   # installs, restarts, and verifies the managed guard
 ```
 
 **Checking what's being blocked:**

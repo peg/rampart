@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // SlackNotifier sends notifications to Slack using incoming webhooks with Block Kit formatting.
@@ -30,10 +29,8 @@ type SlackNotifier struct {
 // NewSlackNotifier creates a new Slack notifier.
 func NewSlackNotifier(url string) *SlackNotifier {
 	return &SlackNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 

@@ -31,6 +31,7 @@ type integrationDriver struct {
 	OpenClaw     bool
 	AutoProtect  bool
 	Platforms    []string
+	Configured   func(home string) bool
 }
 
 func supportedIntegrationDrivers() []integrationDriver {
@@ -38,7 +39,8 @@ func supportedIntegrationDrivers() []integrationDriver {
 		{
 			ID: "openclaw", DisplayName: "OpenClaw", Boundary: "native plugin", VerifyTarget: "openclaw", OpenClaw: true,
 			AutoProtect: true, Platforms: []string{"linux", "darwin"},
-			Installed: func(_ string) bool { return isOpenClawInstalled() },
+			Installed:  func(_ string) bool { return isOpenClawInstalled() },
+			Configured: func(_ string) bool { return isOpenClawPluginConfigured() },
 			VerifyChecks: func(ctx context.Context, timeout time.Duration) []verificationCheck {
 				return []verificationCheck{verifyOpenClawPluginLive(ctx, timeout)}
 			},
@@ -47,9 +49,10 @@ func supportedIntegrationDrivers() []integrationDriver {
 			ID: "claude-code", Aliases: []string{"claude"}, DisplayName: "Claude Code", Boundary: "native hooks", VerifyTarget: "claude-code",
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
-				return integrationBinaryOrPathInstalled("claude", filepath.Join(home, ".claude"))
+				return integrationBinaryOrPathInstalled("claude", claudeConfigDir(home))
 			},
 			SetupCommand: func(opts *rootOptions) *cobra.Command { return newSetupClaudeCodeCmd(opts) },
+			Configured:   claudeHooksConfiguredForHome,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyClaudeHooksInstalled(), verifyNativeHookAdapter(ctx, "claude-code")}
 			},
@@ -61,6 +64,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 				return integrationBinaryOrPathInstalled("codex", codexHomeDir(home))
 			},
 			SetupCommand: func(opts *rootOptions) *cobra.Command { return newSetupCodexCmd(opts) },
+			Configured:   codexHooksConfiguredForHome,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyCodexHooksInstalled(), verifyCodexHookAdapter(ctx)}
 			},
@@ -73,6 +77,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 				return err == nil
 			},
 			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupGeminiCmd() },
+			Configured:   geminiHooksConfiguredForHome,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyGeminiHooksInstalled(), verifyGeminiHookAdapter(ctx)}
 			},
@@ -80,11 +85,14 @@ func supportedIntegrationDrivers() []integrationDriver {
 		{
 			ID: "antigravity", Aliases: []string{"agy"}, DisplayName: "Antigravity CLI / IDE", Boundary: "native plugin hook", VerifyTarget: "antigravity",
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
-			Installed: func(_ string) bool {
-				_, err := execLookPath("agy")
-				return err == nil
+			Installed: func(home string) bool {
+				return integrationBinaryOrPathInstalled("agy",
+					filepath.Join(home, ".gemini", "antigravity"),
+					filepath.Join(home, ".gemini", "antigravity-cli"),
+				)
 			},
 			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupAntigravityCmd() },
+			Configured:   antigravityPluginConfiguredForHome,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyAntigravityPluginInstalled(), verifyAntigravityHookAdapter(ctx)}
 			},
@@ -94,6 +102,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed:    func(home string) bool { return copilotInstalledForHome(home) },
 			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupCopilotCmd() },
+			Configured:   copilotHooksConfiguredForHome,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyCopilotHooksInstalled(), verifyCopilotHookAdapter(ctx)}
 			},
@@ -106,6 +115,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 					detect.ClineExtensionInstalled(home)
 			},
 			SetupCommand: func(opts *rootOptions) *cobra.Command { return newSetupClineCmd(opts) },
+			Configured:   clineHooksConfiguredForHome,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyClineHooksInstalled(), verifyNativeHookAdapter(ctx, "cline")}
 			},
@@ -171,6 +181,7 @@ func runIntegrationSetup(parent *cobra.Command, opts *rootOptions, driver integr
 		return fmt.Errorf("no setup command registered for %s", driver.DisplayName)
 	}
 	setup := driver.SetupCommand(opts)
+	setup.SetContext(parent.Context())
 	setup.SetIn(parent.InOrStdin())
 	setup.SetOut(parent.OutOrStdout())
 	setup.SetErr(parent.ErrOrStderr())

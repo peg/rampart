@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -890,7 +891,23 @@ func TestJSONLSink_WriteReopensExternallyReplacedCurrentFile(t *testing.T) {
 	original, err := os.ReadFile(currentPath)
 	require.NoError(t, err)
 	detachedPath := filepath.Join(dir, "externally-rotated.log")
-	require.NoError(t, os.Rename(currentPath, detachedPath))
+	renameErr := os.Rename(currentPath, detachedPath)
+	if runtime.GOOS == "windows" {
+		// Windows does not allow the path of an open os.File to be renamed
+		// because the standard library handle does not grant delete sharing.
+		// Verify the supported behavior: the sink keeps writing a valid chain
+		// to the original file instead of pretending POSIX rotation occurred.
+		require.Error(t, renameErr)
+		require.NoError(t, sink.Write(sampleEvent("write")))
+		recovered, recoverErr := recoverChainStateFromDir(dir, logger)
+		require.NoError(t, recoverErr)
+		assert.EqualValues(t, 2, recovered.eventCount)
+		managedEvents, _, readErr := ReadEventsFromOffset(currentPath, 0)
+		require.NoError(t, readErr)
+		require.Len(t, managedEvents, 2)
+		return
+	}
+	require.NoError(t, renameErr)
 	require.NoError(t, os.WriteFile(currentPath, original, 0o600))
 
 	require.NoError(t, sink.Write(sampleEvent("write")))

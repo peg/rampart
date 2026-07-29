@@ -17,6 +17,7 @@
 package openclaw
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,15 @@ import (
 
 //go:embed index.js package.json openclaw.plugin.json README.md hooks/rampart/HOOK.md hooks/rampart/index.js
 var PluginFS embed.FS
+
+var pluginFiles = []string{
+	"index.js",
+	"package.json",
+	"openclaw.plugin.json",
+	"README.md",
+	"hooks/rampart/HOOK.md",
+	"hooks/rampart/index.js",
+}
 
 // Version returns the bundled plugin version from package.json.
 func Version() string {
@@ -45,15 +55,7 @@ func Version() string {
 // Extract writes the embedded plugin files to dir and returns the path.
 // The caller is responsible for cleanup if the returned path is a temp dir.
 func Extract(dir string) error {
-	files := []string{
-		"index.js",
-		"package.json",
-		"openclaw.plugin.json",
-		"README.md",
-		"hooks/rampart/HOOK.md",
-		"hooks/rampart/index.js",
-	}
-	for _, name := range files {
+	for _, name := range pluginFiles {
 		data, err := PluginFS.ReadFile(name)
 		if err != nil {
 			return fmt.Errorf("read embedded plugin file %q: %w", name, err)
@@ -67,4 +69,26 @@ func Extract(dir string) error {
 		}
 	}
 	return nil
+}
+
+// Current reports whether every managed plugin file is a regular file that
+// exactly matches this binary's embedded payload. This catches same-version
+// drift in package metadata and nested hook files, not only in index.js.
+func Current(dir string) bool {
+	for _, name := range pluginFiles {
+		path := filepath.Join(dir, name)
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		want, err := PluginFS.ReadFile(name)
+		if err != nil || !bytes.Equal(got, want) {
+			return false
+		}
+	}
+	return true
 }

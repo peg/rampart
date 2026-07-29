@@ -249,6 +249,37 @@ policies:
 	}
 }
 
+func TestEmptyCommandContainsFailsLintAndConfigValidation(t *testing.T) {
+	path := writeTempPolicy(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: ambiguous-substring
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_contains: ["   "]
+`)
+	result := LintPolicyFile(path)
+	if !result.HasErrors() {
+		t.Fatalf("expected empty command_contains lint error, findings: %#v", result.Findings)
+	}
+	found := false
+	for _, finding := range result.Findings {
+		if finding.Severity == LintError && strings.Contains(finding.Message, "command_contains") && strings.Contains(finding.Message, "whitespace-only") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing actionable command_contains lint error: %#v", result.Findings)
+	}
+	if _, err := NewFileStore(path).Load(); err == nil || !strings.Contains(err.Error(), "command_contains") {
+		t.Fatalf("config validation error = %v, want command_contains rejection", err)
+	}
+}
+
 func TestLint_EmptyConditions(t *testing.T) {
 	path := writeTempPolicy(t, `
 version: "1"

@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // DiscordNotifier sends notifications to Discord using webhook embeds.
@@ -30,10 +29,8 @@ type DiscordNotifier struct {
 // NewDiscordNotifier creates a new Discord notifier.
 func NewDiscordNotifier(url string) *DiscordNotifier {
 	return &DiscordNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 

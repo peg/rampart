@@ -333,7 +333,7 @@ func resolveRealShell(lookPath func(string) (string, error)) (string, error) {
 
 func waitForProxyReady(ctx context.Context, proxyURL string) error {
 	deadline := time.Now().Add(2 * time.Second)
-	client := &http.Client{Timeout: 200 * time.Millisecond}
+	client := newRampartHTTPClient(200 * time.Millisecond)
 	url := proxyURL + "/healthz"
 
 	for {
@@ -341,16 +341,8 @@ func waitForProxyReady(ctx context.Context, proxyURL string) error {
 			return fmt.Errorf("timeout waiting for proxy at %s", url)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return fmt.Errorf("create health request: %w", err)
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
+		if isRampartHealthReady(ctx, client, url) {
+			return nil
 		}
 
 		select {
@@ -428,7 +420,11 @@ if [ "$FOUND_C" = "true" ]; then
 	fi
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
-    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","params":{"command_b64":"%%s"}}' "$ENCODED")
+    ENFORCE=false
+    if [ "$RAMPART_MODE" = "enforce" ]; then
+        ENFORCE=true
+    fi
+    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","enforce":%%s,"params":{"command_b64":"%%s"}}' "$ENFORCE" "$ENCODED")
     DECISION=$(curl -sfS -X POST "${RAMPART_URL}/v1/preflight/exec" \
         -H "Authorization: Bearer ${RAMPART_TOKEN}" \
         -H "Content-Type: application/json" \
@@ -444,6 +440,11 @@ if [ "$FOUND_C" = "true" ]; then
     fi
 
     ALLOWED=$(printf '%%s' "$DECISION" | grep -o '"allowed":[a-z]*' | grep -o 'true\|false' | head -n 1)
+    ENFORCED=$(printf '%%s' "$DECISION" | grep -o '"enforced":[a-z]*' | grep -o 'true\|false' | head -n 1)
+    if [ "$RAMPART_MODE" = "enforce" ] && [ "$ENFORCED" != "true" ]; then
+        echo "rampart: blocked: policy service did not confirm enforcement" >&2
+        exit 126
+    fi
     if [ "$RAMPART_MODE" = "enforce" ] && [ "$ALLOWED" != "true" ]; then
         MSG=$(printf '%%s' "$DECISION" | grep -o '"message":"[^"]*"' | head -n 1 | sed 's/"message":"//;s/"$//')
         if [ -z "$MSG" ]; then
@@ -556,7 +557,11 @@ if [ "$FOUND_C" = "true" ]; then
 	fi
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
-    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","params":{"command_b64":"%%s"}}' "$ENCODED")
+    ENFORCE=false
+    if [ "$RAMPART_MODE" = "enforce" ]; then
+        ENFORCE=true
+    fi
+    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","enforce":%%s,"params":{"command_b64":"%%s"}}' "$ENFORCE" "$ENCODED")
     RAMPART_TOKEN=$(cat %q 2>/dev/null)
     DECISION=$(curl -sfS -X POST "%s/v1/preflight/exec" \
         -H "Authorization: Bearer ${RAMPART_TOKEN}" \
@@ -573,6 +578,11 @@ if [ "$FOUND_C" = "true" ]; then
     fi
 
     ALLOWED=$(printf '%%s' "$DECISION" | grep -o '"allowed":[a-z]*' | grep -o 'true\|false' | head -n 1)
+    ENFORCED=$(printf '%%s' "$DECISION" | grep -o '"enforced":[a-z]*' | grep -o 'true\|false' | head -n 1)
+    if [ "$RAMPART_MODE" = "enforce" ] && [ "$ENFORCED" != "true" ]; then
+        echo "rampart: blocked: policy service did not confirm enforcement" >&2
+        exit 126
+    fi
     if [ "$RAMPART_MODE" = "enforce" ] && [ "$ALLOWED" != "true" ]; then
         MSG=$(printf '%%s' "$DECISION" | grep -o '"message":"[^"]*"' | head -n 1 | sed 's/"message":"//;s/"$//')
         if [ -z "$MSG" ]; then

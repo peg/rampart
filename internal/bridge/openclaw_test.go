@@ -14,9 +14,12 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -571,10 +574,13 @@ func TestWriteAllowAlwaysRule(t *testing.T) {
 
 	content := string(data)
 
-	// Must contain the tool: exec match.
-	if !strings.Contains(content, "tool: exec") {
-		t.Errorf("expected 'tool: exec' in overrides, got:\n%s", content)
-	}
+	// Must contain an exec match in either the legacy scalar or current list
+	// representation.
+	overrides, err := policy.LoadUserOverridesPolicy(overridesPath)
+	require.NoError(t, err)
+	require.Len(t, overrides.Policies, 1)
+	require.Len(t, overrides.Policies[0].Match.Tool, 1)
+	assert.Equal(t, "exec", overrides.Policies[0].Match.Tool[0])
 
 	// Must contain the command in the command_matches list.
 	if !strings.Contains(content, testCmd) {
@@ -844,6 +850,37 @@ func TestBridgeAuditSinkWrite(t *testing.T) {
 	}
 
 	cancel()
+}
+
+func TestPendingCommandCorrelationIsBounded(t *testing.T) {
+	b := &OpenClawBridge{pendingCommands: make(map[string]string)}
+	for i := 0; i < maxPendingBridgeCommands; i++ {
+		if !b.rememberPendingCommand(fmt.Sprintf("id-%d", i), "git status") {
+			t.Fatalf("command %d was rejected before the correlation limit", i)
+		}
+	}
+	if b.rememberPendingCommand("overflow", "git status") {
+		t.Fatal("pending command correlation exceeded its entry limit")
+	}
+	if b.rememberPendingCommand("oversized", strings.Repeat("x", maxPendingBridgeCommandLen+1)) {
+		t.Fatal("pending command correlation accepted an oversized command")
+	}
+	if b.rememberPendingCommand(strings.Repeat("i", 257), "git status") {
+		t.Fatal("pending command correlation accepted an oversized approval ID")
+	}
+}
+
+func TestBridgeInfoLogsDoNotExposeCommand(t *testing.T) {
+	var logs bytes.Buffer
+	b := &OpenClawBridge{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+	var req approvalRequestParams
+	req.ID = "approval-1"
+	req.Request.AgentID = "agent"
+	req.Request.Command = "curl -H 'Authorization: Bearer secret-value' example.invalid"
+	b.leavePendingForHumanReview(req, engine.Decision{Message: "approval required"})
+	if strings.Contains(logs.String(), "secret-value") || strings.Contains(logs.String(), req.Request.Command) {
+		t.Fatalf("bridge info log exposed raw command: %s", logs.String())
+	}
 }
 
 // testAuditSink is a minimal in-memory AuditSink for tests.

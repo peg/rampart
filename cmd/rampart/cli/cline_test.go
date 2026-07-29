@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -53,7 +54,7 @@ func TestInstallClineHooksUsesDirectDiscoveryFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
 			t.Fatalf("%s is not an executable regular file: %v", paths[index], info.Mode())
 		}
 		data, err := os.ReadFile(paths[index])
@@ -121,6 +122,69 @@ func TestInstallClineHooksMigratesOnlyOwnedLegacyLayout(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(conflict, "user-hook")); err != nil {
 		t.Fatalf("user hook was modified: %v", err)
+	}
+}
+
+func TestInstallClineHooksRestoresLegacyHookOnActivationFailure(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Hooks")
+	for event, name := range map[string]string{"PreToolUse": "rampart-policy", "PostToolUse": "rampart-audit"} {
+		path := filepath.Join(dir, event, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(createLegacyClineHookForTest(event)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rename := func(source, destination string) error {
+		if filepath.Base(source) == "replacement" && filepath.Base(destination) == "PreToolUse" {
+			return errors.New("injected legacy activation failure")
+		}
+		return os.Rename(source, destination)
+	}
+	if _, _, err := installClineHooksWithRename(dir, "/new/rampart", "linux", false, rename); err == nil ||
+		!strings.Contains(err.Error(), "injected legacy activation failure") {
+		t.Fatalf("install error = %v", err)
+	}
+	for event, name := range map[string]string{"PreToolUse": "rampart-policy", "PostToolUse": "rampart-audit"} {
+		path := filepath.Join(dir, event, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("legacy %s hook was not preserved: %v", event, err)
+		}
+		if !clineHookScriptManaged(data) {
+			t.Fatalf("legacy %s hook was changed: %s", event, data)
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".rampart-cline-migrate-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("completed rollback left transaction directories: %v", matches)
+	}
+}
+
+func TestInstallClineHooksRefreshesManagedFilesWithoutRemoveFirstRename(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Hooks")
+	paths, _, err := installClineHooks(dir, "/old/rampart", "linux", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rename := func(_, _ string) error {
+		return errors.New("routine managed refresh must not rename live hooks away")
+	}
+	if _, _, err := installClineHooksWithRename(dir, "/new/rampart", "linux", false, rename); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "/new/rampart") || strings.Contains(string(data), "/old/rampart") {
+			t.Fatalf("managed hook was not refreshed atomically at %s: %s", path, data)
+		}
 	}
 }
 
@@ -219,25 +283,57 @@ func TestRemoveClineHooksPreservesLegacySymlink(t *testing.T) {
 	}
 }
 
-func TestClineHookPairConfiguredChecksOwnershipAndExecutableBit(t *testing.T) {
-	dir := t.TempDir()
-	paths, _, err := installClineHooks(dir, "rampart", "linux", false)
+func TestClineSetupAndRemoveRefuseSymlinkedHookRoot(t *testing.T) {
+	target := t.TempDir()
+	root := filepath.Join(t.TempDir(), "Hooks")
+	if err := os.Symlink(target, root); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := installClineHooks(root, "rampart", "linux", false); err == nil || !strings.Contains(err.Error(), "linked") {
+		t.Fatalf("symlinked setup error = %v", err)
+	}
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	if err := removeClineHooksFromDir(cmd, root); err == nil || !strings.Contains(err.Error(), "linked") {
+		t.Fatalf("symlinked remove error = %v", err)
+	}
+	entries, err := os.ReadDir(target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !clineHookPairConfigured(dir, "linux") {
-		t.Fatal("expected installed pair to be configured")
+	if len(entries) != 0 {
+		t.Fatalf("symlink target was modified: %v", entries)
 	}
-	if err := os.Chmod(paths[0], 0o644); err != nil {
+}
+
+func TestValidateClineHookPairChecksOwnershipAndExecutableBit(t *testing.T) {
+	dir := t.TempDir()
+	goos := "linux"
+	if runtime.GOOS == "windows" {
+		goos = "windows"
+	}
+	paths, _, err := installClineHooks(dir, "rampart", goos, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if clineHookPairConfigured(dir, "linux") {
-		t.Fatal("disabled POSIX hook must not be reported configured")
+	if err := validateClineHookPair(dir, goos); err != nil {
+		t.Fatal("expected installed pair to be configured")
 	}
-	if !clineHookPairConfigured(dir, "windows") {
-		// No Windows artifacts were installed in this directory.
-	} else {
-		t.Fatal("POSIX files must not masquerade as Windows .ps1 hooks")
+	if goos != "windows" {
+		if err := os.Chmod(paths[0], 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateClineHookPair(dir, goos); err == nil {
+			t.Fatal("disabled POSIX hook must not be reported configured")
+		}
+	}
+	otherOS := "windows"
+	if goos == "windows" {
+		otherOS = "linux"
+	}
+	if err := validateClineHookPair(dir, otherOS); err == nil {
+		t.Fatalf("%s hook files must not masquerade as %s hooks", goos, otherOS)
 	}
 }
 
@@ -317,7 +413,7 @@ func TestVerifyClineHooksChecksCurrentContentAndActivation(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	hookDir := clineUserHooksDir(home)
-	paths, _, err := installClineHooks(hookDir, "rampart", runtime.GOOS, false)
+	paths, _, err := installClineHooks(hookDir, resolveRampartHookBinary(), runtime.GOOS, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,11 +430,27 @@ func TestVerifyClineHooksChecksCurrentContentAndActivation(t *testing.T) {
 	}
 }
 
+func TestVerifyClineHooksRejectsStaleManagedBinary(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	hookDir := clineUserHooksDir(home)
+	if _, _, err := installClineHooks(hookDir, "/retired/rampart", runtime.GOOS, false); err != nil {
+		t.Fatal(err)
+	}
+	if clineHooksConfiguredForHome(home) {
+		t.Fatal("stale managed Cline hooks must not be reported as currently configured")
+	}
+	check := verifyClineHooksInstalled()
+	if check.Status != verificationFail || !strings.Contains(check.Actual, "stale") {
+		t.Fatalf("stale Cline verification = %#v", check)
+	}
+}
+
 func TestVerifyClineHooksDoesNotClaimAdvertisedOverrideIsActive(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	explicit := filepath.Join(t.TempDir(), "hooks")
-	if _, _, err := installClineHooks(explicit, "rampart", runtime.GOOS, false); err != nil {
+	if _, _, err := installClineHooks(explicit, resolveRampartHookBinary(), runtime.GOOS, false); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CLINE_HOOKS_DIR", explicit)

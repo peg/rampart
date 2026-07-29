@@ -20,6 +20,7 @@ EOF
 rampart_bin=""
 artifact_dir=""
 image="${RAMPART_OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}"
+official_latest_image="ghcr.io/openclaw/openclaw:latest"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -72,9 +73,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! docker image inspect "$image" >/dev/null 2>&1; then
-  docker pull "$image"
+requested_image="$image"
+if [[ "$requested_image" == "$official_latest_image" ]]; then
+  # A locally cached :latest is not evidence of current compatibility. Pull it
+  # for every rolling-latest run, then execute the immutable digest we resolved.
+  docker pull "$requested_image" | tee "${artifact_dir}/image-pull.log"
+  image="$(docker image inspect \
+    --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+    "$requested_image" | awk '/^ghcr\.io\/openclaw\/openclaw@sha256:/ { print; exit }')"
+  if [[ -z "$image" ]]; then
+    echo "openclaw-acceptance: official latest image did not resolve to a repository digest" >&2
+    exit 1
+  fi
+elif ! docker image inspect "$requested_image" >/dev/null 2>&1; then
+  docker pull "$requested_image" | tee "${artifact_dir}/image-pull.log"
 fi
+printf 'requested=%s\nresolved=%s\n' "$requested_image" "$image" \
+  | tee "${artifact_dir}/image-reference.txt"
 docker image inspect "$image" >"${artifact_dir}/image.json"
 
 docker run -d \

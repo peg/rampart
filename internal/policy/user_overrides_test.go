@@ -1,7 +1,9 @@
 package policy
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,4 +66,43 @@ func TestAddUserOverrideAllowRejectsEmptyAuthority(t *testing.T) {
 	assert.Error(t, err)
 	_, err = AddUserOverrideAllow(path, "mcp.tool", "value", "")
 	assert.Error(t, err)
+}
+
+func TestEnsureUserOverrideAllowReportsDuplicate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "user-overrides.yaml")
+	first, err := EnsureUserOverrideAllow(path, "exec", "echo safe", "")
+	require.NoError(t, err)
+	assert.True(t, first.Created)
+
+	second, err := EnsureUserOverrideAllow(path, "exec", "echo safe", "")
+	require.NoError(t, err)
+	assert.False(t, second.Created)
+	assert.Equal(t, first.Name, second.Name)
+}
+
+func TestEnsureUserOverrideAllowRejectsOversizedPatternBeforeWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "user-overrides.yaml")
+	_, err := EnsureUserOverrideAllow(path, "exec", strings.Repeat("a", MaxGlobPatternLen+1), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid allow pattern")
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestLoadUserOverridesPolicyAcceptsLegacyScalarTool(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "user-overrides.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`policies:
+  - name: legacy
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo safe"]
+`), 0o600))
+
+	overrides, err := LoadUserOverridesPolicy(path)
+	require.NoError(t, err)
+	require.Len(t, overrides.Policies, 1)
+	assert.Equal(t, stringOrSlice{"exec"}, overrides.Policies[0].Match.Tool)
 }

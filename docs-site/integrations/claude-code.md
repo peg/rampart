@@ -57,6 +57,12 @@ future unknown `PreToolUse` tool names fail closed until Rampart is updated.
 Claude documents some host-owned tools that intentionally do not emit `PreToolUse`;
 `EndConversation` is one benign example and has no file or network effect.
 
+Rampart normalizes Claude's `LSP.filePath` and
+`NotebookEdit.notebook_path` fields before applying path rules. An
+`EnterWorktree` call must include the resolved `path`; a name-only call fails
+closed because `name` is an opaque label, not a filesystem destination that a
+path policy can evaluate.
+
 ## How It Works
 
 Claude Code has a built-in [hook system](https://code.claude.com/docs/en/hooks)

@@ -19,24 +19,23 @@ pip install rampart-sdk
 ```python
 import rampart
 
-# Create a client (reads RAMPART_URL and RAMPART_TOKEN from environment)
-client = rampart.RampartClient()
+# Reads RAMPART_URL and RAMPART_TOKEN from the environment. A context manager
+# closes the connection pool deterministically.
+with rampart.RampartClient() as client:
+    # Preview whether an exec command would be allowed. Preview methods do not
+    # consume stateful rules and must not be used as an execution boundary.
+    decision = client.check_exec("rm -rf /")
+    if not decision.allowed:
+        print(f"Command blocked: {decision.message}")
+    else:
+        print("Command is allowed")
 
-# Preview whether an exec command would be allowed (does not consume stateful rules)
-decision = client.check_exec("rm -rf /")
-if not decision.allowed:
-    print(f"Command blocked: {decision.message}")
-else:
-    print("Command is allowed")
+    decision = client.check_read("/etc/passwd")
+    decision = client.check_write("/tmp/output.txt", content="Hello world")
+    decision = client.check_fetch("https://api.example.com/data")
 
-# Check other tool types
-decision = client.check_read("/etc/passwd")
-decision = client.check_write("/tmp/output.txt", content="Hello world")
-decision = client.check_fetch("https://api.example.com/data")
-
-# Check server health
-if client.health():
-    print("Rampart server is healthy")
+    if client.health():
+        print("Rampart server is healthy")
 ```
 
 ### Decorator Usage
@@ -133,7 +132,7 @@ asyncio.run(main())
 ```python
 # Custom configuration
 client = rampart.RampartClient(
-    url="http://rampart.example.com:8080",
+    url="https://rampart.example.com:8080",
     token="your-auth-token",
     fail_open=True,  # Allow calls if server is unreachable (default)
     timeout=30.0,    # Request timeout in seconds
@@ -142,6 +141,11 @@ client = rampart.RampartClient(
 # Fail-closed mode (recommended for security boundaries)
 strict_client = rampart.RampartClient(fail_open=False)
 ```
+
+Non-loopback endpoints must use HTTPS because policy requests contain tool-call
+metadata even when no bearer token is configured. The SDK also ignores ambient
+proxy variables and refuses HTTP redirects so control-plane credentials and
+tool data remain bound to the configured Rampart endpoint.
 
 ## API Reference
 
@@ -208,18 +212,15 @@ deliberate availability-versus-enforcement choice.
 ```python
 import rampart
 
-client = rampart.RampartClient()
-
 try:
-    decision = client.check_exec("rm -rf /")
-    if decision.allowed:
-        print("Dangerous command is somehow allowed!")
-    else:
-        print(f"Command blocked by policy: {decision.policies}")
-        
+    with rampart.RampartClient() as client:
+        decision = client.check_exec("rm -rf /")
+        if decision.allowed:
+            print("Dangerous command is somehow allowed!")
+        else:
+            print(f"Command blocked by policy: {decision.policies}")
 except rampart.RampartConnectionError:
     print("Cannot reach Rampart server")
-    
 except rampart.RampartServerError as e:
     print(f"Server error: {e.status_code} - {e.message}")
 ```
@@ -267,13 +268,11 @@ safe_file_operation = rampart.read_guard()(unsafe_file_operation)
 
 # Or check policies manually
 def manual_policy_check(path: str) -> str:
-    client = rampart.RampartClient()
-    decision = client.check_read(path)
-    
-    if not decision.allowed:
-        raise ValueError(f"File access denied: {decision.message}")
-    
-    return unsafe_file_operation(path)
+    with rampart.RampartClient(fail_open=False) as client:
+        decision = client.enforce("read", {"path": path})
+        if not decision.allowed:
+            raise ValueError(f"File access denied: {decision.message}")
+        return unsafe_file_operation(path)
 ```
 
 ## Development

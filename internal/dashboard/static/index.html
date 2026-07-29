@@ -769,7 +769,7 @@ function updatePending(approvals,runGroups){
 
 function renderPending(newIds){
   const tbody=document.getElementById('pending-body');
-  // Build set of IDs that belong to a run group (2+ items sharing run_id)
+  // Build set of IDs that belong to an exact agent/session/run group.
   const groupedIds=new Set();
   for(const g of runGroupsData){for(const item of g.items){groupedIds.add(item.id);}}
 
@@ -828,7 +828,6 @@ function renderPending(newIds){
 function createRunCluster(g,groupItems,newIds){
   const cluster=document.createElement('div');
   cluster.className='run-cluster';
-  cluster.dataset.runId=g.run_id;
 
   const shortId=g.run_id.slice(0,8);
   const count=groupItems.length;
@@ -840,8 +839,8 @@ function createRunCluster(g,groupItems,newIds){
     <span class="run-cluster-label" title="${esc(g.run_id)}">Run: ${esc(shortId)}…</span>
     <span class="run-cluster-count">${count} pending</span>
     <div class="run-cluster-actions">
-      <button class="act-btn approve run-approve-all" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Approve all pending calls from this run">✓ Approve All</button>
-      <button class="act-btn deny run-deny-all" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Deny all pending calls from this run">✗ Deny All</button>
+      <button class="act-btn approve run-approve-all" data-agent="${esc(g.agent)}" data-session="${esc(g.session)}" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Approve all pending calls from this agent session and run">✓ Approve All</button>
+      <button class="act-btn deny run-deny-all" data-agent="${esc(g.agent)}" data-session="${esc(g.session)}" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Deny all pending calls from this agent session and run">✗ Deny All</button>
     </div>`;
   // Toggle collapse on header click (but not button clicks)
   header.addEventListener('click',e=>{
@@ -866,37 +865,21 @@ function createRunCluster(g,groupItems,newIds){
   return cluster;
 }
 
-async function bulkResolveRun(runId,action,count){
-  const label=action==='approve'?'Approve':'Deny';
+async function bulkResolveRun(agent,session,runId,action,count){
   const actionVerb=action==='approve'?'Approve':'Deny';
+  const pastTense=action==='approve'?'Approved':'Denied';
   if(!confirm(`${actionVerb} all ${count} pending call${count===1?'':'s'} from this run?`))return;
   try{
     await api('/v1/approvals/bulk-resolve',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({run_id:runId,action})
+      body:JSON.stringify({agent,session,run_id:runId,action})
     });
-    toast(`${label}d run ${runId.slice(0,8)}…`);
+    toast(`${pastTense} run ${runId.slice(0,8)}…`);
     // Re-poll immediately to update the dashboard
     clearTimeout(pollTimer);poll();
   }catch(e){
-    // Bulk-resolve endpoint may not be deployed yet (built by W2 in parallel).
-    // Fall back to resolving each pending item in the group individually.
-    if(e.message&&(e.message.includes('404')||e.message.includes('405'))){
-      const group=runGroupsData.find(g=>g.run_id===runId);
-      if(group){
-        const ids=group.items.filter(item=>pendingMap.has(item.id)).map(item=>item.id);
-        const approved=action==='approve';
-        for(const id of ids){
-          try{await api('/v1/approvals/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved,resolved_by:'dashboard'})})}
-          catch(err){/* best effort */}
-        }
-        clearTimeout(pollTimer);poll();
-        toast(`${label}d ${ids.length} approval${ids.length===1?'':'s'}`);
-      }
-    }else{
-      toast('Error: '+e.message);
-    }
+    toast('Error: '+e.message);
   }
 }
 
@@ -946,13 +929,13 @@ function handlePendingClick(e){
   const runApprove=e.target.closest('.run-approve-all');
   if(runApprove){
     e.stopPropagation();
-    bulkResolveRun(runApprove.dataset.runId,'approve',parseInt(runApprove.dataset.count,10));
+    bulkResolveRun(runApprove.dataset.agent,runApprove.dataset.session,runApprove.dataset.runId,'approve',parseInt(runApprove.dataset.count,10));
     return;
   }
   const runDeny=e.target.closest('.run-deny-all');
   if(runDeny){
     e.stopPropagation();
-    bulkResolveRun(runDeny.dataset.runId,'deny',parseInt(runDeny.dataset.count,10));
+    bulkResolveRun(runDeny.dataset.agent,runDeny.dataset.session,runDeny.dataset.runId,'deny',parseInt(runDeny.dataset.count,10));
     return;
   }
   if(e.target.classList.contains('row-chk')){

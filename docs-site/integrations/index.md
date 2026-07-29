@@ -17,7 +17,7 @@ for the evidence and known limitations of that path.
 | **Native Hooks** | Uses the agent's built-in hook system | Claude Code, Cline, Codex, GitHub Copilot; Gemini CLI (experimental enterprise/API-key path) |
 | **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, OpenCode, Continue |
 | **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
-| **LD_PRELOAD** | Intercepts exec syscalls at the OS level | Optional Unix defense in depth |
+| **LD_PRELOAD** | Interposes supported libc exec/spawn functions; native library is source-built | Optional defense in depth for compatible Unix processes |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
 | **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Antigravity, Hermes Agent (experimental) |
 | **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
@@ -51,9 +51,9 @@ When a policy action is `ask`, behavior varies by integration:
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI, IDE, desktop](codex-cli.md) | Native hooks | `rampart setup codex` | All |
 | [Gemini CLI](gemini-cli.md) | Experimental enterprise/API-key native hooks | `rampart setup gemini` | Linux, macOS |
-| [Antigravity CLI / IDE](antigravity.md) | Shared native policy plugin | `rampart setup antigravity` | All |
-| [GitHub Copilot CLI / VS Code](github-copilot.md) | Shared native hooks | `rampart setup copilot` | All |
-| [OpenClaw](openclaw.md) | Native plugin | `rampart setup openclaw` | Linux, macOS |
+| [Antigravity CLI / IDE](antigravity.md) | Shared plugin; CLI host-verified, IDE contract-tested | `rampart setup antigravity` | All |
+| [GitHub Copilot CLI / VS Code](github-copilot.md) | CLI adapter-tested; shared VS Code Preview contract | `rampart setup copilot` | All |
+| [OpenClaw](openclaw.md) | Managed native guard | `rampart protect openclaw` | Linux, macOS |
 | [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | Linux, macOS |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
@@ -74,7 +74,7 @@ q: "Integration method?" {shape: diamond}
 hooks: "rampart protect\\n(native hook auto-detection)" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
-shim: "rampart setup openclaw\\nrampart setup hermes" {
+shim: "rampart protect openclaw\\nrampart setup hermes (experimental)" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 mcp: "rampart mcp --" {

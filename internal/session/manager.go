@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,7 +25,10 @@ import (
 	"unicode"
 
 	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/securefile"
 )
+
+var errStateTooLarge = fmt.Errorf("session: state file exceeds %d-byte limit", maxStateSize)
 
 // Manager handles loading, updating, and cleanup of session state files.
 // Each Manager is bound to a specific session ID; use a zero-sessionID Manager
@@ -98,10 +102,7 @@ func (m *Manager) statePath() (string, error) {
 // load reads and deserialises the session state file.
 // Returns a new empty State if the file does not yet exist.
 func (m *Manager) load(path string) (*State, error) {
-	if info, err := os.Stat(path); err == nil && info.Size() > maxStateSize {
-		return nil, fmt.Errorf("session: state file exceeds %d-byte limit", maxStateSize)
-	}
-	data, err := os.ReadFile(path)
+	data, err := readStateFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		now := time.Now().UTC()
 		return &State{
@@ -167,6 +168,11 @@ func (m *Manager) save(path string, s *State) error {
 	}
 	tmpPath := tmpFile.Name()
 
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("session: secure temp file: %w", err)
+	}
 	if _, err := tmpFile.Write(data); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
@@ -384,63 +390,73 @@ func (m *Manager) Cleanup(maxAge time.Duration) error {
 		return err
 	}
 
-	entries, err := os.ReadDir(d)
+	dir, err := os.Open(d)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil // nothing to clean
 		}
-		return fmt.Errorf("session: cleanup readdir %s: %w", d, err)
+		return fmt.Errorf("session: cleanup open %s: %w", d, err)
 	}
+	defer dir.Close()
 
 	cutoff := time.Now().UTC().Add(-maxAge)
 	var removed, failed int
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	for {
+		entries, readErr := dir.ReadDir(128)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return fmt.Errorf("session: cleanup readdir %s: %w", d, readErr)
 		}
-		name := entry.Name()
-		if filepath.Ext(name) != ".json" {
-			continue
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if filepath.Ext(name) != ".json" {
+				continue
+			}
+
+			fp := filepath.Join(d, name)
+			fileRemoved := false
+			if err := m.withStateLock(fp, func() error {
+				data, err := readStateFile(fp)
+				if errors.Is(err, os.ErrNotExist) {
+					return nil
+				}
+				if err != nil {
+					return fmt.Errorf("read: %w", err)
+				}
+
+				var s State
+				if err := json.Unmarshal(data, &s); err != nil {
+					m.logger.Debug("session: cleanup removing unparseable file", "path", fp)
+					if err := os.Remove(fp); err != nil {
+						return fmt.Errorf("remove unparseable file: %w", err)
+					}
+					fileRemoved = true
+					return nil
+				}
+
+				if s.LastActive.Before(cutoff) {
+					if err := os.Remove(fp); err != nil {
+						return fmt.Errorf("remove stale file: %w", err)
+					}
+					m.logger.Debug("session: cleanup removed stale session file",
+						"session_id", s.SessionID,
+						"last_active", s.LastActive,
+					)
+					fileRemoved = true
+				}
+				return nil
+			}); err != nil {
+				m.logger.Debug("session: cleanup failed", "path", fp, "error", err)
+				failed++
+			} else if fileRemoved {
+				removed++
+			}
 		}
-
-		fp := filepath.Join(d, name)
-		fileRemoved := false
-		if err := m.withStateLock(fp, func() error {
-			data, err := os.ReadFile(fp)
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			if err != nil {
-				return fmt.Errorf("read: %w", err)
-			}
-
-			var s State
-			if err := json.Unmarshal(data, &s); err != nil {
-				m.logger.Debug("session: cleanup removing unparseable file", "path", fp)
-				if err := os.Remove(fp); err != nil {
-					return fmt.Errorf("remove unparseable file: %w", err)
-				}
-				fileRemoved = true
-				return nil
-			}
-
-			if s.LastActive.Before(cutoff) {
-				if err := os.Remove(fp); err != nil {
-					return fmt.Errorf("remove stale file: %w", err)
-				}
-				m.logger.Debug("session: cleanup removed stale session file",
-					"session_id", s.SessionID,
-					"last_active", s.LastActive,
-				)
-				fileRemoved = true
-			}
-			return nil
-		}); err != nil {
-			m.logger.Debug("session: cleanup failed", "path", fp, "error", err)
-			failed++
-		} else if fileRemoved {
-			removed++
+		if errors.Is(readErr, io.EOF) {
+			break
 		}
 	}
 
@@ -451,4 +467,43 @@ func (m *Manager) Cleanup(maxAge time.Duration) error {
 		)
 	}
 	return nil
+}
+
+func readStateFile(path string) ([]byte, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("session: state path is not a regular non-symlink file: %s", path)
+	}
+	if before.Size() > maxStateSize {
+		return nil, errStateTooLarge
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	after, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if after.Mode()&os.ModeSymlink != 0 || !after.Mode().IsRegular() ||
+		!os.SameFile(before, after) || !os.SameFile(opened, after) {
+		return nil, fmt.Errorf("session: state file changed while opening: %s", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxStateSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxStateSize {
+		return nil, errStateTooLarge
+	}
+	return data, nil
 }

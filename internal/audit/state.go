@@ -64,22 +64,8 @@ func (s *JSONLSink) writeSharedStateLocked() error {
 	data = append(data, '\n')
 
 	path := filepath.Join(s.dir, sharedStateFilename)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("audit: open shared chain state: %w", err)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
+	if err := replaceAuditMetadata(path, data, s.fsync); err != nil {
 		return fmt.Errorf("audit: write shared chain state: %w", err)
-	}
-	if s.fsync {
-		if err := file.Sync(); err != nil {
-			_ = file.Close()
-			return fmt.Errorf("audit: fsync shared chain state: %w", err)
-		}
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("audit: close shared chain state: %w", err)
 	}
 	return nil
 }
@@ -112,12 +98,12 @@ func (s *JSONLSink) refreshSharedStateLocked() error {
 
 func (s *JSONLSink) readSharedStateLocked() (sharedChainState, bool, error) {
 	path := filepath.Join(s.dir, sharedStateFilename)
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return sharedChainState{}, false, nil
-	}
+	data, exists, err := readAuditMetadata(path)
 	if err != nil {
 		return sharedChainState{}, false, fmt.Errorf("audit: read shared chain state: %w", err)
+	}
+	if !exists {
+		return sharedChainState{}, false, nil
 	}
 
 	var state sharedChainState
@@ -155,12 +141,12 @@ func (s *JSONLSink) validateSharedStateLocked(state sharedChainState) (bool, err
 	if len(files) == 0 || files[len(files)-1] != state.CurrentFile {
 		return false, nil
 	}
-	info, err := os.Stat(filepath.Join(s.dir, state.CurrentFile))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
+	info, exists, err := inspectAuditRegularPath(filepath.Join(s.dir, state.CurrentFile))
 	if err != nil {
 		return false, fmt.Errorf("audit: stat shared chain file: %w", err)
+	}
+	if !exists {
+		return false, nil
 	}
 	if !info.Mode().IsRegular() || info.Size() != state.CurrentSize {
 		return false, nil
@@ -199,7 +185,7 @@ func (s *JSONLSink) validateSharedStateLocked(state sharedChainState) (bool, err
 }
 
 func validateSharedLastEvent(dir string, state sharedChainState) (Event, bool, error) {
-	file, err := os.Open(filepath.Join(dir, state.LastEventFile))
+	file, err := openAuditRegular(filepath.Join(dir, state.LastEventFile), os.O_RDONLY)
 	if os.IsNotExist(err) {
 		return Event{}, false, nil
 	}
@@ -276,7 +262,7 @@ func readLastAuditRecord(path string, size int64) ([]byte, error) {
 		start = size - suffixBytes
 	}
 
-	file, err := os.Open(path)
+	file, err := openAuditRegular(path, os.O_RDONLY)
 	if err != nil {
 		return nil, fmt.Errorf("audit: open current shared chain file: %w", err)
 	}
@@ -334,8 +320,8 @@ func (s *JSONLSink) adoptSharedStateLocked(state sharedChainState) error {
 func (s *JSONLSink) switchFileLocked(name string) error {
 	if s.file != nil && s.currentFile == name {
 		openInfo, openErr := s.file.Stat()
-		pathInfo, pathErr := os.Stat(filepath.Join(s.dir, name))
-		if openErr == nil && pathErr == nil && os.SameFile(openInfo, pathInfo) {
+		pathInfo, exists, pathErr := inspectAuditRegularPath(filepath.Join(s.dir, name))
+		if openErr == nil && pathErr == nil && exists && os.SameFile(openInfo, pathInfo) {
 			return nil
 		}
 	}

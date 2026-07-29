@@ -129,11 +129,6 @@ func ReadEventsFromDir(auditDir string) ([]audit.Event, error) {
 		allEvents = append(allEvents, events...)
 	}
 
-	// Sort events by timestamp
-	sort.Slice(allEvents, func(i, j int) bool {
-		return allEvents[i].Timestamp.Before(allEvents[j].Timestamp)
-	})
-
 	return allEvents, nil
 }
 
@@ -177,9 +172,9 @@ func prepareReportData(events []audit.Event, startTime, endTime time.Time) (*Rep
 			data.AllowedEvents++
 		case "deny":
 			data.DeniedEvents++
-		case "log":
+		case "log", "watch":
 			data.LoggedEvents++
-		case "ask":
+		case "ask", "require_approval":
 			data.AskEvents++
 		}
 
@@ -432,7 +427,7 @@ func prepareEventList(events []audit.Event) []ReportEvent {
 			cssClass = "decision-allow"
 		case "deny":
 			cssClass = "decision-deny"
-		case "log":
+		case "log", "watch":
 			cssClass = "decision-log"
 		}
 

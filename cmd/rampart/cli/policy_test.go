@@ -36,27 +36,6 @@ func TestNormalizeSession(t *testing.T) {
 	}
 }
 
-func TestRenderCommand(t *testing.T) {
-	tests := []struct {
-		name   string
-		params map[string]any
-		want   string
-	}{
-		{"nil", nil, ""},
-		{"command", map[string]any{"command": "ls"}, "ls"},
-		{"path", map[string]any{"path": "/tmp"}, "/tmp"},
-		{"url", map[string]any{"url": "https://x.com"}, "https://x.com"},
-		{"empty", map[string]any{}, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := renderCommand(tt.params); got != tt.want {
-				t.Errorf("renderCommand() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestPolicyExplainDeny(t *testing.T) {
 	dir := t.TempDir()
 	policyFile := filepath.Join(dir, "rampart.yaml")

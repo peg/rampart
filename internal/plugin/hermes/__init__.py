@@ -37,6 +37,7 @@ DEFAULT_TIMEOUT_MS = 3000
 DEFAULT_ENDPOINT_MODE = "preflight"
 DEFAULT_AGENT_NAME = "hermes"
 MAX_PATCH_PATHS = 100
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 # The default integration is an enforcement boundary, so service outages deny
 # every tool. Advanced operators may explicitly opt selected read-only tools
@@ -96,7 +97,27 @@ logger = logging.getLogger(__name__)
 
 
 class RampartUnavailable(RuntimeError):
-    """Rampart serve could not be reached or returned an unusable response."""
+    """Rampart serve could not be reached or returned a server-side failure."""
+
+
+class RampartInvalidResponse(RuntimeError):
+    """Rampart configuration or response is invalid and must fail closed."""
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep policy credentials bound to the configured control endpoint."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+# Rampart's managed Hermes integration accepts loopback policy endpoints only.
+# Do not let ambient HTTP(S)_PROXY settings turn that direct local boundary into
+# a credential-bearing request to another process or host.
+_NO_REDIRECT_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    _NoRedirectHandler(),
+)
 
 
 @dataclass(frozen=True)
@@ -484,7 +505,14 @@ def _is_trusted_serve_url(value: str) -> bool:
 
     try:
         parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
             return False
         hostname = (parsed.hostname or "").rstrip(".").lower()
         # Force port parsing now so malformed values cannot reach urlopen.
@@ -497,7 +525,14 @@ def _is_trusted_serve_url(value: str) -> bool:
 
 
 def _decode_http_error(exc: urllib.error.HTTPError) -> dict[str, Any]:
-    body = exc.read().decode("utf-8", errors="replace")
+    raw_body = exc.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw_body) > MAX_RESPONSE_BYTES:
+        return {
+            "decision": "deny",
+            "allowed": False,
+            "message": "Rampart error response exceeded the size limit",
+        }
+    body = raw_body.decode("utf-8", errors="replace")
     try:
         parsed = json.loads(body) if body else {}
     except json.JSONDecodeError:
@@ -513,7 +548,7 @@ def _decode_http_error(exc: urllib.error.HTTPError) -> dict[str, Any]:
 
 def post_to_rampart(config: PluginConfig, rampart_tool: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     if not _is_trusted_serve_url(config.serve_url):
-        raise RampartUnavailable("Rampart serve URL must use a loopback HTTP(S) address")
+        raise RampartInvalidResponse("Rampart serve URL must use a loopback HTTP(S) address")
     token = _load_token(config)
     headers = {"Content-Type": "application/json"}
     if token:
@@ -526,21 +561,32 @@ def post_to_rampart(config: PluginConfig, rampart_tool: str, payload: Mapping[st
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=config.timeout_seconds) as response:
-            data = response.read().decode("utf-8", errors="replace")
+        with _NO_REDIRECT_OPENER.open(request, timeout=config.timeout_seconds) as response:
+            raw_data = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw_data) > MAX_RESPONSE_BYTES:
+                raise RampartInvalidResponse("Rampart response exceeded the size limit")
+            data = raw_data.decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            return _decode_http_error(exc)
-        raise RampartUnavailable(f"Rampart returned HTTP {exc.code}") from exc
+        try:
+            if 400 <= exc.code < 500:
+                return _decode_http_error(exc)
+            if 300 <= exc.code < 400:
+                raise RampartInvalidResponse(
+                    f"Rampart refused redirect response HTTP {exc.code}"
+                ) from exc
+            raise RampartUnavailable(f"Rampart returned HTTP {exc.code}") from exc
+        finally:
+            if exc.fp is not None:
+                exc.close()
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
         raise RampartUnavailable(str(exc)) from exc
 
     try:
         parsed = json.loads(data) if data else {}
     except json.JSONDecodeError as exc:
-        raise RampartUnavailable("Rampart returned invalid JSON") from exc
+        raise RampartInvalidResponse("Rampart returned invalid JSON") from exc
     if not isinstance(parsed, dict):
-        raise RampartUnavailable("Rampart returned non-object JSON")
+        raise RampartInvalidResponse("Rampart returned non-object JSON")
     return parsed
 
 
@@ -552,6 +598,9 @@ def _decision_from_result(result: Mapping[str, Any]) -> str:
     decision = result.get("decision")
     if result.get("error"):
         return "deny"
+    allowed = result.get("allowed")
+    if not isinstance(allowed, bool):
+        return "deny"
     if not isinstance(decision, str):
         return "deny"
     decision = decision.strip().lower()
@@ -559,7 +608,7 @@ def _decision_from_result(result: Mapping[str, Any]) -> str:
         return "deny"
     # A contradictory response is not a valid authorization. This also keeps a
     # malformed/partially upgraded local service from accidentally failing open.
-    if result.get("allowed") is False and decision in {"allow", "watch", "log"}:
+    if allowed != (decision in {"allow", "watch", "log"}):
         return "deny"
     return decision
 
@@ -624,7 +673,7 @@ def evaluate_pre_tool_call(
             f"rampart: patch touches more than {MAX_PATCH_PATHS} paths — refusing batched edit until it is split into smaller calls"
         )
 
-    result: Mapping[str, Any] = {"decision": "allow"}
+    result: Mapping[str, Any] = {"decision": "allow", "allowed": True}
     selected_rank = 0
     for policy_params in _policy_param_variants(rampart_tool, params):
         payload = _build_payload(
@@ -636,6 +685,8 @@ def evaluate_pre_tool_call(
         )
         try:
             candidate = caller(config, rampart_tool, payload)
+        except RampartInvalidResponse:
+            return _block("rampart: invalid policy response — refusing tool call")
         except RampartUnavailable:
             if tool_name in config.fail_open_tools or rampart_tool in config.fail_open_tools:
                 logger.warning("Rampart unavailable for %s/%s; configured fail-open", tool_name, rampart_tool)

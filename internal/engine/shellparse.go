@@ -16,13 +16,17 @@ package engine
 import (
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"unicode"
 )
 
 // ansiEscapeRE matches ANSI escape sequences (CSI and simple ESC[...m).
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+var (
+	timeoutDurationRE = regexp.MustCompile(`^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[smhd])?$`)
+	stdbufModeRE      = regexp.MustCompile(`^(?:0|L|B|[0-9]+(?:[kKmMgGtTpPeEzZyY](?:i?[bB])?)?)$`)
+)
 
 // ExtractSubcommands extracts commands embedded inside $(...), backticks,
 // and eval "..." wrappers. It returns all extracted inner commands. This
@@ -203,7 +207,12 @@ func extractEval(cmd string) []string {
 // operators, returning each segment trimmed. Escaped or quoted delimiters
 // are not split on.
 func SplitCompoundCommand(cmd string) []string {
-	return splitCompoundCommandForOS(cmd, runtime.GOOS)
+	// Tool calls describe the command language chosen by the agent, not the OS
+	// running Rampart. Agents routinely invoke bash/sh through Git Bash, WSL,
+	// containers, and remote shells from a Windows host. Treat the unwrapped
+	// command as POSIX shell syntax; explicit cmd.exe wrappers switch their own
+	// inner tokenization to Windows semantics in normalizeSegmentForOS.
+	return splitCompoundCommandForOS(cmd, "posix")
 }
 
 // splitCompoundCommandForOS exposes shell-specific parsing to cross-platform
@@ -356,7 +365,11 @@ func isAmpersandRedirect(cmd string, i int, goos string) bool {
 // This is intentionally not a full bash parser — it handles the 90% case
 // to prevent trivial policy evasion.
 func NormalizeCommand(cmd string) string {
-	return normalizeCommandForOS(cmd, runtime.GOOS)
+	// Normalization follows the command's shell language rather than the host
+	// OS. A Windows runner can receive POSIX commands from Git Bash, WSL, SSH,
+	// containers, or an agent harness. Host-based tokenization would preserve
+	// POSIX quote/backslash evasions and make policy behavior platform-dependent.
+	return normalizeCommandForOS(cmd, "posix")
 }
 
 func normalizeCommandForOS(cmd, goos string) string {
@@ -389,18 +402,23 @@ func normalizeSegmentForOS(seg, goos string) string {
 	}
 
 	tokenOS := goos
-	if looksLikeCmdWrapper(seg) {
+	switch {
+	case looksLikeCmdWrapper(seg):
 		tokenOS = "windows"
+	case looksLikePOSIXShellWrapper(seg):
+		tokenOS = "posix"
+	case looksLikePowerShellWrapper(seg):
+		tokenOS = "powershell"
 	}
 	tokens := tokenizeForOS(seg, tokenOS)
 	if len(tokens) == 0 {
 		return ""
 	}
-	if goos == "windows" {
+	if tokenOS == "windows" {
 		tokens = removeCmdCarets(tokens)
 	}
 
-	tokens = unwrapCommandTokens(tokens)
+	tokens = unwrapCommandTokensForOS(tokens, tokenOS)
 	tokens = stripLeadingRedirections(tokens)
 	if len(tokens) == 0 {
 		return ""
@@ -409,20 +427,421 @@ func normalizeSegmentForOS(seg, goos string) string {
 	return strings.Join(tokens, " ")
 }
 
-// unwrapCommandTokens repeatedly strips leading env assignments and shell -c
-// wrappers until the token stream stops changing. This catches nested forms
-// like `bash -c 'FOO=bar sh -c whoami'` where an env prefix hides a second
-// shell wrapper inside the first quoted command.
-func unwrapCommandTokens(tokens []string) []string {
-	for depth := 0; depth < 4; depth++ {
+// unwrapCommandTokens repeatedly strips leading env assignments, transparent
+// POSIX executors, and shell -c wrappers until the token stream stops changing.
+// This catches nested forms like `env -i bash -c 'FOO=bar exec sh -c whoami'`.
+func unwrapCommandTokensForOS(tokens []string, goos string) []string {
+	for {
 		next := stripLeadingEnvAssignments(tokens)
-		next = stripShellWrapperOnce(next)
+		if goos == "posix" {
+			next = stripPOSIXTransparentExecutorOnce(next)
+		}
+		next, nextOS := stripShellWrapperOnceForOS(next, goos)
 		if strSlicesEqual(next, tokens) {
 			return next
 		}
 		tokens = next
+		goos = nextOS
+	}
+}
+
+// stripPOSIXTransparentExecutorOnce exposes the command executed by common
+// shell builtins/utilities. Unknown or query-only options stay untouched so
+// normalization cannot turn a non-executing invocation into a granting match.
+func stripPOSIXTransparentExecutorOnce(tokens []string) []string {
+	if len(tokens) < 2 {
+		return tokens
+	}
+	name := filepath.Base(strings.ReplaceAll(tokens[0], "\\", "/"))
+	switch name {
+	case "command":
+		i := 1
+		for i < len(tokens) {
+			switch tokens[i] {
+			case "--":
+				i++
+				if i < len(tokens) {
+					return tokens[i:]
+				}
+				return tokens
+			case "-p":
+				i++
+			case "-v", "-V":
+				return tokens
+			default:
+				if strings.HasPrefix(tokens[i], "-") {
+					return tokens
+				}
+				return tokens[i:]
+			}
+		}
+	case "exec":
+		i := 1
+		for i < len(tokens) {
+			token := tokens[i]
+			switch token {
+			case "--":
+				i++
+			case "-a":
+				if i+1 >= len(tokens) {
+					return tokens
+				}
+				i += 2
+			default:
+				if isExecFlag(token) {
+					i++
+					continue
+				}
+				if strings.HasPrefix(token, "-") {
+					return tokens
+				}
+				return tokens[i:]
+			}
+			if i < len(tokens) && token == "--" {
+				return tokens[i:]
+			}
+		}
+	case "env":
+		return stripPOSIXEnvUtility(tokens)
+	case "nohup":
+		return stripPOSIXNohup(tokens)
+	case "nice":
+		return stripPOSIXNice(tokens)
+	case "timeout":
+		return stripPOSIXTimeout(tokens)
+	case "setsid":
+		return stripPOSIXSetsid(tokens)
+	case "stdbuf":
+		return stripPOSIXStdbuf(tokens)
 	}
 	return tokens
+}
+
+func isExecFlag(token string) bool {
+	if len(token) < 2 || token[0] != '-' || token == "--" {
+		return false
+	}
+	for _, flag := range token[1:] {
+		if flag != 'c' && flag != 'l' {
+			return false
+		}
+	}
+	return true
+}
+
+func stripPOSIXEnvUtility(tokens []string) []string {
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			i++
+			for i < len(tokens) && isEnvAssignment(tokens[i]) {
+				i++
+			}
+			if i < len(tokens) {
+				return tokens[i:]
+			}
+			return tokens
+		case token == "-i" || token == "--ignore-environment" ||
+			token == "-0" || token == "--null" || token == "-v" || token == "--debug":
+			i++
+		case token == "-u" || token == "--unset" || token == "-C" ||
+			token == "--chdir" || token == "--argv0":
+			if i+1 >= len(tokens) {
+				return tokens
+			}
+			i += 2
+		case strings.HasPrefix(token, "--unset=") ||
+			strings.HasPrefix(token, "--chdir=") ||
+			strings.HasPrefix(token, "--argv0="):
+			i++
+		case strings.HasPrefix(token, "-u") && len(token) > 2 &&
+			!strings.ContainsRune(strings.TrimPrefix(token, "-u"), '='):
+			// BSD env accepts the option argument without intervening
+			// whitespace (for example, -uRAMPART_MODE).
+			i++
+		case strings.HasPrefix(token, "-C") && len(token) > 2:
+			// Likewise, -C/tmp is the attached form of -C /tmp.
+			i++
+		case token == "-S" || token == "--split-string":
+			if i+1 >= len(tokens) {
+				return tokens
+			}
+			expanded := tokenizeForOS(tokens[i+1], "posix")
+			if len(expanded) == 0 {
+				return tokens
+			}
+			rewritten := append([]string{tokens[0]}, tokens[1:i]...)
+			rewritten = append(rewritten, expanded...)
+			rewritten = append(rewritten, tokens[i+2:]...)
+			return rewritten
+		case strings.HasPrefix(token, "--split-string="):
+			expanded := tokenizeForOS(strings.TrimPrefix(token, "--split-string="), "posix")
+			if len(expanded) == 0 {
+				return tokens
+			}
+			rewritten := append([]string{tokens[0]}, tokens[1:i]...)
+			rewritten = append(rewritten, expanded...)
+			rewritten = append(rewritten, tokens[i+1:]...)
+			return rewritten
+		case strings.HasPrefix(token, "-S") && len(token) > 2:
+			expanded := tokenizeForOS(strings.TrimPrefix(token, "-S"), "posix")
+			if len(expanded) == 0 {
+				return tokens
+			}
+			rewritten := append([]string{tokens[0]}, tokens[1:i]...)
+			rewritten = append(rewritten, expanded...)
+			rewritten = append(rewritten, tokens[i+1:]...)
+			return rewritten
+		case isEnvAssignment(token):
+			i++
+		default:
+			if strings.HasPrefix(token, "-") {
+				return tokens
+			}
+			return tokens[i:]
+		}
+	}
+	return tokens
+}
+
+func stripPOSIXNohup(tokens []string) []string {
+	i := 1
+	if tokens[i] == "--help" || tokens[i] == "--version" {
+		return tokens
+	}
+	if tokens[i] == "--" {
+		i++
+		if i < len(tokens) {
+			return tokens[i:]
+		}
+		return tokens
+	}
+	if i >= len(tokens) || strings.HasPrefix(tokens[i], "-") {
+		return tokens
+	}
+	return tokens[i:]
+}
+
+func stripPOSIXNice(tokens []string) []string {
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			i++
+			if i < len(tokens) {
+				return tokens[i:]
+			}
+			return tokens
+		case token == "--help" || token == "--version":
+			return tokens
+		case token == "-n" || token == "--adjustment":
+			if i+1 >= len(tokens) || !isSignedDecimal(tokens[i+1]) {
+				return tokens
+			}
+			i += 2
+		case strings.HasPrefix(token, "--adjustment="):
+			if !isSignedDecimal(strings.TrimPrefix(token, "--adjustment=")) {
+				return tokens
+			}
+			i++
+		case strings.HasPrefix(token, "-n") && len(token) > 2:
+			adjustment := strings.TrimPrefix(token, "-n")
+			adjustment = strings.TrimPrefix(adjustment, "=")
+			if !isSignedDecimal(adjustment) {
+				return tokens
+			}
+			i++
+		case len(token) > 1 && token[0] == '-' && isSignedDecimal(token):
+			// Historical nice syntax accepts -N as an adjustment.
+			i++
+		case strings.HasPrefix(token, "-"):
+			return tokens
+		default:
+			return tokens[i:]
+		}
+	}
+	return tokens
+}
+
+func stripPOSIXTimeout(tokens []string) []string {
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			i++
+			goto duration
+		case token == "--help" || token == "--version":
+			return tokens
+		case token == "--preserve-status" || token == "--foreground" ||
+			token == "--verbose" || token == "-v":
+			i++
+		case token == "-k" || token == "--kill-after":
+			if i+1 >= len(tokens) || !isTimeoutDuration(tokens[i+1]) {
+				return tokens
+			}
+			i += 2
+		case strings.HasPrefix(token, "--kill-after="):
+			if !isTimeoutDuration(strings.TrimPrefix(token, "--kill-after=")) {
+				return tokens
+			}
+			i++
+		case strings.HasPrefix(token, "-k") && len(token) > 2:
+			if !isTimeoutDuration(strings.TrimPrefix(token, "-k")) {
+				return tokens
+			}
+			i++
+		case token == "-s" || token == "--signal":
+			if i+1 >= len(tokens) || !isSignalName(tokens[i+1]) {
+				return tokens
+			}
+			i += 2
+		case strings.HasPrefix(token, "--signal="):
+			if !isSignalName(strings.TrimPrefix(token, "--signal=")) {
+				return tokens
+			}
+			i++
+		case strings.HasPrefix(token, "-s") && len(token) > 2:
+			if !isSignalName(strings.TrimPrefix(token, "-s")) {
+				return tokens
+			}
+			i++
+		case strings.HasPrefix(token, "-"):
+			return tokens
+		default:
+			goto duration
+		}
+	}
+
+duration:
+	if i+1 >= len(tokens) || !isTimeoutDuration(tokens[i]) {
+		return tokens
+	}
+	return tokens[i+1:]
+}
+
+func stripPOSIXSetsid(tokens []string) []string {
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			i++
+			if i < len(tokens) {
+				return tokens[i:]
+			}
+			return tokens
+		case token == "--help" || token == "--version":
+			return tokens
+		case token == "--ctty" || token == "--fork" || token == "--wait" ||
+			isSetsidShortOptions(token):
+			i++
+		case strings.HasPrefix(token, "-"):
+			return tokens
+		default:
+			return tokens[i:]
+		}
+	}
+	return tokens
+}
+
+func stripPOSIXStdbuf(tokens []string) []string {
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			i++
+			if i < len(tokens) {
+				return tokens[i:]
+			}
+			return tokens
+		case token == "--help" || token == "--version":
+			return tokens
+		case token == "-i" || token == "-o" || token == "-e" ||
+			token == "--input" || token == "--output" || token == "--error":
+			if i+1 >= len(tokens) || !isStdbufMode(tokens[i+1]) {
+				return tokens
+			}
+			i += 2
+		case hasStdbufLongMode(token):
+			i++
+		case len(token) > 2 && token[0] == '-' &&
+			(token[1] == 'i' || token[1] == 'o' || token[1] == 'e'):
+			mode := strings.TrimPrefix(token[2:], "=")
+			if !isStdbufMode(mode) {
+				return tokens
+			}
+			i++
+		case strings.HasPrefix(token, "-"):
+			return tokens
+		default:
+			return tokens[i:]
+		}
+	}
+	return tokens
+}
+
+func isSignedDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	if value[0] == '+' || value[0] == '-' {
+		value = value[1:]
+	}
+	if value == "" {
+		return false
+	}
+	for i := range value {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isTimeoutDuration(value string) bool {
+	return value == "inf" || value == "infinity" || timeoutDurationRE.MatchString(value)
+}
+
+func isSignalName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, ch := range value {
+		if (ch < '0' || ch > '9') && (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+func isSetsidShortOptions(token string) bool {
+	if len(token) < 2 || token[0] != '-' || strings.HasPrefix(token, "--") {
+		return false
+	}
+	for _, option := range token[1:] {
+		if option != 'c' && option != 'f' && option != 'w' {
+			return false
+		}
+	}
+	return true
+}
+
+func isStdbufMode(value string) bool {
+	return stdbufModeRE.MatchString(value)
+}
+
+func hasStdbufLongMode(token string) bool {
+	for _, prefix := range []string{"--input=", "--output=", "--error="} {
+		if strings.HasPrefix(token, prefix) {
+			return isStdbufMode(strings.TrimPrefix(token, prefix))
+		}
+	}
+	return false
 }
 
 // shellBasenames lists shell binary names that commonly wrap commands via -c.
@@ -440,6 +859,18 @@ var (
 )
 
 func looksLikeCmdWrapper(command string) bool {
+	return looksLikeShellWrapper(command, cmdBasenames)
+}
+
+func looksLikePOSIXShellWrapper(command string) bool {
+	return looksLikeShellWrapper(command, shellBasenames)
+}
+
+func looksLikePowerShellWrapper(command string) bool {
+	return looksLikeShellWrapper(command, powerShellBasenames)
+}
+
+func looksLikeShellWrapper(command string, basenames map[string]bool) bool {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return false
@@ -449,7 +880,7 @@ func looksLikeCmdWrapper(command string) bool {
 		end = len(command)
 	}
 	head := strings.Trim(command[:end], `"'`)
-	return cmdBasenames[shellWrapperBasename(head)]
+	return basenames[shellWrapperBasename(head)]
 }
 
 // isShellBinary checks if a token is a known shell binary, matching by basename
@@ -487,20 +918,6 @@ func stripLeadingEnvAssignments(tokens []string) []string {
 	return tokens[start:]
 }
 
-// stripShellWrapper strips nested shell -c wrappers without touching env
-// assignments. It is kept as a focused helper for tests and callers that only
-// want wrapper removal semantics.
-func stripShellWrapper(tokens []string) []string {
-	for depth := 0; depth < 3; depth++ {
-		stripped := stripShellWrapperOnce(tokens)
-		if strSlicesEqual(stripped, tokens) {
-			return stripped
-		}
-		tokens = stripped
-	}
-	return tokens
-}
-
 func strSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -513,9 +930,9 @@ func strSlicesEqual(a, b []string) bool {
 	return true
 }
 
-func stripShellWrapperOnce(tokens []string) []string {
+func stripShellWrapperOnceForOS(tokens []string, goos string) ([]string, string) {
 	if len(tokens) < 2 {
-		return tokens
+		return tokens, goos
 	}
 
 	basename := shellWrapperBasename(tokens[0])
@@ -527,10 +944,10 @@ func stripShellWrapperOnce(tokens []string) []string {
 			tok := tokens[i]
 			if !strings.HasPrefix(tok, "-") {
 				// Reached a non-flag token without finding -c — not a wrapper.
-				return tokens
+				return tokens, goos
 			}
 			if hasCFlag(tok) {
-				return unwrapInnerTokens(tokens, i+1)
+				return unwrapInnerTokensForOS(tokens, i+1, "posix"), "posix"
 			}
 		}
 	case cmdBasenames[basename]:
@@ -539,7 +956,7 @@ func stripShellWrapperOnce(tokens []string) []string {
 		for i := 1; i < len(tokens); i++ {
 			tok := strings.ToLower(tokens[i])
 			if tok == "/c" || tok == "/k" {
-				return removeCmdCarets(unwrapInnerTokensForOS(tokens, i+1, "windows"))
+				return removeCmdCarets(unwrapInnerTokensForOS(tokens, i+1, "windows")), "windows"
 			}
 			if (strings.HasPrefix(tok, "/c") || strings.HasPrefix(tok, "/k")) && len(tok) > 2 {
 				attached := tokens[i][2:]
@@ -547,10 +964,10 @@ func stripShellWrapperOnce(tokens []string) []string {
 				if len(inner) == 1 {
 					inner = unwrapInnerTokensForOS(inner, 0, "windows")
 				}
-				return removeCmdCarets(inner)
+				return removeCmdCarets(inner), "windows"
 			}
 			if !strings.HasPrefix(tok, "/") {
-				return tokens
+				return tokens, goos
 			}
 		}
 	case powerShellBasenames[basename]:
@@ -559,14 +976,14 @@ func stripShellWrapperOnce(tokens []string) []string {
 		for i := 1; i < len(tokens); i++ {
 			tok := strings.ToLower(tokens[i])
 			if tok == "-command" || tok == "-c" {
-				return unwrapInnerTokens(tokens, i+1)
+				return unwrapInnerTokensForOS(tokens, i+1, "powershell"), "powershell"
 			}
 			if !strings.HasPrefix(tok, "-") {
-				return tokens
+				return tokens, goos
 			}
 		}
 	}
-	return tokens
+	return tokens, goos
 }
 
 // removeCmdCarets removes cmd.exe's escape marker. It is intentionally
@@ -617,10 +1034,6 @@ func isAttachedRedirection(token string) bool {
 	return i < len(token)
 }
 
-func unwrapInnerTokens(tokens []string, start int) []string {
-	return unwrapInnerTokensForOS(tokens, start, runtime.GOOS)
-}
-
 func unwrapInnerTokensForOS(tokens []string, start int, goos string) []string {
 	if start >= len(tokens) {
 		return tokens
@@ -637,10 +1050,75 @@ func unwrapInnerTokensForOS(tokens []string, start int, goos string) []string {
 }
 
 func tokenizeForOS(cmd, goos string) []string {
-	if goos == "windows" {
+	switch goos {
+	case "windows":
 		return tokenizeWindows(cmd)
+	case "powershell":
+		return tokenizePowerShell(cmd)
+	default:
+		return tokenize(cmd)
 	}
-	return tokenize(cmd)
+}
+
+// tokenizePowerShell handles the quoting rules needed to expose a wrapped
+// -Command payload. Unlike POSIX shells, backslashes are ordinary path
+// characters and the backtick is the escape marker. Both quote styles group
+// whitespace.
+func tokenizePowerShell(cmd string) []string {
+	var tokens []string
+	var cur strings.Builder
+	var quote byte
+	tokenStarted := false
+
+	for i := 0; i < len(cmd); i++ {
+		ch := cmd[i]
+		if quote == '\'' {
+			if ch == '\'' {
+				if i+1 < len(cmd) && cmd[i+1] == '\'' {
+					cur.WriteByte('\'')
+					i++
+					continue
+				}
+				quote = 0
+				continue
+			}
+			cur.WriteByte(ch)
+			continue
+		}
+		if ch == '`' && i+1 < len(cmd) {
+			i++
+			cur.WriteByte(cmd[i])
+			tokenStarted = true
+			continue
+		}
+		if quote == '"' {
+			if ch == '"' {
+				quote = 0
+				continue
+			}
+			cur.WriteByte(ch)
+			continue
+		}
+		if ch == '\'' || ch == '"' {
+			quote = ch
+			tokenStarted = true
+			continue
+		}
+		if ch == ' ' || ch == '\t' {
+			if tokenStarted {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+				tokenStarted = false
+			}
+			continue
+		}
+		cur.WriteByte(ch)
+		tokenStarted = true
+	}
+	if tokenStarted {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
 }
 
 // tokenizeWindows handles the cmd.exe lexical rules relevant to policy

@@ -41,7 +41,9 @@ Before you dive in, skim the [integration support matrix](support-matrix.md) if 
 rampart quickstart
 ```
 
-This detects your agent (Claude Code, Codex, Cline, OpenClaw), installs the service, wires up the right integration path, and verifies everything is working. Done.
+This discovers integrations in Rampart's current auto-protect registry, installs
+the service when the selected path needs it, wires up the appropriate boundary,
+and verifies the result. Done.
 
 Then use your agent normally. Rampart is invisible until something needs to be blocked or approved.
 
@@ -88,11 +90,12 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
 
     Enterprise/API-key Gemini CLI only. This is an explicit experimental path,
     not Antigravity support and not part of bare `rampart protect` detection.
+    Authenticated host hook ingestion remains pending.
 
 === "GitHub Copilot"
 
     ```bash
-    # Covers Copilot CLI and VS Code agent sessions
+    # CLI adapter; also installs the shared VS Code Preview hook contract
     rampart setup copilot
     rampart verify copilot
     ```
@@ -103,16 +106,20 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
     rampart wrap -- your-agent
 
     # Optional process-interposition fallback on supported Unix processes
+    # Requires: make -C preload install (release packages contain the CLI only)
     rampart preload -- your-agent
     ```
 
 === "OpenClaw"
 
     ```bash
-    rampart setup openclaw
+    rampart protect openclaw
     ```
 
-    Native plugin path on current OpenClaw builds. `rampart serve` is required for policy evaluation here.
+    Installs the managed native guard, enables fail-closed degraded behavior,
+    restarts the gateway, and runs non-executing behavioral canaries.
+    `rampart serve` is required for policy evaluation here. Use
+    `rampart setup openclaw` only for advanced/manual integration management.
 
 === "MCP Servers"
 

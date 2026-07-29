@@ -366,7 +366,7 @@ func computeDecisionCounts(events []audit.Event) DecisionCounts {
 			counts.Deny++
 		case "log", "watch":
 			counts.Log++
-		case "ask":
+		case "ask", "require_approval":
 			counts.Ask++
 		default:
 			counts.Other++

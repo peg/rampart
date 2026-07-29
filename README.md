@@ -74,14 +74,11 @@ Recheck the boundary at any time:
 rampart verify openclaw
 ```
 
-Direct per-agent setup remains available:
+Direct setup for supported integration paths remains available:
 
 ```bash
 # Claude Code
 rampart setup claude-code
-
-# Hermes Agent (experimental)
-rampart setup hermes
 
 # Cline
 rampart setup cline
@@ -90,20 +87,28 @@ rampart setup cline
 rampart setup codex
 rampart verify codex
 
-# Gemini CLI (experimental enterprise/API-key preview)
-rampart setup gemini
-rampart verify gemini
-
-# Antigravity CLI and IDE
+# Antigravity CLI (host-verified) and IDE (shared contract)
 rampart setup antigravity
 rampart verify antigravity
 
-# GitHub Copilot CLI and VS Code agent sessions
+# GitHub Copilot CLI adapter and VS Code Preview hooks
 rampart setup copilot
 rampart verify copilot
 
 # Any other agent (wraps $SHELL)
 rampart wrap -- your-agent
+```
+
+Experimental integrations are explicit opt-ins and stay outside bare
+`rampart protect` auto-detection:
+
+```bash
+# Hermes Agent (experimental; native approval/resume pending)
+rampart setup hermes
+
+# Gemini CLI (experimental enterprise/API-key path; no authenticated host proof)
+rampart setup gemini
+rampart verify gemini
 ```
 
 Check the broader installation state:
@@ -165,7 +170,7 @@ DENY  14:23:12  resp  read .env                        [block-credential-leak]
 
 <img src="docs/architecture.svg" alt="Rampart architecture" width="100%">
 
-Local pattern matching is benchmarked in microseconds. The optional
+Local pattern matching is benchmarked at microsecond scale. The optional
 [rampart-verify](https://github.com/peg/rampart-verify) sidecar adds LLM-based
 classification for selected ambiguous commands. Decisions observed at the
 configured Rampart boundary are written to a hash-chained audit trail.
@@ -178,11 +183,11 @@ configured Rampart boundary are written to a hash-chained audit trail.
 | **Cline** | `rampart setup cline` | Platform-native editor/CLI hook files |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Gemini CLI** | `rampart setup gemini` | Experimental enterprise/API-key `BeforeTool`/`AfterTool` hooks |
-| **Antigravity** | `rampart setup antigravity` | Shared CLI/IDE `PreToolUse` policy plugin with native `force_ask` |
-| **GitHub Copilot** | `rampart setup copilot` | Shared native hooks for Copilot CLI and VS Code agent sessions |
+| **Antigravity** | `rampart setup antigravity` | Shared CLI/IDE `PreToolUse` plugin; CLI 1.1.7 host-verified, IDE contract-tested |
+| **GitHub Copilot** | `rampart setup copilot` | Shared hooks; CLI package startup + adapter tested, authenticated ingestion pending; VS Code Preview contract-tested |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
-| **System-wide** | `rampart preload -- <cmd>` | LD_PRELOAD syscall interception |
+| **Compatible native processes** | `rampart preload -- <cmd>` | Optional libc exec/spawn interposition (Linux/macOS) |
 
 <div align="center">
 <img src="docs/watch.png" alt="rampart watch live audit dashboard" width="700">
@@ -290,7 +295,8 @@ Run `rampart verify openclaw` to test behavior; use `rampart doctor` for a wider
 ## Antigravity
 
 Rampart installs one global plugin shared by Antigravity CLI and the
-Antigravity IDE:
+Antigravity IDE. The CLI 1.1.7 path has completed host proof; the IDE shares the
+reviewed contract, but a separate physical IDE host run remains pending:
 
 ```bash
 rampart setup antigravity
@@ -336,7 +342,12 @@ rampart wrap -- python my_agent.py
 
 ## Add preload coverage to a process
 
-For agents with no hook system and no `$SHELL` support, `preload` intercepts exec-family syscalls at the OS level:
+For agents with no hook system and no `$SHELL` support, `preload` can interpose
+supported libc exec/spawn calls in a compatible dynamically linked process:
+
+> **Source build required:** current GitHub release archives and Homebrew
+> packages ship the CLI but not `librampart`. From the matching Rampart source
+> checkout, run `make -C preload install` first.
 
 ```bash
 rampart preload -- your-agent
@@ -605,16 +616,13 @@ curl -s localhost:9090/v1/preflight/exec \
 
 ## Performance
 
-Policy evaluation is benchmarked in microseconds on maintainer and CI hardware.
-Exact latency depends on the policy set, machine, and audit path:
+The in-process policy hot path is benchmarked at microsecond scale. Hook process
+startup, policy size, machine speed, and audit I/O affect end-to-end latency.
+Reproduce the engine-only benchmark on your own hardware with:
 
-| Command | Decision | Time |
-|---------|----------|------|
-| `rm -rf /` | deny | 8µs |
-| `sudo reboot` | watch | 6µs |
-| `.ssh/id_rsa` read | deny | 3µs |
-| `git status` | allow | 4µs |
-| `curl ngrok.io` | deny | 3µs |
+```bash
+go test ./internal/engine -run '^$' -bench '^BenchmarkEvaluate$' -benchmem -count=3
+```
 
 ---
 
@@ -662,20 +670,22 @@ rampart verify openclaw                     # Re-run safe canaries through the l
 rampart quickstart                           # Auto-detect, install, configure, health check
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
-rampart setup openclaw                       # OpenClaw native plugin integration
+rampart setup openclaw                       # Advanced/manual OpenClaw integration management
 rampart setup codex                          # Codex native lifecycle hooks
-rampart setup gemini                         # Experimental enterprise/API-key Gemini CLI hooks
-rampart setup antigravity                    # Antigravity CLI + IDE shared policy plugin
-rampart setup copilot                        # Copilot CLI + VS Code shared native hooks
+rampart setup antigravity                    # CLI host-verified; IDE shares the tested plugin contract
+rampart setup copilot                        # Copilot CLI adapter + VS Code Preview hooks
 rampart verify codex                         # Verify hook install + native deny response
-rampart verify gemini                        # Verify hook install + native deny response
 rampart verify antigravity                   # Verify plugin install + native deny response
 rampart verify copilot                       # Verify dual-host deny response + audit
+# Experimental, explicit opt-in integrations
+rampart setup gemini                         # Enterprise/API-key Gemini CLI; no authenticated host proof
+rampart verify gemini                        # Verify generated hooks + adapter response
+rampart setup hermes                         # Hermes plugin; native approval/resume pending
 rampart setup <agent> --remove               # Clean uninstall
 
 # Run
 rampart wrap -- <command>                    # Wrap any agent via $SHELL
-rampart preload -- <command>                 # LD_PRELOAD syscall interception
+rampart preload -- <command>                 # Optional compatible libc exec/spawn interposition
 rampart mcp -- <mcp-server-command>          # Proxy MCP with policy enforcement
 rampart mcp scan -- <server>                 # Auto-generate policies from MCP tools
 
@@ -739,8 +749,8 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Cline | `rampart setup cline` | Linux, macOS, Windows* |
 | Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
 | Gemini CLI (enterprise/API key) | `rampart setup gemini` | Experimental; Linux, macOS |
-| Antigravity CLI / IDE | `rampart setup antigravity` | Linux, macOS, Windows |
-| GitHub Copilot CLI / VS Code | `rampart setup copilot` | Linux, macOS, Windows |
+| Antigravity CLI / IDE | `rampart setup antigravity` | Linux, macOS, Windows; CLI 1.1.7 host proof, IDE contract-tested |
+| GitHub Copilot CLI / VS Code | `rampart setup copilot` | Linux, macOS, Windows; CLI adapter-tested, VS Code Preview contract-tested |
 | Claude Desktop MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |
 | Python agents | `rampart preload` or HTTP API | Linux, macOS |

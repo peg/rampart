@@ -32,15 +32,34 @@ run_preloaded() {
   local fail_open="$2"
   local stderr_path="$3"
   shift 3
+  if [[ -n "${RAMPART_CONTRACT_PROXY:-}" ]]; then
+    HTTP_PROXY="$RAMPART_CONTRACT_PROXY" \
+    HTTPS_PROXY="$RAMPART_CONTRACT_PROXY" \
+    ALL_PROXY="$RAMPART_CONTRACT_PROXY" \
+    http_proxy="$RAMPART_CONTRACT_PROXY" \
+    https_proxy="$RAMPART_CONTRACT_PROXY" \
+    all_proxy="$RAMPART_CONTRACT_PROXY" \
+    NO_PROXY= no_proxy= \
+      run_preloaded_direct "$url" "$fail_open" "$stderr_path" "$@"
+    return
+  fi
+  run_preloaded_direct "$url" "$fail_open" "$stderr_path" "$@"
+}
+
+run_preloaded_direct() {
+  local url="$1"
+  local fail_open="$2"
+  local stderr_path="$3"
+  shift 3
   RAMPART_DEBUG=1 \
-  RAMPART_MODE=enforce \
-  RAMPART_FAIL_OPEN="$fail_open" \
-  RAMPART_AGENT=preload-contract \
-  RAMPART_SESSION=preload-contract \
-  RAMPART_TOKEN="${RAMPART_CONTRACT_TOKEN:-contract-token}" \
-  RAMPART_URL="$url" \
-  LD_PRELOAD="$LIB_PATH" \
-  "$@" >/dev/null 2>"$stderr_path"
+    RAMPART_MODE=enforce \
+    RAMPART_FAIL_OPEN="$fail_open" \
+    RAMPART_AGENT=preload-contract \
+    RAMPART_SESSION=preload-contract \
+    RAMPART_TOKEN="${RAMPART_CONTRACT_TOKEN:-contract-token}" \
+    RAMPART_URL="$url" \
+    LD_PRELOAD="$LIB_PATH" \
+    "$@" >/dev/null 2>"$stderr_path"
 }
 
 expect_result() {
@@ -99,6 +118,29 @@ expect_result auth-failure deny "${BASE_URL}/auth" 1 /bin/sh -c 'exec /bin/true'
 expect_result oversized-response deny "${BASE_URL}/oversized" 1 /bin/sh -c 'exec /bin/true'
 expect_result server-fail-open allow "${BASE_URL}/server-error" 1 /bin/sh -c 'exec /bin/true'
 expect_result server-fail-closed deny "${BASE_URL}/server-error" 0 /bin/sh -c 'exec /bin/true'
+
+# Ambient proxy variables must never receive policy commands or bearer tokens.
+# Point every proxy variable at a closed local port: a proxy-aware client would
+# fail closed instead of reaching the allow endpoint directly.
+RAMPART_CONTRACT_PROXY="http://127.0.0.1:1" \
+  expect_result ambient-proxy-ignored allow "${BASE_URL}/allow" 0 \
+  /bin/sh -c 'exec /bin/true'
+
+# Debug diagnostics describe the decision without copying raw argv secrets to
+# stderr, terminal logs, or host artifacts.
+expect_result debug-command-redaction allow "${BASE_URL}/allow" 0 \
+  /bin/sh -c 'exec /bin/true rampart-debug-secret-canary'
+if grep -q 'rampart-debug-secret-canary' "${TMP_DIR}/debug-command-redaction.stderr"; then
+  echo "[test] FAIL: debug log exposed the intercepted command" >&2
+  exit 1
+fi
+
+# Unsupported schemes and URL credentials are local configuration failures;
+# fail-open applies only to transport/5xx degradation.
+expect_result unsupported-protocol deny "file:///tmp/rampart-policy" 1 \
+  /bin/sh -c 'exec /bin/true'
+expect_result embedded-url-credentials deny "http://user:secret@127.0.0.1:${PORT}/allow" 1 \
+  /bin/sh -c 'exec /bin/true'
 
 # Both spawn variants must enforce and must report the real executable rather
 # than the caller-controlled argv[0].

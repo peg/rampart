@@ -12,6 +12,11 @@ Both hosts load user hooks from `~/.copilot/hooks`, and Copilot CLI supports the
 VS Code-compatible PascalCase payload. Rampart therefore installs one hook file
 and one policy adapter rather than maintaining separate integrations.
 
+The latest published CLI package startup and Rampart adapter are tested
+separately. An authenticated host run proving that Copilot dispatched the hook
+is still pending. VS Code is covered by the shared schema and adapter tests, not
+by a separate physical editor host run.
+
 !!! note "VS Code hooks are Preview"
     Copilot CLI hooks are the stable primary support surface. VS Code agent
     hooks are currently an upstream Preview feature, so their configuration or
@@ -101,9 +106,11 @@ non-executing destructive canary, requires both the Copilot CLI and VS Code
 deny fields, checks session-correlated audit output, and exercises the live
 local policy path. It does not ask a model to execute the canary.
 
-The weekly rolling-latest gate validates the generated schema and adapter
-against the latest published `@github/copilot` CLI. An authenticated model/tool
-host run remains separate release evidence.
+The weekly rolling gate confirms that the latest published `@github/copilot`
+package starts in isolated state while Rampart separately validates the shared
+schema and adapter. The version command does not prove that Copilot loaded or
+dispatched the hooks. An authenticated model/tool host run remains separate
+release evidence.
 
 ## Uninstall
 

@@ -2,6 +2,7 @@ import plugin from './index.js';
 
 const toolResult = process.argv[2] ? JSON.parse(process.argv[2]) : {
   decision: 'ask',
+  allowed: false,
   policy: 'test-policy',
   message: 'needs approval',
   severity: 'warning',

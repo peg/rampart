@@ -157,6 +157,35 @@ func TestGenericNotifier_Send(t *testing.T) {
 	}
 }
 
+func TestNotifierRefusesCrossOriginRedirect(t *testing.T) {
+	destinationHit := make(chan struct{}, 1)
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		destinationHit <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer destination.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", destination.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	event := NotifyEvent{
+		Action:     "ask",
+		Command:    "sensitive command",
+		ResolveURL: "http://localhost:9090/v1/approvals/example/resolve?sig=secret",
+	}
+	if err := NewGenericNotifier(redirector.URL).Send(event); err == nil {
+		t.Fatal("redirecting notification endpoint unexpectedly succeeded")
+	}
+	select {
+	case <-destinationHit:
+		t.Fatal("notification request followed redirect to a different origin")
+	default:
+	}
+}
+
 func TestSlackNotifier_Send(t *testing.T) {
 	event := NotifyEvent{
 		Action:    "log",

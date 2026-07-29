@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,8 +51,16 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 		Message: req.Message,
 	}
 
-	// Short-circuit if this run has been bulk-approved.
-	if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
+	// Check run-scoped authorization and enqueue atomically. A bulk cache
+	// publication can never slip between a stale check and Create, leaving an
+	// orphan pending request for a call that should have been auto-approved.
+	pending, autoApproved, err := s.approvals.CreateOrAutoApproved(call, decision)
+	if err != nil {
+		s.logger.Error("proxy: approval store full", "error", err)
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if autoApproved {
 		s.logger.Debug("proxy: run auto-approved (hook), bypassing approval queue", "tool", req.Tool, "run_id", call.RunID)
 		ttl := s.approvalTimeout
 		if ttl <= 0 {
@@ -65,13 +72,6 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 			"message":    "auto-approved by bulk-resolve",
 			"expires_at": time.Now().Add(ttl).Format(time.RFC3339),
 		})
-		return
-	}
-
-	pending, err := s.approvals.Create(call, decision)
-	if err != nil {
-		s.logger.Error("proxy: approval store full", "error", err)
-		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	s.broadcastSSE(map[string]any{"type": "approvals"})
@@ -103,12 +103,18 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	pending := s.approvals.List()
 	items := make([]map[string]any, 0, len(pending))
 
-	// Track per-run-id grouping data for the run_groups response field.
+	// A run ID is caller-selected and not globally unique. Group approvals by
+	// the complete identity used by bulk authorization.
+	type runScope struct {
+		agent   string
+		session string
+		runID   string
+	}
 	type runGroupEntry struct {
 		minCreatedAt time.Time
 		items        []map[string]any
 	}
-	runGroupMap := make(map[string]*runGroupEntry)
+	runGroupMap := make(map[runScope]*runGroupEntry)
 
 	for _, req := range pending {
 		item := map[string]any{
@@ -124,11 +130,21 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Call.RunID != "" {
 			item["run_id"] = req.Call.RunID
-			// Accumulate into run group tracking.
-			g, exists := runGroupMap[req.Call.RunID]
+			scope := runScope{
+				agent:   strings.TrimSpace(req.Call.Agent),
+				session: strings.TrimSpace(req.Call.Session),
+				runID:   strings.TrimSpace(req.Call.RunID),
+			}
+			// Incomplete identity cannot safely support a bulk authorization
+			// operation, so leave that approval in the flat/solo view.
+			if scope.agent == "" || scope.session == "" || scope.runID == "" {
+				items = append(items, item)
+				continue
+			}
+			g, exists := runGroupMap[scope]
 			if !exists {
 				g = &runGroupEntry{minCreatedAt: req.CreatedAt}
-				runGroupMap[req.Call.RunID] = g
+				runGroupMap[scope] = g
 			} else if req.CreatedAt.Before(g.minCreatedAt) {
 				g.minCreatedAt = req.CreatedAt
 			}
@@ -139,15 +155,15 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 
 	// Build run_groups: only groups with 2+ items, sorted by MIN(created_at).
 	type runGroup struct {
-		runID        string
+		scope        runScope
 		minCreatedAt time.Time
 		items        []map[string]any
 	}
 	var groups []runGroup
-	for runID, g := range runGroupMap {
+	for scope, g := range runGroupMap {
 		if len(g.items) >= 2 {
 			groups = append(groups, runGroup{
-				runID:        runID,
+				scope:        scope,
 				minCreatedAt: g.minCreatedAt,
 				items:        g.items,
 			})
@@ -161,7 +177,9 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	runGroupsJSON := make([]map[string]any, 0, len(groups))
 	for _, g := range groups {
 		runGroupsJSON = append(runGroupsJSON, map[string]any{
-			"run_id":              g.runID,
+			"agent":               g.scope.agent,
+			"session":             g.scope.session,
+			"run_id":              g.scope.runID,
 			"count":               len(g.items),
 			"earliest_created_at": g.minCreatedAt.Format(time.RFC3339),
 			"items":               g.items,
@@ -207,6 +225,71 @@ func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, item)
 }
 
+// approvalResolutionEvent describes the operator decision itself. For an
+// allow-always request this event deliberately records an approved one-shot
+// resolution plus persist_requested=true; it does not claim the durable rule
+// exists before that separate transaction succeeds.
+func approvalResolutionEvent(resolved *approval.Request, approved, persistRequested bool, resolvedBy string) audit.Event {
+	resolution := "denied"
+	if approved {
+		resolution = "approved"
+	}
+	return audit.Event{
+		// Reusing the approval ULID makes a retry after an ambiguous sink error
+		// identifiable without creating a second logical resolution identity.
+		ID:         resolved.ID,
+		Timestamp:  time.Now().UTC(),
+		Agent:      resolved.Call.Agent,
+		Session:    resolved.Call.Session,
+		RunID:      resolved.Call.RunID,
+		ToolCallID: resolved.Call.ToolCallID,
+		Tool:       resolved.Call.Tool,
+		Request: map[string]any{
+			"action":            "approval_resolved",
+			"tool":              resolved.Call.Tool,
+			"command":           resolved.Call.Command(),
+			"resolution":        resolution,
+			"resolved_by":       resolvedBy,
+			"approval_id":       resolved.ID,
+			"persist_requested": approved && persistRequested,
+			"persist":           false,
+		},
+		Decision: audit.EventDecision{
+			Action:  resolution,
+			Message: fmt.Sprintf("approval %s by %s", resolution, resolvedBy),
+		},
+	}
+}
+
+// approvalPersistenceAuthorizationEvent records that the operator-authorized
+// durable policy write is about to be attempted. It is persisted before the
+// policy file is changed, so the durable authorization is never installed
+// without a preceding audit record. It intentionally does not claim success.
+func approvalPersistenceAuthorizationEvent(resolved *approval.Request, resolvedBy, policyPath string) audit.Event {
+	return audit.Event{
+		ID:         audit.NewEventID(),
+		Timestamp:  time.Now().UTC(),
+		Agent:      resolved.Call.Agent,
+		Session:    resolved.Call.Session,
+		RunID:      resolved.Call.RunID,
+		ToolCallID: resolved.Call.ToolCallID,
+		Tool:       resolved.Call.Tool,
+		Request: map[string]any{
+			"action":      "approval_persistence_authorized",
+			"tool":        resolved.Call.Tool,
+			"command":     resolved.Call.Command(),
+			"resolved_by": resolvedBy,
+			"approval_id": resolved.ID,
+			"policy_path": policyPath,
+			"persist":     false,
+		},
+		Decision: audit.EventDecision{
+			Action:  "authorized",
+			Message: fmt.Sprintf("durable allow persistence authorized by %s", resolvedBy),
+		},
+	}
+}
+
 func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -242,6 +325,12 @@ authorized:
 	if req.ResolvedBy == "" {
 		req.ResolvedBy = "api"
 	}
+	if hmacAuthed {
+		// A signed link authenticates the server-issued capability, not the
+		// identity claimed in its caller-controlled JSON body. Record an honest,
+		// server-owned principal so audit consumers cannot be misled.
+		req.ResolvedBy = "signed-link"
+	}
 
 	// HMAC-signed URLs are scoped to a single approval action — they must not
 	// be able to make permanent policy changes. Check before resolving so the
@@ -262,10 +351,32 @@ authorized:
 		}
 	}
 
-	if err := s.approvals.Resolve(id, req.Approved, req.ResolvedBy, req.Persist); err != nil {
+	// The store records Persisted only after the separate durable policy
+	// transaction succeeds below. The resolution audit is a required
+	// pre-publication step: a failed write leaves the request pending, does not
+	// wake its waiter, and does not expose an exact-replay grant.
+	var resolutionAudit *audit.Event
+	err := s.approvals.ResolveBeforePublish(id, req.Approved, req.ResolvedBy, func(candidate *approval.Request) error {
+		if s.sink == nil {
+			return nil
+		}
+		event := approvalResolutionEvent(candidate, req.Approved, req.Persist, req.ResolvedBy)
+		if writeErr := s.sink.Write(event); writeErr != nil {
+			return fmt.Errorf("write approval resolution audit: %w", writeErr)
+		}
+		resolutionAudit = &event
+		return nil
+	})
+	if err != nil {
 		// Distinguish "already resolved" (replay) from "unknown id".
 		if existing, ok := s.approvals.Get(id); ok && existing.Status != approval.StatusPending {
 			writeError(w, http.StatusGone, "approval already resolved; URL cannot be reused")
+			return
+		} else if ok {
+			// The request is still pending, so resolution failed before any
+			// authorization was committed (for example, durable replay state
+			// was unavailable). Keep it retryable and fail closed.
+			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
 		writeError(w, http.StatusNotFound, err.Error())
@@ -274,54 +385,37 @@ authorized:
 
 	resolved, _ := s.approvals.Get(id)
 	s.broadcastSSE(map[string]any{"type": "approvals"})
+	if resolutionAudit != nil {
+		s.broadcastSSE(map[string]any{"type": "audit", "event": *resolutionAudit})
+	}
 	s.logger.Info("proxy: approval resolved",
 		"id", id,
 		"approved", req.Approved,
 		"resolved_by", req.ResolvedBy,
 	)
 
-	// Write audit event for the resolution.
-	if s.sink != nil {
-		resolution := "denied"
-		if req.Approved && req.Persist {
-			resolution = "always_allowed"
-		} else if req.Approved {
-			resolution = "approved"
-		}
-
-		auditEvent := audit.Event{
-			ID:        audit.NewEventID(),
-			Timestamp: time.Now().UTC(),
-			Agent:     resolved.Call.Agent,
-			Session:   resolved.Call.Session,
-			Tool:      resolved.Call.Tool,
-			Request: map[string]any{
-				"action":      "approval_resolved",
-				"tool":        resolved.Call.Tool,
-				"command":     resolved.Call.Command(),
-				"resolution":  resolution,
-				"resolved_by": req.ResolvedBy,
-				"approval_id": id,
-				"persist":     req.Approved && req.Persist,
-			},
-			Decision: audit.EventDecision{
-				Action:  resolution,
-				Message: fmt.Sprintf("approval %s by %s", resolution, req.ResolvedBy),
-			},
-		}
-
-		if err := s.sink.Write(auditEvent); err != nil {
-			s.logger.Error("proxy: audit write for approval resolution failed", "error", err)
-		}
-		s.broadcastSSE(map[string]any{"type": "audit", "event": auditEvent})
-	}
 	var persisted bool
 	if req.Approved && req.Persist {
 		policyPath := engine.DefaultAutoAllowedPath()
-		if err := engine.AppendAllowRule(policyPath, resolved.Call); err != nil {
+		persistenceAuditOK := true
+		if s.sink != nil {
+			event := approvalPersistenceAuthorizationEvent(resolved, req.ResolvedBy, policyPath)
+			if writeErr := s.sink.Write(event); writeErr != nil {
+				persistenceAuditOK = false
+				s.logger.Error("proxy: audit write for durable approval authorization failed; policy not installed", "error", writeErr)
+			} else {
+				s.broadcastSSE(map[string]any{"type": "audit", "event": event})
+			}
+		}
+		if !persistenceAuditOK {
+			s.logger.Warn("proxy: skipped durable allow rule because its required audit record was unavailable", "approval_id", id)
+		} else if err := engine.AppendAllowRule(policyPath, resolved.Call); err != nil {
 			s.logger.Error("proxy: failed to persist allow rule", "error", err)
 		} else {
 			persisted = true
+			if markErr := s.approvals.MarkPersisted(id); markErr != nil {
+				s.logger.Error("proxy: failed to record persisted approval state", "id", id, "error", markErr)
+			}
 			s.logger.Info("proxy: allow rule persisted", "path", policyPath, "tool", resolved.Call.Tool)
 			// Force immediate reload so the new rule takes effect without waiting for hot-reload.
 			if s.engine != nil {
@@ -340,8 +434,9 @@ authorized:
 	})
 }
 
-// handleBulkResolve resolves all pending approvals for a given run_id.
-// Returns 400 if run_id is empty to prevent inadvertent mass-approval.
+// handleBulkResolve resolves all pending approvals for an exact
+// agent/session/run scope. Incomplete scopes are rejected to prevent
+// inadvertent cross-agent authorization.
 func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
@@ -353,8 +448,11 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.RunID) == "" {
-		writeError(w, http.StatusBadRequest, "run_id is required; refusing to bulk-resolve without a run_id")
+	req.Agent = strings.TrimSpace(req.Agent)
+	req.Session = strings.TrimSpace(req.Session)
+	req.RunID = strings.TrimSpace(req.RunID)
+	if req.Agent == "" || req.Session == "" || req.RunID == "" {
+		writeError(w, http.StatusBadRequest, "agent, session, and run_id are required; refusing incomplete bulk-approval scope")
 		return
 	}
 
@@ -371,61 +469,83 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		resolvedBy = "api"
 	}
 
-	// Set auto-approve BEFORE resolving so any new approvals created from
-	// the same run during the loop window are also auto-approved (fixes TOCTOU).
-	if approved {
-		ttl := s.approvalTimeout
-		if ttl <= 0 {
-			ttl = time.Hour
-		}
-		s.approvals.AutoApproveRun(req.RunID, ttl)
-	}
-
 	// Collect all pending approvals that belong to this run.
 	pending := s.approvals.List()
+	matching := make([]*approval.Request, 0)
+	for _, ap := range pending {
+		if strings.TrimSpace(ap.Call.Agent) == req.Agent &&
+			strings.TrimSpace(ap.Call.Session) == req.Session &&
+			strings.TrimSpace(ap.Call.RunID) == req.RunID {
+			matching = append(matching, ap)
+		}
+	}
+
 	var resolved int
 	var ids []string
+	var resolveErr error
+	autoApproveTTL := s.approvalTimeout
+	if autoApproveTTL <= 0 {
+		autoApproveTTL = time.Hour
+	}
 
-	for _, ap := range pending {
-		if ap.Call.RunID != req.RunID {
-			continue
+	resolveBatch := func(batch []*approval.Request) {
+		for _, ap := range batch {
+			err := s.approvals.ResolveBeforePublish(ap.ID, approved, resolvedBy, func(candidate *approval.Request) error {
+				if s.sink == nil {
+					return nil
+				}
+				event := approvalResolutionEvent(candidate, approved, false, resolvedBy)
+				event.Request["bulk"] = true
+				event.Request["auto_approve"] = approved
+				if approved {
+					event.Request["auto_approve_ttl_seconds"] = int64(autoApproveTTL / time.Second)
+				}
+				event.Decision.Message = fmt.Sprintf("bulk %s by %s", event.Decision.Action, resolvedBy)
+				if writeErr := s.sink.Write(event); writeErr != nil {
+					return fmt.Errorf("write bulk approval resolution audit: %w", writeErr)
+				}
+				return nil
+			})
+			if err != nil {
+				resolveErr = err
+				s.logger.Warn("proxy: bulk-resolve stopped before publishing approval", "id", ap.ID, "error", err)
+				return
+			}
+			resolved++
+			ids = append(ids, ap.ID)
+			// Individual audit SSE events intentionally remain batched below.
 		}
-		if err := s.approvals.Resolve(ap.ID, approved, resolvedBy, false); err != nil {
-			s.logger.Warn("proxy: bulk-resolve skipped approval", "id", ap.ID, "error", err)
-			continue
+	}
+	resolveBatch(matching)
+
+	// The run-scoped cache is authorization state in its own right. Install it
+	// only after every approval selected by this bulk request has a durable
+	// journal transition and required audit record. Installation and approval
+	// creation use the same Store lock. If creation wins their race, this loop
+	// receives and resolves that new request before trying publication again;
+	// if publication wins, the creator observes auto-approved state atomically.
+	if approved && resolveErr == nil && len(matching) > 0 {
+		scopeCall := engine.ToolCall{Agent: req.Agent, Session: req.Session, RunID: req.RunID}
+		for resolveErr == nil {
+			select {
+			case <-r.Context().Done():
+				resolveErr = fmt.Errorf("bulk approval request cancelled before cache publication: %w", r.Context().Err())
+				continue
+			default:
+			}
+			raced, installed := s.approvals.AutoApproveRunIfNoPending(scopeCall, autoApproveTTL)
+			if installed {
+				break
+			}
+			if len(raced) == 0 {
+				resolveErr = fmt.Errorf("bulk approval scope could not be installed")
+				break
+			}
+			resolveBatch(raced)
 		}
-		resolved++
-		ids = append(ids, ap.ID)
-		// Write audit event for each resolved approval.
-		if s.sink != nil {
-			resolution := "denied"
-			if approved {
-				resolution = "approved"
-			}
-			ev := audit.Event{
-				ID:        audit.NewEventID(),
-				Timestamp: time.Now().UTC(),
-				Agent:     ap.Call.Agent,
-				Session:   ap.Call.Session,
-				Tool:      ap.Call.Tool,
-				Request: map[string]any{
-					"action":      "approval_resolved",
-					"tool":        ap.Call.Tool,
-					"command":     ap.Call.Command(),
-					"resolution":  resolution,
-					"resolved_by": resolvedBy,
-					"approval_id": ap.ID,
-				},
-				Decision: audit.EventDecision{
-					Action:  resolution,
-					Message: fmt.Sprintf("bulk %s by %s", resolution, resolvedBy),
-				},
-			}
-			if err := s.sink.Write(ev); err != nil {
-				s.logger.Error("proxy: audit write for bulk-resolve failed", "error", err)
-			}
-			// Individual audit SSE events intentionally omitted here —
-			// a single audit_batch broadcast fires after the loop instead.
+		if resolveErr != nil {
+			s.logger.Error("proxy: bulk-resolve could not install auto-approval scope",
+				"agent", req.Agent, "session", req.Session, "run_id", req.RunID, "error", resolveErr)
 		}
 	}
 
@@ -433,15 +553,23 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		// Broadcast a single audit_batch event instead of N individual audit
 		// events to avoid flooding the SSE channel on large bulk-resolves.
 		s.broadcastSSE(map[string]any{"type": "approvals"})
-		s.broadcastSSE(map[string]any{"type": "audit_batch", "run_id": req.RunID})
+		s.broadcastSSE(map[string]any{
+			"type": "audit_batch", "agent": req.Agent, "session": req.Session, "run_id": req.RunID,
+		})
 	}
 
 	s.logger.Info("proxy: bulk-resolve completed",
+		"agent", req.Agent,
+		"session", req.Session,
 		"run_id", req.RunID,
 		"action", req.Action,
 		"resolved", resolved,
 		"resolved_by", resolvedBy,
 	)
+	if resolveErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "bulk resolution stopped before unaudited authorization could be published")
+		return
+	}
 
 	if ids == nil {
 		ids = []string{}
@@ -580,10 +708,11 @@ func (s *Server) approvalResolveURL(id string, expiresAt time.Time) string {
 		s.logger.Warn("proxy: cannot generate resolve URL; listen address not configured")
 		return ""
 	}
-	if s.signer != nil {
-		return s.signer.SignURL(base, id, expiresAt)
+	if s.signer == nil {
+		s.logger.Error("proxy: signed approval links are unavailable; suppressing bearerless resolve URL")
+		return ""
 	}
-	return fmt.Sprintf("%s/v1/approvals/%s/resolve", base, url.PathEscape(id))
+	return s.signer.SignURL(base, id, expiresAt)
 }
 
 func (s *Server) resolveURLBase() string {
@@ -609,5 +738,9 @@ func (s *Server) resolveURLBase() string {
 	if strings.TrimSpace(port) == "" {
 		return ""
 	}
-	return "http://localhost:" + port
+	scheme := "http"
+	if s.tlsEnabled {
+		scheme = "https"
+	}
+	return scheme + "://localhost:" + port
 }

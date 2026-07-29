@@ -38,19 +38,20 @@ import (
 //
 // Engine is safe for concurrent use.
 type Engine struct {
-	mu             sync.RWMutex
-	onceMu         sync.Mutex // serializes one-time rule claims with policy reloads
-	config         *Config
-	store          PolicyStore
-	defaultAction  Action
-	lastLoadedAt   time.Time
-	lastConfigHash string
-	responseRegex  map[string]*regexp.Regexp
-	logger         *slog.Logger
-	callCounter    CallCounter   // enforcement state for call_count policy rules
-	telemetryCalls CallCounter   // best-effort status telemetry; never an authorization dependency
-	stopReload     chan struct{} // closed to stop periodic reload goroutine
-	stopOnce       sync.Once
+	mu              sync.RWMutex
+	onceMu          sync.Mutex // serializes one-time rule claims with policy reloads
+	config          *Config
+	store           PolicyStore
+	defaultAction   Action
+	lastLoadedAt    time.Time
+	lastConfigHash  string
+	responseRegex   map[string]*regexp.Regexp
+	logger          *slog.Logger
+	callCounter     CallCounter   // enforcement state for call_count policy rules
+	telemetryCalls  CallCounter   // best-effort status telemetry; never an authorization dependency
+	stopReload      chan struct{} // closed to stop periodic reload goroutine
+	startReloadOnce sync.Once
+	stopOnce        sync.Once
 }
 
 // New creates an engine from a policy store.
@@ -71,6 +72,7 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 		logger:         logger,
 		callCounter:    NewSlidingWindowCounter(),
 		telemetryCalls: NewSlidingWindowCounter(),
+		stopReload:     make(chan struct{}),
 	}
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
 	e.lastLoadedAt = time.Now().UTC()
@@ -111,6 +113,13 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 
 func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	start := time.Now()
+	if err := call.validateSecurityInput(); err != nil {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("ambiguous tool input (%v); failing closed", err),
+			EvalDuration: time.Since(start),
+		}
+	}
 
 	e.mu.RLock()
 	cfg := e.config
@@ -480,7 +489,7 @@ func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCount
 		return true
 	}
 	if len(cond.CommandMatches) == 0 && len(cond.CommandContains) == 0 && len(cond.CommandEnvAssignments) == 0 {
-		return matchCondition(cond, call, counter)
+		return matchConditionForAction(cond, call, counter, ActionAllow)
 	}
 	if !matchStrictCommandCondition(cond, call) {
 		return false
@@ -492,7 +501,7 @@ func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCount
 	if cond.IsEmpty() {
 		return true
 	}
-	return matchCondition(cond, call, counter)
+	return matchConditionForAction(cond, call, counter, ActionAllow)
 }
 
 func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
@@ -500,20 +509,10 @@ func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
 	if cmd == "" {
 		return false
 	}
+	analysis := analyzeGrantCommand(cmd)
 	cmdMatch := false
-	if len(cond.CommandMatches) > 0 {
-		cmdMatch = matchCommandAnyForAction(cond.CommandMatches, cmd, ActionAllow)
-		if norm := NormalizeCommand(cmd); !cmdMatch && norm != cmd {
-			cmdMatch = matchCommandAnyForAction(cond.CommandMatches, norm, ActionAllow)
-		}
-	}
-	if !cmdMatch {
-		for _, sub := range cond.CommandContains {
-			if strings.Contains(cmd, sub) {
-				cmdMatch = true
-				break
-			}
-		}
+	if len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0 {
+		cmdMatch, _ = matchGrantCommandFieldWithAnalysis(cond, cmd, ActionAllow, analysis)
 	}
 	if !cmdMatch {
 		cmdMatch = matchFirstCommandEnvAssignment(cond.CommandEnvAssignments, cmd) != ""
@@ -521,8 +520,18 @@ func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
 	if !cmdMatch {
 		return false
 	}
-	return !matchCommandAnyForAction(cond.CommandNotMatches, cmd, ActionDeny) &&
-		!matchCommandAnyForAction(cond.CommandNotMatches, NormalizeCommand(cmd), ActionDeny)
+	if len(cond.CommandNotMatches) > 0 {
+		if matchCommandAnyForAction(cond.CommandNotMatches, cmd, ActionDeny) ||
+			matchCommandAnyForAction(cond.CommandNotMatches, analysis.normalized, ActionDeny) {
+			return false
+		}
+		for _, component := range analysis.components {
+			if matchCommandAnyForAction(cond.CommandNotMatches, component, ActionDeny) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // isDurableAllowPolicy reports whether a policy came from Rampart's durable
@@ -553,6 +562,13 @@ const maxResponseMatchSize = 1 << 20 // 1 MB
 
 func (e *Engine) EvaluateResponse(call ToolCall, response string) Decision {
 	start := time.Now()
+	if err := call.validateSecurityInput(); err != nil {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("ambiguous tool input (%v); failing closed", err),
+			EvalDuration: time.Since(start),
+		}
+	}
 
 	e.mu.RLock()
 	cfg := e.config
@@ -626,8 +642,8 @@ func oversizedMatchInput(cfg *Config, call ToolCall) (string, int) {
 		{"tool", call.Tool},
 		{"command", call.Command()},
 		{"path", call.Path()},
-		{"url", call.Param("url")},
-		{"domain", call.Param("domain")},
+		{"url", call.URL()},
+		{"domain", call.Domain()},
 	}
 	for _, field := range fields {
 		if len(field.value) > maxGlobInputLen {
@@ -1080,22 +1096,23 @@ func (e *Engine) StartPeriodicReload(interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
-	e.stopReload = make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := e.Reload(); err != nil {
-					e.logger.Error("engine: periodic reload failed", "error", err)
+	e.startReloadOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if err := e.Reload(); err != nil {
+						e.logger.Error("engine: periodic reload failed", "error", err)
+					}
+				case <-e.stopReload:
+					return
 				}
-			case <-e.stopReload:
-				return
 			}
-		}
-	}()
-	e.logger.Info("engine: periodic reload started", "interval", interval)
+		}()
+		e.logger.Info("engine: periodic reload started", "interval", interval)
+	})
 }
 
 func (e *Engine) onceRuleDetails(decision Decision) (string, Rule, error) {
@@ -1189,9 +1206,7 @@ func (e *Engine) CleanExpired() (int, error) {
 // Stop terminates the periodic reload goroutine, if running.
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() {
-		if e.stopReload != nil {
-			close(e.stopReload)
-		}
+		close(e.stopReload)
 	})
 }
 

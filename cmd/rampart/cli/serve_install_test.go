@@ -170,6 +170,29 @@ func TestPersistAndReadToken(t *testing.T) {
 	}
 }
 
+func TestReadPersistedTokenRefusesSymlink(t *testing.T) {
+	skipOnWindows(t, "Unix symlink semantics")
+	home := t.TempDir()
+	testSetHome(t, home)
+	path, err := tokenFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "external-token")
+	if err := os.WriteFile(target, []byte("do-not-read"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPersistedToken(); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+		t.Fatalf("readPersistedToken error = %v, want symlink refusal", err)
+	}
+}
+
 func TestPrintServiceInstallSuccessRedactsTokenForNonInteractiveWriter(t *testing.T) {
 	const secret = "service-secret-token"
 	var out bytes.Buffer
@@ -334,6 +357,8 @@ func TestInstallLinuxRotatesTokenBetweenStopAndStart(t *testing.T) {
 	}
 
 	want := []string{
+		"systemctl --user is-active rampart-serve.service|old-token",
+		"systemctl --user is-enabled rampart-serve.service|old-token",
 		"systemctl --user stop rampart-serve.service|old-token",
 		"systemctl --user daemon-reload|old-token",
 		"systemctl --user enable rampart-serve.service|new-token",
@@ -341,6 +366,155 @@ func TestInstallLinuxRotatesTokenBetweenStopAndStart(t *testing.T) {
 	}
 	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("service/token ordering:\n got: %q\nwant: %q", calls, want)
+	}
+}
+
+func TestInstallLinuxRestoresDefinitionTokenAndServiceOnStartFailure(t *testing.T) {
+	skipOnWindows(t, "Unix service runner")
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := persistToken("old-token"); err != nil {
+		t.Fatal(err)
+	}
+	unitPath, err := systemdUnitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const oldUnit = "old unit\n"
+	if err := os.WriteFile(unitPath, []byte(oldUnit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	startCalls := 0
+	runner := func(name string, args ...string) *exec.Cmd {
+		if name == "systemctl" && len(args) >= 2 && args[1] == "is-active" {
+			return exec.Command("sh", "-c", "printf active")
+		}
+		if name == "systemctl" && len(args) >= 2 && args[1] == "is-enabled" {
+			return exec.Command("sh", "-c", "printf enabled")
+		}
+		if name == "systemctl" && len(args) >= 2 && args[1] == "start" {
+			startCalls++
+			if startCalls == 1 {
+				return exec.Command("sh", "-c", "exit 1")
+			}
+		}
+		return exec.Command("true")
+	}
+	cfg := serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   "new-token",
+		LogPath: filepath.Join(home, ".rampart", "serve.log"),
+	}
+	err = installLinux(&cobra.Command{}, cfg, true, false, defaultServePort, runner)
+	if err == nil || !strings.Contains(err.Error(), "systemctl start") {
+		t.Fatalf("installLinux error = %v, want start failure", err)
+	}
+	gotUnit, readErr := os.ReadFile(unitPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(gotUnit) != oldUnit {
+		t.Fatalf("unit after rollback = %q, want %q", gotUnit, oldUnit)
+	}
+	gotToken, readErr := readPersistedToken()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if gotToken != "old-token" {
+		t.Fatalf("token after rollback = %q, want old-token", gotToken)
+	}
+	if startCalls != 2 {
+		t.Fatalf("start calls = %d, want failed replacement plus restored service", startCalls)
+	}
+}
+
+func TestInstallLinuxRollbackPreservesInactiveDisabledState(t *testing.T) {
+	skipOnWindows(t, "Unix service runner")
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := persistToken("old-token"); err != nil {
+		t.Fatal(err)
+	}
+	unitPath, err := systemdUnitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("old unit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+	startCalls := 0
+	runner := func(name string, args ...string) *exec.Cmd {
+		verb := ""
+		if name == "systemctl" && len(args) >= 2 {
+			verb = args[1]
+			calls = append(calls, verb)
+		}
+		switch verb {
+		case "is-active":
+			return exec.Command("sh", "-c", "printf inactive; exit 3")
+		case "is-enabled":
+			return exec.Command("sh", "-c", "printf disabled; exit 1")
+		case "start":
+			startCalls++
+			if startCalls == 1 {
+				return exec.Command("sh", "-c", "exit 1")
+			}
+		}
+		return exec.Command("true")
+	}
+	err = installLinux(&cobra.Command{}, serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   "new-token",
+		LogPath: filepath.Join(home, ".rampart", "serve.log"),
+	}, true, false, defaultServePort, runner)
+	if err == nil || !strings.Contains(err.Error(), "systemctl start") {
+		t.Fatalf("installLinux error = %v, want start failure", err)
+	}
+	if strings.Count(strings.Join(calls, ","), "stop") != 1 {
+		t.Fatalf("calls = %v, want only rollback stop for inactive prior service", calls)
+	}
+	wantSuffix := []string{"daemon-reload", "disable", "stop"}
+	if len(calls) < len(wantSuffix) || strings.Join(calls[len(calls)-len(wantSuffix):], ",") != strings.Join(wantSuffix, ",") {
+		t.Fatalf("rollback calls = %v, want suffix %v", calls, wantSuffix)
+	}
+}
+
+func TestInstallLinuxRefusesSymlinkedServiceDefinition(t *testing.T) {
+	skipOnWindows(t, "Unix symlink semantics")
+	home := t.TempDir()
+	testSetHome(t, home)
+	unitPath, err := systemdUnitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "shared-unit")
+	if err := os.WriteFile(target, []byte("keep me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, unitPath); err != nil {
+		t.Fatal(err)
+	}
+	err = installLinux(&cobra.Command{}, serviceConfig{
+		Binary: "/usr/local/bin/rampart", Token: "new-token",
+	}, true, false, defaultServePort, mockRunner(&[]string{}))
+	if err == nil || !strings.Contains(err.Error(), "symlinked") {
+		t.Fatalf("installLinux error = %v, want symlink refusal", err)
+	}
+	data, readErr := os.ReadFile(target)
+	if readErr != nil || string(data) != "keep me\n" {
+		t.Fatalf("symlink target changed: data=%q err=%v", data, readErr)
 	}
 }
 
@@ -511,6 +685,12 @@ func tokenObservingRunner(t *testing.T, calls *[]string) commandRunner {
 			t.Fatalf("read token while invoking %s: %v", name, err)
 		}
 		*calls = append(*calls, name+" "+strings.Join(args, " ")+"|"+token)
+		if name == "systemctl" && len(args) >= 2 && args[1] == "is-active" {
+			return exec.Command("sh", "-c", "printf active")
+		}
+		if name == "systemctl" && len(args) >= 2 && args[1] == "is-enabled" {
+			return exec.Command("sh", "-c", "printf enabled")
+		}
 		return exec.Command("true")
 	}
 }

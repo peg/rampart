@@ -27,6 +27,8 @@ import (
 	"github.com/peg/rampart/internal/audit"
 )
 
+const maxAuditStatsRange = 366 * 24 * time.Hour
+
 // WithAuditDir sets the audit log directory for history API endpoints.
 func WithAuditDir(dir string) Option {
 	return func(s *Server) {
@@ -223,18 +225,35 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate and open every entry before sending response headers. A planted
+	// symlink named like an audit file must never turn this endpoint into an
+	// arbitrary local-file reader or produce a partially successful export.
+	opened := make([]*os.File, 0, len(files))
+	for _, path := range files {
+		file, err := audit.OpenRegularFile(path)
+		if err != nil {
+			for _, existing := range opened {
+				_ = existing.Close()
+			}
+			s.logger.Error("proxy: refusing unsafe audit export path", "file", path, "error", err)
+			writeError(w, http.StatusInternalServerError, "audit export contains an unsafe file entry")
+			return
+		}
+		opened = append(opened, file)
+	}
+	defer func() {
+		for _, file := range opened {
+			_ = file.Close()
+		}
+	}()
+
 	w.Header().Set("Content-Type", "application/jsonl")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="rampart-audit-%s.jsonl"`, date))
 	w.WriteHeader(http.StatusOK)
 
 	// Stream all files for this date.
-	for _, f := range files {
-		file, err := os.Open(f)
-		if err != nil {
-			continue
-		}
+	for _, file := range opened {
 		_, _ = io.Copy(w, file)
-		file.Close()
 	}
 }
 
@@ -271,6 +290,10 @@ func (s *Server) handleAuditStats(w http.ResponseWriter, r *http.Request) {
 	}
 	if toDate.Before(fromDate) {
 		writeError(w, http.StatusBadRequest, "to date must not be before from date")
+		return
+	}
+	if toDate.Sub(fromDate) > maxAuditStatsRange {
+		writeError(w, http.StatusBadRequest, "audit stats range cannot exceed 366 days")
 		return
 	}
 

@@ -133,7 +133,11 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 
 				// Print detection results
 				if result.ClaudeCode {
-					if _, err := fmt.Fprint(cmd.OutOrStdout(), "  ✓ Claude Code found (~/.claude/settings.json)\n"); err != nil {
+					settingsPath := "Claude settings"
+					if home, homeErr := os.UserHomeDir(); homeErr == nil {
+						settingsPath = claudeSettingsPath(home)
+					}
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  ✓ Claude Code found (%s)\n", settingsPath); err != nil {
 						return fmt.Errorf("cli: write detect output: %w", err)
 					}
 				} else {

@@ -1,5 +1,5 @@
 schema_version: rampart.assurance.v1
-baseline_release: v1.4.0
+baseline_release: v1.4.1
 reviewed_at: "2026-07-28"
 
 # This manifest records the guarantees Rampart can support with evidence today.
@@ -111,7 +111,7 @@ integrations:
     support_tier: supported
     setup_command: rampart setup cline
     boundary: native_hook
-    platforms: [linux, macos]
+    platforms: [linux, macos, windows]
     service_required: false
     upstream_ci: none
     coverage:
@@ -285,7 +285,7 @@ integrations:
         proves: Active verification invokes the real adapter with a destructive canary and requires both a structured denial and session-correlated audit record.
       - path: scripts/compat-gemini-latest.mjs
         kind: upstream_latest
-        proves: The latest published Gemini CLI starts with Rampart's generated settings and the candidate adapter returns the documented destructive-tool denial schema.
+        proves: The latest published Gemini CLI package starts in isolated state while Rampart separately validates its generated settings shape and documented destructive-tool denial schema; hook ingestion is not claimed.
     limitations:
       - This targets Gemini CLI's continuing enterprise, Google Cloud, and paid API-key surface; Antigravity CLI compatibility is not claimed.
       - Gemini CLI is excluded from zero-configuration auto-protection so Antigravity's shared ~/.gemini state cannot be mistaken for an installed Gemini CLI.
@@ -375,7 +375,7 @@ integrations:
         proves: Active verification invokes the real adapter with a destructive canary and requires CLI and VS Code denials plus session-correlated audit output.
       - path: scripts/compat-copilot-latest.mjs
         kind: upstream_latest
-        proves: The latest published Copilot CLI starts with isolated state while the generated shared hook schema and destructive denial adapter are checked.
+        proves: The latest published Copilot CLI package starts in isolated state while Rampart separately checks the generated shared hook schema and destructive denial adapter; hook ingestion is not claimed.
     limitations:
       - VS Code agent hooks are an upstream Preview feature and their configuration or behavior may change.
       - Copilot CLI command-hook crashes and non-zero exits fail closed for PreToolUse, but every CLI hook timeout is fail-open, including administrator policy hooks.

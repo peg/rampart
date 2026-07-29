@@ -73,6 +73,36 @@ func TestStandardPolicyBlocksMixedCaseDestructiveCommandOnCaseInsensitiveHosts(t
 	}
 }
 
+func TestStandardPolicyBlocksDestructiveCommandsBehindTransparentPOSIXLaunchers(t *testing.T) {
+	path := filepath.Join("..", "..", "policies", "standard.yaml")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewFileStore(path), logger)
+	if err != nil {
+		t.Fatalf("load standard policy: %v", err)
+	}
+
+	commands := []string{
+		"nohup rm -rf /",
+		"nice --adjustment=5 rm -rf /",
+		"timeout --foreground --kill-after=1s 5s rm -rf /",
+		"setsid --fork --wait rm -rf /",
+		"stdbuf --output=L rm -rf /",
+		"env -uRAMPART_TOKEN -C/tmp nohup timeout -k1s 5s nice -n5 setsid -fw stdbuf -oL rm -rf /",
+	}
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			decision := eng.Evaluate(ToolCall{
+				Agent:  "claude-code",
+				Tool:   "exec",
+				Params: map[string]any{"command": command},
+			})
+			if decision.Action != ActionDeny {
+				t.Fatalf("transparent launcher command %q = %s, want deny", command, decision.Action)
+			}
+		})
+	}
+}
+
 func TestStandardPolicyGatesUnknownAndDangerousMCPTools(t *testing.T) {
 	path := filepath.Join("..", "..", "policies", "standard.yaml")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

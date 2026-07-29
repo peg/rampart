@@ -14,11 +14,17 @@ concurrency:
 
 jobs:
   copilot-latest:
-    name: Copilot CLI latest isolated hook gate
-    runs-on: ubuntu-latest
+    name: Copilot CLI latest package + adapter gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -30,15 +36,17 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Validate against latest Copilot CLI
+      - name: Check latest package startup and Rampart adapter
         run: node scripts/compat-copilot-latest.mjs
 
   gemini-latest:
-    name: Gemini CLI latest isolated hook gate
+    name: Gemini CLI latest package + adapter gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -50,7 +58,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Validate against latest Gemini CLI
+      - name: Check latest package startup and Rampart adapter
         run: node scripts/compat-gemini-latest.mjs
 
   hermes-latest:
@@ -59,6 +67,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -74,11 +84,18 @@ jobs:
         run: python scripts/compat-hermes-latest.py
 
   openclaw-latest:
-    name: OpenClaw latest isolated plugin gate
+    name: OpenClaw latest source + container gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.25.12'
 
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -86,5 +103,23 @@ jobs:
           # Latest OpenClaw requires >=22.22.3 or a supported Node 24 release.
           node-version: '24'
 
-      - name: Validate against latest OpenClaw
+      - name: Validate source compatibility against latest OpenClaw
         run: node scripts/compat-openclaw-latest.mjs --npm-latest
+
+      - name: Build candidate Rampart
+        run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/rampart-openclaw-candidate" ./cmd/rampart
+
+      - name: Validate zero-configuration protection in latest official image
+        run: |
+          scripts/lab/openclaw-container-acceptance.sh \
+            --rampart "$RUNNER_TEMP/rampart-openclaw-candidate" \
+            --artifact-dir "$RUNNER_TEMP/openclaw-container-acceptance"
+
+      - name: Upload OpenClaw compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: openclaw-latest-compatibility
+          path: ${{ runner.temp }}/openclaw-container-acceptance
+          if-no-files-found: warn
+          retention-days: 14

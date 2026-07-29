@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -146,6 +148,79 @@ func TestPolicySyncWatchPrintsChecks(t *testing.T) {
 	require.Equal(t, 1, cloneCount)
 }
 
+func TestPolicySyncSerializesSharedRepositoryAndActivation(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	origLookPath := policySyncLookPath
+	origRunGit := policySyncRunGit
+	t.Cleanup(func() {
+		policySyncLookPath = origLookPath
+		policySyncRunGit = origRunGit
+	})
+	policySyncLookPath = func(string) (string, error) { return "git", nil }
+
+	var activeCalls atomic.Int32
+	var cloneStarted sync.Once
+	started := make(chan struct{})
+	release := make(chan struct{})
+	overlapped := make(chan struct{}, 1)
+	policySyncRunGit = func(_ context.Context, args ...string) (string, error) {
+		if activeCalls.Add(1) > 1 {
+			select {
+			case overlapped <- struct{}{}:
+			default:
+			}
+		}
+		defer activeCalls.Add(-1)
+
+		switch {
+		case len(args) >= 5 && args[0] == "clone":
+			cloneStarted.Do(func() { close(started) })
+			<-release
+			repoPath := args[4]
+			if err := os.MkdirAll(filepath.Join(repoPath, ".git"), 0o700); err != nil {
+				return "", err
+			}
+			return "", os.WriteFile(filepath.Join(repoPath, "rampart.yaml"), []byte("version: \"1\"\npolicies: []\n"), 0o600)
+		case len(args) >= 5 && args[0] == "-C" && args[2] == "remote" && args[3] == "get-url":
+			return "https://example.com/org/policy.git", nil
+		case len(args) >= 4 && args[0] == "-C" && args[2] == "pull":
+			return "Already up to date.", nil
+		case len(args) >= 4 && args[0] == "-C" && args[2] == "rev-parse" && args[3] == "HEAD":
+			return "serialized-sha", nil
+		default:
+			return "", fmt.Errorf("unexpected git args: %v", args)
+		}
+	}
+
+	errCh := make(chan error, 2)
+	go func() {
+		_, err := performPolicySync(context.Background(), "https://example.com/org/policy.git")
+		errCh <- err
+	}()
+	<-started
+	go func() {
+		_, err := performPolicySync(context.Background(), "https://example.com/org/policy.git")
+		errCh <- err
+	}()
+
+	select {
+	case <-overlapped:
+		t.Fatal("concurrent policy sync entered the shared repository transaction")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		require.NoError(t, <-errCh)
+	}
+	select {
+	case <-overlapped:
+		t.Fatal("policy sync git operations overlapped")
+	default:
+	}
+}
+
 func TestPolicySyncStatusAndStop(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
@@ -179,6 +254,29 @@ func TestPolicySyncRejectsNonHTTPSURL(t *testing.T) {
 	_, err := resolvePolicySyncURL([]string{"http://example.com/org/policy.git"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "only HTTPS")
+
+	require.Error(t, validatePolicySyncURL("https://"))
+	err = validatePolicySyncURL("https://token@example.com/org/policy.git")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "credentials")
+	require.Error(t, validatePolicySyncURL("https://example.com/org/policy.git#main"))
+
+	err = validatePolicySyncURL("https://example.com/org/policy.git?token=secret")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "queries")
+	require.Error(t, validatePolicySyncURL("https://example.com/org/policy.git?"))
+
+	err = validatePolicySyncURL("https:example.com/org/policy.git")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "opaque")
+}
+
+func TestPolicySyncURLForDisplayRedactsLegacyCredentials(t *testing.T) {
+	display := policySyncURLForDisplay("https://user:secret@example.com/org/policy.git?token=legacy-secret#main")
+	require.Equal(t, "https://example.com/org/policy.git", display)
+	require.NotContains(t, display, "secret")
+	require.NotContains(t, display, "token")
+	require.Equal(t, "(invalid configured URL)", policySyncURLForDisplay("https:user:secret@example.com"))
 }
 
 func TestPolicySyncErrorsWhenGitMissing(t *testing.T) {
@@ -209,4 +307,168 @@ func TestFindPolicySyncSourceOrder(t *testing.T) {
 	got, err := findPolicySyncSource(repo)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(repo, "rampart.yaml"), got)
+}
+
+func TestFindPolicySyncSourceRefusesSymlink(t *testing.T) {
+	repo := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.yaml")
+	require.NoError(t, os.WriteFile(target, []byte("version: \"1\"\npolicies: []\n"), 0o600))
+	if err := os.Symlink(target, filepath.Join(repo, "rampart.yaml")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	_, err := findPolicySyncSource(repo)
+	require.Error(t, err)
+}
+
+func TestPolicySyncRejectsInvalidRemotePolicyWithoutReplacingCurrent(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	dest := filepath.Join(home, ".rampart", "policies", policySyncPolicyName)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o700))
+	current := []byte("version: \"1\"\npolicies: []\n")
+	require.NoError(t, os.WriteFile(dest, current, 0o600))
+
+	origLookPath := policySyncLookPath
+	origRunGit := policySyncRunGit
+	t.Cleanup(func() {
+		policySyncLookPath = origLookPath
+		policySyncRunGit = origRunGit
+	})
+	policySyncLookPath = func(string) (string, error) { return "git", nil }
+	policySyncRunGit = func(_ context.Context, args ...string) (string, error) {
+		if len(args) >= 5 && args[0] == "clone" {
+			repoPath := args[4]
+			require.NoError(t, os.MkdirAll(filepath.Join(repoPath, ".git"), 0o700))
+			return "", os.WriteFile(filepath.Join(repoPath, "rampart.yaml"), []byte("not: [valid"), 0o600)
+		}
+		return "", fmt.Errorf("unexpected git args: %v", args)
+	}
+
+	_, err := performPolicySync(context.Background(), "https://example.com/org/policy.git")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed validation")
+	after, readErr := os.ReadFile(dest)
+	require.NoError(t, readErr)
+	require.Equal(t, current, after)
+}
+
+func TestPolicySyncHeadFailurePreservesLivePolicyAndState(t *testing.T) {
+	dest, statePath, currentPolicy, currentState := preparePolicySyncTransactionTest(t, fmt.Errorf("rev-parse unavailable"))
+
+	_, err := performPolicySync(context.Background(), "https://example.com/org/policy.git")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "rev-parse unavailable")
+	requireFileContent(t, dest, currentPolicy)
+	requireFileContent(t, statePath, currentState)
+}
+
+func TestPolicySyncStateWriteFailureAfterReplaceRollsBack(t *testing.T) {
+	dest, statePath, currentPolicy, currentState := preparePolicySyncTransactionTest(t, nil)
+	originalWrite := policySyncWrite
+	failed := false
+	policySyncWrite = func(path string, data []byte) error {
+		if err := originalWrite(path, data); err != nil {
+			return err
+		}
+		if path == statePath && !failed {
+			failed = true
+			return fmt.Errorf("injected post-replace state failure")
+		}
+		return nil
+	}
+
+	_, err := performPolicySync(context.Background(), "https://example.com/org/policy.git")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "post-replace state failure")
+	require.True(t, failed)
+	requireFileContent(t, dest, currentPolicy)
+	requireFileContent(t, statePath, currentState)
+}
+
+func TestPolicySyncPolicyWriteFailureAfterReplaceRollsBackPolicyAndState(t *testing.T) {
+	dest, statePath, currentPolicy, currentState := preparePolicySyncTransactionTest(t, nil)
+	originalWrite := policySyncWrite
+	failed := false
+	policySyncWrite = func(path string, data []byte) error {
+		if err := originalWrite(path, data); err != nil {
+			return err
+		}
+		if path == dest && !failed {
+			failed = true
+			return fmt.Errorf("injected post-replace policy failure")
+		}
+		return nil
+	}
+
+	_, err := performPolicySync(context.Background(), "https://example.com/org/policy.git")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "post-replace policy failure")
+	require.True(t, failed)
+	requireFileContent(t, dest, currentPolicy)
+	requireFileContent(t, statePath, currentState)
+}
+
+func TestRestorePolicySyncFileAllowsMissingParentForAbsentSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "nested", "state.json")
+	require.NoError(t, restorePolicySyncFile(path, policySyncFileSnapshot{}))
+}
+
+func preparePolicySyncTransactionTest(t *testing.T, headErr error) (string, string, []byte, []byte) {
+	t.Helper()
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	origLookPath := policySyncLookPath
+	origRunGit := policySyncRunGit
+	origNow := policySyncNow
+	origWrite := policySyncWrite
+	t.Cleanup(func() {
+		policySyncLookPath = origLookPath
+		policySyncRunGit = origRunGit
+		policySyncNow = origNow
+		policySyncWrite = origWrite
+	})
+
+	currentPolicy := []byte("version: \"1\"\ndefault_action: deny\npolicies: []\n")
+	dest := filepath.Join(home, ".rampart", "policies", policySyncPolicyName)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o700))
+	require.NoError(t, os.WriteFile(dest, currentPolicy, 0o600))
+	require.NoError(t, savePolicySyncState(syncState{
+		GitURL:        "https://example.com/previous/policy.git",
+		LastCommitSHA: "old-sha",
+		LastSyncTime:  time.Date(2026, 2, 27, 10, 0, 0, 0, time.UTC),
+	}))
+	statePath := filepath.Join(home, ".rampart", policySyncStateFileName)
+	currentState, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+
+	policySyncLookPath = func(string) (string, error) { return "git", nil }
+	policySyncNow = func() time.Time { return time.Date(2026, 2, 28, 10, 0, 0, 0, time.UTC) }
+	policySyncRunGit = func(_ context.Context, args ...string) (string, error) {
+		switch {
+		case len(args) >= 5 && args[0] == "clone":
+			repoPath := args[4]
+			if err := os.MkdirAll(filepath.Join(repoPath, ".git"), 0o700); err != nil {
+				return "", err
+			}
+			remote := []byte("version: \"1\"\ndefault_action: allow\npolicies: []\n")
+			return "", os.WriteFile(filepath.Join(repoPath, "rampart.yaml"), remote, 0o600)
+		case len(args) >= 4 && args[0] == "-C" && args[2] == "rev-parse" && args[3] == "HEAD":
+			if headErr != nil {
+				return "", headErr
+			}
+			return "new-sha", nil
+		default:
+			return "", fmt.Errorf("unexpected git args: %v", args)
+		}
+	}
+
+	return dest, statePath, currentPolicy, currentState
+}
+
+func requireFileContent(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
 }

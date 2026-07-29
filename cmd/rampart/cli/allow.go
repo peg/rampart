@@ -276,10 +276,13 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 	}
 
 	// Try to reload the daemon.
-	token := resolveToken(opts.token)
 	addr, err := resolveAddrAllow(opts.apiAddr)
 	if err != nil {
 		return fmt.Errorf("resolve reload API address: %w", err)
+	}
+	token, _, err := resolveTokenForEndpoint(addr, opts.token)
+	if err != nil {
+		return fmt.Errorf("resolve reload API credentials: %w", err)
 	}
 	reloaded, reloadErr := reloadPolicy(cmd, addr, token)
 	if reloaded {
@@ -457,7 +460,7 @@ func reloadPolicy(cmd *cobra.Command, addr, token string) (bool, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := newRampartHTTPClient(3 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err

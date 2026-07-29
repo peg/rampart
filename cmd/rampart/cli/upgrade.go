@@ -20,6 +20,8 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,6 +29,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,7 +62,6 @@ type upgradeDeps struct {
 	executablePath        func() (string, error)
 	userHomeDir           func() (string, error)
 	readFile              func(string) ([]byte, error)
-	writeFile             func(string, []byte, os.FileMode) error
 	chmod                 func(string, os.FileMode) error
 	rename                func(string, string) error
 	createTemp            func(string, string) (*os.File, error)
@@ -68,16 +70,16 @@ type upgradeDeps struct {
 	currentVersion        func(context.Context, commandRunner, func() (string, error)) (string, error)
 	latestRelease         func(context.Context, *http.Client, string) (string, error)
 	downloadURL           func(context.Context, *http.Client, string) ([]byte, error)
+	validateCandidate     func(context.Context, string, string) error
 	inspectServePID       func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
 	stopServe             func(int) error
 	restartServe          func(commandRunner, string, io.Writer, io.Writer) error
-	detectSystemdService  func(commandRunner) string
+	detectSystemdService  func(commandRunner, func() (string, error), string) string
 	restartSystemdService func(commandRunner, string, io.Writer) error
-	detectLaunchdServices func(commandRunner, func() (string, error)) []launchdService
+	detectLaunchdServices func(commandRunner, func() (string, error), string) []launchdService
 	restartLaunchdService func(commandRunner, launchdService, io.Writer) error
-	sleep                 func(time.Duration)
+	prepareServeVerifier  func(func() (string, error), func(string) ([]byte, error)) (serveRestartVerifier, error)
 	pathEnv               func() string
-	stat                  func(string) (os.FileInfo, error)
 	lstat                 func(string) (os.FileInfo, error)
 	evalSymlinks          func(string) (string, error)
 	updatePolicies        func(io.Writer, bool) error
@@ -92,15 +94,15 @@ func defaultUpgradeDeps() upgradeDeps {
 		executablePath:        os.Executable,
 		userHomeDir:           os.UserHomeDir,
 		readFile:              os.ReadFile,
-		writeFile:             os.WriteFile,
 		chmod:                 os.Chmod,
-		rename:                os.Rename,
+		rename:                filetxn.Replace,
 		createTemp:            os.CreateTemp,
 		remove:                os.Remove,
 		commandRunner:         exec.Command,
 		currentVersion:        currentVersion,
 		latestRelease:         fetchLatestRelease,
 		downloadURL:           downloadURL,
+		validateCandidate:     validateUpgradeCandidate,
 		inspectServePID:       inspectServePID,
 		stopServe:             stopServeProcess,
 		restartServe:          restartServe,
@@ -108,11 +110,10 @@ func defaultUpgradeDeps() upgradeDeps {
 		restartSystemdService: restartSystemdUserService,
 		detectLaunchdServices: detectActiveLaunchdServices,
 		restartLaunchdService: restartLaunchdUserService,
-		sleep:                 time.Sleep,
+		prepareServeVerifier:  prepareServeRestartVerifier,
 		pathEnv: func() string {
 			return os.Getenv("PATH")
 		},
-		stat:            os.Stat,
 		lstat:           os.Lstat,
 		evalSymlinks:    filepath.EvalSymlinks,
 		updatePolicies:  upgradeStandardPolicies,
@@ -141,9 +142,6 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		if deps.readFile != nil {
 			resolved.readFile = deps.readFile
 		}
-		if deps.writeFile != nil {
-			resolved.writeFile = deps.writeFile
-		}
 		if deps.chmod != nil {
 			resolved.chmod = deps.chmod
 		}
@@ -168,6 +166,9 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		if deps.downloadURL != nil {
 			resolved.downloadURL = deps.downloadURL
 		}
+		if deps.validateCandidate != nil {
+			resolved.validateCandidate = deps.validateCandidate
+		}
 		if deps.inspectServePID != nil {
 			resolved.inspectServePID = deps.inspectServePID
 		}
@@ -189,14 +190,11 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		if deps.restartLaunchdService != nil {
 			resolved.restartLaunchdService = deps.restartLaunchdService
 		}
-		if deps.sleep != nil {
-			resolved.sleep = deps.sleep
+		if deps.prepareServeVerifier != nil {
+			resolved.prepareServeVerifier = deps.prepareServeVerifier
 		}
 		if deps.pathEnv != nil {
 			resolved.pathEnv = deps.pathEnv
-		}
-		if deps.stat != nil {
-			resolved.stat = deps.stat
 		}
 		if deps.lstat != nil {
 			resolved.lstat = deps.lstat
@@ -230,7 +228,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			"On Windows, rerun the official install.ps1 installer. Policy-only refreshes\n" +
 			"remain available on every platform with --no-binary.",
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
@@ -309,21 +307,26 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return err
 			}
 
-			servePID, serveRunning, err := resolved.inspectServePID(resolved.userHomeDir, resolved.readFile)
-			if err != nil {
-				return err
-			}
-
 			// A platform service takes priority over PID-file management. Service
 			// processes do not write ~/.rampart/serve.pid, and must be restarted
-			// explicitly so they load the newly replaced executable.
+			// explicitly so they load the newly replaced executable. Detect them
+			// before reading a fallback PID file so stale fallback state cannot
+			// block an otherwise healthy service-managed upgrade.
 			activeSvc := ""
 			var activeLaunchd []launchdService
 			switch resolved.goos {
 			case "linux":
-				activeSvc = resolved.detectSystemdService(resolved.commandRunner)
+				activeSvc = resolved.detectSystemdService(resolved.commandRunner, resolved.userHomeDir, exePath)
 			case "darwin":
-				activeLaunchd = resolved.detectLaunchdServices(resolved.commandRunner, resolved.userHomeDir)
+				activeLaunchd = resolved.detectLaunchdServices(resolved.commandRunner, resolved.userHomeDir, exePath)
+			}
+			servePID := 0
+			serveRunning := activeSvc != "" || len(activeLaunchd) > 0
+			if !serveRunning {
+				servePID, serveRunning, err = resolved.inspectServePID(resolved.userHomeDir, resolved.readFile)
+				if err != nil {
+					return err
+				}
 			}
 			pidServeRunning := serveRunning && activeSvc == "" && len(activeLaunchd) == 0
 
@@ -336,7 +339,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 					fmt.Fprintf(cmd.OutOrStdout(), "- would stop rampart serve (pid %d)\n", servePID)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "- would atomically replace %s\n", exePath)
-				fmt.Fprintf(cmd.OutOrStdout(), "- would scan PATH and auto-fix stale rampart copies (symlink to new binary)\n")
+				fmt.Fprintf(cmd.OutOrStdout(), "- would scan PATH and warn about other rampart executables without modifying them\n")
 				if !skipPolicyUpdate {
 					fmt.Fprintf(cmd.OutOrStdout(), "- would refresh managed built-in policies with the new binary\n")
 				}
@@ -348,6 +351,9 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 					}
 				} else if pidServeRunning {
 					fmt.Fprintf(cmd.OutOrStdout(), "- would restart rampart serve in background\n")
+				}
+				if serveRunning {
+					fmt.Fprintln(cmd.OutOrStdout(), "- would verify a fresh Rampart-owned local runtime at the target version before discarding rollback")
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "✓ dry run complete\n")
 				return nil
@@ -393,59 +399,173 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				return err
 			}
 
+			candidatePath, err := stageUpgradeCandidate(exePath, newBinary, resolved)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resolved.remove(candidatePath) }()
+			if err := resolved.validateCandidate(ctx, candidatePath, target); err != nil {
+				return err
+			}
+
+			var restartVerifier serveRestartVerifier
+			if serveRunning {
+				restartVerifier, err = resolved.prepareServeVerifier(resolved.userHomeDir, resolved.readFile)
+				if err != nil {
+					return fmt.Errorf("upgrade: prepare runtime health verification: %w", err)
+				}
+			}
+			verifyRestartedRuntime := func(expectedVersion string, restartedAt time.Time) error {
+				if restartVerifier == nil {
+					return fmt.Errorf("upgrade: runtime health verifier is unavailable")
+				}
+				if err := restartVerifier(ctx, expectedVersion, restartedAt); err != nil {
+					return fmt.Errorf("upgrade: restarted runtime did not become healthy: %w", err)
+				}
+				return nil
+			}
+			restartPIDRuntime := func(expectedVersion string) error {
+				restartedAt := time.Now()
+				if err := resolved.restartServe(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+				return verifyRestartedRuntime(expectedVersion, restartedAt)
+			}
+
+			pidServeNeedsRestart := false
+			defer func() {
+				if !pidServeNeedsRestart {
+					return
+				}
+				if restartErr := restartPIDRuntime(current); restartErr != nil {
+					restartErr = fmt.Errorf("upgrade: restore previously running rampart serve: %w", restartErr)
+					if runErr == nil {
+						runErr = restartErr
+					} else {
+						runErr = errors.Join(runErr, restartErr)
+					}
+					return
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "✓ restored previously running rampart serve")
+			}()
+
 			if pidServeRunning {
 				if err := resolved.stopServe(servePID); err != nil {
 					return err
 				}
+				// From this point until a successful explicit restart, every error
+				// path must restore the previously running background server. In
+				// particular, an atomic replacement failure leaves the old binary
+				// installed and should not also leave protection offline.
+				pidServeNeedsRestart = true
 			}
 
 			installSpin := newCliSpinner(cmd.OutOrStdout(), "Installing")
-			if err := replaceExecutableAtomically(exePath, newBinary, resolved); err != nil {
+			backupPath, err := activateUpgradeCandidate(exePath, candidatePath, resolved)
+			if err != nil {
 				installSpin.Fail("Installation failed")
 				if isPermissionError(err) {
 					return fmt.Errorf("upgrade: %w\n💡 Try this: sudo rampart upgrade", err)
 				}
 				return err
 			}
+			if err := resolved.validateCandidate(ctx, exePath, target); err != nil {
+				installSpin.Fail("Installation validation failed")
+				if rollbackErr := resolved.rename(backupPath, exePath); rollbackErr != nil {
+					return errors.Join(err, fmt.Errorf("upgrade: restore previous executable from %s: %w", backupPath, rollbackErr))
+				}
+				return fmt.Errorf("%w; restored the previous Rampart executable", err)
+			}
 			installSpin.Stop(fmt.Sprintf("Installed %s", target))
 
-			fixStalePathCopies(cmd.OutOrStdout(), exePath, resolved)
-			if !skipPolicyUpdate {
-				if err := resolved.refreshPolicies(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
-					// Non-fatal: the verified binary is installed, and the user can retry
-					// the policy-only migration with that binary.
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed (binary upgrade succeeded): %v\n", err)
-					fmt.Fprintf(cmd.ErrOrStderr(), "  run '%s upgrade --no-binary' to retry\n", exePath)
+			// Keep the rollback executable until every previously active runtime has
+			// loaded the candidate and proved its identity and version over a fresh
+			// local health endpoint. Binary replacement and runtime continuity are one
+			// transaction: a restart or health-proof failure restores both.
+			restartManagedServices := func(expectedVersion string) []error {
+				var restartErrs []error
+				if activeSvc != "" {
+					restartedAt := time.Now()
+					if err := resolved.restartSystemdService(resolved.commandRunner, activeSvc, cmd.OutOrStdout()); err != nil {
+						restartErrs = append(restartErrs, err)
+					} else if err := verifyRestartedRuntime(expectedVersion, restartedAt); err != nil {
+						restartErrs = append(restartErrs, fmt.Errorf("verify %s after restart: %w", activeSvc, err))
+					}
+					return restartErrs
 				}
-			}
-
-			serveRestarted := false
-			if activeSvc != "" {
-				if err := resolved.restartSystemdService(resolved.commandRunner, activeSvc, cmd.OutOrStdout()); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %v\n  run manually: systemctl --user restart %s\n", err, activeSvc)
-				} else {
-					serveRestarted = true
-				}
-			} else if len(activeLaunchd) > 0 {
-				serveRestarted = true
 				for _, service := range activeLaunchd {
+					restartedAt := time.Now()
 					if err := resolved.restartLaunchdService(resolved.commandRunner, service, cmd.OutOrStdout()); err != nil {
-						serveRestarted = false
-						fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %v\n  reload manually: launchctl unload %q && launchctl load %q\n", err, service.PlistPath, service.PlistPath)
+						restartErrs = append(restartErrs, err)
+						continue
+					}
+					if err := verifyRestartedRuntime(expectedVersion, restartedAt); err != nil {
+						restartErrs = append(restartErrs, fmt.Errorf("verify %s after restart: %w", service.Label, err))
 					}
 				}
+				return restartErrs
+			}
+
+			var runtimeRestartErrs []error
+			if activeSvc != "" {
+				runtimeRestartErrs = restartManagedServices(target)
+			} else if len(activeLaunchd) > 0 {
+				runtimeRestartErrs = restartManagedServices(target)
 			} else if pidServeRunning {
-				if err := resolved.restartServe(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
-					return err
+				if err := restartPIDRuntime(target); err != nil {
+					runtimeRestartErrs = append(runtimeRestartErrs, err)
+				} else {
+					pidServeNeedsRestart = false
 				}
-				serveRestarted = true
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart upgraded to %s\n", target)
-			if !serveRestarted && serveRunning {
-				fmt.Fprintln(cmd.OutOrStdout(), "Reminder: restart rampart serve to ensure it uses the new binary.")
+			if len(runtimeRestartErrs) > 0 {
+				restartCause := errors.Join(runtimeRestartErrs...)
+				if rollbackErr := resolved.rename(backupPath, exePath); rollbackErr != nil {
+					return errors.Join(
+						fmt.Errorf("upgrade: candidate runtime activation failed: %w", restartCause),
+						fmt.Errorf("upgrade: restore previous executable from %s: %w", backupPath, rollbackErr),
+					)
+				}
+				backupPath = ""
+
+				var recoveryErrs []error
+				if activeSvc != "" || len(activeLaunchd) > 0 {
+					recoveryErrs = restartManagedServices(current)
+				} else if pidServeRunning {
+					// Recovery below is the one authoritative retry. Disable the
+					// deferred fallback first so a failed recovery is reported once
+					// instead of starting an uncontrolled third process attempt.
+					pidServeNeedsRestart = false
+					if recoveryErr := restartPIDRuntime(current); recoveryErr != nil {
+						recoveryErrs = append(recoveryErrs, recoveryErr)
+					}
+				}
+				if len(recoveryErrs) > 0 {
+					return errors.Join(
+						fmt.Errorf("upgrade: candidate runtime activation failed; restored the previous executable: %w", restartCause),
+						fmt.Errorf("upgrade: previous runtime recovery could not be verified: %w", errors.Join(recoveryErrs...)),
+					)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "✓ restored the previous Rampart executable and runtime")
+				return fmt.Errorf("upgrade: candidate runtime activation failed; restored the previous Rampart executable and runtime: %w", restartCause)
 			}
 
+			if err := resolved.remove(backupPath); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ upgraded runtime is healthy, but prior executable cleanup failed at %s: %v\n", backupPath, err)
+			}
+
+			warnAboutPathCopies(cmd.OutOrStdout(), exePath, resolved)
+			if !skipPolicyUpdate {
+				if err := resolved.refreshPolicies(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+					// Non-fatal: the verified binary and any active runtime are healthy,
+					// and the user can retry only the managed policy refresh.
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed (binary upgrade succeeded): %v\n", err)
+					fmt.Fprintf(cmd.ErrOrStderr(), "  run %s upgrade --no-binary to retry\n", shellQuoteCodexHookArg(exePath))
+				}
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ rampart binary upgraded to %s\n", target)
 			fmt.Fprintln(cmd.OutOrStdout(), "Next: run 'rampart protect' once to refresh managed agent integrations and verify detected boundaries.")
 			return nil
 		},
@@ -852,22 +972,33 @@ func inspectServePID(userHomeDir func() (string, error), readFile func(string) (
 	if err != nil || pid <= 0 {
 		return 0, false, nil
 	}
-	proc, err := os.FindProcess(pid)
+	owned, _, err := isRampartServeProcess(pid)
 	if err != nil {
-		return 0, false, nil
+		return 0, false, fmt.Errorf("upgrade: verify serve pid %d: %w", pid, err)
 	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
+	if !owned {
 		return pid, false, nil
 	}
 	return pid, true, nil
 }
 
 func stopServeProcess(pid int) error {
+	owned, identity, err := isRampartServeProcess(pid)
+	if err != nil {
+		return fmt.Errorf("upgrade: verify serve pid %d before signaling: %w", pid, err)
+	}
+	if !owned {
+		if identity == "" {
+			identity = "process is no longer running"
+		}
+		return fmt.Errorf("upgrade: refusing to signal stale serve pid %d (%s)", pid, identity)
+	}
+
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return nil
 	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := terminateRampartServeProcess(proc); err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			return nil
 		}
@@ -897,11 +1028,367 @@ func restartServe(runner commandRunner, binary string, stdout, stderr io.Writer)
 	return nil
 }
 
-// detectActiveSystemdService returns the name of an active rampart systemd user
-// service (rampart-proxy.service or rampart-serve.service), or "" if none are active.
-// systemd user services are the standard install path for openclaw and claude-code setups.
-func detectActiveSystemdService(runner commandRunner) string {
+// serveRestartVerifier proves that a restart created a fresh, Rampart-owned
+// local runtime and that the runtime loaded the expected binary version.
+// Implementations must be bounded by ctx; upgrade keeps its rollback binary
+// until this proof succeeds.
+type serveRestartVerifier func(ctx context.Context, expectedVersion string, restartedAt time.Time) error
+
+type serveRestartVerifierDeps struct {
+	processIdentity func(int) (bool, string, error)
+	now             func() time.Time
+	timeout         time.Duration
+	pollInterval    time.Duration
+	requestTimeout  time.Duration
+}
+
+func defaultServeRestartVerifierDeps() serveRestartVerifierDeps {
+	return serveRestartVerifierDeps{
+		processIdentity: isRampartServeProcess,
+		now:             time.Now,
+		timeout:         10 * time.Second,
+		pollInterval:    100 * time.Millisecond,
+		requestTimeout:  time.Second,
+	}
+}
+
+func prepareServeRestartVerifier(
+	userHomeDir func() (string, error),
+	readFile func(string) ([]byte, error),
+) (serveRestartVerifier, error) {
+	return prepareServeRestartVerifierWithDeps(userHomeDir, readFile, defaultServeRestartVerifierDeps())
+}
+
+func prepareServeRestartVerifierWithDeps(
+	userHomeDir func() (string, error),
+	readFile func(string) ([]byte, error),
+	deps serveRestartVerifierDeps,
+) (serveRestartVerifier, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return nil, fmt.Errorf("resolve home directory: empty path")
+	}
+	statePath := filepath.Join(home, ".rampart", serveStateFile)
+	previousState, err := readFile(statePath)
+	previousExists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read existing %s: %w", statePath, err)
+	}
+	previousState = append([]byte(nil), previousState...)
+
+	return func(ctx context.Context, expectedVersion string, restartedAt time.Time) error {
+		verifiedState, err := verifyRestartedServe(
+			ctx,
+			home,
+			readFile,
+			expectedVersion,
+			previousState,
+			previousExists,
+			restartedAt,
+			deps,
+		)
+		if err != nil {
+			return err
+		}
+		// Each managed runtime must produce its own fresh state. Advancing the
+		// baseline prevents a second launchd service from reusing the first
+		// service's successful proof.
+		previousState = append(previousState[:0], verifiedState...)
+		previousExists = true
+		return nil
+	}, nil
+}
+
+func verifyRestartedServe(
+	ctx context.Context,
+	home string,
+	readFile func(string) ([]byte, error),
+	expectedVersion string,
+	previousState []byte,
+	previousExists bool,
+	restartedAt time.Time,
+	deps serveRestartVerifierDeps,
+) ([]byte, error) {
+	if deps.processIdentity == nil {
+		return nil, fmt.Errorf("process identity verifier is unavailable")
+	}
+	if deps.now == nil {
+		deps.now = time.Now
+	}
+	if deps.timeout <= 0 {
+		deps.timeout = 10 * time.Second
+	}
+	if deps.pollInterval <= 0 {
+		deps.pollInterval = 100 * time.Millisecond
+	}
+	if deps.requestTimeout <= 0 {
+		deps.requestTimeout = time.Second
+	}
+
+	verifyCtx, cancel := context.WithTimeout(ctx, deps.timeout)
+	defer cancel()
+
+	statePath := filepath.Join(home, ".rampart", serveStateFile)
+	var lastErr error
+	for {
+		stateData, err := readFile(statePath)
+		if err != nil {
+			lastErr = fmt.Errorf("read fresh %s: %w", statePath, err)
+		} else {
+			verified, verifyErr := verifyRestartedServeState(
+				verifyCtx,
+				home,
+				readFile,
+				stateData,
+				expectedVersion,
+				previousState,
+				previousExists,
+				restartedAt,
+				deps,
+			)
+			if verifyErr == nil {
+				return verified, nil
+			}
+			// Preserve the last substantive identity/version/state failure. A
+			// request racing the outer deadline should not replace actionable
+			// diagnostics with a generic context deadline error.
+			if lastErr == nil || (!errors.Is(verifyErr, context.DeadlineExceeded) && !errors.Is(verifyErr, context.Canceled)) {
+				lastErr = verifyErr
+			}
+		}
+
+		timer := time.NewTimer(deps.pollInterval)
+		select {
+		case <-verifyCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if lastErr == nil {
+				lastErr = verifyCtx.Err()
+			}
+			return nil, fmt.Errorf("no healthy restarted Rampart runtime within %s: %w", deps.timeout, lastErr)
+		case <-timer.C:
+		}
+	}
+}
+
+func verifyRestartedServeState(
+	ctx context.Context,
+	home string,
+	readFile func(string) ([]byte, error),
+	stateData []byte,
+	expectedVersion string,
+	previousState []byte,
+	previousExists bool,
+	restartedAt time.Time,
+	deps serveRestartVerifierDeps,
+) ([]byte, error) {
+	if previousExists && bytes.Equal(stateData, previousState) {
+		return nil, fmt.Errorf("serve.state is stale (unchanged since before restart)")
+	}
+
+	var state serveState
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		return nil, fmt.Errorf("decode fresh serve.state: %w", err)
+	}
+	if state.PID <= 0 {
+		return nil, fmt.Errorf("fresh serve.state has invalid pid %d", state.PID)
+	}
+	started, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(state.Started))
+	if err != nil {
+		return nil, fmt.Errorf("fresh serve.state has invalid started time %q", state.Started)
+	}
+	// writeServeState uses RFC3339 second precision. Truncating the restart
+	// boundary avoids rejecting a daemon that starts later in the same second.
+	if started.Before(restartedAt.UTC().Truncate(time.Second)) {
+		return nil, fmt.Errorf("serve.state predates this restart (%s)", started.UTC().Format(time.RFC3339Nano))
+	}
+	if started.After(deps.now().UTC().Add(5 * time.Second)) {
+		return nil, fmt.Errorf("serve.state started time is implausibly in the future (%s)", started.UTC().Format(time.RFC3339Nano))
+	}
+
+	serveURL, err := validateLocalServeStateURL(state)
+	if err != nil {
+		return nil, err
+	}
+	owned, identity, err := deps.processIdentity(state.PID)
+	if err != nil {
+		return nil, fmt.Errorf("verify serve.state pid %d: %w", state.PID, err)
+	}
+	if !owned {
+		if strings.TrimSpace(identity) == "" {
+			identity = "not a Rampart serve process"
+		}
+		return nil, fmt.Errorf("serve.state pid %d is not Rampart-owned (%s)", state.PID, identity)
+	}
+
+	client, closeClient, err := localServeHealthClient(serveURL, home, readFile, deps.requestTimeout)
+	if err != nil {
+		return nil, err
+	}
+	defer closeClient()
+
+	healthURL := *serveURL
+	healthURL.Path = "/healthz"
+	healthURL.RawPath = ""
+	health, err := fetchRampartHealth(ctx, client, healthURL.String())
+	if err != nil {
+		return nil, fmt.Errorf("probe fresh local Rampart health: %w", err)
+	}
+	if !validUpgradeHealthService(health.Service, expectedVersion) {
+		return nil, fmt.Errorf("unexpected health service identity %q", health.Service)
+	}
+	if expectedVersion != "" {
+		expected, expectedErr := normalizeVersion(expectedVersion)
+		actual, actualErr := normalizeVersion(health.Version)
+		if expectedErr != nil {
+			return nil, fmt.Errorf("invalid expected runtime version %q: %w", expectedVersion, expectedErr)
+		}
+		if actualErr != nil || actual != expected {
+			return nil, fmt.Errorf("restarted runtime version mismatch: expected %s, got %q", expected, health.Version)
+		}
+	}
+	return append([]byte(nil), stateData...), nil
+}
+
+// v1.4.0 and older health responses predate the explicit service identity
+// field. During rollback, the executable version, fresh state, loopback-only
+// endpoint, and Rampart-owned process identity still provide a bounded proof
+// that the previous runtime recovered. Newer versions must provide the marker.
+func validUpgradeHealthService(service, expectedVersion string) bool {
+	if service == "rampart" {
+		return true
+	}
+	if service != "" {
+		return false
+	}
+	cmp, ok := compareReleaseVersions(expectedVersion, "v1.4.0")
+	return ok && cmp <= 0
+}
+
+func validateLocalServeStateURL(state serveState) (*url.URL, error) {
+	rawURL := strings.TrimSpace(state.URL)
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("fresh serve.state has invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("refusing serve.state URL %q: scheme must be http or https", rawURL)
+	}
+	if u.Host == "" || u.Hostname() == "" || u.Opaque != "" || u.User != nil {
+		return nil, fmt.Errorf("refusing serve.state URL %q: absolute URL without credentials is required", rawURL)
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("refusing serve.state URL %q: paths, queries, and fragments are not allowed", rawURL)
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	loopback := host == "localhost"
+	if ip := net.ParseIP(host); ip != nil {
+		loopback = ip.IsLoopback()
+	}
+	if !loopback {
+		return nil, fmt.Errorf("refusing non-loopback serve.state URL %q", rawURL)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port <= 0 || port > 65535 || state.Port != port {
+		return nil, fmt.Errorf("fresh serve.state URL port does not match state port %d", state.Port)
+	}
+	return u, nil
+}
+
+func localServeHealthClient(
+	serveURL *url.URL,
+	home string,
+	readFile func(string) ([]byte, error),
+	requestTimeout time.Duration,
+) (*http.Client, func(), error) {
+	dialer := &net.Dialer{Timeout: requestTimeout}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DisableKeepAlives:     true,
+		TLSHandshakeTimeout:   requestTimeout,
+		ResponseHeaderTimeout: requestTimeout,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, fmt.Errorf("verify local health address: %w", err)
+			}
+			if strings.EqualFold(host, "localhost") {
+				// Resolve the generated localhost state without consulting DNS or a
+				// proxy, while supporting both Rampart's default IPv4 listener and an
+				// explicit --addr ::1 listener.
+				var dialErrs []error
+				for _, loopbackHost := range []string{"127.0.0.1", "::1"} {
+					conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(loopbackHost, port))
+					if dialErr == nil {
+						return conn, nil
+					}
+					dialErrs = append(dialErrs, dialErr)
+				}
+				return nil, fmt.Errorf("connect to localhost loopback: %w", errors.Join(dialErrs...))
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || !ip.IsLoopback() {
+				return nil, fmt.Errorf("refusing health connection to non-loopback address %q", address)
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
+		},
+	}
+	if serveURL.Scheme == "https" {
+		// serve.state intentionally contains no arbitrary trust path. Self-upgrade
+		// therefore supports HTTPS only for Rampart's tls-auto certificate. A
+		// custom --tls-cert service needs an explicit future fingerprint/source
+		// design; falling back to system roots or InsecureSkipVerify here would
+		// weaken the proof that the restarted local process is the managed one.
+		certPath := filepath.Join(home, ".rampart", "tls", "cert.pem")
+		certPEM, err := readFile(certPath)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("verify HTTPS runtime: read managed tls-auto certificate %s: %w (custom --tls-cert runtimes require a manual upgrade and restart)", certPath, err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(certPEM) {
+			return nil, func() {}, fmt.Errorf("verify HTTPS runtime: managed tls-auto certificate %s is not valid PEM (custom --tls-cert runtimes require a manual upgrade and restart)", certPath)
+		}
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    roots,
+		}
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   requestTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return client, transport.CloseIdleConnections, nil
+}
+
+// detectActiveSystemdService returns an active Rampart-owned systemd user
+// service only when its ExecStart resolves to the executable being upgraded.
+// This prevents a second installation from being mistaken for the managed
+// process whose lifecycle must be refreshed.
+func detectActiveSystemdService(runner commandRunner, userHomeDir func() (string, error), executable string) string {
+	home, err := userHomeDir()
+	if err != nil {
+		return ""
+	}
+	serviceDir := filepath.Join(home, ".config", "systemd", "user")
 	for _, svc := range []string{"rampart-proxy.service", "rampart-serve.service"} {
+		data, exists, err := readRegularServiceFile(filepath.Join(serviceDir, svc))
+		if err != nil || !exists {
+			continue
+		}
+		binary, args, ok := systemdServiceCommand(data)
+		if !ok || !isRampartServeArguments(append([]string{binary}, args...)) || !sameExecutable(binary, executable) {
+			continue
+		}
 		cmd := runner("systemctl", "--user", "is-active", "--quiet", svc)
 		if err := cmd.Run(); err == nil {
 			return svc
@@ -929,7 +1416,7 @@ type launchdService struct {
 // detectActiveLaunchdServices returns Rampart LaunchAgents that launchctl
 // reports as loaded. This includes the current general/proxy labels and the
 // legacy com.rampart.serve label so upgrades restart older installations too.
-func detectActiveLaunchdServices(runner commandRunner, userHomeDir func() (string, error)) []launchdService {
+func detectActiveLaunchdServices(runner commandRunner, userHomeDir func() (string, error), executable string) []launchdService {
 	home, err := userHomeDir()
 	if err != nil {
 		return nil
@@ -938,7 +1425,12 @@ func detectActiveLaunchdServices(runner commandRunner, userHomeDir func() (strin
 
 	active := make([]launchdService, 0, len(candidates))
 	for _, service := range candidates {
-		if _, err := os.Stat(service.PlistPath); err != nil {
+		data, exists, err := readRegularServiceFile(service.PlistPath)
+		if err != nil || !exists {
+			continue
+		}
+		label, args, err := launchdServiceIdentity(data)
+		if err != nil || label != service.Label || !isRampartServeArguments(args) || !sameExecutable(args[0], executable) {
 			continue
 		}
 		if err := runner("launchctl", "list", service.Label).Run(); err == nil {
@@ -946,6 +1438,30 @@ func detectActiveLaunchdServices(runner commandRunner, userHomeDir func() (strin
 		}
 	}
 	return active
+}
+
+func systemdServiceCommand(data []byte) (string, []string, bool) {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) >= len("ExecStart=") && strings.EqualFold(line[:len("ExecStart=")], "ExecStart=") {
+			return splitServiceCommand(strings.TrimSpace(line[len("ExecStart="):]))
+		}
+	}
+	return "", nil, false
+}
+
+func sameExecutable(left, right string) bool {
+	leftAbs, leftErr := filepath.Abs(strings.TrimSpace(left))
+	rightAbs, rightErr := filepath.Abs(strings.TrimSpace(right))
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	leftInfo, leftStatErr := os.Stat(leftAbs)
+	rightInfo, rightStatErr := os.Stat(rightAbs)
+	if leftStatErr == nil && rightStatErr == nil {
+		return os.SameFile(leftInfo, rightInfo)
+	}
+	return samePath(leftAbs, rightAbs)
 }
 
 func rampartLaunchdServices(home string) []launchdService {
@@ -1020,11 +1536,34 @@ func isHomebrewManagedPath(path string) bool {
 		strings.Contains(path, "/.linuxbrew/cellar/")
 }
 
-func replaceExecutableAtomically(path string, payload []byte, deps upgradeDeps) error {
+func validateUpgradeCandidate(ctx context.Context, path, target string) error {
+	validationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(validationCtx, path, "version").CombinedOutput()
+	if errors.Is(validationCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("upgrade: candidate version check timed out")
+	}
+	if err != nil {
+		return fmt.Errorf("upgrade: candidate could not execute its version command: %w", err)
+	}
+	line := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	fields := strings.Fields(line)
+	if len(fields) < 2 || fields[0] != "rampart" {
+		return fmt.Errorf("upgrade: candidate identity check failed: expected rampart %s, got %q", strings.TrimPrefix(target, "v"), line)
+	}
+	reported, err := normalizeVersion(fields[1])
+	if err != nil || reported != target {
+		return fmt.Errorf("upgrade: candidate version check failed: expected %s, got %q", target, fields[1])
+	}
+	return nil
+}
+
+func stageUpgradeCandidate(path string, payload []byte, deps upgradeDeps) (string, error) {
 	dir := filepath.Dir(path)
 	tmp, err := deps.createTemp(dir, ".rampart-upgrade-*")
 	if err != nil {
-		return fmt.Errorf("upgrade: create temporary file: %w", err)
+		return "", fmt.Errorf("upgrade: create candidate file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	cleanup := true
@@ -1036,35 +1575,78 @@ func replaceExecutableAtomically(path string, payload []byte, deps upgradeDeps) 
 
 	if _, err := tmp.Write(payload); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("upgrade: write temporary binary: %w", err)
+		return "", fmt.Errorf("upgrade: write candidate binary: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("upgrade: sync temporary binary: %w", err)
+		return "", fmt.Errorf("upgrade: sync candidate binary: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("upgrade: finalize temporary binary: %w", err)
+		return "", fmt.Errorf("upgrade: finalize candidate binary: %w", err)
 	}
 	if err := deps.chmod(tmpPath, 0o755); err != nil {
-		return fmt.Errorf("upgrade: chmod temporary binary: %w", err)
-	}
-
-	if err := deps.rename(tmpPath, path); err != nil {
-		return fmt.Errorf("upgrade: replace binary at %s: %w", path, err)
+		return "", fmt.Errorf("upgrade: chmod candidate binary: %w", err)
 	}
 	cleanup = false
-	return nil
+	return tmpPath, nil
+}
+
+// activateUpgradeCandidate atomically installs a previously validated staged
+// candidate while retaining a same-directory copy of the old executable for
+// post-activation validation and rollback.
+func activateUpgradeCandidate(path, candidatePath string, deps upgradeDeps) (string, error) {
+	info, err := deps.lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("upgrade: inspect current executable before replacement: %w", err)
+	}
+	oldBinary, err := deps.readFile(path)
+	if err != nil {
+		return "", fmt.Errorf("upgrade: read current executable for rollback: %w", err)
+	}
+
+	backup, err := deps.createTemp(filepath.Dir(path), ".rampart-upgrade-backup-*")
+	if err != nil {
+		return "", fmt.Errorf("upgrade: create rollback executable: %w", err)
+	}
+	backupPath := backup.Name()
+	cleanupBackup := true
+	defer func() {
+		if cleanupBackup {
+			_ = deps.remove(backupPath)
+		}
+	}()
+	if _, err := backup.Write(oldBinary); err != nil {
+		_ = backup.Close()
+		return "", fmt.Errorf("upgrade: write rollback executable: %w", err)
+	}
+	if err := backup.Sync(); err != nil {
+		_ = backup.Close()
+		return "", fmt.Errorf("upgrade: sync rollback executable: %w", err)
+	}
+	if err := backup.Close(); err != nil {
+		return "", fmt.Errorf("upgrade: finalize rollback executable: %w", err)
+	}
+	if err := deps.chmod(backupPath, info.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("upgrade: preserve rollback executable mode: %w", err)
+	}
+
+	if err := deps.rename(candidatePath, path); err != nil {
+		return "", fmt.Errorf("upgrade: replace binary at %s: %w", path, err)
+	}
+	cleanupBackup = false
+	return backupPath, nil
 }
 
 func isPermissionError(err error) bool {
 	return os.IsPermission(err) || errors.Is(err, os.ErrPermission)
 }
 
-func fixStalePathCopies(out io.Writer, installedBinary string, deps upgradeDeps) {
-	installedInfo, err := deps.stat(installedBinary)
-	if err != nil {
-		return
-	}
+// warnAboutPathCopies reports PATH shadowing without rewriting executables.
+// A filename and executable bit do not prove that Rampart owns a file: it may
+// be package-managed, installed by another user workflow, or be an unrelated
+// program with the same name. Upgrade therefore leaves every unproven copy
+// untouched and gives the operator an explicit path to inspect.
+func warnAboutPathCopies(out io.Writer, installedBinary string, deps upgradeDeps) {
 	installedResolved := installedBinary
 	if resolved, err := deps.evalSymlinks(installedBinary); err == nil {
 		installedResolved = resolved
@@ -1082,6 +1664,9 @@ func fixStalePathCopies(out io.Writer, installedBinary string, deps upgradeDeps)
 		seen[dir] = struct{}{}
 
 		candidate := filepath.Join(dir, "rampart")
+		if samePath(candidate, installedBinary) || samePath(candidate, installedResolved) {
+			continue
+		}
 		lfi, err := deps.lstat(candidate)
 		if err != nil {
 			continue
@@ -1102,29 +1687,7 @@ func fixStalePathCopies(out io.Writer, installedBinary string, deps upgradeDeps)
 			fmt.Fprintf(out, "⚠ left package-managed rampart unchanged at %s; use brew upgrade instead\n", candidate)
 			continue
 		}
-		cfi, err := deps.stat(candidate)
-		if err != nil {
-			continue
-		}
-		if os.SameFile(installedInfo, cfi) {
-			continue
-		}
-		// Auto-fix: replace stale copy with a symlink to the installed binary.
-		// This prevents PATH shadowing after upgrades (e.g. ~/go/bin/rampart
-		// installed via `go install` hiding the newer /usr/local/bin/rampart).
-		tmp := candidate + ".old"
-		if err := os.Rename(candidate, tmp); err == nil {
-			if err := os.Symlink(installedBinary, candidate); err == nil {
-				_ = os.Remove(tmp)
-				fmt.Fprintf(out, "✓ fixed stale rampart at %s → symlinked to %s\n", candidate, installedBinary)
-			} else {
-				// Symlink failed — restore original and warn
-				_ = os.Rename(tmp, candidate)
-				fmt.Fprintf(out, "⚠ stale rampart at %s — could not symlink (%v), remove manually\n", candidate, err)
-			}
-		} else {
-			fmt.Fprintf(out, "⚠ stale rampart at %s — could not replace (%v), remove manually\n", candidate, err)
-		}
+		fmt.Fprintf(out, "⚠ another rampart executable may shadow this upgrade at %s; left unchanged because ownership is unproven\n", candidate)
 	}
 }
 

@@ -280,8 +280,7 @@ func TestHookActionAsk_HeadlessOnly_DoesNotEmitPermissionDecisionAsk(t *testing.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			writeTestRampartHealth(w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			createCount.Add(1)
 			w.WriteHeader(http.StatusCreated)

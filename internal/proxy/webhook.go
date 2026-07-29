@@ -57,6 +57,11 @@ func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decis
 		policyName = decision.MatchedPolicies[0]
 	}
 
+	resolveURL := s.approvalResolveURL(pending.ID, pending.ExpiresAt.UTC())
+	if resolveURL == "" {
+		s.logger.Error("proxy: approval notification suppressed because no signed resolve URL is available", "approval_id", pending.ID)
+		return
+	}
 	event := notify.NotifyEvent{
 		Action:     decision.Action.String(),
 		Tool:       call.Tool,
@@ -67,7 +72,7 @@ func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decis
 		Timestamp:  pending.CreatedAt.UTC().Format(time.RFC3339),
 		ApprovalID: pending.ID,
 		ExpiresAt:  pending.ExpiresAt.UTC().Format(time.RFC3339),
-		ResolveURL: s.approvalResolveURL(pending.ID, pending.ExpiresAt.UTC()),
+		ResolveURL: resolveURL,
 	}
 
 	notifier := notify.NewNotifier(s.notifyConfig.URL, s.notifyConfig.Platform)

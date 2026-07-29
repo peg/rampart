@@ -20,14 +20,13 @@ func fileContains(path, marker string) bool {
 }
 
 func claudeRampartHooksPresent(home string) bool {
-	path := filepath.Join(home, ".claude", "settings.json")
+	path := claudeSettingsPath(home)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 	var settings claudeSettings
-	return (json.Unmarshal(data, &settings) == nil && hasRampartHook(settings)) ||
-		strings.Contains(string(data), "hook --format claude-code")
+	return json.Unmarshal(data, &settings) == nil && hasRampartHook(settings)
 }
 
 func clineManagedHooksPresentInDir(hookDir string) bool {
@@ -54,8 +53,21 @@ func clineManagedHooksPresentInDir(hookDir string) bool {
 }
 
 func codexRampartIntegrationPresent(home string) bool {
-	if codexHooksConfiguredForHome(home) {
-		return true
+	hooksPath := filepath.Join(codexHomeDir(home), "hooks.json")
+	if data, err := os.ReadFile(hooksPath); err == nil {
+		var settings map[string]any
+		if json.Unmarshal(data, &settings) == nil {
+			if hooks, ok := settings["hooks"].(map[string]any); ok {
+				for _, event := range []string{"PreToolUse", "PostToolUse"} {
+					entries, _ := hooks[event].([]any)
+					for _, entry := range entries {
+						if matcher, ok := entry.(map[string]any); ok && isRampartCodexMatcher(matcher) {
+							return true
+						}
+					}
+				}
+			}
+		}
 	}
 	wrapper := filepath.Join(home, ".local", "bin", "codex")
 	data, err := os.ReadFile(wrapper)
@@ -190,7 +202,16 @@ func removeManagedAgentIntegrations(cmd *cobra.Command, opts *rootOptions, home 
 					return runSetupRemove(cmd, newSetupOpenClawCmd(opts))
 				}
 				stateDir, configPath, _ := resolveOpenClawStateDir("")
-				_, err := removeOpenClawNativePluginAt(stateDir, configPath)
+				var hostUninstall func() error
+				if openclawBin, findErr := findOpenClawBinary(); findErr == nil {
+					if resolvedState, resolvedConfig, resolveErr := resolveOpenClawStateDir(openclawBin); resolveErr == nil {
+						stateDir, configPath = resolvedState, resolvedConfig
+						hostUninstall = func() error {
+							return runOpenClawPluginUninstall(openclawBin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+						}
+					}
+				}
+				_, err := removeOpenClawNativePluginWithHostAt(stateDir, configPath, hostUninstall)
 				return err
 			},
 		},

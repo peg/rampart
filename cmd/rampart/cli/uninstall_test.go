@@ -5,7 +5,9 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,9 +16,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestRampartLaunchdServicePathsIncludeCurrentAndLegacyLabels(t *testing.T) {
+func TestRampartLaunchdServicesIncludeCurrentAndLegacyLabels(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator), "Users", "test")
-	got := rampartLaunchdServicePaths(home)
+	services := rampartLaunchdServices(home)
+	got := make([]string, 0, len(services))
+	for _, service := range services {
+		got = append(got, service.PlistPath)
+	}
 	want := []string{
 		filepath.Join(home, "Library", "LaunchAgents", "sh.rampart.serve.plist"),
 		filepath.Join(home, "Library", "LaunchAgents", "com.rampart.proxy.plist"),
@@ -27,21 +33,254 @@ func TestRampartLaunchdServicePathsIncludeCurrentAndLegacyLabels(t *testing.T) {
 	}
 }
 
-func TestWindowsStopServeScriptUsesProcessCommandLineAndExcludesUninstaller(t *testing.T) {
-	script := windowsStopServeScript(4242)
-	for _, want := range []string{
-		"Get-CimInstance Win32_Process",
-		"$uninstallPid=4242",
-		"$_.ProcessId -ne $uninstallPid",
-		"$_.CommandLine -like '*serve*'",
-		"Invoke-CimMethod",
+func TestConfirmUninstallUsesProvidedInput(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		want  bool
+	}{
+		{input: "yes\n", want: true},
+		{input: "Y\n", want: true},
+		{input: "no\n", want: false},
+		{input: "", want: false},
 	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("stop script missing %q: %s", want, script)
+		var out bytes.Buffer
+		got, err := confirmUninstall(strings.NewReader(tt.input), &out)
+		if err != nil {
+			t.Fatalf("confirmUninstall(%q): %v", tt.input, err)
+		}
+		if got != tt.want {
+			t.Errorf("confirmUninstall(%q) = %t, want %t", tt.input, got, tt.want)
+		}
+		if !strings.Contains(out.String(), "Continue?") {
+			t.Errorf("missing prompt for %q: %q", tt.input, out.String())
 		}
 	}
-	if strings.Contains(script, "Get-Process") {
-		t.Fatalf("stop script uses Get-Process, whose Process objects do not reliably expose CommandLine: %s", script)
+}
+
+func TestTeardownManagedRuntimePreservesServiceAfterIntegrationFailure(t *testing.T) {
+	var out bytes.Buffer
+	stopCalled := false
+	servicesCalled := false
+	removed, failed, preserved := teardownManagedRuntime(
+		&out,
+		t.TempDir(),
+		"linux",
+		nil,
+		true,
+		func(io.Writer, bool) error {
+			stopCalled = true
+			return nil
+		},
+		func(string, string, commandRunner) ([]string, []string) {
+			servicesCalled = true
+			return nil, nil
+		},
+	)
+	if !preserved || stopCalled || servicesCalled || len(removed) != 0 || len(failed) != 0 {
+		t.Fatalf("preserved=%t stop=%t services=%t removed=%v failed=%v", preserved, stopCalled, servicesCalled, removed, failed)
+	}
+	if !strings.Contains(out.String(), "Preserving rampart serve") {
+		t.Fatalf("missing preservation explanation: %q", out.String())
+	}
+}
+
+func TestTeardownManagedRuntimeStopsBackgroundBeforeServices(t *testing.T) {
+	var calls []string
+	removed, failed, preserved := teardownManagedRuntime(
+		io.Discard,
+		t.TempDir(),
+		"linux",
+		nil,
+		false,
+		func(io.Writer, bool) error {
+			calls = append(calls, "stop-background")
+			return nil
+		},
+		func(string, string, commandRunner) ([]string, []string) {
+			calls = append(calls, "remove-services")
+			return []string{"service"}, nil
+		},
+	)
+	if preserved || len(failed) != 0 || strings.Join(removed, ",") != "service" {
+		t.Fatalf("preserved=%t removed=%v failed=%v", preserved, removed, failed)
+	}
+	if got := strings.Join(calls, ","); got != "stop-background,remove-services" {
+		t.Fatalf("calls = %q", got)
+	}
+}
+
+func TestTeardownManagedRuntimePreservesRuntimeAfterPartialFailure(t *testing.T) {
+	removed, failed, preserved := teardownManagedRuntime(
+		io.Discard,
+		t.TempDir(),
+		"linux",
+		nil,
+		false,
+		func(io.Writer, bool) error { return io.ErrUnexpectedEOF },
+		func(string, string, commandRunner) ([]string, []string) {
+			return []string{"one service"}, []string{"second service could not be removed"}
+		},
+	)
+	if !preserved || len(removed) != 1 || len(failed) != 2 {
+		t.Fatalf("preserved=%t removed=%v failed=%v", preserved, removed, failed)
+	}
+}
+
+func TestRemoveManagedServeServicesUsesExactLinuxUnits(t *testing.T) {
+	home := t.TempDir()
+	serviceDir := filepath.Join(home, ".config", "systemd", "user")
+	if err := os.MkdirAll(serviceDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"rampart-serve.service", "rampart-proxy.service"} {
+		content := "[Service]\nExecStart=/home/user/bin/rampart serve --port 9090\n"
+		if err := os.WriteFile(filepath.Join(serviceDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var calls []string
+	runner := func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, strings.TrimSpace(name+" "+strings.Join(args, " ")))
+		return exec.Command(os.Args[0], "-test.run=^$")
+	}
+	removed, failed := removeManagedServeServices(home, "linux", runner)
+	if len(failed) != 0 {
+		t.Fatalf("unexpected failures: %v", failed)
+	}
+	if len(removed) != 2 {
+		t.Fatalf("removed=%v, want both managed services", removed)
+	}
+	wantCalls := []string{
+		"systemctl --user stop rampart-serve.service",
+		"systemctl --user disable rampart-serve.service",
+		"systemctl --user stop rampart-proxy.service",
+		"systemctl --user disable rampart-proxy.service",
+		"systemctl --user daemon-reload",
+	}
+	if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
+		t.Fatalf("service calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(wantCalls, "\n"))
+	}
+	for _, name := range []string{"rampart-serve.service", "rampart-proxy.service"} {
+		if _, err := os.Stat(filepath.Join(serviceDir, name)); !os.IsNotExist(err) {
+			t.Errorf("managed unit %s still exists: %v", name, err)
+		}
+	}
+}
+
+func TestRemoveManagedServeServicesPreservesUnrecognizedUnit(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "systemd", "user", "rampart-serve.service")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[Service]\nExecStart=/usr/bin/unrelated serve\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	runner := func(name string, args ...string) *exec.Cmd {
+		called = true
+		return exec.Command(os.Args[0], "-test.run=^$")
+	}
+	removed, failed := removeManagedServeServices(home, "linux", runner)
+	if len(removed) != 0 || len(failed) != 1 {
+		t.Fatalf("removed=%v failed=%v", removed, failed)
+	}
+	if called {
+		t.Fatal("unrecognized service must not trigger systemctl")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("unrecognized service was removed: %v", err)
+	}
+}
+
+func TestManagedSystemdServiceRequiresExactlyOneExecStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rampart-serve.service")
+	content := "[Service]\nExecStart=/usr/local/bin/rampart serve\nExecStart=/usr/bin/unrelated\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	managed, err := managedSystemdServiceFile(path)
+	if err == nil || managed || !strings.Contains(err.Error(), "2 ExecStart") {
+		t.Fatalf("managed=%t err=%v, want duplicate ExecStart refusal", managed, err)
+	}
+}
+
+func TestRampartServeServiceIdentityRequiresServeSubcommand(t *testing.T) {
+	if !isRampartServeArguments([]string{"/usr/local/bin/rampart", "serve", "--port", "9090"}) {
+		t.Fatal("generated serve arguments were not recognized")
+	}
+	if isRampartServeArguments([]string{"/usr/local/bin/rampart", "doctor", "--output", "serve"}) {
+		t.Fatal("a later serve option value must not establish service ownership")
+	}
+}
+
+func TestRemoveManagedServeServicesUsesExactLaunchdLabel(t *testing.T) {
+	home := t.TempDir()
+	services := rampartLaunchdServices(home)
+	service := services[0]
+	if err := os.MkdirAll(filepath.Dir(service.PlistPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>` + service.Label + `</string>
+<key>ProgramArguments</key><array><string>/usr/local/bin/rampart</string><string>serve</string></array>
+</dict></plist>`
+	if err := os.WriteFile(service.PlistPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+	runner := func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, strings.TrimSpace(name+" "+strings.Join(args, " ")))
+		return exec.Command(os.Args[0], "-test.run=^$")
+	}
+	removed, failed := removeManagedServeServices(home, "darwin", runner)
+	if len(failed) != 0 || len(removed) != 1 {
+		t.Fatalf("removed=%v failed=%v", removed, failed)
+	}
+	wantCalls := []string{
+		"launchctl list " + service.Label,
+		"launchctl remove " + service.Label,
+	}
+	if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
+		t.Fatalf("launchd calls=%v want=%v", calls, wantCalls)
+	}
+	if _, err := os.Stat(service.PlistPath); !os.IsNotExist(err) {
+		t.Fatalf("managed plist still exists: %v", err)
+	}
+}
+
+func TestManagedLaunchdServiceRequiresRampartExecutable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "com.rampart.proxy.plist")
+	content := `<?xml version="1.0"?><plist><dict>
+<key>Label</key><string>com.rampart.proxy</string>
+<key>ProgramArguments</key><array><string>/usr/local/bin/unrelated</string><string>serve</string></array>
+</dict></plist>`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	managed, err := managedLaunchdServiceFile(path, "com.rampart.proxy")
+	if err == nil || managed {
+		t.Fatalf("managed=%t err=%v, want ownership refusal", managed, err)
+	}
+}
+
+func TestManagedLaunchdServiceRejectsDuplicateIdentityKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sh.rampart.serve.plist")
+	content := `<?xml version="1.0"?><plist><dict>
+<key>Label</key><string>sh.rampart.serve</string>
+<key>Label</key><string>sh.rampart.serve</string>
+<key>ProgramArguments</key><array><string>/usr/local/bin/rampart</string><string>serve</string></array>
+</dict></plist>`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	managed, err := managedLaunchdServiceFile(path, "sh.rampart.serve")
+	if err == nil || managed || !strings.Contains(err.Error(), "duplicate Label") {
+		t.Fatalf("managed=%t err=%v, want duplicate identity refusal", managed, err)
 	}
 }
 

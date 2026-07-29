@@ -3,13 +3,13 @@
 # Usage:
 #   1. Put your policies in ./policies/
 #   2. docker compose up
-#   3. Configure your agent: RAMPART_API=http://localhost:9090
+#   3. Configure a host agent: RAMPART_API=http://localhost:9090
 
 services:
   rampart:
     image: ghcr.io/peg/rampart:latest
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./policies:/home/nonroot/.rampart/policies:ro
       - rampart-audit:/home/nonroot/.rampart/audit

@@ -104,6 +104,36 @@ func TestSetupGeminiInvalidJSONRequiresForce(t *testing.T) {
 	assertRampartGeminiHook(t, testReadJSONMap(t, settingsPath), "BeforeTool")
 }
 
+func TestGeminiOwnershipRejectsOtherProtocolExecutableAndRefreshesStaleRampart(t *testing.T) {
+	other := map[string]any{"hooks": []any{map[string]any{
+		"type": "command", "command": "notify hook --format gemini",
+	}}}
+	if isRampartGeminiMatcher(other) {
+		t.Fatal("unrelated executable was claimed as a Rampart Gemini matcher")
+	}
+
+	home := t.TempDir()
+	testSetHome(t, home)
+	path := filepath.Join(home, ".gemini", "settings.json")
+	if err := installGeminiHooks(path, "'/retired/rampart' hook --format gemini", false); err != nil {
+		t.Fatal(err)
+	}
+	settings := testReadJSONMap(t, path)
+	hooks := settings["hooks"].(map[string]any)
+	if !isRampartGeminiMatcher(hooks["BeforeTool"].([]any)[0].(map[string]any)) {
+		t.Fatal("narrow legacy Rampart command was not recognized for migration")
+	}
+	if geminiHooksConfiguredForHome(home) {
+		t.Fatal("stale Gemini hook was reported as current")
+	}
+	if err := testExecuteRoot(t, "setup", "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	if !geminiHooksConfiguredForHome(home) {
+		t.Fatal("Gemini setup did not refresh the stale Rampart command")
+	}
+}
+
 func assertRampartGeminiHook(t *testing.T, settings map[string]any, event string) {
 	t.Helper()
 	hooks := settings["hooks"].(map[string]any)

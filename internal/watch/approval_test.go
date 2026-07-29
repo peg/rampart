@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,25 @@ func TestApprovalClientResolve(t *testing.T) {
 	client := NewApprovalClient(srv.URL, "")
 	err := client.Resolve(t.Context(), "abc123", true, false)
 	require.NoError(t, err)
+}
+
+func TestApprovalClientRejectsInvalidResolveID(t *testing.T) {
+	client := NewApprovalClient("http://127.0.0.1:1", "")
+	if err := client.Resolve(t.Context(), "../healthz", true, false); err == nil {
+		t.Fatal("Resolve accepted an approval ID containing path traversal")
+	}
+}
+
+func TestApprovalClientRejectsOversizedListResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"approvals":[]}`+strings.Repeat(" ", maxApprovalResponseBytes))
+	}))
+	defer srv.Close()
+
+	client := NewApprovalClient(srv.URL, "")
+	if _, err := client.ListPending(t.Context()); err == nil {
+		t.Fatal("ListPending accepted an oversized response")
+	}
 }
 
 func TestFormatDuration(t *testing.T) {

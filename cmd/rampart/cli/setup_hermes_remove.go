@@ -8,22 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
+	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
 	"gopkg.in/yaml.v3"
 )
 
 func hermesPluginManaged(pluginDir string) bool {
-	manifest, err := readHermesPluginManifest(pluginDir)
-	if err != nil || manifest.Name != "rampart" || !strings.EqualFold(strings.TrimSpace(manifest.Author), "peg") || !containsString(manifest.ProvidesHooks, "pre_tool_call") {
-		return false
-	}
-	runtimeData, err := os.ReadFile(filepath.Join(pluginDir, "__init__.py"))
-	if err != nil {
-		return false
-	}
-	runtime := string(runtimeData)
-	return strings.Contains(runtime, "Rampart policy gate for Hermes Agent") && strings.Contains(runtime, "def register(")
+	return hermesplugin.Managed(pluginDir)
 }
 
 func yamlMappingValue(node *yaml.Node, key string) *yaml.Node {
@@ -67,6 +58,42 @@ func yamlRemoveSequenceValue(node *yaml.Node, value string) bool {
 	}
 	node.Content = kept
 	return changed
+}
+
+func yamlSequenceContains(node *yaml.Node, value string) bool {
+	if node == nil || node.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, item := range node.Content {
+		if item.Kind == yaml.ScalarNode && item.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func hermesConfigReferencesRampart(configPath string) (bool, error) {
+	data, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("setup hermes: read config %s: %w", configPath, err)
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return false, fmt.Errorf("setup hermes: parse config %s: %w", configPath, err)
+	}
+	if len(document.Content) == 0 {
+		return false, nil
+	}
+	plugins := yamlMappingValue(document.Content[0], "plugins")
+	if plugins == nil {
+		return false, nil
+	}
+	return yamlSequenceContains(yamlMappingValue(plugins, "enabled"), "rampart") ||
+		yamlSequenceContains(yamlMappingValue(plugins, "disabled"), "rampart") ||
+		yamlMappingValue(yamlMappingValue(plugins, "entries"), "rampart") != nil, nil
 }
 
 func removeHermesRampartConfig(configPath string) (bool, error) {
@@ -139,12 +166,21 @@ func removeHermesIntegration(pluginDir, hermesHome string) (bool, error) {
 		return false, fmt.Errorf("setup hermes: inspect plugin directory %s: %w", pluginDir, err)
 	}
 
-	configRemoved, err := removeHermesRampartConfig(filepath.Join(hermesHome, "config.yaml"))
+	configPath := filepath.Join(hermesHome, "config.yaml")
+	if !pluginPresent {
+		configured, err := hermesConfigReferencesRampart(configPath)
+		if err != nil {
+			return false, err
+		}
+		if configured {
+			return false, fmt.Errorf("setup hermes: refusing to remove config-only plugin ID rampart without a positively owned Rampart plugin directory")
+		}
+		return false, nil
+	}
+
+	_, err := removeHermesRampartConfig(configPath)
 	if err != nil {
 		return false, err
-	}
-	if !pluginPresent {
-		return configRemoved, nil
 	}
 	for _, name := range []string{"__init__.py", "plugin.yaml"} {
 		path := filepath.Join(pluginDir, name)

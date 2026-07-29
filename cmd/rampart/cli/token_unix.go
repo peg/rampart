@@ -2,12 +2,18 @@
 
 package cli
 
-import "os"
+import (
+	"os"
+
+	"github.com/peg/rampart/internal/securefile"
+)
+
+var secureOwnerOnlyFile = securefile.OwnerOnly
 
 // secureFilePermissions sets the file to owner-only access (0600).
 // On Unix systems, this uses standard chmod.
 func secureFilePermissions(path string) error {
-	return os.Chmod(path, 0o600)
+	return secureOwnerOnlyFile(path)
 }
 
 // secureDirPermissions sets the directory to owner-only access (0700).

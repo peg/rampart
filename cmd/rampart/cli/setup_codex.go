@@ -8,14 +8,49 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// decodeUserJSON preserves arbitrary numeric fields owned by the host. The
+// default map[string]any decoder converts numbers to float64, which can round
+// unrelated integer settings when Rampart later rewrites the document.
+func decodeUserJSON(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func regularConfigFileExists(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("refusing linked or non-regular configuration path %s", path)
+	}
+	return true, nil
+}
 
 func newSetupCodexCmd(_ *rootOptions) *cobra.Command {
 	var remove bool
@@ -66,9 +101,7 @@ Run 'rampart setup codex --remove' to uninstall.`,
 				return nil
 			}
 
-			hookBin := resolveRampartHookBinary()
-			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format codex"
-			hookCommandWindows := windowsQuoteCodexHookArg(hookBin) + " hook --format codex"
+			hookCommand, hookCommandWindows := currentCodexHookCommands()
 
 			if err := installCodexHooks(hooksPath, hookCommand, hookCommandWindows, force); err != nil {
 				return err
@@ -98,15 +131,21 @@ Run 'rampart setup codex --remove' to uninstall.`,
 
 func installCodexHooks(path, command, commandWindows string, force bool) error {
 	settings := make(map[string]any)
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
+	exists, err := regularConfigFileExists(path)
+	if err != nil {
+		return fmt.Errorf("setup codex: inspect %s: %w", path, err)
+	}
+	if exists {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("setup codex: read %s: %w", path, err)
+		}
+		if err := decodeUserJSON(data, &settings); err != nil {
 			if !force {
 				return fmt.Errorf("setup codex: existing %s has invalid JSON (use --force to replace): %w", path, err)
 			}
 			settings = make(map[string]any)
 		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("setup codex: read %s: %w", path, err)
 	}
 
 	hooks, ok := settings["hooks"].(map[string]any)
@@ -143,14 +182,30 @@ func installCodexHooks(path, command, commandWindows string, force bool) error {
 }
 
 func codexHooksConfiguredForHome(home string) bool {
-	data, err := os.ReadFile(filepath.Join(codexHomeDir(home), "hooks.json"))
+	path := filepath.Join(codexHomeDir(home), "hooks.json")
+	exists, err := regularConfigFileExists(path)
+	if err != nil || !exists {
+		return false
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 	var settings map[string]any
-	if json.Unmarshal(data, &settings) != nil {
+	if decodeUserJSON(data, &settings) != nil {
 		return false
 	}
+	command, commandWindows := currentCodexHookCommands()
+	return codexHooksUseCommands(settings, command, commandWindows)
+}
+
+func currentCodexHookCommands() (string, string) {
+	hookBin := resolveRampartHookBinary()
+	return shellQuoteCodexHookArg(hookBin) + " hook --format codex",
+		windowsQuoteCodexHookArg(hookBin) + " hook --format codex"
+}
+
+func codexHooksUseCommands(settings map[string]any, command, commandWindows string) bool {
 	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok {
 		return false
@@ -160,15 +215,26 @@ func codexHooksConfiguredForHome(home string) bool {
 		if !ok {
 			return false
 		}
-		found := false
+		owned := 0
 		for _, entry := range entries {
 			matcher, ok := entry.(map[string]any)
-			if ok && isRampartCodexMatcher(matcher) {
-				found = true
-				break
+			if !ok {
+				continue
+			}
+			handlers, _ := matcher["hooks"].([]any)
+			for _, rawHandler := range handlers {
+				handler, ok := rawHandler.(map[string]any)
+				if !ok || !isRampartCodexHandler(handler) {
+					continue
+				}
+				owned++
+				if matcher["matcher"] != "*" || handler["type"] != "command" ||
+					handler["command"] != command || handler["commandWindows"] != commandWindows {
+					return false
+				}
 			}
 		}
-		if !found {
+		if owned != 1 {
 			return false
 		}
 	}
@@ -178,8 +244,14 @@ func codexHooksConfiguredForHome(home string) bool {
 func codexHomeDir(home string) string {
 	if configured := strings.TrimSpace(os.Getenv("CODEX_HOME")); configured != "" {
 		expanded := os.ExpandEnv(configured)
-		if strings.HasPrefix(expanded, "~"+string(os.PathSeparator)) {
-			expanded = filepath.Join(home, strings.TrimPrefix(expanded, "~"+string(os.PathSeparator)))
+		if expanded == "~" {
+			return filepath.Clean(home)
+		}
+		if len(expanded) >= 2 && expanded[0] == '~' && (expanded[1] == '/' || expanded[1] == '\\') {
+			// Environment files and cross-platform launchers commonly use `/`
+			// even on Windows. Accept both separator forms for a leading tilde.
+			relative := strings.ReplaceAll(expanded[2:], "\\", "/")
+			expanded = filepath.Join(home, filepath.FromSlash(relative))
 		}
 		return filepath.Clean(expanded)
 	}
@@ -187,28 +259,24 @@ func codexHomeDir(home string) string {
 }
 
 func replaceRampartMatcher(existing any, rampartMatcher map[string]any) []any {
-	var kept []any
-	if entries, ok := existing.([]any); ok {
-		for _, entry := range entries {
-			if matcher, ok := entry.(map[string]any); ok && isRampartCodexMatcher(matcher) {
-				continue
-			}
-			kept = append(kept, entry)
-		}
-	}
+	kept, _ := removeRampartCodexHandlers(existing)
 	return append(kept, rampartMatcher)
 }
 
 func removeCodexHooks(path string) (bool, error) {
+	exists, err := regularConfigFileExists(path)
+	if err != nil {
+		return false, fmt.Errorf("setup codex: inspect %s: %w", path, err)
+	}
+	if !exists {
+		return false, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
 		return false, fmt.Errorf("setup codex: read %s: %w", path, err)
 	}
 	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
+	if err := decodeUserJSON(data, &settings); err != nil {
 		return false, fmt.Errorf("setup codex: parse %s: %w", path, err)
 	}
 	hooks, ok := settings["hooks"].(map[string]any)
@@ -218,17 +286,10 @@ func removeCodexHooks(path string) (bool, error) {
 
 	removed := false
 	for _, event := range []string{"PreToolUse", "PostToolUse"} {
-		entries, ok := hooks[event].([]any)
-		if !ok {
+		kept, eventRemoved := removeRampartCodexHandlers(hooks[event])
+		removed = removed || eventRemoved
+		if !eventRemoved {
 			continue
-		}
-		var kept []any
-		for _, entry := range entries {
-			if matcher, ok := entry.(map[string]any); ok && isRampartCodexMatcher(matcher) {
-				removed = true
-				continue
-			}
-			kept = append(kept, entry)
 		}
 		if len(kept) == 0 {
 			delete(hooks, event)
@@ -250,51 +311,80 @@ func isRampartCodexMatcher(matcher map[string]any) bool {
 	}
 	for _, rawHandler := range handlers {
 		handler, ok := rawHandler.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, field := range []string{"command", "commandWindows"} {
-			command, _ := handler[field].(string)
-			// "hook --format codex" is Rampart's CLI contract. The executable
-			// may be an absolute release path (or a Go test binary), so do not
-			// key ownership detection on the basename.
-			if strings.Contains(command, "hook --format codex") {
-				return true
-			}
+		if ok && isRampartCodexHandler(handler) {
+			return true
 		}
 	}
 	return false
 }
 
-func writeCodexHooks(path string, settings map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("setup codex: create hooks directory: %w", err)
+func isRampartCodexHandler(handler map[string]any) bool {
+	for _, field := range []string{"command", "commandWindows"} {
+		command, _ := handler[field].(string)
+		// "hook --format codex" is Rampart's CLI contract. The executable
+		// may be an absolute release path (or a Go test binary), so do not
+		// key ownership detection on the basename.
+		if hasRampartHookFormat(command, "codex") {
+			return true
+		}
 	}
+	return false
+}
+
+// removeRampartCodexHandlers removes only Rampart-owned commands. Codex hook
+// matchers may contain multiple handlers, so setup and uninstall must preserve
+// unrelated handlers and all matcher metadata.
+func removeRampartCodexHandlers(existing any) ([]any, bool) {
+	entries, ok := existing.([]any)
+	if !ok {
+		return nil, false
+	}
+	kept := make([]any, 0, len(entries))
+	removed := false
+	for _, entry := range entries {
+		matcher, ok := entry.(map[string]any)
+		if !ok {
+			kept = append(kept, entry)
+			continue
+		}
+		handlers, ok := matcher["hooks"].([]any)
+		if !ok {
+			kept = append(kept, entry)
+			continue
+		}
+		remaining := make([]any, 0, len(handlers))
+		for _, rawHandler := range handlers {
+			handler, ok := rawHandler.(map[string]any)
+			if ok && isRampartCodexHandler(handler) {
+				removed = true
+				continue
+			}
+			remaining = append(remaining, rawHandler)
+		}
+		if len(remaining) == len(handlers) {
+			kept = append(kept, entry)
+			continue
+		}
+		if len(remaining) > 0 {
+			copyMatcher := make(map[string]any, len(matcher))
+			for key, value := range matcher {
+				copyMatcher[key] = value
+			}
+			copyMatcher["hooks"] = remaining
+			kept = append(kept, copyMatcher)
+		}
+	}
+	return kept, removed
+}
+
+func writeCodexHooks(path string, settings map[string]any) error {
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("setup codex: marshal hooks: %w", err)
 	}
 	data = append(data, '\n')
-
-	temp, err := os.CreateTemp(filepath.Dir(path), ".rampart-codex-hooks-*.json")
-	if err != nil {
-		return fmt.Errorf("setup codex: create temporary hooks file: %w", err)
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("setup codex: secure temporary hooks file: %w", err)
-	}
-	if _, err := temp.Write(data); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("setup codex: write temporary hooks file: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("setup codex: close temporary hooks file: %w", err)
-	}
-	if err := replaceCodexHooksFile(tempPath, path); err != nil {
-		return fmt.Errorf("setup codex: replace hooks file: %w", err)
+	if err := atomicWritePrivateFile(path, data); err != nil {
+		return fmt.Errorf("setup codex: write hooks file: %w", err)
 	}
 	return nil
 }

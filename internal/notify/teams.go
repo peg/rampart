@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // TeamsNotifier sends notifications to Microsoft Teams using Office 365 connector cards.
@@ -30,10 +29,8 @@ type TeamsNotifier struct {
 // NewTeamsNotifier creates a new Teams notifier.
 func NewTeamsNotifier(url string) *TeamsNotifier {
 	return &TeamsNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 

@@ -70,8 +70,14 @@ rampart wrap --config /path/to/policy.yaml -- your-agent
 
 If your agent doesn't respect `$SHELL`, use [LD_PRELOAD](codex-cli.md) instead:
 
+The native library is not included in release archives or Homebrew. From a
+matching Rampart source checkout, run `make -C preload install` first.
+
 ```bash
 rampart preload -- your-agent
 ```
 
-This intercepts exec syscalls directly — works with any dynamically-linked process regardless of `$SHELL` support.
+This interposes supported libc exec/spawn functions in compatible dynamically
+linked processes, independently of `$SHELL`. It does not cover static binaries,
+direct syscalls, secure-execution/SIP contexts, or runtimes that bypass those
+symbols; use native host hooks or OS containment when available.

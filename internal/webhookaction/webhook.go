@@ -74,7 +74,16 @@ func Execute(logger *slog.Logger, call engine.ToolCall, decision engine.Decision
 		return fallback(logger, cfg, "marshal error")
 	}
 
-	resp, err := (&http.Client{Timeout: cfg.EffectiveTimeout()}).Post(cfg.URL, "application/json", bytes.NewReader(body))
+	client := &http.Client{
+		Timeout: cfg.EffectiveTimeout(),
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			// A redirect would let the configured endpoint delegate both the
+			// sensitive tool-call payload and its authorization decision to a
+			// different origin. Treat every redirect as an unavailable webhook.
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Post(cfg.URL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		// Webhook paths and query strings commonly contain bearer secrets. Never
 		// copy the configured URL into logs; the policy name already identifies

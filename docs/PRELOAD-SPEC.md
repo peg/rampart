@@ -1,11 +1,19 @@
-# Rampart Preload — Syscall-Level Agent Protection
+# Rampart Preload — Optional Native Exec Interposition
 
-**Status:** Shipped (v0.1.5+) | **Last updated: v0.4.5**  
+**Status:** Optional, source-built native library | **Last updated: v1.4 development**
+
 **See also:** `rampart preload --help`, [README](../README.md#ld_preload)
 
 ## Overview
 
-`rampart preload` provides universal agent protection via LD_PRELOAD (Linux) / DYLD_INSERT_LIBRARIES (macOS). It intercepts exec syscalls at the process level and routes them through Rampart's policy engine before execution.
+`rampart preload` provides best-effort defense in depth via LD_PRELOAD (Linux) /
+DYLD_INSERT_LIBRARIES (macOS). It interposes a documented set of libc
+exec/spawn functions and routes those calls through Rampart before execution.
+It is not a kernel boundary and does not cover every runtime or process.
+
+The CLI command ships in release archives and Homebrew, but the native library
+does not. Build the library from the matching source revision with
+`make -C preload install` before using this path.
 
 This is the fallback for agents that do not have hook systems. Native hooks
 (Claude Code, Codex, and Cline) remain the preferred integration; preload is
@@ -14,7 +22,7 @@ optional defense in depth or a fallback for other processes.
 ## User Experience
 
 ```bash
-# Protect any agent, zero configuration in the agent itself
+# Protect a compatible agent without modifying that agent's configuration
 rampart preload -- your-agent
 rampart preload -- python my_agent.py
 rampart preload -- node agent.js
@@ -45,7 +53,7 @@ The preload library is a thin HTTP client. All policy logic stays in `rampart se
 ### 1. `librampart.so` / `librampart.dylib`
 
 Intercepts:
-- `execve` — primary exec syscall
+- `execve` — primary libc exec entry point
 - `execvp` / `execvpe` — PATH-resolved variants
 - `system` — libc shell wrapper
 - `popen` — pipe to shell command
@@ -91,7 +99,9 @@ librampart.dylib: librampart.c
     $(CC) -dynamiclib -o $@ $< -lcurl
 ```
 
-Cross-compiled in goreleaser alongside the Go binary. Distributed as part of the release tarball.
+The current GoReleaser archives contain only the Go CLI. Native libraries are
+not cross-compiled or distributed in release archives because each target must
+be built and verified against its platform compiler and libcurl ABI.
 
 ## Environment Variables
 
@@ -107,18 +117,23 @@ The library reads from env (set by `rampart preload` command):
 | `RAMPART_SESSION` | `preload-<pid>` | Session ID |
 | `RAMPART_DEBUG` | `0` | Log to stderr |
 
+The library snapshots these values and its loader chain at initialization. It
+reconstructs explicit child environments so an `execve`/`execvpe`/
+`posix_spawn*` caller cannot substitute less restrictive Rampart values for
+the next compatible process.
+
 ## Platform Support
 
 ### Linux (primary target)
-- LD_PRELOAD is universally supported for dynamically-linked binaries
-- ~95% coverage (static binaries are not interceptable)
+- LD_PRELOAD supports many dynamically linked user programs
+- Static binaries, direct syscalls, secure-execution contexts, and runtimes
+  that bypass the interposed libc symbols are not interceptable
 - No special permissions needed
 
 ### macOS
 - DYLD_INSERT_LIBRARIES works for non-SIP-protected binaries
-- ✅ Works: Homebrew packages, Node.js (nvm/volta), Python (pyenv/homebrew), Go binaries, npm globals
+- Can work with compatible non-hardened user programs
 - ❌ Blocked: /usr/bin/*, /System/*, Apple-signed hardened binaries
-- ~70-85% coverage for typical developer environments
 - No need to disable SIP — AI agents are user-installed software
 
 ### Windows
@@ -130,27 +145,25 @@ The library reads from env (set by `rampart preload` command):
 - AI agent hallucinating `rm -rf /`
 - Malicious skills/plugins executing credential theft
 - Unintended network exfiltration via curl/wget
-- Any exec call from the agent process tree
+- Calls through supported interposed libc functions in the loaded process tree
 
 ### What this does NOT catch
-- Agent explicitly unsetting LD_PRELOAD before exec (deliberate bypass)
-- Direct syscalls bypassing libc (requires assembly, unlikely from AI agents)
+- Direct syscalls or runtimes that bypass libc interposition
 - Statically-linked binaries (no dynamic linker = no preload)
+- Processes where secure-execution, SIP, or hardening removes loader injection
 - Non-exec actions (file reads via open(), network via connect())
 
 ### Threat model alignment
-Our threat is **hallucinating/manipulated AI agents**, not **adversarial human attackers**. An AI agent doesn't know to unset LD_PRELOAD. The bypass resistance is low against a determined human but high against the actual threat.
+The intended threat is accidental or model-generated execution inside a
+compatible process boundary, not a determined local attacker. Treat preload as
+defense in depth; use native host hooks and OS containment where available.
 
-## Performance (Critical Priority)
+## Performance
 
-Performance is non-negotiable. Users should not be able to measure the overhead.
-
-**Target: < 1ms per intercepted call.**
-
-Optimization strategy (in order of implementation):
-1. **Persistent keep-alive connection** — open one HTTP connection at library init via `curl_easy_init()`, reuse for every call. Eliminates TCP handshake per call.
-2. **Unix domain socket** — `rampart serve` listens on `~/.rampart/rampart.sock` in addition to TCP. The preload library connects via UDS, eliminating the TCP stack entirely. Target: ~0.3ms round-trip.
-3. **Connection pooling** — if the agent spawns child processes that inherit LD_PRELOAD, each process gets its own persistent connection.
+The implementation reuses one libcurl handle and its localhost HTTP
+keep-alive connection per process. Each process has its own connection and
+every intercepted call receives a fresh policy decision. Rampart does not
+currently implement a Unix-domain-socket transport for this library.
 
 Fallback path (if serve is unreachable): honor `RAMPART_FAIL_OPEN` after the bounded connection attempt. There are no retries. Authentication failures, malformed or oversized responses, and client-side safety failures never use this fallback in enforce mode.
 
@@ -158,12 +171,6 @@ Fallback path (if serve is unreachable): honor `RAMPART_FAIL_OPEN` after the bou
 - No in-process policy evaluation (keeps library minimal and auditable)
 - No shared memory mapping (complexity not justified)
 - No caching of decisions (policies can change, every call must be fresh)
-
-**Benchmark targets:**
-- Persistent TCP to localhost: < 3ms p99
-- Unix domain socket: < 1ms p99  
-- Fail-open (serve down): < 0.01ms
-- Library load time: < 5ms (one-time at process start)
 
 ## Implementation History
 
@@ -182,15 +189,14 @@ No policy changes needed. The preload library sends standard `/v1/preflight/exec
 | eBPF | Linux-only, high effort, needs recent kernel |
 | macOS Endpoint Security | macOS-only, needs entitlements/approval |
 
-LD_PRELOAD is the only approach that works cross-platform with reasonable effort. The kernel-level approaches can be v0.3+ for users who need higher bypass resistance.
+Dynamic-loader interposition is the maintained optional fallback on Linux and
+macOS. It trades portability and low setup cost for a weaker boundary than
+kernel or OS-native containment.
 
 ## Success Criteria
 
-- Works with Codex CLI, Python agents, Node.js agents on Linux
-- Works with Homebrew-installed tools on macOS
-- **< 1ms p99 latency via Unix socket, < 3ms via TCP**
+- Works with the explicitly tested compatible agent/runtime matrix
 - Existing policies enforce correctly without modification
-- Fails open instantly when serve is down (no user-visible delay)
-- Zero crashes, zero memory leaks, zero UB in C code
-- Passes Valgrind and AddressSanitizer clean
+- Applies the documented bounded degraded behavior when serve is unavailable
+- Native unit and live contract suites pass on the supported Linux/macOS matrix
 - The C boundary and its dependency surface remain directly auditable

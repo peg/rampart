@@ -126,9 +126,42 @@ func TestCopilotHomeHonorsEnvironment(t *testing.T) {
 }
 
 func TestCopilotHookDataManagedRecognizesDisabledFileForRepairAndRemoval(t *testing.T) {
-	data := []byte(`{"version":1,"disableAllHooks":true,"hooks":{"PreToolUse":[{"command":"rampart hook --format copilot"}],"PostToolUse":[{"command":"rampart hook --format copilot"}]}}`)
+	data := []byte(`{"version":1,"disableAllHooks":true,"hooks":{"PreToolUse":[{"type":"command","bash":"rampart hook --format copilot","powershell":"rampart.exe hook --format copilot"}],"PostToolUse":[{"type":"command","bash":"rampart hook --format copilot","powershell":"rampart.exe hook --format copilot"}]}}`)
 	if !copilotHookDataManaged(data) {
 		t.Fatal("a disabled Rampart hook file must remain identifiable for repair and removal")
+	}
+}
+
+func TestCopilotHookOwnershipRejectsOtherProtocolExecutable(t *testing.T) {
+	data := []byte(`{"version":1,"hooks":{"PreToolUse":[{"type":"command","bash":"notify hook --format copilot","powershell":"notify.exe hook --format copilot"}],"PostToolUse":[{"type":"command","bash":"notify hook --format copilot","powershell":"notify.exe hook --format copilot"}]}}`)
+	if copilotHookDataManaged(data) {
+		t.Fatal("unrelated executables were claimed as a Rampart Copilot hook file")
+	}
+}
+
+func TestCopilotStaleManagedCommandsAreRefreshed(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("COPILOT_HOME", "")
+	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"version":1,"hooks":{"PreToolUse":[{"type":"command","bash":"'/retired/rampart' hook --format copilot","powershell":"& \"C:\\retired\\rampart.exe\" hook --format copilot"}],"PostToolUse":[{"type":"command","bash":"'/retired/rampart' hook --format copilot","powershell":"& \"C:\\retired\\rampart.exe\" hook --format copilot"}]}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !copilotHookDataManaged(data) {
+		t.Fatal("narrow legacy Rampart commands were not recognized for migration")
+	}
+	if copilotHooksConfiguredForHome(home) {
+		t.Fatal("stale Copilot hook was reported as current")
+	}
+	if err := testExecuteRoot(t, "setup", "copilot"); err != nil {
+		t.Fatal(err)
+	}
+	if !copilotHooksConfiguredForHome(home) {
+		t.Fatal("Copilot setup did not refresh stale Rampart commands")
 	}
 }
 

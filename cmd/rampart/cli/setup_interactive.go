@@ -37,73 +37,20 @@ type agentInfo struct {
 
 // detectAgents checks PATH and common locations for known AI agents.
 func detectAgents() []agentInfo {
-	agents := []agentInfo{
-		{
-			Name:     "Claude Code",
-			HasSetup: true,
-			SetupCmd: "claude-code",
-		},
-		{
-			Name:     "Cline",
-			HasSetup: true,
-			SetupCmd: "cline",
-		},
-		{
-			Name:     "OpenClaw",
-			HasSetup: true,
-			SetupCmd: "openclaw",
-		},
-		{
-			Name:     "Codex",
-			HasSetup: true,
-			SetupCmd: "codex",
-		},
-		{
-			Name:     "Gemini CLI",
-			HasSetup: true,
-			SetupCmd: "gemini",
-		},
-		{
-			Name:     "GitHub Copilot CLI / VS Code",
-			HasSetup: true,
-			SetupCmd: "copilot",
-		},
-		{
-			Name:     "Antigravity CLI / IDE",
-			HasSetup: true,
-			SetupCmd: "antigravity",
-		},
-		{
-			Name:      "Aider",
-			HasSetup:  false,
-			ManualCmd: "rampart wrap -- aider",
-		},
-		{
-			Name:      "Cursor",
-			HasSetup:  false,
-			ManualCmd: "rampart wrap -- cursor",
-		},
-		{
-			Name:      "Windsurf",
-			HasSetup:  false,
-			ManualCmd: "rampart wrap -- windsurf",
-		},
+	quickstart := quickstartAgents()
+	agents := make([]agentInfo, 0, len(quickstart))
+	for _, agent := range quickstart {
+		agents = append(agents, agentInfo{
+			Name:      agent.Name,
+			HasSetup:  agent.HasSetup,
+			SetupCmd:  agent.SetupCmd,
+			ManualCmd: agent.WrapCmd,
+		})
 	}
-
 	if env, err := detect.Environment(); err == nil && env != nil {
-		agents[0].Detected = env.ClaudeCode
-		agents[1].Detected = env.HasCline
-		agents[2].Detected = env.HasOpenClaw
-		agents[3].Detected = env.HasCodex
-		home, _ := os.UserHomeDir()
-		_, geminiErr := execLookPath("gemini")
-		agents[4].Detected = geminiErr == nil
-		agents[5].Detected = copilotInstalledForHome(home)
-		_, antigravityErr := execLookPath("agy")
-		agents[6].Detected = antigravityErr == nil
-		agents[7].Detected = env.HasAider
-		agents[8].Detected = env.HasCursor
-		agents[9].Detected = env.HasWindsurf
+		for i := range agents {
+			agents[i].Detected = isAgentDetected(env, quickstart[i].Key)
+		}
 	}
 
 	return agents
@@ -243,15 +190,13 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 	for _, a := range selectedAgents {
 		switch a.SetupCmd {
 		case "claude-code":
-			fmt.Fprintf(out, "  • Claude Code: hooks in %s\n", filepath.Join(home, ".claude", "settings.json"))
+			fmt.Fprintf(out, "  • Claude Code: hooks in %s\n", claudeSettingsPath(home))
 		case "cline":
 			fmt.Fprintf(out, "  • Cline: hooks in %s\n", filepath.Join(home, "Documents", "Cline", "Hooks"))
 		case "openclaw":
-			fmt.Fprintf(out, "  • OpenClaw: shell shim in %s\n", filepath.Join(home, ".local", "bin", "rampart-shim"))
+			fmt.Fprintf(out, "  • OpenClaw: native plugin under %s\n", filepath.Join(home, ".openclaw", "extensions", "rampart"))
 		case "codex":
 			fmt.Fprintf(out, "  • Codex: hooks in %s\n", filepath.Join(codexHomeDir(home), "hooks.json"))
-		case "gemini":
-			fmt.Fprintf(out, "  • Gemini CLI: hooks in %s\n", filepath.Join(home, ".gemini", "settings.json"))
 		case "copilot":
 			fmt.Fprintf(out, "  • GitHub Copilot CLI / VS Code: hooks in %s\n", filepath.Join(copilotHomeDir(home), "hooks", copilotRampartHookFile))
 		case "antigravity":

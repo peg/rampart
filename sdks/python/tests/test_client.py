@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
+import rampart.client as client_module
 import rampart.decorators as decorators
 from rampart import (
     Decision,
@@ -56,12 +57,12 @@ class TestRampartClient:
     def test_init_with_params(self):
         """Test client initialization with custom parameters."""
         client = RampartClient(
-            url="http://example.com:8080",
+            url="https://example.com:8080",
             token="test-token",
             fail_open=False,
             timeout=60.0,
         )
-        assert client.url == "http://example.com:8080"
+        assert client.url == "https://example.com:8080"
         assert client.token == "test-token"
         assert client.fail_open is False
 
@@ -70,18 +71,94 @@ class TestRampartClient:
         with patch.dict(
             os.environ,
             {
-                "RAMPART_URL": "http://env.example.com",
+                "RAMPART_URL": "https://env.example.com",
                 "RAMPART_TOKEN": "env-token",
             },
         ):
             client = RampartClient()
-            assert client.url == "http://env.example.com"
+            assert client.url == "https://env.example.com"
             assert client.token == "env-token"
 
     def test_url_trailing_slash_removed(self):
         """Test that trailing slashes are removed from URLs."""
-        client = RampartClient(url="http://example.com:8080/")
-        assert client.url == "http://example.com:8080"
+        client = RampartClient(url="https://example.com:8080/")
+        assert client.url == "https://example.com:8080"
+
+    @pytest.mark.asyncio
+    @patch("rampart.client.httpx.AsyncClient")
+    @patch("rampart.client.httpx.Client")
+    async def test_control_clients_are_direct_and_refuse_redirects(
+        self, sync_client, async_client
+    ):
+        client = RampartClient()
+        client._sync_client()
+        client._async_http_client()
+        assert sync_client.call_args.kwargs["follow_redirects"] is False
+        assert async_client.call_args.kwargs["follow_redirects"] is False
+        assert sync_client.call_args.kwargs["trust_env"] is False
+        assert async_client.call_args.kwargs["trust_env"] is False
+        async_client.return_value.aclose = AsyncMock()
+        await client.aclose()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://policy.example.com:9090",
+            "http://user:password@localhost:9090",
+            "http://localhost:9090?next=https://example.com",
+            "file:///tmp/rampart.sock",
+        ],
+    )
+    def test_token_rejects_unsafe_control_url(self, url):
+        with pytest.raises(ValueError):
+            RampartClient(url=url, token="secret")
+
+    def test_tool_data_rejects_non_loopback_http_without_token(self):
+        with pytest.raises(ValueError):
+            RampartClient(url="http://policy.example.com:9090", token="")
+
+    def test_explicit_empty_token_does_not_inherit_environment_token(self):
+        with patch.dict(os.environ, {"RAMPART_TOKEN": "ambient-secret"}):
+            client = RampartClient(token="")
+        assert client.token is None
+
+    def test_sync_transport_bounds_chunked_response_body(self):
+        inner = httpx.MockTransport(
+            lambda request: httpx.Response(200, content=b"12345")
+        )
+        transport = client_module._LimitedTransport(inner, 4)
+        with httpx.Client(transport=transport) as client:
+            with pytest.raises(client_module._InvalidControlResponse):
+                client.get("http://localhost/")
+
+    def test_sync_transport_rejects_compressed_control_response(self):
+        inner = httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                stream=httpx.ByteStream(b"not-trusted-compressed-data"),
+            )
+        )
+        transport = client_module._LimitedTransport(inner, 1024)
+        with httpx.Client(transport=transport) as client:
+            with pytest.raises(client_module._InvalidControlResponse):
+                client.get("http://localhost/")
+
+    @pytest.mark.asyncio
+    async def test_async_transport_bounds_chunked_response_body(self):
+        async def handler(request):
+            return httpx.Response(200, content=b"12345")
+
+        inner = httpx.MockTransport(handler)
+        transport = client_module._LimitedAsyncTransport(inner, 4)
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(client_module._InvalidControlResponse):
+                await client.get("http://localhost/")
+
+    def test_token_allows_loopback_http(self):
+        client = RampartClient(url="http://127.0.0.1:9090", token="secret")
+        assert client.url == "http://127.0.0.1:9090"
+        client.close()
 
     @pytest.mark.asyncio
     async def test_async_context_manager_closes_both_clients(self):
@@ -169,6 +246,26 @@ class TestRampartClient:
                 "session": "test-session",
                 "params": {"command": "git status"},
             },
+        )
+
+    def test_tool_name_is_one_encoded_path_segment(self):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "allowed": False,
+            "action": "deny",
+            "message": "unsupported custom tool",
+            "policies": [],
+        }
+        mock_client = Mock()
+        mock_client.post.return_value = mock_response
+        client = RampartClient()
+        client._client = mock_client
+
+        client.preflight("custom/tool?admin=true", {})
+
+        assert mock_client.post.call_args.args[0] == (
+            "http://localhost:9090/v1/preflight/custom%2Ftool%3Fadmin%3Dtrue"
         )
 
     @patch("rampart.client.httpx.Client")

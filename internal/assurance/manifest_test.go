@@ -119,6 +119,8 @@ func TestPublicDocsAvoidKnownAbsoluteBoundaryClaims(t *testing.T) {
 	banned := []string{
 		"every command, file access, and network request",
 		"every command, file read, network request",
+		"every shell command, file access, and network request",
+		"every shell command, file read, and network request",
 		"every command claude attempts",
 		"dangerous commands never run",
 		"green across the board means you're fully protected",

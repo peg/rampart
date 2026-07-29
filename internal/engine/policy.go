@@ -573,10 +573,13 @@ func validatePolicy(policy Policy, cache map[string]*regexp.Regexp) error {
 			}
 			if strings.HasPrefix(rule.Webhook.URL, "http://") {
 				slog.Warn("webhook URL uses insecure http:// scheme; use https:// in production",
-					"policy", policy.Name, "rule", index, "url", rule.Webhook.URL)
+					"policy", policy.Name, "rule", index)
 			}
 		}
 		if err := compileResponseRegexes(rule.When, cache); err != nil {
+			return fmt.Errorf("rule %d: %w", index, err)
+		}
+		if err := validateCommandContains(rule.When.CommandContains); err != nil {
 			return fmt.Errorf("rule %d: %w", index, err)
 		}
 		if err := validateCallCountCondition(rule.When.CallCount); err != nil {
@@ -626,6 +629,15 @@ func validatePolicyGlobPatterns(policy Policy) error {
 			if err := validateGlobPatterns(fmt.Sprintf("rule %d tool_param_matches.%s", index, parameter), []string{pattern}); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func validateCommandContains(patterns []string) error {
+	for index, pattern := range patterns {
+		if strings.TrimSpace(pattern) == "" {
+			return fmt.Errorf("command_contains pattern %d must not be empty or whitespace-only", index)
 		}
 	}
 	return nil

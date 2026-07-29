@@ -174,8 +174,7 @@ rampart doctor
 **Plugin missing — reinstall:**
 
 ```bash
-rampart setup openclaw --force
-# Then restart the OpenClaw gateway
+rampart protect openclaw --reinstall
 ```
 
 **OpenClaw version too old:**
@@ -184,7 +183,7 @@ The native plugin requires OpenClaw >= 2026.3.28. Upgrade:
 
 ```bash
 npm install -g openclaw@latest
-rampart setup openclaw  # auto-detects and installs plugin
+rampart protect openclaw  # installs, restarts, and verifies the managed guard
 ```
 
 **Rampart serve not running:**

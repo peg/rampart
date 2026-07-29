@@ -146,7 +146,7 @@ func GenerateExport(opts ExportOptions) (*ExportReport, string, error) {
 					agg.samples = append(agg.samples, cmd)
 				}
 			}
-		case "allow":
+		case "allow", "watch", "log":
 			report.Totals.Allow++
 			for _, p := range e.Decision.MatchedPolicies {
 				agg, ok := allowed[p]
@@ -159,7 +159,7 @@ func GenerateExport(opts ExportOptions) (*ExportReport, string, error) {
 					agg.samples = append(agg.samples, cmd)
 				}
 			}
-		case "ask", "require_approval":
+		case "ask", "require_approval", "webhook":
 			report.Totals.Ask++
 			for _, p := range e.Decision.MatchedPolicies {
 				agg, ok := approval[p]
@@ -174,8 +174,6 @@ func GenerateExport(opts ExportOptions) (*ExportReport, string, error) {
 			}
 		case "auto_allow":
 			report.Totals.AutoAllow++
-		default:
-			report.Totals.Allow++
 		}
 	}
 

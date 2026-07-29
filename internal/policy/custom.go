@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/securefile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,7 +44,7 @@ type CustomEntry struct {
 
 // CustomMatch defines which tools this entry applies to.
 type CustomMatch struct {
-	Tool []string `yaml:"tool,omitempty"`
+	Tool stringOrSlice `yaml:"tool,omitempty"`
 }
 
 // CustomRule is a single allow/deny rule.
@@ -135,6 +136,11 @@ func saveCustomPolicyLocked(path string, p *CustomPolicy) error {
 		return fmt.Errorf("policy: create temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("policy: secure temp file: %w", err)
+	}
 
 	if _, err := tmp.Write(out); err != nil {
 		tmp.Close()
@@ -266,7 +272,7 @@ func (p *CustomPolicy) AddRule(action, pattern, message, tool string) error {
 	// Entry not found — create a new one.
 	p.Policies = append(p.Policies, CustomEntry{
 		Name:  entryName,
-		Match: CustomMatch{Tool: matchTools},
+		Match: CustomMatch{Tool: stringOrSlice(matchTools)},
 		Rules: []CustomRule{
 			{
 				Action:  action,

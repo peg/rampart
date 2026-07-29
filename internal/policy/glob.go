@@ -14,9 +14,41 @@
 package policy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
+
+const (
+	// MaxGlobPatternLen is the largest policy glob Rampart accepts. Keeping the
+	// bound here gives every policy-writing path the same limit as enforcement.
+	MaxGlobPatternLen = 8192
+	// MaxDoubleGlobPatternLen is the tighter limit for patterns containing **,
+	// whose matcher keeps state proportional to both pattern and input length.
+	MaxDoubleGlobPatternLen = 256
+	// MaxDoubleStarOccurrences bounds matcher complexity and ambiguity.
+	MaxDoubleStarOccurrences = 2
+)
+
+// ValidateGlobPatterns applies the shared enforcement bounds to policy globs.
+// Policy loaders and generated-policy writers must use this function so a
+// successfully persisted rule is guaranteed to remain loadable by the engine.
+func ValidateGlobPatterns(field string, patterns []string) error {
+	for _, pattern := range patterns {
+		if len(pattern) > MaxGlobPatternLen {
+			return fmt.Errorf("%s pattern is %d bytes (max %d)", field, len(pattern), MaxGlobPatternLen)
+		}
+		count := strings.Count(pattern, "**")
+		if count > 0 && len(pattern) > MaxDoubleGlobPatternLen {
+			return fmt.Errorf("%s double-star pattern is %d bytes (max %d)", field, len(pattern), MaxDoubleGlobPatternLen)
+		}
+		if count > MaxDoubleStarOccurrences {
+			return fmt.Errorf("%s pattern %q has %d ** occurrences (max %d)", field, pattern, count, MaxDoubleStarOccurrences)
+		}
+	}
+	return nil
+}
 
 // BuildExactAllowPattern converts a literal command or path into a glob that
 // matches the same value without treating shell wildcard characters as policy
@@ -51,4 +83,15 @@ func HashPattern(s string) string {
 		hash = hash*33 + uint32(b)
 	}
 	return fmt.Sprintf("%08x", hash)
+}
+
+// ExactPatternHash returns a deterministic, collision-resistant identifier for
+// an exact tool authority. It is intentionally separate from HashPattern:
+// HashPattern's historical djb2 output is part of user-override rule identity
+// and must remain stable for upgrade compatibility.
+func ExactPatternHash(tool, pattern string) string {
+	sum := sha256.Sum256([]byte(tool + "\x00" + pattern))
+	// Ninety-six bits keeps generated names compact while making accidental
+	// collisions unrealistic even across very large policy sets.
+	return hex.EncodeToString(sum[:12])
 }

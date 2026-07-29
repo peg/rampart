@@ -369,6 +369,15 @@ policies:
 	}
 }
 
+func TestDecisionCountsTreatsLegacyApprovalNameAsAsk(t *testing.T) {
+	counts := computeDecisionCounts([]audit.Event{
+		{Decision: audit.EventDecision{Action: "require_approval"}},
+	})
+	if counts.Ask != 1 || counts.Other != 0 {
+		t.Fatalf("decision counts = %+v, want require_approval classified as ask", counts)
+	}
+}
+
 func writeAuditFile(t *testing.T, dir, name string, events []audit.Event) {
 	t.Helper()
 	path := filepath.Join(dir, name)

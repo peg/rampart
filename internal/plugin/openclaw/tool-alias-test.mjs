@@ -48,7 +48,7 @@ const allowResult = await runWithFetch({
   fetchImpl: async (url, opts = {}) => {
     calls.push({ url: String(url), opts });
     assert(String(url).includes('/v1/tool/exec'), `expected exec endpoint, got ${url}`);
-    return { ok: true, json: async () => ({ decision: 'allow' }) };
+    return { ok: true, json: async () => ({ decision: 'allow', allowed: true }) };
   },
   invoke: async ({ handlers, logs }) => {
     const before = handlers.before_tool_call;
@@ -75,7 +75,7 @@ const askResult = await runWithFetch({
   fetchImpl: async (url, opts = {}) => {
     learnCalls.push({ url: String(url), opts });
     if (String(url).includes('/v1/tool/exec')) {
-      return { ok: true, json: async () => ({ decision: 'ask', policy: 'test-policy', message: 'needs approval' }) };
+      return { ok: true, json: async () => ({ decision: 'ask', allowed: false, policy: 'test-policy', message: 'needs approval' }) };
     }
     if (String(url).includes('/v1/rules/learn')) {
       return { ok: true, status: 200, text: async () => '{"ok":true}' };

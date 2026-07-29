@@ -188,7 +188,7 @@ func TestFormatDenyMessage(t *testing.T) {
 
 func TestVerifyAnchors_NoAnchors(t *testing.T) {
 	dir := t.TempDir()
-	err := verifyAnchors(dir, map[string]string{})
+	err := verifyAnchorsWithSince(dir, map[string]string{}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

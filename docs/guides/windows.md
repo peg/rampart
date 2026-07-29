@@ -1,8 +1,8 @@
 # Windows Setup Guide
 
-Rampart builds and tests its policy engine plus Claude Code and Codex hook setup
-on Windows CI. A physical Windows host E2E is still pending, and Unix-specific
-integration modes remain unavailable.
+Rampart builds and tests its policy engine plus Claude Code, Codex, Cline,
+Copilot, and Antigravity setup paths on Windows CI. A physical Windows host E2E
+is still pending, and Unix-specific integration modes remain unavailable.
 
 ## Quick Install
 
@@ -10,7 +10,10 @@ integration modes remain unavailable.
 irm https://rampart.sh/install.ps1 | iex
 ```
 
-This downloads the latest release, installs to `~\.rampart\bin`, adds it to your PATH, and offers to set up Claude Code hooks automatically.
+This downloads and validates the latest release, transactionally installs it
+to `~\.rampart\bin`, and adds that directory to your user PATH. It deliberately
+does not modify agent configuration. Run `rampart protect` afterward to detect,
+configure, and behaviorally verify supported installed agents.
 
 **Manual install:** Download the `.zip` from [GitHub Releases](https://github.com/peg/rampart/releases), extract `rampart.exe`, and add to your PATH.
 
@@ -64,7 +67,7 @@ rampart test "rm -rf /"
 | Feature | Status |
 |---------|--------|
 | `rampart serve` | ✅ Foreground or `--background` |
-| `rampart setup claude-code` | ✅ Works |
+| `rampart setup` / `rampart protect` | ✅ Claude Code, Codex, Cline, Copilot, and Antigravity |
 | `rampart hook` | ✅ Works |
 | `rampart test` | ✅ Works |
 | `rampart watch` | ✅ Works |
@@ -78,11 +81,18 @@ rampart test "rm -rf /"
 | `rampart serve install` | ❌ | Use Task Scheduler or NSSM for automatic startup |
 | `rampart upgrade` | ❌ Re-run installer | Binary self-upgrade is intentionally disabled; `--no-binary` can refresh policies |
 | `rampart wrap` | ❌ Unix only | Uses `$SHELL` |
-| `rampart preload` | ❌ Linux only | Uses LD_PRELOAD |
+| `rampart preload` | ❌ Unix only | Source-built native library; macOS SIP and hardened-runtime limits apply |
 
 For every binary upgrade, rerun `irm https://rampart.sh/install.ps1 | iex`.
-The installer verifies and replaces the executable and also repairs the legacy
-`~\.rampart` ACL found on affected v1.2.x installations.
+The installer verifies the archive checksum and embedded version in a staging
+directory before it stops the managed Rampart process or moves the current
+installation. If replacement fails, it restores the prior installation. It also
+repairs the legacy `~\.rampart` ACL found on affected v1.2.x installations.
+
+If Windows or PowerShell stops during the brief directory-swap window, the next
+installer run reports any preserved `.install-backup-*` or `.install-stage-*`
+directory. Rampart does not delete those recovery files automatically; verify
+the active installation before removing them.
 
 ### Path Matching
 

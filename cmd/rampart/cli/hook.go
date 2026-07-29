@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,6 +136,78 @@ func readBoundedHookInput(reader io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("hook: stdin exceeds %d-byte limit", maxHookInputBytes)
 	}
 	return data, nil
+}
+
+// normalizeHookStringAliases validates every representation of a
+// security-bearing string before selecting one canonical value. Host hook
+// payloads are untrusted: silently preferring one alias would let a benign
+// decoy hide a different command or path in another field.
+func normalizeHookStringAliases(
+	params map[string]any,
+	canonical, context, field string,
+	aliases ...string,
+) (string, bool, error) {
+	keys := append([]string{canonical}, aliases...)
+	seenKeys := make(map[string]struct{}, len(keys))
+	selected := ""
+	found := false
+	for _, key := range keys {
+		if _, duplicate := seenKeys[key]; duplicate {
+			continue
+		}
+		seenKeys[key] = struct{}{}
+		raw, exists := params[key]
+		if !exists {
+			continue
+		}
+		value, ok := raw.(string)
+		if !ok {
+			return "", false, fmt.Errorf("%s requires %s alias %q to be a string", context, field, key)
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if found && value != selected {
+			return "", false, fmt.Errorf("%s has conflicting %s aliases", context, field)
+		}
+		selected = value
+		found = true
+	}
+	if found {
+		params[canonical] = selected
+	}
+	return selected, found, nil
+}
+
+func requireHookStringAliases(
+	params map[string]any,
+	canonical, context, field string,
+	aliases ...string,
+) (string, error) {
+	value, found, err := normalizeHookStringAliases(params, canonical, context, field, aliases...)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("%s requires a non-empty %s", context, field)
+	}
+	return value, nil
+}
+
+// copyFirstHookAlias preserves the tolerant normalization used for completed
+// tool events. Post-tool payload drift must not prevent response scanning;
+// strict ambiguity rejection belongs at the pre-execution boundary.
+func copyFirstHookAlias(params map[string]any, canonical string, aliases ...string) {
+	if _, exists := params[canonical]; exists {
+		return
+	}
+	for _, alias := range aliases {
+		if value, exists := params[alias]; exists {
+			params[canonical] = value
+			return
+		}
+	}
 }
 
 func hookEventIsPost(event string) bool {
@@ -266,18 +337,7 @@ func isServeRunning(serveURL string) bool {
 	defer cancel()
 
 	healthURL := strings.TrimRight(serveURL, "/") + "/healthz"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
-	if err != nil {
-		return false
-	}
-
-	resp, err := rampartHTTPClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	return resp.StatusCode == http.StatusOK
+	return isRampartHealthReady(ctx, rampartHTTPClient, healthURL)
 }
 
 func newHookCmd(opts *rootOptions) *cobra.Command {
@@ -320,6 +380,12 @@ Claude Code setup (add to ~/.claude/settings.json):
 
 Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Attempt Windows legacy-directory recovery before doing any command
+			// work, including local option validation. Defer reporting a recovery
+			// failure until after the host payload is read so enforce mode can still
+			// return the integration's protocol-shaped deny response.
+			rampartDirErr := ensureDefaultRampartDirAccessible()
+
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
@@ -347,11 +413,11 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookDeny, false, reason, "")
 			}
 
-			if err := ensureDefaultRampartDirAccessible(); err != nil {
+			if rampartDirErr != nil {
 				if mode == "enforce" {
 					return outputEnforceFailure("Rampart data directory is inaccessible; refusing host data until permissions are repaired")
 				}
-				return fmt.Errorf("hook: prepare Rampart data directory: %w", err)
+				return fmt.Errorf("hook: prepare Rampart data directory: %w", rampartDirErr)
 			}
 
 			// Derive session identity once at the top (git repo/branch or RAMPART_SESSION env).
@@ -368,7 +434,13 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return fmt.Errorf("hook: resolve serve URL: %w", resolveErr)
 			}
 			serveURL = resolvedServeURL
-			serveToken, _ := resolveTokenValue()
+			serveToken, _, tokenErr := resolveTokenForEndpoint(serveURL, "")
+			if tokenErr != nil {
+				if mode == "enforce" {
+					return outputEnforceFailure("Rampart credential endpoint is unsafe; refusing host data until configuration is fixed")
+				}
+				return fmt.Errorf("hook: resolve serve credentials: %w", tokenErr)
+			}
 
 			// Resolve audit directory
 			if auditDir == "" {
@@ -1001,6 +1073,11 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 			params = normalized
 		}
 	}
+	if event == "PreToolUse" {
+		if err := validateClaudePreToolParams(input.ToolName, params); err != nil {
+			return nil, err
+		}
+	}
 
 	result := &hookParseResult{
 		Tool:          toolType,
@@ -1020,6 +1097,74 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	}
 
 	return result, nil
+}
+
+func validateClaudePreToolParams(toolName string, params map[string]any) error {
+	requireString := func(description string, keys ...string) error {
+		for _, key := range keys {
+			if value, ok := params[key].(string); ok && strings.TrimSpace(value) != "" {
+				return nil
+			}
+		}
+		return fmt.Errorf("hook: Claude Code %s requires a non-empty %s", toolName, description)
+	}
+
+	switch toolName {
+	case "Bash", "PowerShell":
+		_, err := requireHookStringAliases(params, "command", "hook: Claude Code "+toolName, "command")
+		return err
+	case "code_execution":
+		_, err := requireHookStringAliases(params, "command", "hook: Claude Code "+toolName, "command or code", "code", "input")
+		return err
+	case "Monitor":
+		_, commandFound, err := normalizeHookStringAliases(params, "command", "hook: Claude Code "+toolName, "command")
+		if err != nil {
+			return err
+		}
+		if commandFound {
+			return nil
+		}
+		if websocket, ok := params["ws"].(map[string]any); ok {
+			if value, ok := websocket["url"].(string); ok && strings.TrimSpace(value) != "" {
+				return nil
+			}
+		}
+		return fmt.Errorf("hook: Claude Code Monitor requires a non-empty command or WebSocket URL")
+	case "Read", "ReadFile":
+		_, err := requireHookStringAliases(params, "path", "hook: Claude Code "+toolName, "file path", "file_path")
+		return err
+	case "Glob":
+		return requireString("pattern", "pattern")
+	case "Grep":
+		return requireString("pattern", "pattern")
+	case "LSP":
+		_, err := requireHookStringAliases(params, "path", "hook: Claude Code "+toolName, "file path", "filePath", "file_path")
+		return err
+	case "Write", "WriteFile", "Edit", "EditFile":
+		_, err := requireHookStringAliases(params, "path", "hook: Claude Code "+toolName, "file path", "file_path")
+		return err
+	case "NotebookEdit":
+		_, err := requireHookStringAliases(params, "path", "hook: Claude Code "+toolName, "notebook path", "notebook_path", "file_path")
+		return err
+	case "EnterWorktree":
+		// Claude's name field is an opaque worktree label, not the resolved
+		// filesystem destination. Treating it as a path would let path-scoped
+		// write policies evaluate the wrong resource. Accept a real path when a
+		// host provides one; otherwise fail closed at the pre-tool boundary.
+		if _, err := requireHookStringAliases(params, "path", "hook: Claude Code "+toolName, "resolved worktree path"); err != nil {
+			if name, ok := params["name"].(string); ok && strings.TrimSpace(name) != "" {
+				return fmt.Errorf("hook: Claude Code %s requires a non-empty resolved worktree path; name is only an opaque label", toolName)
+			}
+			return err
+		}
+		return nil
+	case "WebFetch", "Fetch", "web_fetch":
+		return requireString("URL", "url")
+	case "WebSearch", "web_search":
+		return requireString("search query", "query")
+	default:
+		return nil
+	}
 }
 
 // extractToolResponse extracts every string leaf from the tool_response map.
@@ -1280,7 +1425,7 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 		copyAlias("url", "query")
 	}
 
-	if name == "run_commands" || name == "bash" {
+	if name == "execute_command" || name == "run_commands" || name == "bash" {
 		commands, err := collectClineCommands(params)
 		if err != nil {
 			return nil, nil, err
@@ -1295,7 +1440,7 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 	}
 
 	var policyPaths []string
-	if name == "read_files" || toolType == "write" {
+	if name == "read_file" || name == "read_files" || toolType == "write" {
 		var err error
 		policyPaths, err = collectClinePaths(params)
 		if err != nil {
@@ -1317,7 +1462,7 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 				}
 			}
 		}
-		if len(policyPaths) == 0 && enforce && (name == "read_files" || toolType == "write") {
+		if len(policyPaths) == 0 && enforce && (name == "read_file" || name == "read_files" || toolType == "write") {
 			return nil, nil, fmt.Errorf("hook: Cline %s requires at least one file path", toolName)
 		}
 		if len(policyPaths) > 0 {
@@ -1326,7 +1471,7 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 		}
 	}
 
-	if name == "fetch_web_content" || name == "fetch_web" || name == "web_fetch" {
+	if name == "fetch_web_content" || name == "fetch_web" || name == "web_fetch" || name == "web_search" {
 		urls, err := collectClineURLs(params)
 		if err != nil {
 			return nil, nil, err

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/peg/rampart/internal/detect"
 	"github.com/spf13/cobra"
 )
 
@@ -56,9 +57,7 @@ Run 'rampart setup copilot --remove' to uninstall the user hook.`,
 				return nil
 			}
 
-			hookBin := resolveRampartHookBinary()
-			bashCommand := shellQuoteCodexHookArg(hookBin) + " hook --format copilot"
-			powershellCommand := "& " + windowsQuoteCodexHookArg(hookBin) + " hook --format copilot"
+			bashCommand, powershellCommand := currentCopilotHookCommands()
 			if err := installCopilotHooks(path, bashCommand, powershellCommand, force); err != nil {
 				if policy && os.IsPermission(err) {
 					return fmt.Errorf("setup copilot: install machine policy: %w (rerun from an elevated shell)", err)
@@ -164,23 +163,45 @@ func copilotHookDataManaged(data []byte) bool {
 	}
 	for _, event := range []string{"PreToolUse", "PostToolUse"} {
 		entries, ok := hooks[event].([]any)
-		if !ok || len(entries) == 0 {
+		if !ok || len(entries) != 1 {
 			return false
 		}
-		found := false
-		for _, raw := range entries {
-			entry, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			for _, key := range []string{"command", "bash", "powershell"} {
-				value, _ := entry[key].(string)
-				if strings.Contains(value, "hook --format copilot") {
-					found = true
-				}
-			}
+		entry, ok := entries[0].(map[string]any)
+		if !ok || entry["type"] != "command" {
+			return false
 		}
-		if !found {
+		bash, _ := entry["bash"].(string)
+		powershell, _ := entry["powershell"].(string)
+		if !hasRampartHookFormat(bash, "copilot") || !hasRampartHookFormat(powershell, "copilot") {
+			return false
+		}
+	}
+	return true
+}
+
+func currentCopilotHookCommands() (string, string) {
+	hookBin := resolveRampartHookBinary()
+	return shellQuoteCodexHookArg(hookBin) + " hook --format copilot",
+		"& " + windowsQuoteCodexHookArg(hookBin) + " hook --format copilot"
+}
+
+func copilotHookDataCurrent(data []byte) bool {
+	var config map[string]any
+	if json.Unmarshal(data, &config) != nil {
+		return false
+	}
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	wantBash, wantPowershell := currentCopilotHookCommands()
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		entries, ok := hooks[event].([]any)
+		if !ok || len(entries) != 1 {
+			return false
+		}
+		entry, ok := entries[0].(map[string]any)
+		if !ok || entry["type"] != "command" || entry["bash"] != wantBash || entry["powershell"] != wantPowershell {
 			return false
 		}
 	}
@@ -218,7 +239,7 @@ func copilotCLIUserHooksDisabled(home, cwd string) (string, bool) {
 
 func copilotHooksConfiguredForHome(home string) bool {
 	data, err := os.ReadFile(filepath.Join(copilotHomeDir(home), "hooks", copilotRampartHookFile))
-	return err == nil && copilotHookDataManaged(data)
+	return err == nil && copilotHookDataCurrent(data)
 }
 
 func removeCopilotHooks(path string) (bool, error) {
@@ -242,11 +263,5 @@ func copilotInstalledForHome(home string) bool {
 	if integrationBinaryOrPathInstalled("copilot", copilotHomeDir(home)) {
 		return true
 	}
-	for _, root := range []string{filepath.Join(home, ".vscode", "extensions"), filepath.Join(home, ".vscode-insiders", "extensions")} {
-		matches, _ := filepath.Glob(filepath.Join(root, "github.copilot-chat-*"))
-		if len(matches) > 0 {
-			return true
-		}
-	}
-	return false
+	return detect.CopilotExtensionInstalled(home)
 }

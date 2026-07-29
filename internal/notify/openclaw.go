@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // OpenClawNotifier sends compact system-event-style payloads for OpenClaw.
@@ -30,10 +29,8 @@ type OpenClawNotifier struct {
 // NewOpenClawNotifier creates a new OpenClaw notifier.
 func NewOpenClawNotifier(url string) *OpenClawNotifier {
 	return &OpenClawNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 

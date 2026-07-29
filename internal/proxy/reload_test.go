@@ -229,40 +229,6 @@ func TestHandlePolicyReload_InvalidPolicy(t *testing.T) {
 	assert.Equal(t, 2, srv.engine.PolicyCount())
 }
 
-// TestReloadClient_Success verifies the ReloadPolicy client function against
-// a real httptest.Server.
-func TestReloadClient_Success(t *testing.T) {
-	srv, token, _ := setupReloadTestServer(t, reloadPolicyYAML)
-	ts := httptest.NewServer(srv.handler())
-	defer ts.Close()
-
-	result, err := ReloadPolicy(ts.URL, token)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	assert.True(t, result.Success)
-	assert.Equal(t, 2, result.PoliciesLoaded)
-	assert.Equal(t, 2, result.RulesTotal)
-	assert.GreaterOrEqual(t, result.ReloadTimeMs, int64(0))
-}
-
-// TestReloadClient_WrongToken verifies the client returns an error on 401.
-func TestReloadClient_WrongToken(t *testing.T) {
-	srv, _, _ := setupReloadTestServer(t, reloadPolicyYAML)
-	ts := httptest.NewServer(srv.handler())
-	defer ts.Close()
-
-	_, err := ReloadPolicy(ts.URL, "wrong-token")
-	require.Error(t, err)
-}
-
-// TestReloadClient_UnreachableServer verifies the client returns an error
-// when the server is not running.
-func TestReloadClient_UnreachableServer(t *testing.T) {
-	_, err := ReloadPolicy("http://127.0.0.1:19999", "some-token")
-	require.Error(t, err)
-}
-
 // TestHandlePolicyReload_ReturnedResponseFields checks that all documented
 // response fields are present.
 func TestHandlePolicyReload_ReturnedResponseFields(t *testing.T) {

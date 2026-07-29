@@ -103,6 +103,36 @@ type failOnWriteSink struct {
 	failAt int
 }
 
+type createAutoRaceResult struct {
+	request      *approval.Request
+	autoApproved bool
+	err          error
+}
+
+type createAutoRaceSink struct {
+	once   sync.Once
+	store  *approval.Store
+	call   engine.ToolCall
+	result chan createAutoRaceResult
+}
+
+func (s *createAutoRaceSink) Write(audit.Event) error {
+	s.once.Do(func() {
+		go func() {
+			request, autoApproved, err := s.store.CreateOrAutoApproved(
+				s.call,
+				engine.Decision{Action: engine.ActionRequireApproval, Message: "raced bulk publication"},
+			)
+			s.result <- createAutoRaceResult{request: request, autoApproved: autoApproved, err: err}
+		}()
+	})
+	return nil
+}
+
+func (s *createAutoRaceSink) Flush() error { return nil }
+
+func (s *createAutoRaceSink) Close() error { return nil }
+
 func (s *failOnWriteSink) Write(audit.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -226,6 +256,24 @@ func TestToolCall_Allow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	body := decodeBody(t, resp)
 	assert.Equal(t, "allow", body["decision"])
+}
+
+func TestToolCall_CallerEffectiveCommandCannotHideRawCommand(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "enforce")
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(
+		`{"agent":"main","session":"s1","params":{"command":"rm -rf /","command_effective":"echo safe"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "deny", response["decision"])
+	require.Equal(t, 1, sink.count())
+	assert.Equal(t, "deny", sink.lastEvent().Decision.Action)
 }
 
 func TestToolCall_OnceRuleAuthorizesExactlyOneConcurrentRequest(t *testing.T) {
@@ -356,7 +404,10 @@ func TestToolCall_MonitorMode(t *testing.T) {
 	resp := postToolCall(t, ts, token, `{"agent":"main","session":"s1","params":{"command":"rm -rf /"}}`)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	body := decodeBody(t, resp)
-	assert.Equal(t, "deny", body["decision"])
+	assert.Equal(t, "allow", body["decision"])
+	assert.Equal(t, true, body["allowed"])
+	assert.Equal(t, false, body["enforced"])
+	assert.Equal(t, "deny", body["policy_decision"])
 }
 
 func TestToolCall_DisabledMode(t *testing.T) {
@@ -382,6 +433,7 @@ func TestHealthCheck(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	body := decodeBody(t, resp)
+	assert.Equal(t, "rampart", body["service"])
 	assert.Equal(t, "ok", body["status"])
 	assert.Equal(t, "monitor", body["mode"])
 }
@@ -451,6 +503,27 @@ func TestToolCall_AuditFailureDoesNotBlockMonitorMode(t *testing.T) {
 	assert.Equal(t, 1, failing.count())
 }
 
+func TestToolCall_MonitorModeReportsPolicyDenyWithoutEnforcingIt(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "monitor")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"rm -rf /tmp/example"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, true, response["allowed"])
+	assert.Equal(t, "allow", response["decision"])
+	assert.Equal(t, "deny", response["policy_decision"])
+	assert.Equal(t, false, response["enforced"])
+	require.Equal(t, 1, sink.count())
+	assert.Equal(t, "deny", sink.lastEvent().Decision.Action, "audit retains the observed policy decision")
+}
+
 func TestToolCall_AutoApprovalAuditFailureFailsClosed(t *testing.T) {
 	srv, token, _ := setupTestServer(t, `
 version: "1"
@@ -466,7 +539,7 @@ policies:
 `, "enforce")
 	failing := &failOnWriteSink{failAt: 2}
 	srv.sink = failing
-	srv.approvals.AutoApproveRun("approved-run", time.Minute)
+	srv.approvals.AutoApproveRun(engine.ToolCall{Agent: "main", Session: "s1", RunID: "approved-run"}, time.Minute)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
 		strings.NewReader(`{"agent":"main","session":"s1","run_id":"approved-run","params":{"command":"deploy prod"}}`))
@@ -500,7 +573,7 @@ policies:
         when:
           response_matches: ["AKIA[0-9A-Z]{16}"]
 `, "enforce")
-	srv.approvals.AutoApproveRun("approved-run", time.Minute)
+	srv.approvals.AutoApproveRun(engine.ToolCall{Agent: "main", Session: "s1", RunID: "approved-run"}, time.Minute)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(
 		`{"agent":"main","session":"s1","run_id":"approved-run","params":{"command":"deploy prod"},"response":"leaked AKIA1234567890ABCDEF"}`))
@@ -513,6 +586,7 @@ policies:
 	var response map[string]any
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.Equal(t, "deny", response["decision"])
+	assert.Equal(t, false, response["allowed"])
 	assert.Equal(t, redactedResponse, response["response"])
 
 	events := sink.snapshot()
@@ -520,6 +594,74 @@ policies:
 	assert.Equal(t, "allow", events[1].Decision.Action)
 	assert.Equal(t, "deny", events[2].Decision.Action)
 	assert.Equal(t, events[1].ID, events[2].Request["request_audit_id"])
+}
+
+func TestToolCall_ApprovedExactReplayIsAllowedOnce(t *testing.T) {
+	srv, token, sink := setupTestServer(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: approve-deploy
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches: ["deploy prod"]
+`, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	body := `{"agent":"main","session":"s1","run_id":"run-exact","tool_call_id":"call-exact","cwd":"/workspace/project","params":{"command":"deploy prod"}}`
+	initial := postToolCall(t, ts, token, body)
+	require.Equal(t, http.StatusAccepted, initial.StatusCode)
+	initialResult := decodeBody(t, initial)
+	approvalID, ok := initialResult["approval_id"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, approvalID)
+
+	resolveReq, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/"+approvalID+"/resolve",
+		strings.NewReader(`{"approved":true,"resolved_by":"operator"}`))
+	require.NoError(t, err)
+	resolveReq.Header.Set("Authorization", "Bearer "+token)
+	resolveReq.Header.Set("Content-Type", "application/json")
+	resolveResp, err := http.DefaultClient.Do(resolveReq)
+	require.NoError(t, err)
+	defer resolveResp.Body.Close()
+	require.Equal(t, http.StatusOK, resolveResp.StatusCode)
+
+	replay := postToolCall(t, ts, token, body)
+	require.Equal(t, http.StatusOK, replay.StatusCode)
+	replayResult := decodeBody(t, replay)
+	assert.Equal(t, true, replayResult["allowed"])
+	assert.Equal(t, "allow", replayResult["decision"])
+	assert.Equal(t, approvalID, replayResult["approval_id"])
+	assert.Equal(t, "approved", replayResult["approval_status"])
+	assert.Equal(t, "once", replayResult["approval_scope"])
+	assert.Equal(t, "operator", replayResult["approval_resolved_by"])
+
+	events := sink.snapshot()
+	require.GreaterOrEqual(t, len(events), 4)
+	policyEvent := events[len(events)-2]
+	allowEvent := events[len(events)-1]
+	assert.Equal(t, "ask", policyEvent.Decision.Action)
+	assert.Equal(t, "allow", allowEvent.Decision.Action)
+	assert.Equal(t, "run-exact", allowEvent.RunID)
+	assert.Equal(t, "call-exact", allowEvent.ToolCallID)
+	assert.Equal(t, "/workspace/project", allowEvent.Request["workdir"])
+	assert.Equal(t, approvalID, allowEvent.Request["approval_id"])
+	assert.Equal(t, "approved", allowEvent.Request["approval_status"])
+	assert.Equal(t, "once", allowEvent.Request["approval_scope"])
+	assert.Equal(t, "operator", allowEvent.Request["approval_resolved_by"])
+	assert.Equal(t, policyEvent.ID, allowEvent.Request["approval_policy_audit_id"])
+	assert.Equal(t, policyEvent.ID, replayResult["approval_policy_audit_id"])
+
+	secondReplay := postToolCall(t, ts, token, body)
+	require.Equal(t, http.StatusAccepted, secondReplay.StatusCode)
+	secondResult := decodeBody(t, secondReplay)
+	assert.Equal(t, "pending", secondResult["approval_status"])
+	assert.NotEqual(t, approvalID, secondResult["approval_id"], "the consumed grant must not authorize another replay")
+	require.Len(t, srv.approvals.List(), 1)
 }
 
 func TestToolCall_ResponseDeniedAndRedacted(t *testing.T) {
@@ -532,6 +674,7 @@ func TestToolCall_ResponseDeniedAndRedacted(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := decodeBody(t, resp)
+	assert.Equal(t, false, data["allowed"])
 	assert.Equal(t, "deny", data["decision"])
 	assert.Equal(t, "Sensitive credential detected in response", data["message"])
 	assert.Equal(t, redactedResponse, data["response"])
@@ -602,9 +745,177 @@ func TestToolCall_ResponseAuditFailureDoesNotBlockMonitorMode(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	var response map[string]any
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
-	assert.Equal(t, "deny", response["decision"])
-	assert.Equal(t, redactedResponse, response["response"])
+	assert.Equal(t, true, response["allowed"])
+	assert.Equal(t, "allow", response["decision"])
+	assert.Equal(t, "deny", response["response_policy_decision"])
+	assert.Equal(t, "leaked AKIA1234567890ABCDEF", response["response"])
 	assert.Equal(t, 2, failing.count())
+}
+
+func TestPreflightEnforcementHonorsMonitorMode(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "monitor")
+	req := httptest.NewRequest(http.MethodPost, "/v1/preflight/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","run_id":"run-preflight","tool_call_id":"call-preflight","enforce":true,"params":{"command":"rm -rf /tmp/example"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, true, response["allowed"])
+	assert.Equal(t, "allow", response["decision"])
+	assert.Equal(t, "deny", response["policy_decision"])
+	assert.Equal(t, true, response["enforcement_requested"])
+	assert.Equal(t, false, response["enforced"])
+	require.Equal(t, 1, sink.count())
+	assert.Equal(t, "deny", sink.lastEvent().Decision.Action)
+	assert.Equal(t, "run-preflight", sink.lastEvent().RunID)
+	assert.Equal(t, "call-preflight", sink.lastEvent().ToolCallID)
+}
+
+func TestPreflightEnforcementAdvancesCallCount(t *testing.T) {
+	srv, token, _ := setupTestServer(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: exec-limit
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          call_count:
+            gte: 2
+            window: 1h
+`, "enforce")
+
+	post := func(enforce bool) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/v1/preflight/exec",
+			strings.NewReader(fmt.Sprintf(`{"agent":"wrapped","session":"wrap","enforce":%t,"params":{"command":"echo safe"}}`, enforce)))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		srv.handler().ServeHTTP(recorder, req)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var response map[string]any
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		return response
+	}
+
+	// Preview calls must not spend runtime call-count state.
+	require.Equal(t, "allow", post(false)["decision"])
+	require.Equal(t, "allow", post(false)["decision"])
+
+	first := post(true)
+	second := post(true)
+	require.Equal(t, "allow", first["decision"])
+	require.Equal(t, true, first["allowed"])
+	require.Equal(t, true, first["enforced"])
+	require.Equal(t, "deny", second["decision"])
+	require.Equal(t, false, second["allowed"])
+	require.Equal(t, true, second["enforced"])
+}
+
+func TestPreflightEnforcementAuditFailureFailsClosed(t *testing.T) {
+	srv, token, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	failing := &failOnWriteSink{failAt: 1}
+	srv.sink = failing
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/preflight/exec",
+		strings.NewReader(`{"agent":"wrapped","session":"wrap","enforce":true,"params":{"command":"git status"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Contains(t, response["error"], "audit storage is unavailable")
+	_, assertedEnforced := response["enforced"]
+	require.False(t, assertedEnforced, "failed preflight must not assert completed enforcement")
+	_, assertedAllowed := response["allowed"]
+	require.False(t, assertedAllowed, "failed preflight must not return an executable allow")
+	require.Equal(t, 1, failing.count())
+}
+
+func TestPreflightInputURLUsesAuthoritativeDerivedDomain(t *testing.T) {
+	srv, token, _ := setupTestServer(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: block-exfil-domain
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          domain_matches: ["webhook.site"]
+`, "enforce")
+	req := httptest.NewRequest(http.MethodPost, "/v1/preflight/fetch", strings.NewReader(
+		`{"agent":"main","session":"s1","input":{"url":"https://webhook.site/collect","domain":"github.com"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "deny", response["decision"])
+	assert.Equal(t, false, response["allowed"])
+}
+
+func TestPreflightTopLevelURLCanonicalization(t *testing.T) {
+	const policy = `
+version: "1"
+default_action: allow
+policies:
+  - name: block-exfil-domain
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          domain_matches: ["webhook.site"]
+`
+
+	t.Run("matching aliases are accepted and domain is URL-derived", func(t *testing.T) {
+		srv, token, _ := setupTestServer(t, policy, "enforce")
+		req := httptest.NewRequest(http.MethodPost, "/v1/preflight/fetch", strings.NewReader(
+			`{"agent":"main","session":"s1","url":"https://webhook.site/collect","params":{"url":"https://webhook.site/collect","domain":"github.com","scheme":"file"}}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+
+		srv.handler().ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		var response map[string]any
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.Equal(t, "deny", response["decision"])
+		assert.Equal(t, false, response["allowed"])
+	})
+
+	t.Run("conflicting aliases are rejected", func(t *testing.T) {
+		srv, token, _ := setupTestServer(t, policy, "enforce")
+		req := httptest.NewRequest(http.MethodPost, "/v1/preflight/fetch", strings.NewReader(
+			`{"agent":"main","session":"s1","url":"https://example.com/safe","input":{"href":"https://webhook.site/collect"}}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+
+		srv.handler().ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		var response map[string]any
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.Contains(t, response["error"], "conflicting url aliases")
+	})
 }
 
 func TestServerTimeouts(t *testing.T) {
@@ -651,6 +962,36 @@ func TestListenAndServeTimeouts(t *testing.T) {
 	assert.Equal(t, 120*time.Second, httpSrv.IdleTimeout)
 }
 
+func TestShutdownBeforeServeStopsBackgroundResources(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+
+	require.NoError(t, srv.Shutdown(context.Background()))
+	require.NoError(t, srv.Shutdown(context.Background()), "shutdown must be idempotent")
+
+	select {
+	case <-srv.stopCleanup:
+	default:
+		t.Fatal("expired-rule cleanup stop channel remains open")
+	}
+}
+
+func TestServeReturnsNilAfterShutdown(t *testing.T) {
+	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(ln) }()
+	require.Eventually(t, func() bool {
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		return srv.server != nil
+	}, time.Second, 5*time.Millisecond)
+
+	require.NoError(t, srv.Shutdown(context.Background()))
+	require.NoError(t, <-serveDone)
+}
+
 func TestStripLeadingComments(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -679,23 +1020,28 @@ func TestStripLeadingComments(t *testing.T) {
 	}
 }
 
-func TestApprovalResolveURL_UsesConfiguredBaseURL(t *testing.T) {
+func TestApprovalResolveURL_UnsignedConfiguredBaseIsSuppressed(t *testing.T) {
 	srv := New(nil, nil, WithResolveBaseURL("https://approve.example.com/"), WithToken("test-token"))
 	expiresAt := time.Now().Add(5 * time.Minute).UTC()
 
 	got := srv.approvalResolveURL("approval/1", expiresAt)
-	want := "https://approve.example.com/v1/approvals/approval%2F1/resolve"
-	assert.Equal(t, want, got)
+	assert.Empty(t, got)
 }
 
-func TestApprovalResolveURL_FallbacksToLocalhostWithListenerPort(t *testing.T) {
+func TestApprovalResolveURL_UnsignedListenerBaseIsSuppressed(t *testing.T) {
 	srv := New(nil, nil, WithToken("test-token"))
 	srv.listenAddr = "127.0.0.1:54321"
 	expiresAt := time.Now().Add(5 * time.Minute).UTC()
 
 	got := srv.approvalResolveURL("approval-1", expiresAt)
-	want := "http://localhost:54321/v1/approvals/approval-1/resolve"
-	assert.Equal(t, want, got)
+	assert.Empty(t, got)
+}
+
+func TestAutoAllowedRuleCreatedSupportsLegacyAndHashedNames(t *testing.T) {
+	want := "2026-07-28T12:34:56Z"
+	assert.Equal(t, want, autoAllowedRuleCreated("auto-allow-git-push-20260728T123456Z"))
+	assert.Equal(t, want, autoAllowedRuleCreated("auto-allow-git-push-20260728T123456Z-0123456789abcdef01234567"))
+	assert.Empty(t, autoAllowedRuleCreated("auto-allow-git-push-no-time"))
 }
 
 func TestApprovalResolveURL_SignedWhenSignerConfigured(t *testing.T) {
@@ -727,7 +1073,8 @@ func TestApprovalResolveURL_SignedWhenSignerConfigured(t *testing.T) {
 func TestResolveApproval_SignedURLBypassesBearerAuth(t *testing.T) {
 	eng := buildApprovalEngine(t)
 	signer := signing.NewSigner([]byte("0123456789abcdef0123456789abcdef"))
-	srv := New(eng, nil, WithToken("secret-token"), WithMode("enforce"), WithSigner(signer))
+	sink := &mockSink{}
+	srv := New(eng, sink, WithToken("secret-token"), WithMode("enforce"), WithSigner(signer))
 	handler := srv.handler()
 
 	// Create a pending approval.
@@ -740,7 +1087,7 @@ func TestResolveApproval_SignedURLBypassesBearerAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	// Resolve with signature (no Bearer token).
-	body := `{"approved":true,"resolved_by":"discord-user"}`
+	body := `{"approved":true,"resolved_by":"impersonated-admin"}`
 	resolveURL := fmt.Sprintf("/v1/approvals/%s/resolve?%s", pending.ID, parsedURL.RawQuery)
 	req := httptest.NewRequest(http.MethodPost, resolveURL, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -754,6 +1101,12 @@ func TestResolveApproval_SignedURLBypassesBearerAuth(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	assert.Equal(t, pending.ID, resp["id"])
 	assert.Equal(t, true, resp["approved"])
+	resolved, ok := srv.approvals.Get(pending.ID)
+	require.True(t, ok)
+	assert.Equal(t, "signed-link", resolved.ResolvedBy)
+	events := sink.snapshot()
+	require.Len(t, events, 1)
+	assert.Equal(t, "signed-link", events[0].Request["resolved_by"])
 }
 
 func TestResolveApproval_BadSignatureRejected(t *testing.T) {
@@ -833,6 +1186,19 @@ func TestResolveURLBaseFromListenAddr(t *testing.T) {
 	srv.listenAddr = ":8080"
 	srv.resolveBaseURL = ""
 	assert.Equal(t, "http://localhost:8080", srv.resolveURLBase())
+}
+
+func TestResolveURLBaseFromTLSListenAddr(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("tok"), WithTLS(true))
+	srv.listenAddr = "127.0.0.1:8443"
+	assert.Equal(t, "https://localhost:8443", srv.resolveURLBase())
+}
+
+func TestNewInvalidModeFailsClosedToEnforce(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("tok"), WithMode("unexpected"))
+	assert.Equal(t, defaultMode, srv.mode)
 }
 
 func TestApprovalDoubleResolveReturns410(t *testing.T) {
@@ -1213,11 +1579,14 @@ func TestResolveApproval_AuditTrail(t *testing.T) {
 	}{
 		{"approved", true, false, "approved"},
 		{"denied", false, false, "denied"},
-		{"always_allowed", true, true, "always_allowed"},
+		{"persisted_allow", true, true, "approved"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			eng := buildApprovalEngine(t)
 			sink := &mockSink{}
 			srv := New(eng, sink, WithToken("tok"), WithMode("enforce"),
@@ -1240,17 +1609,260 @@ func TestResolveApproval_AuditTrail(t *testing.T) {
 			handler.ServeHTTP(rr, req)
 			assert.Equal(t, http.StatusOK, rr.Code)
 
-			// Verify audit event was written.
-			require.GreaterOrEqual(t, sink.count(), 1, "expected at least one audit event")
-			last := sink.lastEvent()
-			assert.Equal(t, "approval_resolved", last.Request["action"])
-			assert.Equal(t, "exec", last.Request["tool"])
-			assert.Equal(t, tt.wantResolution, last.Request["resolution"])
-			assert.Equal(t, "dashboard", last.Request["resolved_by"])
-			assert.Equal(t, pending.ID, last.Request["approval_id"])
-			assert.Equal(t, tt.approved && tt.persist, last.Request["persist"])
+			// The decision event is always honest about what existed at its
+			// publication boundary. A durable request receives a second audit
+			// record authorizing the later policy transaction; it never rewrites
+			// the resolution event into a premature "always_allowed" claim.
+			events := sink.snapshot()
+			require.NotEmpty(t, events, "expected at least one audit event")
+			resolution := events[0]
+			assert.Equal(t, "approval_resolved", resolution.Request["action"])
+			assert.Equal(t, "exec", resolution.Request["tool"])
+			assert.Equal(t, tt.wantResolution, resolution.Request["resolution"])
+			assert.Equal(t, "dashboard", resolution.Request["resolved_by"])
+			assert.Equal(t, pending.ID, resolution.Request["approval_id"])
+			assert.Equal(t, tt.approved && tt.persist, resolution.Request["persist_requested"])
+			assert.Equal(t, false, resolution.Request["persist"])
+			if tt.approved && tt.persist {
+				require.Len(t, events, 2)
+				assert.Equal(t, "approval_persistence_authorized", events[1].Request["action"])
+				assert.Equal(t, pending.ID, events[1].Request["approval_id"])
+				assert.Equal(t, "authorized", events[1].Decision.Action)
+			}
 		})
 	}
+}
+
+func TestResolveApproval_PersistFailureIsNotReportedAsAlwaysAllowed(t *testing.T) {
+	homeFile := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(homeFile, []byte("blocked"), 0o600))
+	t.Setenv("HOME", homeFile)
+	t.Setenv("USERPROFILE", homeFile)
+
+	eng := buildApprovalEngine(t)
+	sink := &mockSink{}
+	srv := New(eng, sink, WithToken("tok"), WithMode("enforce"),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+	pending, err := srv.approvals.Create(engine.ToolCall{
+		Tool:    "exec",
+		Params:  map[string]any{"command": "git status"},
+		Agent:   "claude",
+		Session: "s1",
+	}, engine.Decision{Action: engine.ActionRequireApproval, Message: "needs approval"})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID),
+		strings.NewReader(`{"approved":true,"resolved_by":"dashboard","persist":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, false, response["persisted"])
+	resolved, ok := srv.approvals.Get(pending.ID)
+	require.True(t, ok)
+	assert.False(t, resolved.Persisted)
+	events := sink.snapshot()
+	require.Len(t, events, 2)
+	assert.Equal(t, "approved", events[0].Request["resolution"])
+	assert.Equal(t, true, events[0].Request["persist_requested"])
+	assert.Equal(t, false, events[0].Request["persist"])
+	assert.Equal(t, "approval_persistence_authorized", events[1].Request["action"])
+	assert.Equal(t, "authorized", events[1].Decision.Action)
+}
+
+func TestResolveApproval_AuditFailureLeavesApprovalPendingAndUnusable(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	failing := &failOnWriteSink{failAt: 1}
+	srv := New(eng, failing, WithToken("tok"), WithMode("enforce"),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+	call := engine.ToolCall{
+		Tool:       "exec",
+		Params:     map[string]any{"command": "deploy prod"},
+		Agent:      "claude",
+		Session:    "s1",
+		RunID:      "run-audit-failure",
+		ToolCallID: "call-audit-failure",
+	}
+	pending, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	resolve := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID),
+			strings.NewReader(`{"approved":true,"resolved_by":"dashboard"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer tok")
+		recorder := httptest.NewRecorder()
+		srv.handler().ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	recorder := resolve()
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	current, ok := srv.approvals.Get(pending.ID)
+	require.True(t, ok)
+	assert.Equal(t, approval.StatusPending, current.Status)
+	select {
+	case <-pending.Done():
+		t.Fatal("audit failure woke the approval waiter")
+	default:
+	}
+	grant, consumed, consumeErr := srv.approvals.ConsumeApproved(call)
+	require.NoError(t, consumeErr)
+	assert.False(t, consumed)
+	assert.Nil(t, grant)
+
+	// The same approval remains retryable once durable audit storage returns.
+	srv.sink = &mockSink{}
+	recorder = resolve()
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	grant, consumed, consumeErr = srv.approvals.ConsumeApproved(call)
+	require.NoError(t, consumeErr)
+	require.True(t, consumed)
+	assert.Equal(t, pending.ID, grant.ID)
+}
+
+func TestResolveApproval_DurableAuditFailureKeepsOneTimeApprovalButSkipsPolicy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	eng := buildApprovalEngine(t)
+	// The resolution audit succeeds; the separate durable-authorization audit fails.
+	failing := &failOnWriteSink{failAt: 2}
+	srv := New(eng, failing, WithToken("tok"), WithMode("enforce"),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+	call := engine.ToolCall{
+		Tool:       "exec",
+		Params:     map[string]any{"command": "git status"},
+		Agent:      "claude",
+		Session:    "s1",
+		RunID:      "run-persist-audit-failure",
+		ToolCallID: "call-persist-audit-failure",
+	}
+	pending, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/approvals/%s/resolve", pending.ID),
+		strings.NewReader(`{"approved":true,"resolved_by":"dashboard","persist":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, false, response["persisted"])
+	current, ok := srv.approvals.Get(pending.ID)
+	require.True(t, ok)
+	assert.Equal(t, approval.StatusApproved, current.Status)
+	assert.False(t, current.Persisted)
+	assert.Equal(t, 2, failing.count())
+	_, statErr := os.Stat(engine.DefaultAutoAllowedPath())
+	assert.True(t, os.IsNotExist(statErr), "durable rule was installed without its required audit record")
+
+	grant, consumed, consumeErr := srv.approvals.ConsumeApproved(call)
+	require.NoError(t, consumeErr)
+	require.True(t, consumed, "failed durable persistence must preserve the already-audited one-time approval")
+	assert.Equal(t, pending.ID, grant.ID)
+}
+
+func TestBulkResolve_AuditFailureDoesNotInstallAutoApproval(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	failing := &failOnWriteSink{failAt: 2}
+	srv := New(eng, failing, WithToken("tok"), WithMode("enforce"),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+
+	calls := []engine.ToolCall{
+		{Tool: "exec", Params: map[string]any{"command": "deploy one"}, Agent: "claude", Session: "s1", RunID: "run-bulk", ToolCallID: "call-one"},
+		{Tool: "exec", Params: map[string]any{"command": "deploy two"}, Agent: "claude", Session: "s1", RunID: "run-bulk", ToolCallID: "call-two"},
+	}
+	requests := make([]*approval.Request, 0, len(calls))
+	for _, call := range calls {
+		pending, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+		require.NoError(t, err)
+		requests = append(requests, pending)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(`{"agent":"claude","session":"s1","run_id":"run-bulk","action":"approve","resolved_by":"dashboard"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Equal(t, 2, failing.count())
+	approvedCount := 0
+	pendingCount := 0
+	for _, request := range requests {
+		current, ok := srv.approvals.Get(request.ID)
+		require.True(t, ok)
+		switch current.Status {
+		case approval.StatusApproved:
+			approvedCount++
+		case approval.StatusPending:
+			pendingCount++
+		}
+	}
+	assert.Equal(t, 1, approvedCount, "only the individually journaled and audited approval may publish")
+	assert.Equal(t, 1, pendingCount, "the approval whose audit failed must remain pending")
+	assert.False(t, srv.approvals.IsAutoApproved(calls[0]), "partial bulk resolution installed future authorization")
+}
+
+func TestBulkResolve_ConcurrentCreateCannotLeaveOrphanPending(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("tok"), WithMode("enforce"),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+	initial := engine.ToolCall{
+		Tool:       "exec",
+		Params:     map[string]any{"command": "deploy initial"},
+		Agent:      "claude",
+		Session:    "s1",
+		RunID:      "run-create-race",
+		ToolCallID: "call-initial",
+	}
+	_, err := srv.approvals.Create(initial, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	racedCall := initial
+	racedCall.Params = map[string]any{"command": "deploy raced"}
+	racedCall.ToolCallID = "call-raced"
+	tracingSink := &createAutoRaceSink{
+		store:  srv.approvals,
+		call:   racedCall,
+		result: make(chan createAutoRaceResult, 1),
+	}
+	srv.sink = tracingSink
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(`{"agent":"claude","session":"s1","run_id":"run-create-race","action":"approve","resolved_by":"dashboard"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var raced createAutoRaceResult
+	select {
+	case raced = <-tracingSink.result:
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent create did not complete")
+	}
+	require.NoError(t, raced.err)
+	if raced.autoApproved {
+		assert.Nil(t, raced.request)
+	} else {
+		require.NotNil(t, raced.request)
+		resolved, ok := srv.approvals.Get(raced.request.ID)
+		require.True(t, ok)
+		assert.Equal(t, approval.StatusApproved, resolved.Status, "creation won the race but bulk publication did not catch it")
+	}
+	assert.Empty(t, srv.approvals.List(), "bulk publication left an orphan same-scope approval pending")
+	assert.True(t, srv.approvals.IsAutoApproved(racedCall))
 }
 
 // TestGetPolicy is removed — GET /v1/policy was removed in v0.9.9.
@@ -1434,15 +2046,15 @@ func TestBulkResolve_ApprovesAllInRun(t *testing.T) {
 default_action: allow
 policies: []`
 
-	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	srv, token, sink := setupTestServer(t, configYAML, "enforce")
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
 	runID := "run-test-abc123"
 
 	// Create two approvals with the same run_id.
-	createApproval := func(cmd string) string {
-		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":"claude-code","run_id":%q,"message":"needs approval"}`, cmd, runID)
+	createApproval := func(agent, cmd string) string {
+		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":%q,"run_id":%q,"message":"needs approval"}`, cmd, agent, runID)
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
@@ -1455,11 +2067,12 @@ policies: []`
 		return result["id"].(string)
 	}
 
-	id1 := createApproval("rm -rf /tmp/a")
-	id2 := createApproval("rm -rf /tmp/b")
+	id1 := createApproval("claude-code", "rm -rf /tmp/a")
+	id2 := createApproval("claude-code", "rm -rf /tmp/b")
+	collidingID := createApproval("codex", "rm -rf /tmp/c")
 
 	// Bulk-resolve: approve the run.
-	bulkBody := fmt.Sprintf(`{"run_id":%q,"action":"approve","resolved_by":"test"}`, runID)
+	bulkBody := fmt.Sprintf(`{"agent":"claude-code","session":"hook","run_id":%q,"action":"approve","resolved_by":"test"}`, runID)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(bulkBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -1495,6 +2108,15 @@ policies: []`
 	}
 	assert.Equal(t, "approved", getStatus(id1))
 	assert.Equal(t, "approved", getStatus(id2))
+	assert.Equal(t, "pending", getStatus(collidingID), "same run_id in another agent scope must remain pending")
+	events := sink.snapshot()
+	require.Len(t, events, 2)
+	for _, event := range events {
+		assert.Equal(t, true, event.Request["bulk"])
+		assert.Equal(t, true, event.Request["auto_approve"])
+		assert.NotZero(t, event.Request["auto_approve_ttl_seconds"])
+		assert.Equal(t, runID, event.RunID)
+	}
 }
 
 func TestBulkResolve_EmptyRunIDRejected(t *testing.T) {
@@ -1506,10 +2128,13 @@ policies: []`
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
-	// Empty run_id must return 400 — never batch-approve everything.
+	// Every identity field is required — never batch-resolve a caller-selected
+	// run ID across agents or sessions.
 	for _, body := range []string{
-		`{"run_id":"","action":"approve"}`,
-		`{"run_id":"   ","action":"approve"}`,
+		`{"agent":"","session":"hook","run_id":"run","action":"approve"}`,
+		`{"agent":"claude-code","session":"","run_id":"run","action":"approve"}`,
+		`{"agent":"claude-code","session":"hook","run_id":"","action":"approve"}`,
+		`{"agent":"claude-code","session":"hook","run_id":"   ","action":"approve"}`,
 		`{"action":"approve"}`,
 	} {
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
@@ -1532,7 +2157,7 @@ policies: []`
 	defer ts.Close()
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve",
-		strings.NewReader(`{"run_id":"x","action":"approve"}`))
+		strings.NewReader(`{"agent":"claude-code","session":"hook","run_id":"x","action":"approve"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -1550,7 +2175,7 @@ policies: []`
 	defer ts.Close()
 
 	// Bulk-resolve a run that has no pending approvals.
-	body := `{"run_id":"run-nonexistent","action":"approve"}`
+	body := `{"agent":"claude-code","session":"hook","run_id":"run-nonexistent","action":"approve"}`
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -1589,7 +2214,7 @@ policies: []`
 		resp.Body.Close()
 	}
 
-	bulkBody := fmt.Sprintf(`{"run_id":%q,"action":"approve"}`, runID)
+	bulkBody := fmt.Sprintf(`{"agent":"claude-code","session":"hook","run_id":%q,"action":"approve"}`, runID)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(bulkBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -1609,6 +2234,19 @@ policies: []`
 	var result map[string]any
 	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&result))
 	assert.Equal(t, "approved", result["status"], "subsequent call from auto-approved run should be auto-approved")
+
+	// A run ID is caller-selected and may collide across agents. The cached
+	// approval must not authorize a different identity using the same value.
+	collisionBody := fmt.Sprintf(`{"tool":"exec","command":"rm /tmp/other","agent":"codex","run_id":%q,"message":"colliding run"}`, runID)
+	collisionReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(collisionBody))
+	collisionReq.Header.Set("Authorization", "Bearer "+token)
+	collisionReq.Header.Set("Content-Type", "application/json")
+	collisionResp, err := http.DefaultClient.Do(collisionReq)
+	require.NoError(t, err)
+	defer collisionResp.Body.Close()
+	assert.Equal(t, http.StatusCreated, collisionResp.StatusCode)
+	collisionResult := decodeBody(t, collisionResp)
+	assert.Equal(t, "pending", collisionResult["status"])
 }
 
 // ── W3: run_groups in list response ───────────────────────────────────────
@@ -1624,9 +2262,10 @@ policies: []`
 
 	runID := "run-group-test-xyz"
 
-	// Create 3 approvals: 2 with same run_id (should form a group), 1 solo.
-	createApproval := func(cmd, rid string) {
-		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":"claude-code","run_id":%q,"message":"approval"}`, cmd, rid)
+	// Create a two-item exact scope, one colliding run ID in another agent, and
+	// one solo approval. Only the exact scope should form a group.
+	createApproval := func(agent, cmd, rid string) {
+		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":%q,"run_id":%q,"message":"approval"}`, cmd, agent, rid)
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
@@ -1634,10 +2273,11 @@ policies: []`
 		resp.Body.Close()
 	}
 
-	createApproval("cmd-a", runID)
+	createApproval("claude-code", "cmd-a", runID)
 	time.Sleep(5 * time.Millisecond) // ensure distinct created_at ordering
-	createApproval("cmd-b", runID)
-	createApproval("cmd-solo", "") // no run_id — should not appear in run_groups
+	createApproval("claude-code", "cmd-b", runID)
+	createApproval("codex", "cmd-collision", runID)
+	createApproval("claude-code", "cmd-solo", "") // no run_id — should not appear in run_groups
 
 	// List approvals.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/approvals", nil)
@@ -1654,16 +2294,19 @@ policies: []`
 	runGroups, ok := result["run_groups"].([]any)
 	require.True(t, ok, "run_groups should be a JSON array")
 
-	// Exactly one group with our run_id.
+	require.Len(t, runGroups, 1, "colliding run IDs in distinct agent scopes must not be co-grouped")
+	// Exactly one group with our complete scope.
 	var found map[string]any
 	for _, g := range runGroups {
 		group := g.(map[string]any)
-		if group["run_id"] == runID {
+		if group["agent"] == "claude-code" && group["session"] == "hook" && group["run_id"] == runID {
 			found = group
 			break
 		}
 	}
 	require.NotNil(t, found, "run_id %q should appear in run_groups", runID)
+	assert.Equal(t, "claude-code", found["agent"])
+	assert.Equal(t, "hook", found["session"])
 	assert.Equal(t, float64(2), found["count"])
 	assert.NotEmpty(t, found["earliest_created_at"])
 
@@ -1677,10 +2320,10 @@ policies: []`
 		assert.NotEqual(t, "", group["run_id"], "solo (empty run_id) should not appear in run_groups")
 	}
 
-	// Flat approvals array should still have all 3 items.
+	// Flat approvals array should still have all 4 items.
 	approvals, ok := result["approvals"].([]any)
 	require.True(t, ok)
-	assert.Len(t, approvals, 3)
+	assert.Len(t, approvals, 4)
 }
 
 func TestListApprovals_RunGroupsSortedByEarliestCreatedAt(t *testing.T) {

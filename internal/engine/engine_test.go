@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,6 +80,139 @@ policies:
 	}
 	if got.Message != "destructive command blocked" {
 		t.Errorf("want denial message, got %q", got.Message)
+	}
+}
+
+func TestEvaluate_RejectsConflictingSecurityAliases(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies: []
+`)
+
+	tests := []struct {
+		name string
+		call ToolCall
+	}{
+		{
+			name: "params and input command",
+			call: ToolCall{Tool: "exec",
+				Params: map[string]any{"command": "echo safe"},
+				Input:  map[string]any{"command": "rm -rf /"}},
+		},
+		{
+			name: "command aliases",
+			call: ToolCall{Tool: "exec", Params: map[string]any{
+				"command": "echo safe", "cmd": "rm -rf /",
+			}},
+		},
+		{
+			name: "path aliases",
+			call: ToolCall{Tool: "write", Params: map[string]any{
+				"file_path": "/tmp/safe", "path": "/etc/shadow",
+			}},
+		},
+		{
+			name: "working directory aliases",
+			call: ToolCall{Tool: "exec", WorkDir: "/tmp/safe", Params: map[string]any{
+				"cwd": "/etc",
+			}},
+		},
+		{
+			name: "url aliases",
+			call: ToolCall{Tool: "fetch", Params: map[string]any{
+				"url": "https://github.com", "uri": "https://webhook.site/steal",
+			}},
+		},
+		{
+			name: "non string command",
+			call: ToolCall{Tool: "exec", Params: map[string]any{
+				"command": []string{"echo", "safe"},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := e.Evaluate(tt.call)
+			require.Equal(t, ActionDeny, decision.Action)
+			require.Contains(t, decision.Message, "ambiguous tool input")
+		})
+	}
+
+	t.Run("identical duplicate is compatible", func(t *testing.T) {
+		decision := e.Evaluate(ToolCall{
+			Tool:   "exec",
+			Params: map[string]any{"command": "git status"},
+			Input:  map[string]any{"command": "git status"},
+		})
+		require.Equal(t, ActionAllow, decision.Action)
+	})
+}
+
+func TestEvaluate_DerivesDomainFromURL(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: block-exfil-domain
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          domain_matches: ["webhook.site"]
+`)
+	decision := e.Evaluate(ToolCall{Tool: "fetch", Params: map[string]any{
+		"url":    "https://webhook.site/collect",
+		"domain": "github.com",
+	}})
+	require.Equal(t, ActionDeny, decision.Action)
+	require.Equal(t, "webhook.site", (ToolCall{Params: map[string]any{
+		"url": "https://webhook.site/collect", "domain": "github.com",
+	}}).Domain())
+}
+
+func TestEvaluate_ConsumesValidatedSecurityAliases(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: block-command-alias
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm -rf *"]
+  - name: block-path-alias
+    match:
+      tool: write
+    rules:
+      - action: deny
+        when:
+          path_matches: ["/etc/**"]
+  - name: block-url-alias
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          domain_matches: ["webhook.site"]
+`)
+
+	tests := []ToolCall{
+		{
+			Tool:   "exec",
+			Params: map[string]any{"command": "   "},
+			Input:  map[string]any{"cmd": "rm -rf /"},
+		},
+		{Tool: "write", Params: map[string]any{"target": "/etc/shadow"}},
+		{Tool: "fetch", Input: map[string]any{"href": "https://webhook.site/collect"}},
+	}
+	for _, call := range tests {
+		decision := e.Evaluate(call)
+		require.Equal(t, ActionDeny, decision.Action, "call: %#v; decision: %#v", call, decision)
 	}
 }
 
@@ -403,6 +537,29 @@ policies: []
 	if got.Action != ActionDeny {
 		t.Errorf("after reload: want deny, got %s", got.Action)
 	}
+}
+
+func TestPeriodicReloadLifecycleIsConcurrentSafe(t *testing.T) {
+	engine := setupEngine(t, `
+version: "1"
+default_action: allow
+policies: []
+`)
+
+	var wg sync.WaitGroup
+	for i := range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				engine.StartPeriodicReload(time.Hour)
+				return
+			}
+			engine.Stop()
+		}()
+	}
+	wg.Wait()
+	engine.Stop()
 }
 
 func TestValidation_DuplicatePolicyName(t *testing.T) {
@@ -867,6 +1024,40 @@ policies:
 	assert.Equal(t, ActionDeny, got.Action, "timeout should fail closed — deny rule fires")
 	assert.GreaterOrEqual(t, elapsed, 90*time.Millisecond)
 	assert.Less(t, elapsed, 190*time.Millisecond)
+}
+
+func TestEvaluateResponse_ExclusionRegexTimeoutFailsClosed(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: timeout-check
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          response_matches: ["secret"]
+          response_not_matches: ["documented-example"]
+        message: "secret detected"
+`)
+
+	regexMatchMu.Lock()
+	regexMatchFunc = func(re *regexp.Regexp, value string) bool {
+		if re.String() == "documented-example" {
+			time.Sleep(200 * time.Millisecond)
+		}
+		return re.MatchString(value)
+	}
+	regexMatchMu.Unlock()
+	t.Cleanup(func() {
+		regexMatchMu.Lock()
+		regexMatchFunc = nil
+		regexMatchMu.Unlock()
+	})
+
+	got := e.EvaluateResponse(execCall("main", "echo test"), "secret")
+	assert.Equal(t, ActionDeny, got.Action, "an exclusion timeout must not suppress a deny rule")
 }
 
 func BenchmarkEvaluateResponse10KB(b *testing.B) {

@@ -11,6 +11,8 @@
  *      tool `exec`.
  *   4. A second safe command reached OpenClaw's native plugin approval queue,
  *      was approved once, resumed, executed, and produced correlated proof.
+ *   5. A disposable canary command was attempted through native `bash`, denied
+ *      by Rampart, produced no successful tool result, and changed no state.
  *
  * The test may only operate beneath an explicit disposable isolation root. It
  * refuses primary OpenClaw state, workspaces, sessions, memory, and services.
@@ -120,6 +122,8 @@ const approvalPrompt = [
 ].join(' ');
 const approvalDriver = process.env.RAMPART_OPENCLAW_APPROVAL_DRIVER || 'gateway';
 const approvalProofPath = process.env.RAMPART_OPENCLAW_APPROVAL_PROOF_FILE || '';
+const denyMarker = `rampart-runtime-denied-shell-${runStamp}`;
+const denySessionId = denyMarker;
 if (!['gateway', 'external'].includes(approvalDriver)) {
   console.error('RAMPART_OPENCLAW_APPROVAL_DRIVER must be "gateway" or "external".');
   process.exit(2);
@@ -138,6 +142,11 @@ let tokenExisted = false;
 let tokenBackup = null;
 let cleanupErrors = [];
 let activeAgentChild = null;
+let denyCanaryPath;
+let denyCanaryContent;
+let denyCommand;
+let denyPrompt;
+let testPolicyPath;
 
 function redact(text) {
   return String(text ?? '')
@@ -174,7 +183,7 @@ function run(cmd, args = [], opts = {}) {
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      if (code === 0) {
+      if (code === 0 || opts.allowNonZero === true) {
         resolvePromise({ stdout, stderr, code, signal });
       } else {
         reject(new Error(`${cmd} ${args.join(' ')} exited ${code ?? signal}\nstdout:\n${redact(stdout)}\nstderr:\n${redact(stderr)}`));
@@ -296,6 +305,7 @@ async function startRampart() {
   await run('go', ['build', '-o', serverBinary, './cmd/rampart'], { timeoutMs: 120_000, cwd: repoRoot });
 
   server = spawn(serverBinary, [
+    '--config', testPolicyPath,
     'serve',
     '--no-openclaw-bridge',
     '--addr', '127.0.0.1',
@@ -379,6 +389,17 @@ async function runOpenClawTurn(turnSessionId, turnPrompt, expectedMarker) {
   if (!combined.includes(expectedMarker)) {
     fail(`OpenClaw turn completed but output did not include marker ${expectedMarker}. Output:\n${redact(combined).slice(-4000)}`);
   }
+}
+
+async function runDeniedOpenClawTurn() {
+  // OpenClaw versions differ on whether a denied tool result makes the agent
+  // command itself exit non-zero. Trajectory, audit, and filesystem state are
+  // the authoritative proof, so retain either CLI outcome for those checks.
+  return run('openclaw', openClawAgentArgs(denySessionId, denyPrompt), {
+    timeoutMs: Number(process.env.RAMPART_OPENCLAW_AGENT_TIMEOUT_MS || '240000'),
+    cwd: repoRoot,
+    allowNonZero: true,
+  });
 }
 
 async function runApprovedOpenClawTurn() {
@@ -567,6 +588,47 @@ async function verifyTrajectoryBashExecution(turnSessionId, expectedMarker) {
   return path;
 }
 
+async function verifyTrajectoryBashDenied(turnSessionId, expectedMarker) {
+  const path = join(sessionsDir, `${turnSessionId}.trajectory.jsonl`);
+  if (!existsSync(path)) {
+    fail(`missing OpenClaw deny trajectory file: ${path}`);
+  }
+  const events = parseJSONLines(await readFile(path, 'utf8'), path);
+  const bashCalls = events.filter((evt) => (
+    evt?.type === 'tool.call' &&
+    evt?.data?.name === 'bash' &&
+    JSON.stringify(evt.data.arguments || {}).includes(expectedMarker)
+  ));
+  if (bashCalls.length !== 1) {
+    fail(`deny trajectory expected exactly one native bash attempt for ${expectedMarker}, observed ${bashCalls.length}`);
+  }
+
+  const callId = bashCalls[0].data.toolCallId || bashCalls[0].data.itemId;
+  const results = events.filter((evt) => {
+    if (evt?.type !== 'tool.result' || evt?.data?.name !== 'bash') return false;
+    const resultCallId = evt.data.toolCallId || evt.data.itemId;
+    return !callId || resultCallId === callId;
+  });
+  if (results.length === 0) {
+    fail(`deny trajectory did not contain a matching bash tool.result for ${expectedMarker}`);
+  }
+
+  const reportsDenial = (evt) => {
+    const status = String(evt.data.status || '').toLowerCase();
+    const resultText = JSON.stringify({ result: evt.data.result, output: evt.data.output }).toLowerCase();
+    return evt.data.isError === true ||
+      ['blocked', 'cancelled', 'denied', 'error', 'failed'].includes(status) ||
+      /\b(blocked|denied|not allowed|permission)\b/.test(resultText);
+  };
+  if (!results.some(reportsDenial)) {
+    fail(`matching bash tool.result did not report a blocked/denied outcome for ${expectedMarker}`);
+  }
+  if (results.some((evt) => !reportsDenial(evt))) {
+    fail(`deny trajectory contained a non-denial bash result for ${expectedMarker}`);
+  }
+  return path;
+}
+
 async function verifyRampartAudit(turnSessionId, expectedMarker, expectedAction) {
   const deadline = Date.now() + 10_000;
   let events = [];
@@ -609,6 +671,36 @@ try {
   auditDir = join(tmpRoot, 'audit');
   await mkdir(auditDir, { recursive: true });
   await writeFile(join(tmpRoot, 'README.txt'), 'Temporary files for Rampart/OpenClaw runtime regression.\n', 'utf8');
+  denyCanaryPath = join(tmpRoot, `deny-canary-${runStamp}.txt`);
+  denyCanaryContent = `Rampart deny canary ${denyMarker}\n`;
+  denyCommand = `rm -f ${denyCanaryPath} && printf '%s\\n' '${denyMarker}'`;
+  denyPrompt = [
+    'This is a controlled Rampart/OpenClaw deny regression test.',
+    'The target is a disposable canary, and Rampart is expected to block the command.',
+    'Use the native shell/terminal/bash command tool exactly once to attempt:',
+    denyCommand,
+    'Do not use any other tool and do not retry if blocked.',
+  ].join(' ');
+  testPolicyPath = join(tmpRoot, 'runtime-policy.yaml');
+  await writeFile(denyCanaryPath, denyCanaryContent, 'utf8');
+  await writeFile(testPolicyPath, [
+    'version: "1"',
+    'default_action: allow',
+    'policies:',
+    '  - name: runtime-regression',
+    '    match:',
+    '      tool: exec',
+    '    rules:',
+    '      - action: deny',
+    '        when:',
+    `          command_matches: [${JSON.stringify(denyCommand)}]`,
+    '        message: "Disposable runtime canary blocked"',
+    '      - action: ask',
+    '        when:',
+    '          command_matches: ["shred **"]',
+    '        message: "Runtime approval probe"',
+    '',
+  ].join('\n'), 'utf8');
   await backupToken();
 
   console.log(`[runtime-regression] marker=${marker}`);
@@ -621,6 +713,16 @@ try {
   const appServerBinding = await verifyCodexAppServerBinding(sessionId);
   const trajectoryPath = await verifyTrajectoryBashExecution(sessionId, marker);
   const auditEvent = await verifyRampartAudit(sessionId, marker, 'allow');
+
+  console.log(`[runtime-regression] denyMarker=${denyMarker}`);
+  const denyTurn = await runDeniedOpenClawTurn();
+  const denyAppServerBinding = await verifyCodexAppServerBinding(denySessionId);
+  const denyTrajectoryPath = await verifyTrajectoryBashDenied(denySessionId, denyMarker);
+  const denyAuditEvent = await verifyRampartAudit(denySessionId, denyMarker, 'deny');
+  const denyCanaryAfter = await readFile(denyCanaryPath, 'utf8');
+  if (denyCanaryAfter !== denyCanaryContent) {
+    fail(`Rampart deny canary changed despite denied native bash attempt: ${denyCanaryPath}`);
+  }
 
   console.log(`[runtime-regression] approvalMarker=${approvalMarker}`);
   const approval = await runApprovedOpenClawTurn();
@@ -639,6 +741,21 @@ try {
       agent: auditEvent.agent,
       session: auditEvent.session,
       action: auditEvent.decision?.action,
+    },
+    deniedExecution: {
+      marker: denyMarker,
+      canary: denyCanaryPath,
+      canaryUnchanged: true,
+      openclawExitCode: denyTurn.code,
+      appServerBinding: denyAppServerBinding,
+      trajectory: denyTrajectoryPath,
+      rampartAudit: {
+        id: denyAuditEvent.id,
+        tool: denyAuditEvent.tool,
+        agent: denyAuditEvent.agent,
+        session: denyAuditEvent.session,
+        action: denyAuditEvent.decision?.action,
+      },
     },
     approvedExecution: {
       marker: approvalMarker,

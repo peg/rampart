@@ -33,7 +33,6 @@ package bridge
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -53,13 +52,18 @@ import (
 
 const openClawGatewayProtocolVersion = 4
 
+const (
+	maxOpenClawFrameBytes      = 4 << 20
+	maxPendingBridgeCommands   = 1000
+	maxPendingBridgeCommandLen = 256 << 10
+)
+
 // OpenClawBridge connects to the OpenClaw gateway and handles exec approval
 // routing through Rampart's policy engine.
 type OpenClawBridge struct {
 	engine                    *engine.Engine
 	gatewayURL                string
 	token                     string
-	serveURL                  string
 	sink                      audit.AuditSink
 	logger                    *slog.Logger
 	autoResolveAllowDecisions bool
@@ -71,8 +75,7 @@ type OpenClawBridge struct {
 	conn    *websocket.Conn
 
 	pendingMu       sync.Mutex
-	pending         map[string]chan struct{} // approval ID → close to signal resolution
-	pendingCommands map[string]string        // approval ID → command (for allow-always writeback)
+	pendingCommands map[string]string // approval ID → command (for allow-always writeback)
 }
 
 // Config holds bridge configuration.
@@ -82,9 +85,6 @@ type Config struct {
 
 	// GatewayToken is the authentication token for the Gateway.
 	GatewayToken string
-
-	// ServeURL is the Rampart serve instance URL for human-review escalation.
-	ServeURL string
 
 	// ReconnectInterval is how long to wait before reconnecting after a disconnect.
 	ReconnectInterval time.Duration
@@ -115,9 +115,6 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 	if cfg.ReconnectInterval == 0 {
 		cfg.ReconnectInterval = 5 * time.Second
 	}
-	if cfg.ServeURL == "" {
-		cfg.ServeURL = discoverServeURL()
-	}
 	autoResolveAllowDecisions := true
 	if cfg.AutoResolveAllowDecisions != nil {
 		autoResolveAllowDecisions = *cfg.AutoResolveAllowDecisions
@@ -127,12 +124,10 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		engine:                    eng,
 		gatewayURL:                cfg.GatewayURL,
 		token:                     cfg.GatewayToken,
-		serveURL:                  cfg.ServeURL,
 		sink:                      cfg.AuditSink,
 		logger:                    cfg.Logger,
 		autoResolveAllowDecisions: autoResolveAllowDecisions,
 		reconnectInterval:         cfg.ReconnectInterval,
-		pending:                   make(map[string]chan struct{}),
 		pendingCommands:           make(map[string]string),
 	}
 }
@@ -196,6 +191,7 @@ func (b *OpenClawBridge) connectAndListen(ctx context.Context) error {
 	const pongWait = 90 * time.Second
 	const pingInterval = 30 * time.Second
 	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetReadLimit(maxOpenClawFrameBytes)
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
@@ -350,12 +346,10 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 		}
 		// Store the command immediately so allow-always writeback works
 		// regardless of who ultimately resolves the approval (Rampart or OpenClaw native flow).
-		if req.ID != "" && req.command() != "" {
-			b.pendingMu.Lock()
-			b.pendingCommands[req.ID] = req.command()
-			b.pendingMu.Unlock()
+		if req.ID != "" && req.command() != "" && !b.rememberPendingCommand(req.ID, req.command()) {
+			b.logger.Warn("bridge: pending command correlation limit reached; allow-always writeback unavailable", "id", req.ID)
 		}
-		go b.handleApprovalRequested(ctx, conn, req)
+		b.handleApprovalRequested(ctx, conn, req)
 
 	case "exec.approval.resolved":
 		// Another client resolved this approval — cancel any pending escalation.
@@ -366,10 +360,6 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 		}
 		if err := json.Unmarshal(frame.Payload, &resolved); err == nil {
 			b.pendingMu.Lock()
-			if ch, ok := b.pending[resolved.ID]; ok {
-				close(ch)
-				delete(b.pending, resolved.ID)
-			}
 			cmd := b.pendingCommands[resolved.ID]
 			delete(b.pendingCommands, resolved.ID)
 			b.pendingMu.Unlock()
@@ -379,6 +369,19 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 			}
 		}
 	}
+}
+
+func (b *OpenClawBridge) rememberPendingCommand(id, command string) bool {
+	if id == "" || len(id) > 256 || len(command) > maxPendingBridgeCommandLen {
+		return false
+	}
+	b.pendingMu.Lock()
+	defer b.pendingMu.Unlock()
+	if _, exists := b.pendingCommands[id]; !exists && len(b.pendingCommands) >= maxPendingBridgeCommands {
+		return false
+	}
+	b.pendingCommands[id] = command
+	return true
 }
 
 // handleApprovalRequested evaluates a command against the policy engine and
@@ -400,7 +403,7 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 
 	b.logger.Info("bridge: evaluated approval request",
 		"id", req.ID,
-		"command", req.command(),
+		"command_bytes", len(req.command()),
 		"agent", req.agentID(),
 		"action", decision.Action.String(),
 		"duration", evalDuration,
@@ -447,7 +450,7 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 		// Webhook actions delegate to an external system.
 		// Don't resolve — let OpenClaw's approval flow handle it or time out.
 		b.logger.Info("bridge: webhook action — deferring to OpenClaw approval flow",
-			"id", req.ID, "command", req.command())
+			"id", req.ID, "command_bytes", len(req.command()))
 
 	default:
 		// Unknown action — fail closed. An unrecognized action should never
@@ -508,7 +511,7 @@ func (b *OpenClawBridge) sendResolve(conn *websocket.Conn, approvalID, decision 
 func (b *OpenClawBridge) leavePendingForHumanReview(req approvalRequestParams, decision engine.Decision) {
 	b.logger.Info("bridge: approval requires human review, leaving native OpenClaw approval pending",
 		"id", req.ID,
-		"command", req.command(),
+		"command_bytes", len(req.command()),
 		"agent", req.agentID(),
 		"message", decision.Message,
 	)
@@ -521,7 +524,7 @@ func (b *OpenClawBridge) leavePendingForHumanReview(req approvalRequestParams, d
 func (b *OpenClawBridge) leavePendingForOpenClawReview(req approvalRequestParams, decision engine.Decision) {
 	b.logger.Info("bridge: Rampart allowed approval request; leaving native OpenClaw approval pending",
 		"id", req.ID,
-		"command", req.command(),
+		"command_bytes", len(req.command()),
 		"agent", req.agentID(),
 		"action", decision.Action.String(),
 	)
@@ -552,89 +555,27 @@ func (b *OpenClawBridge) writeAllowAlwaysRule(command string) {
 	}
 
 	overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
-
-	// Hash the command for a stable rule name using SHA-256 (first 8 hex chars).
-	hb := commandHash(pattern)
-	ruleName := fmt.Sprintf("user-allow-%s", hb)
-
-	// Build the rule block to append.
-	rule := fmt.Sprintf("\n- name: %s\n  match:\n    tool: exec\n  rules:\n    - when:\n        command_matches:\n          - %q\n      action: allow\n      message: \"User allowed (always)\"\n",
-		ruleName, pattern)
-
-	// Read existing file or create with header.
-	var existing string
-	data, err := os.ReadFile(overridesPath)
+	result, err := policyutil.EnsureUserOverrideAllow(
+		overridesPath,
+		"exec",
+		pattern,
+		"User allowed (always)",
+	)
 	if err != nil {
-		existing = "# Rampart user override policies\n# Auto-generated entries are added here when you click \"Always Allow\"\n# This file is never overwritten by upgrades or rampart setup\npolicies:\n"
-	} else {
-		existing = string(data)
-		// Don't add a duplicate rule.
-		if strings.Contains(existing, ruleName) {
-			b.logger.Info("bridge: allow-always rule already exists", "rule", ruleName, "command", command)
-			return
-		}
-	}
-
-	if err := os.MkdirAll(filepath.Dir(overridesPath), 0o700); err != nil {
-		b.logger.Error("bridge: allow-always: create policies dir", "error", err)
+		b.logger.Error("bridge: allow-always: persist rule", "error", err)
 		return
 	}
-	// Atomic write: write to temp file then rename to avoid partial reads.
-	dir := filepath.Dir(overridesPath)
-	tmp, err := os.CreateTemp(dir, ".rampart-user-overrides-*.yaml.tmp")
-	if err != nil {
-		b.logger.Error("bridge: allow-always: create temp file", "error", err)
-		return
-	}
-	tmpPath := tmp.Name()
-	if _, werr := tmp.WriteString(existing + rule); werr != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		b.logger.Error("bridge: allow-always: write temp file", "error", werr)
-		return
-	}
-	if cerr := tmp.Close(); cerr != nil {
-		os.Remove(tmpPath)
-		b.logger.Error("bridge: allow-always: close temp file", "error", cerr)
-		return
-	}
-	if rerr := replaceFileWithRetries(tmpPath, overridesPath); rerr != nil {
-		os.Remove(tmpPath)
-		b.logger.Error("bridge: allow-always: rename to final path", "error", rerr)
+	if !result.Created {
+		b.logger.Info("bridge: allow-always rule already exists", "rule", result.Name, "command_bytes", len(command))
 		return
 	}
 
-	b.logger.Info("bridge: allow-always rule written", "rule", ruleName, "command", command, "path", overridesPath)
+	b.logger.Info("bridge: allow-always rule written", "rule", result.Name, "command_bytes", len(command), "path", overridesPath)
 
 	// Hot-reload the engine so the new rule takes effect immediately.
 	if err := b.engine.Reload(); err != nil {
 		b.logger.Warn("bridge: allow-always: engine reload failed", "error", err)
 	}
-}
-
-func replaceFileWithRetries(tmpPath, destPath string) error {
-	var lastErr error
-	for attempt := 0; attempt < 6; attempt++ {
-		if err := os.Rename(tmpPath, destPath); err == nil {
-			return nil
-		} else {
-			lastErr = err
-			if runtime.GOOS == "windows" {
-				if removeErr := os.Remove(destPath); removeErr != nil && !os.IsNotExist(removeErr) {
-					lastErr = fmt.Errorf("rename %s -> %s: %w (remove existing: %v)", tmpPath, destPath, err, removeErr)
-				}
-			}
-			time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
-		}
-	}
-	return lastErr
-}
-
-// commandHash returns the first 8 hex characters of the SHA-256 hash of s.
-// Used to generate stable, collision-resistant rule names for allow-always entries.
-func commandHash(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return fmt.Sprintf("%x", sum[:4])
 }
 
 // --- Wire protocol types ---
@@ -776,28 +717,6 @@ func (cfg openclawConfig) rampartPluginEnabled() bool {
 		return entry.Enabled == nil || *entry.Enabled
 	}
 	return false
-}
-
-// discoverServeURL finds the Rampart serve URL from serve.state or environment.
-func discoverServeURL() string {
-	if v := os.Getenv("RAMPART_URL"); v != "" {
-		return v
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "http://127.0.0.1:9090"
-	}
-	data, err := os.ReadFile(filepath.Join(home, ".rampart", "serve.state"))
-	if err != nil {
-		return "http://127.0.0.1:9090"
-	}
-	var state struct {
-		URL string `json:"url"`
-	}
-	if err := json.Unmarshal(data, &state); err != nil || state.URL == "" {
-		return "http://127.0.0.1:9090"
-	}
-	return state.URL
 }
 
 // openclawConfig represents the relevant subset of ~/.openclaw/openclaw.json.

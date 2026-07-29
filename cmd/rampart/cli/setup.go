@@ -21,37 +21,73 @@ import (
 
 var execLookPath = osexec.LookPath
 var osExecutable = os.Executable
+var detectOpenClawVersionForSetup = detectOpenClawVersion
+var runSetupOpenClawPluginForSetup = runSetupOpenClawPlugin
 
 // resolveRampartHookBinary returns the executable that managed hook files
-// should invoke. Stable installations prefer the package-manager PATH entry so
-// hooks survive upgrades. Explicit side-by-side builds (for example
-// rampart-staging) bind to themselves so candidate testing cannot silently
-// fall back to an older stable binary.
+// should invoke. A package-manager PATH entry is upgrade-stable, but is trusted
+// only when it currently resolves to the same file as this process. This avoids
+// binding hooks to an older or PATH-shadowed Rampart during candidate testing.
+// Explicit side-by-side builds (for example rampart-staging) always bind to
+// themselves.
 func resolveRampartHookBinary() string {
 	executable, executableErr := osExecutable()
 	if executableErr == nil {
+		executable = absolutePath(executable)
 		base := strings.TrimSuffix(strings.ToLower(filepath.Base(executable)), ".exe")
 		if strings.HasPrefix(base, "rampart-") {
-			if absolute, err := filepath.Abs(executable); err == nil {
-				return absolute
-			}
 			return executable
 		}
-	}
 
-	if path, err := execLookPath("rampart"); err == nil {
-		if absolute, absoluteErr := filepath.Abs(path); absoluteErr == nil {
-			return absolute
-		}
-		return path
-	}
-	if executableErr == nil {
-		if absolute, err := filepath.Abs(executable); err == nil {
-			return absolute
+		if path, err := execLookPath("rampart"); err == nil {
+			path = absolutePath(path)
+			executableInfo, executableStatErr := os.Stat(executable)
+			pathInfo, pathStatErr := os.Stat(path)
+			if executableStatErr == nil && pathStatErr == nil && os.SameFile(executableInfo, pathInfo) {
+				return path
+			}
 		}
 		return executable
 	}
+
+	if path, err := execLookPath("rampart"); err == nil {
+		return absolutePath(path)
+	}
 	return "rampart"
+}
+
+func absolutePath(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		return absolute
+	}
+	return path
+}
+
+// configuredAgentHome resolves an agent's user-scoped configuration root while
+// accepting either path separator for a leading tilde. Cross-platform shell
+// profiles commonly carry these values between Unix and Windows hosts.
+func configuredAgentHome(home, envName, fallback string) string {
+	configured := strings.TrimSpace(os.Getenv(envName))
+	if configured == "" {
+		return filepath.Join(home, fallback)
+	}
+	expanded := os.ExpandEnv(configured)
+	if expanded == "~" {
+		return filepath.Clean(home)
+	}
+	if len(expanded) >= 2 && expanded[0] == '~' && (expanded[1] == '/' || expanded[1] == '\\') {
+		relative := strings.ReplaceAll(expanded[2:], "\\", "/")
+		expanded = filepath.Join(home, filepath.FromSlash(relative))
+	}
+	return filepath.Clean(expanded)
+}
+
+func claudeConfigDir(home string) string {
+	return configuredAgentHome(home, "CLAUDE_CONFIG_DIR", ".claude")
+}
+
+func claudeSettingsPath(home string) string {
+	return filepath.Join(claudeConfigDir(home), "settings.json")
 }
 
 func newSetupCmd(opts *rootOptions) *cobra.Command {
@@ -113,7 +149,8 @@ func newSetupHermesCmd() *cobra.Command {
 		Use:   "hermes",
 		Short: "Install the experimental Rampart plugin for Hermes Agent",
 		Long: `Installs Rampart's experimental Hermes Agent user plugin into
-~/.hermes/plugins/rampart without patching Hermes itself.
+$HERMES_HOME/plugins/rampart (normally ~/.hermes/plugins/rampart) without
+patching Hermes itself.
 
 The plugin uses Hermes' pre_tool_call hook, calls Rampart's policy API before
 sensitive tool calls execute, defaults to /v1/preflight/{tool}, blocks ask
@@ -129,7 +166,7 @@ gateways after enabling so plugin discovery reloads cleanly.`,
 				return fmt.Errorf("setup hermes: resolve home: %w", err)
 			}
 			if strings.TrimSpace(pluginDir) == "" {
-				pluginDir = filepath.Join(home, ".hermes", "plugins", "rampart")
+				pluginDir = filepath.Join(hermesHomeDir(home), "plugins", "rampart")
 			} else {
 				pluginDir = filepath.Clean(os.ExpandEnv(pluginDir))
 			}
@@ -178,7 +215,7 @@ gateways after enabling so plugin discovery reloads cleanly.`,
 	}
 	cmd.Flags().BoolVar(&enable, "enable", false, "Enable the plugin via `hermes plugins enable rampart` after installing")
 	cmd.Flags().BoolVar(&remove, "remove", false, "Remove the installed plugin files")
-	cmd.Flags().StringVar(&pluginDir, "plugin-dir", "", "Hermes plugin install directory (default ~/.hermes/plugins/rampart)")
+	cmd.Flags().StringVar(&pluginDir, "plugin-dir", "", "Hermes plugin install directory (default $HERMES_HOME/plugins/rampart or ~/.hermes/plugins/rampart)")
 	return cmd
 }
 
@@ -194,8 +231,9 @@ func newSetupClaudeCodeCmd(opts *rootOptions) *cobra.Command {
 		Use:   "claude-code",
 		Short: "Install Rampart hook into Claude Code settings",
 		Long: `Adds PreToolUse, PostToolUse, and PostToolUseFailure hooks to
-~/.claude/settings.json. Tool calls are evaluated before execution and
-successful responses are scanned after execution.
+$CLAUDE_CONFIG_DIR/settings.json (normally ~/.claude/settings.json). Tool calls
+are evaluated before execution and successful responses are scanned after
+execution.
 
 This includes Bash, Read, Write, Edit, Fetch, Task, and any future tools.
 
@@ -212,12 +250,20 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				return fmt.Errorf("setup: resolve home: %w", err)
 			}
 
-			settingsPath := filepath.Join(home, ".claude", "settings.json")
+			settingsPath := claudeSettingsPath(home)
 
 			// Load existing settings or start fresh
 			settings := make(claudeSettings)
-			if data, err := os.ReadFile(settingsPath); err == nil {
-				if err := json.Unmarshal(data, &settings); err != nil {
+			exists, err := regularConfigFileExists(settingsPath)
+			if err != nil {
+				return fmt.Errorf("setup: inspect %s: %w", settingsPath, err)
+			}
+			if exists {
+				data, err := os.ReadFile(settingsPath)
+				if err != nil {
+					return fmt.Errorf("setup: read %s: %w", settingsPath, err)
+				}
+				if err := decodeUserJSON(data, &settings); err != nil {
 					if !force {
 						return fmt.Errorf("setup: existing %s has invalid JSON (use --force to overwrite): %w", settingsPath, err)
 					}
@@ -225,22 +271,16 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				}
 			}
 
-			// Check if Rampart hook already exists
-			if hasRampartHook(settings) && !force {
-				fmt.Fprintln(cmd.OutOrStdout(), "Rampart hook already configured in Claude Code settings.")
-				return nil
-			}
-
 			// Build the hook config — no --serve-url needed; the hook resolves its
 			// endpoint via flag/env/config/state with localhost:9090 as the final fallback.
 			// Use an absolute path so the hook works regardless of Claude Code's PATH.
 			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
 			// settings.json never needs to contain credentials.
-			hookBin := resolveRampartHookBinary()
-			// Convert Windows paths to Git Bash format. Claude Code on Windows runs
-			// hooks through Git Bash which doesn't understand backslash paths.
-			hookBin = toGitBashPath(hookBin)
-			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format claude-code"
+			hookCommand := currentClaudeHookCommand()
+			if claudeHooksUseCommand(settings, hookCommand) && !force {
+				fmt.Fprintln(cmd.OutOrStdout(), "Rampart hook already configured in Claude Code settings.")
+				return nil
+			}
 
 			rampartHook := map[string]any{
 				"type":    "command",
@@ -269,52 +309,41 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				"hooks":   []any{rampartHook},
 			}
 
-			// Get or create hooks section
+			// Get or create hooks section. Unknown or malformed host shapes are
+			// preserved by default rather than silently discarded.
 			hooks, ok := settings["hooks"].(map[string]any)
 			if !ok {
+				if _, exists := settings["hooks"]; exists && !force {
+					return fmt.Errorf("setup: existing %s has a non-object hooks value (use --force to replace)", settingsPath)
+				}
 				hooks = make(map[string]any)
+			}
+			for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+				if existing, exists := hooks[event]; exists {
+					if _, valid := existing.([]any); !valid && !force {
+						return fmt.Errorf("setup: existing %s %s value is not an array (use --force to replace)", settingsPath, event)
+					}
+				}
 			}
 
 			// Get or create PreToolUse array (dedup existing rampart entries)
 			var preToolUse []any
 			if existing, ok := hooks["PreToolUse"].([]any); ok {
-				// Filter out any existing rampart hooks
-				for _, h := range existing {
-					if m, ok := h.(map[string]any); ok {
-						if hasRampartInMatcher(m) {
-							continue
-						}
-					}
-					preToolUse = append(preToolUse, h)
-				}
+				preToolUse, _ = removeRampartClaudeHookCommands(existing)
 			}
 			preToolUse = append(preToolUse, allToolsMatcher)
 
 			// Get or create PostToolUse array (dedup existing rampart entries).
 			var postToolUse []any
 			if existing, ok := hooks["PostToolUse"].([]any); ok {
-				for _, h := range existing {
-					if m, ok := h.(map[string]any); ok {
-						if hasRampartInMatcher(m) {
-							continue
-						}
-					}
-					postToolUse = append(postToolUse, h)
-				}
+				postToolUse, _ = removeRampartClaudeHookCommands(existing)
 			}
 			postToolUse = append(postToolUse, postToolUseMatcher)
 
 			// Get or create PostToolUseFailure array (dedup existing rampart entries)
 			var postToolUseFailure []any
 			if existing, ok := hooks["PostToolUseFailure"].([]any); ok {
-				for _, h := range existing {
-					if m, ok := h.(map[string]any); ok {
-						if hasRampartInMatcher(m) {
-							continue
-						}
-					}
-					postToolUseFailure = append(postToolUseFailure, h)
-				}
+				postToolUseFailure, _ = removeRampartClaudeHookCommands(existing)
 			}
 			postToolUseFailure = append(postToolUseFailure, postToolUseFailureMatcher)
 
@@ -325,7 +354,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			// Ensure directory exists
 			if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
-				return fmt.Errorf("setup: create .claude dir: %w", err)
+				return fmt.Errorf("setup: create Claude config dir: %w", err)
 			}
 
 			// Write settings
@@ -335,7 +364,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 			data = append(data, '\n')
 
-			if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
+			if err := atomicWritePrivateFile(settingsPath, data); err != nil {
 				return fmt.Errorf("setup: write settings: %w", err)
 			}
 
@@ -398,19 +427,23 @@ func removeClaudeCodeHooks(cmd *cobra.Command) error {
 		return fmt.Errorf("setup: resolve home: %w", err)
 	}
 
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settingsPath := claudeSettingsPath(home)
 
+	exists, err := regularConfigFileExists(settingsPath)
+	if err != nil {
+		return fmt.Errorf("setup: inspect %s: %w", settingsPath, err)
+	}
+	if !exists {
+		fmt.Fprintln(cmd.OutOrStdout(), "No Claude Code settings found. Nothing to remove.")
+		return nil
+	}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintln(cmd.OutOrStdout(), "No Claude Code settings found. Nothing to remove.")
-			return nil
-		}
 		return fmt.Errorf("setup: read settings: %w", err)
 	}
 
 	settings := make(claudeSettings)
-	if err := json.Unmarshal(data, &settings); err != nil {
+	if err := decodeUserJSON(data, &settings); err != nil {
 		return fmt.Errorf("setup: parse settings: %w", err)
 	}
 
@@ -428,15 +461,10 @@ func removeClaudeCodeHooks(cmd *cobra.Command) error {
 		if !ok {
 			continue
 		}
-		var kept []any
-		for _, h := range eventHooks {
-			if m, ok := h.(map[string]any); ok && hasRampartInMatcher(m) {
-				removedCount++
-				matcher, _ := m["matcher"].(string)
-				fmt.Fprintf(cmd.OutOrStdout(), "  Removed %s hook: matcher=%s\n", event, matcher)
-				continue
-			}
-			kept = append(kept, h)
+		kept, removed := removeRampartClaudeHookCommands(eventHooks)
+		removedCount += removed
+		if removed > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "  Removed %d Rampart %s hook command(s)\n", removed, event)
 		}
 		if len(kept) == 0 {
 			delete(hooks, event)
@@ -462,7 +490,7 @@ func removeClaudeCodeHooks(cmd *cobra.Command) error {
 	}
 	out = append(out, '\n')
 
-	if err := os.WriteFile(settingsPath, out, 0o644); err != nil {
+	if err := atomicWritePrivateFile(settingsPath, out); err != nil {
 		return fmt.Errorf("setup: write settings: %w", err)
 	}
 
@@ -501,25 +529,35 @@ Legacy compatibility options still exist for older OpenClaw setups:
 
 Use --remove to uninstall (preserves policies and audit logs).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if remove {
+				return removeOpenClaw(cmd)
+			}
+			if runtime.GOOS == "windows" {
+				return fmt.Errorf("setup openclaw: not supported on Windows")
+			}
 			if plugin {
-				return runSetupOpenClawPlugin(cmd.OutOrStdout(), cmd.ErrOrStderr())
+				return runSetupOpenClawPluginForSetup(cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
 			if migrate {
 				return runSetupOpenClawMigrate(cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
-			if remove {
-				return removeOpenClaw(cmd)
-			}
-			// Auto-detect: if OpenClaw >= 2026.3.28 is installed and --plugin/--migrate
-			// weren't explicitly requested, use the native plugin path automatically.
-			// Skip in test environments (RAMPART_TEST=1) to avoid running openclaw binary.
-			if !patchTools && !patchToolsOnly && !shimOnly && !noPreload && os.Getenv("RAMPART_TEST") != "1" {
-				if ver, err := detectOpenClawVersion(); err == nil {
-					if ok, _ := openclawVersionAtLeast(ver, openclawMinVersion); ok {
-						fmt.Fprintf(cmd.OutOrStdout(), "✓ OpenClaw %s detected — using native plugin integration\n", ver)
-						return runSetupOpenClawPlugin(cmd.OutOrStdout(), cmd.ErrOrStderr())
-					}
+			// The default path must be selected positively. A missing or malformed
+			// version must never downgrade protection into legacy shim/dist patching.
+			// Operators can still choose that compatibility path explicitly.
+			if !patchTools && !patchToolsOnly && !shimOnly && !noPreload {
+				ver, err := detectOpenClawVersionForSetup()
+				if err != nil {
+					return fmt.Errorf("setup openclaw: cannot safely select an integration because OpenClaw version detection failed: %w; upgrade OpenClaw or explicitly select a legacy compatibility mode with --shim-only, --no-preload, or --patch-tools", err)
 				}
+				ok, err := openclawVersionAtLeast(ver, openclawMinVersion)
+				if err != nil {
+					return fmt.Errorf("setup openclaw: cannot safely compare detected OpenClaw version %q: %w; upgrade OpenClaw or explicitly select a legacy compatibility mode with --shim-only, --no-preload, or --patch-tools", ver, err)
+				}
+				if !ok {
+					return fmt.Errorf("setup openclaw: detected OpenClaw %s, but native protection requires >= %s; upgrade OpenClaw or explicitly select a legacy compatibility mode with --shim-only, --no-preload, or --patch-tools", ver, openclawMinVersion)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ OpenClaw %s detected — using native plugin integration\n", ver)
+				return runSetupOpenClawPluginForSetup(cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
 			// --patch-tools-only: used by ExecStartPre to re-patch file tools
 			// without writing drop-ins or starting services (avoids systemd deadlock).
@@ -536,10 +574,6 @@ Use --remove to uninstall (preserves policies and audit logs).`,
 				}
 				return patchOpenClawTools(cmd, url, token)
 			}
-			if runtime.GOOS == "windows" {
-				return fmt.Errorf("setup openclaw: not supported on Windows")
-			}
-
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return fmt.Errorf("setup: resolve home: %w", err)
@@ -1023,12 +1057,16 @@ func removeOpenClaw(cmd *cobra.Command) error {
 	// back to the default state directory so removal still works after the host
 	// binary itself has already been uninstalled.
 	stateDir, configPath, _ := resolveOpenClawStateDir("")
+	var hostUninstall func() error
 	if openclawBin, findErr := findOpenClawBinary(); findErr == nil {
 		if resolvedState, resolvedConfig, resolveErr := resolveOpenClawStateDir(openclawBin); resolveErr == nil {
 			stateDir, configPath = resolvedState, resolvedConfig
+			hostUninstall = func() error {
+				return runOpenClawPluginUninstall(openclawBin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
 		}
 	}
-	nativeRemoved, err := removeOpenClawNativePluginAt(stateDir, configPath)
+	nativeRemoved, err := removeOpenClawNativePluginWithHostAt(stateDir, configPath, hostUninstall)
 	if err != nil {
 		return fmt.Errorf("setup openclaw: remove native plugin: %w", err)
 	}
@@ -1359,6 +1397,26 @@ func hasRampartHook(settings claudeSettings) bool {
 		}
 	}
 	return true
+}
+
+func claudeHooksConfiguredForHome(home string) bool {
+	path := claudeSettingsPath(home)
+	exists, err := regularConfigFileExists(path)
+	if err != nil || !exists {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	settings := make(claudeSettings)
+	return decodeUserJSON(data, &settings) == nil && claudeHooksUseCommand(settings, currentClaudeHookCommand())
+}
+
+func currentClaudeHookCommand() string {
+	// Claude Code launches hooks through Git Bash on Windows.
+	hookBin := toGitBashPath(resolveRampartHookBinary())
+	return shellQuoteCodexHookArg(hookBin) + " hook --format claude-code"
 }
 
 // openclawToolsCandidates returns possible paths for OpenClaw's pi-coding-agent tools directory.
@@ -2004,24 +2062,163 @@ func hasRampartInMatcher(matcher map[string]any) bool {
 	for _, h := range hooks {
 		if m, ok := h.(map[string]any); ok {
 			if cmd, ok := m["command"].(string); ok {
-				// Current installs always carry this explicit protocol marker;
-				// matching it also handles shell-quoted executable paths.
-				if strings.Contains(cmd, "hook --format claude-code") {
-					return true
-				}
-				// Match bare "rampart hook" or absolute path variants:
-				// - Unix: /usr/local/bin/rampart hook
-				// - Windows: C:\Users\foo\.rampart\bin\rampart.exe hook
-				if cmd == "rampart hook" || cmd == "rampart.exe hook" ||
-					strings.HasPrefix(cmd, "rampart hook ") || strings.HasPrefix(cmd, "rampart.exe hook ") ||
-					strings.HasSuffix(cmd, "/rampart hook") || strings.HasSuffix(cmd, "\\rampart hook") ||
-					strings.HasSuffix(cmd, "/rampart.exe hook") || strings.HasSuffix(cmd, "\\rampart.exe hook") ||
-					strings.Contains(cmd, "/rampart hook ") || strings.Contains(cmd, "\\rampart hook ") ||
-					strings.Contains(cmd, "/rampart.exe hook ") || strings.Contains(cmd, "\\rampart.exe hook ") {
+				if isRampartClaudeHookCommand(cmd) {
 					return true
 				}
 			}
 		}
 	}
 	return false
+}
+
+func isRampartClaudeHookCommand(command string) bool {
+	if hasRampartHookFormat(command, "claude-code") {
+		return true
+	}
+	// The original Claude integration used exactly `<rampart executable> hook`
+	// without a format flag. Keep that one historical form migratable.
+	return rampartExecutableRunsExactArgs(command, "hook")
+}
+
+func hasRampartHookFormat(command, format string) bool {
+	for _, current := range currentRampartHookCommands(format) {
+		if strings.TrimSpace(command) == strings.TrimSpace(current) {
+			return true
+		}
+	}
+	return rampartExecutableRunsExactArgs(command, "hook --format "+format)
+}
+
+func currentRampartHookCommands(format string) []string {
+	switch format {
+	case "claude-code":
+		return []string{currentClaudeHookCommand()}
+	case "codex":
+		command, commandWindows := currentCodexHookCommands()
+		return []string{command, commandWindows}
+	case "gemini":
+		return []string{currentGeminiHookCommand()}
+	case "antigravity":
+		return []string{currentAntigravityHookCommand()}
+	case "copilot":
+		bash, powershell := currentCopilotHookCommands()
+		return []string{bash, powershell}
+	default:
+		return nil
+	}
+}
+
+// rampartExecutableRunsExactArgs accepts only a single executable token whose
+// basename is rampart (or rampart.exe), followed by the exact historical args.
+// It intentionally rejects wrappers, extra flags, and arbitrary binaries that
+// merely implement Rampart's hook protocol.
+func rampartExecutableRunsExactArgs(command, args string) bool {
+	trimmed := strings.TrimSpace(command)
+	suffix := " " + args
+	if !strings.HasSuffix(trimmed, suffix) {
+		return false
+	}
+	executable := strings.TrimSpace(strings.TrimSuffix(trimmed, suffix))
+	if strings.HasPrefix(executable, "& ") {
+		executable = strings.TrimSpace(strings.TrimPrefix(executable, "& "))
+	}
+	quoted := false
+	if len(executable) >= 2 {
+		first, last := executable[0], executable[len(executable)-1]
+		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+			executable = executable[1 : len(executable)-1]
+			quoted = true
+		}
+	}
+	if executable == "" || strings.ContainsAny(executable, "\t\r\n\"'") || (!quoted && strings.Contains(executable, " ")) {
+		return false
+	}
+	normalized := strings.ReplaceAll(executable, "\\", "/")
+	if index := strings.LastIndex(normalized, "/"); index >= 0 {
+		normalized = normalized[index+1:]
+	}
+	base := strings.ToLower(normalized)
+	return base == "rampart" || base == "rampart.exe"
+}
+
+// removeRampartClaudeHookCommands removes only Rampart-owned command entries.
+// Claude settings may group multiple commands under one matcher; preserving
+// the matcher and its unrelated hooks avoids destructive upgrades/uninstalls.
+func removeRampartClaudeHookCommands(entries []any) ([]any, int) {
+	kept := make([]any, 0, len(entries))
+	removed := 0
+	for _, entry := range entries {
+		matcher, ok := entry.(map[string]any)
+		if !ok {
+			kept = append(kept, entry)
+			continue
+		}
+		hooks, ok := matcher["hooks"].([]any)
+		if !ok {
+			kept = append(kept, entry)
+			continue
+		}
+		remaining := make([]any, 0, len(hooks))
+		for _, rawHook := range hooks {
+			hook, ok := rawHook.(map[string]any)
+			command, _ := hook["command"].(string)
+			if ok && isRampartClaudeHookCommand(command) {
+				removed++
+				continue
+			}
+			remaining = append(remaining, rawHook)
+		}
+		if len(remaining) == len(hooks) {
+			kept = append(kept, entry)
+			continue
+		}
+		if len(remaining) > 0 {
+			copyMatcher := make(map[string]any, len(matcher))
+			for key, value := range matcher {
+				copyMatcher[key] = value
+			}
+			copyMatcher["hooks"] = remaining
+			kept = append(kept, copyMatcher)
+		}
+	}
+	return kept, removed
+}
+
+func claudeHooksUseCommand(settings claudeSettings, expected string) bool {
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+		entries, ok := hooks[event].([]any)
+		if !ok {
+			return false
+		}
+		owned := 0
+		for _, rawMatcher := range entries {
+			matcher, ok := rawMatcher.(map[string]any)
+			if !ok {
+				continue
+			}
+			rawHooks, _ := matcher["hooks"].([]any)
+			for _, rawHook := range rawHooks {
+				hook, ok := rawHook.(map[string]any)
+				if !ok {
+					continue
+				}
+				command, _ := hook["command"].(string)
+				if !isRampartClaudeHookCommand(command) {
+					continue
+				}
+				owned++
+				if command != expected || hook["type"] != "command" || matcher["matcher"] != ".*" {
+					return false
+				}
+			}
+		}
+		if owned != 1 {
+			return false
+		}
+	}
+	return true
 }

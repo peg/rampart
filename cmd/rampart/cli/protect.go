@@ -5,15 +5,17 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/filetxn"
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
@@ -196,19 +198,10 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 	if err != nil {
 		return fmt.Errorf("protect: find OpenClaw: %w", err)
 	}
-	_, configPath, err := resolveOpenClawStateDir(bin)
-	if err != nil {
-		return fmt.Errorf("protect: resolve OpenClaw config: %w", err)
-	}
-	changed, err := configureOpenClawGuardModeAtPath(configPath)
-	if err != nil {
+	if err := configureOpenClawGuardMode(bin, w, errW); err != nil {
 		return fmt.Errorf("protect: enable fail-closed OpenClaw guard mode: %w", err)
 	}
-	if changed {
-		fmt.Fprintln(w, "✓ Enabled fail-closed behavior when Rampart is unavailable")
-	} else {
-		fmt.Fprintln(w, "✓ Fail-closed degraded behavior is already enabled")
-	}
+	fmt.Fprintln(w, "✓ Enabled fail-closed behavior when Rampart is unavailable")
 
 	if !opts.NoRestart {
 		if err := restartOpenClawGateway(); err != nil {
@@ -251,12 +244,7 @@ func openClawPluginCurrent(state openClawPluginState) bool {
 		state.ManifestVersion != want || state.RuntimeVersion != want {
 		return false
 	}
-	installed, err := os.ReadFile(filepath.Join(state.Dir, "index.js"))
-	if err != nil {
-		return false
-	}
-	bundled, err := ocplugin.PluginFS.ReadFile("index.js")
-	return err == nil && bytes.Equal(installed, bundled)
+	return ocplugin.Current(state.Dir)
 }
 
 func installManagedGuardPolicy() (string, error) {
@@ -279,84 +267,65 @@ func installManagedGuardPolicy() (string, error) {
 	return dest, nil
 }
 
-func configureOpenClawGuardModeAtPath(configPath string) (bool, error) {
-	var cfg map[string]any
-	data, err := os.ReadFile(configPath)
-	if err == nil {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return false, fmt.Errorf("parse %s: %w", configPath, err)
+func configureOpenClawGuardMode(openclawBin string, w, errW io.Writer) error {
+	stateDir, configPath, err := resolveOpenClawStateDir(openclawBin)
+	if err != nil {
+		return fmt.Errorf("resolve active OpenClaw state: %w", err)
+	}
+	if err := setOpenClawExecAskAt(stateDir, configPath, "off"); err != nil {
+		return fmt.Errorf("repair tools.exec.ask ownership: %w", err)
+	}
+	if err := ensureOpenClawApprovalHardening(w, errW); err != nil {
+		return fmt.Errorf("repair OpenClaw approval timeout: %w", err)
+	}
+
+	const patch = `{"plugins":{"entries":{"rampart":{"enabled":true,"config":{"failOpen":false,"failOpenTools":null,"serveUrl":"http://localhost:9090"}}}}}`
+	var stdout, stderr bytes.Buffer
+	cmd := osexec.Command(openclawBin, "config", "patch", "--stdin")
+	cmd.Stdin = strings.NewReader(patch)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	patchErr := cmd.Run()
+	if patchErr == nil {
+		_, _ = io.Copy(w, &stdout)
+		_, _ = io.Copy(errW, &stderr)
+		return nil
+	}
+
+	// config patch is newer than Rampart's original OpenClaw host floor. Probe
+	// the command before falling back: a supported command that rejected the
+	// write (schema, Nix mode, permissions) must remain a hard failure.
+	if err := osexec.Command(openclawBin, "config", "patch", "--help").Run(); err == nil {
+		_, _ = io.Copy(w, &stdout)
+		_, _ = io.Copy(errW, &stderr)
+		return fmt.Errorf("OpenClaw config patch: %w", patchErr)
+	}
+
+	// Older supported hosts still provide path-based config set. Apply the
+	// fail-closed values before enablement. Each host-owned write is validated
+	// and include-aware; no Rampart whole-file rewrite is used.
+	legacyWrites := [][]string{
+		{"config", "set", "plugins.entries.rampart.config.failOpenTools", "[]", "--json"},
+		{"config", "set", "plugins.entries.rampart.config.failOpen", "false", "--json"},
+		{"config", "set", "plugins.entries.rampart.config.serveUrl", `"http://localhost:9090"`, "--json"},
+		{"config", "set", "plugins.entries.rampart.enabled", "true", "--json"},
+	}
+	for _, args := range legacyWrites {
+		legacyCmd := osexec.Command(openclawBin, args...)
+		legacyCmd.Stdout = w
+		legacyCmd.Stderr = errW
+		if err := legacyCmd.Run(); err != nil {
+			return fmt.Errorf("OpenClaw config patch unavailable (%v); fallback `%s` failed: %w", patchErr, strings.Join(args, " "), err)
 		}
-	} else if os.IsNotExist(err) {
-		cfg = make(map[string]any)
-	} else {
-		return false, fmt.Errorf("read %s: %w", configPath, err)
 	}
-
-	plugins, err := jsonObject(cfg, "plugins")
-	if err != nil {
-		return false, err
-	}
-	entries, err := jsonObject(plugins, "entries")
-	if err != nil {
-		return false, err
-	}
-	rampartEntry, err := jsonObject(entries, "rampart")
-	if err != nil {
-		return false, err
-	}
-	pluginConfig, err := jsonObject(rampartEntry, "config")
-	if err != nil {
-		return false, err
-	}
-
-	changed := false
-	if enabled, ok := rampartEntry["enabled"].(bool); !ok || !enabled {
-		rampartEntry["enabled"] = true
-		changed = true
-	}
-	if failOpen, ok := pluginConfig["failOpen"].(bool); !ok || failOpen {
-		pluginConfig["failOpen"] = false
-		changed = true
-	}
-	const managedServeURL = "http://localhost:9090"
-	if serveURL, ok := pluginConfig["serveUrl"].(string); !ok || serveURL != managedServeURL {
-		pluginConfig["serveUrl"] = managedServeURL
-		changed = true
-	}
-	if _, ok := pluginConfig["failOpenTools"]; ok {
-		delete(pluginConfig, "failOpenTools")
-		changed = true
-	}
-	if !changed {
-		return false, nil
-	}
-
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal %s: %w", configPath, err)
-	}
-	out = append(out, '\n')
-	if err := atomicWritePrivateFile(configPath, out); err != nil {
-		return false, fmt.Errorf("write %s: %w", configPath, err)
-	}
-	return true, nil
-}
-
-func jsonObject(parent map[string]any, key string) (map[string]any, error) {
-	value, ok := parent[key]
-	if !ok {
-		child := make(map[string]any)
-		parent[key] = child
-		return child, nil
-	}
-	child, ok := value.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must be a JSON object", key)
-	}
-	return child, nil
+	return nil
 }
 
 func atomicWritePrivateFile(path string, data []byte) error {
+	return atomicWritePrivateFileWithMode(path, data, 0o600)
+}
+
+func atomicWritePrivateFileWithMode(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
@@ -367,9 +336,9 @@ func atomicWritePrivateFile(path string, data []byte) error {
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
+	if err := secureFilePermissions(tmpPath); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure temporary file: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
@@ -382,7 +351,10 @@ func atomicWritePrivateFile(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return fmt.Errorf("set temporary file mode: %w", err)
+	}
+	if err := filetxn.Replace(tmpPath, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil

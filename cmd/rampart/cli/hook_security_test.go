@@ -161,6 +161,58 @@ func TestClineUnknownPreToolReturnsStructuredCancel(t *testing.T) {
 	}
 }
 
+func TestClaudeMalformedKnownPreToolReturnsStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	payload := `{"hook_event_name":"PreToolUse","session_id":"s","tool_use_id":"tool-1","tool_name":"Bash","tool_input":{}}`
+	stdout, stderr, hookErr := runHookWithStdin(
+		t,
+		&rootOptions{},
+		payload,
+		"--mode", "enforce",
+		"--audit-dir", filepath.Join(home, "audit"),
+	)
+	if hookErr != nil {
+		t.Fatalf("hook returned an ordinary host error: %v (stderr=%q)", hookErr, stderr)
+	}
+	var output hookOutput
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output = %q: %v", stdout, err)
+	}
+	if output.HookSpecificOutput == nil || output.HookSpecificOutput.PermissionDecision != "deny" ||
+		!strings.Contains(output.HookSpecificOutput.PermissionDecisionReason, "requires") {
+		t.Fatalf("output = %#v, want structured malformed-input deny", output)
+	}
+}
+
+func TestClineMalformedKnownPreToolReturnsStructuredCancel(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	payload := `{"clineVersion":"3.17.0","hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"execute_command","parameters":{}}}`
+	var stdout, stderr string
+	var hookErr error
+	captureStderr(t, func() {
+		stdout, stderr, hookErr = runHookWithStdin(
+			t,
+			&rootOptions{},
+			payload,
+			"--mode", "enforce",
+			"--format", "cline",
+			"--audit-dir", filepath.Join(home, "audit"),
+		)
+	})
+	if hookErr != nil {
+		t.Fatalf("hook returned an ordinary host error: %v (stderr=%q)", hookErr, stderr)
+	}
+	var output clineHookOutput
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output = %q: %v", stdout, err)
+	}
+	if !output.Cancel || !strings.Contains(output.ErrorMessage, "requires") {
+		t.Fatalf("output = %#v, want structured malformed-input cancel", output)
+	}
+}
+
 func TestClaudeUnknownPostToolBlocksAndRedactsResponse(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)

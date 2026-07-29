@@ -100,7 +100,9 @@ func resolveWatchServeConfig(cmd *cobra.Command, serveURL string) (string, strin
 		fmt.Fprintf(errW, "Note: using serve URL %s\n", resolvedURL)
 	}
 
-	if tok, source := resolveTokenValue(); tok != "" {
+	if tok, source, err := resolveTokenForEndpoint(resolvedURL, ""); err != nil {
+		return "", "", fmt.Errorf("watch: resolve serve credentials: %w", err)
+	} else if tok != "" {
 		resolvedToken = tok
 		if source == "file" {
 			fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")

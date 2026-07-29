@@ -119,6 +119,20 @@ func TestFilterEventsByTime(t *testing.T) {
 	}
 }
 
+func TestPrepareReportDataClassifiesCurrentDecisionAliases(t *testing.T) {
+	now := time.Now().UTC()
+	data, err := prepareReportData([]audit.Event{
+		{Timestamp: now, Decision: audit.EventDecision{Action: "watch"}},
+		{Timestamp: now, Decision: audit.EventDecision{Action: "require_approval"}},
+	}, now.Add(-time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.LoggedEvents != 1 || data.AskEvents != 1 {
+		t.Fatalf("report aliases: logged=%d ask=%d, want 1/1", data.LoggedEvents, data.AskEvents)
+	}
+}
+
 func TestPrepareTopCommands(t *testing.T) {
 	counts := map[string]int{
 		"rm -rf /":        5,

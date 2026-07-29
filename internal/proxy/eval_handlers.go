@@ -27,26 +27,12 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = map[string]any{}
 	}
-	promoteTopLevelParams(&req)
-
 	toolName := r.PathValue("toolName")
-	decision := engine.Decision{}
-
-	// Enrich params with derived fields for policy matching.
-	// Also enrich the input map so MCP-style {"input":{"url":"..."}} requests
-	// have domain/scheme/path available for domain_matches policies.
-	enrichParams(toolName, req.Params)
-	if len(req.Input) > 0 {
-		enrichParams(toolName, req.Input)
-		// Promote enriched fields from input into params so the engine sees them.
-		for _, field := range []string{"url", "domain", "scheme", "path", "command"} {
-			if v, ok := req.Input[field]; ok {
-				if _, exists := req.Params[field]; !exists {
-					req.Params[field] = v
-				}
-			}
-		}
+	if err := prepareToolRequest(toolName, &req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid tool input: %v", err))
+		return
 	}
+	decision := engine.Decision{}
 
 	// Per-agent tokens override the agent identity from the request.
 	// This prevents an agent from impersonating another agent.
@@ -66,6 +52,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		RunID:      req.RunID,
 		ToolCallID: req.ToolCallID,
 		Tool:       toolName,
+		WorkDir:    requestWorkingDirectory(req),
 		Params:     req.Params,
 		Input:      extractToolInput(toolName, req.Params, req.Input),
 		Timestamp:  time.Now().UTC(),
@@ -107,7 +94,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		}
 		RecordDecision(decision.Action.String(), policy, decision.EvalDuration)
 		SetPendingApprovals(len(s.approvals.List()))
-		SetPolicyCount(s.engine.PolicyCount())
+		policyCount := 0
+		if s.engine != nil {
+			policyCount = s.engine.PolicyCount()
+		}
+		SetPolicyCount(policyCount)
 		SetUptime(time.Since(s.startedAt))
 	}
 
@@ -137,6 +128,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp["suggestions"] = []string{}
 	}
+	// Monitor mode is observational at an actual tool boundary. Preserve the
+	// policy result explicitly, but return an effective allow so adapters do not
+	// accidentally enforce a deny/ask/webhook decision while the service is
+	// configured to block nothing.
+	s.applyMonitorToolDecision(resp, decision)
 
 	if s.mode == "enforce" && decision.Action == engine.ActionDeny {
 		writeJSON(w, http.StatusForbidden, resp)
@@ -145,6 +141,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	if s.mode == "enforce" && decision.Action == engine.ActionWebhook {
 		webhookDecision := s.executeWebhookAction(call, decision)
+		resp["allowed"] = webhookDecision.Action == engine.ActionAllow || webhookDecision.Action == engine.ActionWatch
 		resp["decision"] = webhookDecision.Action.String()
 		resp["message"] = webhookDecision.Message
 
@@ -155,6 +152,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		}
 		if webhookAuditID != "" {
 			auditID = webhookAuditID
+			resp["audit_id"] = webhookAuditID
 		}
 
 		if webhookDecision.Action == engine.ActionDeny {
@@ -211,22 +209,51 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 
-		// Check if this run has been bulk-approved (auto-approve cache).
-		if call.RunID != "" && s.approvals.IsAutoApproved(call.RunID) {
-			s.logger.Debug("proxy: run auto-approved, bypassing approval queue", "tool", toolName, "run_id", call.RunID)
+		// An individually approved call may resume exactly once, but only when
+		// the host retries the identical run_id/tool_call_id and payload. The
+		// approval store atomically consumes the fingerprint-bound grant before
+		// this request is reported as allowed.
+		approved, consumed, consumeErr := s.approvals.ConsumeApproved(call)
+		if consumeErr != nil {
+			s.logger.Error("proxy: exact approval replay unavailable", "tool", toolName, "run_id", call.RunID, "tool_call_id", call.ToolCallID, "error", consumeErr)
+			writeError(w, http.StatusServiceUnavailable, "approval state is unavailable; refusing tool call")
+			return
+		}
+		if consumed {
 			decision.Action = engine.ActionAllow
-			decision.Message = "auto-approved by bulk-resolve"
-			decision.MatchedPolicies = []string{"auto-approved"}
+			decision.Message = "approved once via Rampart approval"
+			resp["allowed"] = true
 			resp["decision"] = decision.Action.String()
 			resp["message"] = decision.Message
-			resp["policy"] = "auto-approved"
-			finalAuditID, err := s.writeAudit(req, toolName, decision)
-			if err != nil && s.mode == "enforce" {
+			resp["approval_id"] = approved.ID
+			resp["approval_status"] = "approved"
+			resp["approval_scope"] = "once"
+			resp["approval_resolved_by"] = approved.ResolvedBy
+			if auditID != "" {
+				resp["approval_policy_audit_id"] = auditID
+			}
+
+			auditRequest := make(map[string]any, len(req.Params)+5)
+			for key, value := range req.Params {
+				auditRequest[key] = value
+			}
+			auditRequest["approval_id"] = approved.ID
+			auditRequest["approval_status"] = "approved"
+			auditRequest["approval_scope"] = "once"
+			auditRequest["approval_resolved_by"] = approved.ResolvedBy
+			if auditID != "" {
+				auditRequest["approval_policy_audit_id"] = auditID
+			}
+			finalAuditID, err := s.writeAuditRecord(req, toolName, decision, auditRequest, nil)
+			if err != nil {
 				writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool call")
 				return
 			}
+			if finalAuditID != "" {
+				resp["audit_id"] = finalAuditID
+			}
 			blocked, responseAuditErr := s.evaluateAndAuditResponse(req, call, toolName, resp, finalAuditID)
-			if responseAuditErr != nil && s.mode == "enforce" {
+			if responseAuditErr != nil {
 				writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool response")
 				return
 			}
@@ -238,10 +265,42 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		pending, err := s.approvals.Create(call, decision)
-		if err != nil {
-			s.logger.Error("proxy: approval store full", "error", err)
-			writeError(w, http.StatusServiceUnavailable, err.Error())
+		// Check run-scoped authorization and enqueue atomically. This prevents a
+		// bulk cache publication from racing a stale check and leaving an orphan
+		// pending approval for a call that should have been auto-approved.
+		pending, autoApproved, createErr := s.approvals.CreateOrAutoApproved(call, decision)
+		if createErr != nil {
+			s.logger.Error("proxy: approval store full", "error", createErr)
+			writeError(w, http.StatusServiceUnavailable, createErr.Error())
+			return
+		}
+		if autoApproved {
+			s.logger.Debug("proxy: run auto-approved, bypassing approval queue", "tool", toolName, "run_id", call.RunID)
+			decision.Action = engine.ActionAllow
+			decision.Message = "auto-approved by bulk-resolve"
+			decision.MatchedPolicies = []string{"auto-approved"}
+			resp["allowed"] = true
+			resp["decision"] = decision.Action.String()
+			resp["message"] = decision.Message
+			resp["policy"] = "auto-approved"
+			finalAuditID, err := s.writeAudit(req, toolName, decision)
+			if err != nil && s.mode == "enforce" {
+				writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool call")
+				return
+			}
+			if finalAuditID != "" {
+				resp["audit_id"] = finalAuditID
+			}
+			blocked, responseAuditErr := s.evaluateAndAuditResponse(req, call, toolName, resp, finalAuditID)
+			if responseAuditErr != nil && s.mode == "enforce" {
+				writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool response")
+				return
+			}
+			if blocked {
+				writeJSON(w, http.StatusOK, resp)
+				return
+			}
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 		s.broadcastSSE(map[string]any{"type": "approvals"})
@@ -277,6 +336,25 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) applyMonitorToolDecision(resp map[string]any, decision engine.Decision) {
+	if s.mode != "monitor" {
+		return
+	}
+	resp["enforced"] = false
+	resp["policy_decision"] = decision.Action.String()
+	resp["policy_message"] = decision.Message
+	resp["allowed"] = true
+	if decision.Action == engine.ActionAllow || decision.Action == engine.ActionWatch {
+		return
+	}
+	resp["decision"] = engine.ActionAllow.String()
+	if decision.Message == "" {
+		resp["message"] = fmt.Sprintf("monitor mode observed %s; action allowed", decision.Action.String())
+	} else {
+		resp["message"] = fmt.Sprintf("monitor mode observed %s; action allowed: %s", decision.Action.String(), decision.Message)
+	}
+}
+
 func (s *Server) evaluateAndAuditResponse(
 	req toolRequest,
 	call engine.ToolCall,
@@ -306,7 +384,19 @@ func (s *Server) applyResponseEvaluation(
 	if result.Action != engine.ActionDeny {
 		return false, &result
 	}
+	if s.mode == "monitor" {
+		resp["allowed"] = true
+		resp["enforced"] = false
+		resp["response_policy_decision"] = result.Action.String()
+		resp["response_policy_message"] = result.Message
+		resp["response_eval_duration_us"] = result.EvalDuration.Microseconds()
+		if len(result.MatchedPolicies) > 0 {
+			resp["response_policy"] = result.MatchedPolicies[0]
+		}
+		return false, &result
+	}
 
+	resp["allowed"] = false
 	resp["decision"] = result.Action.String()
 	resp["message"] = result.Message
 	resp["eval_duration_us"] = result.EvalDuration.Microseconds()
@@ -341,7 +431,11 @@ func (s *Server) writeResponseAudit(
 
 	flags := []string{"response-evaluated"}
 	if decision.Action == engine.ActionDeny {
-		flags = append(flags, "response-redacted")
+		if s.mode == "enforce" {
+			flags = append(flags, "response-redacted")
+		} else {
+			flags = append(flags, "response-observed-deny")
+		}
 	}
 	return s.writeAuditRecord(req, toolName, decision, request, &audit.ToolResponse{Flags: flags})
 }
@@ -469,7 +563,6 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = map[string]any{}
 	}
-	promoteTopLevelParams(&req)
 
 	// Override agent from token identity (prevent impersonation via preflight).
 	if !identity.IsAdmin && identity.Agent != "" {
@@ -485,16 +578,22 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	}
 
 	toolName := r.PathValue("toolName")
-	enrichParams(toolName, req.Params)
+	if err := prepareToolRequest(toolName, &req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid tool input: %v", err))
+		return
+	}
 
 	call := engine.ToolCall{
-		ID:        audit.NewEventID(),
-		Agent:     req.Agent,
-		Session:   req.Session,
-		Tool:      toolName,
-		Params:    req.Params,
-		Input:     extractToolInput(toolName, req.Params, req.Input),
-		Timestamp: time.Now().UTC(),
+		ID:         audit.NewEventID(),
+		Agent:      req.Agent,
+		Session:    req.Session,
+		RunID:      req.RunID,
+		ToolCallID: req.ToolCallID,
+		Tool:       toolName,
+		WorkDir:    requestWorkingDirectory(req),
+		Params:     req.Params,
+		Input:      extractToolInput(toolName, req.Params, req.Input),
+		Timestamp:  time.Now().UTC(),
 	}
 
 	// Apply same policy scoping as handleToolCall.
@@ -526,13 +625,31 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	effectiveAllowed := allowed
+	effectiveDecision := decision.Action.String()
+	effectiveMessage := decision.Message
+	effectiveEnforcement := req.Enforce && s.mode == "enforce"
 	preflightResp := map[string]any{
-		"allowed":          allowed,
-		"decision":         decision.Action.String(),
-		"message":          decision.Message,
-		"matched_policies": decision.MatchedPolicies,
-		"eval_duration_us": decision.EvalDuration.Microseconds(),
-		"enforced":         req.Enforce,
+		"allowed":               effectiveAllowed,
+		"decision":              effectiveDecision,
+		"message":               effectiveMessage,
+		"matched_policies":      decision.MatchedPolicies,
+		"eval_duration_us":      decision.EvalDuration.Microseconds(),
+		"enforced":              effectiveEnforcement,
+		"enforcement_requested": req.Enforce,
+	}
+	if req.Enforce && s.mode == "monitor" {
+		preflightResp["policy_decision"] = decision.Action.String()
+		preflightResp["policy_message"] = decision.Message
+		preflightResp["allowed"] = true
+		if !allowed {
+			preflightResp["decision"] = engine.ActionAllow.String()
+			if decision.Message == "" {
+				preflightResp["message"] = fmt.Sprintf("monitor mode observed %s; action allowed", decision.Action.String())
+			} else {
+				preflightResp["message"] = fmt.Sprintf("monitor mode observed %s; action allowed: %s", decision.Action.String(), decision.Message)
+			}
+		}
 	}
 	if auditID != "" {
 		preflightResp["audit_id"] = auditID
@@ -684,6 +801,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	uptime := int(time.Since(s.startedAt).Seconds())
 	writeJSON(w, http.StatusOK, map[string]any{
+		"service":        "rampart",
 		"status":         "ok",
 		"mode":           s.mode,
 		"uptime_seconds": uptime,

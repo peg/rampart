@@ -45,7 +45,7 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 └─────────────────────────────────────────────┘
 ```
 
-Policy files are the security boundary. If an attacker can modify policy files, Rampart's guarantees do not hold. This is why [user separation](../deployment/production-checklist.md) is recommended for production.
+Policy files are part of the security boundary. If an attacker can modify the active policy, Rampart's guarantees do not hold. Protect production policy with OS ownership/ACLs that the agent user cannot modify. A [separate service user](../deployment/user-separation.md) can help in centralized HTTP/SDK deployments, but is not a drop-in topology for same-user native hooks.
 
 ## Known Limitations
 
@@ -67,22 +67,23 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 The hash-chained audit trail detects **partial tampering**. Editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
 
 **Mitigations:**
-- Run `rampart serve` as a [separate user](../deployment/production-checklist.md) so the agent can't access audit files
+- In centralized HTTP/SDK deployments, run `rampart serve` as a [separate user](../deployment/user-separation.md) so the agent cannot access service-owned audit files; native hooks write in the host user's context and need an external SIEM for an independent boundary
 - Enable SIEM export (`--syslog` or `--cef`) to send events to an external immutable system
 - Webhook notifications send real-time alerts to Discord/Slack as a separate record
 - External chain anchors every 100 events provide additional integrity checkpoints
 
 **For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](../features/siem-integration.md).
 
-### 3. Token Exposure in Wrap Mode
+### 3. Wrap-Mode Token Boundary
 
-The `rampart wrap` shim needs a bearer token to authenticate with `rampart serve`. The token is stored in a `0600` file (not embedded in the shim script). However, the agent user can still read this file.
+`rampart wrap` starts an ephemeral loopback policy service and gives its shell shims a bearer token in a `0600` temporary file. The wrapped process runs as the same OS user and can read that file. The token prevents accidental access by unrelated users; it is not a sandbox boundary against an adversarial process running as the agent user.
 
 **Mitigations:**
-- Run `rampart serve` as a separate user and store the token in that user's home directory with restricted permissions
-- Use native hooks (`rampart setup claude-code`) instead of wrap mode because hooks do not require a token file
+- Use wrap mode for accidental/misbehaving-agent risk, not as containment for hostile same-user code
+- Prefer a native integration when one exists, and pair either mode with OS sandboxing for adversarial workloads
+- The temporary token and shim are removed when the wrapped process exits
 
-**Resolution:** Use [user separation](../deployment/production-checklist.md) for production deployments, or prefer native hooks which don't require a token file.
+**Resolution:** Treat the wrapped process and its ephemeral policy capability as one trust domain. Use a VM/container/sandbox when the process itself is hostile.
 
 ### 4. Encoding and Obfuscation
 
@@ -123,7 +124,8 @@ OpenClaw has a native plugin path, which is the preferred integration. Rampart k
 Rampart does **not** behave identically across every integration when policy evaluation becomes unavailable. That difference is a real security boundary and has to be understood clearly.
 
 **Current behavior:**
-- `rampart wrap` and `rampart preload` default to **fail-open**. If `rampart serve` is unreachable, commands continue without policy checks unless you configure fail-closed behavior.
+- `rampart wrap --mode enforce` blocks when its local evaluator is unavailable or returns an invalid/non-enforced response. `--mode monitor` warns and allows by design.
+- Standalone `rampart preload` defaults to fail-open for compatibility; use `--fail-open=false` when availability must not override enforcement.
 - The native OpenClaw plugin supports per-tool degraded behavior. A manual plugin setup keeps explicitly configured lower-risk tools fail-open by default; `rampart protect openclaw` removes those exceptions and configures every tool to fail closed.
 - Native hook integrations (Claude Code, Codex, Cline) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path. Codex approval-required actions still need the external Rampart queue and deny if it is unavailable.
 

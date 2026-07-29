@@ -265,7 +265,8 @@ func TestUpgradeRefreshesPoliciesAfterInstallingNewBinary(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
+		validateCandidate:    acceptUpgradeCandidate,
 		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
 			if strings.HasSuffix(url, "checksums.txt") {
 				return checksums, nil
@@ -305,16 +306,12 @@ func TestUpgradeRefreshesPoliciesAfterInstallingNewBinary(t *testing.T) {
 	}
 }
 
-func TestFixStalePathCopiesDoesNotReplaceHomebrewBinary(t *testing.T) {
+func TestWarnAboutPathCopiesDoesNotReplaceHomebrewBinary(t *testing.T) {
 	skipOnWindows(t, "Homebrew path layout is Unix-specific")
 	dir := t.TempDir()
 	installed := filepath.Join(dir, "rampart")
 	if err := os.WriteFile(installed, []byte("current"), 0o755); err != nil {
 		t.Fatalf("write installed binary: %v", err)
-	}
-	installedInfo, err := os.Stat(installed)
-	if err != nil {
-		t.Fatalf("stat installed binary: %v", err)
 	}
 	link := filepath.Join(dir, "homebrew-link")
 	if err := os.Symlink(installed, link); err != nil {
@@ -327,13 +324,6 @@ func TestFixStalePathCopiesDoesNotReplaceHomebrewBinary(t *testing.T) {
 	candidate := "/usr/local/bin/rampart"
 	deps := defaultUpgradeDeps()
 	deps.pathEnv = func() string { return "/usr/local/bin" }
-	deps.stat = func(path string) (os.FileInfo, error) {
-		if path == installed {
-			return installedInfo, nil
-		}
-		t.Fatalf("package-managed candidate reached mutation stat: %s", path)
-		return nil, os.ErrNotExist
-	}
 	deps.lstat = func(path string) (os.FileInfo, error) {
 		if path != candidate {
 			t.Fatalf("unexpected lstat path: %s", path)
@@ -348,9 +338,45 @@ func TestFixStalePathCopiesDoesNotReplaceHomebrewBinary(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	fixStalePathCopies(&out, installed, deps)
+	warnAboutPathCopies(&out, installed, deps)
 	if !strings.Contains(out.String(), "left package-managed rampart unchanged") {
 		t.Fatalf("missing package-manager preservation notice: %q", out.String())
+	}
+}
+
+func TestWarnAboutPathCopiesLeavesUnownedBinaryUntouched(t *testing.T) {
+	dir := t.TempDir()
+	installedDir := filepath.Join(dir, "installed")
+	shadowDir := filepath.Join(dir, "shadow")
+	if err := os.MkdirAll(installedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(shadowDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	installed := filepath.Join(installedDir, "rampart")
+	shadow := filepath.Join(shadowDir, "rampart")
+	if err := os.WriteFile(installed, []byte("current"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shadow, []byte("operator-owned"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := defaultUpgradeDeps()
+	deps.pathEnv = func() string { return shadowDir }
+	var out bytes.Buffer
+	warnAboutPathCopies(&out, installed, deps)
+
+	got, err := os.ReadFile(shadow)
+	if err != nil {
+		t.Fatalf("shadow binary was removed: %v", err)
+	}
+	if string(got) != "operator-owned" {
+		t.Fatalf("shadow binary was changed: %q", got)
+	}
+	if !strings.Contains(out.String(), "left unchanged because ownership is unproven") {
+		t.Fatalf("missing ownership warning: %q", out.String())
 	}
 }
 

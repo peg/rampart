@@ -57,7 +57,7 @@ HTTP server that accepts tool calls, evaluates them, and returns decisions. Bear
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /v1/tool/{name}` | Evaluate and execute |
+| `POST /v1/tool/{name}` | Evaluate a host-owned tool call |
 | `POST /v1/preflight/{name}` | Policy preview, or host-owned execution check with `enforce: true` |
 | `GET /v1/approvals` | Pending approvals |
 | `POST /v1/approvals/{id}/resolve` | Approve/deny |
@@ -106,7 +106,9 @@ not install a misleading post-result scanner.
 approval-event bridge hosted by `rampart serve`. Current releases should use the
 native plugin installed by `rampart protect openclaw`.
 
-**SDK** (`pkg/sdk/`) — Embed the engine directly in Go code. Zero network overhead, nanosecond evaluation. Best for: Go agents, performance-critical paths.
+**SDK** (`pkg/sdk/`) — Embed the engine directly in Go code. This avoids network
+overhead and keeps policy evaluation in-process. Best for: Go agents and
+latency-sensitive paths.
 
 ## Policy Profiles
 

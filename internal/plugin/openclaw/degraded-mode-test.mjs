@@ -93,9 +93,28 @@ const serverErrorReadWithStrictConfig = await runScenario({
 });
 assert(serverErrorReadWithStrictConfig.result?.block === true, 'read should block when failOpenTools is empty');
 
+const clientErrorRead = await runScenario({
+  name: 'client-error-read-explicit-fail-open',
+  toolName: 'read',
+  pluginConfig: { failOpenTools: ['read'] },
+  fetchImpl: async () => ({ ok: false, status: 400 }),
+});
+assert(clientErrorRead.result?.block === true, 'client errors must never become configured fail-open');
+
+const manualRedirectRead = await runScenario({
+  name: 'manual-redirect-read-explicit-fail-open',
+  toolName: 'read',
+  pluginConfig: { failOpenTools: ['read'] },
+  fetchImpl: async () => ({ ok: false, status: 307 }),
+});
+assert(manualRedirectRead.result?.block === true, 'redirect responses must never become configured fail-open');
+
 for (const [name, payload] of [
   ['empty-object-response', {}],
   ['array-response', []],
+  ['missing-allowed-response', { decision: 'allow' }],
+  ['contradictory-allow-response', { decision: 'allow', allowed: false }],
+  ['contradictory-deny-response', { decision: 'deny', allowed: true }],
   ['unknown-decision', { decision: 'maybe', allowed: true }],
 ]) {
   const scenario = await runScenario({
@@ -107,6 +126,48 @@ for (const [name, payload] of [
   assert(scenario.result?.block === true, `${name} must fail closed`);
 }
 
+const redirectRead = await runScenario({
+  name: 'redirect-read-explicit-fail-open',
+  toolName: 'read',
+  pluginConfig: { failOpenTools: ['read'] },
+  fetchImpl: async () => {
+    throw new TypeError('fetch failed', { cause: new Error('unexpected redirect') });
+  },
+});
+assert(redirectRead.result?.block === true, 'redirect refusal must not become configured fail-open');
+
+const oversizedResponse = await runScenario({
+  name: 'oversized-response',
+  toolName: 'read',
+  pluginConfig: { failOpenTools: ['read'] },
+  fetchImpl: async () => new Response('x'.repeat(1024 * 1024 + 1), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }),
+});
+assert(oversizedResponse.result?.block === true, 'oversized response must fail closed');
+
+const slowBody = await runScenario({
+  name: 'slow-response-body',
+  toolName: 'exec',
+  pluginConfig: { timeoutMs: 5 },
+  fetchImpl: async (_url, opts) => new Response(new ReadableStream({
+    start(controller) {
+      const delayed = setTimeout(() => {
+        controller.enqueue(new TextEncoder().encode('{"decision":"allow","allowed":true}'));
+        controller.close();
+      }, 50);
+      opts.signal.addEventListener('abort', () => {
+        clearTimeout(delayed);
+        const error = new Error('response body aborted');
+        error.name = 'AbortError';
+        controller.error(error);
+      }, { once: true });
+    },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+});
+assert(slowBody.result?.block === true, 'timeout must cover the complete response body');
+
 const untrustedServeUrl = await runScenario({
   name: 'untrusted-serve-url',
   toolName: 'exec',
@@ -115,4 +176,19 @@ const untrustedServeUrl = await runScenario({
 });
 assert(untrustedServeUrl.result?.block === true, 'untrusted serveUrl must fail closed');
 
-console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read-explicit-fail-open', 'unreachable-read-default-closed', 'server-error-write', 'timeout-edit', 'server-error-read-strict', 'empty-object-response', 'array-response', 'unknown-decision', 'untrusted-serve-url'] }, null, 2));
+for (const serveUrl of [
+  'http://user:password@localhost:9090',
+  'http://localhost:9090?redirect=https://example.invalid',
+  'http://localhost:9090/control',
+]) {
+  const scenario = await runScenario({
+    name: `unsafe-local-url-${serveUrl}`,
+    toolName: 'exec',
+    pluginConfig: { serveUrl, failOpen: false },
+    fetchImpl: async () => { throw new Error('unsafe URL must not be fetched'); },
+  });
+  assert(scenario.result?.block === true, `${serveUrl} must fail closed`);
+  assert(!JSON.stringify(scenario.logs).includes('password'), 'unsafe serveUrl credentials must not reach logs');
+}
+
+console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read-explicit-fail-open', 'unreachable-read-default-closed', 'server-error-write', 'timeout-edit', 'server-error-read-strict', 'client-error-read-explicit-fail-open', 'manual-redirect-read-explicit-fail-open', 'empty-object-response', 'array-response', 'missing-allowed-response', 'contradictory-allow-response', 'contradictory-deny-response', 'unknown-decision', 'redirect-read-explicit-fail-open', 'oversized-response', 'slow-response-body', 'untrusted-serve-url'] }, null, 2));

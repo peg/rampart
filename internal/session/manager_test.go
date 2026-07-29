@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -383,6 +384,25 @@ func TestCleanup_IgnoresNonJSONFiles(t *testing.T) {
 
 	if _, err := os.Stat(txtPath); err != nil {
 		t.Errorf("notes.txt should not have been touched: %v", err)
+	}
+}
+
+func TestStateReadRejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not consistently available on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte(`{"session_id":"linked"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "linked.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(dir, "linked", nil)
+	if _, err := m.PeekAsk("tool-use"); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+		t.Fatalf("PeekAsk symlink error = %v, want non-symlink rejection", err)
 	}
 }
 

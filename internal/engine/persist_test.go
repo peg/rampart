@@ -130,6 +130,83 @@ func TestGenerateAllowRuleRejectsEmptyAuthority(t *testing.T) {
 	}
 }
 
+func TestGenerateAllowRuleRejectsExactPatternExpansionPastGlobLimit(t *testing.T) {
+	// The literal input itself fits the enforcement input bound, but escaping
+	// each wildcard triples its size. Persisting this used to write a policy
+	// that the engine could never load again.
+	command := strings.Repeat("*", 3000)
+	_, err := GenerateAllowRule(ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": command},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be represented safely")
+	assert.Contains(t, err.Error(), "max 8192")
+
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	err = AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": command},
+	})
+	require.Error(t, err)
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr), "invalid generated rule must not create a poison policy file")
+}
+
+func TestGenerateAllowRuleSameSecondPrefixCollisionGetsStableHashSuffix(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 12, 34, 56, 0, time.UTC)
+	first, err := generateAllowRuleAt(ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "git push origin/main"},
+	}, now)
+	require.NoError(t, err)
+	second, err := generateAllowRuleAt(ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "git push upstream/main"},
+	}, now)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first.Name, second.Name)
+	assert.Contains(t, first.Name, "auto-allow-git-push-20260728T123456Z-")
+	assert.Contains(t, second.Name, "auto-allow-git-push-20260728T123456Z-")
+
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	require.NoError(t, appendAllowRuleLocked(path, first))
+	require.NoError(t, appendAllowRuleLocked(path, second))
+	loaded, err := NewFileStore(path).Load()
+	require.NoError(t, err)
+	require.Len(t, loaded.Policies, 2)
+}
+
+func TestAppendAllowRuleRejectsPoisonFileTransactionally(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	poisoned := []byte(`version: "1"
+default_action: deny
+policies:
+  - name: duplicate
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when: {command_matches: ["echo one"]}
+  - name: duplicate
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when: {command_matches: ["echo two"]}
+`)
+	require.NoError(t, os.WriteFile(path, poisoned, 0o600))
+
+	err := AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo three"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate policy name")
+	after, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	assert.Equal(t, poisoned, after, "failed merge must leave the existing policy byte-for-byte unchanged")
+}
+
 func TestAppendAllowRuleIsExactByDefault(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -231,6 +308,41 @@ func TestAppendAllowRule(t *testing.T) {
 	if err := cfg2.validate(); err != nil {
 		t.Fatalf("generated config fails validation: %v", err)
 	}
+}
+
+func TestRemoveAllowRuleUpdatesAndDeletesPolicyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	require.NoError(t, AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo first"},
+	}))
+	require.NoError(t, AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo second"},
+	}))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var cfg Config
+	require.NoError(t, yaml.Unmarshal(data, &cfg))
+	require.Len(t, cfg.Policies, 2)
+
+	removed, remaining, err := RemoveAllowRule(path, cfg.Policies[0].Name)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.Equal(t, 1, remaining)
+
+	removed, remaining, err = RemoveAllowRule(path, "missing")
+	require.NoError(t, err)
+	assert.False(t, removed)
+	assert.Equal(t, 1, remaining)
+
+	removed, remaining, err = RemoveAllowRule(path, cfg.Policies[1].Name)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.Zero(t, remaining)
+	_, err = os.Stat(path)
+	assert.True(t, os.IsNotExist(err))
 }
 
 func TestAppendAllowRuleConcurrentWritersDoNotLoseUpdates(t *testing.T) {

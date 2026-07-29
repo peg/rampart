@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/peg/rampart/internal/engine"
 )
 
 // decodeJSONBody accepts exactly one JSON value plus optional trailing
@@ -76,21 +78,167 @@ func extractToolInput(toolName string, params map[string]any, explicitInput map[
 	return params
 }
 
-// promoteTopLevelParams copies convenience fields (command, path) from the
-// top-level request into Params when they aren't already present. This allows
-// callers to use the flat form {"command":"rm -rf /"} instead of the nested
-// form {"params":{"command":"rm -rf /"}}.
-func promoteTopLevelParams(req *toolRequest) {
-	if req.Command != "" {
-		if _, exists := req.Params["command"]; !exists {
-			req.Params["command"] = req.Command
+// toolInputMaps returns every representation a supported host can use for
+// security-sensitive tool arguments. extractToolInput deliberately chooses one
+// preferred view for policy matching, but validation must consider all views:
+// otherwise a caller could put a benign value in the preferred map and a
+// different value in a nested arguments/tool_input map consumed by the host.
+func toolInputMaps(params map[string]any, explicitInput map[string]any) []map[string]any {
+	maps := []map[string]any{params}
+	if explicitInput != nil {
+		maps = append(maps, explicitInput)
+	}
+	for _, key := range []string{"arguments", "tool_input"} {
+		if nested, ok := params[key].(map[string]any); ok && nested != nil {
+			maps = append(maps, nested)
 		}
 	}
-	if req.Path != "" {
-		if _, exists := req.Params["path"]; !exists {
-			req.Params["path"] = req.Path
+	return maps
+}
+
+// prepareToolRequest canonicalizes security-sensitive aliases before policy
+// evaluation. Requests may use legacy params, MCP-style input, or top-level
+// convenience fields, but distinct non-empty values are ambiguous and must be
+// rejected rather than resolved by precedence.
+func prepareToolRequest(toolName string, req *toolRequest) error {
+	if req.Params == nil {
+		req.Params = map[string]any{}
+	}
+	input := extractToolInput(toolName, req.Params, req.Input)
+	maps := toolInputMaps(req.Params, req.Input)
+
+	commandKeys := []string{"command"}
+	commandInitial := []string{req.Command}
+	if toolName == "exec" {
+		commandKeys = append(commandKeys, "cmd", "input")
+		for _, values := range maps {
+			encoded, exists := values["command_b64"]
+			if !exists || encoded == nil || strings.TrimSpace(fmt.Sprint(encoded)) == "" {
+				continue
+			}
+			if _, ok := encoded.(string); !ok {
+				return fmt.Errorf("command_b64 must be a string")
+			}
+			decoded, ok := decodeBase64Command(values)
+			if !ok {
+				return fmt.Errorf("command_b64 must be valid bounded base64")
+			}
+			commandInitial = append(commandInitial, decoded)
 		}
 	}
+	command, err := canonicalStringAliases("command", commandInitial, maps, commandKeys...)
+	if err != nil {
+		return err
+	}
+
+	pathKeys := []string{"path", "file_path"}
+	switch toolName {
+	case "read", "write", "edit", "mcp-destructive":
+		pathKeys = append(pathKeys, "file", "filepath", "target")
+	}
+	path, err := canonicalStringAliases("path", []string{req.Path}, maps, pathKeys...)
+	if err != nil {
+		return err
+	}
+	workDir, err := canonicalStringAliases("working directory", []string{req.WorkDir, req.CWD}, maps, "workdir", "cwd")
+	if err != nil {
+		return err
+	}
+
+	urlKeys := []string{"url"}
+	switch toolName {
+	case "fetch", "http", "web_fetch", "browser":
+		urlKeys = append(urlKeys, "uri", "href")
+	}
+	rawURL, err := canonicalStringAliases("url", []string{req.URL}, maps, urlKeys...)
+	if err != nil {
+		return err
+	}
+	for _, field := range []string{"domain", "scheme"} {
+		if _, err := canonicalStringAliases(field, nil, maps, field); err != nil {
+			return err
+		}
+	}
+
+	for _, values := range maps {
+		delete(values, "command_effective")
+		if command != "" {
+			values["command"] = command
+		}
+		if path != "" {
+			values["path"] = path
+		}
+		if workDir != "" {
+			values["workdir"] = workDir
+		}
+		if rawURL != "" {
+			values["url"] = rawURL
+			// Domain and scheme are derived data. Never retain caller-supplied
+			// decoys when a URL is available.
+			delete(values, "domain")
+			delete(values, "scheme")
+		}
+		enrichParams(toolName, values)
+	}
+
+	// Keep the legacy Params view complete for audit and policy consumers while
+	// retaining the original structured input for exact replay fingerprints.
+	for _, field := range []string{"url", "domain", "scheme", "path", "command", "workdir"} {
+		if value, ok := input[field]; ok {
+			if _, exists := req.Params[field]; !exists {
+				req.Params[field] = value
+			}
+		}
+	}
+	return nil
+}
+
+func canonicalStringAliases(field string, initial []string, maps []map[string]any, keys ...string) (string, error) {
+	values := make(map[string]struct{}, len(initial)+len(maps)*len(keys))
+	selected := ""
+	add := func(value string) {
+		if strings.TrimSpace(value) == "" {
+			return
+		}
+		if selected == "" {
+			selected = value
+		}
+		values[value] = struct{}{}
+	}
+	for _, value := range initial {
+		add(value)
+	}
+	for _, valuesMap := range maps {
+		for _, key := range keys {
+			value, exists := valuesMap[key]
+			if !exists || value == nil {
+				continue
+			}
+			text, ok := value.(string)
+			if !ok {
+				return "", fmt.Errorf("%s must be a string", field)
+			}
+			add(text)
+		}
+	}
+	if len(values) > 1 {
+		return "", fmt.Errorf("conflicting %s aliases", field)
+	}
+	return selected, nil
+}
+
+// requestWorkingDirectory returns the canonical directory prepared by
+// prepareToolRequest. That validation has already required every non-empty
+// top-level, params, and input alias to agree.
+func requestWorkingDirectory(req toolRequest) string {
+	call := engine.ToolCall{Params: req.Params, Input: req.Input}
+	if workDir := call.WorkingDirectory(); workDir != "" {
+		return workDir
+	}
+	if workDir := strings.TrimSpace(req.WorkDir); workDir != "" {
+		return workDir
+	}
+	return strings.TrimSpace(req.CWD)
 }
 
 // enrichParams adds derived fields to params for richer policy matching.
@@ -118,7 +266,7 @@ func enrichParams(toolName string, params map[string]any) {
 		}
 	}
 
-	if toolName == "fetch" || toolName == "http" || toolName == "web_fetch" {
+	if toolName == "fetch" || toolName == "http" || toolName == "web_fetch" || toolName == "browser" {
 		rawURL, _ := params["url"].(string)
 		if rawURL == "" {
 			return
@@ -127,12 +275,9 @@ func enrichParams(toolName string, params map[string]any) {
 		if err != nil || parsed.Host == "" {
 			return
 		}
-		if _, ok := params["domain"]; !ok {
-			params["domain"] = parsed.Hostname()
-		}
-		if _, ok := params["scheme"]; !ok {
-			params["scheme"] = parsed.Scheme
-		}
+		// These fields are derived from URL, not independent caller authority.
+		params["domain"] = parsed.Hostname()
+		params["scheme"] = parsed.Scheme
 		if _, ok := params["path"]; !ok {
 			params["path"] = parsed.Path
 		}

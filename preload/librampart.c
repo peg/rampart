@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include <unistd.h>
 #include <dlfcn.h>
@@ -38,6 +39,7 @@
 
 #ifdef __APPLE__
 #define PRELOAD_ENV_NAME "DYLD_INSERT_LIBRARIES"
+#define PRELOAD_AUX_ENV_NAME "DYLD_FORCE_FLAT_NAMESPACE"
 #else
 #define PRELOAD_ENV_NAME "LD_PRELOAD"
 #endif
@@ -52,6 +54,13 @@ static struct {
     char *agent;
     char *session;
 } config;
+static char *owned_config_url = NULL;
+static char *owned_config_token = NULL;
+static char *owned_config_mode = NULL;
+static char *owned_config_agent = NULL;
+static char *owned_config_session = NULL;
+static char *trusted_preload_value = NULL;
+static int config_initialization_failed = 0;
 
 // HTTP response buffer
 struct http_response {
@@ -63,9 +72,11 @@ struct http_response {
 
 // Global state
 static CURL *curl_handle = NULL;
+static CURL *inherited_curl_handle = NULL;
 static pthread_mutex_t curl_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static int curl_global_initialized = 0;
+static int curl_atfork_registered = 0;
 static char preload_lib_path[PATH_MAX];
 static int preload_anchor;
 
@@ -102,6 +113,90 @@ static int warned_system_missing = 0;
 static int warned_popen_missing = 0;
 static int warned_posix_spawn_missing = 0;
 static int warned_posix_spawnp_missing = 0;
+
+static size_t write_callback(void *contents, size_t size, size_t nmemb,
+                             struct http_response *response);
+
+static int configure_curl_handle_locked(void) {
+    if (curl_handle) return 1;
+    curl_handle = curl_easy_init();
+    if (!curl_handle) return 0;
+    if (curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 2L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_NOSIGNAL, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPALIVE, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPIDLE, 30L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPINTVL, 10L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_FORBID_REUSE, 0L) != CURLE_OK ||
+        /* Rampart's control request must go directly to its configured
+         * endpoint. Inheriting HTTP(S)_PROXY can disclose bearer credentials
+         * and intercepted commands to an ambient proxy. */
+        curl_easy_setopt(curl_handle, CURLOPT_PROXY, "") != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_NOPROXY, "*") != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_NETRC, CURL_NETRC_IGNORED) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 0L) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_MAXREDIRS, 0L) != CURLE_OK ||
+#if LIBCURL_VERSION_NUM >= 0x075500
+        curl_easy_setopt(curl_handle, CURLOPT_PROTOCOLS_STR, "http,https") != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https") != CURLE_OK ||
+#else
+        curl_easy_setopt(curl_handle, CURLOPT_PROTOCOLS,
+                         (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS)) != CURLE_OK ||
+        curl_easy_setopt(curl_handle, CURLOPT_REDIR_PROTOCOLS,
+                         (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS)) != CURLE_OK ||
+#endif
+        0) {
+        curl_easy_cleanup(curl_handle);
+        curl_handle = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+static int ensure_curl_handle(void) {
+    int ready;
+    pthread_mutex_lock(&curl_mutex);
+    /* The child-side atfork handler cannot safely call libcurl. Dispose of
+     * the inherited connection lazily once normal execution resumes. */
+    if (inherited_curl_handle) {
+        curl_easy_cleanup(inherited_curl_handle);
+        inherited_curl_handle = NULL;
+    }
+    ready = configure_curl_handle_locked();
+    pthread_mutex_unlock(&curl_mutex);
+    return ready;
+}
+
+static void curl_atfork_prepare(void) {
+    pthread_mutex_lock(&curl_mutex);
+}
+
+static void curl_atfork_parent(void) {
+    pthread_mutex_unlock(&curl_mutex);
+}
+
+static void curl_atfork_child(void) {
+    /* A persistent easy handle can retain a duplicated keep-alive socket.
+     * Never share it between the parent and child after fork. */
+    inherited_curl_handle = curl_handle;
+    curl_handle = NULL;
+    pthread_mutex_unlock(&curl_mutex);
+}
+
+static int preload_env_contains(const char *value) {
+    if (!value || !*value || !*preload_lib_path) return 0;
+    size_t n = strlen(preload_lib_path);
+    const char *p = value;
+    while (*p) {
+        const char *end = strchr(p, ':');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        if (len == n && strncmp(p, preload_lib_path, n) == 0) return 1;
+        if (!end) break;
+        p = end + 1;
+    }
+    return 0;
+}
 
 static void warn_once_missing_symbol(int *warned, const char *func_name, const char *phase) {
     if (__sync_lock_test_and_set(warned, 1) != 0) return;
@@ -201,7 +296,7 @@ static int ensure_real_posix_spawnp(void) {
 
 static void debug_log(const char *fmt, ...) {
     if (!config.debug) return;
-    
+
     va_list args;
     va_start(args, fmt);
     fprintf(stderr, "[rampart] ");
@@ -229,7 +324,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, struct h
         debug_log("Failed to allocate memory for HTTP response");
         return 0;
     }
-    
+
     response->data = ptr;
     memcpy(&(response->data[response->size]), contents, total_size);
     response->size += total_size;
@@ -238,13 +333,26 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, struct h
     return total_size;
 }
 
+static char *snapshot_config_value(char **owned, const char *value,
+                                   const char *fallback, int empty_uses_fallback) {
+    const char *source = value;
+    if (!source || (empty_uses_fallback && !source[0])) source = fallback;
+    if (!source) return NULL;
+    *owned = strdup(source);
+    if (!*owned) {
+        config_initialization_failed = 1;
+        return (char *)fallback;
+    }
+    return *owned;
+}
+
 static void init_config(void) {
-    config.url = getenv("RAMPART_URL");
-    if (!config.url || !config.url[0]) config.url = DEFAULT_RAMPART_URL;
-    
-    config.token = getenv("RAMPART_TOKEN");
-    config.mode = getenv("RAMPART_MODE");
-    if (!config.mode) config.mode = "enforce";
+    config.url = snapshot_config_value(&owned_config_url, getenv("RAMPART_URL"),
+                                       DEFAULT_RAMPART_URL, 1);
+    config.token = snapshot_config_value(&owned_config_token, getenv("RAMPART_TOKEN"),
+                                         NULL, 0);
+    config.mode = snapshot_config_value(&owned_config_mode, getenv("RAMPART_MODE"),
+                                        "enforce", 1);
     
     char *fail_open_str = getenv("RAMPART_FAIL_OPEN");
     config.fail_open = (!fail_open_str || strcmp(fail_open_str, "1") == 0) ? 1 : 0;
@@ -252,15 +360,13 @@ static void init_config(void) {
     char *debug_str = getenv("RAMPART_DEBUG");
     config.debug = (debug_str && strcmp(debug_str, "1") == 0) ? 1 : 0;
     
-    config.agent = getenv("RAMPART_AGENT");
-    if (!config.agent || !config.agent[0]) config.agent = "preload";
-    
-    config.session = getenv("RAMPART_SESSION");
-    if (!config.session) {
-        static char session_buf[64];
-        snprintf(session_buf, sizeof(session_buf), "preload-%d", getpid());
-        config.session = session_buf;
-    }
+    config.agent = snapshot_config_value(&owned_config_agent, getenv("RAMPART_AGENT"),
+                                         "preload", 1);
+
+    static char session_buf[64];
+    snprintf(session_buf, sizeof(session_buf), "preload-%d", getpid());
+    config.session = snapshot_config_value(&owned_config_session, getenv("RAMPART_SESSION"),
+                                           session_buf, 1);
 }
 
 static void init_library(void) {
@@ -272,34 +378,49 @@ static void init_library(void) {
         strncpy(preload_lib_path, info.dli_fname, sizeof(preload_lib_path) - 1);
         preload_lib_path[sizeof(preload_lib_path) - 1] = '\0';
     }
-    
+
+    const char *initial_preload = getenv(PRELOAD_ENV_NAME);
+    if (*preload_lib_path) {
+        size_t initial_len = initial_preload ? strlen(initial_preload) : 0;
+        size_t lib_len = strlen(preload_lib_path);
+        int already_present = preload_env_contains(initial_preload);
+        if (!already_present && initial_len > SIZE_MAX - lib_len - 2) {
+            config_initialization_failed = 1;
+        } else {
+            size_t value_len = already_present
+                ? initial_len + 1
+                : initial_len + (initial_len ? 1 : 0) + lib_len + 1;
+            trusted_preload_value = malloc(value_len);
+            if (!trusted_preload_value) {
+                config_initialization_failed = 1;
+            } else if (already_present) {
+                memcpy(trusted_preload_value, initial_preload, value_len);
+            } else {
+                snprintf(trusted_preload_value, value_len, "%s%s%s",
+                         initial_preload ? initial_preload : "",
+                         initial_len ? ":" : "", preload_lib_path);
+            }
+        }
+    } else {
+        config_initialization_failed = 1;
+    }
+
     // Initialize libcurl
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
         debug_log("Failed to initialize libcurl globally");
         return;
     }
     curl_global_initialized = 1;
-    curl_handle = curl_easy_init();
-    if (!curl_handle) {
-        debug_log("Failed to initialize curl handle");
+    if (pthread_atfork(curl_atfork_prepare, curl_atfork_parent, curl_atfork_child) != 0) {
+        debug_log("Failed to register fork-safety handlers");
         return;
     }
-    
-    // Configure persistent keep-alive connection.
-    if (curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback) != CURLE_OK ||
-        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 2L) != CURLE_OK ||
-        curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 1L) != CURLE_OK ||
-        curl_easy_setopt(curl_handle, CURLOPT_NOSIGNAL, 1L) != CURLE_OK ||
-        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPALIVE, 1L) != CURLE_OK ||
-        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPIDLE, 30L) != CURLE_OK ||
-        curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPINTVL, 10L) != CURLE_OK ||
-        curl_easy_setopt(curl_handle, CURLOPT_FORBID_REUSE, 0L) != CURLE_OK) {
+    curl_atfork_registered = 1;
+    if (!configure_curl_handle_locked()) {
         debug_log("Failed to configure curl handle");
-        curl_easy_cleanup(curl_handle);
-        curl_handle = NULL;
         return;
     }
-    
+
     // Load original function pointers using union to avoid pedantic warnings
     union { void *p; int (*execve)(const char *, char *const[], char *const[]); } u_execve;
     union { void *p; int (*execvp)(const char *, char *const[]); } u_execvp;
@@ -319,7 +440,7 @@ static void init_library(void) {
     if (disable_execve_intercept) {
         warn_once_missing_symbol(&warned_execve_missing, "execve", "library initialization");
     }
-    
+
     u_execvp.p = dlsym(RTLD_NEXT, "execvp");
     real_execvp = u_execvp.execvp;
     disable_execvp_intercept = (real_execvp == NULL);
@@ -363,22 +484,8 @@ static void init_library(void) {
     if (disable_posix_spawnp_intercept) {
         warn_once_missing_symbol(&warned_posix_spawnp_missing, "posix_spawnp", "library initialization");
     }
-    
-    debug_log("Library initialized successfully");
-}
 
-static int preload_env_contains(const char *value) {
-    if (!value || !*value || !*preload_lib_path) return 0;
-    size_t n = strlen(preload_lib_path);
-    const char *p = value;
-    while (*p) {
-        const char *end = strchr(p, ':');
-        size_t len = end ? (size_t)(end - p) : strlen(p);
-        if (len == n && strncmp(p, preload_lib_path, n) == 0) return 1;
-        if (!end) break;
-        p = end + 1;
-    }
-    return 0;
+    debug_log("Library initialized successfully");
 }
 
 static void free_modified_envp(char **env) {
@@ -387,47 +494,99 @@ static void free_modified_envp(char **env) {
     free(env);
 }
 
-static char **ensure_preload_env(char *const envp[], int *modified, int *failed) {
+static int env_entry_has_name(const char *entry, const char *name) {
+    size_t name_len = strlen(name);
+    return entry && strncmp(entry, name, name_len) == 0 && entry[name_len] == '=';
+}
+
+static int protected_child_env_entry(const char *entry) {
+    static const char *const names[] = {
+        PRELOAD_ENV_NAME,
+        "RAMPART_URL",
+        "RAMPART_TOKEN",
+        "RAMPART_MODE",
+        "RAMPART_FAIL_OPEN",
+        "RAMPART_DEBUG",
+        "RAMPART_AGENT",
+        "RAMPART_SESSION",
+#ifdef __APPLE__
+        PRELOAD_AUX_ENV_NAME,
+#endif
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (env_entry_has_name(entry, names[i])) return 1;
+    }
+    return 0;
+}
+
+static int append_child_env_entry(char **out, size_t *index,
+                                  const char *name, const char *value) {
+    if (!value) return 1;
+    size_t name_len = strlen(name), value_len = strlen(value);
+    if (name_len > SIZE_MAX - value_len - 2) return 0;
+    size_t entry_len = name_len + value_len + 2;
+    out[*index] = malloc(entry_len);
+    if (!out[*index]) return 0;
+    snprintf(out[*index], entry_len, "%s=%s", name, value);
+    (*index)++;
+    return 1;
+}
+
+/* Rebuild envp for explicit-environment process launches. The loader setting
+ * and Rampart control-plane values are snapshots from library initialization,
+ * not caller-controlled values from a later execve/posix_spawn envp. */
+static char **build_trusted_child_env(char *const envp[], int *modified, int *failed) {
     *modified = 0;
     *failed = 0;
-    if (!*preload_lib_path) return (char **)envp;
-    char *const *src = envp;
-    const size_t name_len = strlen(PRELOAD_ENV_NAME);
-    size_t n = 0, preload_idx = (size_t)-1;
-    for (; src && src[n]; n++) {
-        if (strncmp(src[n], PRELOAD_ENV_NAME, name_len) == 0 && src[n][name_len] == '=') {
-            preload_idx = n;
-        }
-    }
-    if (preload_idx != (size_t)-1 &&
-        preload_env_contains(src[preload_idx] + name_len + 1)) {
+    if (config_initialization_failed || !trusted_preload_value) {
+        *failed = 1;
         return (char **)envp;
     }
-    char **out = calloc(n + 2, sizeof(char *));
-    if (!out) { *failed = 1; return (char **)envp; }
-    for (size_t i = 0; i < n; i++) {
-        if (i == preload_idx) {
-            const char *cur = src[i] + name_len + 1;
-            size_t cur_len = strlen(cur), lib_len = strlen(preload_lib_path);
-            size_t entry_len = name_len + 1 + cur_len + (cur_len ? 1 : 0) + lib_len + 1;
-            out[i] = malloc(entry_len);
-            if (!out[i]) { free_modified_envp(out); *failed = 1; return (char **)envp; }
-            snprintf(out[i], entry_len, "%s=%s%s%s", PRELOAD_ENV_NAME,
-                     cur, cur_len ? ":" : "", preload_lib_path);
-            continue;
-        }
-        out[i] = strdup(src[i]);
-        if (!out[i]) { free_modified_envp(out); *failed = 1; return (char **)envp; }
+
+    size_t kept = 0;
+    for (size_t i = 0; envp && envp[i]; i++) {
+        if (!protected_child_env_entry(envp[i])) kept++;
     }
-    if (preload_idx == (size_t)-1) {
-        size_t lib_len = strlen(preload_lib_path);
-        size_t entry_len = name_len + 1 + lib_len + 1;
-        out[n] = malloc(entry_len);
-        if (!out[n]) { free_modified_envp(out); *failed = 1; return (char **)envp; }
-        snprintf(out[n], entry_len, "%s=%s", PRELOAD_ENV_NAME, preload_lib_path);
+    size_t trusted_count = 7 + (config.token ? 1 : 0);
+#ifdef __APPLE__
+    trusted_count++;
+#endif
+    if (kept > SIZE_MAX - trusted_count - 1) {
+        *failed = 1;
+        return (char **)envp;
+    }
+    char **out = calloc(kept + trusted_count + 1, sizeof(char *));
+    if (!out) { *failed = 1; return (char **)envp; }
+
+    size_t index = 0;
+    for (size_t i = 0; envp && envp[i]; i++) {
+        if (protected_child_env_entry(envp[i])) continue;
+        out[index] = strdup(envp[i]);
+        if (!out[index]) goto allocation_failure;
+        index++;
+    }
+
+    if (!append_child_env_entry(out, &index, PRELOAD_ENV_NAME, trusted_preload_value) ||
+        !append_child_env_entry(out, &index, "RAMPART_URL", config.url) ||
+        !append_child_env_entry(out, &index, "RAMPART_TOKEN", config.token) ||
+        !append_child_env_entry(out, &index, "RAMPART_MODE", config.mode) ||
+        !append_child_env_entry(out, &index, "RAMPART_FAIL_OPEN", config.fail_open ? "1" : "0") ||
+        !append_child_env_entry(out, &index, "RAMPART_DEBUG", config.debug ? "1" : "0") ||
+        !append_child_env_entry(out, &index, "RAMPART_AGENT", config.agent) ||
+        !append_child_env_entry(out, &index, "RAMPART_SESSION", config.session)
+#ifdef __APPLE__
+        || !append_child_env_entry(out, &index, PRELOAD_AUX_ENV_NAME, "1")
+#endif
+    ) {
+        goto allocation_failure;
     }
     *modified = 1;
     return out;
+
+allocation_failure:
+    free_modified_envp(out);
+    *failed = 1;
+    return (char **)envp;
 }
 
 static int checked_add_size(size_t *total, size_t amount) {
@@ -737,6 +896,37 @@ static int safety_failure_result(void) {
     return monitor_mode() || (config.mode && strcmp(config.mode, "disabled") == 0);
 }
 
+static int safe_http_endpoint(const char *url) {
+    if (!url) return 0;
+    const char *authority;
+    if (strncasecmp(url, "http://", 7) == 0) authority = url + 7;
+    else if (strncasecmp(url, "https://", 8) == 0) authority = url + 8;
+    else return 0;
+
+    const char *authority_end = authority;
+    while (*authority_end && *authority_end != '/') authority_end++;
+    size_t authority_len = (size_t)(authority_end - authority);
+    if (authority_len == 0 || memchr(authority, '@', authority_len)) {
+        return 0;
+    }
+    if (*authority == '[') {
+        const char *close = memchr(authority + 1, ']', authority_len - 1);
+        if (!close || close == authority + 1 ||
+            (close + 1 != authority_end && close[1] != ':')) return 0;
+        if (close + 1 < authority_end && close + 2 == authority_end) return 0;
+    } else {
+        const char *colon = memchr(authority, ':', authority_len);
+        size_t host_len = colon ? (size_t)(colon - authority) : authority_len;
+        if (host_len == 0) return 0;
+        if (colon && (colon + 1 == authority_end ||
+                      memchr(colon + 1, ':', (size_t)(authority_end - colon - 1)))) return 0;
+    }
+    for (const unsigned char *p = (const unsigned char *)authority; *p; p++) {
+        if (*p <= 0x20 || *p == 0x7f || *p == '\\' || *p == '?' || *p == '#') return 0;
+    }
+    return 1;
+}
+
 static int is_transport_failure(CURLcode result) {
     switch (result) {
         case CURLE_COULDNT_RESOLVE_PROXY:
@@ -763,9 +953,21 @@ static int check_policy(const char *command) {
         return 1;
     }
 
-    if (!curl_handle) {
+    if (config_initialization_failed) {
+        debug_log("Rampart configuration could not be initialized safely");
+        return safety_failure_result();
+    }
+    if (!safe_http_endpoint(config.url)) {
+        debug_log("RAMPART_URL is not a safe absolute HTTP(S) endpoint");
+        return safety_failure_result();
+    }
+    if (!curl_atfork_registered) {
+        debug_log("Fork-safety handlers are unavailable");
+        return safety_failure_result();
+    }
+    if (!ensure_curl_handle()) {
         debug_log("Curl handle is unavailable");
-        return recoverable_failure_result();
+        return safety_failure_result();
     }
     if (!command) {
         debug_log("Command is null");
@@ -881,7 +1083,7 @@ static int check_policy(const char *command) {
         setup_result = CURLE_FAILED_INIT;
     }
 
-    debug_log("Checking policy for command: %s", command);
+    debug_log("Checking policy for intercepted command (%zu bytes)", strlen(command));
     CURLcode result = setup_result == CURLE_OK ? curl_easy_perform(curl_handle) : setup_result;
     long response_code = 0;
     if (result == CURLE_OK && curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE,
@@ -949,16 +1151,16 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     char *cmd = build_exec_command(path, argv);
     int allowed = cmd ? check_policy(cmd) : safety_failure_result();
     if (!allowed) {
-        debug_log("Blocking execve: %s", cmd ? cmd : "command encoding failed");
+        debug_log("Blocking execve (%s)", cmd ? "policy decision" : "command encoding failed");
         free(cmd);
         errno = EPERM;
         return -1;
     }
     
-    debug_log("Allowing execve: %s", cmd ? cmd : "(null)");
+    debug_log("Allowing execve");
     if (cmd) free(cmd);
     int modified = 0, cascade_failed = 0;
-    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    char **effective_envp = build_trusted_child_env(envp, &modified, &cascade_failed);
     if (cascade_failed && !safety_failure_result()) {
         debug_log("Blocking execve because preload cascade could not be preserved");
         errno = EPERM;
@@ -981,13 +1183,13 @@ int execvp(const char *file, char *const argv[]) {
     char *cmd = build_exec_command(file, argv);
     int allowed = cmd ? check_policy(cmd) : safety_failure_result();
     if (!allowed) {
-        debug_log("Blocking execvp: %s", cmd ? cmd : "command encoding failed");
+        debug_log("Blocking execvp (%s)", cmd ? "policy decision" : "command encoding failed");
         free(cmd);
         errno = EPERM;
         return -1;
     }
     
-    debug_log("Allowing execvp: %s", cmd ? cmd : "(null)");
+    debug_log("Allowing execvp");
     if (cmd) free(cmd);
     return real_execvp(file, argv);
 }
@@ -1005,16 +1207,16 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
     char *cmd = build_exec_command(file, argv);
     int allowed = cmd ? check_policy(cmd) : safety_failure_result();
     if (!allowed) {
-        debug_log("Blocking execvpe: %s", cmd ? cmd : "command encoding failed");
+        debug_log("Blocking execvpe (%s)", cmd ? "policy decision" : "command encoding failed");
         free(cmd);
         errno = EPERM;
         return -1;
     }
     
-    debug_log("Allowing execvpe: %s", cmd ? cmd : "(null)");
+    debug_log("Allowing execvpe");
     if (cmd) free(cmd);
     int modified = 0, cascade_failed = 0;
-    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    char **effective_envp = build_trusted_child_env(envp, &modified, &cascade_failed);
     if (cascade_failed && !safety_failure_result()) {
         debug_log("Blocking execvpe because preload cascade could not be preserved");
         errno = EPERM;
@@ -1036,12 +1238,12 @@ int system(const char *command) {
     if (disable_system_intercept) return real_system(command);
     
     if (command && !check_policy(command)) {
-        debug_log("Blocking system: %s", command);
+        debug_log("Blocking system (policy decision)");
         errno = EPERM;
         return -1;
     }
     
-    debug_log("Allowing system: %s", command ? command : "(null)");
+    debug_log("Allowing system");
     return real_system(command);
 }
 
@@ -1055,12 +1257,12 @@ FILE *popen(const char *command, const char *type) {
     if (disable_popen_intercept) return real_popen(command, type);
     
     if (command && !check_policy(command)) {
-        debug_log("Blocking popen: %s", command);
+        debug_log("Blocking popen (policy decision)");
         errno = EPERM;
         return NULL;
     }
     
-    debug_log("Allowing popen: %s", command ? command : "(null)");
+    debug_log("Allowing popen");
     return real_popen(command, type);
 }
 
@@ -1080,15 +1282,15 @@ int posix_spawn(pid_t *pid, const char *path,
     char *cmd = build_exec_command(path, argv);
     int allowed = cmd ? check_policy(cmd) : safety_failure_result();
     if (!allowed) {
-        debug_log("Blocking posix_spawn: %s", cmd ? cmd : "command encoding failed");
+        debug_log("Blocking posix_spawn (%s)", cmd ? "policy decision" : "command encoding failed");
         free(cmd);
         return EPERM;
     }
     
-    debug_log("Allowing posix_spawn: %s", cmd ? cmd : "(null)");
+    debug_log("Allowing posix_spawn");
     if (cmd) free(cmd);
     int modified = 0, cascade_failed = 0;
-    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    char **effective_envp = build_trusted_child_env(envp, &modified, &cascade_failed);
     if (cascade_failed && !safety_failure_result()) {
         debug_log("Blocking posix_spawn because preload cascade could not be preserved");
         return EPERM;
@@ -1112,15 +1314,15 @@ int posix_spawnp(pid_t *pid, const char *file,
     char *cmd = build_exec_command(file, argv);
     int allowed = cmd ? check_policy(cmd) : safety_failure_result();
     if (!allowed) {
-        debug_log("Blocking posix_spawnp: %s", cmd ? cmd : "command encoding failed");
+        debug_log("Blocking posix_spawnp (%s)", cmd ? "policy decision" : "command encoding failed");
         free(cmd);
         return EPERM;
     }
 
-    debug_log("Allowing posix_spawnp: %s", cmd);
+    debug_log("Allowing posix_spawnp");
     free(cmd);
     int modified = 0, cascade_failed = 0;
-    char **effective_envp = ensure_preload_env(envp, &modified, &cascade_failed);
+    char **effective_envp = build_trusted_child_env(envp, &modified, &cascade_failed);
     if (cascade_failed && !safety_failure_result()) {
         debug_log("Blocking posix_spawnp because preload cascade could not be preserved");
         return EPERM;
@@ -1143,9 +1345,19 @@ void cleanup_library(void) {
         curl_easy_cleanup(curl_handle);
         curl_handle = NULL;
     }
+    if (inherited_curl_handle) {
+        curl_easy_cleanup(inherited_curl_handle);
+        inherited_curl_handle = NULL;
+    }
     pthread_mutex_unlock(&curl_mutex);
     if (curl_global_initialized) {
         curl_global_cleanup();
         curl_global_initialized = 0;
     }
+    free(owned_config_url);
+    free(owned_config_token);
+    free(owned_config_mode);
+    free(owned_config_agent);
+    free(owned_config_session);
+    free(trusted_preload_value);
 }

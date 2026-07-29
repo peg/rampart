@@ -107,6 +107,11 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 controller_repo="$(git -C "$script_dir" rev-parse --show-toplevel)"
+controller_sha="$(git -C "$controller_repo" rev-parse HEAD)"
+controller_dirty=false
+if [[ -n "$(git -C "$controller_repo" status --porcelain --untracked-files=normal)" ]]; then
+  controller_dirty=true
+fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_id="${timestamp}-${sha:0:12}-$$"
 run_root="${lab_root}/runs/${run_id}"
@@ -146,6 +151,8 @@ write_summary() {
   "schema_version": 1,
   "run_id": $(json_string "$run_id"),
   "commit_sha": $(json_string "$sha"),
+  "controller_commit_sha": $(json_string "$controller_sha"),
+  "controller_dirty": $controller_dirty,
   "suite": $(json_string "$suite"),
   "status": $(json_string "$status"),
   "exit_code": $exit_code,
@@ -234,7 +241,15 @@ if [[ "$failed" -ne 0 ]]; then
 fi
 worktree_added=1
 
-python3 - "$worktree" "$sha" "$suite" "$hermes_python" "$hermes_bin" >"${artifact_dir}/environment.json" <<'PY'
+python3 - \
+  "$worktree" \
+  "$sha" \
+  "$suite" \
+  "$hermes_python" \
+  "$hermes_bin" \
+  "$controller_sha" \
+  "$controller_dirty" \
+  >"${artifact_dir}/environment.json" <<'PY'
 import json, os, platform, shutil, subprocess, sys
 
 def version(executable, *arguments):
@@ -275,6 +290,10 @@ if hermes_python:
 print(json.dumps({
     "schema_version": 1,
     "commit_sha": sys.argv[2],
+    "controller": {
+        "commit_sha": sys.argv[6],
+        "dirty": sys.argv[7] == "true",
+    },
     "suite": sys.argv[3],
     "worktree": sys.argv[1],
     "platform": platform.platform(),
@@ -346,7 +365,7 @@ run_preload() {
     XDG_STATE_HOME="$isolated_home/.local/state" \
     RAMPART_PRELOAD_SOURCE_DIR="${worktree}/preload" \
     RAMPART_BLOCK_CMD="cat ${isolated_home}/.ssh/id_rsa" \
-    bash "${controller_repo}/preload/test_preload.sh"
+    bash "${worktree}/preload/test_preload.sh"
   local code=$?
   set -e
   kill "$preload_server_pid" 2>/dev/null || true
@@ -363,7 +382,7 @@ run_e2e() {
   fi
   approval_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   run_step approval-flow isolated env PORT="$approval_port" bash -c 'cd "$1" && bash "$2"' \
-    _ "$worktree" "${controller_repo}/scripts/test-approval-flow.sh"
+    _ "$worktree" "${worktree}/scripts/test-approval-flow.sh"
   if [[ "$(uname -s)" == "Linux" ]]; then
     run_step preload-enforcement run_preload
   else
@@ -384,7 +403,7 @@ run_hermes() {
     fi
   fi
   run_step "$step" isolated env RAMPART_COMPAT_REPO_ROOT="$worktree" \
-    python3 "${controller_repo}/scripts/compat-hermes-latest.py" "${args[@]}"
+    python3 "${worktree}/scripts/compat-hermes-latest.py" "${args[@]}"
 }
 
 run_openclaw() {

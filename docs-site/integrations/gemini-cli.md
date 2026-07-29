@@ -63,9 +63,11 @@ deny response, checks session-correlated audit output, and tests the live local
 policy path. It does not invoke a model or execute the canary command.
 
 The current experimental claim covers adapter behavior on Linux and macOS. A
-rolling latest-Gemini compatibility job validates the published CLI and
-generated settings without credentials. Authenticated live-host proof and
-physical Windows host proof remain release-assurance follow-ups.
+rolling job confirms that the latest published package starts in isolated state
+while Rampart separately validates the generated settings shape and adapter.
+The version command does not prove that Gemini loaded or dispatched the hooks.
+Authenticated live-host proof and physical Windows host proof remain
+release-assurance follow-ups.
 
 ## Uninstall
 

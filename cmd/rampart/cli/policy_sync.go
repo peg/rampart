@@ -14,15 +14,20 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/filetxn"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +40,7 @@ var (
 	policySyncLookPath = exec.LookPath
 	policySyncRunGit   = runPolicySyncGit
 	policySyncNow      = func() time.Time { return time.Now().UTC() }
+	policySyncWrite    = atomicWritePrivateFile
 )
 
 type syncState struct {
@@ -133,9 +139,9 @@ func newPolicySyncStatusCmd() *cobra.Command {
 				return err
 			}
 
-			url := state.GitURL
-			if strings.TrimSpace(url) == "" {
-				url = "(not configured)"
+			displayURL := policySyncURLForDisplay(state.GitURL)
+			if strings.TrimSpace(displayURL) == "" {
+				displayURL = "(not configured)"
 			}
 
 			lastSync := "(never)"
@@ -148,7 +154,7 @@ func newPolicySyncStatusCmd() *cobra.Command {
 				sha = "(unknown)"
 			}
 
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Git URL: %s\nLast sync: %s\nLast commit: %s\n", url, lastSync, sha); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Git URL: %s\nLast sync: %s\nLast commit: %s\n", displayURL, lastSync, sha); err != nil {
 				return fmt.Errorf("policy: write sync status output: %w", err)
 			}
 			return nil
@@ -199,14 +205,47 @@ func resolvePolicySyncURL(args []string) (string, error) {
 	return state.GitURL, nil
 }
 
-func validatePolicySyncURL(url string) error {
-	if strings.TrimSpace(url) == "" {
+func validatePolicySyncURL(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
 		return fmt.Errorf("policy: git URL cannot be empty")
 	}
-	if !strings.HasPrefix(strings.ToLower(url), "https://") {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") {
 		return fmt.Errorf("policy: only HTTPS git URLs are supported")
 	}
+	if parsed.Opaque != "" {
+		return fmt.Errorf("policy: opaque policy sync URLs are not supported")
+	}
+	if parsed.Hostname() == "" {
+		return fmt.Errorf("policy: only HTTPS git URLs are supported")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("policy: credentials are not allowed in policy sync URLs; use a public HTTPS repository")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery {
+		return fmt.Errorf("policy: URL queries are not supported; use a public HTTPS repository without credentials")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("policy: URL fragments are not supported")
+	}
 	return nil
+}
+
+func policySyncURLForDisplay(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" || parsed.Opaque != "" {
+		return "(invalid configured URL)"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func performPolicySync(ctx context.Context, url string) (syncResult, error) {
@@ -220,52 +259,164 @@ func performPolicySync(ctx context.Context, url string) (syncResult, error) {
 	}
 
 	repoPath := filepath.Join(home, ".rampart", "sync-repo")
-	if err := syncRepo(ctx, url, repoPath); err != nil {
-		return syncResult{}, err
-	}
-
-	srcPolicyPath, err := findPolicySyncSource(repoPath)
+	statePath, err := policySyncStatePath()
 	if err != nil {
-		return syncResult{}, err
+		return syncResult{}, fmt.Errorf("policy: resolve sync state path: %w", err)
 	}
-	srcPolicyData, err := os.ReadFile(srcPolicyPath)
-	if err != nil {
-		return syncResult{}, fmt.Errorf("policy: read policy from repository: %w", err)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		return syncResult{}, fmt.Errorf("policy: create sync state directory: %w", err)
 	}
-
 	destPolicyPath := filepath.Join(home, ".rampart", "policies", policySyncPolicyName)
-	changed := true
-	if existing, err := os.ReadFile(destPolicyPath); err == nil {
-		changed = string(existing) != string(srcPolicyData)
-	} else if !os.IsNotExist(err) {
-		return syncResult{}, fmt.Errorf("policy: read existing synced policy: %w", err)
+
+	var result syncResult
+	if err := filetxn.WithLock(statePath, func() error {
+		// The checkout is shared by manual and --watch syncs. Keep repository
+		// mutation, policy reading, HEAD resolution, and activation in one
+		// transaction so contents can never be attributed to another sync's SHA.
+		if err := syncRepo(ctx, url, repoPath); err != nil {
+			return err
+		}
+
+		srcPolicyPath, err := findPolicySyncSource(repoPath)
+		if err != nil {
+			return err
+		}
+		srcPolicyData, err := os.ReadFile(srcPolicyPath)
+		if err != nil {
+			return fmt.Errorf("policy: read policy from repository: %w", err)
+		}
+		if _, err := engine.NewMemoryStore(srcPolicyData, "policy-sync:"+srcPolicyPath).Load(); err != nil {
+			return fmt.Errorf("policy: remote policy failed validation: %w", err)
+		}
+
+		sha, err := policySyncRunGit(ctx, "-C", repoPath, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+
+		activated, activateErr := activatePolicySync(
+			url,
+			strings.TrimSpace(sha),
+			policySyncNow(),
+			srcPolicyData,
+			destPolicyPath,
+			statePath,
+		)
+		result = activated
+		return activateErr
+	}); err != nil {
+		return syncResult{}, err
+	}
+	return result, nil
+}
+
+type policySyncFileSnapshot struct {
+	exists bool
+	data   []byte
+}
+
+type policySyncRollbackTarget struct {
+	path     string
+	snapshot policySyncFileSnapshot
+}
+
+// activatePolicySync commits state first and the policy last. The policy file
+// is the live activation point: if either durable write reports an error, both
+// files are restored to their prior contents before the failure is returned.
+func activatePolicySync(
+	gitURL string,
+	commitSHA string,
+	syncedAt time.Time,
+	policyData []byte,
+	policyPath string,
+	statePath string,
+) (syncResult, error) {
+	policySnapshot, err := snapshotPolicySyncFile(policyPath)
+	if err != nil {
+		return syncResult{}, fmt.Errorf("policy: snapshot existing synced policy: %w", err)
+	}
+	stateSnapshot, err := snapshotPolicySyncFile(statePath)
+	if err != nil {
+		return syncResult{}, fmt.Errorf("policy: snapshot sync state: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(destPolicyPath), 0o755); err != nil {
-		return syncResult{}, fmt.Errorf("policy: create policy directory: %w", err)
+	state, err := decodePolicySyncState(stateSnapshot)
+	if err != nil {
+		return syncResult{}, err
 	}
-	if err := os.WriteFile(destPolicyPath, srcPolicyData, 0o600); err != nil {
-		return syncResult{}, fmt.Errorf("policy: write synced policy: %w", err)
-	}
-
-	sha, err := policySyncRunGit(ctx, "-C", repoPath, "rev-parse", "HEAD")
+	state.GitURL = gitURL
+	state.LastCommitSHA = commitSHA
+	state.LastSyncTime = syncedAt
+	stateData, err := encodePolicySyncState(state)
 	if err != nil {
 		return syncResult{}, err
 	}
 
-	now := policySyncNow()
-	state, err := loadPolicySyncState()
-	if err != nil {
-		return syncResult{}, err
+	changed := !policySnapshot.exists || !bytes.Equal(policySnapshot.data, policyData)
+	if err := policySyncWrite(statePath, stateData); err != nil {
+		writeErr := fmt.Errorf("policy: write sync state: %w", err)
+		return syncResult{}, joinPolicySyncRollback(writeErr, policySyncRollbackTarget{statePath, stateSnapshot})
 	}
-	state.GitURL = url
-	state.LastCommitSHA = strings.TrimSpace(sha)
-	state.LastSyncTime = now
-	if err := savePolicySyncState(state); err != nil {
-		return syncResult{}, err
+	if changed {
+		if err := policySyncWrite(policyPath, policyData); err != nil {
+			writeErr := fmt.Errorf("policy: write synced policy: %w", err)
+			return syncResult{}, joinPolicySyncRollback(
+				writeErr,
+				policySyncRollbackTarget{policyPath, policySnapshot},
+				policySyncRollbackTarget{statePath, stateSnapshot},
+			)
+		}
 	}
 
-	return syncResult{CommitSHA: state.LastCommitSHA, PolicyChanged: changed, SyncedAt: now}, nil
+	return syncResult{CommitSHA: commitSHA, PolicyChanged: changed, SyncedAt: syncedAt}, nil
+}
+
+func snapshotPolicySyncFile(path string) (policySyncFileSnapshot, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return policySyncFileSnapshot{}, nil
+	}
+	if err != nil {
+		return policySyncFileSnapshot{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return policySyncFileSnapshot{}, fmt.Errorf("refusing non-regular or symlinked file: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return policySyncFileSnapshot{}, err
+	}
+	return policySyncFileSnapshot{exists: true, data: data}, nil
+}
+
+func restorePolicySyncFile(path string, snapshot policySyncFileSnapshot) error {
+	if snapshot.exists {
+		return policySyncWrite(path, snapshot.data)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return filetxn.SyncDir(dir)
+}
+
+func joinPolicySyncRollback(cause error, targets ...policySyncRollbackTarget) error {
+	var rollbackErrs []error
+	for _, target := range targets {
+		if err := restorePolicySyncFile(target.path, target.snapshot); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore %s: %w", target.path, err))
+		}
+	}
+	if rollbackErr := errors.Join(rollbackErrs...); rollbackErr != nil {
+		return errors.Join(cause, fmt.Errorf("policy: rollback sync activation: %w", rollbackErr))
+	}
+	return cause
 }
 
 func syncRepo(ctx context.Context, url, repoPath string) error {
@@ -309,7 +460,8 @@ func findPolicySyncSource(repoPath string) (string, error) {
 		filepath.Join(repoPath, ".rampart", "policy.yaml"),
 	}
 	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
+		info, err := os.Lstat(candidate)
+		if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 			return candidate, nil
 		}
 	}
@@ -333,18 +485,30 @@ func loadPolicySyncState() (syncState, error) {
 	if err != nil {
 		return syncState{}, fmt.Errorf("policy: resolve sync state path: %w", err)
 	}
-	data, err := os.ReadFile(path)
+	snapshot, err := snapshotPolicySyncFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return syncState{}, nil
-		}
 		return syncState{}, fmt.Errorf("policy: read sync state: %w", err)
 	}
+	return decodePolicySyncState(snapshot)
+}
+
+func decodePolicySyncState(snapshot policySyncFileSnapshot) (syncState, error) {
+	if !snapshot.exists {
+		return syncState{}, nil
+	}
 	var state syncState
-	if err := json.Unmarshal(data, &state); err != nil {
+	if err := json.Unmarshal(snapshot.data, &state); err != nil {
 		return syncState{}, fmt.Errorf("policy: parse sync state: %w", err)
 	}
 	return state, nil
+}
+
+func encodePolicySyncState(state syncState) ([]byte, error) {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("policy: encode sync state: %w", err)
+	}
+	return append(data, '\n'), nil
 }
 
 func savePolicySyncState(state syncState) error {
@@ -352,18 +516,19 @@ func savePolicySyncState(state syncState) error {
 	if err != nil {
 		return fmt.Errorf("policy: resolve sync state path: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	data, err := encodePolicySyncState(state)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("policy: create sync state directory: %w", err)
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("policy: encode sync state: %w", err)
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("policy: write sync state: %w", err)
-	}
-	return nil
+	return filetxn.WithLock(path, func() error {
+		if err := policySyncWrite(path, data); err != nil {
+			return fmt.Errorf("policy: write sync state: %w", err)
+		}
+		return nil
+	})
 }
 
 func policySyncStatePath() (string, error) {

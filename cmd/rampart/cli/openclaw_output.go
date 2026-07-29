@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 )
@@ -52,6 +53,36 @@ func decodeOpenClawJSON(output []byte, dst any) error {
 		offset += lineEnd + 1
 	}
 	return fmt.Errorf("OpenClaw output did not contain a valid JSON object or array")
+}
+
+// decodeOpenClawConfigJSON also accepts a complete JSON scalar on its own
+// output line. `openclaw config get --json` legitimately returns scalars for
+// leaf keys (for example, `"off"`), while gateway responses remain restricted
+// to the object/array decoder above.
+func decodeOpenClawConfigJSON(output []byte, dst any) error {
+	if err := decodeOpenClawJSON(output, dst); err == nil {
+		return nil
+	}
+	lines := strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSpace([]byte(stripANSI(lines[i])))
+		if len(line) == 0 || line[0] == '{' || line[0] == '[' {
+			continue
+		}
+		var raw json.RawMessage
+		decoder := json.NewDecoder(bytes.NewReader(line))
+		if err := decoder.Decode(&raw); err != nil {
+			continue
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			continue
+		}
+		if err := json.Unmarshal(raw, dst); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("OpenClaw output did not contain a valid JSON value")
 }
 
 func stripANSI(value string) string {

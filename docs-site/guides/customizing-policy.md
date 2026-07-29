@@ -320,7 +320,7 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
   match:
     tool: ["exec"]
   rules:
-    # Substring matching catches ALL wrapper bypasses (bash -c, sh -c, etc.)
+    # Substring matching catches common wrapper spellings (bash -c, sh -c, etc.)
     - action: deny
       when:
         command_contains:
@@ -332,7 +332,10 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
       message: "Policy modification commands must be run by a human, not an agent"
 ```
 
-The `command_contains` approach is robust against shell wrapper bypasses — `bash -c 'rampart allow ...'` is caught because the substring "rampart allow" appears in the command.
+The `command_contains` approach catches common shell-wrapper spellings —
+`bash -c 'rampart allow ...'` is caught because the substring "rampart allow"
+appears in the command. It is not a complete shell parser or an OS sandbox;
+use a native integration and OS isolation for adversarial workloads.
 
 This means:
 

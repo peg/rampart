@@ -298,6 +298,13 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 	for parameter, pattern := range r.When.ToolParamMatches {
 		checkGlobDepth(filename, p.Name, ruleIdx, []string{pattern}, "tool_param_matches."+parameter, result)
 	}
+	if err := validateCommandContains(r.When.CommandContains); err != nil {
+		result.add(LintFinding{
+			File:     filename,
+			Severity: LintError,
+			Message:  fmt.Sprintf("policy %q rule %d: %v", p.Name, ruleIdx+1, err),
+		})
+	}
 	if err := validateCallCountCondition(r.When.CallCount); err != nil {
 		result.add(LintFinding{
 			File:     filename,

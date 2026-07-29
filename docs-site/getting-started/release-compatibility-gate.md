@@ -110,7 +110,9 @@ Gemini CLI remains **experimental** because consumer Google sign-in is retired, 
      CLI and VS Code destructive-call denial fields from the candidate adapter.
    - Run `rampart verify copilot` against the candidate hook file.
    - Do not call this authenticated host-boundary proof: the credential-free
-     rolling gate starts the latest CLI and invokes the adapter directly.
+     rolling gate starts the latest package and invokes the adapter directly;
+     the version command does not prove that the host loaded or dispatched the
+     generated hooks.
    - Record that Copilot CLI hook timeouts fail open, including administrator
      policy hooks, and that VS Code agent hooks remain an upstream Preview.
 
@@ -153,7 +155,7 @@ scripts/compat-claude-host.sh --yes
 scripts/compat-codex-host.sh --yes
 ```
 
-The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness can run either the `openclaw` on `PATH` or `--npm-latest` for the latest npm package, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks. The Gemini and Copilot gates use disposable homes, start the latest published CLIs, validate the candidate-generated configuration, and exercise their adapters without credentials or model calls.
+The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness can run either the `openclaw` on `PATH` or `--npm-latest` for the latest npm package, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks. The Gemini and Copilot gates use disposable homes and start the latest published packages, then separately validate candidate-generated configuration shapes and exercise their adapters without credentials or model calls. Their version commands do not prove that either host ingested or dispatched the hooks. Harnesses propagate only an allowlist of runtime variables and standard credential-free registry/proxy URLs; URLs containing userinfo, query strings, or fragments are dropped.
 
 For OpenClaw's recommended support tier, also run the opt-in runtime audit regression before a release promotion:
 
@@ -169,6 +171,6 @@ node scripts/test-openclaw-codex-native-audit.mjs
 
 The isolation root must contain a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false` before starting that gateway. Never point the test at a primary OpenClaw home. The script refuses paths outside the isolation root and refuses service restarts.
 
-That live regression is intentionally separate from scheduled CI because it uses a real OpenClaw Codex app-server. It proves both routine native-shell interception and the complete hosted approval path: pending plugin approval, `allow-once`, exact tool-call resume, successful execution, trajectory evidence, and correlated Rampart canonical `exec` audit evidence.
+That live regression is intentionally separate from scheduled CI because it uses a real OpenClaw Codex app-server. It proves routine native-shell interception, the complete hosted approval path (pending plugin approval, `allow-once`, exact tool-call resume, and successful execution), and a native hard-deny whose disposable canary remains unchanged. Every path requires correlated trajectory and Rampart canonical `exec` audit evidence.
 
 A scheduled/manual GitHub Actions workflow runs these upstream checks outside the core unit-test matrix so external upstream breakage is visible without destabilizing ordinary pull-request CI.

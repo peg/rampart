@@ -57,28 +57,28 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
       <td data-label="Best path">Shared policy plugin<br><code>rampart setup antigravity</code></td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">Native <code>force_ask</code> prompt</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>CLI 1.1.7 allow/deny host proof</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>CLI 1.1.7 host-verified; IDE contract-tested, physical IDE proof pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>GitHub Copilot CLI / VS Code</strong></td>
       <td data-label="Best path">Shared native lifecycle hooks<br><code>rampart setup copilot</code></td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">Native Copilot prompt</td>
-      <td data-label="Support tier"><strong>Supported</strong> for CLI adapter<br>VS Code hook host is upstream Preview</td>
+      <td data-label="Support tier"><strong>Supported</strong> CLI adapter<br>package startup + adapter evidence; authenticated hook ingestion pending; VS Code is contract-tested Preview</td>
     </tr>
     <tr class="tier-recommended">
       <td data-label="Surface"><strong>OpenClaw &gt;= 2026.5.2</strong></td>
-      <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
+      <td data-label="Best path">Managed native guard<br><code>rampart protect openclaw</code></td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">First-class plugin approvals / native approval UI</td>
       <td data-label="Support tier"><strong>Verified</strong></td>
     </tr>
-    <tr class="tier-supported">
+    <tr class="tier-experimental">
       <td data-label="Surface"><strong>Hermes Agent</strong></td>
       <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
-      <td data-label="Support tier">Experimental<br>0.19.0 shell deny/allow host proof</td>
+      <td data-label="Support tier"><strong>Experimental</strong><br>0.19.0 shell deny/allow host proof; native approval/resume pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
@@ -124,24 +124,33 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
   enforce mode, unknown future pre-call tools deny; an isolated Claude Code
   2.1.220 shell deny/allow host run is recorded
 - **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
-- **Gemini CLI (enterprise/API key)** → experimental native
-  `BeforeTool`/`AfterTool` hooks cover documented shell, file, network, MCP,
-  memory, and delegated-agent calls; a real authenticated host proof is still
-  pending, and this does not cover Antigravity
 - **Antigravity CLI / IDE** → one shared native plugin gates documented tool
-  calls before execution and uses `force_ask` for approvals; current
-  `PostToolUse` does not expose results, so response scanning is not claimed
+  calls before execution and uses `force_ask` for approvals. The CLI 1.1.7 path
+  has a completed host proof; the IDE shares the reviewed plugin contract but
+  does not yet have a separate physical host proof. Current `PostToolUse` does
+  not expose results, so response scanning is not claimed
 - **GitHub Copilot CLI / VS Code** → one shared user hook covers both hosts;
-  Copilot CLI also supports a separate administrator-owned machine policy hook,
-  while VS Code hooks remain an upstream Preview surface
-- **OpenClaw >= 2026.5.2** → best OpenClaw path; plugin + native approval UI
-- **Hermes Agent** → experimental plugin path with a completed isolated
-  Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than resume
+  latest-package startup and the adapter are tested separately, but authenticated
+  hook ingestion is still pending. Copilot CLI also supports a separate
+  administrator-owned machine policy hook, while VS Code hooks remain an
+  upstream Preview surface covered by contract and adapter tests
+- **OpenClaw >= 2026.5.2** → `rampart protect openclaw` installs and verifies
+  the managed native guard with fail-closed service behavior and native approval UI
 - **Cline** → current editor and CLI payloads plus POSIX and Windows discovery
   artifacts are covered by adapter/setup tests; physical Windows and rolling
   latest-Cline host proof remain pending. Legacy CLI `--yolo` disables hooks,
   and the currently advertised custom `--hooks-dir` override is not consumed
   reliably by upstream file-hook discovery
+
+### Experimental paths
+
+- **Gemini CLI (enterprise/API key)** → experimental native
+  `BeforeTool`/`AfterTool` hooks cover documented shell, file, network, MCP,
+  memory, and delegated-agent calls; a real authenticated host proof is still
+  pending, and this does not cover Antigravity
+- **Hermes Agent** → experimental plugin path with a completed isolated
+  Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than
+  resume until Hermes exposes a first-class plugin approval flow
 
 ## Degraded behavior notes
 

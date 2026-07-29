@@ -14,12 +14,13 @@ Complete reference for all `rampart` commands.
 Auto-detects your environment, installs `rampart serve`, configures integration hooks, and runs a health check.
 
 ```bash
-rampart quickstart                  # Interactive setup
-rampart quickstart --yes            # Non-interactive mode
-rampart quickstart -y               # Short form of --yes
+rampart quickstart                  # Detect, configure, and verify non-interactively
+rampart quickstart --yes            # Compatibility spelling for existing scripts
+rampart quickstart -y               # Short compatibility spelling
 ```
 
-`--yes` / `-y` skips prompts so setup can run unattended in CI, scripts, or agent-driven installs.
+Quickstart currently has no confirmation prompts. `--yes` / `-y` remains
+accepted so existing CI, scripts, and agent-driven installs continue to work.
 
 ### `rampart protect`
 
@@ -244,6 +245,10 @@ rampart wrap --config policy.yaml -- agent      # Custom policy
 Add exec-family interception to supported dynamically linked processes via
 `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES`.
 
+Current release archives and Homebrew packages contain the CLI only. Build the
+matching native library from a Rampart source checkout with
+`make -C preload install` before using this command.
+
 ```bash
 rampart preload -- your-agent                   # Enforce mode
 rampart preload --mode monitor -- agent         # Audit only
@@ -357,7 +362,7 @@ When the OpenClaw native plugin is installed, doctor shows:
 If the plugin is missing or the OpenClaw version is too old:
 ```
 ✗ OpenClaw plugin: not installed
-  → Run: rampart setup openclaw
+  → Run: rampart protect openclaw
 ```
 
 ### `rampart status`

@@ -73,9 +73,16 @@ func parseCopilotInput(reader io.Reader) (*hookParseResult, error) {
 	if event == "PreToolUse" && tool == "unknown" {
 		return nil, fmt.Errorf("hook: unsupported Copilot tool_name %q; update Rampart before allowing this tool", input.ToolName)
 	}
-	normalizeCopilotParams(params)
+	if event == "PostToolUse" {
+		normalizeCopilotPostParams(params)
+	}
 	if tool == "mcp" {
 		tool = classifyNativeMCPTool(input.ToolName, params)
+	}
+	if event == "PreToolUse" {
+		if err := validateCopilotActionParams(input.ToolName, tool, params); err != nil {
+			return nil, err
+		}
 	}
 
 	result := &hookParseResult{
@@ -92,6 +99,9 @@ func parseCopilotInput(reader io.Reader) (*hookParseResult, error) {
 		result.PolicyPaths, err = collectCopilotPaths(params)
 		if err != nil {
 			return nil, err
+		}
+		if event == "PreToolUse" && len(result.PolicyPaths) == 0 {
+			return nil, fmt.Errorf("hook: Copilot %s requires at least one file path", input.ToolName)
 		}
 		if len(result.PolicyPaths) > 0 {
 			params["path"] = result.PolicyPaths[0]
@@ -188,26 +198,40 @@ func mapCopilotTool(toolName string) string {
 	}
 }
 
-func normalizeCopilotParams(params map[string]any) {
-	copyAlias := func(destination string, sources ...string) {
-		if _, exists := params[destination]; exists {
-			return
-		}
-		for _, source := range sources {
-			if value, ok := params[source]; ok {
-				params[destination] = value
-				return
-			}
-		}
-	}
-	copyAlias("command", "cmd", "script", "terminalCommand")
-	copyAlias("path", "filePath", "file_path", "uri", "directory", "dirPath", "dir_path")
-	copyAlias("url", "uri", "href")
-	if command, ok := params["input"].(string); ok {
-		if _, exists := params["command"]; !exists {
+func normalizeCopilotPostParams(params map[string]any) {
+	copyFirstHookAlias(params, "command", "cmd", "script", "code", "terminalCommand")
+	copyFirstHookAlias(params, "path", "filePath", "file_path", "uri", "directory", "dirPath", "dir_path")
+	copyFirstHookAlias(params, "url", "uri", "href", "query")
+	if _, exists := params["command"]; !exists {
+		if command, ok := params["input"].(string); ok {
 			params["command"] = command
 		}
 	}
+}
+
+// validateCopilotActionParams rejects recognized pre-call actions whose
+// security-bearing command or network target cannot be evaluated. Write paths
+// are validated after the complete batch is collected in parseCopilotInput.
+func validateCopilotActionParams(toolName, tool string, params map[string]any) error {
+	context := "hook: Copilot " + toolName
+	switch tool {
+	case "exec":
+		_, err := requireHookStringAliases(params, "command", context, "command", "cmd", "script", "code", "terminalCommand", "input")
+		return err
+	case "read", "write", "mcp-destructive":
+		_, _, err := normalizeHookStringAliases(
+			params,
+			"path",
+			context,
+			"file path",
+			"filePath", "file_path", "uri", "directory", "dirPath", "dir_path",
+		)
+		return err
+	case "fetch":
+		_, err := requireHookStringAliases(params, "url", context, "URL or query", "uri", "href", "query")
+		return err
+	}
+	return nil
 }
 
 func collectCopilotPaths(params map[string]any) ([]string, error) {

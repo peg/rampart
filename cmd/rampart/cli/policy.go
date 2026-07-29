@@ -378,11 +378,14 @@ Requires rampart serve to be running.`,
 			if err != nil {
 				return fmt.Errorf("policy rules: resolve serve URL: %w", err)
 			}
-			token, _ := resolveTokenValue()
+			token, _, err := resolveTokenForEndpoint(serveURL, "")
+			if err != nil {
+				return fmt.Errorf("policy rules: resolve serve credentials: %w", err)
+			}
 
 			req, _ := http.NewRequestWithContext(cmd.Context(), "GET", serveURL+"/v1/policies", nil)
 			req.Header.Set("Authorization", "Bearer "+token)
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := rampartHTTPClient.Do(req)
 			if err != nil {
 				return fmt.Errorf("policy rules: connect to serve: %w\n  Is rampart serve running? Try: rampart status", err)
 			}
@@ -457,22 +460,6 @@ type policyRulesEntry struct {
 	MatchTools []string `json:"match_tools,omitempty"`
 	MatchAgent string   `json:"match_agent,omitempty"`
 	RuleCount  int      `json:"rule_count"`
-}
-
-func renderCommand(params map[string]any) string {
-	if params == nil {
-		return ""
-	}
-	if command, ok := params["command"].(string); ok {
-		return command
-	}
-	if path, ok := params["path"].(string); ok {
-		return path
-	}
-	if url, ok := params["url"].(string); ok {
-		return url
-	}
-	return ""
 }
 
 func renderToolScope(tools engine.StringOrSlice) string {

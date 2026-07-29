@@ -38,6 +38,14 @@ const auditReaderBufferBytes = 64 * 1024
 
 var errRecordTooLarge = fmt.Errorf("audit: record exceeds %d-byte limit", MaxRecordBytes)
 
+// OpenRegularFile opens an existing audit file only when the directory entry
+// and resulting handle both refer to the same regular, non-symlink file. It is
+// intended for streaming call sites that cannot use ReadEventsFromOffset.
+// The caller must close the returned file.
+func OpenRegularFile(path string) (*os.File, error) {
+	return openAuditRegular(path, os.O_RDONLY)
+}
+
 // readRecord reads at most one JSONL record. complete is false only for an
 // unterminated final record, which callers may retry after more data is written.
 // The returned record does not include the trailing newline.
@@ -76,7 +84,7 @@ func readRecord(reader *bufio.Reader) (record []byte, complete bool, err error) 
 // Partial (unterminated) lines are not consumed — the offset stays before them
 // so they can be re-read once complete.
 func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
-	f, err := os.Open(path)
+	f, err := OpenRegularFile(path)
 	if err != nil {
 		return nil, offset, err
 	}

@@ -99,6 +99,12 @@ Rampart uses glob patterns for matching:
 | `**` | Any sequence of characters (crosses path separators) |
 | `?` | Any single character |
 
+For exec calls, Rampart also normalizes common shell wrappers and transparent
+launchers such as `env`, `command`, `exec`, `nohup`, `nice`, `timeout`,
+`setsid`, and `stdbuf`, then checks compound command components independently.
+This is deliberate defense in depth, not a complete parser for every shell or
+an operating-system security boundary.
+
 ### Examples
 
 ```yaml

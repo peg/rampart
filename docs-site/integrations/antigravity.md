@@ -5,9 +5,11 @@ description: "Protect Antigravity tool calls with Rampart's shared native PreToo
 
 # Antigravity CLI and IDE
 
-Rampart protects both Antigravity surfaces with one global plugin in
-`~/.gemini/config/plugins/rampart`. No Antigravity project file or Rampart
-policy authoring is required for the managed default path.
+Rampart installs one global plugin in `~/.gemini/config/plugins/rampart` for
+both Antigravity surfaces. The CLI 1.1.7 path has completed host proof; the IDE
+shares the reviewed plugin contract but does not yet have a separate physical
+host run. No Antigravity project file or Rampart policy authoring is required
+for the managed default path.
 
 ## Setup
 

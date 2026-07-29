@@ -97,3 +97,15 @@ func TestClineIntegrationDriverDetectsCurrentVSCodeExtension(t *testing.T) {
 		t.Fatal("Cline driver did not detect the current VS Code extension")
 	}
 }
+
+func TestAntigravityIntegrationDriverDetectsIDEStateWithoutCLIOnPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "antigravity"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	driver, ok := findIntegrationDriver("antigravity")
+	if !ok || driver.Installed == nil || !driver.Installed(home) {
+		t.Fatal("Antigravity driver did not detect the IDE state directory")
+	}
+}

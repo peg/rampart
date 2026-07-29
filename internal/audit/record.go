@@ -17,15 +17,6 @@ const (
 	maxIdentifierRunes  = 4096
 )
 
-// MarshalRecord applies event defaults, deterministically compacts fields when
-// necessary, computes the event hash after compaction, and marshals one JSONL
-// record (without its trailing newline). It is the common record encoder for
-// chained sinks and direct hook/MCP appenders.
-func MarshalRecord(event Event) ([]byte, error) {
-	_, line, err := marshalRecord(event)
-	return line, err
-}
-
 func marshalRecord(event Event) (Event, []byte, error) {
 	event = applyEventDefaults(event)
 	event.Hash = ""

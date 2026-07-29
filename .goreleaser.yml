@@ -20,6 +20,9 @@ builds:
       - -X github.com/peg/rampart/internal/build.Date={{.Date}}
 
 archives:
+  # Release archives currently contain the Go CLI only. The optional preload
+  # library has platform-native libcurl/compiler requirements and must be built
+  # from source until per-platform native artifacts are added and verified.
   - id: default
     formats:
       - tar.gz

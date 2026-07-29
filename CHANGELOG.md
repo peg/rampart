@@ -13,15 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rampart protect` now detects installed integrations through a shared driver
   contract, installs the strongest supported boundary, and runs the matching
   active verifier without requiring users to choose an adapter manually.
-- **Experimental Gemini CLI lifecycle-hook integration** — `rampart setup gemini`
-  installs managed `BeforeTool` and `AfterTool` hooks, preserves unrelated
-  settings, covers documented shell, file, web, MCP, memory, and delegated-tool
-  surfaces, and provides active non-executing verification plus a rolling
-  latest-upstream compatibility gate.
-- **GitHub Copilot CLI and VS Code protection** — `rampart setup copilot`
+- **Antigravity shared policy plugin** — `rampart setup antigravity` installs
+  one `PreToolUse` integration for the CLI and IDE, including native
+  `force_ask` approvals. Antigravity CLI 1.1.7 has completed host proof; the IDE
+  shares the tested contract, but a separate physical editor run is pending.
+- **GitHub Copilot CLI adapter and VS Code Preview hooks** — `rampart setup copilot`
   installs one cross-platform `PreToolUse`/`PostToolUse` user hook shared by
   Copilot CLI and VS Code agent sessions. Copilot CLI administrators can also
-  install a machine-owned policy hook with `--policy`.
+  install a machine-owned policy hook with `--policy`. Latest-package startup
+  and the adapter are tested separately; authenticated hook ingestion is
+  pending, and VS Code coverage remains an upstream Preview contract.
+- **Exact one-shot approval resume** — Individually approved `/v1/tool/*`
+  requests can resume once when the host supplies stable run and tool-call
+  identifiers. The grant is short-lived, bound to the complete call payload,
+  durable across restarts, and atomically consumed across processes.
+
+### Experimental
+
+- **Gemini CLI lifecycle-hook adapter** — `rampart setup gemini` installs
+  managed `BeforeTool` and `AfterTool` hooks for the enterprise/API-key Gemini
+  CLI path, preserves unrelated settings, and provides non-executing adapter
+  verification plus a rolling latest-package startup gate. It is excluded from
+  bare `rampart protect`; authenticated host hook ingestion remains unproven,
+  and this integration does not cover Antigravity.
 
 ### Changed
 
@@ -51,6 +65,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Policy benchmarks score the declared behavior again** — Version 2 corpora
+  preserve `allow`, `watch`, `ask`, and `deny` expectations, benign controls no
+  longer count as security gaps, and over-blocking can no longer improve the
+  score. Non-strict runs still accept `ask` for a case that expects `deny`.
+- **Command policy behavior is shell-aware across operating systems** — Bash,
+  `cmd.exe`, and PowerShell wrappers are parsed by command dialect rather than
+  by the OS running Rampart. Restrictive rules also evaluate ambiguous native
+  Windows forms, including caret and PowerShell backtick escapes, while those
+  alternate interpretations can never broaden an allow rule.
+- **Windows hook upgrades recover legacy data-directory permissions first** —
+  Native hooks repair the locked `~\.rampart` layout left by affected older
+  installers before other command work and still return protocol-shaped,
+  fail-closed responses if recovery is not possible.
 - **Windows background service lifecycle is reliable** — Detached serving uses
   the Windows process model, records the child PID, and can be stopped or
   restarted without relying on Unix process-group behavior.
@@ -96,9 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `disableAllHooks` setting prevents the user-level Rampart boundary from
   loading in the current repository.
 - **Rolling compatibility gates track upstream Gemini and Copilot releases** —
-  Disposable homes validate generated hook configuration and destructive-call
-  denial adapters against the latest published CLIs without touching normal
-  user state or claiming authenticated host execution.
+  Disposable homes confirm the latest published packages start, then separately
+  validate generated hook configuration and destructive-call denial adapters
+  without touching normal user state or claiming host hook ingestion or
+  authenticated execution.
 - **Hermes latest-version gate rejects silent dependency fallback** — The
   disposable Hermes harness now compares the installed distribution with
   PyPI's current release and fails when an unsupported Python version causes
@@ -110,6 +138,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   intercept packages, the brittle OpenClaw source-patching scripts, and the old
   fail-open Node filesystem preload hook. Supported integrations now use the
   maintained native hook, plugin, proxy, wrapper, or preload boundaries.
+
+## [1.4.1] - 2026-07-28
+
+### Security
+
+- **Execution grants require a whole-call command match** — An allow, watch, or
+  webhook rule can no longer authorize a compound command merely because one
+  sibling segment or nested substitution matches. Restrictive rules continue
+  inspecting every executable segment and subcommand with deny-wins behavior.
 
 ## [1.4.0] - 2026-07-25
 

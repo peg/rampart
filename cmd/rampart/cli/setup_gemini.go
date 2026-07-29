@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -48,11 +47,7 @@ Run 'rampart setup gemini --remove' to uninstall.`,
 				return nil
 			}
 
-			hookBin := resolveRampartHookBinary()
-			hookCommand := shellQuoteCodexHookArg(hookBin) + " hook --format gemini"
-			if runtime.GOOS == "windows" {
-				hookCommand = windowsQuoteCodexHookArg(hookBin) + " hook --format gemini"
-			}
+			hookCommand := currentGeminiHookCommand()
 			if err := installGeminiHooks(settingsPath, hookCommand, force); err != nil {
 				return err
 			}
@@ -134,7 +129,7 @@ func geminiHooksConfiguredForHome(home string) bool {
 		found := false
 		for _, entry := range entries {
 			matcher, ok := entry.(map[string]any)
-			if ok && isRampartGeminiMatcher(matcher) {
+			if ok && geminiMatcherUsesCommand(matcher, currentGeminiHookCommand()) {
 				found = true
 				break
 			}
@@ -144,6 +139,32 @@ func geminiHooksConfiguredForHome(home string) bool {
 		}
 	}
 	return true
+}
+
+func currentGeminiHookCommand() string {
+	hookBin := resolveRampartHookBinary()
+	if runtime.GOOS == "windows" {
+		return windowsQuoteCodexHookArg(hookBin) + " hook --format gemini"
+	}
+	return shellQuoteCodexHookArg(hookBin) + " hook --format gemini"
+}
+
+func geminiMatcherUsesCommand(matcher map[string]any, expected string) bool {
+	handlers, ok := matcher["hooks"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawHandler := range handlers {
+		handler, ok := rawHandler.(map[string]any)
+		if !ok {
+			continue
+		}
+		command, _ := handler["command"].(string)
+		if command == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func replaceGeminiRampartMatcher(existing any, rampartMatcher map[string]any) []any {
@@ -214,7 +235,7 @@ func isRampartGeminiMatcher(matcher map[string]any) bool {
 			continue
 		}
 		command, _ := handler["command"].(string)
-		if strings.Contains(command, "hook --format gemini") {
+		if hasRampartHookFormat(command, "gemini") {
 			return true
 		}
 	}

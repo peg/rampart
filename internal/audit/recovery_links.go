@@ -46,7 +46,7 @@ func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, 
 
 	for _, name := range files {
 		path := filepath.Join(dir, name)
-		file, err := os.Open(path)
+		file, err := openAuditRegular(path, os.O_RDONLY)
 		if err != nil {
 			return recoveredChainState{}, fmt.Errorf("open %s: %w", name, err)
 		}

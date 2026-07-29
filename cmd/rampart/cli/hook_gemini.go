@@ -42,7 +42,7 @@ func parseGeminiInput(reader io.Reader) (*hookParseResult, error) {
 		return nil, fmt.Errorf("hook: unsupported Gemini tool_name %q; update Rampart before allowing this tool", input.ToolName)
 	}
 
-	params, policyPaths, err := normalizeGeminiParams(input.ToolName, input.ToolInput)
+	params, policyPaths, err := normalizeGeminiParams(input.ToolName, input.ToolInput, event == "BeforeTool")
 	if err != nil {
 		return nil, err
 	}
@@ -94,20 +94,39 @@ func mapGeminiTool(toolName string) string {
 	}
 }
 
-func normalizeGeminiParams(toolName string, input map[string]any) (map[string]any, []string, error) {
+func normalizeGeminiParams(toolName string, input map[string]any, enforce bool) (map[string]any, []string, error) {
 	params := make(map[string]any, len(input)+1)
 	for key, value := range input {
 		params[key] = value
 	}
-	if path, ok := params["file_path"].(string); ok && strings.TrimSpace(path) != "" {
-		params["path"] = path
-	}
-	if _, exists := params["path"]; !exists {
-		if path, ok := params["dir_path"].(string); ok && strings.TrimSpace(path) != "" {
+	if enforce {
+		if err := validateGeminiActionParams(toolName, params); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		if path, ok := params["file_path"].(string); ok && strings.TrimSpace(path) != "" {
 			params["path"] = path
+		}
+		if _, exists := params["path"]; !exists {
+			if path, ok := params["dir_path"].(string); ok && strings.TrimSpace(path) != "" {
+				params["path"] = path
+			}
+		}
+		switch toolName {
+		case "web_fetch":
+			if prompt, ok := params["prompt"].(string); ok {
+				params["url"] = prompt
+			}
+		case "google_web_search":
+			if query, ok := params["query"].(string); ok {
+				params["url"] = query
+			}
 		}
 	}
 	if toolName == "read_many_files" {
+		if !enforce {
+			return params, nil, nil
+		}
 		seen := make(map[string]struct{})
 		paths := make([]string, 0, 4)
 		add := func(path string) error {
@@ -150,17 +169,41 @@ func normalizeGeminiParams(toolName string, input map[string]any) (map[string]an
 		params["paths"] = append([]string(nil), paths...)
 		return params, paths, nil
 	}
-	if toolName == "web_fetch" {
-		if prompt, ok := params["prompt"].(string); ok {
-			params["url"] = prompt
-		}
-	}
-	if toolName == "google_web_search" {
-		if query, ok := params["query"].(string); ok {
-			params["url"] = query
-		}
-	}
 	return params, nil, nil
+}
+
+// validateGeminiActionParams rejects recognized pre-call actions whose
+// security-bearing fields are absent or type-confused. AfterTool payloads are
+// intentionally accepted so response scanning survives upstream schema drift.
+func validateGeminiActionParams(toolName string, params map[string]any) error {
+	context := "hook: Gemini " + toolName
+	switch mapGeminiTool(toolName) {
+	case "exec":
+		_, err := requireHookStringAliases(params, "command", context, "command")
+		return err
+	case "read", "write":
+		_, found, err := normalizeHookStringAliases(params, "path", context, "file path", "file_path", "dir_path")
+		if err != nil {
+			return err
+		}
+		switch toolName {
+		case "write_file", "replace", "read_file":
+			if !found {
+				return fmt.Errorf("%s requires a non-empty file path", context)
+			}
+		}
+		return nil
+	case "fetch":
+		switch toolName {
+		case "web_fetch":
+			_, err := requireHookStringAliases(params, "url", context, "URL or query", "prompt")
+			return err
+		case "google_web_search":
+			_, err := requireHookStringAliases(params, "url", context, "URL or query", "query")
+			return err
+		}
+	}
+	return nil
 }
 
 func outputGeminiHookResult(cmdOutput io.Writer, decision hookDecisionType, reason string) error {

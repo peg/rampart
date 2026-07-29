@@ -51,6 +51,41 @@ func TestParseGeminiInputFailsClosedForUnknownBeforeTool(t *testing.T) {
 	}
 }
 
+func TestParseGeminiInputRejectsMalformedKnownBeforeTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolName  string
+		toolInput string
+	}{
+		{name: "missing shell command", toolName: "run_shell_command", toolInput: `{}`},
+		{name: "non-string shell command", toolName: "shell", toolInput: `{"command":42}`},
+		{name: "missing write path", toolName: "write_file", toolInput: `{}`},
+		{name: "missing replace path", toolName: "replace", toolInput: `{}`},
+		{name: "missing read path", toolName: "read_file", toolInput: `{}`},
+		{name: "missing fetch URL", toolName: "web_fetch", toolInput: `{}`},
+		{name: "missing search query", toolName: "google_web_search", toolInput: `{}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"` + testCase.toolName + `","tool_input":` + testCase.toolInput + `}`
+			if _, err := parseGeminiInput(strings.NewReader(payload)); err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("error = %v, want required-field rejection", err)
+			}
+		})
+	}
+}
+
+func TestParseGeminiAfterToolKeepsScanningMalformedKnownInput(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{},"tool_response":{"output":"scan me"}}`
+	result, err := parseGeminiInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response != "scan me" {
+		t.Fatalf("response = %q, want scan me", result.Response)
+	}
+}
+
 func TestParseGeminiReadManyFilesEvaluatesEveryInclude(t *testing.T) {
 	payload := `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"read_many_files","tool_input":{"include":["safe/**",".env"]}}`
 	result, err := parseGeminiInput(strings.NewReader(payload))
@@ -102,6 +137,25 @@ func TestGeminiUnknownBeforeToolEmitsStructuredDeny(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
 	cmd.SetIn(strings.NewReader(`{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"future_mutator","tool_input":{}}`))
+	cmd.SetArgs([]string{"hook", "--format", "gemini", "--audit-dir", filepath.Join(home, "audit")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("structured output = %q: %v", stdout.String(), err)
+	}
+	if output["decision"] != "deny" {
+		t.Fatalf("decision = %#v, want deny", output["decision"])
+	}
+}
+
+func TestGeminiMalformedKnownBeforeToolEmitsStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(`{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"run_shell_command","tool_input":{}}`))
 	cmd.SetArgs([]string{"hook", "--format", "gemini", "--audit-dir", filepath.Join(home, "audit")})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)

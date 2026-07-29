@@ -136,7 +136,7 @@ HTTP server for tool evaluation. Bearer token auth, localhost-only.
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /v1/tool/{name}` | Evaluate and execute |
+| `POST /v1/tool/{name}` | Evaluate a host-owned tool call |
 | `POST /v1/preflight/{name}` | Policy preview, or host-owned execution check with `enforce: true` |
 | `GET /v1/policy/summary` | Auth required. Returns JSON with `default_action`, per-rule summaries, and a plain-English overall summary |
 | `GET /v1/approvals` | Pending approvals |
@@ -154,6 +154,10 @@ Starts embedded proxy → generates shell shim → sets `$SHELL` → execs child
 ### Preload Library (`preload/`)
 
 ~500 lines of C. Intercepts `execve`, `execvp`, `system()`, `popen()`, `posix_spawn()`. HTTP client via libcurl. Fail-open on server unreachable.
+
+This is an optional source-built component. Current release archives and the
+Homebrew formula package the Go CLI only; they do not include a native preload
+library.
 
 ## Project Layout
 
@@ -187,6 +191,6 @@ preload/             C library for LD_PRELOAD
 | **Native plugin** | Agent plugin forwards tool calls to Rampart before execution | OpenClaw |
 | **Wrap** | `$SHELL` shim intercepts commands | Aider, OpenCode |
 | **MCP Proxy** | Transparent MCP protocol proxy | Claude Desktop, Cursor |
-| **LD_PRELOAD** | Optional Unix syscall interception | Any compatible process |
+| **LD_PRELOAD** | Optional libc exec/spawn interposition | Compatible dynamically linked Unix processes |
 | **HTTP API** | Direct REST calls | Python agents, custom |
 | **Go SDK** | Embed engine in Go code | Go agents |

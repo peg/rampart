@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
 )
 
@@ -46,28 +47,25 @@ func testLogger() *slog.Logger {
 
 func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 	tests := []struct {
-		name      string
-		toolName  string
-		wantTool  string
-		withInput bool
+		name     string
+		toolName string
+		wantTool string
+		params   map[string]any
 	}{
-		{name: "Bash", toolName: "Bash", wantTool: "exec", withInput: true},
-		{name: "Read", toolName: "Read", wantTool: "read", withInput: true},
-		{name: "ReadFile", toolName: "ReadFile", wantTool: "read", withInput: false},
-		{name: "Write", toolName: "Write", wantTool: "write", withInput: true},
-		{name: "WriteFile", toolName: "WriteFile", wantTool: "write", withInput: false},
-		{name: "Edit", toolName: "Edit", wantTool: "write", withInput: true},
-		{name: "EditFile", toolName: "EditFile", wantTool: "write", withInput: false},
-		{name: "WebFetch", toolName: "WebFetch", wantTool: "fetch", withInput: true},
-		{name: "Fetch", toolName: "Fetch", wantTool: "fetch", withInput: false},
+		{name: "Bash", toolName: "Bash", wantTool: "exec", params: map[string]any{"command": "echo hi"}},
+		{name: "Read", toolName: "Read", wantTool: "read", params: map[string]any{"file_path": "README.md"}},
+		{name: "ReadFile", toolName: "ReadFile", wantTool: "read", params: map[string]any{"path": "README.md"}},
+		{name: "Write", toolName: "Write", wantTool: "write", params: map[string]any{"file_path": "out.txt"}},
+		{name: "WriteFile", toolName: "WriteFile", wantTool: "write", params: map[string]any{"path": "out.txt"}},
+		{name: "Edit", toolName: "Edit", wantTool: "write", params: map[string]any{"file_path": "out.txt"}},
+		{name: "EditFile", toolName: "EditFile", wantTool: "write", params: map[string]any{"path": "out.txt"}},
+		{name: "WebFetch", toolName: "WebFetch", wantTool: "fetch", params: map[string]any{"url": "https://example.com"}},
+		{name: "Fetch", toolName: "Fetch", wantTool: "fetch", params: map[string]any{"url": "https://example.com"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			payload := map[string]any{"hook_event_name": "PreToolUse", "tool_name": tt.toolName}
-			if tt.withInput {
-				payload["tool_input"] = map[string]any{"command": "echo hi"}
-			}
+			payload := map[string]any{"hook_event_name": "PreToolUse", "tool_name": tt.toolName, "tool_input": tt.params}
 
 			data, err := json.Marshal(payload)
 			if err != nil {
@@ -88,6 +86,137 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 				t.Fatal("params is nil")
 			}
 		})
+	}
+}
+
+func TestParseClaudeCodeInputRejectsMalformedKnownPreTools(t *testing.T) {
+	tests := []struct {
+		toolName  string
+		toolInput string
+	}{
+		{toolName: "Bash", toolInput: `{}`},
+		{toolName: "PowerShell", toolInput: `{"command":42}`},
+		{toolName: "Read", toolInput: `{}`},
+		{toolName: "Write", toolInput: `{"file_path":" "}`},
+		{toolName: "NotebookEdit", toolInput: `{}`},
+		{toolName: "WebFetch", toolInput: `{}`},
+		{toolName: "WebSearch", toolInput: `{}`},
+		{toolName: "Monitor", toolInput: `{"ws":{}}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.toolName, func(t *testing.T) {
+			payload := `{"hook_event_name":"PreToolUse","tool_name":"` + testCase.toolName + `","tool_input":` + testCase.toolInput + `}`
+			if _, err := parseClaudeCodeInput(strings.NewReader(payload), testLogger()); err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("error = %v, want required-field rejection", err)
+			}
+		})
+	}
+}
+
+func TestParseClaudeCodeInputNormalizesPathAliasesBeforePolicyEvaluation(t *testing.T) {
+	store := engine.NewMemoryStore([]byte(`
+version: "1"
+default_action: allow
+policies:
+  - name: protect-sensitive-paths
+    match:
+      agent: claude-code
+      tool: [read, write]
+    rules:
+      - action: deny
+        when:
+          path_matches: ["/protected/**"]
+`), "claude-path-alias-test")
+	eng, err := engine.New(store, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		payload  string
+		wantPath string
+	}{
+		{
+			name:     "LSP filePath",
+			payload:  `{"hook_event_name":"PreToolUse","tool_name":"LSP","tool_input":{"filePath":"/protected/source.go"}}`,
+			wantPath: "/protected/source.go",
+		},
+		{
+			name:     "NotebookEdit notebook_path",
+			payload:  `{"hook_event_name":"PreToolUse","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/protected/analysis.ipynb"}}`,
+			wantPath: "/protected/analysis.ipynb",
+		},
+		{
+			name:     "EnterWorktree resolved path",
+			payload:  `{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","tool_input":{"name":"feature","path":"/protected/worktrees/feature"}}`,
+			wantPath: "/protected/worktrees/feature",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			parsed, err := parseClaudeCodeInput(strings.NewReader(testCase.payload), testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := parsed.Params["path"]; got != testCase.wantPath {
+				t.Fatalf("canonical path = %#v, want %q", got, testCase.wantPath)
+			}
+			decision := eng.Evaluate(engine.ToolCall{
+				Agent:  parsed.Agent,
+				Tool:   parsed.Tool,
+				Params: parsed.Params,
+				Input:  parsed.Params,
+			})
+			if decision.Action != engine.ActionDeny {
+				t.Fatalf("decision = %s, want deny for canonical path %#v", decision.Action, parsed.Params["path"])
+			}
+		})
+	}
+}
+
+func TestParseClaudeCodeInputRejectsUnresolvedOrConflictingPathAliases(t *testing.T) {
+	tests := []struct {
+		name      string
+		payload   string
+		wantError string
+	}{
+		{
+			name:      "EnterWorktree opaque name",
+			payload:   `{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","tool_input":{"name":"feature"}}`,
+			wantError: "name is only an opaque label",
+		},
+		{
+			name:      "LSP conflicting aliases",
+			payload:   `{"hook_event_name":"PreToolUse","tool_name":"LSP","tool_input":{"filePath":"/safe/source.go","path":"/protected/source.go"}}`,
+			wantError: "conflicting file path aliases",
+		},
+		{
+			name:      "NotebookEdit conflicting aliases",
+			payload:   `{"hook_event_name":"PreToolUse","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/safe/analysis.ipynb","path":"/protected/analysis.ipynb"}}`,
+			wantError: "conflicting notebook path aliases",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := parseClaudeCodeInput(strings.NewReader(testCase.payload), testLogger())
+			if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+				t.Fatalf("error = %v, want %q", err, testCase.wantError)
+			}
+		})
+	}
+}
+
+func TestParseClaudeCodeInputPostToolKeepsScanningMalformedKnownInput(t *testing.T) {
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{},"tool_response":{"stdout":"scan me"}}`
+	result, err := parseClaudeCodeInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response != "scan me" {
+		t.Fatalf("response = %q, want scan me", result.Response)
 	}
 }
 
@@ -181,7 +310,11 @@ func TestParseClineInput_Mappings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			toolUse := map[string]any{"toolName": tt.toolName}
 			if tt.withParam {
-				toolUse["parameters"] = map[string]any{"path": "/tmp/file"}
+				params := map[string]any{"path": "/tmp/file"}
+				if tt.toolName == "execute_command" {
+					params = map[string]any{"command": "pwd"}
+				}
+				toolUse["parameters"] = params
 			}
 
 			payload := map[string]any{
@@ -240,6 +373,29 @@ func TestParseClineInput_CurrentAndLegacyToolFields(t *testing.T) {
 			}
 			if result.Tool != "exec" || result.HookEventName != "PreToolUse" || result.SessionID == "" {
 				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestParseClineInputRejectsMalformedKnownPreTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolName  string
+		toolInput string
+	}{
+		{name: "missing execute command", toolName: "execute_command", toolInput: `{}`},
+		{name: "invalid command type", toolName: "run_commands", toolInput: `{"commands":42}`},
+		{name: "missing read path", toolName: "read_file", toolInput: `{}`},
+		{name: "missing write path", toolName: "write_to_file", toolInput: `{}`},
+		{name: "missing fetch URL", toolName: "web_fetch", toolInput: `{}`},
+		{name: "missing search query", toolName: "web_search", toolInput: `{}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"hookName":"PreToolUse","taskId":"task-1","preToolUse":{"toolName":"` + testCase.toolName + `","parameters":` + testCase.toolInput + `}}`
+			if _, err := parseClineInput(strings.NewReader(payload), testLogger()); err == nil {
+				t.Fatal("expected malformed known tool to be rejected")
 			}
 		})
 	}

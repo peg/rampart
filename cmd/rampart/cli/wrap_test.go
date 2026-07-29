@@ -2,7 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -313,6 +316,170 @@ func TestCreateShellWrappers(t *testing.T) {
 			if !strings.Contains(string(data), want) {
 				t.Errorf("wrapper missing enforce failure %q", want)
 			}
+		}
+	}
+}
+
+func TestGeneratedShellInterceptorsRequireConfirmedEnforcement(t *testing.T) {
+	skipOnWindows(t, "Unix shell shims")
+	for _, dependency := range []string{"base64", "curl", "grep", "head", "sed", "tr"} {
+		if _, err := exec.LookPath(dependency); err != nil {
+			t.Skipf("%s is required for shell-interceptor test", dependency)
+		}
+	}
+
+	type surface struct {
+		name  string
+		build func(t *testing.T, proxyURL, token, mode string) string
+		env   []string
+	}
+	surfaces := []surface{
+		{
+			name: "direct shim",
+			build: func(t *testing.T, proxyURL, token, mode string) string {
+				t.Helper()
+				path, err := createShellShim(proxyURL, token, mode, "/bin/sh")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					_ = os.Remove(path)
+					_ = os.Remove(path + ".tok")
+				})
+				return path
+			},
+		},
+		{
+			name: "PATH wrapper",
+			build: func(t *testing.T, proxyURL, token, mode string) string {
+				t.Helper()
+				tokenFile := filepath.Join(t.TempDir(), "token")
+				if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				dir, err := createShellWrappers(proxyURL, tokenFile, mode)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.RemoveAll(dir) })
+				path := filepath.Join(dir, "bash")
+				if _, err := os.Stat(path); err != nil {
+					t.Skipf("bash wrapper is unavailable: %v", err)
+				}
+				return path
+			},
+			env: []string{"RAMPART_ACTIVE=1"},
+		},
+	}
+
+	for _, surface := range surfaces {
+		surface := surface
+		for _, tc := range []struct {
+			name             string
+			mode             string
+			responseAllowed  bool
+			responseEnforced bool
+			wantRequest      bool
+			wantExecute      bool
+			wantExitCode     int
+			wantStderr       string
+		}{
+			{
+				name:             "enforce executes after confirmed allow",
+				mode:             "enforce",
+				responseAllowed:  true,
+				responseEnforced: true,
+				wantRequest:      true,
+				wantExecute:      true,
+			},
+			{
+				name:            "enforce blocks unconfirmed allow",
+				mode:            "enforce",
+				responseAllowed: true,
+				wantRequest:     true,
+				wantExitCode:    126,
+				wantStderr:      "policy service did not confirm enforcement",
+			},
+			{
+				name:        "monitor remains observational",
+				mode:        "monitor",
+				wantExecute: true,
+			},
+		} {
+			t.Run(surface.name+"/"+tc.name, func(t *testing.T) {
+				var mu sync.Mutex
+				var requests []struct {
+					enforce       bool
+					authorization string
+					decodeErr     error
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var body struct {
+						Enforce bool `json:"enforce"`
+					}
+					err := json.NewDecoder(r.Body).Decode(&body)
+					mu.Lock()
+					requests = append(requests, struct {
+						enforce       bool
+						authorization string
+						decodeErr     error
+					}{body.Enforce, r.Header.Get("Authorization"), err})
+					mu.Unlock()
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"allowed":  tc.responseAllowed,
+						"enforced": tc.responseEnforced,
+						"message":  "test decision",
+					})
+				}))
+				defer server.Close()
+
+				const token = "test-token"
+				interceptor := surface.build(t, server.URL, token, tc.mode)
+				marker := filepath.Join(t.TempDir(), "executed")
+				cmd := exec.Command("/bin/bash", interceptor, "-c", `printf ran > "$MARKER"`)
+				cmd.Env = append(os.Environ(), append(surface.env, "MARKER="+marker)...)
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				err := cmd.Run()
+
+				if tc.wantExitCode == 0 {
+					if err != nil {
+						t.Fatalf("interceptor failed: %v; stderr: %s", err, stderr.String())
+					}
+				} else {
+					var exitErr *exec.ExitError
+					if !errors.As(err, &exitErr) || exitErr.ExitCode() != tc.wantExitCode {
+						t.Fatalf("exit error = %v, want code %d; stderr: %s", err, tc.wantExitCode, stderr.String())
+					}
+				}
+				if tc.wantStderr != "" && !strings.Contains(stderr.String(), tc.wantStderr) {
+					t.Fatalf("stderr = %q, want substring %q", stderr.String(), tc.wantStderr)
+				}
+				if _, err := os.Stat(marker); (err == nil) != tc.wantExecute {
+					t.Fatalf("wrapped command executed = %v, want %v (stat error: %v)", err == nil, tc.wantExecute, err)
+				}
+
+				mu.Lock()
+				gotRequests := append([]struct {
+					enforce       bool
+					authorization string
+					decodeErr     error
+				}(nil), requests...)
+				mu.Unlock()
+				if len(gotRequests) != 1 {
+					t.Fatalf("preflight requests = %d, want 1", len(gotRequests))
+				}
+				if gotRequests[0].decodeErr != nil {
+					t.Fatalf("decode preflight request: %v", gotRequests[0].decodeErr)
+				}
+				if gotRequests[0].enforce != tc.wantRequest {
+					t.Errorf("preflight enforce = %v, want %v", gotRequests[0].enforce, tc.wantRequest)
+				}
+				if gotRequests[0].authorization != "Bearer "+token {
+					t.Errorf("Authorization = %q", gotRequests[0].authorization)
+				}
+			})
 		}
 	}
 }

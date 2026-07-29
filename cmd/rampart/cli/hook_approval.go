@@ -53,15 +53,8 @@ type pollApprovalResponse struct {
 	Status string `json:"status"`
 }
 
-// requestApproval creates an approval and polls until resolved.
-// Returns hookAllow if approved, hookDeny if denied/expired/error.
-// Falls back to hookAsk if the serve instance is unreachable.
-// The context allows cancellation (e.g., user Ctrl-C).
-func (c *hookApprovalClient) requestApproval(tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
-	return c.requestApprovalCtx(context.Background(), tool, command, agent, path, runID, "", message, timeout)
-}
-
-// requestApprovalCtx is like requestApproval but accepts a context for cancellation.
+// requestApprovalCtx creates an approval and polls until resolved. The context
+// allows cancellation (for example, when the user presses Ctrl-C).
 func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, runID, toolCallID, message string, timeout time.Duration) hookDecisionType {
 	message = enrichApprovalMessage(message, command)
 
@@ -90,7 +83,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := newRampartHTTPClient(5 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		// If the context was cancelled (e.g. user Ctrl-C), deny rather than
@@ -162,7 +155,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 
 // pollApprovalCtx polls GET /v1/approvals/{id} every 500ms until resolved.
 func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, timeout time.Duration) hookDecisionType {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := newRampartHTTPClient(5 * time.Second)
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -256,7 +249,7 @@ func (c *hookApprovalClient) registerAskAuditCtx(ctx context.Context, tool, comm
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
-	client := &http.Client{Timeout: 400 * time.Millisecond}
+	client := newRampartHTTPClient(400 * time.Millisecond)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -306,7 +299,7 @@ func (c *hookApprovalClient) resolveAskAuditCtx(ctx context.Context, approvalID 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
-	client := &http.Client{Timeout: 400 * time.Millisecond}
+	client := newRampartHTTPClient(400 * time.Millisecond)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

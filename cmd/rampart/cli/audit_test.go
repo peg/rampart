@@ -161,8 +161,15 @@ func TestAuditVerifySince_FiltersHookFilenameDate(t *testing.T) {
 
 func writeStandaloneAuditEvent(t *testing.T, path string, event audit.Event) {
 	t.Helper()
+	if event.ID == "" {
+		event.ID = audit.NewEventID()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
 	event.PrevHash = ""
-	line, err := audit.MarshalRecord(event)
+	require.NoError(t, event.ComputeHash())
+	line, err := json.Marshal(event)
 	require.NoError(t, err)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	require.NoError(t, err)

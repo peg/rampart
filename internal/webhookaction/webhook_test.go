@@ -61,3 +61,34 @@ func TestExecuteDoesNotExposeWebhookCredentialsOnFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestExecuteRefusesCrossOriginRedirect(t *testing.T) {
+	destinationHit := make(chan struct{}, 1)
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		destinationHit <- struct{}{}
+		_, _ = w.Write([]byte(`{"decision":"allow"}`))
+	}))
+	defer destination.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", destination.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	decision := Execute(nil, engine.ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "sensitive command"},
+	}, engine.Decision{
+		Action:        engine.ActionWebhook,
+		WebhookConfig: &engine.WebhookActionConfig{URL: redirector.URL},
+	})
+	if decision.Action != engine.ActionDeny {
+		t.Fatalf("redirected webhook action = %s, want deny", decision.Action)
+	}
+	select {
+	case <-destinationHit:
+		t.Fatal("webhook request followed redirect to a different origin")
+	default:
+	}
+}

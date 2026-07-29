@@ -169,7 +169,8 @@ func TestDetectProtectedAgents_CodexHooks(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := installCodexHooks(hooksPath, "rampart hook --format codex", "rampart.exe hook --format codex", false); err != nil {
+	command, commandWindows := currentCodexHookCommands()
+	if err := installCodexHooks(hooksPath, command, commandWindows, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,7 +190,7 @@ func TestDetectProtectedAgents_CodexHooks(t *testing.T) {
 func TestDetectProtectedAgents_GeminiHooks(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	if err := installGeminiHooks(filepath.Join(home, ".gemini", "settings.json"), "rampart hook --format gemini", false); err != nil {
+	if err := installGeminiHooks(filepath.Join(home, ".gemini", "settings.json"), currentGeminiHookCommand(), false); err != nil {
 		t.Fatal(err)
 	}
 	found := false
@@ -208,7 +209,8 @@ func TestDetectProtectedAgents_CopilotHooks(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
-	if err := installCopilotHooks(path, "rampart hook --format copilot", "rampart.exe hook --format copilot", false); err != nil {
+	bashCommand, powershellCommand := currentCopilotHookCommands()
+	if err := installCopilotHooks(path, bashCommand, powershellCommand, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, agent := range detectProtectedAgents() {
@@ -219,10 +221,35 @@ func TestDetectProtectedAgents_CopilotHooks(t *testing.T) {
 	t.Fatalf("expected shared Copilot lifecycle hook detection, got %v", detectProtectedAgents())
 }
 
+func TestDetectProtectedAgents_CopilotDisabledHooksNotProtected(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("COPILOT_HOME", "")
+	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
+	bashCommand, powershellCommand := currentCopilotHookCommands()
+	if err := installCopilotHooks(path, bashCommand, powershellCommand, false); err != nil {
+		t.Fatal(err)
+	}
+	settings := testReadJSONMap(t, path)
+	settings["disableAllHooks"] = true
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range detectProtectedAgents() {
+		if agent == "GitHub Copilot CLI / VS Code (hooks)" {
+			t.Fatal("status reported Copilot protected while user hooks are disabled")
+		}
+	}
+}
+
 func TestDetectProtectedAgents_AntigravityPlugin(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	if err := installAntigravityPlugin(antigravityPluginDir(home), "rampart hook --format antigravity", false); err != nil {
+	if err := installAntigravityPlugin(antigravityPluginDir(home), currentAntigravityHookCommand(), false); err != nil {
 		t.Fatal(err)
 	}
 	for _, agent := range detectProtectedAgents() {

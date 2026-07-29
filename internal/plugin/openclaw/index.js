@@ -102,6 +102,22 @@ function truncateForApprovalDescription(text, max = 220) {
   return `${normalized.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
+function markdownInlineCode(text) {
+  const value = truncateForApprovalDescription(text);
+  const longestRun = Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longestRun + 1);
+  return `${fence}${value}${fence}`;
+}
+
+function escapeMarkdownText(text) {
+  return truncateForApprovalDescription(text).replace(/([\\`*_[\]{}()<>#+\-.!|])/g, "\\$1");
+}
+
+function safeLogLabel(value, max = 80) {
+  const normalized = String(value ?? "unknown").replace(/[\r\n\t]+/g, " ").trim();
+  return normalized.slice(0, max) || "unknown";
+}
+
 // OpenClaw has exposed command execution through more than one tool name over
 // time. Rampart policy is intentionally written against the stable "exec"
 // class, so command-style aliases must be normalized before policy evaluation.
@@ -225,7 +241,7 @@ function normalizeToolCall(toolName, params, event = {}) {
       originalToolName,
       mapped: false,
       classified: false,
-      classificationError: `unsupported OpenClaw tool ${originalToolName}`,
+      classificationError: `unsupported OpenClaw tool ${safeLogLabel(originalToolName)}`,
       policyPaths: [],
     };
   }
@@ -465,6 +481,11 @@ function isTrustedServeUrl(value) {
     const url = new URL(value ?? "http://localhost:9090");
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.pathname === "/" &&
       (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]")
     );
   } catch {
@@ -473,12 +494,87 @@ function isTrustedServeUrl(value) {
 }
 
 function toolDisplayName(toolName, originalToolName) {
-  return originalToolName && originalToolName !== toolName
-    ? `${originalToolName}→${toolName}`
-    : toolName;
+  const canonical = safeLogLabel(toolName);
+  const original = safeLogLabel(originalToolName || toolName);
+  return original !== canonical ? `${original}→${canonical}` : canonical;
 }
 
 // ─── Rampart API client ───────────────────────────────────────────────────────
+
+const MAX_CONTROL_RESPONSE_BYTES = 1024 * 1024;
+const POLICY_DECISIONS = new Set(["allow", "watch", "ask", "deny"]);
+const APPROVAL_SEVERITIES = new Set(["info", "warning", "critical"]);
+
+class InvalidControlResponseError extends Error {}
+
+async function readControlResponseText(response) {
+  const declaredLength = response?.headers?.get?.("content-length");
+  if (declaredLength !== null && declaredLength !== undefined && declaredLength !== "") {
+    const parsedLength = Number(declaredLength);
+    if (Number.isFinite(parsedLength) && parsedLength > MAX_CONTROL_RESPONSE_BYTES) {
+      await response?.body?.cancel?.().catch(() => {});
+      throw new InvalidControlResponseError("Rampart response exceeded the size limit");
+    }
+  }
+
+  // Real Fetch responses expose a byte stream. Count decoded response bytes as
+  // they arrive so chunked or compressed replies cannot bypass Content-Length.
+  if (response?.body && typeof response.body.getReader === "function") {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let total = 0;
+    let text = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value?.byteLength ?? 0;
+        if (total > MAX_CONTROL_RESPONSE_BYTES) {
+          await reader.cancel().catch(() => {});
+          throw new InvalidControlResponseError("Rampart response exceeded the size limit");
+        }
+        text += decoder.decode(value, { stream: true });
+      }
+      return text + decoder.decode();
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  // Test doubles and older host shims may expose only convenience readers. The
+  // production Fetch path above performs the limit before buffering the body.
+  if (typeof response?.text === "function") {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > MAX_CONTROL_RESPONSE_BYTES) {
+      throw new InvalidControlResponseError("Rampart response exceeded the size limit");
+    }
+    return text;
+  }
+  if (typeof response?.json === "function") {
+    const text = JSON.stringify(await response.json());
+    if (new TextEncoder().encode(text).byteLength > MAX_CONTROL_RESPONSE_BYTES) {
+      throw new InvalidControlResponseError("Rampart response exceeded the size limit");
+    }
+    return text;
+  }
+  throw new InvalidControlResponseError("Rampart response body is unreadable");
+}
+
+async function readControlResponseJSON(response) {
+  const text = await readControlResponseText(response);
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new InvalidControlResponseError("Rampart returned invalid JSON", { cause: err });
+  }
+}
+
+function isConsistentPolicyDecision(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return false;
+  if (!POLICY_DECISIONS.has(result.decision)) return false;
+  if (typeof result.allowed !== "boolean") return false;
+  return result.allowed === (result.decision === "allow" || result.decision === "watch");
+}
 
 /**
  * Call the Rampart serve endpoint to check if a tool call should be allowed.
@@ -490,12 +586,15 @@ function toolDisplayName(toolName, originalToolName) {
  * Returns:
  *   { allowed: true, decision: "allow" }              → allow (pass through)
  *   { allowed: false, decision: "deny", message }     → block
- *   { decision: "ask", message }                     → require OpenClaw approval
+ *   { allowed: false, decision: "ask", message }     → require OpenClaw approval
  *   null                                              → degraded handling in hook (fail-open only for configured tools)
  */
 async function checkWithRampart(toolName, params, ctx, config, { verification = false } = {}) {
   const serveUrl = config?.serveUrl ?? "http://localhost:9090";
-  const timeoutMs = config?.timeoutMs ?? 3000;
+  const configuredTimeoutMs = Number(config?.timeoutMs ?? 3000);
+  const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+    ? Math.min(configuredTimeoutMs, 30_000)
+    : 3000;
 
   if (!isTrustedServeUrl(serveUrl)) {
     return { _unsafeServeUrl: true };
@@ -527,24 +626,39 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
       method: "POST",
       headers,
       body,
+      redirect: "error",
       signal: controller.signal,
     });
 
-    clearTimeout(timer);
-
     if (!resp.ok) {
-      // 4xx from Rampart: treat 403/401 as deny, defer other errors to degraded handling
+      // Authentication failures are explicit denies, and their bodies are
+      // bounded/drained without being reflected into logs or approval UI.
       if (resp.status === 403 || resp.status === 401) {
-        const text = await resp.text().catch(() => "");
-        return { allowed: false, decision: "deny", message: `Rampart: HTTP ${resp.status}${text ? ` — ${text}` : ""}` };
+        // Drain the bounded body for connection reuse, but never reflect an
+        // authentication response body into host logs or approval UI.
+        await readControlResponseText(resp);
+        return { allowed: false, decision: "deny", message: `Rampart authentication rejected (HTTP ${resp.status})` };
       }
-      // 5xx or unexpected — defer to degraded handling in the hook
+      await resp?.body?.cancel?.().catch(() => {});
+      // Redirects and other client errors indicate an incompatible or invalid
+      // control-plane exchange, not an outage eligible for configured fail-open.
+      if (resp.status >= 300 && resp.status < 400) {
+        return { _invalidResponse: true };
+      }
+      if (resp.status >= 400 && resp.status < 500) {
+        return {
+          allowed: false,
+          decision: "deny",
+          message: `Rampart rejected the policy request (HTTP ${resp.status})`,
+        };
+      }
+      // 5xx or an unexpected transport status uses explicit degraded handling.
       return { _serveError: true, _status: resp.status };
     }
 
     try {
-      const result = await resp.json();
-      if (!result || typeof result !== "object" || Array.isArray(result)) {
+      const result = await readControlResponseJSON(resp);
+      if (!isConsistentPolicyDecision(result)) {
         return { _invalidResponse: true };
       }
       return result;
@@ -552,10 +666,16 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
       return { _invalidResponse: true };
     }
   } catch (err) {
-    clearTimeout(timer);
+    if (err instanceof InvalidControlResponseError) {
+      return { _invalidResponse: true };
+    }
     if (err?.name === "AbortError") {
       // Timeout — defer to degraded handling in the hook
       return null;
+    }
+    const errorText = `${err?.message ?? ""} ${err?.cause?.message ?? ""}`.toLowerCase();
+    if (errorText.includes("redirect")) {
+      return { _invalidResponse: true };
     }
     if (
       err?.code === "ECONNREFUSED" ||
@@ -569,6 +689,10 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
     }
     // Unknown fetch error — defer to degraded handling in the hook
     return null;
+  } finally {
+    // The authorization timeout covers headers and the complete bounded body,
+    // not only the initial Fetch promise.
+    clearTimeout(timer);
   }
 }
 
@@ -596,7 +720,8 @@ export function register(api) {
   }
 
   const serveUrl = pluginConfig.serveUrl ?? "http://localhost:9090";
-  api.logger.info(`[rampart] v${version} loaded (serve: ${serveUrl})`);
+  const serveURLDisplay = isTrustedServeUrl(serveUrl) ? serveUrl : "<untrusted>";
+  api.logger.info(`[rampart] v${version} loaded (serve: ${serveURLDisplay})`);
 
   // Severity emoji for approval embeds
   const severityEmoji = { info: "ℹ️", warning: "⚠️", critical: "🚨" };
@@ -607,14 +732,16 @@ export function register(api) {
     const { toolName, params, originalToolName, mapped, classified, classificationError, policyPaths } = normalized;
     const displayToolName = toolDisplayName(toolName, originalToolName);
     if (!classified) {
-      api.logger.warn(`[rampart] blocking unclassified OpenClaw tool ${originalToolName}: ${classificationError}`);
+      api.logger.warn(`[rampart] blocking unclassified OpenClaw tool ${safeLogLabel(originalToolName)}`);
       return {
         block: true,
         blockReason: `rampart: ${classificationError} — update Rampart or add a typed integration before using this capability`,
       };
     }
     if (mapped) {
-      api.logger.info(`[rampart] mapped OpenClaw tool ${originalToolName} to Rampart ${toolName}`);
+      api.logger.info(
+        `[rampart] mapped OpenClaw tool ${safeLogLabel(originalToolName)} to Rampart ${safeLogLabel(toolName)}`,
+      );
     }
 
     const basePolicyParams = policyParamsForTool(toolName, params, ctx);
@@ -645,7 +772,7 @@ export function register(api) {
     const unreachableReason = `[rampart] serve unavailable for ${displayToolName} at ${serveUrl}`;
 
     if (result?._unsafeServeUrl) {
-      api.logger.warn(`[rampart] refusing untrusted serveUrl for ${displayToolName}: ${serveUrl}`);
+      api.logger.warn(`[rampart] refusing untrusted serveUrl for ${displayToolName}`);
       return {
         block: true,
         blockReason: "rampart: untrusted policy service URL — managed protection requires loopback",
@@ -691,7 +818,7 @@ export function register(api) {
     }
 
     const decision = result?.decision;
-    if (!new Set(["allow", "watch", "ask", "deny"]).has(decision)) {
+    if (!POLICY_DECISIONS.has(decision)) {
       api.logger.warn(`[rampart] unknown policy decision for ${displayToolName}: ${String(decision)}`);
       return {
         block: true,
@@ -700,7 +827,7 @@ export function register(api) {
     }
 
     // Debug log every decision (not just blocks/approvals)
-    api.logger.debug(`[rampart] ${displayToolName} → ${decision}${result.policy ? ` (policy: ${result.policy})` : ""}`);
+    api.logger.debug(`[rampart] ${displayToolName} → ${decision}`);
     if (Object.prototype.hasOwnProperty.call(result, "approval_id")) {
       api.logger.warn(`[rampart] unexpected approval_id from Rampart eval for OpenClaw-hosted ${displayToolName}; this would create dual-queue ownership`);
     }
@@ -708,7 +835,7 @@ export function register(api) {
     switch (decision) {
       case "deny": {
         const reason = result.message ?? result.reason ?? "policy violation";
-        api.logger.warn(`[rampart] BLOCKED ${displayToolName}: ${reason}${result.policy ? ` [${result.policy}]` : ""}`);
+        api.logger.warn(`[rampart] BLOCKED ${displayToolName}`);
         return {
           block: true,
           blockReason: `rampart: ${reason}`,
@@ -721,23 +848,25 @@ export function register(api) {
         // target in the patch.
         const subject = extractSubject(toolName, policyParams);
         const subjectPreview = truncateForApprovalDescription(subject, 160);
-        const severity = result.severity ?? "warning";
-        const emoji = severityEmoji[severity] ?? "⚠️";
+        const severity = APPROVAL_SEVERITIES.has(result.severity)
+          ? result.severity
+          : "warning";
+        const emoji = severityEmoji[severity];
 
-        api.logger.info(`[rampart] returning requireApproval for ${displayToolName} (subject: ${subjectPreview})`);
+        api.logger.info(`[rampart] returning requireApproval for ${displayToolName}`);
         return {
           requireApproval: {
             title: `🛡️ Rampart — ${displayToolName} approval required`,
             description: [
-              `**Command:** \`${subjectPreview}\``,
-              result.policy  ? `**Policy:** ${truncateForApprovalDescription(result.policy, 64)}` : null,
-              result.message ? `**Risk:** ${truncateForApprovalDescription(result.message, 96)}` : `**Risk:** ${emoji} Requires approval`,
+              `**Command:** ${markdownInlineCode(subjectPreview)}`,
+              result.policy  ? `**Policy:** ${markdownInlineCode(truncateForApprovalDescription(result.policy, 64))}` : null,
+              result.message ? `**Risk:** ${escapeMarkdownText(truncateForApprovalDescription(result.message, 96))}` : `**Risk:** ${emoji} Requires approval`,
             ].filter(Boolean).join("\n"),
             severity,
             timeoutMs: pluginConfig.approvalTimeoutMs ?? 120_000,
             timeoutBehavior: "deny",
             onResolution: async (resolution) => {
-              api.logger.info(`[rampart] plugin approval resolved: ${displayToolName} → ${resolution} (toolCallId: ${ctx.toolCallId ?? "none"}, session: ${ctx.sessionKey ?? "none"})`);
+              api.logger.info(`[rampart] plugin approval resolved: ${displayToolName} → ${safeLogLabel(resolution)}`);
 
               if (resolution === "allow-always") {
                 if (!isTrustedServeUrl(serveUrl)) {
@@ -750,7 +879,7 @@ export function register(api) {
                   decision: "allow",
                   source: "openclaw-approval",
                 };
-                api.logger.info(`[rampart] attempting always-allow persistence via /v1/rules/learn: ${JSON.stringify({ ...learnPayload, originalToolName: mapped ? originalToolName : undefined, session: ctx.sessionKey ?? null, toolCallId: ctx.toolCallId ?? null })}`);
+                api.logger.info(`[rampart] attempting always-allow persistence for ${displayToolName}`);
 
                 // Write a persistent allow rule via /v1/rules/learn.
                 // This works regardless of whether an approval_id exists.
@@ -763,16 +892,17 @@ export function register(api) {
                       ...(token ? { Authorization: `Bearer ${token}` } : {}),
                     },
                     body: JSON.stringify(learnPayload),
+                    redirect: "error",
                     signal: AbortSignal.timeout(5000),
                   });
-                  const learnText = await learnResp.text().catch(() => "");
+                  await readControlResponseText(learnResp);
                   if (learnResp.ok) {
-                    api.logger.info(`[rampart] always-allow rule written: ${toolName}:${subject}${learnText ? ` response=${learnText}` : ""}`);
+                    api.logger.info(`[rampart] always-allow rule written for ${displayToolName}`);
                   } else {
-                    api.logger.warn(`[rampart] always-allow rule write failed: HTTP ${learnResp.status}${learnText ? ` body=${learnText}` : ""}`);
+                    api.logger.warn(`[rampart] always-allow rule write failed: HTTP ${learnResp.status}`);
                   }
                 } catch (err) {
-                  api.logger.warn(`[rampart] always-allow write error: ${err.message}`);
+                  api.logger.warn(`[rampart] always-allow write error (${err?.name ?? "Error"})`);
                 }
               } else {
                 api.logger.info(`[rampart] no durable allow write for resolution=${resolution}`);
@@ -791,10 +921,6 @@ export function register(api) {
       case "watch":
       case "allow":
       default:
-        // Allowed — check if Rampart wants to modify params
-        if (policyPaths.length === 0 && result.params && typeof result.params === "object") {
-          return { params: result.params };
-        }
         return; // void = allow as-is
     }
   };
@@ -826,8 +952,23 @@ export function register(api) {
     try {
       const token = await loadToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const resp = await fetch(`${serveUrl}/v1/status`, { headers, signal: AbortSignal.timeout(3000) });
-      respond(true, resp.ok ? await resp.json() : { error: `serve returned ${resp.status}` });
+      const resp = await fetch(`${serveUrl}/v1/status`, {
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!resp.ok) {
+        await resp?.body?.cancel?.().catch(() => {});
+        respond(true, { error: `serve returned ${resp.status}` });
+        return;
+      }
+      const status = await readControlResponseJSON(resp);
+      respond(
+        true,
+        status && typeof status === "object" && !Array.isArray(status)
+          ? status
+          : { error: "rampart serve returned an invalid status response" },
+      );
     } catch {
       respond(true, { error: "rampart serve unreachable" });
     }

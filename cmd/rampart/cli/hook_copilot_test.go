@@ -19,6 +19,7 @@ func TestParseCopilotInputCoversCLIAndVSCodeTools(t *testing.T) {
 	}{
 		{name: "cli shell", toolName: "Bash", input: `{"command":"rm -rf /"}`, wantTool: "exec", wantKey: "command", wantValue: "rm -rf /"},
 		{name: "vscode terminal", toolName: "runTerminalCommand", input: `{"command":"git push origin main"}`, wantTool: "exec", wantKey: "command", wantValue: "git push origin main"},
+		{name: "code execution", toolName: "codeExecution", input: `{"code":"print('ok')"}`, wantTool: "exec", wantKey: "command", wantValue: "print('ok')"},
 		{name: "cli write", toolName: "Write", input: `{"file_path":"/tmp/out"}`, wantTool: "write", wantKey: "path", wantValue: "/tmp/out"},
 		{name: "vscode edit", toolName: "replace_string_in_file", input: `{"filePath":"/tmp/out"}`, wantTool: "write", wantKey: "path", wantValue: "/tmp/out"},
 		{name: "web", toolName: "WebFetch", input: `{"url":"https://example.com"}`, wantTool: "fetch", wantKey: "url", wantValue: "https://example.com"},
@@ -48,12 +49,69 @@ func TestParseCopilotInputFailsClosedForUnknownPreTool(t *testing.T) {
 	}
 }
 
+func TestParseCopilotInputRejectsMalformedKnownPreTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolName  string
+		toolInput string
+	}{
+		{name: "missing CLI command", toolName: "Bash", toolInput: `{}`},
+		{name: "non-string VS Code command", toolName: "runTerminalCommand", toolInput: `{"command":42}`},
+		{name: "missing write path", toolName: "Write", toolInput: `{}`},
+		{name: "empty batch write paths", toolName: "editFiles", toolInput: `{"files":[]}`},
+		{name: "missing fetch URL", toolName: "WebFetch", toolInput: `{}`},
+		{name: "missing web search query", toolName: "WebSearch", toolInput: `{}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"` + testCase.toolName + `","tool_input":` + testCase.toolInput + `}`
+			if _, err := parseCopilotInput(strings.NewReader(payload)); err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("error = %v, want required-field rejection", err)
+			}
+		})
+	}
+}
+
+func TestParseCopilotPostToolKeepsScanningMalformedKnownInput(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{},"tool_result":{"output":"scan me"}}`
+	result, err := parseCopilotInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response != "scan me" {
+		t.Fatalf("response = %q, want scan me", result.Response)
+	}
+}
+
 func TestCopilotUnknownPreToolEmitsDualHostStructuredDeny(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	var stdout, stderr bytes.Buffer
 	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
 	cmd.SetIn(strings.NewReader(`{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"future_remote_mutator","tool_input":{}}`))
+	cmd.SetArgs([]string{"hook", "--format", "copilot", "--audit-dir", filepath.Join(home, "audit")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("structured output = %q: %v", stdout.String(), err)
+	}
+	if output["permissionDecision"] != "deny" {
+		t.Fatalf("CLI decision = %#v, want deny", output["permissionDecision"])
+	}
+	specific, _ := output["hookSpecificOutput"].(map[string]any)
+	if specific["permissionDecision"] != "deny" {
+		t.Fatalf("VS Code decision = %#v, want deny", specific["permissionDecision"])
+	}
+}
+
+func TestCopilotMalformedKnownPreToolEmitsDualHostStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(`{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"runTerminalCommand","tool_input":{}}`))
 	cmd.SetArgs([]string{"hook", "--format", "copilot", "--audit-dir", filepath.Join(home, "audit")})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)

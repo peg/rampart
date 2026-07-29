@@ -3,6 +3,8 @@ package openclaw
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 )
@@ -119,6 +121,27 @@ func TestEmbeddedPluginRuntimeVersionMatchesPackage(t *testing.T) {
 	}
 }
 
+func TestCurrentChecksEveryManagedPluginFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := Extract(dir); err != nil {
+		t.Fatal(err)
+	}
+	if !Current(dir) {
+		t.Fatal("freshly extracted plugin should be current")
+	}
+	manifestPath := filepath.Join(dir, "hooks", "rampart", "HOOK.md")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, append(data, []byte("\nmodified")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if Current(dir) {
+		t.Fatal("nested hook drift was not detected")
+	}
+}
+
 func TestGatewayStatusMethodUsesCurrentRespondContract(t *testing.T) {
 	data, err := PluginFS.ReadFile("index.js")
 	if err != nil {
@@ -127,8 +150,12 @@ func TestGatewayStatusMethodUsesCurrentRespondContract(t *testing.T) {
 	if !bytes.Contains(data, []byte(`registerGatewayMethod("rampart.status", async ({ respond }) => {`)) {
 		t.Fatalf("rampart.status gateway method must accept the Gateway respond callback")
 	}
-	if !bytes.Contains(data, []byte(`respond(true, resp.ok ? await resp.json() : { error: `)) {
-		t.Fatalf("rampart.status gateway method must resolve through respond(true, payload)")
+	if !bytes.Contains(data, []byte(`const status = await readControlResponseJSON(resp);`)) {
+		t.Fatalf("rampart.status gateway method must use the bounded control-response decoder")
+	}
+	if !bytes.Contains(data, []byte(`status && typeof status === "object" && !Array.isArray(status)`)) ||
+		!bytes.Contains(data, []byte(`{ error: "rampart serve returned an invalid status response" }`)) {
+		t.Fatalf("rampart.status gateway method must validate the decoded payload before responding")
 	}
 	if !bytes.Contains(data, []byte(`respond(true, { error: "rampart serve unreachable" });`)) {
 		t.Fatalf("rampart.status unreachable path must resolve through respond(true, payload)")

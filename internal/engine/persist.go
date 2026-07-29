@@ -18,10 +18,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
 	policyutil "github.com/peg/rampart/internal/policy"
+	"github.com/peg/rampart/internal/securefile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,15 +34,6 @@ func DefaultAutoAllowedPath() string {
 		home = "."
 	}
 	return filepath.Join(home, ".rampart", "policies", "auto-allowed.yaml")
-}
-
-// DefaultUserOverridesPath returns the default path for durable user override rules.
-func DefaultUserOverridesPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
 }
 
 // dangerousCommandPrefixes lists command prefixes that should NEVER be
@@ -112,13 +105,18 @@ func GeneralizeCommand(cmd string) string {
 // approval persistence is exact by default: it never inserts wildcards, and
 // literal glob metacharacters in commands and paths are escaped.
 func GenerateAllowRule(call ToolCall) (Policy, error) {
+	return generateAllowRuleAt(call, time.Now().UTC())
+}
+
+func generateAllowRuleAt(call ToolCall, now time.Time) (Policy, error) {
 	tool := strings.TrimSpace(call.Tool)
 	if tool == "" {
 		return Policy{}, fmt.Errorf("persist: allow rule requires a tool")
 	}
 
-	now := time.Now().UTC()
+	now = now.UTC()
 	var ruleName string
+	var exactPattern string
 	var rule Rule
 
 	switch tool {
@@ -127,17 +125,20 @@ func GenerateAllowRule(call ToolCall) (Policy, error) {
 		if cmd == "" {
 			return Policy{}, fmt.Errorf("persist: exec allow rule requires a command")
 		}
-		pattern := policyutil.BuildExactAllowPattern(cmd)
+		exactPattern = policyutil.BuildExactAllowPattern(cmd)
+		if err := policyutil.ValidateGlobPatterns("command_matches", []string{exactPattern}); err != nil {
+			return Policy{}, fmt.Errorf("persist: exact command cannot be represented safely: %w", err)
+		}
 		tokens := strings.Fields(cmd)
 		nameParts := tokens
 		if len(nameParts) > 2 {
 			nameParts = nameParts[:2]
 		}
-		ruleName = fmt.Sprintf("auto-allow-%s", strings.Join(nameParts, "-"))
+		ruleName = fmt.Sprintf("auto-allow-%s", sanitizeName(strings.Join(nameParts, "-")))
 		rule = Rule{
 			Action: "allow",
 			When: Condition{
-				CommandMatches: []string{pattern},
+				CommandMatches: []string{exactPattern},
 			},
 		}
 
@@ -147,11 +148,15 @@ func GenerateAllowRule(call ToolCall) (Policy, error) {
 			return Policy{}, fmt.Errorf("persist: %s allow rule requires a path", tool)
 		}
 		action := tool
+		exactPattern = policyutil.BuildExactAllowPattern(path)
+		if err := policyutil.ValidateGlobPatterns("path_matches", []string{exactPattern}); err != nil {
+			return Policy{}, fmt.Errorf("persist: exact path cannot be represented safely: %w", err)
+		}
 		ruleName = fmt.Sprintf("auto-allow-%s-%s", action, sanitizeName(path))
 		rule = Rule{
 			Action: "allow",
 			When: Condition{
-				PathMatches: []string{policyutil.BuildExactAllowPattern(path)},
+				PathMatches: []string{exactPattern},
 			},
 		}
 
@@ -159,13 +164,17 @@ func GenerateAllowRule(call ToolCall) (Policy, error) {
 		return Policy{}, fmt.Errorf("persist: automatic allow is unsupported for tool %q; author an explicit policy instead", tool)
 	}
 
-	return Policy{
-		Name: fmt.Sprintf("%s-%s", ruleName, now.Format("20060102T150405Z")),
+	generated := Policy{
+		Name: fmt.Sprintf("%s-%s-%s", ruleName, now.Format("20060102T150405Z"), policyutil.ExactPatternHash(tool, exactPattern)),
 		Match: Match{
 			Tool: StringOrSlice{policyutil.BuildExactAllowPattern(tool)},
 		},
 		Rules: []Rule{rule},
-	}, nil
+	}
+	if err := validatePolicy(generated, make(map[string]*regexp.Regexp)); err != nil {
+		return Policy{}, fmt.Errorf("persist: generated policy is invalid: %w", err)
+	}
+	return generated, nil
 }
 
 // MigrateAllowRuleGlobs rewrites old-format command_matches patterns that
@@ -239,6 +248,56 @@ func AppendAllowRule(policyPath string, call ToolCall) error {
 	})
 }
 
+// RemoveAllowRule removes a named rule from an auto-generated policy using the
+// same cross-process transaction as AppendAllowRule. It returns whether a rule
+// was removed and the number of rules left in the file.
+func RemoveAllowRule(policyPath, name string) (bool, int, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, 0, fmt.Errorf("persist: rule name is required")
+	}
+
+	removed := false
+	remaining := 0
+	err := withPolicyFileLock(policyPath, func() error {
+		data, err := os.ReadFile(policyPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("persist: read policy file: %w", err)
+		}
+		var cfg Config
+		if err := safeUnmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("persist: parse existing policy: %w", err)
+		}
+
+		for index := range cfg.Policies {
+			if cfg.Policies[index].Name != name {
+				continue
+			}
+			cfg.Policies = append(cfg.Policies[:index], cfg.Policies[index+1:]...)
+			removed = true
+			break
+		}
+		remaining = len(cfg.Policies)
+		if !removed {
+			return nil
+		}
+		if remaining > 0 {
+			return writeConfigAtomic(policyPath, &cfg)
+		}
+		if err := os.Remove(policyPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("persist: remove empty policy file: %w", err)
+		}
+		if err := syncPolicyDir(filepath.Dir(policyPath)); err != nil {
+			return fmt.Errorf("persist: sync policy directory: %w", err)
+		}
+		return nil
+	})
+	return removed, remaining, err
+}
+
 func appendAllowRuleLocked(policyPath string, policy Policy) error {
 	// Load existing config or create new one.
 	var cfg Config
@@ -254,6 +313,9 @@ func appendAllowRuleLocked(policyPath string, policy Policy) error {
 	if cfg.Version == "" {
 		cfg.Version = "1"
 		cfg.DefaultAction = "deny"
+	}
+	if err := cfg.validate(); err != nil {
+		return fmt.Errorf("persist: validate existing policy: %w", err)
 	}
 
 	// Dedup: skip if an identical rule already exists (same tool + command/path pattern).
@@ -434,6 +496,12 @@ func removeRule(policyPath, policyName string, ruleIndex int, expected *Rule) er
 
 // writeConfigAtomic writes a Config to a YAML file atomically.
 func writeConfigAtomic(policyPath string, cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("persist: policy config is nil")
+	}
+	if err := cfg.validate(); err != nil {
+		return fmt.Errorf("persist: validate policy before write: %w", err)
+	}
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("persist: marshal policy: %w", err)
@@ -448,6 +516,11 @@ func writeConfigAtomic(policyPath string, cfg *Config) error {
 		return fmt.Errorf("persist: create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("persist: secure temp file: %w", err)
+	}
 
 	if _, err := tmpFile.WriteString(header + string(out)); err != nil {
 		tmpFile.Close()

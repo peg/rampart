@@ -217,7 +217,7 @@ func newBenchCmd(_ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&category, "category", "", "Filter to a single corpus category")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Include per-case results")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Count only deny as covered")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Require an exact deny for deny expectations")
 	cmd.Flags().StringVar(&osFilter, "os", currentBenchOS(), "Filter cases by OS: linux|darwin|windows|*")
 	cmd.Flags().Float64Var(&minCoverage, "min-coverage", 0, "Exit 1 if coverage is below this percent")
 	cmd.Flags().StringVar(&severity, "severity", "medium", "Minimum severity: critical|high|medium")
@@ -304,7 +304,7 @@ func runBench(opts benchRunOptions) (benchSummary, error) {
 	for _, tc := range cases {
 		decision := eng.Evaluate(benchToolCall(tc))
 		actual := decision.Action.String()
-		covered := benchCovered(actual, opts.Strict)
+		covered := benchCovered(tc.Expected, actual, opts.Strict)
 		weight := benchSeverityWeight(tc.Severity)
 
 		summary.WeightedTotal += weight
@@ -421,7 +421,7 @@ func printBenchSummary(w io.Writer, summary benchSummary, verbose bool) error {
 		return fmt.Errorf("bench: write output: %w", err)
 	}
 	if summary.Strict {
-		if _, err := fmt.Fprintln(w, "Mode: strict (only deny counts as covered)"); err != nil {
+		if _, err := fmt.Fprintln(w, "Mode: strict (deny expectations require deny)"); err != nil {
 			return fmt.Errorf("bench: write output: %w", err)
 		}
 	}
@@ -649,10 +649,12 @@ func migrateV1BenchEntries(entries []benchCorpusV1Entry) ([]benchCase, error) {
 		switch expectedAction {
 		case "deny":
 			expected = "deny"
-		case "ask", "require_approval", "allow", "watch", "log":
-			// v1 allowed permissive expectations. For attack-coverage
-			// semantics, migrate those to the modern approval action.
+		case "ask", "require_approval":
 			expected = "ask"
+		case "allow":
+			expected = "allow"
+		case "watch", "log":
+			expected = "watch"
 		default:
 			return nil, fmt.Errorf("bench: corpus entry %d has invalid expected_action %q", i, e.ExpectedAction)
 		}
@@ -737,26 +739,26 @@ func benchToolCall(tc benchCase) engine.ToolCall {
 	}
 }
 
-func benchCovered(actual string, strict bool) bool {
-	if actual == "deny" {
+func benchCovered(expected, actual string, strict bool) bool {
+	if actual == expected {
 		return true
 	}
-	if strict {
-		return false
+	if !strict && expected == "deny" && actual == "ask" {
+		return true
 	}
-	return actual == "ask"
+	return false
 }
 
 func normalizeBenchExpected(expected string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(expected)) {
-	case "deny":
-		return "deny", nil
+	case "allow", "watch", "deny":
+		return strings.ToLower(strings.TrimSpace(expected)), nil
 	case "ask", "require_approval":
 		// Accept v2 corpora written before require_approval was removed, but
 		// expose only the current action name to results and reports.
 		return "ask", nil
 	default:
-		return "", fmt.Errorf("invalid expected action %q (want deny or ask)", expected)
+		return "", fmt.Errorf("invalid expected action %q (want allow, watch, ask, or deny)", expected)
 	}
 }
 

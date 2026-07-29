@@ -51,7 +51,8 @@ func TestInstallManagedGuardPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(normalizeManagedPolicyContent(installed)) != string(embedded) {
+	_, _, installedContent := parseManagedPolicyHeaders(installed)
+	if string(installedContent) != string(embedded) {
 		t.Fatal("installed Guard policy does not match the embedded profile")
 	}
 	if runtime.GOOS != "windows" {
@@ -63,103 +64,175 @@ func TestInstallManagedGuardPolicy(t *testing.T) {
 	}
 }
 
-func TestConfigureOpenClawGuardModePreservesConfig(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "openclaw.json")
-	input := `{
-  "models": {"provider": "local"},
-  "plugins": {
-    "allow": ["existing", "rampart"],
-    "entries": {
-      "existing": {"enabled": true},
-      "rampart": {
-        "enabled": false,
-        "config": {
-          "serveUrl": "http://127.0.0.1:9191",
-          "failOpen": true,
-          "failOpenTools": ["read", "web_search"],
-          "approvalTimeoutMs": 240000
-        }
-      }
-    }
-  }
-}`
-	if err := os.WriteFile(path, []byte(input), 0o644); err != nil {
+func TestAtomicWritePrivateFileReplacesExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := atomicWritePrivateFile(path, []byte("first\n")); err != nil {
 		t.Fatal(err)
 	}
-
-	changed, err := configureOpenClawGuardModeAtPath(path)
-	if err != nil {
-		t.Fatalf("configureOpenClawGuardModeAtPath: %v", err)
+	if err := atomicWritePrivateFile(path, []byte("second\n")); err != nil {
+		t.Fatalf("replace existing file: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected config to change")
-	}
-
-	var cfg map[string]any
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	plugins := cfg["plugins"].(map[string]any)
-	entries := plugins["entries"].(map[string]any)
-	entry := entries["rampart"].(map[string]any)
-	pluginConfig := entry["config"].(map[string]any)
-	if enabled, _ := entry["enabled"].(bool); !enabled {
-		t.Fatal("Rampart plugin was not enabled")
-	}
-	if failOpen, ok := pluginConfig["failOpen"].(bool); !ok || failOpen {
-		t.Fatalf("failOpen = %#v, want false", pluginConfig["failOpen"])
-	}
-	if _, exists := pluginConfig["failOpenTools"]; exists {
-		t.Fatal("failOpenTools should be removed so failOpen=false controls every tool")
-	}
-	if pluginConfig["serveUrl"] != "http://localhost:9090" || pluginConfig["approvalTimeoutMs"] != float64(240000) {
-		t.Fatal("unrelated Rampart plugin settings were not preserved")
-	}
-	if cfg["models"].(map[string]any)["provider"] != "local" {
-		t.Fatal("unrelated OpenClaw settings were not preserved")
-	}
-	if _, exists := entries["existing"]; !exists {
-		t.Fatal("another plugin entry was removed")
-	}
-	if runtime.GOOS != "windows" {
-		if info, err := os.Stat(path); err != nil {
-			t.Fatal(err)
-		} else if info.Mode().Perm() != 0o600 {
-			t.Fatalf("mode = %o, want 600", info.Mode().Perm())
-		}
-	}
-
-	changed, err = configureOpenClawGuardModeAtPath(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed {
-		t.Fatal("Guard mode configuration should be idempotent")
+	if string(data) != "second\n" {
+		t.Fatalf("content = %q, want replacement", data)
 	}
 }
 
-func TestConfigureOpenClawGuardModeRejectsMalformedShape(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(path, []byte(`{"plugins": []}`), 0o600); err != nil {
+func TestConfigureOpenClawGuardModeDelegatesIncludeSafePatchToHost(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell recorder is POSIX-only")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "openclaw")
+	argsPath := filepath.Join(dir, "args")
+	stdinPath := filepath.Join(dir, "stdin")
+	t.Setenv("RAMPART_TEST_ARGS", argsPath)
+	t.Setenv("RAMPART_TEST_STDIN", stdinPath)
+	script := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "set" ]; then
+  printf '%s ' "$@" >> "$RAMPART_TEST_ARGS"
+  printf '\n' >> "$RAMPART_TEST_ARGS"
+  exit 0
+fi
+printf '%s ' "$@" >> "$RAMPART_TEST_ARGS"
+printf '\n' >> "$RAMPART_TEST_ARGS"
+cat > "$RAMPART_TEST_STDIN"
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := configureOpenClawGuardModeAtPath(path); err == nil {
-		t.Fatal("expected a malformed plugins value to be rejected")
+	prepareOpenClawGuardTest(t, dir, bin)
+
+	if err := configureOpenClawGuardMode(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
 	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"config set plugins.entries.rampart.config.approvalTimeoutMs 120000 --json",
+		"config patch --stdin",
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(string(args)), " "), want) {
+			t.Fatalf("OpenClaw commands missing %q: %q", want, args)
+		}
+	}
+	patchData, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patch map[string]any
+	if err := json.Unmarshal(patchData, &patch); err != nil {
+		t.Fatal(err)
+	}
+	entry := patch["plugins"].(map[string]any)["entries"].(map[string]any)["rampart"].(map[string]any)
+	pluginConfig := entry["config"].(map[string]any)
+	if entry["enabled"] != true || pluginConfig["failOpen"] != false || pluginConfig["failOpenTools"] != nil || pluginConfig["serveUrl"] != "http://localhost:9090" {
+		t.Fatalf("unexpected managed guard patch: %#v", entry)
+	}
+}
+
+func TestConfigureOpenClawGuardModeFallsBackToValidatedLegacyHostWrites(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell recorder is POSIX-only")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "openclaw")
+	argsPath := filepath.Join(dir, "args")
+	t.Setenv("RAMPART_TEST_ARGS", argsPath)
+	script := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "patch" ]; then
+  exit 2
+fi
+printf '%s ' "$@" >> "$RAMPART_TEST_ARGS"
+printf '\n' >> "$RAMPART_TEST_ARGS"
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prepareOpenClawGuardTest(t, dir, bin)
+
+	if err := configureOpenClawGuardMode(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(args)), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("fallback command count = %d, want 5: %q", len(lines), args)
+	}
+	for _, want := range []string{
+		"approvalTimeoutMs 120000 --json",
+		"failOpenTools [] --json",
+		"failOpen false --json",
+		`serveUrl "http://localhost:9090" --json`,
+		"rampart.enabled true --json",
+	} {
+		if !strings.Contains(string(args), want) {
+			t.Fatalf("legacy host writes missing %q: %s", want, args)
+		}
+	}
+}
+
+func TestConfigureOpenClawGuardModeDoesNotBypassSupportedHostRejection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell recorder is POSIX-only")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "openclaw")
+	marker := filepath.Join(dir, "fallback-ran")
+	t.Setenv("RAMPART_TEST_MARKER", marker)
+	script := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "set" ] && [ "$3" = "plugins.entries.rampart.config.approvalTimeoutMs" ]; then
+  exit 0
+fi
+if [ "$1" = "config" ] && [ "$2" = "patch" ] && [ "$3" = "--help" ]; then
+  exit 0
+fi
+if [ "$1" = "config" ] && [ "$2" = "patch" ]; then
+  printf '%s\n' 'write rejected by host policy' >&2
+  exit 2
+fi
+touch "$RAMPART_TEST_MARKER"
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prepareOpenClawGuardTest(t, dir, bin)
+
+	err := configureOpenClawGuardMode(bin, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "config patch") {
+		t.Fatalf("expected supported host rejection, got %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("fallback bypassed a supported host rejection: %v", err)
+	}
+}
+
+func prepareOpenClawGuardTest(t *testing.T, root, bin string) {
+	t.Helper()
+	stateDir := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(stateDir, openclawPluginDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	config := []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"ask":"on-miss"}}}`)
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
 }
 
 func TestOpenClawPluginCurrentDetectsSameVersionDrift(t *testing.T) {
 	dir := t.TempDir()
-	bundled, err := ocplugin.PluginFS.ReadFile("index.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "index.js"), bundled, 0o600); err != nil {
+	if err := ocplugin.Extract(dir); err != nil {
 		t.Fatal(err)
 	}
 	state := openClawPluginState{
@@ -168,6 +241,10 @@ func TestOpenClawPluginCurrentDetectsSameVersionDrift(t *testing.T) {
 	}
 	if !openClawPluginCurrent(state) {
 		t.Fatal("exact bundled plugin should be current")
+	}
+	bundled, err := ocplugin.PluginFS.ReadFile("index.js")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "index.js"), append(bundled, []byte("\n// drift")...), 0o600); err != nil {
 		t.Fatal(err)

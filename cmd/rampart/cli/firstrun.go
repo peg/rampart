@@ -114,7 +114,8 @@ func isHookBasedOnly(protected []string) bool {
 			strings.Contains(p, "Cline (hooks)") ||
 			strings.Contains(p, "Codex (hooks)") ||
 			strings.Contains(p, "Gemini CLI (hooks)") ||
-			strings.Contains(p, "Antigravity CLI / IDE (plugin)")) {
+			strings.Contains(p, "Antigravity CLI / IDE (plugin)") ||
+			strings.Contains(p, "GitHub Copilot CLI / VS Code (hooks)")) {
 			return false
 		}
 	}

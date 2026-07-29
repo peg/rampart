@@ -7,13 +7,71 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/policies"
 )
+
+func TestNotifyRequiresSignedApprovalLinks(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cfg  *engine.NotifyConfig
+		want bool
+	}{
+		{name: "none"},
+		{name: "empty url", cfg: &engine.NotifyConfig{On: []string{"ask"}}},
+		{name: "default includes ask", cfg: &engine.NotifyConfig{URL: "https://example.invalid/hook"}, want: true},
+		{name: "ask", cfg: &engine.NotifyConfig{URL: "https://example.invalid/hook", On: []string{"ask"}}, want: true},
+		{name: "legacy approval", cfg: &engine.NotifyConfig{URL: "https://example.invalid/hook", On: []string{" REQUIRE_APPROVAL "}}, want: true},
+		{name: "deny only", cfg: &engine.NotifyConfig{URL: "https://example.invalid/hook", On: []string{"deny"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := notifyRequiresSignedApprovalLinks(test.cfg); got != test.want {
+				t.Fatalf("notifyRequiresSignedApprovalLinks() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestServeFailsClosedWhenApprovalSigningKeyIsUnavailable(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	configPath := filepath.Join(home, "rampart.yaml")
+	config := `version: "1"
+default_action: deny
+notify:
+  url: https://example.invalid/hook
+  platform: webhook
+  on: [ask]
+policies: []
+`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaderCalled := false
+	deps := &serveDeps{
+		loadSigningKey: func(string) ([]byte, error) {
+			loaderCalled = true
+			return nil, fmt.Errorf("simulated signing-key failure")
+		},
+	}
+	cmd := newServeCmd(&rootOptions{configPath: configPath}, deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--port", "19091", "--audit-dir", filepath.Join(home, "audit")})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "approval resolve URL signing unavailable") {
+		t.Fatalf("serve error = %v, want signing failure", err)
+	}
+	if !loaderCalled {
+		t.Fatal("serve did not attempt to load the approval signing key")
+	}
+}
 
 func TestServeTokenOutputRedactsWhenNonInteractive(t *testing.T) {
 	const token = "secret-token-value"
@@ -84,12 +142,115 @@ func TestIsPolicyDirEvent(t *testing.T) {
 			}
 		})
 	}
+	if runtime.GOOS == "windows" {
+		event := fsnotify.Event{Name: filepath.Join(strings.ToUpper(dir), "guard.yaml"), Op: fsnotify.Write}
+		if !isPolicyDirEvent(event, dir) {
+			t.Fatal("isPolicyDirEvent must compare Windows directory paths case-insensitively")
+		}
+	}
 }
 
 func TestStopBackgroundServeAllowsMissingPID(t *testing.T) {
 	testSetHome(t, t.TempDir())
 	if err := stopBackgroundServe(&bytes.Buffer{}, true); err != nil {
 		t.Fatalf("stopBackgroundServe(missingOK=true): %v", err)
+	}
+}
+
+func TestPrepareBackgroundServePIDRefusesToClobberRunningServer(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "serve.pid")
+	if err := os.WriteFile(pidPath, []byte("4242\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalInspect := inspectBackgroundServeProcess
+	inspectBackgroundServeProcess = func(pid int) (bool, string, error) {
+		if pid != 4242 {
+			t.Fatalf("inspected pid = %d, want 4242", pid)
+		}
+		return true, "rampart serve", nil
+	}
+	t.Cleanup(func() { inspectBackgroundServeProcess = originalInspect })
+
+	if err := prepareBackgroundServePID(pidPath); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("prepareBackgroundServePID error = %v", err)
+	}
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("active PID file was removed: %v", err)
+	}
+}
+
+func TestPrepareBackgroundServePIDRemovesAuthenticatedStaleFile(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "serve.pid")
+	if err := os.WriteFile(pidPath, []byte("4242\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalInspect := inspectBackgroundServeProcess
+	inspectBackgroundServeProcess = func(int) (bool, string, error) {
+		return false, "process is no longer running", nil
+	}
+	t.Cleanup(func() { inspectBackgroundServeProcess = originalInspect })
+
+	if err := prepareBackgroundServePID(pidPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("stale PID file remains: %v", err)
+	}
+}
+
+func TestReadServePIDFileRejectsSymlinkAndOversizedInput(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "serve.pid")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, _, err := readServePIDFile(link); err == nil || !strings.Contains(err.Error(), "symlinked") {
+		t.Fatalf("symlink error = %v", err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(link, []byte(strings.Repeat("9", maxServePIDFileBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readServePIDFile(link); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized error = %v", err)
+	}
+}
+
+func TestBackgroundReadyMarkerRequiresExactChildPID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".serve-ready-test")
+	if err := os.WriteFile(path, []byte("wrong\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		_ = os.WriteFile(path, []byte("4242\n"), 0o600)
+	}()
+	if err := waitForBackgroundReady(path, 4242, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConsumeBackgroundReadyPathStaysInsideRampartDir(t *testing.T) {
+	rampartDir := t.TempDir()
+	valid := filepath.Join(rampartDir, ".serve-ready-valid")
+	t.Setenv(backgroundReadyFileEnv, valid)
+	got, err := consumeBackgroundReadyPath(rampartDir)
+	if err != nil || got != valid {
+		t.Fatalf("consumeBackgroundReadyPath() = %q, %v", got, err)
+	}
+	if os.Getenv(backgroundReadyFileEnv) != "" {
+		t.Fatal("readiness environment variable was not consumed")
+	}
+
+	t.Setenv(backgroundReadyFileEnv, filepath.Join(t.TempDir(), ".serve-ready-outside"))
+	if _, err := consumeBackgroundReadyPath(rampartDir); err == nil {
+		t.Fatal("outside readiness path was accepted")
 	}
 }
 
@@ -102,7 +263,10 @@ func TestIsRampartServeCommand(t *testing.T) {
 	}{
 		{name: "serve", comm: "/usr/local/bin/rampart", args: "/usr/local/bin/rampart serve --port 9090", want: true},
 		{name: "serve with global flag", comm: "rampart", args: "rampart --config /tmp/policy.yaml serve", want: true},
+		{name: "quoted Windows executable", comm: "rampart.exe", args: `"C:\Program Files\Rampart\rampart.exe" serve --port 9090`, want: true},
 		{name: "different rampart command", comm: "rampart", args: "rampart doctor"},
+		{name: "serve as unrelated argument", comm: "rampart", args: "rampart doctor --output serve"},
+		{name: "serve after terminating version flag", comm: "rampart", args: "rampart --version serve"},
 		{name: "different executable", comm: "/usr/bin/sleep", args: "sleep 60"},
 		{name: "name substring", comm: "/tmp/not-rampart", args: "/tmp/not-rampart serve"},
 	}
@@ -132,6 +296,11 @@ func TestSamePath(t *testing.T) {
 				t.Errorf("samePath(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+	if runtime.GOOS == "windows" {
+		if !samePath(`C:\Users\Example\.rampart\rampart.exe`, `c:\users\example\.RAMPART\RAMPART.EXE`) {
+			t.Fatal("samePath must compare Windows paths case-insensitively")
+		}
 	}
 }
 
@@ -202,5 +371,46 @@ func TestActivePolicyMDWrite(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("serve command did not shut down in time")
+	}
+}
+
+func TestWriteActivePolicyMarkdownReplacesSymlinkWithoutFollowingIt(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	rampartDir := filepath.Join(home, ".rampart")
+	if err := os.MkdirAll(rampartDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(target, []byte("preserve-me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(rampartDir, "ACTIVE_POLICY.md")
+	if err := os.Symlink(target, active); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	store := engine.NewMemoryStore([]byte("version: \"1\"\npolicies: []\n"), "active-policy-test")
+	eng, err := engine.New(store, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeActivePolicyMarkdown(eng); err != nil {
+		t.Fatal(err)
+	}
+
+	targetData, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(targetData) != "preserve-me" {
+		t.Fatalf("symlink target changed to %q", targetData)
+	}
+	info, err := os.Lstat(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("ACTIVE_POLICY.md remained a symlink")
 	}
 }

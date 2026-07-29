@@ -25,7 +25,6 @@ import (
 	"github.com/peg/rampart/internal/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 func setupLearnTestServer(t *testing.T) (*httptest.Server, string, string) {
@@ -111,10 +110,8 @@ func TestLearnRule_CreatesExactPathRule(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	assert.Equal(t, "/tmp/output[[]1].txt", result.Pattern)
 
-	data, err := os.ReadFile(filepath.Join(tmpHome, ".rampart", "policies", "user-overrides.yaml"))
+	overrides, err := policy.LoadUserOverridesPolicy(filepath.Join(tmpHome, ".rampart", "policies", "user-overrides.yaml"))
 	require.NoError(t, err)
-	var overrides userOverridesPolicy
-	require.NoError(t, yaml.Unmarshal(data, &overrides))
 	require.Len(t, overrides.Policies, 1)
 	when := overrides.Policies[0].Rules[0].When
 	assert.Equal(t, []string{"/tmp/output[[]1].txt"}, when.PathMatches)

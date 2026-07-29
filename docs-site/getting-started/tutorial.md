@@ -150,7 +150,9 @@ open http://localhost:9090/dashboard/
 Approve it → Claude continues. Deny it → Claude gets an explanation and tries a different approach.
 
 !!! tip "Working with an agent team?"
-    If you run multiple Claude Code sub-agents in the same session, they all share a run ID. The dashboard groups their pending approvals together — one click to **Approve All** for the whole team run.
+    Pending approvals are grouped only when the calls report the same agent,
+    session, and run ID. One click can then **Approve All** for that exact team
+    run without authorizing a colliding run ID from another agent or session.
 
 ---
 
@@ -261,7 +263,7 @@ Agent wants to run "npm test"
 Claude Code PreToolUse hook fires
         │
         ▼
-Rampart evaluates against YAML policies (~20μs):
+Rampart evaluates against YAML policies (microsecond-scale in-process):
   1. Does "npm test" match block-destructive?  No.
   2. Does "npm test" match approve-deploys?    No.
   3. No rules matched → default_action: allow
@@ -270,7 +272,8 @@ Rampart evaluates against YAML policies (~20μs):
 ✅ Command executes normally
 ```
 
-The evaluation takes **microseconds**. Your agent doesn't slow down.
+The in-process evaluation is **microsecond-scale**. End-to-end hook latency also
+includes host process startup and audit I/O.
 
 ---
 

@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/policies"
@@ -136,6 +137,7 @@ func TestNewUpgradeCmdAlreadyLatestWarnsAboutRemovedPolicyAction(t *testing.T) {
 	}
 
 	deps := &upgradeDeps{
+		goos:        "linux",
 		userHomeDir: func() (string, error) { return dir, nil },
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.3.0", nil
@@ -180,6 +182,7 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesStockPolicy(t *testing.T) {
 	}
 
 	deps := &upgradeDeps{
+		goos: "linux",
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.2.3", nil
 		},
@@ -233,6 +236,7 @@ func TestNewUpgradeCmdPreservesModifiedBuiltInPolicy(t *testing.T) {
 	}
 
 	deps := &upgradeDeps{
+		goos: "linux",
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.2.3", nil
 		},
@@ -322,7 +326,8 @@ func TestNewUpgradeCmdDryRun(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 1234, true, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
+		validateCandidate:    acceptUpgradeCandidate,
 	}
 
 	var out bytes.Buffer
@@ -358,7 +363,9 @@ func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "rampart-proxy.service" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "rampart-proxy.service" },
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
 	}
 
 	var out bytes.Buffer
@@ -397,11 +404,11 @@ func TestNewUpgradeCmdDryRunLaunchd(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string {
+		detectSystemdService: func(commandRunner, func() (string, error), string) string {
 			t.Fatal("systemd detection must not run on Darwin")
 			return ""
 		},
-		detectLaunchdServices: func(commandRunner, func() (string, error)) []launchdService {
+		detectLaunchdServices: func(commandRunner, func() (string, error), string) []launchdService {
 			return []launchdService{service}
 		},
 	}
@@ -442,7 +449,8 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
+		validateCandidate:    acceptUpgradeCandidate,
 		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
 			if strings.HasSuffix(url, "checksums.txt") {
 				return checksums, nil
@@ -461,7 +469,7 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "✓ rampart upgraded to v1.1.0") {
+	if !strings.Contains(out.String(), "✓ rampart binary upgraded to v1.1.0") {
 		t.Fatalf("missing success line: %q", out.String())
 	}
 	if !strings.Contains(out.String(), "run 'rampart protect' once") {
@@ -492,7 +500,9 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "rampart-proxy.service" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "rampart-proxy.service" },
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
 		restartSystemdService: func(_ commandRunner, svc string, out io.Writer) error {
 			restarted = svc
 			fmt.Fprintf(out, "✓ restarted %s\n", svc)
@@ -517,7 +527,7 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "✓ rampart upgraded to v1.1.0") {
+	if !strings.Contains(got, "✓ rampart binary upgraded to v1.1.0") {
 		t.Fatalf("missing success line: %q", got)
 	}
 	if restarted != "rampart-proxy.service" {
@@ -555,13 +565,15 @@ func TestNewUpgradeCmdLaunchdRestart(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string {
+		detectSystemdService: func(commandRunner, func() (string, error), string) string {
 			t.Fatal("systemd detection must not run on Darwin")
 			return ""
 		},
-		detectLaunchdServices: func(commandRunner, func() (string, error)) []launchdService {
+		detectLaunchdServices: func(commandRunner, func() (string, error), string) []launchdService {
 			return services
 		},
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
 		restartLaunchdService: func(_ commandRunner, service launchdService, out io.Writer) error {
 			restarted = append(restarted, service.Label)
 			fmt.Fprintf(out, "✓ restarted %s\n", service.Label)
@@ -623,7 +635,9 @@ func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
 			pidStopped = true
 			return nil
 		},
-		detectSystemdService: func(commandRunner) string { return "rampart-serve.service" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "rampart-serve.service" },
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
 		restartSystemdService: func(_ commandRunner, svc string, out io.Writer) error {
 			restarted = svc
 			return nil
@@ -673,6 +687,15 @@ func makeArchive(t *testing.T, name string, payload []byte) []byte {
 		t.Fatalf("close gzip: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func acceptUpgradeCandidate(context.Context, string, string) error { return nil }
+
+func acceptServeRestartVerification(
+	func() (string, error),
+	func(string) ([]byte, error),
+) (serveRestartVerifier, error) {
+	return func(context.Context, string, time.Time) error { return nil }, nil
 }
 
 func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {

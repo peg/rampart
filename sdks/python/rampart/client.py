@@ -16,12 +16,144 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import os
-from typing import Any, Dict, Optional, Union
+import threading
+from typing import Any, AsyncIterator, Dict, Iterator, Optional, Union
+from urllib.parse import quote, urlsplit
 
 import httpx
 
 from .types import Decision, RampartConnectionError, RampartServerError
+
+MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+class _InvalidControlResponse(Exception):
+    pass
+
+
+class _LimitedSyncStream(httpx.SyncByteStream):
+    def __init__(self, stream: httpx.SyncByteStream, limit: int):
+        self._stream = stream
+        self._limit = limit
+
+    def __iter__(self) -> Iterator[bytes]:
+        total = 0
+        for chunk in self._stream:
+            total += len(chunk)
+            if total > self._limit:
+                self._stream.close()
+                raise _InvalidControlResponse(
+                    "Rampart response exceeded the size limit"
+                )
+            yield chunk
+
+    def close(self) -> None:
+        self._stream.close()
+
+
+class _LimitedAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, stream: httpx.AsyncByteStream, limit: int):
+        self._stream = stream
+        self._limit = limit
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        total = 0
+        async for chunk in self._stream:
+            total += len(chunk)
+            if total > self._limit:
+                await self._stream.aclose()
+                raise _InvalidControlResponse(
+                    "Rampart response exceeded the size limit"
+                )
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+
+class _LimitedTransport(httpx.BaseTransport):
+    def __init__(self, inner: httpx.BaseTransport, limit: int):
+        self._inner = inner
+        self._limit = limit
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        response = self._inner.handle_request(request)
+        encoding = response.headers.get("content-encoding", "").strip().lower()
+        if encoding not in {"", "identity"}:
+            response.stream.close()
+            raise _InvalidControlResponse(
+                "Rampart control responses must not use content encoding"
+            )
+        return httpx.Response(
+            status_code=response.status_code,
+            headers=response.headers,
+            stream=_LimitedSyncStream(response.stream, self._limit),
+            extensions=response.extensions,
+        )
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+class _LimitedAsyncTransport(httpx.AsyncBaseTransport):
+    def __init__(self, inner: httpx.AsyncBaseTransport, limit: int):
+        self._inner = inner
+        self._limit = limit
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await self._inner.handle_async_request(request)
+        encoding = response.headers.get("content-encoding", "").strip().lower()
+        if encoding not in {"", "identity"}:
+            await response.stream.aclose()
+            raise _InvalidControlResponse(
+                "Rampart control responses must not use content encoding"
+            )
+        return httpx.Response(
+            status_code=response.status_code,
+            headers=response.headers,
+            stream=_LimitedAsyncStream(response.stream, self._limit),
+            extensions=response.extensions,
+        )
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+def _validate_base_url(value: str) -> str:
+    """Validate the endpoint that receives policy credentials and tool data."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Rampart URL must be a non-empty absolute HTTP(S) URL")
+    raw = value.strip()
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port  # Force validation of malformed ports.
+    except ValueError as exc:
+        raise ValueError(f"Invalid Rampart URL: {exc}") from exc
+
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Rampart URL must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Rampart URL must not contain embedded credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Rampart URL must not contain a query string or fragment")
+    if port is not None and not 0 < port < 65536:
+        raise ValueError("Rampart URL contains an invalid port")
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    loopback = hostname == "localhost"
+    if not loopback:
+        try:
+            loopback = ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            loopback = False
+    if parsed.scheme == "http" and not loopback:
+        raise ValueError(
+            "Refusing to send Rampart control data over non-loopback HTTP; use HTTPS"
+        )
+    return raw.rstrip("/")
 
 
 class RampartClient:
@@ -55,29 +187,65 @@ class RampartClient:
         fail_open: bool = True,
         timeout: float = 30.0,
     ):
-        self.url = url or os.environ.get("RAMPART_URL", "http://localhost:9090")
-        self.token = token or os.environ.get("RAMPART_TOKEN")
+        raw_url = (
+            url
+            if url is not None
+            else os.environ.get("RAMPART_URL", "http://localhost:9090")
+        )
+        raw_token = token if token is not None else os.environ.get("RAMPART_TOKEN")
+        self.token = raw_token.strip() if raw_token and raw_token.strip() else None
         self.fail_open = fail_open
 
-        # Remove trailing slash for consistent URL construction
-        self.url = self.url.rstrip("/")
+        self.url = _validate_base_url(raw_url)
 
         # Build headers
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            # The response limiter counts wire bytes. Refuse compression so a
+            # tiny encoded body cannot expand beyond the in-memory limit.
+            "Accept-Encoding": "identity",
+        }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
 
-        self._client = httpx.Client(
-            headers=headers,
-            timeout=httpx.Timeout(timeout),
-            follow_redirects=True,
-        )
+        self._client_headers = headers
+        self._client_timeout = httpx.Timeout(timeout)
+        # Allocate each transport only when its API is used. A synchronous SDK
+        # user should not have to discover and close an unused async pool (and
+        # vice versa).
+        self._client: Optional[httpx.Client] = None
+        self._async_client: Optional[httpx.AsyncClient] = None
+        self._client_init_lock = threading.Lock()
 
-        self._async_client = httpx.AsyncClient(
-            headers=headers,
-            timeout=httpx.Timeout(timeout),
-            follow_redirects=True,
-        )
+    def _sync_client(self) -> httpx.Client:
+        if self._client is None:
+            with self._client_init_lock:
+                if self._client is None:
+                    self._client = httpx.Client(
+                        headers=self._client_headers,
+                        timeout=self._client_timeout,
+                        follow_redirects=False,
+                        trust_env=False,
+                        transport=_LimitedTransport(
+                            httpx.HTTPTransport(), MAX_RESPONSE_BYTES
+                        ),
+                    )
+        return self._client
+
+    def _async_http_client(self) -> httpx.AsyncClient:
+        if self._async_client is None:
+            with self._client_init_lock:
+                if self._async_client is None:
+                    self._async_client = httpx.AsyncClient(
+                        headers=self._client_headers,
+                        timeout=self._client_timeout,
+                        follow_redirects=False,
+                        trust_env=False,
+                        transport=_LimitedAsyncTransport(
+                            httpx.AsyncHTTPTransport(), MAX_RESPONSE_BYTES
+                        ),
+                    )
+        return self._async_client
 
     def __enter__(self) -> RampartClient:
         return self
@@ -92,13 +260,16 @@ class RampartClient:
         await self.aclose()
 
     def close(self) -> None:
-        """Close the underlying HTTP clients."""
-        self._client.close()
+        """Close the synchronous HTTP client, if it was used."""
+        if self._client is not None:
+            self._client.close()
 
     async def aclose(self) -> None:
         """Close both HTTP clients after asynchronous use."""
-        self._client.close()
-        await self._async_client.aclose()
+        if self._client is not None:
+            self._client.close()
+        if self._async_client is not None:
+            await self._async_client.aclose()
 
     def health(self) -> bool:
         """Check if the Rampart server is healthy.
@@ -107,7 +278,7 @@ class RampartClient:
             True if the server responds to the health check, False otherwise.
         """
         try:
-            response = self._client.get(f"{self.url}/healthz")
+            response = self._sync_client().get(f"{self.url}/healthz")
             return bool(response.status_code == 200)
         except Exception:
             return False
@@ -115,7 +286,7 @@ class RampartClient:
     async def ahealth(self) -> bool:
         """Async version of health()."""
         try:
-            response = await self._async_client.get(f"{self.url}/healthz")
+            response = await self._async_http_client().get(f"{self.url}/healthz")
             return bool(response.status_code == 200)
         except Exception:
             return False
@@ -341,12 +512,14 @@ class RampartClient:
             request_data["enforce"] = True
 
         try:
-            response = self._client.post(
-                f"{self.url}/v1/{endpoint}/{tool}",
+            response = self._sync_client().post(
+                f"{self.url}/v1/{endpoint}/{quote(tool, safe='')}",
                 json=request_data,
             )
             return self._decision_from_response(response)
 
+        except _InvalidControlResponse as exc:
+            raise RampartServerError(0, str(exc)) from exc
         except httpx.RequestError as e:
             # Network/connection error
             if not self.fail_open:
@@ -381,12 +554,14 @@ class RampartClient:
             request_data["enforce"] = True
 
         try:
-            response = await self._async_client.post(
-                f"{self.url}/v1/{endpoint}/{tool}",
+            response = await self._async_http_client().post(
+                f"{self.url}/v1/{endpoint}/{quote(tool, safe='')}",
                 json=request_data,
             )
             return self._decision_from_response(response)
 
+        except _InvalidControlResponse as exc:
+            raise RampartServerError(0, str(exc)) from exc
         except httpx.RequestError as e:
             # Network/connection error
             if not self.fail_open:

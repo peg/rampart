@@ -418,10 +418,13 @@ func runRulesRemove(cmd *cobra.Command, opts *rootOptions, indexStr string, forc
 	fmt.Fprintf(out, "  %s\n", rulesOkStyle.Render("✓ Rule removed"))
 
 	// Try to reload the daemon.
-	resolvedToken := resolveToken(token)
 	resolvedAddr, err := resolveAddrAllow(apiAddr)
 	if err != nil {
 		return fmt.Errorf("rules: resolve reload API address: %w", err)
+	}
+	resolvedToken, _, err := resolveTokenForEndpoint(resolvedAddr, token)
+	if err != nil {
+		return fmt.Errorf("rules: resolve reload API credentials: %w", err)
 	}
 	reloaded, _ := reloadPolicy(cmd, resolvedAddr, resolvedToken)
 	if reloaded {
@@ -545,10 +548,13 @@ func runRulesReset(cmd *cobra.Command, opts *rootOptions, force bool, apiAddr, t
 	fmt.Fprintf(out, "  %s\n", rulesOkStyle.Render(fmt.Sprintf("✓ Removed %d custom rule(s)", totalCustom)))
 
 	// Try to reload the daemon.
-	resolvedToken := resolveToken(token)
 	resolvedAddr, err := resolveAddrAllow(apiAddr)
 	if err != nil {
 		return fmt.Errorf("rules: resolve reload API address: %w", err)
+	}
+	resolvedToken, _, err := resolveTokenForEndpoint(resolvedAddr, token)
+	if err != nil {
+		return fmt.Errorf("rules: resolve reload API credentials: %w", err)
 	}
 	reloaded, _ := reloadPolicy(cmd, resolvedAddr, resolvedToken)
 	if reloaded {

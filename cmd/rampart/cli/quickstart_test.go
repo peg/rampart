@@ -98,6 +98,25 @@ func TestQuickstartSelectAgents_AgentsFlagSingleAgent(t *testing.T) {
 	}
 }
 
+func TestQuickstartSelectAgents_NoneDisablesDetectedAgents(t *testing.T) {
+	result := &detect.DetectResult{
+		ClaudeCode:     true,
+		HasCodex:       true,
+		HasCline:       true,
+		HasOpenClaw:    true,
+		HasCopilot:     true,
+		HasAntigravity: true,
+	}
+
+	selected, err := selectQuickstartAgents(result, " none ")
+	if err != nil {
+		t.Fatalf("selectQuickstartAgents error = %v", err)
+	}
+	if len(selected) != 0 {
+		t.Fatalf("--agents none selected %+v; want explicit opt-out", selected)
+	}
+}
+
 func TestQuickstartSuggestedPolicies(t *testing.T) {
 	result := &detect.DetectResult{
 		HasKubectl:     true,
@@ -164,6 +183,26 @@ func TestQuickstartCmd_Flags(t *testing.T) {
 	}
 }
 
+func TestQuickstartAgentsUseCurrentNativeRegistry(t *testing.T) {
+	agents := quickstartAgents()
+	byKey := make(map[string]quickstartAgent, len(agents))
+	for _, agent := range agents {
+		byKey[agent.Key] = agent
+	}
+	for _, key := range []string{"claude-code", "codex", "cline", "openclaw", "copilot", "antigravity"} {
+		agent, ok := byKey[key]
+		if !ok || !agent.HasSetup || agent.SetupCmd != key {
+			t.Errorf("native quickstart entry %q = %+v, present=%v", key, agent, ok)
+		}
+	}
+	if _, ok := byKey["gemini"]; ok {
+		t.Fatal("experimental Gemini integration must not be auto-configured by quickstart")
+	}
+	if byKey["copilot"].WrapCmd != "" {
+		t.Fatal("current Copilot integration must not use obsolete gh-copilot wrap guidance")
+	}
+}
+
 func TestHasInstalledPolicy(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
@@ -223,8 +262,8 @@ func TestQuickstartHooksConfigured_OpenClaw(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !quickstartHooksConfigured("openclaw") {
-		t.Fatal("expected openclaw hooks to be true with shim")
+	if quickstartHooksConfigured("openclaw") {
+		t.Fatal("legacy OpenClaw shim must not be reported as the current native plugin boundary")
 	}
 }
 
@@ -234,24 +273,25 @@ func TestQuickstartHooksConfigured_ClaudeCode(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	hookCommand := currentClaudeHookCommand()
 	settings := map[string]any{
 		"hooks": map[string]any{
 			"PreToolUse": []any{
 				map[string]any{
 					"matcher": ".*",
-					"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					"hooks":   []any{map[string]any{"type": "command", "command": hookCommand}},
 				},
 			},
 			"PostToolUse": []any{
 				map[string]any{
 					"matcher": ".*",
-					"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					"hooks":   []any{map[string]any{"type": "command", "command": hookCommand}},
 				},
 			},
 			"PostToolUseFailure": []any{
 				map[string]any{
 					"matcher": ".*",
-					"hooks":   []any{map[string]any{"type": "command", "command": "rampart hook"}},
+					"hooks":   []any{map[string]any{"type": "command", "command": hookCommand}},
 				},
 			},
 		},
@@ -277,7 +317,8 @@ func TestQuickstartHooksConfigured_Codex(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := installCodexHooks(hooksPath, "rampart hook --format codex", "rampart.exe hook --format codex", false); err != nil {
+	command, commandWindows := currentCodexHookCommands()
+	if err := installCodexHooks(hooksPath, command, commandWindows, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -291,7 +332,7 @@ func TestQuickstartHooksConfigured_Cline(t *testing.T) {
 	testSetHome(t, home)
 
 	hookDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if _, _, err := installClineHooks(hookDir, "rampart", runtime.GOOS, false); err != nil {
+	if _, _, err := installClineHooks(hookDir, resolveRampartHookBinary(), runtime.GOOS, false); err != nil {
 		t.Fatal(err)
 	}
 

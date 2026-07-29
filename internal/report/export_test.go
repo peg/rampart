@@ -170,6 +170,36 @@ func TestGenerateExport_InvalidDuration(t *testing.T) {
 	}
 }
 
+func TestGenerateExportClassifiesCurrentDecisionAliases(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	events := []audit.Event{
+		{Timestamp: now, Decision: audit.EventDecision{Action: "watch"}},
+		{Timestamp: now, Decision: audit.EventDecision{Action: "require_approval"}},
+		{Timestamp: now, Decision: audit.EventDecision{Action: "webhook"}},
+		{Timestamp: now, Decision: audit.EventDecision{Action: "unknown"}},
+	}
+	f, err := os.Create(filepath.Join(dir, now.Format("2006-01-02")+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if err := json.NewEncoder(f).Encode(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rep, _, err := GenerateExport(ExportOptions{AuditDir: dir, Last: "24h", Output: filepath.Join(dir, "out.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Totals.Allow != 1 || rep.Totals.Ask != 2 || rep.Totals.Total != 4 {
+		t.Fatalf("totals = %+v, want watch allowed, approval/webhook gated, unknown unclassified", rep.Totals)
+	}
+}
+
 func TestPrintExportSummary_NoError(t *testing.T) {
 	// Smoke test — just verify it doesn't panic on empty report.
 	report := &ExportReport{}

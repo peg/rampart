@@ -54,7 +54,7 @@ async function withPlugin({ name, fetchImpl, pluginConfig = {}, invoke }) {
   }
 }
 
-async function runPolicyScenario({ name, event, expectedTool, expectedCommand, response = { decision: 'allow' }, assertResult, context = ctx }) {
+async function runPolicyScenario({ name, event, expectedTool, expectedCommand, response = { decision: 'allow', allowed: true }, assertResult, context = ctx }) {
   const calls = [];
   const result = await withPlugin({
     name,
@@ -101,6 +101,22 @@ await runPolicyScenario({
 });
 scenarios.push('canonical-exec-nested-input-command');
 
+await runPolicyScenario({
+  name: 'policy-response-cannot-rewrite-tool-params',
+  event: { toolName: 'exec', params: { command: 'echo original' } },
+  expectedTool: 'exec',
+  expectedCommand: 'echo original',
+  response: {
+    decision: 'allow',
+    allowed: true,
+    params: { command: 'echo injected' },
+  },
+  assertResult: (result) => {
+    assert(result === undefined, 'policy response unexpectedly rewrote executable params');
+  },
+});
+scenarios.push('policy-response-cannot-rewrite-tool-params');
+
 for (const [name, toolName, params, expectedCommand] of [
   ['bash-cmd-alias', 'bash', { cmd: 'echo bash-provider' }, 'echo bash-provider'],
   ['shell-script-alias', 'shell', { script: 'echo shell-provider' }, 'echo shell-provider'],
@@ -127,7 +143,7 @@ const unknownTool = await withPlugin({
   name: 'unknown-tool-fails-closed',
   fetchImpl: async () => {
     unknownToolPolicyCalls += 1;
-    return fetchJson({ decision: 'allow', policy: 'allow-unmatched' });
+    return fetchJson({ decision: 'allow', allowed: true, policy: 'allow-unmatched' });
   },
   invoke: async ({ handlers }) => handlers.before_tool_call(
     { toolName: 'future_mutating_tool', params: { target: '/tmp/unsafe' } },
@@ -140,7 +156,7 @@ scenarios.push('unknown-tool-fails-closed');
 
 const adapterFault = await withPlugin({
   name: 'adapter-exception-fails-closed',
-  fetchImpl: async () => fetchJson({ decision: 'allow' }),
+  fetchImpl: async () => fetchJson({ decision: 'allow', allowed: true }),
   invoke: async ({ handlers }) => handlers.before_tool_call(
     {
       toolName: 'write',
@@ -164,6 +180,7 @@ const patchResult = await withPlugin({
     const denied = body.params.path === 'secrets/.env';
     return fetchJson({
       decision: denied ? 'deny' : 'allow',
+      allowed: !denied,
       policy: denied ? 'protected-environment' : 'workspace-write',
       message: denied ? 'protected environment file' : 'workspace write allowed',
     });
@@ -204,8 +221,8 @@ const patchAsk = await withPlugin({
     const body = parseBody({ opts });
     patchAskCalls.push({ url: String(url), body });
     return fetchJson(body.params.path === 'production/config.yaml'
-      ? { decision: 'ask', policy: 'production-write', message: 'production change' }
-      : { decision: 'allow', policy: 'workspace-write' });
+      ? { decision: 'ask', allowed: false, policy: 'production-write', message: 'production change' }
+      : { decision: 'allow', allowed: true, policy: 'workspace-write' });
   },
   invoke: async ({ handlers }) => handlers.before_tool_call(
     {
@@ -373,7 +390,7 @@ const ask = await runPolicyScenario({
   name: 'write-tool-hosted-approval',
   event: { toolName: 'write', params: { path: '/tmp/provider-fixture.txt', content: 'fixture' } },
   expectedTool: 'write',
-  response: { decision: 'ask', policy: 'provider-fixture', message: 'write requires approval', severity: 'warning' },
+  response: { decision: 'ask', allowed: false, policy: 'provider-fixture', message: 'write requires approval', severity: 'warning' },
   assertResult: (result) => {
     assert(result?.requireApproval, 'expected requireApproval for ask decision');
     assert(result.requireApproval.title.includes('write approval required'), `unexpected approval title: ${result.requireApproval.title}`);

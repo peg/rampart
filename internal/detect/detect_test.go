@@ -248,6 +248,32 @@ func TestEnvironmentDetectsAgentsAndToolsFromSignals(t *testing.T) {
 	}
 }
 
+func TestEnvironmentHonorsClaudeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	configDir := filepath.Join(home, "custom-claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	t.Setenv("PATH", t.TempDir())
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := []byte(`{"mcpServers":{"custom":{"command":"example"}}}`)
+	if err := os.WriteFile(filepath.Join(configDir, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Environment()
+	if err != nil {
+		t.Fatalf("Environment() error = %v", err)
+	}
+	if !got.ClaudeCode || !reflect.DeepEqual(got.MCPServers, []string{"custom"}) {
+		t.Fatalf("custom Claude config was not detected: %+v", got)
+	}
+}
+
 func TestClineExtensionInstalledCurrentVSCodePaths(t *testing.T) {
 	for _, relative := range []string{
 		filepath.Join(".vscode", "extensions", "saoudrizwan.claude-dev-4.19.0"),
@@ -290,31 +316,51 @@ func TestClineExtensionInstalledPreservesLegacyIDsAndRejectsFiles(t *testing.T) 
 	}
 }
 
+func TestCopilotExtensionInstalledDesktopAndRemoteRoots(t *testing.T) {
+	for _, relative := range []string{
+		filepath.Join(".vscode", "extensions", "github.copilot-chat-0.33.0"),
+		filepath.Join(".vscode-insiders", "extensions", "github.copilot-chat-0.33.0"),
+		filepath.Join(".vscode-server", "extensions", "github.copilot-chat-0.33.0"),
+		filepath.Join(".vscode-server-insiders", "extensions", "github.copilot-chat-0.33.0"),
+	} {
+		t.Run(relative, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(home, relative), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if !CopilotExtensionInstalled(home) {
+				t.Fatalf("Copilot extension at %s was not detected", relative)
+			}
+		})
+	}
+}
+
 func TestDetectedAgentsAndToolsOrder(t *testing.T) {
 	r := &DetectResult{
-		ClaudeCode:   true,
-		HasCodex:     true,
-		HasCline:     true,
-		HasOpenClaw:  true,
-		HasCursor:    true,
-		HasAider:     true,
-		HasWindsurf:  true,
-		HasCopilot:   true,
-		HasKubectl:   true,
-		HasDocker:    true,
-		HasNode:      true,
-		HasNpm:       true,
-		HasPython:    true,
-		HasPip:       true,
-		HasTerraform: true,
-		HasGit:       true,
-		HasGo:        true,
-		HasRust:      true,
-		HasAWSCLI:    true,
+		ClaudeCode:     true,
+		HasCodex:       true,
+		HasCline:       true,
+		HasOpenClaw:    true,
+		HasCursor:      true,
+		HasAider:       true,
+		HasWindsurf:    true,
+		HasCopilot:     true,
+		HasAntigravity: true,
+		HasKubectl:     true,
+		HasDocker:      true,
+		HasNode:        true,
+		HasNpm:         true,
+		HasPython:      true,
+		HasPip:         true,
+		HasTerraform:   true,
+		HasGit:         true,
+		HasGo:          true,
+		HasRust:        true,
+		HasAWSCLI:      true,
 	}
 
 	agents := r.DetectedAgents()
-	wantAgents := []string{"claude-code", "codex", "cline", "openclaw", "cursor", "aider", "windsurf", "copilot"}
+	wantAgents := []string{"claude-code", "codex", "cline", "openclaw", "cursor", "aider", "windsurf", "copilot", "antigravity"}
 	if !reflect.DeepEqual(agents, wantAgents) {
 		t.Fatalf("DetectedAgents() = %v, want %v", agents, wantAgents)
 	}

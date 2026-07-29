@@ -60,12 +60,56 @@ func TestMapAntigravityToolCoversDocumentedSurface(t *testing.T) {
 	}
 }
 
+func TestParseAntigravityInputRejectsMalformedKnownTools(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		args     string
+	}{
+		{name: "missing command", toolName: "run_command", args: `{}`},
+		{name: "non-string command", toolName: "run_command", args: `{"CommandLine":42}`},
+		{name: "missing write path", toolName: "write_to_file", args: `{}`},
+		{name: "empty batched write paths", toolName: "multi_replace_file_content", args: `{"TargetFiles":[]}`},
+		{name: "missing read path", toolName: "view_file", args: `{}`},
+		{name: "missing directory path", toolName: "list_dir", args: `{}`},
+		{name: "missing URL", toolName: "read_url_content", args: `{}`},
+		{name: "missing query", toolName: "search_web", args: `{}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"toolCall":{"name":"` + testCase.toolName + `","args":` + testCase.args + `},"conversationId":"s"}`
+			if _, err := parseAntigravityInput(strings.NewReader(payload)); err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("error = %v, want required-field rejection", err)
+			}
+		})
+	}
+}
+
 func TestAntigravityUnknownToolEmitsStructuredDeny(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	var stdout, stderr bytes.Buffer
 	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
 	cmd.SetIn(strings.NewReader(`{"toolCall":{"name":"future_mutator","args":{}},"conversationId":"s"}`))
+	cmd.SetArgs([]string{"hook", "--format", "antigravity", "--audit-dir", filepath.Join(home, "audit")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("structured output = %q: %v", stdout.String(), err)
+	}
+	if output["decision"] != "deny" {
+		t.Fatalf("decision = %#v, want deny", output["decision"])
+	}
+}
+
+func TestAntigravityMalformedKnownToolEmitsStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(`{"toolCall":{"name":"run_command","args":{}},"conversationId":"s"}`))
 	cmd.SetArgs([]string{"hook", "--format", "antigravity", "--audit-dir", filepath.Join(home, "audit")})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)

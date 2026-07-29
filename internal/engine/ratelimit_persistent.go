@@ -13,6 +13,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/peg/rampart/internal/securefile"
 )
 
 const (
@@ -125,15 +127,21 @@ func (c *PersistentCallCounter) Snapshot(window time.Duration, now time.Time) ma
 
 func loadPersistentCallCounter(path string) (*SlidingWindowCounter, error) {
 	counter := NewSlidingWindowCounter()
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return counter, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("persistent call counter stat: %w", err)
 	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("persistent call counter is not a regular non-symlink file: %s", path)
+	}
 	if info.Size() > maxPersistentCallCounterStateBytes {
 		return nil, fmt.Errorf("persistent call counter state is %d bytes (max %d)", info.Size(), maxPersistentCallCounterStateBytes)
+	}
+	if err := securefile.OwnerOnly(path); err != nil {
+		return nil, fmt.Errorf("persistent call counter secure state: %w", err)
 	}
 
 	data, err := os.ReadFile(path)
@@ -207,7 +215,7 @@ func writePersistentCallCounter(path string, counter *SlidingWindowCounter, now 
 		}
 	}()
 
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("persistent call counter secure temporary file: %w", err)
 	}

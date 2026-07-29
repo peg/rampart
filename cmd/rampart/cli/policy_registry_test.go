@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/policies"
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,21 @@ func TestVerifyPolicySHA256(t *testing.T) {
 	err := verifyPolicySHA256(content, "deadbeef", "custom")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sha256 mismatch")
+}
+
+func TestValidateRegistryHTTPSURL(t *testing.T) {
+	require.NoError(t, validateRegistryHTTPSURL("https://example.com/policy.yaml"))
+	require.Error(t, validateRegistryHTTPSURL("http://example.com/policy.yaml"))
+	require.Error(t, validateRegistryHTTPSURL("https://"))
+	require.Error(t, validateRegistryHTTPSURL("https://token@example.com/policy.yaml"))
+	require.Error(t, validateRegistryHTTPSURL("https://example.com/policy.yaml#fragment"))
+}
+
+func TestValidateRegistryPolicyRejectsInvalidContent(t *testing.T) {
+	require.NoError(t, validateRegistryPolicy([]byte("version: \"1\"\npolicies: []\n"), "valid"))
+	err := validateRegistryPolicy([]byte("not: [valid"), "invalid")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed validation")
 }
 
 func TestFetchURLRejectsOversizedResponse(t *testing.T) {
@@ -194,6 +210,42 @@ func TestPolicyRemove_RefusesBuiltIn(t *testing.T) {
 	_, _, err := runCLI(t, "policy", "remove", "standard")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "built-in profile")
+}
+
+func TestPolicyRegistryCacheRefusesSymlink(t *testing.T) {
+	skipOnWindows(t, "Unix symlink semantics")
+	dir := t.TempDir()
+	target := filepath.Join(dir, "attacker-manifest.json")
+	if err := os.WriteFile(target, []byte(`{"version":"1","policies":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(dir, policyRegistryCacheFileName)
+	if err := os.Symlink(target, cachePath); err != nil {
+		t.Fatal(err)
+	}
+	client := &policyRegistryClient{cacheTTL: time.Hour, now: time.Now}
+	if _, ok, err := client.readFreshCachedManifest(cachePath); err == nil || ok {
+		t.Fatalf("cache read ok=%t err=%v, want symlink refusal", ok, err)
+	}
+}
+
+func TestPolicyRegistryCacheEnforcesReadLimit(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), policyRegistryCacheFileName)
+	file, err := os.Create(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxPolicyRegistryResponseBytes + 1); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	client := &policyRegistryClient{cacheTTL: time.Hour, now: time.Now}
+	if _, ok, err := client.readFreshCachedManifest(cachePath); err == nil || ok {
+		t.Fatalf("cache read ok=%t err=%v, want size-limit refusal", ok, err)
+	}
 }
 
 func TestPolicyRemove_RemovesInstalledPolicy(t *testing.T) {

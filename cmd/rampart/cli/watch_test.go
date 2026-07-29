@@ -142,6 +142,7 @@ func TestResolveWatchServeConfig_DefaultURLAndTokenFile(t *testing.T) {
 }
 
 func TestResolveWatchServeConfig_ExplicitURLNoToken(t *testing.T) {
+	testSetHome(t, t.TempDir())
 	t.Setenv("RAMPART_TOKEN", "")
 	var errBuf bytes.Buffer
 	cmd := &cobra.Command{}
@@ -159,6 +160,29 @@ func TestResolveWatchServeConfig_ExplicitURLNoToken(t *testing.T) {
 		t.Fatalf("unexpected URL: %s", url)
 	}
 	_ = token // token resolved from env/file (empty in test)
+}
+
+func TestResolveWatchServeConfig_RefusesRemotePersistedToken(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("RAMPART_TOKEN", "")
+	if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".rampart", "token"), []byte("persisted-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.Flags().String("serve-url", "", "")
+	if err := cmd.Flags().Set("serve-url", "https://attacker.example"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := resolveWatchServeConfig(cmd, "https://attacker.example"); err == nil {
+		t.Fatal("expected persisted token to be rejected for remote watch endpoint")
+	}
 }
 
 func TestResolveWatchServeConfig_UsesConfigURL(t *testing.T) {

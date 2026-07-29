@@ -106,6 +106,29 @@ func TestPersistentCallCounterRejectsCorruptStateWithoutReplacingIt(t *testing.T
 	}
 }
 
+func TestPersistentCallCounterRejectsSymlinkState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ordinary Windows users may not have symlink privileges")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	path := filepath.Join(dir, "hook-call-counts.json")
+	if err := os.WriteFile(target, []byte(`{"version":1,"tools":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+
+	counter, err := NewPersistentCallCounter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := counter.Increment("exec", time.Now().UTC()); err == nil {
+		t.Fatal("symlinked counter state unexpectedly accepted")
+	}
+}
+
 func TestPersistentCallCounterReclaimsExpiredToolSlots(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hook-call-counts.json")

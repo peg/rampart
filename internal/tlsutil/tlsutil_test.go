@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -107,6 +108,42 @@ func TestGeneratedCertPermissions(t *testing.T) {
 	info, err = os.Stat(filepath.Join(dir, "cert.pem"))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "cert should be 0600")
+}
+
+func TestLoadOrGenerateRehardensManagedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode assertion")
+	}
+
+	dir := t.TempDir()
+	_, _, err := LoadOrGenerate(dir)
+	require.NoError(t, err)
+	keyPath := filepath.Join(dir, "key.pem")
+	require.NoError(t, os.Chmod(keyPath, 0o644))
+
+	_, _, err = LoadOrGenerate(dir)
+	require.NoError(t, err)
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestLoadOrGenerateRejectsManagedSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation commonly requires elevated Windows privileges")
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target")
+	require.NoError(t, os.WriteFile(target, []byte("do-not-touch"), 0o600))
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "key.pem")))
+
+	_, _, err := LoadOrGenerate(dir)
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "regular non-symlink file"), err.Error())
+	data, readErr := os.ReadFile(target)
+	require.NoError(t, readErr)
+	assert.Equal(t, "do-not-touch", string(data))
 }
 
 func TestTLSServerAcceptsConnections(t *testing.T) {

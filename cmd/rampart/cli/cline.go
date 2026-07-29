@@ -265,7 +265,23 @@ func inspectClineDestination(path, event string) (clineDestinationState, error) 
 }
 
 func installClineHooks(hookDir, rampartBin, goos string, force bool) ([2]string, bool, error) {
+	return installClineHooksWithRename(hookDir, rampartBin, goos, force, os.Rename)
+}
+
+func installClineHooksWithRename(
+	hookDir, rampartBin, goos string,
+	force bool,
+	rename func(string, string) error,
+) ([2]string, bool, error) {
 	var paths [2]string
+	hookDir = filepath.Clean(hookDir)
+	if info, err := os.Lstat(hookDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return paths, false, fmt.Errorf("setup cline: refusing linked or non-directory hook root %s", hookDir)
+		}
+	} else if !os.IsNotExist(err) {
+		return paths, false, fmt.Errorf("setup cline: inspect hook root %s: %w", hookDir, err)
+	}
 	var states [2]clineDestinationState
 	legacyWindowsDirs := make([]string, 0, len(clineHookEvents))
 	for index, event := range clineHookEvents {
@@ -292,32 +308,42 @@ func installClineHooks(hookDir, rampartBin, goos string, force bool) ([2]string,
 	if err := os.MkdirAll(hookDir, 0o755); err != nil {
 		return paths, false, fmt.Errorf("setup cline: create hook directory: %w", err)
 	}
-	migrated := false
+	migrated := len(legacyWindowsDirs) > 0
+	for _, state := range states {
+		migrated = migrated || state == clineDestinationManagedLegacyDir
+	}
+
+	// Missing and regular managed hooks can be replaced atomically in place.
+	// Install those first so a routine refresh never removes both live hooks.
 	for index, event := range clineHookEvents {
-		path := paths[index]
 		if states[index] == clineDestinationManagedLegacyDir {
-			legacyName := "rampart-policy"
-			if event == "PostToolUse" {
-				legacyName = "rampart-audit"
-			}
-			if err := os.Remove(filepath.Join(path, legacyName)); err != nil {
-				return paths, migrated, fmt.Errorf("setup cline: remove legacy hook: %w", err)
-			}
-			if err := os.Remove(path); err != nil {
-				return paths, migrated, fmt.Errorf("setup cline: remove legacy hook directory: %w", err)
-			}
-			migrated = true
+			continue
 		}
 		content := createClineHookScript(rampartBin, event, goos)
-		if err := atomicWritePrivateFile(path, []byte(content)); err != nil {
+		if err := writeClineHookFile(paths[index], content, goos); err != nil {
 			return paths, migrated, fmt.Errorf("setup cline: install %s hook: %w", event, err)
 		}
-		if goos != "windows" {
-			if err := os.Chmod(path, 0o755); err != nil {
-				return paths, migrated, fmt.Errorf("setup cline: enable %s hook: %w", event, err)
-			}
+	}
+
+	// A legacy directory and its replacement file cannot coexist at the same
+	// path. Migrate only that one event through a same-filesystem backup, leaving
+	// the other lifecycle hook live throughout the migration.
+	for index, event := range clineHookEvents {
+		if states[index] != clineDestinationManagedLegacyDir {
+			continue
+		}
+		content := createClineHookScript(rampartBin, event, goos)
+		if err := migrateClineLegacyHook(paths[index], event, content, goos, rename); err != nil {
+			return paths, migrated, err
 		}
 	}
+
+	if err := validateClineHookPair(hookDir, goos); err != nil {
+		return paths, migrated, fmt.Errorf("setup cline: validate installed hooks: %w", err)
+	}
+
+	// Windows discovers the .ps1 pair. Retire an owned extensionless legacy
+	// layout only after the complete active pair has validated successfully.
 	for _, legacyPath := range legacyWindowsDirs {
 		event := filepath.Base(legacyPath)
 		legacyName := "rampart-policy"
@@ -330,12 +356,98 @@ func installClineHooks(hookDir, rampartBin, goos string, force bool) ([2]string,
 		if err := os.Remove(legacyPath); err != nil {
 			return paths, migrated, fmt.Errorf("setup cline: remove legacy hook directory: %w", err)
 		}
-		migrated = true
 	}
 	return paths, migrated, nil
 }
 
+func writeClineHookFile(path, content, goos string) error {
+	mode := os.FileMode(0o600)
+	if goos != "windows" {
+		mode = 0o755
+	}
+	// Set the executable mode on the staged inode before the atomic replace;
+	// a crash can therefore never leave a newly refreshed hook disabled.
+	if err := atomicWritePrivateFileWithMode(path, []byte(content), mode); err != nil {
+		return err
+	}
+	return validateClineHookFile(path, goos)
+}
+
+func migrateClineLegacyHook(path, event, content, goos string, rename func(string, string) error) error {
+	txnDir, err := os.MkdirTemp(filepath.Dir(path), ".rampart-cline-migrate-*")
+	if err != nil {
+		return fmt.Errorf("setup cline: create %s migration: %w", event, err)
+	}
+	preserveTxn := false
+	defer func() {
+		if !preserveTxn {
+			_ = os.RemoveAll(txnDir)
+		}
+	}()
+
+	stagedPath := filepath.Join(txnDir, "replacement")
+	if err := writeClineHookFile(stagedPath, content, goos); err != nil {
+		return fmt.Errorf("setup cline: stage %s hook: %w", event, err)
+	}
+	backupPath := filepath.Join(txnDir, "legacy")
+	if err := rename(path, backupPath); err != nil {
+		return fmt.Errorf("setup cline: back up legacy %s hook: %w", event, err)
+	}
+	if err := rename(stagedPath, path); err != nil {
+		if restoreErr := rename(backupPath, path); restoreErr != nil {
+			preserveTxn = true
+			return fmt.Errorf("setup cline: activate %s hook: %w (restore failed: %v; backup preserved at %s)", event, err, restoreErr, txnDir)
+		}
+		return fmt.Errorf("setup cline: activate %s hook: %w", event, err)
+	}
+	if err := validateClineHookFile(path, goos); err != nil {
+		if removeErr := removeManagedClineHookFile(path); removeErr != nil {
+			preserveTxn = true
+			return fmt.Errorf("setup cline: validate %s hook: %w (remove replacement failed: %v; backup preserved at %s)", event, err, removeErr, txnDir)
+		}
+		if restoreErr := rename(backupPath, path); restoreErr != nil {
+			preserveTxn = true
+			return fmt.Errorf("setup cline: validate %s hook: %w (restore failed: %v; backup preserved at %s)", event, err, restoreErr, txnDir)
+		}
+		return fmt.Errorf("setup cline: validate %s hook: %w", event, err)
+	}
+	if err := os.RemoveAll(txnDir); err != nil {
+		preserveTxn = true
+		return fmt.Errorf("setup cline: %s hook migrated but transaction cleanup failed at %s: %w", event, txnDir, err)
+	}
+	return nil
+}
+
+func removeManagedClineHookFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing to remove changed replacement %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !clineHookScriptManaged(data) {
+		return fmt.Errorf("refusing to remove unowned replacement %s", path)
+	}
+	return os.Remove(path)
+}
+
 func removeClineHooksFromDir(cmd *cobra.Command, hookDir string) error {
+	info, err := os.Lstat(hookDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintln(cmd.OutOrStdout(), "No Rampart Cline hooks found. Nothing to remove.")
+			return nil
+		}
+		return fmt.Errorf("setup cline: inspect hook root %s: %w", hookDir, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("setup cline: refusing linked or non-directory hook root %s", hookDir)
+	}
 	var removed []string
 	var skipped []string
 	for _, event := range clineHookEvents {
@@ -420,39 +532,61 @@ func clineHookScriptManaged(content []byte) bool {
 	return current || legacy
 }
 
-func clineHookPairConfigured(hookDir, goos string) bool {
-	return validateClineHookPair(hookDir, goos) == nil
-}
-
 func validateClineHookPair(hookDir, goos string) error {
 	for _, event := range clineHookEvents {
 		path := clineHookPath(hookDir, event, goos)
-		info, err := os.Lstat(path)
-		if err != nil {
-			return fmt.Errorf("%s is missing: %w", path, err)
+		if err := validateClineHookFile(path, goos); err != nil {
+			return err
 		}
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s is not a regular, non-symlink hook file", path)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		if !clineHookScriptManaged(data) {
-			return fmt.Errorf("%s is not a Rampart-managed Cline hook", path)
-		}
-		if goos != "windows" && info.Mode().Perm()&0o111 == 0 {
-			return fmt.Errorf("%s is disabled because it is not executable", path)
-		}
+	}
+	return nil
+}
+
+func validateClineHookFile(path, goos string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("%s is missing: %w", path, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is not a regular, non-symlink hook file", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if !clineHookScriptManaged(data) {
+		return fmt.Errorf("%s is not a Rampart-managed Cline hook", path)
+	}
+	if goos != "windows" && info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%s is disabled because it is not executable", path)
 	}
 	return nil
 }
 
 func clineHooksConfiguredForHome(home string) bool {
 	for _, hookDir := range clineKnownHookDirs(home) {
-		if clineHookPairConfigured(hookDir, runtime.GOOS) {
+		if validateCurrentClineHookPair(hookDir, runtime.GOOS) == nil {
 			return true
 		}
 	}
 	return false
+}
+
+func validateCurrentClineHookPair(hookDir, goos string) error {
+	if err := validateClineHookPair(hookDir, goos); err != nil {
+		return err
+	}
+	rampartBin := resolveRampartHookBinary()
+	for _, event := range clineHookEvents {
+		path := clineHookPath(hookDir, event, goos)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		expected := createClineHookScript(rampartBin, event, goos)
+		if string(data) != expected {
+			return fmt.Errorf("%s invokes a stale or non-current Rampart binary", path)
+		}
+	}
+	return nil
 }

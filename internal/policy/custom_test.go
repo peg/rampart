@@ -52,6 +52,31 @@ policies: []
 	}
 }
 
+func TestLoadCustomPolicy_AcceptsScalarToolFromExistingPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "custom.yaml")
+	err := os.WriteFile(path, []byte(`version: "1"
+policies:
+  - name: existing
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo safe"]
+`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := policy.LoadCustomPolicy(path)
+	if err != nil {
+		t.Fatalf("LoadCustomPolicy: %v", err)
+	}
+	if len(p.Policies) != 1 || len(p.Policies[0].Match.Tool) != 1 || p.Policies[0].Match.Tool[0] != "exec" {
+		t.Fatalf("unexpected scalar tool migration: %+v", p.Policies)
+	}
+}
+
 func TestSaveCustomPolicy_ValidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "custom.yaml")

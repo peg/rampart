@@ -47,9 +47,12 @@ func parseAntigravityInput(reader io.Reader) (*hookParseResult, error) {
 		return nil, fmt.Errorf("hook: unsupported Antigravity tool name %q; update Rampart before allowing this tool", toolName)
 	}
 
-	params := normalizeAntigravityParams(input.ToolCall.Args)
+	params := cloneHookParams(input.ToolCall.Args)
 	if tool == "mcp" {
 		tool = classifyNativeMCPTool(toolName, params)
+	}
+	if err := validateAntigravityActionParams(toolName, tool, params); err != nil {
+		return nil, err
 	}
 	result := &hookParseResult{
 		Tool:          tool,
@@ -64,6 +67,9 @@ func parseAntigravityInput(reader io.Reader) (*hookParseResult, error) {
 		policyPaths, err := collectAntigravityPaths(params)
 		if err != nil {
 			return nil, err
+		}
+		if len(policyPaths) == 0 {
+			return nil, fmt.Errorf("hook: Antigravity %s requires at least one file path", toolName)
 		}
 		result.PolicyPaths = policyPaths
 		if len(result.PolicyPaths) > 0 {
@@ -99,29 +105,43 @@ func mapAntigravityTool(toolName string) string {
 	}
 }
 
-func normalizeAntigravityParams(input map[string]any) map[string]any {
-	params := make(map[string]any, len(input)+3)
-	for key, value := range input {
-		params[key] = value
+// validateAntigravityActionParams rejects documented pre-call tools when the
+// command, read target, or network target that policy must inspect is missing
+// or type-confused. Write paths are validated after collecting the full batch.
+func validateAntigravityActionParams(toolName, tool string, params map[string]any) error {
+	context := "hook: Antigravity " + toolName
+	pathAliases := []string{
+		"AbsolutePath", "TargetFile", "FilePath", "filePath", "file_path", "Path",
+		"DirectoryPath", "directoryPath", "SearchDirectory", "SearchPath",
 	}
-	copyAlias := func(destination string, aliases ...string) {
-		if _, exists := params[destination]; exists {
-			return
+	switch tool {
+	case "exec":
+		_, err := requireHookStringAliases(params, "command", context, "command", "CommandLine", "commandLine", "Command", "cmd")
+		return err
+	case "read", "write", "mcp", "mcp-destructive":
+		_, found, err := normalizeHookStringAliases(params, "path", context, "file path", pathAliases...)
+		if err != nil {
+			return err
 		}
-		for _, alias := range aliases {
-			if value, exists := params[alias]; exists {
-				params[destination] = value
-				return
+		switch strings.ToLower(strings.TrimSpace(toolName)) {
+		case "view_file", "list_dir", "find_by_name", "grep_search":
+			if !found {
+				return fmt.Errorf("%s requires a non-empty file path", context)
+			}
+		}
+	case "fetch":
+		_, found, err := normalizeHookStringAliases(params, "url", context, "URL or query", "Url", "URL", "Uri", "URI", "query")
+		if err != nil {
+			return err
+		}
+		switch strings.ToLower(strings.TrimSpace(toolName)) {
+		case "search_web", "read_url_content":
+			if !found {
+				return fmt.Errorf("%s requires a non-empty URL or query", context)
 			}
 		}
 	}
-	copyAlias("command", "CommandLine", "commandLine", "Command", "cmd")
-	copyAlias("path", "AbsolutePath", "TargetFile", "FilePath", "filePath", "file_path", "Path", "DirectoryPath", "directoryPath", "SearchDirectory", "SearchPath")
-	copyAlias("url", "Url", "URL", "Uri", "URI", "url")
-	if _, exists := params["url"]; !exists {
-		copyAlias("url", "query")
-	}
-	return params
+	return nil
 }
 
 func collectAntigravityPaths(params map[string]any) ([]string, error) {

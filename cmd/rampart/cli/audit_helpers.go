@@ -327,14 +327,6 @@ func eventMatchesQuery(event audit.Event, query string) bool {
 	return false
 }
 
-func verifyAnchors(auditDir string, hashesByID map[string]string, strictOpt ...bool) error {
-	strict := true
-	if len(strictOpt) > 0 {
-		strict = strictOpt[0]
-	}
-	return verifyAnchorsWithSince(auditDir, hashesByID, strict, nil)
-}
-
 func verifyAnchorsWithSince(auditDir string, hashesByID map[string]string, strict bool, sinceDate *time.Time) error {
 	anchors, err := listAnchorFiles(auditDir)
 	if err != nil {

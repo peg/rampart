@@ -363,13 +363,10 @@ func detectProtectedAgents() []string {
 	}
 
 	// Claude Code hooks
-	claudeSettings := filepath.Join(home, ".claude", "settings.json")
-	if data, err := os.ReadFile(claudeSettings); err == nil {
-		var settings map[string]any
-		if json.Unmarshal(data, &settings) == nil {
-			if countClaudeHookMatchers(settings) > 0 {
-				agents = append(agents, "Claude Code (hooks)")
-			}
+	if claudeHooksConfiguredForHome(home) {
+		claudeAssessment := claudeHookLoadAssessmentForHome(home)
+		if !claudeAssessment.Blocked && !claudeAssessment.Unverified {
+			agents = append(agents, "Claude Code (hooks)")
 		}
 	}
 
@@ -418,7 +415,10 @@ func detectProtectedAgents() []string {
 
 	// Shared user hooks loaded by Copilot CLI and VS Code's agent host.
 	if copilotHooksConfiguredForHome(home) {
-		agents = append(agents, "GitHub Copilot CLI / VS Code (hooks)")
+		workingDir, _ := os.Getwd()
+		if _, disabled := copilotCLIUserHooksDisabled(home, workingDir); !disabled {
+			agents = append(agents, "GitHub Copilot CLI / VS Code (hooks)")
+		}
 	}
 
 	// Hermes Agent user plugin installed by `rampart setup hermes`.
@@ -462,7 +462,8 @@ func detectHermesPluginState() hermesPluginState {
 }
 
 func detectHermesPluginStateForHome(home string) hermesPluginState {
-	state := hermesPluginState{PluginDir: filepath.Join(home, ".hermes", "plugins", "rampart")}
+	hermesHome := hermesHomeDir(home)
+	state := hermesPluginState{PluginDir: filepath.Join(hermesHome, "plugins", "rampart")}
 	manifestPath := filepath.Join(state.PluginDir, "plugin.yaml")
 	data, err := os.ReadFile(manifestPath)
 	if err == nil {
@@ -480,7 +481,7 @@ func detectHermesPluginStateForHome(home string) hermesPluginState {
 		}
 	}
 
-	configPath := filepath.Join(home, ".hermes", "config.yaml")
+	configPath := filepath.Join(hermesHome, "config.yaml")
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		return state

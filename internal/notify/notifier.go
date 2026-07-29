@@ -53,13 +53,23 @@ type GenericNotifier struct {
 	client *http.Client
 }
 
+func newNotifyHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			// Notification payloads can contain command data and a signed approval
+			// URL. Never let a webhook endpoint redirect those capabilities to a
+			// different destination.
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // NewGenericNotifier creates a new generic webhook notifier.
 func NewGenericNotifier(url string) *GenericNotifier {
 	return &GenericNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 

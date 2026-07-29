@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 /**
- * Validate Rampart's Gemini CLI integration against the latest published host.
+ * Check latest Gemini CLI package startup plus Rampart's generated settings
+ * shape and adapter behavior.
  *
  * This gate is credential-free and state-isolated. It proves that the latest
- * Gemini CLI starts with Rampart's generated settings, and that the candidate
- * Rampart binary returns the documented deny schema for a destructive
- * BeforeTool payload. It does not make a model request or claim live-host tool
- * execution proof.
+ * package starts in isolated state, then separately checks Rampart's generated
+ * settings shape and documented deny schema for a destructive BeforeTool
+ * payload. The version command is not evidence that Gemini loaded or dispatched
+ * the hooks; this does not make a model request or claim live-host proof.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { buildCompatProcessEnv } from './compat-process-env.mjs';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-gemini-compat-'));
 const tempHome = join(tempRoot, 'home');
+const childTemp = join(tempRoot, 'tmp');
 const rampartBin = join(tempRoot, process.platform === 'win32' ? 'rampart.exe' : 'rampart');
 const args = process.argv.slice(2);
 const keepTemp = args.includes('--keep-temp');
@@ -24,19 +28,19 @@ const packageArg = args.find((arg) => arg.startsWith('--gemini-package='));
 const geminiPackage = packageArg ? packageArg.split('=', 2)[1] : '@google/gemini-cli@latest';
 
 function compatEnv() {
-  const inherited = {};
-  for (const key of [
-    'PATH', 'SystemRoot', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR',
-    'LANG', 'LC_ALL', 'CI', 'NO_COLOR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
-  ]) {
-    if (process.env[key]) inherited[key] = process.env[key];
-  }
-  return {
-    ...inherited,
+  mkdirSync(childTemp, { recursive: true });
+  return buildCompatProcessEnv(process.env, {
     HOME: tempHome,
     USERPROFILE: tempHome,
+    TMPDIR: childTemp,
+    TMP: childTemp,
+    TEMP: childTemp,
     XDG_CONFIG_HOME: join(tempHome, '.config'),
-  };
+    XDG_CACHE_HOME: join(tempHome, '.cache'),
+    XDG_DATA_HOME: join(tempHome, '.local', 'share'),
+    XDG_STATE_HOME: join(tempHome, '.local', 'state'),
+    NO_COLOR: '1',
+  });
 }
 
 function run(command, commandArgs, { input = undefined, env = compatEnv(), cwd = tempRoot } = {}) {
@@ -79,7 +83,7 @@ function assertGeneratedSettings() {
 }
 
 function main() {
-  run('go', ['build', '-o', rampartBin, './cmd/rampart'], { env: process.env, cwd: repoRoot });
+  run('go', ['build', '-o', rampartBin, './cmd/rampart'], { cwd: repoRoot });
   run(rampartBin, ['setup', 'gemini']);
   assertGeneratedSettings();
 
@@ -106,7 +110,7 @@ function main() {
     ok: true,
     gemini_source: geminiPackage,
     gemini_version: version.stdout.split(/\r?\n/).filter(Boolean).at(-1),
-    generated_settings_accepted: true,
+    generated_settings_shape_valid: true,
     destructive_before_tool_denied: true,
     authenticated_host_tool_call: false,
   }, null, 2));

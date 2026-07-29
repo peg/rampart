@@ -106,8 +106,48 @@ entries:
 	if cases[0].Expected != "deny" {
 		t.Fatalf("first case expected = %q, want deny", cases[0].Expected)
 	}
-	if cases[1].Expected != "ask" {
-		t.Fatalf("second case expected = %q, want ask", cases[1].Expected)
+	if cases[1].Expected != "allow" {
+		t.Fatalf("second case expected = %q, want allow", cases[1].Expected)
+	}
+}
+
+func TestBenchCoveredUsesExpectedBehavior(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected string
+		actual   string
+		strict   bool
+		want     bool
+	}{
+		{name: "exact allow", expected: "allow", actual: "allow", want: true},
+		{name: "over-blocked allow", expected: "allow", actual: "deny", want: false},
+		{name: "exact watch", expected: "watch", actual: "watch", want: true},
+		{name: "approval may cover deny", expected: "deny", actual: "ask", want: true},
+		{name: "strict deny rejects approval", expected: "deny", actual: "ask", strict: true, want: false},
+		{name: "deny does not satisfy approval expectation", expected: "ask", actual: "deny", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := benchCovered(tc.expected, tc.actual, tc.strict); got != tc.want {
+				t.Fatalf("benchCovered(%q, %q, %t) = %t, want %t", tc.expected, tc.actual, tc.strict, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeBenchExpectedPreservesBehavior(t *testing.T) {
+	for _, expected := range []string{"allow", "watch", "ask", "deny"} {
+		got, err := normalizeBenchExpected(expected)
+		if err != nil {
+			t.Fatalf("normalize %q: %v", expected, err)
+		}
+		if got != expected {
+			t.Fatalf("normalize %q = %q", expected, got)
+		}
+	}
+	got, err := normalizeBenchExpected("require_approval")
+	if err != nil || got != "ask" {
+		t.Fatalf("legacy require_approval = %q, %v", got, err)
 	}
 }
 

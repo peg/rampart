@@ -63,11 +63,6 @@ func parseManagedPolicyHeaders(data []byte) (version, contentHash string, conten
 	return version, contentHash, content
 }
 
-func normalizeManagedPolicyContent(data []byte) []byte {
-	_, _, content := parseManagedPolicyHeaders(data)
-	return content
-}
-
 func versionStampedPolicyContent(content []byte) []byte {
 	return versionStampedPolicyContentForVersion(content, build.Version)
 }

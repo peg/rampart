@@ -93,6 +93,8 @@ type quietEntry struct {
 // window are suppressed in quiet mode.
 const quietWindow = 30 * time.Second
 
+const maxQuietSeenEntries = 1024
+
 // noisePatterns are command substrings that are always suppressed in quiet mode
 // when the decision is allow. These are known system/infrastructure commands
 // that flood audit logs but carry no security signal.
@@ -225,7 +227,7 @@ func checkServeReachable(serveURL, token string) bool {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := newControlHTTPClient(2 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false
@@ -409,9 +411,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.quietSeen == nil {
 				m.quietSeen = make(map[string]quietEntry)
 			}
-			m.quietSeen[dedup] = quietEntry{lastSeen: time.Now(), count: 1}
-			// Prune stale entries periodically.
-			if len(m.quietSeen) > 100 {
+			// Prune stale entries periodically and enforce a hard cap for unique
+			// command floods within the quiet window.
+			if len(m.quietSeen) >= 100 {
 				now := time.Now()
 				for k, v := range m.quietSeen {
 					if now.Sub(v.lastSeen) > quietWindow {
@@ -419,6 +421,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+			for len(m.quietSeen) >= maxQuietSeenEntries {
+				for k := range m.quietSeen {
+					delete(m.quietSeen, k)
+					break
+				}
+			}
+			m.quietSeen[dedup] = quietEntry{lastSeen: time.Now(), count: 1}
 		}
 
 		// Shift deny flash indices since we prepend at index 0.

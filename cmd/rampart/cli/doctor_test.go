@@ -73,25 +73,6 @@ func TestFormatAgo(t *testing.T) {
 	}
 }
 
-func TestCountClaudeHookMatchers(t *testing.T) {
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"PreToolUse": []any{
-				map[string]any{
-					"matcher": "Bash",
-					"hooks": []any{
-						map[string]any{"type": "command", "command": "rampart hook"},
-					},
-				},
-			},
-		},
-	}
-	count := countClaudeHookMatchers(settings)
-	if count == 0 {
-		t.Error("expected non-zero count for rampart hooks")
-	}
-}
-
 func TestRunDoctor_JSONContract(t *testing.T) {
 	var buf bytes.Buffer
 	err := runDoctor(&buf, true)
@@ -347,6 +328,47 @@ func TestDoctorHooks_PathHints(t *testing.T) {
 	}
 	if !strings.Contains(out, filepath.Join(home, "Documents", "Cline", "Hooks")) {
 		t.Fatalf("expected Cline hooks path in output, got: %s", out)
+	}
+}
+
+func TestDoctorHooksRejectsStaleClaudeCommand(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+
+	staleMatcher := func() map[string]any {
+		return map[string]any{
+			"matcher": ".*",
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": "/retired/rampart hook --format claude-code",
+				},
+			},
+		}
+	}
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse":         []any{staleMatcher()},
+			"PostToolUse":        []any{staleMatcher()},
+			"PostToolUseFailure": []any{staleMatcher()},
+		},
+	}
+	data, err := json.Marshal(settings)
+	requireNoErr(t, err)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	requireNoErr(t, os.MkdirAll(filepath.Dir(settingsPath), 0o700))
+	requireNoErr(t, os.WriteFile(settingsPath, data, 0o600))
+
+	var results []checkResult
+	issues := doctorHooks(func(name, status, message string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: message})
+	})
+	if issues != 1 || len(results) != 1 || results[0].Status != "fail" {
+		t.Fatalf("stale Claude command must fail doctor: issues=%d results=%+v", issues, results)
+	}
+	if !strings.Contains(results[0].Message, "stale") {
+		t.Fatalf("doctor should explain the stale-command possibility: %s", results[0].Message)
 	}
 }
 
@@ -1029,7 +1051,7 @@ func doctorResultText(results []checkResult) string {
 	return b.String()
 }
 
-func TestIsReleaseVersion(t *testing.T) {
+func TestNormalizedReleaseVersionAcceptance(t *testing.T) {
 	tests := []struct {
 		version string
 		want    bool
@@ -1047,8 +1069,9 @@ func TestIsReleaseVersion(t *testing.T) {
 		{"v0.0.0-20260406041825-7384556ab7f6", false},
 	}
 	for _, tt := range tests {
-		if got := isReleaseVersion(tt.version); got != tt.want {
-			t.Fatalf("isReleaseVersion(%q) = %v, want %v", tt.version, got, tt.want)
+		_, got := normalizedReleaseVersion(tt.version)
+		if got != tt.want {
+			t.Fatalf("normalizedReleaseVersion(%q) accepted = %v, want %v", tt.version, got, tt.want)
 		}
 	}
 }

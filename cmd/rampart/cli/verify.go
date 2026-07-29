@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/audit"
+	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
 	"github.com/spf13/cobra"
 )
 
@@ -252,8 +253,19 @@ func runBehavioralVerification(ctx context.Context, target, serveURL string, tim
 		}
 	}
 
-	token, err := readPersistedToken()
-	if err != nil || strings.TrimSpace(token) == "" {
+	token, _, tokenErr := resolveTokenForEndpoint(serveURL, "")
+	if tokenErr != nil {
+		for _, canary := range behavioralCanaries(target) {
+			report.Checks = append(report.Checks, verificationCheck{
+				ID: canary.ID, Name: canary.Name, Status: verificationUnverified,
+				Expected: strings.Join(canary.Expected, " or "), Actual: "unsafe credential endpoint",
+				Message: "Rampart refused to send the control token: " + tokenErr.Error(),
+				Hint:    "Use a loopback URL, or set RAMPART_TOKEN explicitly for a trusted HTTPS endpoint",
+			})
+		}
+		return summarizeVerification(report)
+	}
+	if strings.TrimSpace(token) == "" {
 		for _, canary := range behavioralCanaries(target) {
 			report.Checks = append(report.Checks, verificationCheck{
 				ID: canary.ID, Name: canary.Name, Status: verificationUnverified,
@@ -265,7 +277,7 @@ func runBehavioralVerification(ctx context.Context, target, serveURL string, tim
 		return summarizeVerification(report)
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := newRampartHTTPClient(timeout)
 	for _, canary := range behavioralCanaries(target) {
 		report.Checks = append(report.Checks, runPreflightCanary(ctx, client, strings.TrimRight(serveURL, "/"), token, target, canary))
 	}
@@ -281,21 +293,35 @@ func verifyClaudeHooksInstalled() verificationCheck {
 			Hint: "Run `rampart setup claude-code`, then rerun `rampart verify claude-code`",
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
-	var settings claudeSettings
-	configured := err == nil && json.Unmarshal(data, &settings) == nil && hasRampartHook(settings)
-	if !configured {
+	if !claudeHooksConfiguredForHome(home) {
 		return verificationCheck{
 			ID: "claude-hook-installation", Name: "Claude Code lifecycle hooks are installed",
-			Status: verificationFail, Expected: "PreToolUse, PostToolUse, and PostToolUseFailure", Actual: "missing or incomplete",
-			Message: "Claude Code is not configured to invoke Rampart for every required lifecycle event",
+			Status: verificationFail, Expected: "current PreToolUse, PostToolUse, and PostToolUseFailure commands", Actual: "missing, stale, or incomplete",
+			Message: "Claude Code is not configured to invoke this Rampart binary for every required lifecycle event",
 			Hint:    "Run `rampart setup claude-code`, then rerun verification",
 		}
 	}
+	assessment := claudeHookLoadAssessmentForHome(home)
+	if assessment.Blocked {
+		return verificationCheck{
+			ID: "claude-hook-installation", Name: "Claude Code lifecycle hooks are installed and loadable",
+			Status: verificationFail, Expected: "user hooks enabled", Actual: "configured but disabled",
+			Message: assessment.Reason,
+			Hint:    "Remove the disabling setting or have an administrator deploy Rampart as an approved managed hook, then restart Claude Code",
+		}
+	}
+	if assessment.Unverified {
+		return verificationCheck{
+			ID: "claude-hook-installation", Name: "Claude Code lifecycle hooks are installed and loadable",
+			Status: verificationUnverified, Expected: "readable effective hook settings", Actual: "hook activation could not be determined",
+			Message: assessment.Reason,
+			Hint:    "Run `/status` and `/hooks` inside Claude Code to confirm the active settings source and Rampart hook",
+		}
+	}
 	return verificationCheck{
-		ID: "claude-hook-installation", Name: "Claude Code lifecycle hooks are installed",
-		Status: verificationPass, Expected: "all required lifecycle hooks", Actual: "configured",
-		Message: "Claude Code settings contain the complete Rampart lifecycle hook set",
+		ID: "claude-hook-installation", Name: "Claude Code lifecycle hooks are installed and loadable",
+		Status: verificationPass, Expected: "all required lifecycle hooks using the current binary", Actual: "configured",
+		Message: "Claude Code settings contain the complete current Rampart lifecycle hook set, with no readable setting disabling user hooks",
 	}
 }
 
@@ -310,7 +336,7 @@ func verifyClineHooksInstalled() verificationCheck {
 	}
 	var firstIssue string
 	for _, hookDir := range clineKnownHookDirs(home) {
-		if err := validateClineHookPair(hookDir, runtime.GOOS); err == nil {
+		if err := validateCurrentClineHookPair(hookDir, runtime.GOOS); err == nil {
 			message := fmt.Sprintf("Rampart-managed Cline hooks are present at %s", hookDir)
 			if runtime.GOOS == "windows" {
 				message += "; Cline activates .ps1 hooks by file presence and requires PowerShell, but physical Windows host E2E remains pending"
@@ -319,7 +345,7 @@ func verifyClineHooksInstalled() verificationCheck {
 			}
 			return verificationCheck{
 				ID: "cline-hook-installation", Name: "Cline lifecycle hook files are valid",
-				Status: verificationPass, Expected: "direct Rampart-managed PreToolUse and PostToolUse files", Actual: hookDir,
+				Status: verificationPass, Expected: "direct current Rampart-managed PreToolUse and PostToolUse files", Actual: hookDir,
 				Message: message,
 				Hint:    "Keep Cline hooks enabled. Cline CLI's legacy --yolo mode disables runtime hooks.",
 			}
@@ -335,7 +361,7 @@ func verifyClineHooksInstalled() verificationCheck {
 	if explicit := strings.TrimSpace(os.Getenv("CLINE_HOOKS_DIR")); explicit != "" {
 		if expanded, expandErr := expandClineHomePath(explicit, home); expandErr == nil {
 			expanded = filepath.Clean(expanded)
-			if err := validateClineHookPair(expanded, runtime.GOOS); err == nil {
+			if err := validateCurrentClineHookPair(expanded, runtime.GOOS); err == nil {
 				return verificationCheck{
 					ID: "cline-hook-installation", Name: "Cline lifecycle hook files are valid",
 					Status: verificationUnverified, Expected: "hooks in a directory consumed by the current Cline host", Actual: expanded,
@@ -361,7 +387,7 @@ func verifyClineHooksInstalled() verificationCheck {
 	}
 	return verificationCheck{
 		ID: "cline-hook-installation", Name: "Cline lifecycle hook files are valid",
-		Status: verificationFail, Expected: "direct Rampart-managed PreToolUse and PostToolUse files", Actual: actual,
+		Status: verificationFail, Expected: "direct current Rampart-managed PreToolUse and PostToolUse files", Actual: actual,
 		Message: message,
 		Hint:    "Run `rampart setup cline`, keep both hooks enabled in Cline, and do not use Cline CLI's legacy --yolo mode",
 	}
@@ -520,15 +546,15 @@ func verifyAntigravityPluginInstalled() verificationCheck {
 	if !antigravityPluginConfiguredForHome(home) {
 		return verificationCheck{
 			ID: "antigravity-plugin-installation", Name: "Antigravity policy plugin is installed",
-			Status: verificationFail, Expected: "managed global PreToolUse plugin", Actual: "missing or incomplete",
-			Message: "Antigravity is not configured to invoke Rampart before tool execution",
+			Status: verificationFail, Expected: "managed global PreToolUse plugin using the current binary", Actual: "missing, stale, or incomplete",
+			Message: "Antigravity is not configured to invoke this Rampart binary before tool execution",
 			Hint:    "Run `rampart setup antigravity`, restart Antigravity, then rerun verification",
 		}
 	}
 	return verificationCheck{
 		ID: "antigravity-plugin-installation", Name: "Antigravity policy plugin is installed",
-		Status: verificationPass, Expected: "managed global PreToolUse plugin", Actual: "configured",
-		Message: "Antigravity's global Rampart plugin contains the native PreToolUse policy hook",
+		Status: verificationPass, Expected: "managed global PreToolUse plugin using the current binary", Actual: "configured",
+		Message: "Antigravity's global Rampart plugin contains the current native PreToolUse policy hook",
 	}
 }
 
@@ -706,15 +732,15 @@ func verifyCodexHooksInstalled() verificationCheck {
 	if !codexHooksConfiguredForHome(home) {
 		return verificationCheck{
 			ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
-			Status: verificationFail, Expected: "PreToolUse and PostToolUse", Actual: "missing or incomplete",
-			Message: "Codex is not configured to invoke Rampart for both lifecycle events",
+			Status: verificationFail, Expected: "current PreToolUse and PostToolUse commands", Actual: "missing, stale, or incomplete",
+			Message: "Codex is not configured to invoke this Rampart binary for both lifecycle events",
 			Hint:    "Run `rampart setup codex`, review the hooks with `/hooks`, then rerun verification",
 		}
 	}
 	return verificationCheck{
 		ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
-		Status: verificationPass, Expected: "PreToolUse and PostToolUse", Actual: "configured",
-		Message: "The user-level Codex hook configuration contains both Rampart lifecycle hooks",
+		Status: verificationPass, Expected: "current PreToolUse and PostToolUse commands", Actual: "configured",
+		Message: "The user-level Codex hook configuration contains both current Rampart lifecycle hooks",
 	}
 }
 
@@ -881,6 +907,16 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 		check.Message = "Plugin files exist, but the OpenClaw CLI could not be used for a live probe"
 		return check
 	}
+	configCtx, cancelConfig := context.WithTimeout(ctx, timeout)
+	if err := verifyOpenClawManagedConfig(configCtx, bin); err != nil {
+		cancelConfig()
+		check.Status = verificationFail
+		check.Actual = "managed configuration drift"
+		check.Message = "OpenClaw will not enforce the complete Rampart-managed approval boundary: " + err.Error()
+		check.Hint = "Run `rampart protect openclaw`, restart the gateway, and rerun verification"
+		return check
+	}
+	cancelConfig()
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := osexec.CommandContext(probeCtx, bin, "gateway", "call", "rampart.verify", "--json", "--timeout", fmt.Sprintf("%d", timeout.Milliseconds()))
@@ -923,6 +959,57 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 	check.Actual = "complete and current"
 	check.Message = "The current bundled plugin reached Rampart through its policy mapping path and returned every expected canary decision"
 	return check
+}
+
+func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error {
+	askValue, err := readOpenClawConfigJSON(ctx, openclawBin, "tools.exec.ask")
+	if err != nil {
+		return fmt.Errorf("read tools.exec.ask: %w", err)
+	}
+	ask, ok := askValue.(string)
+	if !ok || strings.TrimSpace(ask) != "off" {
+		return fmt.Errorf("tools.exec.ask is %v, want off", askValue)
+	}
+
+	configValue, err := readOpenClawConfigJSON(ctx, openclawBin, "plugins.entries.rampart.config")
+	if err != nil {
+		return fmt.Errorf("read Rampart plugin config: %w", err)
+	}
+	config, ok := configValue.(map[string]any)
+	if !ok {
+		return fmt.Errorf("invalid Rampart plugin config: expected an object")
+	}
+	if failOpen, ok := config["failOpen"].(bool); !ok || failOpen {
+		return fmt.Errorf("plugins.entries.rampart.config.failOpen is not false")
+	}
+	if failOpenTools, present := config["failOpenTools"]; present && failOpenTools != nil {
+		tools, ok := failOpenTools.([]any)
+		if !ok || len(tools) != 0 {
+			return fmt.Errorf("plugins.entries.rampart.config.failOpenTools is not empty")
+		}
+	}
+	serveURL, ok := config["serveUrl"].(string)
+	if !ok || validateCredentialEndpoint(serveURL, "file") != nil {
+		return fmt.Errorf("plugins.entries.rampart.config.serveUrl is not a trusted loopback URL")
+	}
+	timeoutValue, ok := config["approvalTimeoutMs"].(float64)
+	if !ok || timeoutValue != float64(ochardening.DesiredApprovalTimeoutMs) {
+		return fmt.Errorf("plugins.entries.rampart.config.approvalTimeoutMs is not %d", ochardening.DesiredApprovalTimeoutMs)
+	}
+	return nil
+}
+
+func readOpenClawConfigJSON(ctx context.Context, openclawBin, key string) (any, error) {
+	cmd := osexec.CommandContext(ctx, openclawBin, "config", "get", key, "--json")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("openclaw config get %s: %w", key, err)
+	}
+	var value any
+	if err := decodeOpenClawConfigJSON(output, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 var expectedPluginCanaries = map[string]string{

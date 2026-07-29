@@ -12,15 +12,18 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   configPathsMatch,
   normalizeConfigPath,
   reportedConfigPath,
 } from './compat-openclaw-path.mjs';
+import { buildCompatProcessEnv } from './compat-process-env.mjs';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-openclaw-compat-'));
 const tempHome = join(tempRoot, 'home');
+const childTemp = join(tempRoot, 'tmp');
 const openclawDir = join(tempHome, '.openclaw');
 const configPath = join(openclawDir, 'openclaw.json');
 const args = process.argv.slice(2);
@@ -57,19 +60,25 @@ function runOpenClaw(openclawArgs, options = {}) {
 }
 
 function compatEnv() {
-  return {
-    ...process.env,
+  return buildCompatProcessEnv(process.env, {
     HOME: tempHome,
     USERPROFILE: tempHome,
+    TMPDIR: childTemp,
+    TMP: childTemp,
+    TEMP: childTemp,
     XDG_CONFIG_HOME: join(tempHome, '.config'),
+    XDG_CACHE_HOME: join(tempHome, '.cache'),
+    XDG_DATA_HOME: join(tempHome, '.local', 'share'),
+    XDG_STATE_HOME: join(tempHome, '.local', 'state'),
     OPENCLAW_CONFIG_PATH: configPath,
     RAMPART_TOKEN: 'compat-test-token',
     RAMPART_URL: 'http://127.0.0.1:19090',
-  };
+  });
 }
 
 function setupTempState() {
   mkdirSync(openclawDir, { recursive: true });
+  mkdirSync(childTemp, { recursive: true });
   writeFileSync(
     configPath,
     JSON.stringify(

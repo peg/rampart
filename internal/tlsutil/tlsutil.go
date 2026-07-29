@@ -29,9 +29,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
+
+	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/securefile"
 )
 
 // DefaultCertDir returns the default directory for auto-generated TLS certs.
@@ -50,9 +52,27 @@ func LoadOrGenerate(certDir string) (*tls.Config, string, error) {
 	certPath := filepath.Join(certDir, "cert.pem")
 	keyPath := filepath.Join(certDir, "key.pem")
 
-	// Try loading existing.
-	if cfg, fp, err := loadExisting(certPath, keyPath); err == nil {
-		return cfg, fp, nil
+	// Refuse special files at managed paths before either reading or replacing
+	// them. In particular, following a planted symlink while regenerating a key
+	// could truncate an unrelated file outside the TLS directory.
+	for _, path := range []string{certPath, keyPath} {
+		if err := validateManagedPath(path); err != nil {
+			return nil, "", err
+		}
+	}
+
+	// Try loading an existing managed pair. Harden both files first so Windows
+	// receives a protected current-user-only DACL just as Unix receives 0600.
+	if pathsExist(certPath, keyPath) {
+		if err := securefile.OwnerOnly(certPath); err != nil {
+			return nil, "", fmt.Errorf("tls: secure %s: %w", filepath.Base(certPath), err)
+		}
+		if err := securefile.OwnerOnly(keyPath); err != nil {
+			return nil, "", fmt.Errorf("tls: secure %s: %w", filepath.Base(keyPath), err)
+		}
+		if cfg, fp, err := loadExisting(certPath, keyPath); err == nil {
+			return cfg, fp, nil
+		}
 	}
 
 	// Generate new self-signed cert.
@@ -153,22 +173,60 @@ func generateSelfSigned(certPath, keyPath string) error {
 }
 
 func writePEM(path, blockType string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("tls: create %s: %w", filepath.Base(path), err)
+	encoded := pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: data})
+	if encoded == nil {
+		return fmt.Errorf("tls: encode %s", filepath.Base(path))
 	}
-	defer f.Close()
 
-	if err := pem.Encode(f, &pem.Block{Type: blockType, Bytes: data}); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return fmt.Errorf("tls: create temporary %s: %w", filepath.Base(path), err)
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+
+	// Apply the final access controls before private material is written. The
+	// ACL/mode follows the file through the atomic rename.
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("tls: secure temporary %s: %w", filepath.Base(path), err)
+	}
+	if _, err := f.Write(encoded); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("tls: write %s: %w", filepath.Base(path), err)
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("tls: sync %s: %w", filepath.Base(path), err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("tls: close %s: %w", filepath.Base(path), err)
+	}
+	if err := filetxn.Replace(tmpPath, path); err != nil {
+		return fmt.Errorf("tls: replace %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
 
-	// On non-Windows, ensure restrictive permissions.
-	if runtime.GOOS != "windows" {
-		if err := f.Chmod(0o600); err != nil {
-			return fmt.Errorf("tls: chmod %s: %w", filepath.Base(path), err)
+func validateManagedPath(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("tls: inspect %s: %w", filepath.Base(path), err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("tls: managed path is not a regular non-symlink file: %s", path)
+	}
+	return nil
+}
+
+func pathsExist(paths ...string) bool {
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			return false
 		}
 	}
-
-	return nil
+	return true
 }

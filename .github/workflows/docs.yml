@@ -5,15 +5,19 @@ on:
   pull_request:
     paths:
       - 'docs-site/**'
+      - 'docs/API-REFERENCE.md'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
+      - 'scripts/check-api-reference.sh'
       - '.github/workflows/docs.yml'
   push:
     branches: [main]
     paths:
       - 'docs-site/**'
+      - 'docs/API-REFERENCE.md'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
+      - 'scripts/check-api-reference.sh'
       - '.github/workflows/docs.yml'
 
 permissions:
@@ -29,10 +33,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
+
+      - name: Check canonical API reference wrapper
+        run: sh scripts/check-api-reference.sh
 
       - name: Install Python dependencies
         run: pip install -r docs-requirements.txt
@@ -57,17 +66,24 @@ jobs:
 
       # Deploy to peg/rampart-docs (the repo that serves docs.rampart.sh via GitHub Pages).
       # Requires a PAT with contents:write on peg/rampart-docs stored as DOCS_DEPLOY_TOKEN.
+      - name: Checkout docs deployment branch
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: peg/rampart-docs
+          ref: gh-pages
+          token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          path: rampart-docs
+
       - name: Push to peg/rampart-docs
         if: github.event_name != 'pull_request'
-        env:
-          DOCS_DEPLOY_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          cd /tmp
-          git clone --depth=1 https://x-access-token:${DOCS_DEPLOY_TOKEN}@github.com/peg/rampart-docs.git rampart-docs
-          rsync -a --delete --exclude='.git' "${GITHUB_WORKSPACE}/site/" rampart-docs/
-          cd rampart-docs
+          rsync -a --delete --exclude='.git' \
+            "${GITHUB_WORKSPACE}/site/" \
+            "${GITHUB_WORKSPACE}/rampart-docs/"
+          cd "${GITHUB_WORKSPACE}/rampart-docs"
           git add -A
           git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "docs: deploy from peg/rampart@${GITHUB_SHA::8}"

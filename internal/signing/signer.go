@@ -20,11 +20,15 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/securefile"
 )
 
 // Signer creates and validates HMAC-signed approval resolve URLs.
@@ -70,24 +74,79 @@ func GenerateKey() ([]byte, error) {
 
 // LoadOrCreateKey loads a key from path or creates one when missing.
 func LoadOrCreateKey(path string) ([]byte, error) {
-	key, err := os.ReadFile(path)
-	if err == nil {
-		return key, nil
-	}
-	if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("signing: read key: %w", err)
-	}
-
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("signing: create key dir: %w", err)
 	}
 
-	key, err = GenerateKey()
-	if err != nil {
-		return nil, err
+	operation := "read key"
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		operation = "write key"
 	}
-	if err := os.WriteFile(path, key, 0o600); err != nil {
-		return nil, fmt.Errorf("signing: write key: %w", err)
+	var key []byte
+	err := filetxn.WithLock(path, func() error {
+		info, err := os.Lstat(path)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return fmt.Errorf("refusing non-regular signing key %s", path)
+			}
+			if err := securefile.OwnerOnly(path); err != nil {
+				return fmt.Errorf("secure signing key: %w", err)
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			data, readErr := io.ReadAll(io.LimitReader(file, 33))
+			closeErr := file.Close()
+			if readErr != nil {
+				return readErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			if len(data) != 32 {
+				return fmt.Errorf("signing key must be exactly 32 bytes (got %d)", len(data))
+			}
+			key = data
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+
+		generated, err := GenerateKey()
+		if err != nil {
+			return err
+		}
+		tmp, err := os.CreateTemp(filepath.Dir(path), ".signing-key-*")
+		if err != nil {
+			return err
+		}
+		tmpPath := tmp.Name()
+		defer os.Remove(tmpPath)
+		if err := securefile.OwnerOnly(tmpPath); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("secure temporary signing key: %w", err)
+		}
+		if _, err := tmp.Write(generated); err != nil {
+			_ = tmp.Close()
+			return err
+		}
+		if err := tmp.Sync(); err != nil {
+			_ = tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
+		}
+		if err := filetxn.Replace(tmpPath, path); err != nil {
+			return err
+		}
+		key = generated
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("signing: %s: %w", operation, err)
 	}
 	return key, nil
 }
