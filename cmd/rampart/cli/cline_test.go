@@ -38,6 +38,9 @@ func TestCreateClineHookScriptsArePlatformNativeAndEnforcing(t *testing.T) {
 }
 
 func TestInstallClineHooksUsesDirectDiscoveryFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable-bit behavior is not representable on Windows")
+	}
 	dir := t.TempDir()
 	paths, migrated, err := installClineHooks(dir, "/usr/local/bin/rampart", "linux", false)
 	if err != nil {
@@ -65,20 +68,31 @@ func TestInstallClineHooksUsesDirectDiscoveryFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "PreToolUse", "rampart-policy")); err == nil {
 		t.Fatal("legacy directory layout was created")
 	}
+}
 
-	windowsDir := t.TempDir()
-	windowsPaths, _, err := installClineHooks(windowsDir, `C:\Rampart\rampart.exe`, "windows", false)
+func TestInstallClineHooksUsesPowerShellDiscoveryFiles(t *testing.T) {
+	dir := t.TempDir()
+	paths, migrated, err := installClineHooks(dir, `C:\Rampart\rampart.exe`, "windows", false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if migrated {
+		t.Fatal("fresh Windows install unexpectedly reported migration")
+	}
 	for index, event := range clineHookEvents {
-		if got, want := windowsPaths[index], filepath.Join(windowsDir, event+".ps1"); got != want {
+		if got, want := paths[index], filepath.Join(dir, event+".ps1"); got != want {
 			t.Fatalf("Windows path = %q, want %q", got, want)
+		}
+		if err := validateClineHookFile(paths[index], "windows"); err != nil {
+			t.Fatalf("PowerShell hook %s is invalid: %v", paths[index], err)
 		}
 	}
 }
 
 func TestInstallClineHooksMigratesOnlyOwnedLegacyLayout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable-bit behavior is not representable on Windows")
+	}
 	dir := t.TempDir()
 	legacy := map[string]string{
 		"PreToolUse":  "rampart-policy",
@@ -126,6 +140,9 @@ func TestInstallClineHooksMigratesOnlyOwnedLegacyLayout(t *testing.T) {
 }
 
 func TestInstallClineHooksRestoresLegacyHookOnActivationFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable-bit behavior is not representable on Windows")
+	}
 	dir := filepath.Join(t.TempDir(), "Hooks")
 	for event, name := range map[string]string{"PreToolUse": "rampart-policy", "PostToolUse": "rampart-audit"} {
 		path := filepath.Join(dir, event, name)
@@ -166,6 +183,9 @@ func TestInstallClineHooksRestoresLegacyHookOnActivationFailure(t *testing.T) {
 }
 
 func TestInstallClineHooksRefreshesManagedFilesWithoutRemoveFirstRename(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable-bit behavior is not representable on Windows")
+	}
 	dir := filepath.Join(t.TempDir(), "Hooks")
 	paths, _, err := installClineHooks(dir, "/old/rampart", "linux", false)
 	if err != nil {
