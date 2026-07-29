@@ -4,6 +4,7 @@
 package assurance
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -114,6 +115,7 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	changelog = bytes.ReplaceAll(changelog, []byte("\r\n"), []byte("\n"))
 	matches := regexp.MustCompile(`(?m)^## \[([0-9]+\.[0-9]+\.[0-9]+)\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$`).FindSubmatch(changelog)
 	if len(matches) != 2 {
 		t.Fatal("CHANGELOG.md must contain a dated current release section")
@@ -152,7 +154,7 @@ func TestDockerPublicationRunsFromReleaseTagPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workflow := string(data)
+	workflow := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if !strings.Contains(workflow, "on:\n  push:\n    tags: ['v*']") {
 		t.Fatal("Docker publication must run directly from a version-tag push")
 	}
