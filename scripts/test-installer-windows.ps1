@@ -112,9 +112,16 @@ function Import-InstallerFunction($name) {
             $node.Name -eq $name
     }, $true))
     Assert-True ($definitions.Count -eq 1) "expected one installer function named $name"
-    # Define it in script scope so it remains available after this helper
-    # returns, while still avoiding execution of the installer's main body.
-    Invoke-Expression ("function script:$name $($definitions[0].Body.Extent.Text)")
+    # Define the complete function in script scope so its parameter list is
+    # preserved without executing the installer's main body.
+    $definitionText = $definitions[0].Extent.Text
+    $scopedDefinition = [regex]::Replace(
+        $definitionText,
+        "(?i)^function\s+$([regex]::Escape($name))",
+        "function script:$name"
+    )
+    Assert-True ($scopedDefinition -ne $definitionText) "could not scope installer function $name"
+    Invoke-Expression $scopedDefinition
 }
 
 try {
