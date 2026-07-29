@@ -279,19 +279,40 @@ func deriveGitContextAt(workDir string) gitContext {
 		root, _ := gitRevParseTopLevelAt(workDir)
 		return gitContext{session: s, root: root}
 	}
-	root, err := gitRevParseTopLevelAt(workDir)
+	root, branch, err := gitRevParseContextAt(workDir)
+	if err != nil {
+		// An initialized repository can have a root before HEAD resolves (for
+		// example, before its first commit). Preserve project-policy discovery in
+		// that case; ordinary repositories stay on the single-process fast path.
+		root, err = gitRevParseTopLevelAt(workDir)
+		branch = ""
+	}
 	if err != nil || root == "" {
 		return gitContext{}
 	}
 	repo := filepath.Base(root)
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel2()
-	branchOut, _ := exec.CommandContext(ctx2, "git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	branch := strings.TrimSpace(string(branchOut))
 	if branch == "" || branch == "HEAD" {
 		branch = "detached"
 	}
 	return gitContext{session: repo + "/" + branch, root: root}
+}
+
+func gitRevParseContextAt(workDir string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	args := []string{"rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"}
+	if workDir = strings.TrimSpace(workDir); workDir != "" {
+		args = append([]string{"-C", workDir}, args...)
+	}
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	if err != nil {
+		return "", "", err
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 2 {
+		return "", "", fmt.Errorf("git context returned %d lines", len(lines))
+	}
+	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), nil
 }
 
 func gitRevParseTopLevelAt(workDir string) (string, error) {
@@ -420,9 +441,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return fmt.Errorf("hook: prepare Rampart data directory: %w", rampartDirErr)
 			}
 
-			// Derive session identity once at the top (git repo/branch or RAMPART_SESSION env).
-			gitCtx := deriveGitContext()
-			hookSession := gitCtx.session
+			// Derive repository identity after parsing so a host-provided working
+			// directory is resolved directly instead of spawning Git twice.
+			var gitCtx gitContext
+			hookSession := ""
 
 			// Resolve serve-url and serve-token from standard config/env locations.
 			serveAutoDiscovered := serveURL == ""
@@ -527,6 +549,12 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					return fmt.Errorf("hook: unhandled format %q", format)
 				}
 			}
+			if err == nil && parsed != nil && parsed.WorkDir != "" {
+				gitCtx = deriveGitContextAt(parsed.WorkDir)
+			} else {
+				gitCtx = deriveGitContext()
+			}
+			hookSession = gitCtx.session
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
 
@@ -579,14 +607,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					"",
 					redactClaudeToolOutput(rawResponse),
 				)
-			}
-
-			// Use the host-reported working directory for repository identity and
-			// project-policy discovery. Hook processes are not guaranteed to inherit
-			// the agent's working directory on every host or editor platform.
-			if parsed.WorkDir != "" {
-				gitCtx = deriveGitContextAt(parsed.WorkDir)
-				hookSession = gitCtx.session
 			}
 
 			// Load policies only after parsing the host context, so a project policy
@@ -826,16 +846,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 			}
 
-			// Send webhook notification if configured
-			config, err := store.Load()
-			if err != nil {
-				logger.Error("hook: failed to reload config for notifications", "error", err)
-			} else if config.Notify != nil && config.Notify.URL != "" {
+			// Use the same validated policy snapshot that produced the decision.
+			// Reloading here added avoidable I/O and could mix a decision from one
+			// policy revision with notification settings from another.
+			if notifyConfig := eng.NotificationConfig(); notifyConfig != nil && notifyConfig.URL != "" {
 				// Hook processes exit immediately after writing their protocol result;
 				// an unjoined goroutine is routinely terminated before the request is
 				// sent. Keep notification delivery bounded so a slow endpoint cannot
 				// consume the host's hook timeout budget.
-				sendNotificationWithTimeout(config.Notify, call, decision, logger, time.Second)
+				sendNotificationWithTimeout(notifyConfig, call, decision, logger, time.Second)
 			}
 
 			// PostToolUse: observe approval for any pending ask entries in session state.

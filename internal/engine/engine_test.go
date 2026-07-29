@@ -795,6 +795,28 @@ policies:
 	assert.Contains(t, err.Error(), "pattern too long")
 }
 
+func TestNotificationConfigReturnsDefensiveCopy(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+notify:
+  url: https://example.com/hook
+  platform: webhook
+  on: [deny, ask]
+policies: []
+`)
+
+	first := e.NotificationConfig()
+	require.NotNil(t, first)
+	first.URL = "https://attacker.invalid"
+	first.On[0] = "allow"
+
+	second := e.NotificationConfig()
+	require.NotNil(t, second)
+	assert.Equal(t, "https://example.com/hook", second.URL)
+	assert.Equal(t, []string{"deny", "ask"}, second.On)
+}
+
 // BenchmarkEvaluate measures the hot path: evaluating a single tool call
 // against a realistic set of policies. Target: <0.1ms p99.
 func BenchmarkEvaluate(b *testing.B) {

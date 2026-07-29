@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,6 +39,36 @@ func TestDeriveGitContext_NoGit(t *testing.T) {
 	}
 	if ctx.root != "" {
 		t.Errorf("expected empty root outside git repo, got %q", ctx.root)
+	}
+}
+
+func TestDeriveGitContextAt_UsesSingleGitProcess(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("shell-based process-count fixture is Unix-only")
+	}
+	t.Setenv("RAMPART_SESSION", "")
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	gitPath := filepath.Join(dir, "git")
+	script := "#!/bin/sh\n" +
+		"printf 'call\\n' >> \"$RAMPART_GIT_CALL_LOG\"\n" +
+		"printf '/workspace/repository\\nmain\\n'\n"
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("RAMPART_GIT_CALL_LOG", logPath)
+
+	ctx := deriveGitContextAt("/workspace/repository")
+	if ctx.root != "/workspace/repository" || ctx.session != "repository/main" {
+		t.Fatalf("unexpected git context: %+v", ctx)
+	}
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(calls), "call\n"); got != 1 {
+		t.Fatalf("git process count = %d, want 1", got)
 	}
 }
 

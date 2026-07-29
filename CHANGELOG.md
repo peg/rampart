@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checks formatting, module tidiness, static analysis, race behavior, Linux and
   Windows builds, installers, preload contracts, Python SDK compatibility,
   Docker packaging, and release snapshots before a release can proceed.
+- **Native hook latency avoids redundant process and policy work** — Repository
+  identity is resolved directly from the host-reported working directory with
+  one Git invocation on normal repositories, and webhook delivery reuses the
+  validated policy snapshot that produced the decision instead of reparsing
+  policy files.
 
 ### Fixed
 

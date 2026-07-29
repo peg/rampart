@@ -91,6 +91,19 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 	return e, nil
 }
 
+// NotificationConfig returns a defensive copy of the notification settings
+// from the same validated policy snapshot used for evaluation.
+func (e *Engine) NotificationConfig() *NotifyConfig {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.config == nil || e.config.Notify == nil {
+		return nil
+	}
+	config := *e.config.Notify
+	config.On = append([]string(nil), e.config.Notify.On...)
+	return &config
+}
+
 // Evaluate runs a tool call through all matching policies and returns
 // the final decision.
 //
