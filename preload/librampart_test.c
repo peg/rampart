@@ -3,6 +3,7 @@
  * Licensed under the Apache License, Version 2.0
  */
 
+#define _GNU_SOURCE
 #include <assert.h>
 #include <stdio.h>
 

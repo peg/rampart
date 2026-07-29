@@ -217,7 +217,7 @@ function Split-WindowsCommandLineArguments($commandLine) {
             [void]$value.Append($character)
             $index++
         }
-        $arguments.Add($value.ToString())
+        [void]$arguments.Add($value.ToString())
     }
 
     return $arguments.ToArray()
