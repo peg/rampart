@@ -322,15 +322,17 @@ run_core() {
 
 run_preload() {
   local port
+  local preload_home
   port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  preload_home="${run_root}/preload-home"
   mkdir -p "${artifact_dir}/audit"
-  mkdir -p "${isolated_home}/.ssh"
-  printf '%s\n' 'rampart-lab-private-credential-canary' >"${isolated_home}/.ssh/id_rsa"
-  chmod 600 "${isolated_home}/.ssh/id_rsa"
-  HOME="$isolated_home" \
-    XDG_CONFIG_HOME="$isolated_home/.config" \
-    XDG_CACHE_HOME="$isolated_home/.cache" \
-    XDG_STATE_HOME="$isolated_home/.local/state" \
+  mkdir -p "${preload_home}/.ssh"
+  printf '%s\n' 'rampart-lab-private-credential-canary' >"${preload_home}/.ssh/id_rsa"
+  chmod 600 "${preload_home}/.ssh/id_rsa"
+  HOME="$preload_home" \
+    XDG_CONFIG_HOME="$preload_home/.config" \
+    XDG_CACHE_HOME="$preload_home/.cache" \
+    XDG_STATE_HOME="$preload_home/.local/state" \
     RAMPART_TOKEN="rampart-lab-token" \
     "${artifact_dir}/rampart" --config "${worktree}/policies/standard.yaml" \
     serve --no-openclaw-bridge --mode enforce --port "$port" \
@@ -359,12 +361,12 @@ run_preload() {
   RAMPART_ADDR="127.0.0.1:${port}" \
     RAMPART_URL="http://127.0.0.1:${port}" \
     RAMPART_TOKEN="rampart-lab-token" \
-    HOME="$isolated_home" \
-    XDG_CONFIG_HOME="$isolated_home/.config" \
-    XDG_CACHE_HOME="$isolated_home/.cache" \
-    XDG_STATE_HOME="$isolated_home/.local/state" \
+    HOME="$preload_home" \
+    XDG_CONFIG_HOME="$preload_home/.config" \
+    XDG_CACHE_HOME="$preload_home/.cache" \
+    XDG_STATE_HOME="$preload_home/.local/state" \
     RAMPART_PRELOAD_SOURCE_DIR="${worktree}/preload" \
-    RAMPART_BLOCK_CMD="cat ${isolated_home}/.ssh/id_rsa" \
+    RAMPART_BLOCK_CMD="cat ${preload_home}/.ssh/id_rsa" \
     bash "${worktree}/preload/test_preload.sh"
   local code=$?
   set -e

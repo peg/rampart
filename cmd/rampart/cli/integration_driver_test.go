@@ -42,6 +42,10 @@ func TestDetectInstalledIntegrationDriversUsesIsolatedHome(t *testing.T) {
 	testSetHome(t, home)
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("CODEX_HOME", "")
+	// findOpenClawBinary also checks common system-wide install paths. Point its
+	// explicit override at a missing fixture so this test depends only on the
+	// isolated home, even when the host running the suite has OpenClaw installed.
+	t.Setenv("RAMPART_OPENCLAW_BIN", filepath.Join(home, "missing-openclaw"))
 	for _, dir := range []string{filepath.Join(home, ".claude"), filepath.Join(home, ".gemini"), filepath.Join(home, ".copilot")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
