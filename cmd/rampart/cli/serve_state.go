@@ -39,7 +39,7 @@ func writeServeState(dir string, port, pid int, tls bool) error {
 	if err != nil {
 		return err
 	}
-	return atomicWritePrivateFile(filepath.Join(dir, serveStateFile), data)
+	return atomicWriteRecoverablePrivateFile(filepath.Join(dir, serveStateFile), data)
 }
 
 // removeServeState removes the state file on shutdown.

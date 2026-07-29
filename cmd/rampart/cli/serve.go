@@ -984,7 +984,7 @@ func writeActivePolicyMarkdown(eng *engine.Engine) error {
 	b.WriteString("\nUse `rampart watch`, `rampart log`, and `rampart approve` for live transparency and approvals.\n")
 
 	outPath := filepath.Join(rampartDir, "ACTIVE_POLICY.md")
-	if err := atomicWritePrivateFile(outPath, []byte(b.String())); err != nil {
+	if err := atomicWriteRecoverablePrivateFile(outPath, []byte(b.String())); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
 	return nil

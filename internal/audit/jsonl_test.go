@@ -959,6 +959,28 @@ func TestJSONLSink_CheckpointStartupContinuesChain(t *testing.T) {
 	assert.True(t, valid)
 }
 
+func TestJSONLSink_RecoversFromPartialCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	require.NoError(t, first.Write(sampleEvent("exec")))
+	firstHash := first.lastHash
+	require.NoError(t, first.Close())
+
+	statePath := filepath.Join(dir, sharedStateFilename)
+	require.NoError(t, os.WriteFile(statePath, []byte("{"), 0o600))
+
+	second, err := NewJSONLSink(dir, WithFsync(false))
+	require.NoError(t, err)
+	require.NoError(t, second.Write(sampleEvent("write")))
+	require.NoError(t, second.Close())
+
+	events, _, err := ReadEventsFromOffset(filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl"), 0)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	assert.Equal(t, firstHash, events[1].PrevHash)
+}
+
 func TestJSONLSink_CheckpointStartupDefersHistoricalVerification(t *testing.T) {
 	dir := t.TempDir()
 	sink, err := NewJSONLSink(dir, WithFsync(false))

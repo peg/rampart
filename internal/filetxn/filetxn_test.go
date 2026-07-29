@@ -81,6 +81,15 @@ func TestWithLockReturnsCallbackError(t *testing.T) {
 }
 
 func TestReplaceAtomicallyReplacesDestination(t *testing.T) {
+	testReplacement(t, Replace)
+}
+
+func TestReplaceAtomicReplacesDestination(t *testing.T) {
+	testReplacement(t, ReplaceAtomic)
+}
+
+func testReplacement(t *testing.T, replace func(string, string) error) {
+	t.Helper()
 	dir := t.TempDir()
 	source := filepath.Join(dir, "state.tmp")
 	destination := filepath.Join(dir, "state.json")
@@ -91,8 +100,8 @@ func TestReplaceAtomicallyReplacesDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Replace(source, destination); err != nil {
-		t.Fatalf("Replace: %v", err)
+	if err := replace(source, destination); err != nil {
+		t.Fatalf("replace: %v", err)
 	}
 	data, err := os.ReadFile(destination)
 	if err != nil {

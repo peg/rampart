@@ -326,6 +326,17 @@ func atomicWritePrivateFile(path string, data []byte) error {
 }
 
 func atomicWritePrivateFileWithMode(path string, data []byte, mode os.FileMode) error {
+	return atomicWritePrivateFileWithModeAndDurability(path, data, mode, true)
+}
+
+// atomicWriteRecoverablePrivateFile atomically publishes owner-only derived
+// state without forcing it to stable storage. It is only for files that are
+// safely regenerated when absent, stale, or partial after a system crash.
+func atomicWriteRecoverablePrivateFile(path string, data []byte) error {
+	return atomicWritePrivateFileWithModeAndDurability(path, data, 0o600, false)
+}
+
+func atomicWritePrivateFileWithModeAndDurability(path string, data []byte, mode os.FileMode, durable bool) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
@@ -344,9 +355,11 @@ func atomicWritePrivateFileWithMode(path string, data []byte, mode os.FileMode) 
 		tmp.Close()
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
+	if durable {
+		if err := tmp.Sync(); err != nil {
+			tmp.Close()
+			return err
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -354,7 +367,11 @@ func atomicWritePrivateFileWithMode(path string, data []byte, mode os.FileMode) 
 	if err := os.Chmod(tmpPath, mode); err != nil {
 		return fmt.Errorf("set temporary file mode: %w", err)
 	}
-	if err := filetxn.Replace(tmpPath, path); err != nil {
+	replace := filetxn.ReplaceAtomic
+	if durable {
+		replace = filetxn.Replace
+	}
+	if err := replace(tmpPath, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil

@@ -154,6 +154,53 @@ func readAuditMetadata(path string) ([]byte, bool, error) {
 // temporary name must not be used here because an attacker could pre-create a
 // symlink at that path.
 func replaceAuditMetadata(path string, data []byte, syncFile bool) (err error) {
+	return replaceAuditMetadataWith(path, data, syncFile, filetxn.Replace)
+}
+
+// writeRecoverableAuditMetadata updates derived metadata while cooperating
+// readers are serialized by the caller's directory lock. Existing files are
+// validated before truncation and again after writing, so a path substitution
+// cannot redirect the write. A crash may leave a partial record; callers must
+// validate it and rebuild it from their durable source. The first publication
+// still uses an atomic replacement to avoid creation races.
+func writeRecoverableAuditMetadata(path string, data []byte) error {
+	file, err := openAuditRegular(path, os.O_WRONLY)
+	if errors.Is(err, os.ErrNotExist) {
+		return replaceAuditMetadataWith(path, data, false, filetxn.ReplaceAtomic)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if file != nil {
+			_ = file.Close()
+		}
+	}()
+
+	if err := file.Truncate(0); err != nil {
+		return fmt.Errorf("audit: truncate recoverable metadata: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("audit: seek recoverable metadata: %w", err)
+	}
+	n, err := file.Write(data)
+	if err != nil {
+		return fmt.Errorf("audit: write recoverable metadata: %w", err)
+	}
+	if n != len(data) {
+		return fmt.Errorf("audit: write recoverable metadata: %w", io.ErrShortWrite)
+	}
+	if err := validateOpenAuditFile(path, file, nil); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("audit: close recoverable metadata: %w", err)
+	}
+	file = nil
+	return nil
+}
+
+func replaceAuditMetadataWith(path string, data []byte, syncFile bool, replace func(string, string) error) (err error) {
 	if _, _, err := inspectAuditRegularPath(path); err != nil {
 		return err
 	}
@@ -194,7 +241,7 @@ func replaceAuditMetadata(path string, data []byte, syncFile bool) (err error) {
 	if _, _, err := inspectAuditRegularPath(path); err != nil {
 		return err
 	}
-	if err := filetxn.Replace(tmpPath, path); err != nil {
+	if err := replace(tmpPath, path); err != nil {
 		return fmt.Errorf("audit: replace metadata: %w", err)
 	}
 	return nil

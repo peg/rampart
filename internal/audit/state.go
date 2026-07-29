@@ -64,7 +64,11 @@ func (s *JSONLSink) writeSharedStateLocked() error {
 	data = append(data, '\n')
 
 	path := filepath.Join(s.dir, sharedStateFilename)
-	if err := replaceAuditMetadata(path, data, s.fsync); err != nil {
+	// The checkpoint coordinates live writers but is not an integrity or
+	// durability authority. The JSONL event is synced before this point. If a
+	// crash loses or truncates this recoverable checkpoint update, startup
+	// validates the checkpoint and reconstructs it from that durable event log.
+	if err := writeRecoverableAuditMetadata(path, data); err != nil {
 		return fmt.Errorf("audit: write shared chain state: %w", err)
 	}
 	return nil

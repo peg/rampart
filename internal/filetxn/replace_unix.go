@@ -24,6 +24,13 @@ func Replace(sourcePath, destinationPath string) error {
 	return dir.Sync()
 }
 
+// ReplaceAtomic atomically replaces destinationPath without forcing the
+// directory entry to durable storage. Use it only for recoverable metadata
+// whose authoritative source is already durable.
+func ReplaceAtomic(sourcePath, destinationPath string) error {
+	return os.Rename(sourcePath, destinationPath)
+}
+
 // SyncDir persists directory-entry changes such as newly created durable
 // files. Callers should sync the file contents separately.
 func SyncDir(path string) error {

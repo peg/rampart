@@ -185,6 +185,13 @@ func persistToken(token string) error {
 	if err != nil {
 		return err
 	}
+	if existing, readErr := readPersistedToken(); readErr == nil {
+		if existing == token {
+			return nil
+		}
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("inspect existing token file: %w", readErr)
+	}
 	dir := filepath.Dir(p)
 	if err := ensureRampartDirAccessible(dir); err != nil {
 		return fmt.Errorf("prepare token directory: %w", err)

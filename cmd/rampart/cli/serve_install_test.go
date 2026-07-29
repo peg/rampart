@@ -170,6 +170,34 @@ func TestPersistAndReadToken(t *testing.T) {
 	}
 }
 
+func TestPersistTokenUnchangedDoesNotReplaceFile(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	const token = "stable-token"
+	if err := persistToken(token); err != nil {
+		t.Fatal(err)
+	}
+	path, err := tokenFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistToken(token); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("unchanged token was replaced")
+	}
+}
+
 func TestReadPersistedTokenRefusesSymlink(t *testing.T) {
 	skipOnWindows(t, "Unix symlink semantics")
 	home := t.TempDir()
