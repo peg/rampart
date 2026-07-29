@@ -45,6 +45,44 @@ func TestStoreCloseIsConcurrentSafe(t *testing.T) {
 	wg.Wait()
 }
 
+func TestStoreCloseWaitsForOwnedWorkers(t *testing.T) {
+	store := NewStore()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	store.startWorker(func() {
+		close(started)
+		<-release
+	})
+	<-started
+
+	closed := make(chan struct{})
+	go func() {
+		store.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a Store-owned worker was still running")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return after the Store-owned worker stopped")
+	}
+}
+
+func TestStoreRejectsCreateAfterClose(t *testing.T) {
+	store := NewStore()
+	store.Close()
+
+	_, err := store.Create(testCall(), testDecision())
+	require.ErrorIs(t, err, ErrStoreClosed)
+}
+
 func testCall() engine.ToolCall {
 	return engine.ToolCall{
 		ID:         "test-1",

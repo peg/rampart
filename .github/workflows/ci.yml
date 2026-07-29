@@ -44,6 +44,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install Linux preload dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libcurl4-openssl-dev
+
       - name: Download dependencies
         run: go mod download
 

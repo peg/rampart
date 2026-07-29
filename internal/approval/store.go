@@ -186,6 +186,8 @@ type Store struct {
 	onExpire        func(*Request)
 	stop            chan struct{}
 	closeOnce       sync.Once
+	workers         sync.WaitGroup
+	closed          bool
 	persistFile     string
 	logger          *slog.Logger
 }
@@ -244,7 +246,7 @@ func NewStore(opts ...Option) *Store {
 	}
 
 	// Periodic cleanup of resolved/expired entries.
-	go func() {
+	s.startWorker(func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -255,14 +257,33 @@ func NewStore(opts ...Option) *Store {
 				return
 			}
 		}
-	}()
+	})
 
 	return s
 }
 
-// Close stops the background cleanup goroutine.
+// Close stops and joins every Store-owned background worker. Waiting matters
+// on Windows, where an expiry worker can otherwise retain a journal handle
+// after callers begin removing the Store's data directory.
 func (s *Store) Close() {
-	s.closeOnce.Do(func() { close(s.stop) })
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		close(s.stop)
+		s.mu.Unlock()
+		s.workers.Wait()
+	})
+}
+
+// startWorker registers a Store-owned goroutine before it can run. Callers
+// either invoke it during construction or while holding s.mu before closure,
+// so no positive WaitGroup delta can race the zero-to-Wait transition.
+func (s *Store) startWorker(fn func()) {
+	s.workers.Add(1)
+	go func() {
+		defer s.workers.Done()
+		fn()
+	}()
 }
 
 // maxPendingApprovals is the maximum number of pending approval requests
@@ -272,6 +293,9 @@ const maxPendingApprovals = 1000
 
 // ErrTooManyPending is returned when the pending approval limit is reached.
 var ErrTooManyPending = fmt.Errorf("approval: too many pending requests (limit: %d)", maxPendingApprovals)
+
+// ErrStoreClosed is returned when a caller tries to enqueue work after Close.
+var ErrStoreClosed = fmt.Errorf("approval: store is closed")
 
 // dedupKey computes a scoped retry identity for approval deduplication.
 // Without a stable host-provided tool-call ID, deduplication is disabled:
@@ -350,6 +374,9 @@ func (s *Store) CreateOrAutoApproved(call engine.ToolCall, decision engine.Decis
 
 // createLocked enqueues one request. The caller must hold s.mu.
 func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision) (*Request, error) {
+	if s.closed {
+		return nil, ErrStoreClosed
+	}
 
 	now := time.Now()
 	key := dedupKey(call)
@@ -395,7 +422,7 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision) (*R
 	}
 
 	// Start expiry timer.
-	go s.watchExpiry(req)
+	s.startWorker(func() { s.watchExpiry(req) })
 
 	return req, nil
 }
@@ -1244,7 +1271,7 @@ func (s *Store) loadFromDisk() {
 			}
 		}
 		s.pending[req.ID] = req
-		go s.watchExpiry(req)
+		s.startWorker(func() { s.watchExpiry(req) })
 		restored++
 	}
 	if restored > 0 {
