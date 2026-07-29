@@ -108,6 +108,63 @@ func TestPublicSupportMatrixNamesEveryAssuredIntegration(t *testing.T) {
 	}
 }
 
+func TestReleaseMetadataIsSynchronized(t *testing.T) {
+	root := repositoryRoot(t)
+	changelog, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches := regexp.MustCompile(`(?m)^## \[([0-9]+\.[0-9]+\.[0-9]+)\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$`).FindSubmatch(changelog)
+	if len(matches) != 2 {
+		t.Fatal("CHANGELOG.md must contain a dated current release section")
+	}
+	version := string(matches[1])
+
+	expectations := map[string][]string{
+		"internal/plugin/openclaw/package.json":         {`"version": "` + version + `"`},
+		"internal/plugin/openclaw/openclaw.plugin.json": {`"version": "` + version + `"`},
+		"internal/plugin/openclaw/index.js":             {`export const version = "` + version + `";`},
+		"internal/plugin/hermes/plugin.yaml":            {"version: " + version},
+		"internal/plugin/hermes/__init__.py":            {`VERSION = "` + version + `"`},
+		"policies/openclaw.yaml":                        {"# rampart-policy-version: " + version},
+		"docs-site/index.html":                          {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
+		"docs/index.html":                               {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
+		"docs-site/reference/threat-model.md":           {"Applies to: v" + version},
+		"docs/THREAT-MODEL.md":                          {"Applies to: v" + version},
+	}
+	for name, required := range expectations {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil {
+			t.Errorf("read %s: %v", name, err)
+			continue
+		}
+		for _, marker := range required {
+			if !strings.Contains(string(data), marker) {
+				t.Errorf("%s does not identify current release %s with %q", name, version, marker)
+			}
+		}
+	}
+}
+
+func TestDockerPublicationRunsFromReleaseTagPush(t *testing.T) {
+	root := repositoryRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "docker.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	if !strings.Contains(workflow, "on:\n  push:\n    tags: ['v*']") {
+		t.Fatal("Docker publication must run directly from a version-tag push")
+	}
+	if strings.Contains(workflow, "github.event.release.tag_name") ||
+		strings.Contains(workflow, "types: [published]") {
+		t.Fatal("Docker publication must not depend on a release event created by GITHUB_TOKEN")
+	}
+	if !strings.Contains(workflow, "RELEASE_TAG: ${{ github.ref_name }}") {
+		t.Fatal("Docker publication must derive release metadata from the pushed tag")
+	}
+}
+
 func TestPublicDocsAvoidKnownAbsoluteBoundaryClaims(t *testing.T) {
 	root := repositoryRoot(t)
 	targets := []string{

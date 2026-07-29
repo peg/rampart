@@ -49,7 +49,7 @@ Arguments:
 - `allow` returns nothing or param adjustment only when explicitly requested by Rampart
 - there is no legacy `params.ask = "always"` mutation path
 - degraded mode blocks sensitive tools (`exec`, `write`) when serve is unreachable or returns 5xx
-- configured fail-open tools (`read`, `web_fetch`, `web_search`, `image` by default) remain explicit and test-covered
+- explicitly configured fail-open tools remain opt-in and test-covered; the deprecated coarse `failOpen: true` switch maps to `read`, `web_fetch`, `web_search`, and `image` for compatibility
 - command-execution aliases such as OpenClaw `bash` map to Rampart `exec` for policy checks, learning, and audit events
 - provider-surface replay covers canonical `exec`, nested `input.command`, command aliases, file tools, hosted approval, auth-error fail-closed behavior, audit normalization, and degraded sensitive-tool blocking
 

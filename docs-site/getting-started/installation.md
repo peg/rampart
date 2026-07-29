@@ -114,7 +114,7 @@ volumes:
 
 The loopback bind keeps the bearer-token control API off your LAN. For remote administration, put Rampart behind a trusted HTTPS reverse proxy and supply `RAMPART_TOKEN` explicitly; do not publish port 9090 directly over plaintext HTTP.
 
-Available tags include full versions such as `1.4.0`, minor versions such as `1.4`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.4.0-rc.1`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+Available tags include full versions such as `1.5.0`, minor versions such as `1.5`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.5.0-rc.1`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
 
 ## Build from Source
 

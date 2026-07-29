@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-07-25 | Applies to: v1.4.0
+> Last reviewed: 2026-07-29 | Applies to: v1.5.0
 
 Rampart evaluates AI-agent tool calls against policy before an action proceeds. It is a policy enforcement layer, not a replacement for OS sandboxing, hypervisors, or workload isolation. This document defines the threats Rampart is designed to reduce and the boundaries operators should pair it with.
 

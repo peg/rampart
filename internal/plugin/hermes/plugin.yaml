@@ -1,5 +1,5 @@
 name: rampart
-version: 1.4.0
+version: 1.5.0
 description: Experimental Rampart policy gate for Hermes Agent pre_tool_call hooks
 author: peg
 provides_hooks:
