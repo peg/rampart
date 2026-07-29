@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -18,6 +19,19 @@ func testSetHome(t *testing.T, dir string) {
 	}
 	t.Setenv("HOME", dir)
 	t.Setenv("CODEX_HOME", "")
+}
+
+func testSetOpenClawBinary(t *testing.T, home string) string {
+	t.Helper()
+	path := filepath.Join(home, "test-bin", "openclaw")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RAMPART_OPENCLAW_BIN", path)
+	return path
 }
 
 // skipOnWindows skips the test on Windows with the given reason.

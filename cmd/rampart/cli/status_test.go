@@ -329,6 +329,7 @@ func writeHermesRampartPluginFixture(t *testing.T, home, config string) {
 func TestDetectProtectedAgents_OpenClawPluginRequiresAllowedAndEnabled(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
+	testSetOpenClawBinary(t, home)
 	pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		t.Fatal(err)

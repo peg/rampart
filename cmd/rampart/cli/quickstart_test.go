@@ -226,6 +226,7 @@ func TestHasInstalledPolicy(t *testing.T) {
 func TestQuickstartHooksConfigured_OpenClaw(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
+	testSetOpenClawBinary(t, home)
 
 	if quickstartHooksConfigured("openclaw") {
 		t.Fatal("expected openclaw hooks to be false without plugin or legacy bridge")
