@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   configPathsMatch,
   normalizeConfigPath,
   reportedConfigPath,
 } from './compat-openclaw-path.mjs';
-import { buildCompatProcessEnv } from './compat-process-env.mjs';
+import { buildCompatProcessEnv, removeCompatTree } from './compat-process-env.mjs';
 
 test('normalizes OpenClaw notice-prefixed tilde paths against the isolated home', () => {
   const isolatedHome = resolve('/tmp/rampart-openclaw-compat-test/home');
@@ -63,4 +65,20 @@ test('compatibility child environment excludes ambient credentials', () => {
     HOME: '/tmp/isolated-home',
     RAMPART_TOKEN: 'compat-test-token',
   });
+});
+
+test('compatibility cleanup removes read-only package cache trees', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rampart-compat-cleanup-'));
+  const cache = join(root, 'cache');
+  const artifact = join(cache, 'artifact');
+  mkdirSync(cache);
+  writeFileSync(artifact, 'isolated package cache');
+  if (process.platform !== 'win32') {
+    chmodSync(artifact, 0o400);
+    chmodSync(cache, 0o500);
+  }
+
+  removeCompatTree(root);
+
+  assert.equal(existsSync(root), false);
 });

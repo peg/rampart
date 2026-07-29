@@ -8,7 +8,7 @@
  * install/config checks do not touch a live OpenClaw gateway or user config.
  */
 
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -18,7 +18,7 @@ import {
   normalizeConfigPath,
   reportedConfigPath,
 } from './compat-openclaw-path.mjs';
-import { buildCompatProcessEnv } from './compat-process-env.mjs';
+import { buildCompatProcessEnv, removeCompatTree } from './compat-process-env.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-openclaw-compat-'));
@@ -163,6 +163,6 @@ try {
   if (keepTemp) {
     console.error(`kept temporary directory: ${tempRoot}`);
   } else {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeCompatTree(tempRoot);
   }
 }

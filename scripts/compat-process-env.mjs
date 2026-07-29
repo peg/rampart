@@ -1,6 +1,9 @@
 // Copyright 2026 The Rampart Authors
 // Licensed under the Apache License, Version 2.0
 
+import { chmodSync, lstatSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+
 // Compatibility harnesses execute third-party CLIs. Pass only environment
 // values required to locate runtimes and reach public package registries; do
 // not expose the developer or CI runner's credential-bearing environment.
@@ -88,4 +91,40 @@ export function buildCompatProcessEnv(source, overrides) {
   env.NO_PROXY = noProxy.join(',');
   env.no_proxy = env.NO_PROXY;
   return { ...env, ...overrides };
+}
+
+function makeTreeOwnerWritable(path) {
+  let info;
+  try {
+    info = lstatSync(path);
+  } catch {
+    return;
+  }
+
+  // Do not follow links created by a third-party CLI during cleanup.
+  if (info.isSymbolicLink()) {
+    return;
+  }
+  try {
+    chmodSync(path, info.isDirectory() ? 0o700 : 0o600);
+  } catch {
+    // A later rmSync reports the authoritative cleanup error.
+  }
+  if (!info.isDirectory()) {
+    return;
+  }
+  for (const entry of readdirSync(path)) {
+    makeTreeOwnerWritable(join(path, entry));
+  }
+}
+
+// Third-party package managers may leave read-only cache entries in the
+// isolated tree. Normalize only that owned tree before retrying deletion.
+export function removeCompatTree(path) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    makeTreeOwnerWritable(path);
+    rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
 }

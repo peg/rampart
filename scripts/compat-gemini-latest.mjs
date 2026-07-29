@@ -10,12 +10,12 @@
  * the hooks; this does not make a model request or claim live-host proof.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildCompatProcessEnv } from './compat-process-env.mjs';
+import { buildCompatProcessEnv, removeCompatTree } from './compat-process-env.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-gemini-compat-'));
@@ -39,6 +39,7 @@ function compatEnv() {
     XDG_CACHE_HOME: join(tempHome, '.cache'),
     XDG_DATA_HOME: join(tempHome, '.local', 'share'),
     XDG_STATE_HOME: join(tempHome, '.local', 'state'),
+    GOCACHE: join(childTemp, 'go-build-cache'),
     NO_COLOR: '1',
   });
 }
@@ -122,6 +123,6 @@ try {
   if (keepTemp) {
     console.error(`kept temporary directory: ${tempRoot}`);
   } else {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeCompatTree(tempRoot);
   }
 }
