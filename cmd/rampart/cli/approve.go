@@ -34,7 +34,7 @@ func newApproveCmd(_ *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "approve <approval-id>",
 		Short: "Approve a pending tool call",
-		Long: `Approve a pending tool call that matched a require_approval policy rule.
+		Long: `Approve a pending tool call that matched an ask policy rule.
 
 The approval ID is displayed in the proxy logs, the watch TUI, and
 the 'rampart pending' command output.
@@ -62,7 +62,7 @@ func newDenyCmd(_ *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deny <approval-id>",
 		Short: "Deny a pending tool call",
-		Long:  `Deny a pending tool call that matched a require_approval policy rule.`,
+		Long:  `Deny a pending tool call that matched an ask policy rule.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return resolveApproval(cmd, proxyAddr, proxyToken, args[0], false)
@@ -84,7 +84,7 @@ func newPendingCmd(_ *rootOptions) *cobra.Command {
 		Short: "List pending approval requests",
 		Long: `Show all tool calls waiting for human approval.
 
-These are tool calls that matched a require_approval policy rule and
+These are tool calls that matched an ask policy rule and
 are blocked until someone approves or denies them (or they expire).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return listPending(cmd, proxyAddr, proxyToken)
@@ -95,14 +95,6 @@ are blocked until someone approves or denies them (or they expire).`,
 	cmd.Flags().StringVar(&proxyToken, "token", "", "Proxy auth token (or set RAMPART_TOKEN)")
 
 	return cmd
-}
-
-func resolveToken(token string) string {
-	if token != "" {
-		return token
-	}
-	resolved, _ := resolveTokenValue()
-	return resolved
 }
 
 func resolveAddr(addr string) (string, error) {
@@ -124,7 +116,10 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 	if err != nil {
 		return fmt.Errorf("resolve approval API address: %w", err)
 	}
-	token = resolveToken(token)
+	token, _, err = resolveTokenForEndpoint(resolvedAddr, token)
+	if err != nil {
+		return fmt.Errorf("resolve approval API credentials: %w", err)
+	}
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
 	}
@@ -167,7 +162,10 @@ func listPending(cmd *cobra.Command, addr, token string) error {
 	if err != nil {
 		return fmt.Errorf("resolve approval API address: %w", err)
 	}
-	token = resolveToken(token)
+	token, _, err = resolveTokenForEndpoint(resolvedAddr, token)
+	if err != nil {
+		return fmt.Errorf("resolve approval API credentials: %w", err)
+	}
 	if token == "" {
 		return fmt.Errorf("proxy auth token required (--token or RAMPART_TOKEN)")
 	}

@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,16 +39,16 @@ import (
 )
 
 type wrapDeps struct {
-	listen      func(network, address string) (net.Listener, error)
-	commandPath func(file string) (string, error)
+	listen       func(network, address string) (net.Listener, error)
+	commandPath  func(file string) (string, error)
 	signalNotify func(chan<- os.Signal, ...os.Signal)
 	signalStop   func(chan<- os.Signal)
 }
 
 func defaultWrapDeps() wrapDeps {
 	return wrapDeps{
-		listen:      net.Listen,
-		commandPath: exec.LookPath,
+		listen:       net.Listen,
+		commandPath:  exec.LookPath,
 		signalNotify: signal.Notify,
 		signalStop:   signal.Stop,
 	}
@@ -84,6 +85,9 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateWrapPlatform(runtime.GOOS); err != nil {
+				return err
+			}
 			if mode != "enforce" && mode != "monitor" {
 				return fmt.Errorf("wrap: invalid mode %q (must be enforce or monitor)", mode)
 			}
@@ -267,6 +271,13 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 	return cmd
 }
 
+func validateWrapPlatform(goos string) error {
+	if goos != "linux" && goos != "darwin" {
+		return fmt.Errorf("wrap: unsupported platform %q (use `rampart protect` to install native agent hooks)", goos)
+	}
+	return nil
+}
+
 func resolveWrapPolicyPath(path string) (string, func(), error) {
 	if strings.TrimSpace(path) == "" {
 		path = "rampart.yaml"
@@ -322,7 +333,7 @@ func resolveRealShell(lookPath func(string) (string, error)) (string, error) {
 
 func waitForProxyReady(ctx context.Context, proxyURL string) error {
 	deadline := time.Now().Add(2 * time.Second)
-	client := &http.Client{Timeout: 200 * time.Millisecond}
+	client := newRampartHTTPClient(200 * time.Millisecond)
 	url := proxyURL + "/healthz"
 
 	for {
@@ -330,16 +341,8 @@ func waitForProxyReady(ctx context.Context, proxyURL string) error {
 			return fmt.Errorf("timeout waiting for proxy at %s", url)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return fmt.Errorf("create health request: %w", err)
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
+		if isRampartHealthReady(ctx, client, url) {
+			return nil
 		}
 
 		select {
@@ -400,23 +403,48 @@ done
 if [ "$FOUND_C" = "true" ]; then
 
     if ! command -v curl >/dev/null 2>&1; then
-        echo "rampart: warning: curl is unavailable, allowing command" >&2
+		if [ "$RAMPART_MODE" = "enforce" ]; then
+			echo "rampart: blocked: curl is unavailable; policy cannot be evaluated" >&2
+			exit 126
+		fi
+		echo "rampart: warning: curl is unavailable; monitor mode is allowing command" >&2
         exec "$REAL_SHELL" $SHELL_FLAGS -c "$CMD" "$@"
     fi
+	if ! command -v base64 >/dev/null 2>&1; then
+		if [ "$RAMPART_MODE" = "enforce" ]; then
+			echo "rampart: blocked: base64 is unavailable; command cannot be evaluated safely" >&2
+			exit 126
+		fi
+		echo "rampart: warning: base64 is unavailable; monitor mode is allowing command" >&2
+		exec "$REAL_SHELL" $SHELL_FLAGS -c "$CMD" "$@"
+	fi
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
-    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","params":{"command_b64":"%%s"}}' "$ENCODED")
+    ENFORCE=false
+    if [ "$RAMPART_MODE" = "enforce" ]; then
+        ENFORCE=true
+    fi
+    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","enforce":%%s,"params":{"command_b64":"%%s"}}' "$ENFORCE" "$ENCODED")
     DECISION=$(curl -sfS -X POST "${RAMPART_URL}/v1/preflight/exec" \
         -H "Authorization: Bearer ${RAMPART_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$PAYLOAD" 2>/dev/null)
 
     if [ -z "$DECISION" ]; then
-        echo "rampart: warning: preflight unavailable, allowing command" >&2
+		if [ "$RAMPART_MODE" = "enforce" ]; then
+			echo "rampart: blocked: preflight unavailable; policy cannot be evaluated" >&2
+			exit 126
+		fi
+		echo "rampart: warning: preflight unavailable; monitor mode is allowing command" >&2
         exec "$REAL_SHELL" $SHELL_FLAGS -c "$CMD" "$@"
     fi
 
     ALLOWED=$(printf '%%s' "$DECISION" | grep -o '"allowed":[a-z]*' | grep -o 'true\|false' | head -n 1)
+    ENFORCED=$(printf '%%s' "$DECISION" | grep -o '"enforced":[a-z]*' | grep -o 'true\|false' | head -n 1)
+    if [ "$RAMPART_MODE" = "enforce" ] && [ "$ENFORCED" != "true" ]; then
+        echo "rampart: blocked: policy service did not confirm enforcement" >&2
+        exit 126
+    fi
     if [ "$RAMPART_MODE" = "enforce" ] && [ "$ALLOWED" != "true" ]; then
         MSG=$(printf '%%s' "$DECISION" | grep -o '"message":"[^"]*"' | head -n 1 | sed 's/"message":"//;s/"$//')
         if [ -z "$MSG" ]; then
@@ -491,6 +519,7 @@ func createShellWrappers(proxyURL, tokenFile, mode string) (string, error) {
 # Rampart shell wrapper for %s — auto-generated.
 # Only intercepts when RAMPART_ACTIVE=1 (inside rampart wrap).
 REAL=%q
+RAMPART_MODE=%q
 if [ "$RAMPART_ACTIVE" != "1" ]; then
     exec "$REAL" "$@"
 fi
@@ -511,11 +540,28 @@ done
 if [ "$FOUND_C" = "true" ]; then
 
     if ! command -v curl >/dev/null 2>&1; then
+		if [ "$RAMPART_MODE" = "enforce" ]; then
+			echo "rampart: blocked: curl is unavailable; policy cannot be evaluated" >&2
+			exit 126
+		fi
+		echo "rampart: warning: curl is unavailable; monitor mode is allowing command" >&2
         exec "$REAL" $SHELL_FLAGS -c "$CMD" "$@"
     fi
+	if ! command -v base64 >/dev/null 2>&1; then
+		if [ "$RAMPART_MODE" = "enforce" ]; then
+			echo "rampart: blocked: base64 is unavailable; command cannot be evaluated safely" >&2
+			exit 126
+		fi
+		echo "rampart: warning: base64 is unavailable; monitor mode is allowing command" >&2
+		exec "$REAL" $SHELL_FLAGS -c "$CMD" "$@"
+	fi
 
     ENCODED=$(printf '%%s' "$CMD" | base64 | tr -d '\n\r')
-    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","params":{"command_b64":"%%s"}}' "$ENCODED")
+    ENFORCE=false
+    if [ "$RAMPART_MODE" = "enforce" ]; then
+        ENFORCE=true
+    fi
+    PAYLOAD=$(printf '{"agent":"wrapped","session":"wrap","enforce":%%s,"params":{"command_b64":"%%s"}}' "$ENFORCE" "$ENCODED")
     RAMPART_TOKEN=$(cat %q 2>/dev/null)
     DECISION=$(curl -sfS -X POST "%s/v1/preflight/exec" \
         -H "Authorization: Bearer ${RAMPART_TOKEN}" \
@@ -523,11 +569,21 @@ if [ "$FOUND_C" = "true" ]; then
         -d "$PAYLOAD" 2>/dev/null)
 
     if [ -z "$DECISION" ]; then
+		if [ "$RAMPART_MODE" = "enforce" ]; then
+			echo "rampart: blocked: preflight unavailable; policy cannot be evaluated" >&2
+			exit 126
+		fi
+		echo "rampart: warning: preflight unavailable; monitor mode is allowing command" >&2
         exec "$REAL" $SHELL_FLAGS -c "$CMD" "$@"
     fi
 
     ALLOWED=$(printf '%%s' "$DECISION" | grep -o '"allowed":[a-z]*' | grep -o 'true\|false' | head -n 1)
-    if [ "%s" = "enforce" ] && [ "$ALLOWED" != "true" ]; then
+    ENFORCED=$(printf '%%s' "$DECISION" | grep -o '"enforced":[a-z]*' | grep -o 'true\|false' | head -n 1)
+    if [ "$RAMPART_MODE" = "enforce" ] && [ "$ENFORCED" != "true" ]; then
+        echo "rampart: blocked: policy service did not confirm enforcement" >&2
+        exit 126
+    fi
+    if [ "$RAMPART_MODE" = "enforce" ] && [ "$ALLOWED" != "true" ]; then
         MSG=$(printf '%%s' "$DECISION" | grep -o '"message":"[^"]*"' | head -n 1 | sed 's/"message":"//;s/"$//')
         if [ -z "$MSG" ]; then
             MSG="policy denied"
@@ -546,7 +602,7 @@ fi
 
 # Interactive or non -c usage — pass through directly
 exec "$REAL" $ORIG_ARGS
-`, s.name, s.realPath, tokenFile, proxyURL, mode)
+`, s.name, s.realPath, mode, tokenFile, proxyURL)
 
 		wrapperPath := filepath.Join(dir, s.name)
 		if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
@@ -571,6 +627,10 @@ type decisionCounterSink struct {
 }
 
 func (s *decisionCounterSink) Write(event audit.Event) error {
+	if err := s.sink.Write(event); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	s.evaluated++
 	switch strings.ToLower(event.Decision.Action) {
@@ -602,7 +662,7 @@ func (s *decisionCounterSink) Write(event audit.Event) error {
 		go sendNotification(s.notifyConfig, call, decision, s.logger)
 	}
 
-	return s.sink.Write(event)
+	return nil
 }
 
 func (s *decisionCounterSink) Flush() error {

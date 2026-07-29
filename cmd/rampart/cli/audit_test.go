@@ -110,6 +110,74 @@ func TestAuditVerify_ValidChain(t *testing.T) {
 	assert.Contains(t, stdout, "10 events")
 }
 
+func TestAuditVerify_MixedServiceChainAndStandaloneHooks(t *testing.T) {
+	dir := t.TempDir()
+	serviceEvents := []audit.Event{
+		makeEvent("exec", "service-a", "main", "allow", "ok"),
+		makeEvent("exec", "service-b", "main", "deny", "blocked"),
+	}
+	createTestAuditFile(t, dir, serviceEvents)
+
+	hookPath := filepath.Join(dir, "audit-hook-2026-07-28.jsonl")
+	writeStandaloneAuditEvent(t, hookPath,
+		makeEvent("exec", "hook-a", "codex", "allow", "ok"))
+	writeStandaloneAuditEvent(t, hookPath,
+		makeEvent("write", "hook-b", "claude-code", "deny", "blocked"))
+
+	stdout, _, err := runCLI(t, "audit", "verify", "--audit-dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "2 chained events")
+	assert.Contains(t, stdout, "2 native-hook events")
+}
+
+func TestAuditVerify_StandaloneHookDetectsModification(t *testing.T) {
+	dir := t.TempDir()
+	hookPath := filepath.Join(dir, "audit-hook-2026-07-28.jsonl")
+	event := makeEvent("exec", "hook-a", "codex", "allow", "ok")
+	writeStandaloneAuditEvent(t, hookPath, event)
+
+	data, err := os.ReadFile(hookPath)
+	require.NoError(t, err)
+	data = []byte(strings.Replace(string(data), `"action":"allow"`, `"action":"deny"`, 1))
+	require.NoError(t, os.WriteFile(hookPath, data, 0o600))
+
+	_, _, err = runCLI(t, "audit", "verify", "--audit-dir", dir)
+	require.ErrorContains(t, err, "RECORD MODIFIED")
+}
+
+func TestAuditVerifySince_FiltersHookFilenameDate(t *testing.T) {
+	dir := t.TempDir()
+	writeStandaloneAuditEvent(t,
+		filepath.Join(dir, "audit-hook-2026-02-08.jsonl"),
+		makeEvent("exec", "old", "codex", "allow", "ok"))
+	writeStandaloneAuditEvent(t,
+		filepath.Join(dir, "audit-hook-2026-02-09.jsonl"),
+		makeEvent("exec", "new", "codex", "allow", "ok"))
+
+	stdout, _, err := runCLI(t, "audit", "verify", "--audit-dir", dir, "--since", "2026-02-09")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "1 native-hook events across 1 files")
+}
+
+func writeStandaloneAuditEvent(t *testing.T, path string, event audit.Event) {
+	t.Helper()
+	if event.ID == "" {
+		event.ID = audit.NewEventID()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	event.PrevHash = ""
+	require.NoError(t, event.ComputeHash())
+	line, err := json.Marshal(event)
+	require.NoError(t, err)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	require.NoError(t, err)
+	_, err = file.Write(append(line, '\n'))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+}
+
 func TestAuditVerifySince_AllowsPartialChainAndSkippedAnchor(t *testing.T) {
 	dir := t.TempDir()
 
@@ -192,6 +260,133 @@ func TestListAuditFiles_SortsRotatedFilesNaturally(t *testing.T) {
 	for i, file := range files {
 		assert.Equal(t, names[i], filepath.Base(file))
 	}
+}
+
+func TestFindLatestAuditFile_PrefersUnifiedChainAfterUpgrade(t *testing.T) {
+	dir := t.TempDir()
+	managed := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	legacy := filepath.Join(dir, "audit-hook-2099-12-31.jsonl")
+	require.NoError(t, os.WriteFile(managed, nil, 0o600))
+	require.NoError(t, os.WriteFile(legacy, nil, 0o600))
+
+	latest, err := findLatestAuditFile(dir)
+	require.NoError(t, err)
+	assert.Equal(t, managed, latest)
+}
+
+func TestFindLatestAuditFile_LegacyOnlyFallback(t *testing.T) {
+	dir := t.TempDir()
+	older := filepath.Join(dir, "audit-hook-2026-07-27.jsonl")
+	newer := filepath.Join(dir, "audit-hook-2026-07-28.jsonl")
+	require.NoError(t, os.WriteFile(older, nil, 0o600))
+	require.NoError(t, os.WriteFile(newer, nil, 0o600))
+
+	latest, err := findLatestAuditFile(dir)
+	require.NoError(t, err)
+	assert.Equal(t, newer, latest)
+}
+
+func TestLatestAuditEvent_PrefersUnifiedChainAfterUpgrade(t *testing.T) {
+	dir := t.TempDir()
+	managedEvent := makeEvent("exec", "managed-current", "main", "allow", "ok")
+	managedEvent.ID = audit.NewEventID()
+	managedEvent.Timestamp = time.Now().UTC()
+	require.NoError(t, managedEvent.ComputeHash())
+	managedLine, err := json.Marshal(managedEvent)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, managedEvent.Timestamp.Format("2006-01-02")+".jsonl"),
+		append(managedLine, '\n'),
+		0o600,
+	))
+
+	legacyEvent := makeEvent("exec", "legacy-stale", "main", "allow", "ok")
+	legacyEvent.Timestamp = managedEvent.Timestamp.Add(time.Hour)
+	writeStandaloneAuditEvent(t, filepath.Join(dir, "audit-hook-2099-12-31.jsonl"), legacyEvent)
+
+	latest, err := latestAuditEvent(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "managed-current", latest.Request["command"])
+}
+
+func TestAuditVerify_AcceptsLegacyReopenAfterRotationLayout(t *testing.T) {
+	dir := t.TempDir()
+	date := time.Now().UTC().Format("2006-01-02")
+	baseName := date + ".jsonl"
+	rotatedName := date + ".p1.jsonl"
+
+	first := makeEvent("exec", "first", "main", "allow", "ok")
+	first.ID = audit.NewEventID()
+	first.Timestamp = time.Now().UTC()
+	require.NoError(t, first.ComputeHash())
+	second := makeEvent("read", "second", "main", "allow", "ok")
+	second.ID = audit.NewEventID()
+	second.Timestamp = first.Timestamp.Add(time.Second)
+	second.PrevHash = first.Hash
+	require.NoError(t, second.ComputeHash())
+	third := makeEvent("write", "third", "main", "allow", "ok")
+	third.ID = audit.NewEventID()
+	third.Timestamp = second.Timestamp.Add(time.Second)
+	third.PrevHash = second.Hash
+	require.NoError(t, third.ComputeHash())
+
+	firstLine, err := json.Marshal(first)
+	require.NoError(t, err)
+	secondLine, err := json.Marshal(second)
+	require.NoError(t, err)
+	thirdLine, err := json.Marshal(third)
+	require.NoError(t, err)
+	headerLine, err := json.Marshal(map[string]string{
+		"chain_continue": first.Hash,
+		"prev_file":      baseName,
+	})
+	require.NoError(t, err)
+
+	// Older restarts could append the third event back to the daily base file,
+	// leaving physical order A,C in the base and B in the rotated file.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, baseName),
+		[]byte(string(firstLine)+"\n"+string(thirdLine)+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, rotatedName),
+		[]byte(string(headerLine)+"\n"+string(secondLine)+"\n"), 0o600))
+
+	stdout, _, err := runCLI(t, "audit", "verify", "--audit-dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "3 events")
+	assert.Contains(t, stdout, "no tampering detected")
+}
+
+func TestAuditVerify_RejectsTamperedContinuationHeader(t *testing.T) {
+	dir := t.TempDir()
+	date := time.Now().UTC().Format("2006-01-02")
+	baseName := date + ".jsonl"
+	rotatedName := date + ".p1.jsonl"
+
+	first := makeEvent("exec", "first", "main", "allow", "ok")
+	first.ID = audit.NewEventID()
+	first.Timestamp = time.Now().UTC()
+	require.NoError(t, first.ComputeHash())
+	second := makeEvent("read", "second", "main", "allow", "ok")
+	second.ID = audit.NewEventID()
+	second.Timestamp = first.Timestamp.Add(time.Second)
+	second.PrevHash = first.Hash
+	require.NoError(t, second.ComputeHash())
+
+	firstLine, err := json.Marshal(first)
+	require.NoError(t, err)
+	secondLine, err := json.Marshal(second)
+	require.NoError(t, err)
+	headerLine, err := json.Marshal(map[string]string{
+		"chain_continue": "sha256:tampered",
+		"prev_file":      baseName,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, baseName), append(firstLine, '\n'), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, rotatedName),
+		[]byte(string(headerLine)+"\n"+string(secondLine)+"\n"), 0o600))
+
+	_, _, err = runCLI(t, "audit", "verify", "--audit-dir", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CHAIN BROKEN")
 }
 
 func TestAuditVerify_BrokenChain(t *testing.T) {

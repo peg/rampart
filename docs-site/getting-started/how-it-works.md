@@ -14,7 +14,7 @@ You don't usually run this directly. `rampart quickstart` and the service-backed
 
 **What happens if it's not running?** Behavior depends on the integration:
 
-- **Claude Code / Cline / Codex native hooks** can still evaluate policy locally for direct hook decisions.
+- **Claude Code / Cline / Codex / GitHub Copilot native hooks**, plus the experimental Gemini CLI adapter, can still evaluate policy locally for direct hook decisions.
 - **OpenClaw native plugin** depends on `rampart serve`; sensitive tools such as `exec` and `write` block when the service is unavailable, while explicitly configured lower-risk `failOpenTools` can still proceed.
 - **Wrapper / preload / API integrations** typically need the service path and may fail open or fail closed depending on configuration.
 
@@ -26,8 +26,8 @@ This wires an agent to use the daemon. What it does depends on the agent:
 |-------|-------------------|
 | **Claude Code** | Writes native hooks in `~/.claude/settings.json` |
 | **Codex** | Installs native lifecycle hooks in `$CODEX_HOME/hooks.json` for CLI, IDE, and desktop |
-| **Cline** | Installs hook scripts under `~/Documents/Cline/Hooks/` |
-| **OpenClaw** | Installs native `before_tool_call` plugin on >= 2026.3.28; uses legacy shim/bridge only on older versions |
+| **Cline** | Installs direct platform-native hook files under `~/Documents/Cline/Hooks/` |
+| **OpenClaw** | `rampart protect openclaw` installs the native plugin, managed policies, fail-closed degraded behavior, and behavioral verification on current builds |
 | **MCP servers** | Use `rampart mcp --` prefix instead of setup |
 
 After setup, every tool call exposed by the host goes through the integration's
@@ -37,8 +37,11 @@ Claude/Cline/Codex native hooks can also evaluate allow/deny policy locally.
 ```
 rampart setup claude-code   # one-time, survives agent updates
 rampart setup codex         # native lifecycle hooks; no wrapper replacement
-rampart setup openclaw      # auto-detects version; native plugin on >= 2026.3.28
+rampart protect openclaw    # managed fail-closed guard + behavioral verification
 ```
+
+`rampart setup openclaw` remains available for advanced/manual integration
+management and legacy compatibility.
 
 ## Live monitoring (`rampart watch`)
 

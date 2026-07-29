@@ -14,9 +14,12 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -571,10 +574,13 @@ func TestWriteAllowAlwaysRule(t *testing.T) {
 
 	content := string(data)
 
-	// Must contain the tool: exec match.
-	if !strings.Contains(content, "tool: exec") {
-		t.Errorf("expected 'tool: exec' in overrides, got:\n%s", content)
-	}
+	// Must contain an exec match in either the legacy scalar or current list
+	// representation.
+	overrides, err := policy.LoadUserOverridesPolicy(overridesPath)
+	require.NoError(t, err)
+	require.Len(t, overrides.Policies, 1)
+	require.Len(t, overrides.Policies[0].Match.Tool, 1)
+	assert.Equal(t, "exec", overrides.Policies[0].Match.Tool[0])
 
 	// Must contain the command in the command_matches list.
 	if !strings.Contains(content, testCmd) {
@@ -846,6 +852,37 @@ func TestBridgeAuditSinkWrite(t *testing.T) {
 	cancel()
 }
 
+func TestPendingCommandCorrelationIsBounded(t *testing.T) {
+	b := &OpenClawBridge{pendingCommands: make(map[string]string)}
+	for i := 0; i < maxPendingBridgeCommands; i++ {
+		if !b.rememberPendingCommand(fmt.Sprintf("id-%d", i), "git status") {
+			t.Fatalf("command %d was rejected before the correlation limit", i)
+		}
+	}
+	if b.rememberPendingCommand("overflow", "git status") {
+		t.Fatal("pending command correlation exceeded its entry limit")
+	}
+	if b.rememberPendingCommand("oversized", strings.Repeat("x", maxPendingBridgeCommandLen+1)) {
+		t.Fatal("pending command correlation accepted an oversized command")
+	}
+	if b.rememberPendingCommand(strings.Repeat("i", 257), "git status") {
+		t.Fatal("pending command correlation accepted an oversized approval ID")
+	}
+}
+
+func TestBridgeInfoLogsDoNotExposeCommand(t *testing.T) {
+	var logs bytes.Buffer
+	b := &OpenClawBridge{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+	var req approvalRequestParams
+	req.ID = "approval-1"
+	req.Request.AgentID = "agent"
+	req.Request.Command = "curl -H 'Authorization: Bearer secret-value' example.invalid"
+	b.leavePendingForHumanReview(req, engine.Decision{Message: "approval required"})
+	if strings.Contains(logs.String(), "secret-value") || strings.Contains(logs.String(), req.Request.Command) {
+		t.Fatalf("bridge info log exposed raw command: %s", logs.String())
+	}
+}
+
 // testAuditSink is a minimal in-memory AuditSink for tests.
 type testAuditSink struct {
 	writeFn func(audit.Event) error
@@ -860,36 +897,33 @@ func (s *testAuditSink) Write(ev audit.Event) error {
 func (s *testAuditSink) Flush() error { return nil }
 func (s *testAuditSink) Close() error { return nil }
 
-func TestBuildAllowPattern(t *testing.T) {
+func TestBuildExactAllowPattern(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
 	}{
-		// 3+ tokens: replace last arg with *
-		{"sudo apt-get install nmap", "sudo apt-get install *"},
+		{"sudo apt-get install nmap", "sudo apt-get install nmap"},
 		{"kubectl apply -f prod.yaml", "kubectl apply -f prod.yaml"},
 		{"docker run nginx", "docker run nginx"},
 		{"curl https://example.com/install.sh", "curl https://example.com/install.sh"},
 		{"chmod 600 /etc/shadow", "chmod 600 /etc/shadow"},
-		{"npm install lodash", "npm install *"},
-		// Strip pipes and redirection first
-		{"sudo apt-get install nmap --dry-run 2>&1 | head -1", "sudo apt-get install nmap *"},
-		{"cat /etc/passwd > /tmp/out", "cat /etc/passwd *"}, // 2 tokens after strip, path-like → append *
-		{"ls -la >> log.txt", "ls -la"},                     // 2 tokens after strip, no dot/slash → as-is
-		{"some-cmd 2> /dev/null", "some-cmd"},               // 1 token after strip → as-is
-		// git commit -m "message" — quoted args become multiple fields
-		{"git commit -m fix-bug", "git commit -m *"},
-		// Short commands (1-2 tokens)
+		{"npm install lodash", "npm install lodash"},
+		{"sudo apt-get install nmap --dry-run 2>&1 | head -1", "sudo apt-get install nmap --dry-run 2>&1 | head -1"},
+		{"cat /etc/passwd > /tmp/out", "cat /etc/passwd > /tmp/out"},
+		{"ls -la >> log.txt", "ls -la >> log.txt"},
+		{"some-cmd 2> /dev/null", "some-cmd 2> /dev/null"},
+		{"git commit -m fix-bug", "git commit -m fix-bug"},
 		{"ls", "ls"},
 		{"whoami", "whoami"},
-		{"cat /etc/hosts", "cat /etc/hosts *"},       // path-like → append *
-		{"python3 script.py", "python3 script.py *"}, // dot → append *
-		{"echo hello", "echo hello"},                 // no dot/slash → keep as-is
+		{"cat /etc/hosts", "cat /etc/hosts"},
+		{"python3 script.py", "python3 script.py"},
+		{"echo hello", "echo hello"},
+		{"echo *.txt", "echo [*].txt"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := policy.BuildAllowPattern(tt.input)
+			got := policy.BuildExactAllowPattern(tt.input)
 			assert.Equal(t, tt.want, got)
 		})
 	}

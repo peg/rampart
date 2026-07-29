@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // TeamsNotifier sends notifications to Microsoft Teams using Office 365 connector cards.
@@ -30,10 +29,8 @@ type TeamsNotifier struct {
 // NewTeamsNotifier creates a new Teams notifier.
 func NewTeamsNotifier(url string) *TeamsNotifier {
 	return &TeamsNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 
@@ -65,7 +62,7 @@ func (n *TeamsNotifier) Send(event NotifyEvent) error {
 		themeColor = "d29922" // orange for log
 		title = "🛡️ Rampart: Command Logged"
 		summary = "Rampart policy engine logged a command"
-	} else if event.Action == "require_approval" {
+	} else if isApprovalAction(event.Action) {
 		themeColor = "d29922" // amber for approval required
 		title = "🛡️ Rampart: Approval Required"
 		summary = "Rampart policy engine requires human approval"
@@ -77,7 +74,7 @@ func (n *TeamsNotifier) Send(event NotifyEvent) error {
 		{Name: "Agent", Value: event.Agent},
 		{Name: "Timestamp", Value: event.Timestamp},
 	}
-	if event.Action == "require_approval" {
+	if isApprovalAction(event.Action) {
 		facts = append(facts,
 			teamsFact{Name: "Approval ID", Value: shortApprovalID(event.ApprovalID)},
 			teamsFact{Name: "Expires In", Value: expiresInText(event.ExpiresAt)},

@@ -1,80 +1,147 @@
 ---
 title: Securing Cline
-description: "Add Rampart native hooks to Cline. Evaluate supported shell, file, and web hook payloads before execution and audit observed decisions."
+description: "Install Rampart's platform-native Cline hooks for editor and CLI tool calls, with honest activation and host-proof limits."
 ---
 
 # Cline
 
-[Cline](https://github.com/cline/cline) is an AI coding assistant for VS Code.
-Rampart integrates with Cline's documented hook payloads for shell, file, web,
-and MCP actions. This adapter is regression-tested in isolation; there is no
-rolling latest-Cline host job, so consult the support matrix for the current
-evidence level.
+[Cline](https://github.com/cline/cline) exposes `PreToolUse` and `PostToolUse`
+file hooks. Rampart uses those native boundaries to evaluate supported shell,
+file, web, agent, and MCP calls before execution and to scan tool results after
+execution.
 
-The installed hook scripts currently require Bash, so Rampart claims this path
-on Linux and macOS. A native Windows Cline boundary has not yet been proven.
+Rampart's adapter and installer are tested on Linux, macOS, and Windows build
+targets. The Windows `.ps1` contract is verified against current Cline source
+and covered by unit/cross-build tests; a physical Windows Cline host E2E is
+still pending. A rolling latest-Cline host job is also not yet in place.
 
 ## Setup
 
 ```bash
 rampart setup cline
+rampart verify cline
 ```
 
-This installs scripts for Cline's documented pre- and post-tool hook events.
+The default user-level files are direct children of Cline's shared hook
+directory:
+
+| Host | Files |
+|---|---|
+| Linux / macOS | `~/Documents/Cline/Hooks/PreToolUse` and `PostToolUse` |
+| Windows | `~/Documents/Cline/Hooks/PreToolUse.ps1` and `PostToolUse.ps1` |
+
+On POSIX systems Rampart makes the files executable, which is how current Cline
+marks them enabled. Cline's Hooks UI can disable them by clearing that bit. On
+Windows, current Cline activates `.ps1` hooks by file presence, launches them
+with PowerShell, and does not currently expose the same enable/disable toggle.
+
+Earlier Rampart releases wrote nested paths such as
+`PreToolUse/rampart-policy`. Current Cline does not discover that layout.
+Running `rampart setup cline` upgrades an owned legacy layout in place. Rampart
+refuses to replace or delete a hook it cannot identify as Rampart-managed, even
+with `--force`.
+
+### Workspace and CLI paths
+
+```bash
+rampart setup cline --workspace
+rampart setup cline --hooks-dir /absolute/path/to/hooks
+```
+
+`--workspace` writes `.clinerules/hooks`, which remains a discovery path for
+the editor and CLI. Avoid installing the same Rampart pair at both user and
+workspace scope unless you intentionally want duplicate hook evaluation.
+
+Current Cline CLI source searches `~/Documents/Cline/Hooks`, `~/.cline/hooks`,
+`.clinerules/hooks`, and `.cline/hooks`. `CLINE_DIR` relocates the `~/.cline`
+root. In the upstream source reviewed for this release, `--data-dir` and
+`CLINE_DATA_DIR` relocate runtime state but do **not** relocate hook discovery.
+Rampart accepts `--data-dir` for command-line parity and reports that fact.
+
+Cline CLI advertises `--hooks-dir`, but the reviewed loader currently stores
+the override without consuming it in file-hook discovery. Rampart can install
+an explicit directory, but you must pass the same path to a Cline build that
+honors it and confirm host activation; do not treat the artifact alone as proof.
+
+<Warning>
+  Do not use Cline CLI's legacy `--yolo` mode when relying on Rampart. Current
+  Cline disables runtime hooks in that mode. Ordinary auto-approval settings do
+  not imply this legacy mode.
+</Warning>
+
+<Warning>
+  Current Cline CLI logs and continues when a pre-tool hook times out, fails to
+  launch, or emits invalid control JSON. It also runs post-tool file hooks
+  asynchronously and ignores their control response. A valid Rampart pre-call
+  denial still cancels the call, but the CLI path is not a fail-closed boundary
+  for hook infrastructure failure, and post-tool checks provide audit evidence
+  rather than blocking the already-completed call or subsequent agent loop.
+</Warning>
 
 ## What Gets Intercepted
 
-| Tool Call | Example | Intercepted? |
-|-----------|---------|:---:|
-| Shell commands | `npm install`, `rm -rf` | ✅ |
-| File reads | Reading `.env`, `id_rsa` | ✅ |
-| File writes | Writing to `/etc/`, config files | ✅ |
-| File edits | Modifying source code | ✅ |
+| Tool family | Current examples | Rampart type |
+|---|---|---|
+| Shell | `run_commands`, `execute_command`, `bash` | `exec` |
+| File reads/search | `read_files`, `read_file`, `search_codebase` | `read` |
+| File changes | `editor`, `apply_patch`, `replace_in_file`, `write_to_file` | `write` |
+| Web | `fetch_web_content`, `web_fetch`, `browser_action` | `fetch` |
+| Delegation/teams | `spawn_agent`, `team_run_task`, team lifecycle tools | `agent` |
+| MCP | legacy wrappers and current `server__tool` names | shared MCP classifier |
+
+Rampart evaluates every path in current batched reads and patches, and every
+command in `run_commands`. Current multi-URL `fetch_web_content` calls are
+denied with a request to split the batch, because allowing after evaluating
+only one URL would be unsafe. Unknown future pre-call tools fail closed in
+enforce mode until Rampart can classify them.
+
+Coverage applies only to calls Cline exposes through these hooks. It is not a
+system-wide syscall or network boundary, and custom/plugin tools require a
+known mapping before Rampart will allow them in enforce mode.
 
 ## How It Works
 
-When Cline wants to execute a tool:
+1. Cline sends a JSON hook payload to `rampart hook --format cline`.
+2. Rampart normalizes the editor `PreToolUse`/`PostToolUse` envelope or the
+   current CLI `tool_call`/`tool_result` envelope.
+3. Rampart evaluates the call against local YAML policies.
+4. An allowed call returns `{"cancel":false}`. A denied or approval-required
+   call returns `{"cancel":true}` with policy context.
+5. In the editor, `PostToolUse` can return the normal Cline cancellation
+   response. Current Cline CLI launches post-tool hooks asynchronously and
+   ignores that response, so the same hook records the decision but cannot stop
+   continuation in the CLI host.
 
-1. Cline's hook system sends the tool call to `rampart hook --format cline` via stdin (JSON)
-2. Rampart evaluates the call against your YAML policies
-3. If **allowed**: Rampart returns `{"cancel":false}`, Cline proceeds
-4. If **denied**: Rampart returns `{"cancel":true,"errorMessage":"Blocked by Rampart: reason"}`, Cline never executes the command
-5. If **ask**: Rampart returns `{"cancel":true}` immediately (no waiting), blocking execution
+Cline does not provide Rampart with a reliable native ask/resume contract, so
+`ask` fails closed as immediate cancellation rather than waiting indefinitely.
 
-**Ask behavior:** Unlike integrations with native approval UI, Cline gets an immediate `cancel:true` response for `ask` policies. This prevents Cline from hanging while waiting for approval.
-
-After setup, you continue using Cline normally and can confirm observed calls
-with `rampart watch`.
-
-## Monitor in Real Time
-
-Open a separate terminal to watch decisions as they happen:
-
-```bash
-rampart watch
-```
-
-## Start in Monitor Mode
-
-Not sure about your policies yet? Set your policy's `default_action: allow` and
-use `action: watch` rules instead of `deny`. Calls Cline emits to the installed
-hooks are logged without being blocked. Check `rampart watch`, then switch rules
-to `deny` when you're confident.
+`rampart verify cline` checks owned content, the correct platform filename,
+the POSIX executable bit where applicable, and a safe adapter denial canary. It
+does not claim that a real Cline process invoked the hook; confirm observed
+calls with `rampart watch` before relying on a new host/version.
 
 ## Troubleshooting
 
-**Hooks not intercepting anything?**
+If no calls appear in `rampart watch`:
 
-Check that Cline's settings have the Rampart hook entries. In VS Code, open Cline settings and look for hook configuration pointing to `rampart hook`.
+1. Run `rampart verify cline`.
+2. Confirm both Rampart hooks remain enabled in Cline's Hooks UI.
+3. Confirm you did not launch Cline CLI with legacy `--yolo`.
+4. For a custom directory, confirm that exact Cline build actually honors
+   `--hooks-dir`.
+5. Rerun `rampart setup cline` after upgrading from an older Rampart layout.
 
-**Getting false positives?**
-
-Adjust your policies in `~/.rampart/policies/` or use `rampart watch` to see which rules are firing, then tune the patterns.
+For a hard boundary against host hook failure, add OS/container isolation; a
+native in-process hook cannot force Cline CLI itself to fail closed.
 
 ## Uninstall
 
 ```bash
 rampart setup cline --remove
+# or match the scope used at install time
+rampart setup cline --workspace --remove
+rampart setup cline --hooks-dir /absolute/path/to/hooks --remove
 ```
 
-This removes the Rampart hook scripts. Your policies and audit logs in `~/.rampart/` are preserved.
+Only Rampart-owned files are removed. Policies and audit logs under
+`~/.rampart/` are preserved.

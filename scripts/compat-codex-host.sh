@@ -299,7 +299,9 @@ allow_target = Path(sys.argv[9])
 source_home = sys.argv[10]
 
 events = []
-for audit_path in sorted(audit_dir.glob("audit-hook-*.jsonl")):
+# The hook now appends to Rampart's unified daily audit chain. Keep accepting
+# legacy hook-only files as well so this proof still works across upgrades.
+for audit_path in sorted(audit_dir.glob("*.jsonl")):
     for number, line in enumerate(audit_path.read_text(encoding="utf-8").splitlines(), 1):
         try:
             events.append(json.loads(line))

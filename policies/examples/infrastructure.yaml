@@ -35,7 +35,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "kubectl apply *"
@@ -53,7 +53,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "terraform apply*"
@@ -67,7 +67,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "docker push *"
@@ -84,7 +84,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: watch
         when:
           command_matches:
             - "kubectl get *"
@@ -150,7 +150,7 @@ tests:
   - name: "approves kubectl apply"
     tool: exec
     params: { command: "kubectl apply -f deploy.yaml" }
-    expect: require_approval
+    expect: ask
   - name: "blocks terraform destroy"
     tool: exec
     params: { command: "terraform destroy -auto-approve" }
@@ -162,4 +162,4 @@ tests:
   - name: "approves terraform apply"
     tool: exec
     params: { command: "terraform apply" }
-    expect: require_approval
+    expect: ask

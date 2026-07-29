@@ -1,40 +1,42 @@
 ---
 title: Uninstall
-description: "Uninstall Rampart cleanly by removing agent hooks, stopping services, and deleting local state. Restore Claude Code, Cline, or OpenClaw to original behavior."
+description: "Uninstall Rampart cleanly while preserving agent configuration, credentials, histories, sessions, and memories."
 ---
 
 # Uninstall
 
-## 1. Remove Agent Hooks
+## 1. Remove Rampart-managed integrations and services
 
-Remove Rampart hooks from each agent you set up:
+The top-level command removes Rampart-owned hooks and plugins from Claude Code,
+Cline, Codex, GitHub Copilot, Antigravity, Gemini CLI, Hermes Agent, and
+OpenClaw, then stops and removes the Rampart service:
 
 ```bash
-# Claude Code
+rampart uninstall
+# Non-interactive automation:
+rampart uninstall --yes
+```
+
+Removal is ownership-aware: it preserves agent credentials, histories,
+sessions, memories, workspaces, unrelated hooks/plugins, and non-Rampart
+configuration. If Rampart cannot prove that a file or directory belongs to it,
+the command leaves that path in place, reports it, and exits unsuccessfully so
+automation cannot mistake a partial uninstall for success.
+
+To remove only one integration, use its setup command directly:
+
+```bash
 rampart setup claude-code --remove
-
-# Cline
 rampart setup cline --remove
-
-# OpenClaw
+rampart setup codex --remove
+rampart setup copilot --remove
+rampart setup antigravity --remove
+rampart setup gemini --remove
+rampart setup hermes --remove
 rampart setup openclaw --remove
 ```
 
-This restores agent settings to their pre-Rampart state. Your agent will work exactly as it did before.
-
-## 2. Stop Running Services
-
-```bash
-# If using rampart serve as a systemd service
-sudo systemctl stop rampart-serve
-sudo systemctl disable rampart-serve
-
-# If running manually
-pkill -f 'rampart serve'
-pkill -f 'rampart serve'
-```
-
-## 3. Remove the Binary
+## 2. Remove the Binary
 
 ### Homebrew
 
@@ -55,7 +57,7 @@ rm $(which rampart)
 sudo rm /usr/local/bin/rampart
 ```
 
-## 4. Clean Up Data (Optional)
+## 3. Clean Up Rampart Data (Optional)
 
 Rampart stores everything under `~/.rampart/`:
 
@@ -74,12 +76,16 @@ rm -rf ~/.rampart/
 | `~/.rampart/signing.key` | HMAC key for approval URLs | Yes (auto-regenerated) |
 | `~/.rampart/lib/` | LD_PRELOAD library | Yes |
 
-## 5. Remove Environment Variables (If Set)
+Deleting `~/.rampart/` is deliberately separate from `rampart uninstall` so
+policy and audit evidence are never destroyed implicitly.
+
+## 4. Remove Legacy Environment Variables (If Set)
 
 Check your shell profile (`~/.bashrc`, `~/.zshrc`, `~/.profile`) for:
 
 ```bash
 # Remove these lines if present
+# Older pre-native-hook installations may have added this obsolete hook:
 export NODE_OPTIONS="--require $HOME/clawd/rampart/hooks/node-fs-hook.js"
 export LD_PRELOAD=~/.rampart/lib/librampart.so
 ```
@@ -93,6 +99,6 @@ which rampart
 # Should not exist
 ls ~/.rampart/
 
-# Agent should work normally
-claude   # or your agent of choice
+# The agent's own state should remain intact
+claude   # or another previously protected agent
 ```

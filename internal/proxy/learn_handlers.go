@@ -14,15 +14,14 @@
 package proxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/peg/rampart/internal/policy"
-	"gopkg.in/yaml.v3"
 )
 
 // learnRequest is the request body for POST /v1/rules/learn.
@@ -44,50 +43,6 @@ type learnResponse struct {
 	Source   string `json:"source"`
 }
 
-// userOverridesPolicy is the YAML structure for user-overrides.yaml.
-type userOverridesPolicy struct {
-	Policies []userOverrideEntry `yaml:"policies"`
-}
-
-type userOverrideEntry struct {
-	Name  string             `yaml:"name"`
-	Match userOverrideMatch  `yaml:"match"`
-	Rules []userOverrideRule `yaml:"rules"`
-}
-
-// toolList unmarshals both scalar ("exec") and sequence (["exec"]) YAML forms.
-type toolList []string
-
-func (t *toolList) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	// Try sequence first
-	var seq []string
-	if err := unmarshal(&seq); err == nil {
-		*t = seq
-		return nil
-	}
-	// Fall back to scalar string
-	var s string
-	if err := unmarshal(&s); err != nil {
-		return err
-	}
-	*t = []string{s}
-	return nil
-}
-
-type userOverrideMatch struct {
-	Tool toolList `yaml:"tool"`
-}
-
-type userOverrideRule struct {
-	When    userOverrideWhen `yaml:"when"`
-	Action  string           `yaml:"action"`
-	Message string           `yaml:"message"`
-}
-
-type userOverrideWhen struct {
-	CommandMatches []string `yaml:"command_matches,omitempty,flow"`
-}
-
 // learnRateLimit is the minimum interval between successful /v1/rules/learn writes.
 // Prevents bulk rule injection via a compromised admin token.
 const learnRateLimit = 200 * time.Millisecond // max ~5 writes/sec
@@ -98,12 +53,13 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req learnRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
-	if req.Tool == "" || req.Args == "" {
+	req.Tool = strings.TrimSpace(req.Tool)
+	if req.Tool == "" || strings.TrimSpace(req.Args) == "" {
 		writeError(w, http.StatusBadRequest, "tool and args are required")
 		return
 	}
@@ -113,12 +69,17 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "decision must be \"allow\" — use policy YAML for deny rules")
 		return
 	}
+	switch req.Tool {
+	case "exec", "read", "write", "edit":
+		// These tools have exact command/path conditions in the policy schema.
+	default:
+		writeError(w, http.StatusBadRequest, "automatic allow persistence supports exec, read, write, and edit only; use an explicit policy for other tools")
+		return
+	}
 
-	// Compute smart glob pattern.
-	pattern := policy.BuildAllowPattern(req.Args)
-	hash := policy.HashPattern(pattern)
-	ruleName := fmt.Sprintf("user-allow-%s", hash)
-
+	// Persist exactly the approved invocation. Shell wildcard characters are
+	// escaped so an approval cannot silently authorize related commands.
+	pattern := policy.BuildExactAllowPattern(req.Args)
 	// Resolve overrides path.
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -127,30 +88,17 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 	}
 	overridesPath := filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
 
-	// Ensure directory exists.
-	if err := os.MkdirAll(filepath.Dir(overridesPath), 0o750); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create policies dir: %v", err))
-		return
-	}
-
 	s.policyWriteMu.Lock()
 	defer s.policyWriteMu.Unlock()
 
-	// Read or initialize the file.
-	var cfg userOverridesPolicy
-	data, err := os.ReadFile(overridesPath)
-	if err == nil {
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to parse user-overrides.yaml: %v", err))
-			return
-		}
+	ruleName := policy.UserOverrideRuleName(req.Tool, pattern)
+	existing, err := policy.LoadUserOverridesPolicy(overridesPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load user overrides: %v", err))
+		return
 	}
-	// If file doesn't exist, cfg.Policies will be nil — that's fine.
-
-	// Check for duplicate pattern (by rule name).
-	for _, p := range cfg.Policies {
-		if p.Name == ruleName {
-			// 409 — return existing rule.
+	for _, entry := range existing.Policies {
+		if entry.Name == ruleName {
 			writeJSON(w, http.StatusConflict, learnResponse{
 				RuleName: ruleName,
 				Tool:     req.Tool,
@@ -162,68 +110,39 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build new entry.
-	entry := userOverrideEntry{
-		Name: ruleName,
-		Match: userOverrideMatch{
-			Tool: []string{req.Tool},
-		},
-		Rules: []userOverrideRule{
-			{
-				When: userOverrideWhen{
-					CommandMatches: []string{pattern},
-				},
-				Action:  req.Decision,
-				Message: fmt.Sprintf("User %s (always) via %s", req.Decision, req.Source),
-			},
-		},
-	}
-	cfg.Policies = append(cfg.Policies, entry)
-
-	// Marshal and write atomically.
-	out, err := yaml.Marshal(&cfg)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to marshal policy: %v", err))
-		return
-	}
-
-	// Rate limit: only throttle successful writes, not validation rejections.
+	// Serialize the inexpensive rate check with policy creation. The durable
+	// helper below adds a cross-process lock for bridges or parallel services.
 	s.mu.Lock()
 	if time.Since(s.lastLearnAPI) < learnRateLimit {
 		s.mu.Unlock()
 		writeError(w, http.StatusTooManyRequests, "learn rate limited — slow down rule writes")
 		return
 	}
-	s.lastLearnAPI = time.Now()
 	s.mu.Unlock()
 
-	header := "# Rampart user override policies\n# Auto-generated entries are added here when you click \"Always Allow\"\n# This file is never overwritten by upgrades or rampart setup\n"
-	content := header + string(out)
-
-	dir := filepath.Dir(overridesPath)
-	tmpFile, err := os.CreateTemp(dir, ".rampart-user-overrides-*.yaml.tmp")
+	result, err := policy.EnsureUserOverrideAllow(
+		overridesPath,
+		req.Tool,
+		pattern,
+		fmt.Sprintf("User %s (always) via %s", req.Decision, req.Source),
+	)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create temp file: %v", err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to persist user override: %v", err))
 		return
 	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.WriteString(content); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write: %v", err))
+	if !result.Created {
+		writeJSON(w, http.StatusConflict, learnResponse{
+			RuleName: result.Name,
+			Tool:     req.Tool,
+			Pattern:  result.Pattern,
+			Decision: req.Decision,
+			Source:   req.Source,
+		})
 		return
 	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to close temp file: %v", err))
-		return
-	}
-	if err := os.Rename(tmpPath, overridesPath); err != nil {
-		os.Remove(tmpPath)
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to rename: %v", err))
-		return
-	}
+	s.mu.Lock()
+	s.lastLearnAPI = time.Now()
+	s.mu.Unlock()
 
 	// Reload policies so the new rule takes effect immediately.
 	if s.engine != nil {
@@ -232,21 +151,21 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.logger.Info("proxy: learned rule", "rule", ruleName, "tool", req.Tool, "pattern", pattern, "decision", req.Decision)
+	s.logger.Info("proxy: learned rule", "rule", result.Name, "tool", req.Tool, "pattern", result.Pattern, "decision", req.Decision)
 
 	// Broadcast SSE event.
 	s.broadcastSSE(map[string]any{
 		"type":      "rule.learned",
-		"rule_name": ruleName,
+		"rule_name": result.Name,
 		"tool":      req.Tool,
-		"pattern":   pattern,
+		"pattern":   result.Pattern,
 		"decision":  req.Decision,
 	})
 
 	writeJSON(w, http.StatusCreated, learnResponse{
-		RuleName: ruleName,
+		RuleName: result.Name,
 		Tool:     req.Tool,
-		Pattern:  pattern,
+		Pattern:  result.Pattern,
 		Decision: req.Decision,
 		Source:   req.Source,
 	})

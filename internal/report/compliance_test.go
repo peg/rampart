@@ -25,6 +25,20 @@ import (
 	"github.com/peg/rampart/internal/audit"
 )
 
+func TestExpandHomePathAcceptsWindowsSeparator(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := expandHomePath(`~\reports\posture.json`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, `reports\posture.json`); got != want {
+		t.Fatalf("expandHomePath() = %q, want %q", got, want)
+	}
+}
+
 func TestGeneratePostureReport_Compliant(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
@@ -352,6 +366,15 @@ policies:
 	}
 	if rep.Summary.DecisionCounts.Total != 4 {
 		t.Fatalf("total count = %d, want 4", rep.Summary.DecisionCounts.Total)
+	}
+}
+
+func TestDecisionCountsTreatsLegacyApprovalNameAsAsk(t *testing.T) {
+	counts := computeDecisionCounts([]audit.Event{
+		{Decision: audit.EventDecision{Action: "require_approval"}},
+	})
+	if counts.Ask != 1 || counts.Other != 0 {
+		t.Fatalf("decision counts = %+v, want require_approval classified as ask", counts)
 	}
 }
 

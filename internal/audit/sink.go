@@ -32,10 +32,22 @@ const (
 type SinkOption func(*sinkConfig)
 
 type sinkConfig struct {
-	fsync          bool
-	rotateSize     int64
-	anchorInterval int
-	logger         *slog.Logger
+	fsync             bool
+	rotateSize        int64
+	anchorInterval    int
+	checkpointStartup bool
+	logger            *slog.Logger
+}
+
+// WithCheckpointStartup lets a short-lived writer resume from the validated
+// shared checkpoint and current log tail. If either is absent, stale, or
+// malformed, startup falls back to complete chain recovery. Long-running
+// services should keep the default full recovery so startup itself verifies
+// the complete trail.
+func WithCheckpointStartup() SinkOption {
+	return func(cfg *sinkConfig) {
+		cfg.checkpointStartup = true
+	}
 }
 
 func defaultSinkConfig() sinkConfig {

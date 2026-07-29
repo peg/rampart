@@ -76,12 +76,12 @@ func TestRenderYAMLParseable(t *testing.T) {
 func TestWriteToFileCreatesDir(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "nested", "deep", "policy.yaml")
-	
+
 	p, _ := FindPreset("coding-agent")
 	if err := p.WriteToFile(dest, false); err != nil {
 		t.Fatalf("WriteToFile failed: %v", err)
 	}
-	
+
 	if _, err := os.Stat(dest); os.IsNotExist(err) {
 		t.Error("file was not created")
 	}
@@ -90,12 +90,12 @@ func TestWriteToFileCreatesDir(t *testing.T) {
 func TestWriteToFileNoOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "policy.yaml")
-	
+
 	// Create existing file
 	if err := os.WriteFile(dest, []byte("existing"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	p, _ := FindPreset("coding-agent")
 	err := p.WriteToFile(dest, false)
 	if err == nil {
@@ -109,17 +109,17 @@ func TestWriteToFileNoOverwrite(t *testing.T) {
 func TestWriteToFileForceOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "policy.yaml")
-	
+
 	// Create existing file
 	if err := os.WriteFile(dest, []byte("existing"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	p, _ := FindPreset("coding-agent")
 	if err := p.WriteToFile(dest, true); err != nil {
 		t.Fatalf("WriteToFile with force=true failed: %v", err)
 	}
-	
+
 	content, _ := os.ReadFile(dest)
 	if strings.Contains(string(content), "existing") {
 		t.Error("file was not overwritten")
@@ -147,7 +147,7 @@ func TestCodingAgentBlocksCredentials(t *testing.T) {
 	p, _ := FindPreset("coding-agent")
 	yamlBytes, _ := p.RenderYAML()
 	content := string(yamlBytes)
-	
+
 	// Should block credential paths
 	if !strings.Contains(content, ".ssh") && !strings.Contains(content, "id_rsa") {
 		t.Error("coding-agent should block SSH keys")
@@ -161,7 +161,7 @@ func TestResearchAgentReadOnly(t *testing.T) {
 	p, _ := FindPreset("research-agent")
 	yamlBytes, _ := p.RenderYAML()
 	content := string(yamlBytes)
-	
+
 	// Should allow read but not write
 	if !strings.Contains(content, "read") {
 		t.Error("research-agent should mention read tool")
@@ -172,7 +172,7 @@ func TestDevopsAgentRequiresApproval(t *testing.T) {
 	p, _ := FindPreset("devops-agent")
 	yamlBytes, _ := p.RenderYAML()
 	content := string(yamlBytes)
-	
+
 	if !strings.Contains(content, "ask") {
 		t.Error("devops-agent should use ask for sensitive ops")
 	}

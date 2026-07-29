@@ -9,3 +9,11 @@ docs-site/
 .idea/
 *.test
 coverage.out
+dist/
+/rampart
+/rampart.exe
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.venv/
+**/node_modules/

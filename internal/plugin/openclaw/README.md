@@ -49,7 +49,7 @@ Arguments:
 - `allow` returns nothing or param adjustment only when explicitly requested by Rampart
 - there is no legacy `params.ask = "always"` mutation path
 - degraded mode blocks sensitive tools (`exec`, `write`) when serve is unreachable or returns 5xx
-- configured fail-open tools (`read`, `web_fetch`, `web_search`, `image` by default) remain explicit and test-covered
+- explicitly configured fail-open tools remain opt-in and test-covered; the deprecated coarse `failOpen: true` switch maps to `read`, `web_fetch`, `web_search`, and `image` for compatibility
 - command-execution aliases such as OpenClaw `bash` map to Rampart `exec` for policy checks, learning, and audit events
 - provider-surface replay covers canonical `exec`, nested `input.command`, command aliases, file tools, hosted approval, auth-error fail-closed behavior, audit normalization, and degraded sensitive-tool blocking
 
@@ -71,7 +71,7 @@ RAMPART_OPENCLAW_RESTART_SERVICES= \
 node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-Run it only with a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script starts the ephemeral policy service at that address, runs real OpenClaw Codex app-server turns, leaves OpenClaw config untouched, and restores the isolated token state. It proves routine native-shell interception plus a native plugin approval, `allow-once`, exact resume, and successful execution.
+Run it only with a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script starts the ephemeral policy service at that address, runs real OpenClaw Codex app-server turns, leaves OpenClaw config untouched, and restores the isolated token state. It proves routine native-shell interception, a native plugin approval with `allow-once` exact resume and successful execution, plus a native deny with no canary side effect.
 
 By default the script resolves the approval through `plugin.approval.*`. When
 OpenClaw scopes approvals to a connected UI client, set
@@ -86,6 +86,9 @@ Pass criteria:
 - the OpenClaw trajectory contains a native Codex `bash` tool call and its
   successful, matching `tool.result` output for the marker command
 - the temporary Rampart audit log contains a correlated canonical `exec` event for that marker command
+- a disposable canary beneath the script's temporary directory reaches native
+  `bash`, receives a matching Rampart `deny` audit and denied tool result, and
+  remains byte-for-byte unchanged
 - a second safe command is approved once through `plugin.approval.resolve`, resumes, executes, and has correlated trajectory plus Rampart `ask` audit evidence
 
 A successful assistant response or OpenClaw trajectory alone is not enough; this test fails unless Rampart audit proves the native shell call crossed the policy path.

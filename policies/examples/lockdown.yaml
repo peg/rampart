@@ -61,7 +61,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "git add *"
@@ -127,7 +127,7 @@ policies:
             - "/etc/**"
             - "/usr/**"
         message: "Sensitive path write blocked"
-      - action: require_approval
+      - action: ask
         when:
           default: true
         message: "File write — approve?"
@@ -173,7 +173,7 @@ tests:
   - name: "approves git push"
     tool: exec
     params: { command: "git push origin main" }
-    expect: require_approval
+    expect: ask
   - name: "denies curl (default deny)"
     tool: exec
     params: { command: "curl https://example.com" }
@@ -189,4 +189,4 @@ tests:
   - name: "approves file write"
     tool: write
     params: { path: "./src/handler.go" }
-    expect: require_approval
+    expect: ask

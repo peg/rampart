@@ -34,14 +34,16 @@ Every community policy must include metadata headers:
 # @min-rampart: 0.6.0
 ```
 
-CI automatically runs `rampart policy lint` and `rampart bench --min-coverage 60` on every PR.
+CI automatically lints every community policy and runs the inline behavioral
+tests declared by each changed policy.
 
 Good community policies should:
 
 1. **Have clear comments** explaining what each rule does and why
 2. **Start permissive** — block the dangerous stuff, allow everything else
-3. **Use `require_approval`** for risky-but-legitimate operations
-4. **Include `log` rules** for audit trail on read-only operations
-5. **Not assume a specific setup** — work across cloud providers, cluster configs, etc.
+3. **Use `ask`** for risky-but-legitimate operations
+4. **Include `watch` rules** for audit visibility on read-only operations
+5. **Include inline tests** for restrictive, approval, observation, and benign behavior
+6. **Not assume a specific setup** — work across cloud providers, cluster configs, etc.
 
 File an issue or open a PR at [github.com/peg/rampart](https://github.com/peg/rampart).

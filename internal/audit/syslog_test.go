@@ -8,8 +8,10 @@ package audit
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -198,6 +200,49 @@ func TestMultiSink_FanOutUsesDefaultedEvent(t *testing.T) {
 	}
 	if secondaryEvent.Host.Hostname == "" || secondaryEvent.Host.OS == "" || secondaryEvent.Host.Arch == "" {
 		t.Fatalf("expected defaulted host context in secondary sink: %+v", *secondaryEvent.Host)
+	}
+}
+
+func TestMultiSinkDoesNotFanOutWhenPrimaryRejectsEvent(t *testing.T) {
+	primary := &mockSink{writeFn: func(Event) error { return errors.New("primary unavailable") }}
+	syslogSink := &mockSyslogSender{}
+	ms := NewMultiSink(primary, syslogSink, nil, nil)
+	if err := ms.Write(testEvent()); err == nil {
+		t.Fatal("Write unexpectedly succeeded")
+	}
+	if err := ms.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(syslogSink.events) != 0 {
+		t.Fatalf("secondary sink received %d event(s) after primary failure", len(syslogSink.events))
+	}
+}
+
+func TestMultiSink_CloseIsConcurrentSafeAndIdempotent(t *testing.T) {
+	primary := &mockSink{writeFn: func(Event) error { return nil }}
+	ms := NewMultiSink(primary, nil, nil, nil)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 16)
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- ms.Close()
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+	if err := ms.Write(testEvent()); err == nil {
+		t.Fatal("Write unexpectedly succeeded after Close")
+	}
+	if err := ms.Flush(); err != nil {
+		t.Fatalf("Flush after Close: %v", err)
 	}
 }
 

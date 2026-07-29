@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Engine evaluates tool calls against loaded policies.
@@ -36,17 +38,20 @@ import (
 //
 // Engine is safe for concurrent use.
 type Engine struct {
-	mu             sync.RWMutex
-	config         *Config
-	store          PolicyStore
-	defaultAction  Action
-	lastLoadedAt   time.Time
-	lastConfigHash string
-	responseRegex  map[string]*regexp.Regexp
-	logger         *slog.Logger
-	callCounter    CallCounter
-	stopReload     chan struct{} // closed to stop periodic reload goroutine
-	stopOnce       sync.Once
+	mu              sync.RWMutex
+	onceMu          sync.Mutex // serializes one-time rule claims with policy reloads
+	config          *Config
+	store           PolicyStore
+	defaultAction   Action
+	lastLoadedAt    time.Time
+	lastConfigHash  string
+	responseRegex   map[string]*regexp.Regexp
+	logger          *slog.Logger
+	callCounter     CallCounter   // enforcement state for call_count policy rules
+	telemetryCalls  CallCounter   // best-effort status telemetry; never an authorization dependency
+	stopReload      chan struct{} // closed to stop periodic reload goroutine
+	startReloadOnce sync.Once
+	stopOnce        sync.Once
 }
 
 // New creates an engine from a policy store.
@@ -62,14 +67,19 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 	}
 
 	e := &Engine{
-		config:      cfg,
-		store:       store,
-		logger:      logger,
-		callCounter: NewSlidingWindowCounter(),
+		config:         cfg,
+		store:          store,
+		logger:         logger,
+		callCounter:    NewSlidingWindowCounter(),
+		telemetryCalls: NewSlidingWindowCounter(),
+		stopReload:     make(chan struct{}),
 	}
 	e.defaultAction = e.parseDefaultAction(cfg.DefaultAction)
 	e.lastLoadedAt = time.Now().UTC()
-	e.lastConfigHash = configFingerprint(cfg)
+	e.lastConfigHash, err = configFingerprint(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("engine: fingerprint config: %w", err)
+	}
 	e.responseRegex = cfg.responseRegexCache
 
 	logger.Info("engine: policies loaded",
@@ -79,6 +89,19 @@ func New(store PolicyStore, logger *slog.Logger) (*Engine, error) {
 	)
 
 	return e, nil
+}
+
+// NotificationConfig returns a defensive copy of the notification settings
+// from the same validated policy snapshot used for evaluation.
+func (e *Engine) NotificationConfig() *NotifyConfig {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.config == nil || e.config.Notify == nil {
+		return nil
+	}
+	config := *e.config.Notify
+	config.On = append([]string(nil), e.config.Notify.On...)
+	return &config
 }
 
 // Evaluate runs a tool call through all matching policies and returns
@@ -103,11 +126,26 @@ func (e *Engine) Evaluate(call ToolCall) Decision {
 
 func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	start := time.Now()
+	if err := call.validateSecurityInput(); err != nil {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("ambiguous tool input (%v); failing closed", err),
+			EvalDuration: time.Since(start),
+		}
+	}
 
 	e.mu.RLock()
 	cfg := e.config
 	defaultAction := e.defaultAction
 	e.mu.RUnlock()
+
+	if field, size := oversizedMatchInput(cfg, call); field != "" {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("%s is %d bytes and exceeds the %d-byte policy matching limit; failing closed", field, size, maxGlobInputLen),
+			EvalDuration: time.Since(start),
+		}
+	}
 
 	if opts.DefaultDeny {
 		defaultAction = ActionDeny
@@ -143,16 +181,17 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	// Deny wins. Then log. Then allow.
 	// If policies match scope but no rules fire, fall through to default action.
 	var (
-		finalAction       = ActionAllow
-		finalMessage      string
-		finalAudit        bool
-		finalHeadlessOnly bool
-		finalFromProject  bool
-		matched           []string
-		anyRuleFired      bool
-		consumedOnce      bool
-		consumedPolicy    string
-		consumedRuleIdx   int
+		finalAction        = ActionAllow
+		finalMessage       string
+		finalAudit         bool
+		finalHeadlessOnly  bool
+		finalFromProject   bool
+		matched            []string
+		anyRuleFired       bool
+		anyGlobalRuleFired bool
+		consumedOnce       bool
+		consumedPolicy     string
+		consumedRuleIdx    int
 	)
 
 	var finalWebhookConfig *WebhookActionConfig
@@ -165,6 +204,9 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 
 		action, message, rule := res.action, res.message, res.rule
 		anyRuleFired = true
+		if p.Source != "project" {
+			anyGlobalRuleFired = true
+		}
 		matched = append(matched, p.Name)
 
 		switch action {
@@ -239,6 +281,39 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		return durableAllow
 	}
 
+	// Repository-local policies are additive. If no global rule fired, they
+	// must not turn a restrictive global default into a less restrictive
+	// outcome. This matters most for default_action: deny: a checked-in allow
+	// rule must never create authority the user's global policy did not grant.
+	if !anyGlobalRuleFired {
+		switch defaultAction {
+		case ActionDeny:
+			return Decision{
+				Action:          ActionDeny,
+				MatchedPolicies: matched,
+				Message:         "project policy cannot weaken global default deny",
+				EvalDuration:    time.Since(start),
+				Suggestions:     GenerateSuggestions(call),
+			}
+		case ActionAsk:
+			return Decision{
+				Action:          ActionAsk,
+				MatchedPolicies: matched,
+				Message:         "project policy cannot weaken global default ask",
+				EvalDuration:    time.Since(start),
+			}
+		case ActionWatch:
+			if finalAction == ActionAllow {
+				return Decision{
+					Action:          ActionWatch,
+					MatchedPolicies: matched,
+					Message:         "project policy cannot weaken global default watch",
+					EvalDuration:    time.Since(start),
+				}
+			}
+		}
+	}
+
 	// If policies matched scope but no rules actually fired,
 	// fall through to the configured default action.
 	if !anyRuleFired {
@@ -262,6 +337,109 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		ConsumedRulePolicy: consumedPolicy,
 		ConsumedRuleIndex:  consumedRuleIdx,
 	}
+}
+
+// Enforce records an actual host tool invocation and atomically consumes any
+// matching once:true authorization. Callers that are only previewing policy
+// must use Evaluate or EvaluateWith instead.
+//
+// The engine owns the arrival timestamp so an untrusted host payload cannot
+// move call_count events outside their real enforcement window. Counter-state
+// failures deny the call rather than silently losing enforcement state.
+// Status telemetry is deliberately best-effort and cannot deny a call.
+func (e *Engine) Enforce(call ToolCall, opts EvalOptions) Decision {
+	arrivalTime := time.Now().UTC()
+	call.Timestamp = arrivalTime
+	if e.telemetryCalls != nil {
+		_ = e.telemetryCalls.Increment(call.Tool, arrivalTime)
+	}
+	if e.RequiresCallCount(call) {
+		if err := e.IncrementCallCount(call.Tool, arrivalTime); err != nil {
+			e.logger.Error("engine: call counter unavailable; denying call",
+				"tool", call.Tool,
+				"error", err,
+			)
+			return Decision{
+				Action:      ActionDeny,
+				Message:     "call counter capacity unavailable; refusing tool call",
+				Suggestions: GenerateSuggestions(call),
+			}
+		}
+	}
+	return e.EvaluateAndConsume(call, opts)
+}
+
+// EvaluateAndConsume evaluates a tool call and atomically claims any matching
+// once:true allow before returning it. Ordinary evaluations stay lock-free;
+// only callers contending for a one-time allow are serialized.
+//
+// Enforcement paths should use this method. Preview and policy-test paths
+// should continue to use Evaluate or EvaluateWith because they must not mutate
+// policy state.
+func (e *Engine) EvaluateAndConsume(call ToolCall, opts EvalOptions) Decision {
+	decision := e.EvaluateWith(call, opts)
+	if !isOnceAllow(decision) {
+		return decision
+	}
+	filePath, _, err := e.onceRuleDetails(decision)
+	if err != nil {
+		return e.denyFailedOnceClaim(call, decision, err)
+	}
+
+	e.onceMu.Lock()
+	defer e.onceMu.Unlock()
+
+	err = withPolicyFileLock(filePath, func() error {
+		// Every hook invocation owns a separate Engine. Refresh only after the
+		// cross-process lock is held so a waiter observes the winner's removal.
+		if reloadErr := e.reloadLocked(true); reloadErr != nil {
+			return reloadErr
+		}
+		decision = e.EvaluateWith(call, opts)
+		if !isOnceAllow(decision) {
+			return nil
+		}
+
+		currentPath, expected, detailErr := e.onceRuleDetails(decision)
+		if detailErr != nil {
+			return detailErr
+		}
+		lockedCanonical, detailErr := canonicalPolicyPath(filePath)
+		if detailErr != nil {
+			return detailErr
+		}
+		currentCanonical, detailErr := canonicalPolicyPath(currentPath)
+		if detailErr != nil {
+			return detailErr
+		}
+		if currentCanonical != lockedCanonical {
+			return fmt.Errorf("engine: one-time rule source changed while claiming")
+		}
+		return e.consumeOnceRulePersistenceLocked(decision, currentPath, expected)
+	})
+	if err != nil {
+		return e.denyFailedOnceClaim(call, decision, err)
+	}
+	return decision
+}
+
+func isOnceAllow(decision Decision) bool {
+	return decision.Action == ActionAllow && decision.ConsumedOnce && decision.ConsumedRulePolicy != ""
+}
+
+func (e *Engine) denyFailedOnceClaim(call ToolCall, decision Decision, err error) Decision {
+	e.logger.Error("engine: failed to claim once rule; denying call",
+		"policy", decision.ConsumedRulePolicy,
+		"rule_index", decision.ConsumedRuleIndex,
+		"error", err,
+	)
+	decision.Action = ActionDeny
+	decision.Message = "one-time authorization could not be claimed; failing closed"
+	decision.Suggestions = GenerateSuggestions(call)
+	decision.ConsumedOnce = false
+	decision.ConsumedRulePolicy = ""
+	decision.ConsumedRuleIndex = 0
+	return decision
 }
 
 func (e *Engine) evaluateMatchingPolicy(p Policy, call ToolCall) evaluatePolicyResult {
@@ -344,9 +522,10 @@ func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
 	if cmd == "" {
 		return false
 	}
+	analysis := analyzeGrantCommand(cmd)
 	cmdMatch := false
 	if len(cond.CommandMatches) > 0 || len(cond.CommandContains) > 0 {
-		cmdMatch, _ = matchGrantCommandField(cond, cmd)
+		cmdMatch, _ = matchGrantCommandFieldWithAnalysis(cond, cmd, ActionAllow, analysis)
 	}
 	if !cmdMatch {
 		cmdMatch = matchFirstCommandEnvAssignment(cond.CommandEnvAssignments, cmd) != ""
@@ -354,7 +533,18 @@ func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
 	if !cmdMatch {
 		return false
 	}
-	return !matchAny(cond.CommandNotMatches, cmd) && !matchAny(cond.CommandNotMatches, NormalizeCommand(cmd))
+	if len(cond.CommandNotMatches) > 0 {
+		if matchCommandAnyForAction(cond.CommandNotMatches, cmd, ActionDeny) ||
+			matchCommandAnyForAction(cond.CommandNotMatches, analysis.normalized, ActionDeny) {
+			return false
+		}
+		for _, component := range analysis.components {
+			if matchCommandAnyForAction(cond.CommandNotMatches, component, ActionDeny) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // isDurableAllowPolicy reports whether a policy came from Rampart's durable
@@ -380,16 +570,17 @@ func durableAllowMessage(p Policy) string {
 // EvaluateResponse runs response-side evaluation against matching policies.
 // Only response-specific conditions are considered.
 // maxResponseMatchSize is the maximum response body size (in bytes) that will
-// be evaluated against regex patterns. Larger responses are truncated to avoid
-// pathological backtracking on user-defined regexes.
+// be evaluated against regex patterns.
 const maxResponseMatchSize = 1 << 20 // 1 MB
 
 func (e *Engine) EvaluateResponse(call ToolCall, response string) Decision {
 	start := time.Now()
-
-	// Cap response size before regex matching to prevent ReDoS on large bodies.
-	if len(response) > maxResponseMatchSize {
-		response = response[:maxResponseMatchSize]
+	if err := call.validateSecurityInput(); err != nil {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("ambiguous tool input (%v); failing closed", err),
+			EvalDuration: time.Since(start),
+		}
 	}
 
 	e.mu.RLock()
@@ -397,11 +588,28 @@ func (e *Engine) EvaluateResponse(call ToolCall, response string) Decision {
 	regexCache := e.responseRegex
 	e.mu.RUnlock()
 
+	if field, size := oversizedMatchInput(cfg, call); field != "" {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("%s is %d bytes and exceeds the %d-byte policy matching limit; failing closed", field, size, maxGlobInputLen),
+			EvalDuration: time.Since(start),
+		}
+	}
 	matching := e.collectMatching(cfg, call)
 	if len(matching) == 0 {
 		return Decision{
 			Action:       ActionAllow,
 			Message:      "no matching policy; response allowed",
+			EvalDuration: time.Since(start),
+		}
+	}
+	// Never scan only a prefix: a deny signature could be hidden beyond the
+	// boundary. Fail closed only when an applicable response rule exists; large
+	// ordinary tool output with no response policy remains unaffected.
+	if len(response) > maxResponseMatchSize && hasResponseRules(matching) {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("response exceeds the %d-byte policy matching limit; failing closed", maxResponseMatchSize),
 			EvalDuration: time.Since(start),
 		}
 	}
@@ -423,9 +631,72 @@ func (e *Engine) EvaluateResponse(call ToolCall, response string) Decision {
 	}
 }
 
+func hasResponseRules(policies []Policy) bool {
+	for _, policy := range policies {
+		for _, rule := range policy.Rules {
+			if len(rule.When.ResponseMatches) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// oversizedMatchInput identifies values that can reach a glob matcher. It is
+// checked once at enforcement entry points so oversized values cannot make a
+// deny pattern silently miss or an allow pattern evaluate only a prefix.
+func oversizedMatchInput(cfg *Config, call ToolCall) (string, int) {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"agent", call.Agent},
+		{"session", call.Session},
+		{"tool", call.Tool},
+		{"command", call.Command()},
+		{"path", call.Path()},
+		{"url", call.URL()},
+		{"domain", call.Domain()},
+	}
+	for _, field := range fields {
+		if len(field.value) > maxGlobInputLen {
+			return field.name, len(field.value)
+		}
+	}
+
+	if cfg == nil {
+		return "", 0
+	}
+	for _, policy := range cfg.Policies {
+		for _, rule := range policy.Rules {
+			for parameter := range rule.When.ToolParamMatches {
+				value, ok := call.Input[parameter]
+				if !ok {
+					continue
+				}
+				text := fmt.Sprintf("%v", value)
+				if len(text) > maxGlobInputLen {
+					return "tool parameter " + parameter, len(text)
+				}
+			}
+		}
+	}
+	return "", 0
+}
+
 // Reload re-reads the policy file and replaces the active configuration.
 // Returns an error if the new file is invalid; the old config remains active.
 func (e *Engine) Reload() error {
+	e.onceMu.Lock()
+	defer e.onceMu.Unlock()
+	return e.reloadLocked(false)
+}
+
+// reloadLocked reloads policy state while the caller holds onceMu. The
+// allowPolicyWipe exception is used only after Rampart has intentionally
+// consumed the last one-time policy from a file; public reload behavior stays
+// fail-closed for accidental empty/truncated edits.
+func (e *Engine) reloadLocked(allowPolicyWipe bool) error {
 	cfg, err := e.store.Load()
 	if err != nil {
 		return fmt.Errorf("engine: reload failed: %w", err)
@@ -443,10 +714,13 @@ func (e *Engine) Reload() error {
 	currentCount := len(e.config.Policies)
 	currentHash := e.lastConfigHash
 	e.mu.RUnlock()
-	if currentCount > 0 && len(cfg.Policies) == 0 {
+	if !allowPolicyWipe && currentCount > 0 && len(cfg.Policies) == 0 {
 		return fmt.Errorf("engine: reload rejected — policy count dropped from %d to 0", currentCount)
 	}
-	nextHash := configFingerprint(cfg)
+	nextHash, err := configFingerprint(cfg)
+	if err != nil {
+		return fmt.Errorf("engine: fingerprint reloaded config: %w", err)
+	}
 	if nextHash == currentHash {
 		return nil
 	}
@@ -467,24 +741,16 @@ func (e *Engine) Reload() error {
 	return nil
 }
 
-func configFingerprint(cfg *Config) string {
-	h := sha256.New()
-	fmt.Fprintf(h, "default=%s|", cfg.DefaultAction)
-	for _, p := range cfg.Policies {
-		fmt.Fprintf(h, "policy:%s:%d{", p.Name, len(p.Rules))
-		for _, r := range p.Rules {
-			// Include rule content so changes to patterns, actions,
-			// messages, etc. are detected even when rule count stays the same.
-			fmt.Fprintf(h, "%s:%v:%s:%v;",
-				r.Action,
-				r.When,
-				r.Message,
-				r.Once,
-			)
-		}
-		h.Write([]byte("}"))
+func configFingerprint(cfg *Config) (string, error) {
+	// Hash the complete serializable policy document rather than a hand-picked
+	// subset. This keeps reload detection aligned automatically as policy fields
+	// are added, while yaml:"-" runtime metadata and compiled caches stay out.
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // PolicyCount returns the number of loaded policies.
@@ -541,19 +807,19 @@ func (e *Engine) GetDefaultAction() string {
 }
 
 // IncrementCallCount records one PreToolUse tool invocation.
-func (e *Engine) IncrementCallCount(tool string, at time.Time) {
+func (e *Engine) IncrementCallCount(tool string, at time.Time) error {
 	if e == nil || e.callCounter == nil {
-		return
+		return nil
 	}
-	e.callCounter.Increment(tool, at)
+	return e.callCounter.Increment(tool, at)
 }
 
 // CallCounts returns per-tool invocation counts for the provided window.
 func (e *Engine) CallCounts(window time.Duration) map[string]int {
-	if e == nil || e.callCounter == nil {
+	if e == nil || e.telemetryCalls == nil {
 		return map[string]int{}
 	}
-	return e.callCounter.Snapshot(window, time.Now().UTC())
+	return e.telemetryCalls.Snapshot(window, time.Now().UTC())
 }
 
 // PolicySummaryRule is a flattened policy rule summary for UI/API display.
@@ -771,17 +1037,12 @@ func (e *Engine) evaluateResponsePolicies(
 			e.logger.Warn("engine: webhook action not supported for response rules, treating as deny",
 				"policy", p.Name)
 			return ActionDeny, message, matched, true
-		case ActionRequireApproval:
-			if finalAction != ActionDeny && finalAction != ActionRequireApproval {
-				finalAction = ActionRequireApproval
-				finalMessage = message
-			}
-		case ActionAsk:
-			// ask is a PreToolUse-only concept; in response rules treat like require_approval.
-			if finalAction != ActionDeny && finalAction != ActionRequireApproval && finalAction != ActionAsk {
-				finalAction = ActionAsk
-				finalMessage = message
-			}
+		case ActionRequireApproval, ActionAsk:
+			// Response evaluation happens after the tool has run. There is no safe
+			// approval boundary left to wait at, so an approval-requiring match must
+			// block/redact the response instead of being treated as an allowed result
+			// by callers that only block ActionDeny.
+			return ActionDeny, message, matched, true
 		case ActionWatch:
 			if finalAction == ActionAllow {
 				finalAction = ActionWatch
@@ -848,52 +1109,79 @@ func (e *Engine) StartPeriodicReload(interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
-	e.stopReload = make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := e.Reload(); err != nil {
-					e.logger.Error("engine: periodic reload failed", "error", err)
+	e.startReloadOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if err := e.Reload(); err != nil {
+						e.logger.Error("engine: periodic reload failed", "error", err)
+					}
+				case <-e.stopReload:
+					return
 				}
-			case <-e.stopReload:
-				return
 			}
-		}
-	}()
-	e.logger.Info("engine: periodic reload started", "interval", interval)
+		}()
+		e.logger.Info("engine: periodic reload started", "interval", interval)
+	})
 }
 
-// ConsumeOnceRule removes a once:true rule after it has been matched.
-// This is called by the proxy after a decision with ConsumedOnce=true.
-// The rule is removed from the on-disk policy file and the engine is reloaded.
-func (e *Engine) ConsumeOnceRule(policyName string, ruleIndex int) error {
-	// Look up the policy to find its source file path.
+func (e *Engine) onceRuleDetails(decision Decision) (string, Rule, error) {
 	e.mu.RLock()
-	var filePath string
-	for _, p := range e.config.Policies {
-		if p.Name == policyName {
-			filePath = p.FilePath
-			break
-		}
-	}
-	e.mu.RUnlock()
+	defer e.mu.RUnlock()
 
-	if filePath == "" {
-		return fmt.Errorf("engine: cannot consume once rule — policy %q has no file path", policyName)
+	var (
+		filePath string
+		expected Rule
+		found    bool
+	)
+	for _, p := range e.config.Policies {
+		if p.Name != decision.ConsumedRulePolicy {
+			continue
+		}
+		if decision.ConsumedRuleIndex >= 0 && decision.ConsumedRuleIndex < len(p.Rules) {
+			filePath = p.FilePath
+			expected = p.Rules[decision.ConsumedRuleIndex]
+			found = true
+		}
+		break
 	}
-	if err := RemoveRule(filePath, policyName, ruleIndex); err != nil {
+
+	if !found {
+		return "", Rule{}, fmt.Errorf("engine: cannot consume once rule — rule %d not found in policy %q",
+			decision.ConsumedRuleIndex, decision.ConsumedRulePolicy)
+	}
+	if !expected.Once {
+		return "", Rule{}, fmt.Errorf("engine: cannot consume once rule — rule %d in policy %q is not one-time",
+			decision.ConsumedRuleIndex, decision.ConsumedRulePolicy)
+	}
+	if filePath == "" {
+		return "", Rule{}, fmt.Errorf("engine: cannot consume once rule — policy %q has no file path", decision.ConsumedRulePolicy)
+	}
+	return filePath, expected, nil
+}
+
+// consumeOnceRulePersistenceLocked persists removal of the exact rule and
+// refreshes engine state. The caller must hold both onceMu and the source
+// policy's cross-process lock.
+func (e *Engine) consumeOnceRulePersistenceLocked(decision Decision, filePath string, expected Rule) error {
+	if err := removeRule(filePath, decision.ConsumedRulePolicy, decision.ConsumedRuleIndex, &expected); err != nil {
 		return fmt.Errorf("engine: consume once rule: %w", err)
 	}
+
+	// A normal reload rejects a drop from one policy to zero because that can
+	// indicate a truncated file. Here the empty policy set is intentional.
+	if err := e.reloadLocked(true); err != nil {
+		return fmt.Errorf("engine: consume once rule reload: %w", err)
+	}
 	e.logger.Info("engine: consumed once rule",
-		"policy", policyName,
-		"rule_index", ruleIndex,
+		"policy", decision.ConsumedRulePolicy,
+		"rule_index", decision.ConsumedRuleIndex,
 		"file", filePath,
 	)
-	// Reload to pick up the change.
-	return e.Reload()
+	return nil
 }
 
 // CleanExpired removes expired temporal rules from all loaded policy files
@@ -931,15 +1219,13 @@ func (e *Engine) CleanExpired() (int, error) {
 // Stop terminates the periodic reload goroutine, if running.
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() {
-		if e.stopReload != nil {
-			close(e.stopReload)
-		}
+		close(e.stopReload)
 	})
 }
 
 // parseDefaultAction converts a string default action to an Action constant.
 func (e *Engine) parseDefaultAction(s string) Action {
-	switch s {
+	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "allow":
 		return ActionAllow
 	case "deny":

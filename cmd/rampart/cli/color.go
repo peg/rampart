@@ -65,14 +65,3 @@ func formatDenyMessage(command, reason string, suggestions []string) string {
 	}
 	return sb.String()
 }
-
-// formatApprovalRequiredMessage returns a branded approval-required message for stderr.
-func formatApprovalRequiredMessage(command, reason string) string {
-	if stderrSupportsColor() {
-		return fmt.Sprintf("🛡️ %sRampart: approval required for: %s%s\n   %s%s%s\n",
-			colorYellow, command, colorReset,
-			colorDim, reason, colorReset,
-		)
-	}
-	return fmt.Sprintf("🛡️ Rampart: approval required for: %s\n   %s\n", command, reason)
-}

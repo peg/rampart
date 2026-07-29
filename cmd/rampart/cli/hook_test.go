@@ -6,9 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
 )
 
@@ -40,34 +42,61 @@ func TestDeriveGitContext_NoGit(t *testing.T) {
 	}
 }
 
+func TestDeriveGitContextAt_UsesSingleGitProcess(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("shell-based process-count fixture is Unix-only")
+	}
+	t.Setenv("RAMPART_SESSION", "")
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	gitPath := filepath.Join(dir, "git")
+	script := "#!/bin/sh\n" +
+		"printf 'call\\n' >> \"$RAMPART_GIT_CALL_LOG\"\n" +
+		"printf '/workspace/repository\\nmain\\n'\n"
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("RAMPART_GIT_CALL_LOG", logPath)
+
+	ctx := deriveGitContextAt("/workspace/repository")
+	if ctx.root != "/workspace/repository" || ctx.session != "repository/main" {
+		t.Fatalf("unexpected git context: %+v", ctx)
+	}
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(calls), "call\n"); got != 1 {
+		t.Fatalf("git process count = %d, want 1", got)
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 	tests := []struct {
-		name      string
-		toolName  string
-		wantTool  string
-		withInput bool
+		name     string
+		toolName string
+		wantTool string
+		params   map[string]any
 	}{
-		{name: "Bash", toolName: "Bash", wantTool: "exec", withInput: true},
-		{name: "Read", toolName: "Read", wantTool: "read", withInput: true},
-		{name: "ReadFile", toolName: "ReadFile", wantTool: "read", withInput: false},
-		{name: "Write", toolName: "Write", wantTool: "write", withInput: true},
-		{name: "WriteFile", toolName: "WriteFile", wantTool: "write", withInput: false},
-		{name: "Edit", toolName: "Edit", wantTool: "write", withInput: true},
-		{name: "EditFile", toolName: "EditFile", wantTool: "write", withInput: false},
-		{name: "WebFetch", toolName: "WebFetch", wantTool: "fetch", withInput: true},
-		{name: "Fetch", toolName: "Fetch", wantTool: "fetch", withInput: false},
+		{name: "Bash", toolName: "Bash", wantTool: "exec", params: map[string]any{"command": "echo hi"}},
+		{name: "Read", toolName: "Read", wantTool: "read", params: map[string]any{"file_path": "README.md"}},
+		{name: "ReadFile", toolName: "ReadFile", wantTool: "read", params: map[string]any{"path": "README.md"}},
+		{name: "Write", toolName: "Write", wantTool: "write", params: map[string]any{"file_path": "out.txt"}},
+		{name: "WriteFile", toolName: "WriteFile", wantTool: "write", params: map[string]any{"path": "out.txt"}},
+		{name: "Edit", toolName: "Edit", wantTool: "write", params: map[string]any{"file_path": "out.txt"}},
+		{name: "EditFile", toolName: "EditFile", wantTool: "write", params: map[string]any{"path": "out.txt"}},
+		{name: "WebFetch", toolName: "WebFetch", wantTool: "fetch", params: map[string]any{"url": "https://example.com"}},
+		{name: "Fetch", toolName: "Fetch", wantTool: "fetch", params: map[string]any{"url": "https://example.com"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			payload := map[string]any{"tool_name": tt.toolName}
-			if tt.withInput {
-				payload["tool_input"] = map[string]any{"command": "echo hi"}
-			}
+			payload := map[string]any{"hook_event_name": "PreToolUse", "tool_name": tt.toolName, "tool_input": tt.params}
 
 			data, err := json.Marshal(payload)
 			if err != nil {
@@ -91,6 +120,137 @@ func TestParseClaudeCodeInput_Mappings(t *testing.T) {
 	}
 }
 
+func TestParseClaudeCodeInputRejectsMalformedKnownPreTools(t *testing.T) {
+	tests := []struct {
+		toolName  string
+		toolInput string
+	}{
+		{toolName: "Bash", toolInput: `{}`},
+		{toolName: "PowerShell", toolInput: `{"command":42}`},
+		{toolName: "Read", toolInput: `{}`},
+		{toolName: "Write", toolInput: `{"file_path":" "}`},
+		{toolName: "NotebookEdit", toolInput: `{}`},
+		{toolName: "WebFetch", toolInput: `{}`},
+		{toolName: "WebSearch", toolInput: `{}`},
+		{toolName: "Monitor", toolInput: `{"ws":{}}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.toolName, func(t *testing.T) {
+			payload := `{"hook_event_name":"PreToolUse","tool_name":"` + testCase.toolName + `","tool_input":` + testCase.toolInput + `}`
+			if _, err := parseClaudeCodeInput(strings.NewReader(payload), testLogger()); err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("error = %v, want required-field rejection", err)
+			}
+		})
+	}
+}
+
+func TestParseClaudeCodeInputNormalizesPathAliasesBeforePolicyEvaluation(t *testing.T) {
+	store := engine.NewMemoryStore([]byte(`
+version: "1"
+default_action: allow
+policies:
+  - name: protect-sensitive-paths
+    match:
+      agent: claude-code
+      tool: [read, write]
+    rules:
+      - action: deny
+        when:
+          path_matches: ["/protected/**"]
+`), "claude-path-alias-test")
+	eng, err := engine.New(store, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		payload  string
+		wantPath string
+	}{
+		{
+			name:     "LSP filePath",
+			payload:  `{"hook_event_name":"PreToolUse","tool_name":"LSP","tool_input":{"filePath":"/protected/source.go"}}`,
+			wantPath: "/protected/source.go",
+		},
+		{
+			name:     "NotebookEdit notebook_path",
+			payload:  `{"hook_event_name":"PreToolUse","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/protected/analysis.ipynb"}}`,
+			wantPath: "/protected/analysis.ipynb",
+		},
+		{
+			name:     "EnterWorktree resolved path",
+			payload:  `{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","tool_input":{"name":"feature","path":"/protected/worktrees/feature"}}`,
+			wantPath: "/protected/worktrees/feature",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			parsed, err := parseClaudeCodeInput(strings.NewReader(testCase.payload), testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := parsed.Params["path"]; got != testCase.wantPath {
+				t.Fatalf("canonical path = %#v, want %q", got, testCase.wantPath)
+			}
+			decision := eng.Evaluate(engine.ToolCall{
+				Agent:  parsed.Agent,
+				Tool:   parsed.Tool,
+				Params: parsed.Params,
+				Input:  parsed.Params,
+			})
+			if decision.Action != engine.ActionDeny {
+				t.Fatalf("decision = %s, want deny for canonical path %#v", decision.Action, parsed.Params["path"])
+			}
+		})
+	}
+}
+
+func TestParseClaudeCodeInputRejectsUnresolvedOrConflictingPathAliases(t *testing.T) {
+	tests := []struct {
+		name      string
+		payload   string
+		wantError string
+	}{
+		{
+			name:      "EnterWorktree opaque name",
+			payload:   `{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","tool_input":{"name":"feature"}}`,
+			wantError: "name is only an opaque label",
+		},
+		{
+			name:      "LSP conflicting aliases",
+			payload:   `{"hook_event_name":"PreToolUse","tool_name":"LSP","tool_input":{"filePath":"/safe/source.go","path":"/protected/source.go"}}`,
+			wantError: "conflicting file path aliases",
+		},
+		{
+			name:      "NotebookEdit conflicting aliases",
+			payload:   `{"hook_event_name":"PreToolUse","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/safe/analysis.ipynb","path":"/protected/analysis.ipynb"}}`,
+			wantError: "conflicting notebook path aliases",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := parseClaudeCodeInput(strings.NewReader(testCase.payload), testLogger())
+			if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+				t.Fatalf("error = %v, want %q", err, testCase.wantError)
+			}
+		})
+	}
+}
+
+func TestParseClaudeCodeInputPostToolKeepsScanningMalformedKnownInput(t *testing.T) {
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{},"tool_response":{"stdout":"scan me"}}`
+	result, err := parseClaudeCodeInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response != "scan me" {
+		t.Fatalf("response = %q, want scan me", result.Response)
+	}
+}
+
 func TestParseClaudeCodeInput_UnknownPreToolFailsClosed(t *testing.T) {
 	input := `{
 		"hook_event_name":"PreToolUse",
@@ -108,6 +268,28 @@ func TestParseClaudeCodeInput_InvalidJSON(t *testing.T) {
 	_, err := parseClaudeCodeInput(strings.NewReader("{"), testLogger())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestParseClaudeCodeInput_RejectsUnknownEvent(t *testing.T) {
+	input := `{"hook_event_name":"SessionStart","tool_name":"Bash","tool_input":{}}`
+	_, err := parseClaudeCodeInput(strings.NewReader(input), testLogger())
+	if err == nil || !strings.Contains(err.Error(), "unsupported Claude Code hook_event_name") {
+		t.Fatalf("expected unsupported-event error, got %v", err)
+	}
+}
+
+func TestExtractToolResponseIncludesNestedStringsDeterministically(t *testing.T) {
+	response := map[string]any{
+		"metadata": "tail",
+		"content": []any{
+			map[string]any{"text": "nested secret"},
+			"second",
+		},
+		"stdout": "first",
+	}
+	if got, want := extractToolResponse(response), "first\nnested secret\nsecond\ntail"; got != want {
+		t.Fatalf("response = %q, want %q", got, want)
 	}
 }
 
@@ -149,10 +331,9 @@ func TestParseClineInput_Mappings(t *testing.T) {
 		{name: "access_mcp_resource", toolName: "access_mcp_resource", wantTool: "mcp", withParam: false},
 		{name: "ask_followup_question", toolName: "ask_followup_question", wantTool: "interact", withParam: false},
 		{name: "attempt_completion", toolName: "attempt_completion", wantTool: "interact", withParam: false},
-		{name: "new_task", toolName: "new_task", wantTool: "interact", withParam: false},
+		{name: "new_task", toolName: "new_task", wantTool: "agent", withParam: false},
 		{name: "fetch_instructions", toolName: "fetch_instructions", wantTool: "interact", withParam: false},
 		{name: "plan_mode_respond", toolName: "plan_mode_respond", wantTool: "interact", withParam: false},
-		{name: "default", toolName: "unknown", wantTool: "unknown", withParam: false},
 		{name: "post_tool_use", toolName: "read_file", wantTool: "read", usePost: true, withParam: true},
 	}
 
@@ -160,7 +341,11 @@ func TestParseClineInput_Mappings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			toolUse := map[string]any{"toolName": tt.toolName}
 			if tt.withParam {
-				toolUse["parameters"] = map[string]any{"path": "/tmp/file"}
+				params := map[string]any{"path": "/tmp/file"}
+				if tt.toolName == "execute_command" {
+					params = map[string]any{"command": "pwd"}
+				}
+				toolUse["parameters"] = params
 			}
 
 			payload := map[string]any{
@@ -170,6 +355,7 @@ func TestParseClineInput_Mappings(t *testing.T) {
 				"taskId":       "task-1",
 			}
 			if tt.usePost {
+				payload["hookName"] = "PostToolUse"
 				payload["postToolUse"] = toolUse
 			} else {
 				payload["preToolUse"] = toolUse
@@ -194,6 +380,180 @@ func TestParseClineInput_Mappings(t *testing.T) {
 				t.Fatal("params is nil")
 			}
 		})
+	}
+}
+
+func TestParseClineInput_CurrentAndLegacyToolFields(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "current toolName field",
+			payload: `{"clineVersion":"3.17.0","hookName":"PreToolUse","taskId":"task-current","preToolUse":{"toolName":"execute_command","parameters":{"command":"pwd"}}}`,
+		},
+		{
+			name:    "compatibility tool field",
+			payload: `{"clineVersion":"1.0","hookName":"PreToolUse","taskId":"task-legacy","preToolUse":{"tool":"execute_command","parameters":{"command":"pwd"}}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := parseClineInput(strings.NewReader(test.payload), testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Tool != "exec" || result.HookEventName != "PreToolUse" || result.SessionID == "" {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestParseClineInputRejectsMalformedKnownPreTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolName  string
+		toolInput string
+	}{
+		{name: "missing execute command", toolName: "execute_command", toolInput: `{}`},
+		{name: "invalid command type", toolName: "run_commands", toolInput: `{"commands":42}`},
+		{name: "missing read path", toolName: "read_file", toolInput: `{}`},
+		{name: "missing write path", toolName: "write_to_file", toolInput: `{}`},
+		{name: "missing fetch URL", toolName: "web_fetch", toolInput: `{}`},
+		{name: "missing search query", toolName: "web_search", toolInput: `{}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"hookName":"PreToolUse","taskId":"task-1","preToolUse":{"toolName":"` + testCase.toolName + `","parameters":` + testCase.toolInput + `}}`
+			if _, err := parseClineInput(strings.NewReader(payload), testLogger()); err == nil {
+				t.Fatal("expected malformed known tool to be rejected")
+			}
+		})
+	}
+}
+
+func TestParseClineInput_CurrentCLIToolCallEnvelope(t *testing.T) {
+	payload := `{"clineVersion":"4.0.0","hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"run_commands","parameters":{"commands":"[\"pwd\",\"rm -rf /\"]"}},"tool_call":{"id":"call_123","name":"run_commands","input":{"commands":["pwd","rm -rf /"]}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "exec" || result.HookEventName != "PreToolUse" || result.ToolUseID != "call_123" {
+		t.Fatalf("result = %#v", result)
+	}
+	if got := result.Params["command"]; got != "pwd && rm -rf /" {
+		t.Fatalf("normalized command = %#v", got)
+	}
+}
+
+func TestParseClineInput_CurrentCLIToolResultEnvelope(t *testing.T) {
+	payload := `{"clineVersion":"4.0.0","hookName":"tool_result","taskId":"task-cli","postToolUse":{"toolName":"read_files","parameters":{"files":"[{\"path\":\"README.md\"}]"},"success":true},"tool_result":{"id":"call_123","name":"read_files","input":{"files":[{"path":"README.md"}]},"output":{"content":"credential-shaped output"}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "read" || result.HookEventName != "PostToolUse" || result.ToolUseID != "call_123" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Response != `{"content":"credential-shaped output"}` {
+		t.Fatalf("response = %q", result.Response)
+	}
+}
+
+func TestParseClineInput_CurrentCLIBatchedFilePaths(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"read_files","parameters":{}},"tool_call":{"id":"call_paths","name":"read_files","input":{"files":[{"path":"safe.txt"},{"path":".env"}]}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(result.PolicyPaths, "\x00"), "safe.txt\x00.env"; got != want {
+		t.Fatalf("policy paths = %#v, want %#v", result.PolicyPaths, want)
+	}
+}
+
+func TestParseClineInput_CurrentCLIApplyPatchPaths(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"apply_patch","parameters":{}},"tool_call":{"id":"call_patch","name":"apply_patch","input":{"input":"*** Begin Patch\n*** Update File: safe.txt\n@@\n-old\n+new\n*** Delete File: .env\n*** End Patch"}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "write" || strings.Join(result.PolicyPaths, "\x00") != "safe.txt\x00.env" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestParseClineInput_CurrentCLIMultiURLFailsClosed(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"fetch_web_content","parameters":{}},"tool_call":{"id":"call_web","name":"fetch_web_content","input":{"requests":[{"url":"https://example.com","prompt":"read"},{"url":"https://other.example","prompt":"read"}]}}}`
+	if _, err := parseClineInput(strings.NewReader(payload), testLogger()); err == nil || !strings.Contains(err.Error(), "multiple URLs") {
+		t.Fatalf("expected multi-URL rejection, got %v", err)
+	}
+}
+
+func TestMapClineToolCurrentEditorAndCLISurfaces(t *testing.T) {
+	for name, want := range map[string]string{
+		"execute_command": "exec", "run_commands": "exec", "bash": "exec",
+		"read_file": "read", "read_files": "read", "search_codebase": "read",
+		"replace_in_file": "write", "editor": "write", "apply_patch": "write",
+		"fetch_web_content": "fetch", "spawn_agent": "agent", "ask_question": "interact",
+		"team_send_message": "message", "filesystem__delete_file": "mcp",
+	} {
+		if got := mapClineTool(name); got != want {
+			t.Fatalf("mapClineTool(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestParseClineInput_CurrentPostResult(t *testing.T) {
+	payload := `{"clineVersion":"3.17.0","hookName":"PostToolUse","taskId":"task-1","postToolUse":{"tool":"read_file","parameters":{"path":"README.md"},"result":"credential-shaped output","success":true,"durationMs":12}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.HookEventName != "PostToolUse" || result.Response != "credential-shaped output" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestParseClineInput_FailsClosedForUnknownPreTool(t *testing.T) {
+	payload := `{"clineVersion":"3.17.0","hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"future_remote_mutator","parameters":{}}}`
+	_, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err == nil || !strings.Contains(err.Error(), "unsupported Cline tool") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseClineInput_ValidatesHookIdentity(t *testing.T) {
+	for _, payload := range []string{
+		`{"hookName":"PostToolUse","taskId":"task-1","preToolUse":{"tool":"read_file","parameters":{}}}`,
+		`{"hookName":"PreToolUse","taskId":"task-1","postToolUse":{"tool":"read_file","parameters":{},"result":"ok"}}`,
+		`{"hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"read_file"},"postToolUse":{"tool":"read_file"}}`,
+		`{"hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"read_file","toolName":"execute_command"}}`,
+	} {
+		if _, err := parseClineInput(strings.NewReader(payload), testLogger()); err == nil {
+			t.Fatalf("expected identity error for %s", payload)
+		}
+	}
+}
+
+func TestParseClineInput_ClassifiesWrappedMCPTool(t *testing.T) {
+	payload := `{"clineVersion":"3.17.0","hookName":"PreToolUse","taskId":"task-1","preToolUse":{"tool":"use_mcp_tool","parameters":{"server_name":"filesystem","tool_name":"delete_file","arguments":{"path":"important.txt"}}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
+	}
+}
+
+func TestParseClineInput_ClassifiesCurrentCLIMCPToolName(t *testing.T) {
+	payload := `{"hookName":"tool_call","taskId":"task-cli","preToolUse":{"toolName":"filesystem__delete_file","parameters":{}},"tool_call":{"id":"call_mcp","name":"filesystem__delete_file","input":{"path":"important.txt"}}}`
+	result, err := parseClineInput(strings.NewReader(payload), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
 	}
 }
 

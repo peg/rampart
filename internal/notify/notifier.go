@@ -25,7 +25,7 @@ import (
 // NotifyEvent contains the data for a webhook notification.
 // Breaking change: JSON field names are now snake_case for all fields.
 type NotifyEvent struct {
-	Action    string `json:"action"`    // "deny", "log", or "require_approval"
+	Action    string `json:"action"`    // "deny", "watch", "ask", or legacy "require_approval"
 	Tool      string `json:"tool"`      // e.g. "exec", "read", "write"
 	Command   string `json:"command"`   // the command or path
 	Policy    string `json:"policy"`    // policy name that matched
@@ -36,6 +36,10 @@ type NotifyEvent struct {
 	ApprovalID string `json:"approval_id,omitempty"` // pending approval ID
 	ExpiresAt  string `json:"expires_at,omitempty"`  // approval expiry timestamp (ISO 8601)
 	ResolveURL string `json:"resolve_url,omitempty"` // direct URL to resolve the approval
+}
+
+func isApprovalAction(action string) bool {
+	return action == "ask" || action == "require_approval"
 }
 
 // Notifier sends notifications.
@@ -49,13 +53,23 @@ type GenericNotifier struct {
 	client *http.Client
 }
 
+func newNotifyHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			// Notification payloads can contain command data and a signed approval
+			// URL. Never let a webhook endpoint redirect those capabilities to a
+			// different destination.
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // NewGenericNotifier creates a new generic webhook notifier.
 func NewGenericNotifier(url string) *GenericNotifier {
 	return &GenericNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 

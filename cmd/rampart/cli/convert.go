@@ -59,7 +59,7 @@ type claudePermissions struct {
 }
 
 type claudeSettingsFile struct {
-	Permissions     claudePermissions `json:"permissions"`
+	Permissions claudePermissions `json:"permissions"`
 	// Newer flat-array format written by --allowedTools / --disabledTools flags.
 	AllowedTools    []string `json:"allowedTools"`
 	DisabledTools   []string `json:"disabledTools"`
@@ -77,7 +77,7 @@ type convertedRule struct {
 
 func runConvert(w io.Writer, inputPath, outputFile string) error {
 	// Expand ~ in path
-	if strings.HasPrefix(inputPath, "~/") {
+	if strings.HasPrefix(inputPath, "~/") || strings.HasPrefix(inputPath, `~\`) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("resolve home: %w", err)
@@ -129,9 +129,9 @@ func runConvert(w io.Writer, inputPath, outputFile string) error {
 		}
 	}
 
-	// Ask rules → require_approval
+	// Claude Code ask rules map to Rampart's current approval action.
 	for _, rule := range perms.Ask {
-		r := convertClaudeRule(rule, "require_approval")
+		r := convertClaudeRule(rule, "ask")
 		if r != nil {
 			rules = append(rules, *r)
 		}
@@ -305,9 +305,7 @@ func parseClaudeRule(rule string) (string, string) {
 	tool := rule[:paren]
 	spec := rule[paren+1:]
 	// Strip trailing )
-	if strings.HasSuffix(spec, ")") {
-		spec = spec[:len(spec)-1]
-	}
+	spec = strings.TrimSuffix(spec, ")")
 	return tool, spec
 }
 
@@ -337,16 +335,6 @@ func convertSlugify(s string) string {
 		result = strings.ReplaceAll(result, "--", "-")
 	}
 	return strings.Trim(result, "-")
-}
-
-// toolDisplayName maps internal tool names to human-friendly policy names.
-var toolDisplayName = map[string]string{
-	"exec":  "exec",
-	"read":  "read",
-	"write": "write",
-	"edit":  "edit",
-	"fetch": "fetch",
-	"mcp":   "mcp",
 }
 
 // renderPolicy generates YAML output from converted rules, grouped by tool.

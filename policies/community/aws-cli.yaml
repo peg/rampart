@@ -58,7 +58,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "aws ec2 run-instances *"
@@ -77,7 +77,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "aws ec2 authorize-security-group-ingress *"
@@ -96,3 +96,34 @@ policies:
             - "AKIA[0-9A-Z]{16}"
             - "ASIA[0-9A-Z]{16}"
         message: "AWS credential detected in output"
+
+tests:
+  - name: "blocks destructive instance termination"
+    tool: exec
+    params:
+      command: "aws ec2 terminate-instances --instance-ids i-1234567890abcdef0"
+    expect: deny
+
+  - name: "blocks IAM credential creation"
+    tool: exec
+    params:
+      command: "aws iam create-access-key --user-name deployer"
+    expect: deny
+
+  - name: "asks before resource creation"
+    tool: exec
+    params:
+      command: "aws ec2 run-instances --image-id ami-12345678"
+    expect: ask
+
+  - name: "asks before security group changes"
+    tool: exec
+    params:
+      command: "aws ec2 authorize-security-group-ingress --group-id sg-12345678"
+    expect: ask
+
+  - name: "allows read-only inventory"
+    tool: exec
+    params:
+      command: "aws ec2 describe-instances"
+    expect: allow

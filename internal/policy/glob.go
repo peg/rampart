@@ -14,175 +14,65 @@
 package policy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"net/url"
-	"path"
 	"strings"
 )
 
-// BuildAllowPattern converts a literal command string into a smart glob pattern
-// suitable for command_matches. It strips output redirection/pipes and replaces
-// trailing arguments with wildcards so that similar commands (e.g. different
-// package names) are covered by a single rule.
-func BuildAllowPattern(cmd string) string {
-	// Step 1: Strip output redirection and pipes.
-	// Remove everything after the first |, 2>&1, >, >>, or 2>.
-	clean := cmd
-	for _, sep := range []string{" 2>&1", " |", " >>", " 2>", " >"} {
-		if idx := strings.Index(clean, sep); idx != -1 {
-			clean = clean[:idx]
+const (
+	// MaxGlobPatternLen is the largest policy glob Rampart accepts. Keeping the
+	// bound here gives every policy-writing path the same limit as enforcement.
+	MaxGlobPatternLen = 8192
+	// MaxDoubleGlobPatternLen is the tighter limit for patterns containing **,
+	// whose matcher keeps state proportional to both pattern and input length.
+	MaxDoubleGlobPatternLen = 256
+	// MaxDoubleStarOccurrences bounds matcher complexity and ambiguity.
+	MaxDoubleStarOccurrences = 2
+)
+
+// ValidateGlobPatterns applies the shared enforcement bounds to policy globs.
+// Policy loaders and generated-policy writers must use this function so a
+// successfully persisted rule is guaranteed to remain loadable by the engine.
+func ValidateGlobPatterns(field string, patterns []string) error {
+	for _, pattern := range patterns {
+		if len(pattern) > MaxGlobPatternLen {
+			return fmt.Errorf("%s pattern is %d bytes (max %d)", field, len(pattern), MaxGlobPatternLen)
+		}
+		count := strings.Count(pattern, "**")
+		if count > 0 && len(pattern) > MaxDoubleGlobPatternLen {
+			return fmt.Errorf("%s double-star pattern is %d bytes (max %d)", field, len(pattern), MaxDoubleGlobPatternLen)
+		}
+		if count > MaxDoubleStarOccurrences {
+			return fmt.Errorf("%s pattern %q has %d ** occurrences (max %d)", field, pattern, count, MaxDoubleStarOccurrences)
 		}
 	}
-	clean = strings.TrimSpace(clean)
-	if clean == "" {
-		return cmd
-	}
-
-	// Step 2: Tokenize.
-	tokens := strings.Fields(clean)
-	if shouldKeepExact(clean, tokens) {
-		return clean
-	}
-
-	// Step 3: For 3+ tokens, replace trailing argument(s) with *.
-	if len(tokens) >= 3 {
-		// Keep all tokens except the last, append *
-		return strings.Join(tokens[:len(tokens)-1], " ") + " *"
-	}
-
-	// Step 4: For 1-2 tokens, keep as-is.
-	// Append * if the last token looks like a filename (contains a dot or slash).
-	if len(tokens) > 0 {
-		last := tokens[len(tokens)-1]
-		if strings.Contains(last, ".") || strings.Contains(last, "/") {
-			return strings.Join(tokens, " ") + " *"
-		}
-	}
-
-	return clean
+	return nil
 }
 
-// wrapperPrefixes are tokens that can precede a command without changing its semantics,
-// e.g. "sudo docker run" should still match the "docker run" dangerous prefix.
-var wrapperPrefixes = map[string]bool{
-	"sudo": true, "env": true, "nice": true, "nohup": true,
-	"time": true, "strace": true, "ltrace": true,
-}
-
-func shouldKeepExact(clean string, tokens []string) bool {
-	if len(tokens) == 0 {
-		return false
-	}
-
-	// Strip leading wrapper prefixes so "sudo docker run" matches "docker run"
-	effective := tokens
-	for len(effective) > 0 && wrapperPrefixes[effective[0]] {
-		effective = effective[1:]
-	}
-
-	if hasDangerousPrefix(effective, []string{"docker", "run"}) ||
-		hasDangerousPrefix(effective, []string{"docker", "exec"}) ||
-		hasDangerousPrefix(effective, []string{"kubectl", "apply"}) ||
-		hasDangerousPrefix(effective, []string{"kubectl", "exec"}) ||
-		hasDangerousPrefix(effective, []string{"kubectl", "delete"}) ||
-		hasDangerousPrefix(effective, []string{"rm"}) ||
-		hasDangerousPrefix(effective, []string{"dd"}) ||
-		hasDangerousPrefix(effective, []string{"mkfs"}) {
-		return true
-	}
-
-	if isExternalDownload(effective) {
-		return true
-	}
-
-	if isSensitiveOwnershipChange(effective) {
-		return true
-	}
-
-	return false
-}
-
-func hasDangerousPrefix(tokens, prefix []string) bool {
-	if len(tokens) < len(prefix) {
-		return false
-	}
-	for i := range prefix {
-		if tokens[i] != prefix[i] {
-			return false
+// BuildExactAllowPattern converts a literal command or path into a glob that
+// matches the same value without treating shell wildcard characters as policy
+// wildcards. Automatic "Always Allow" flows use this helper so a human approval
+// never silently grants authority over related commands or paths.
+//
+// Explicit policy-authoring commands accept glob syntax directly and therefore
+// must not pass user-provided patterns through this function.
+func BuildExactAllowPattern(value string) string {
+	var pattern strings.Builder
+	pattern.Grow(len(value))
+	for _, r := range value {
+		switch r {
+		case '*':
+			pattern.WriteString("[*]")
+		case '?':
+			pattern.WriteString("[?]")
+		case '[':
+			pattern.WriteString("[[]")
+		default:
+			pattern.WriteRune(r)
 		}
 	}
-	return true
-}
-
-func isExternalDownload(tokens []string) bool {
-	if len(tokens) < 2 {
-		return false
-	}
-	if tokens[0] != "curl" && tokens[0] != "wget" {
-		return false
-	}
-
-	for _, token := range tokens[1:] {
-		if !strings.Contains(token, "://") {
-			continue
-		}
-		u, err := url.Parse(token)
-		if err != nil {
-			continue
-		}
-		host := strings.ToLower(u.Hostname())
-		if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func isSensitiveOwnershipChange(tokens []string) bool {
-	if len(tokens) < 2 {
-		return false
-	}
-	if tokens[0] != "chmod" && tokens[0] != "chown" {
-		return false
-	}
-
-	for _, token := range tokens[1:] {
-		if strings.HasPrefix(token, "-") {
-			continue
-		}
-		if isSensitivePathToken(token) {
-			return true
-		}
-	}
-	return false
-}
-
-func isSensitivePathToken(token string) bool {
-	cleaned := strings.Trim(token, `"'`)
-	if cleaned == "" || !strings.HasPrefix(cleaned, "/") {
-		return false
-	}
-
-	// Normalize using forward slashes only (filepath.Clean uses backslashes on Windows)
-	// path.Clean resolves .., ., and double slashes safely on all platforms.
-	normalized := path.Clean(strings.ReplaceAll(cleaned, "\\", "/"))
-	sensitiveRoots := []string{
-		"/",
-		"/boot",
-		"/dev",
-		"/etc",
-		"/root",
-		"/sys",
-		"/usr",
-		"/var",
-	}
-	for _, root := range sensitiveRoots {
-		if normalized == root || strings.HasPrefix(normalized, root+"/") {
-			return true
-		}
-	}
-	return false
+	return pattern.String()
 }
 
 // HashPattern returns a hex string derived from a djb2 hash of the pattern,
@@ -193,4 +83,15 @@ func HashPattern(s string) string {
 		hash = hash*33 + uint32(b)
 	}
 	return fmt.Sprintf("%08x", hash)
+}
+
+// ExactPatternHash returns a deterministic, collision-resistant identifier for
+// an exact tool authority. It is intentionally separate from HashPattern:
+// HashPattern's historical djb2 output is part of user-override rule identity
+// and must remain stable for upgrade compatibility.
+func ExactPatternHash(tool, pattern string) string {
+	sum := sha256.Sum256([]byte(tool + "\x00" + pattern))
+	// Ninety-six bits keeps generated names compact while making accidental
+	// collisions unrealistic even across very large policy sets.
+	return hex.EncodeToString(sum[:12])
 }

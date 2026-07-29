@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetectPlatform(t *testing.T) {
@@ -72,6 +73,28 @@ func TestNewNotifier(t *testing.T) {
 			typeName := fmt.Sprintf("%T", notifier)
 			if typeName != test.expected {
 				t.Errorf("NewNotifier(%s, %s) type = %s, want %s", test.url, test.platform, typeName, test.expected)
+			}
+		})
+	}
+}
+
+func TestNewNotifierWithTimeoutOverridesPlatformClient(t *testing.T) {
+	const timeout = 123 * time.Millisecond
+	tests := []struct {
+		platform string
+		get      func(Notifier) time.Duration
+	}{
+		{"slack", func(n Notifier) time.Duration { return n.(*SlackNotifier).client.Timeout }},
+		{"discord", func(n Notifier) time.Duration { return n.(*DiscordNotifier).client.Timeout }},
+		{"teams", func(n Notifier) time.Duration { return n.(*TeamsNotifier).client.Timeout }},
+		{"openclaw", func(n Notifier) time.Duration { return n.(*OpenClawNotifier).client.Timeout }},
+		{"webhook", func(n Notifier) time.Duration { return n.(*GenericNotifier).client.Timeout }},
+	}
+	for _, test := range tests {
+		t.Run(test.platform, func(t *testing.T) {
+			notifier := NewNotifierWithTimeout("https://example.com/hook", test.platform, timeout)
+			if got := test.get(notifier); got != timeout {
+				t.Fatalf("timeout = %s, want %s", got, timeout)
 			}
 		})
 	}
@@ -131,6 +154,35 @@ func TestGenericNotifier_Send(t *testing.T) {
 	}
 	if got := receivedPayload["timestamp"]; got != event.Timestamp {
 		t.Fatalf("timestamp = %v, want %s", got, event.Timestamp)
+	}
+}
+
+func TestNotifierRefusesCrossOriginRedirect(t *testing.T) {
+	destinationHit := make(chan struct{}, 1)
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		destinationHit <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer destination.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", destination.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	event := NotifyEvent{
+		Action:     "ask",
+		Command:    "sensitive command",
+		ResolveURL: "http://localhost:9090/v1/approvals/example/resolve?sig=secret",
+	}
+	if err := NewGenericNotifier(redirector.URL).Send(event); err == nil {
+		t.Fatal("redirecting notification endpoint unexpectedly succeeded")
+	}
+	select {
+	case <-destinationHit:
+		t.Fatal("notification request followed redirect to a different origin")
+	default:
 	}
 }
 
@@ -339,9 +391,22 @@ func TestGenericNotifier_SendRequireApproval(t *testing.T) {
 	}
 }
 
-func TestDiscordNotifier_SendRequireApproval(t *testing.T) {
+func TestApprovalActionAliases(t *testing.T) {
+	for _, action := range []string{"ask", "require_approval"} {
+		if !isApprovalAction(action) {
+			t.Errorf("isApprovalAction(%q) = false, want true", action)
+		}
+	}
+	for _, action := range []string{"", "allow", "deny", "watch", "webhook"} {
+		if isApprovalAction(action) {
+			t.Errorf("isApprovalAction(%q) = true, want false", action)
+		}
+	}
+}
+
+func TestDiscordNotifier_SendAskApproval(t *testing.T) {
 	event := NotifyEvent{
-		Action:     "require_approval",
+		Action:     "ask",
 		Tool:       "exec",
 		Command:    "terraform apply",
 		Agent:      "test-agent",
@@ -384,9 +449,9 @@ func TestDiscordNotifier_SendRequireApproval(t *testing.T) {
 	}
 }
 
-func TestSlackNotifier_SendRequireApproval(t *testing.T) {
+func TestSlackNotifier_SendAskApproval(t *testing.T) {
 	event := NotifyEvent{
-		Action:     "require_approval",
+		Action:     "ask",
 		Tool:       "exec",
 		Command:    "terraform apply",
 		Agent:      "test-agent",
@@ -424,9 +489,9 @@ func TestSlackNotifier_SendRequireApproval(t *testing.T) {
 	}
 }
 
-func TestTeamsNotifier_SendRequireApproval(t *testing.T) {
+func TestTeamsNotifier_SendAskApproval(t *testing.T) {
 	event := NotifyEvent{
-		Action:     "require_approval",
+		Action:     "ask",
 		Tool:       "exec",
 		Command:    "terraform apply",
 		Agent:      "test-agent",

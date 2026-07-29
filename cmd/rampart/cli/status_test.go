@@ -94,6 +94,17 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 		PrevHash:  allowEvent.Hash,
 		Hash:      "sha256:deny",
 	}
+	askEvent := audit.Event{
+		ID:        "01JTEST000000000000000003",
+		Timestamp: now.Add(time.Second),
+		Agent:     "agent-1",
+		Session:   "session-1",
+		Tool:      "exec",
+		Request:   map[string]any{"command": "git push origin main"},
+		Decision:  audit.EventDecision{Action: "ask", EvalTimeUS: 1},
+		PrevHash:  denyEvent.Hash,
+		Hash:      "sha256:ask",
+	}
 	allowLine, err := json.Marshal(allowEvent)
 	if err != nil {
 		t.Fatal(err)
@@ -102,8 +113,12 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	askLine, err := json.Marshal(askEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
 	logPath := filepath.Join(auditDir, now.Format("2006-01-02")+".jsonl")
-	content := string(allowLine) + "\n" + string(denyLine) + "\n"
+	content := string(allowLine) + "\n" + string(denyLine) + "\n" + string(askLine) + "\n"
 	if err := os.WriteFile(logPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +148,7 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 	if got.DefaultAction != "allow" {
 		t.Fatalf("default_action=%q, want allow", got.DefaultAction)
 	}
-	if got.Today.Allow != 1 || got.Today.Deny != 1 || got.Today.Pending != 0 {
+	if got.Today.Allow != 1 || got.Today.Deny != 1 || got.Today.Pending != 1 {
 		t.Fatalf("today counts mismatch: %+v", got.Today)
 	}
 	if got.LastDeny == nil {
@@ -154,7 +169,8 @@ func TestDetectProtectedAgents_CodexHooks(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := installCodexHooks(hooksPath, "rampart hook --format codex", "rampart.exe hook --format codex", false); err != nil {
+	command, commandWindows := currentCodexHookCommands()
+	if err := installCodexHooks(hooksPath, command, commandWindows, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -169,6 +185,79 @@ func TestDetectProtectedAgents_CodexHooks(t *testing.T) {
 	if !found {
 		t.Fatalf("expected Codex lifecycle hook detection, got %v", agents)
 	}
+}
+
+func TestDetectProtectedAgents_GeminiHooks(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := installGeminiHooks(filepath.Join(home, ".gemini", "settings.json"), currentGeminiHookCommand(), false); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, agent := range detectProtectedAgents() {
+		if agent == "Gemini CLI (hooks)" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Gemini CLI lifecycle hook detection, got %v", detectProtectedAgents())
+	}
+}
+
+func TestDetectProtectedAgents_CopilotHooks(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
+	bashCommand, powershellCommand := currentCopilotHookCommands()
+	if err := installCopilotHooks(path, bashCommand, powershellCommand, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range detectProtectedAgents() {
+		if agent == "GitHub Copilot CLI / VS Code (hooks)" {
+			return
+		}
+	}
+	t.Fatalf("expected shared Copilot lifecycle hook detection, got %v", detectProtectedAgents())
+}
+
+func TestDetectProtectedAgents_CopilotDisabledHooksNotProtected(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("COPILOT_HOME", "")
+	path := filepath.Join(home, ".copilot", "hooks", copilotRampartHookFile)
+	bashCommand, powershellCommand := currentCopilotHookCommands()
+	if err := installCopilotHooks(path, bashCommand, powershellCommand, false); err != nil {
+		t.Fatal(err)
+	}
+	settings := testReadJSONMap(t, path)
+	settings["disableAllHooks"] = true
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range detectProtectedAgents() {
+		if agent == "GitHub Copilot CLI / VS Code (hooks)" {
+			t.Fatal("status reported Copilot protected while user hooks are disabled")
+		}
+	}
+}
+
+func TestDetectProtectedAgents_AntigravityPlugin(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := installAntigravityPlugin(antigravityPluginDir(home), currentAntigravityHookCommand(), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range detectProtectedAgents() {
+		if agent == "Antigravity CLI / IDE (plugin)" {
+			return
+		}
+	}
+	t.Fatalf("expected Antigravity plugin detection, got %v", detectProtectedAgents())
 }
 
 func TestDetectProtectedAgents_IgnoresPlainCodexBinary(t *testing.T) {
@@ -240,6 +329,7 @@ func writeHermesRampartPluginFixture(t *testing.T, home, config string) {
 func TestDetectProtectedAgents_OpenClawPluginRequiresAllowedAndEnabled(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
+	testSetOpenClawBinary(t, home)
 	pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		t.Fatal(err)

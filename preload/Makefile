@@ -23,6 +23,8 @@ endif
 
 # Source file
 SRC := librampart.c
+TEST_SRC := librampart_test.c
+TEST_TARGET := librampart_test
 
 # Default target
 all: $(TARGET)
@@ -41,16 +43,10 @@ asan: CFLAGS += -fsanitize=address -g -O1
 asan: LDFLAGS += -fsanitize=address
 asan: $(TARGET)
 
-# Test target - basic smoke test
+# Test target - helper/parser/unit coverage plus a shared-library build.
 test: $(TARGET)
-	@echo "Running basic smoke tests..."
-	@echo "Testing library load..."
-	@if [ "$(UNAME_S)" = "Linux" ]; then \
-		LD_PRELOAD=./$(TARGET) echo "Library loaded successfully"; \
-	else \
-		DYLD_INSERT_LIBRARIES=./$(TARGET) echo "Library loaded successfully"; \
-	fi
-	@echo "All smoke tests passed!"
+	$(CC) $(CFLAGS) -o $(TEST_TARGET) $(TEST_SRC) $(LDFLAGS)
+	./$(TEST_TARGET)
 
 # Install to user's rampart directory
 install: $(TARGET)
@@ -60,7 +56,7 @@ install: $(TARGET)
 
 # Clean build artifacts
 clean:
-	@rm -f librampart.so librampart.dylib
+	@rm -f librampart.so librampart.dylib $(TEST_TARGET)
 	@echo "Cleaned build artifacts"
 
 # Display help

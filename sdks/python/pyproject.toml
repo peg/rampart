@@ -49,7 +49,10 @@ dev = [
     "black>=23.0.0",
     "isort>=5.12.0",
     "flake8>=6.0.0",
-    "mypy>=1.0.0",
+    # mypy 2.x no longer validates the Python 3.9 compatibility target that
+    # this SDK still publishes; keep the development checker aligned with the
+    # advertised runtime floor.
+    "mypy>=1.0.0,<2.0.0",
 ]
 
 [project.urls]
@@ -79,6 +82,9 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
+# Validate Rampart's Python 3.9 surface without re-checking third-party packages
+# selected for the newer interpreter running CI.
+follow_imports = "skip"
 
 [tool.hatch.build.targets.wheel]
 packages = ["rampart"]

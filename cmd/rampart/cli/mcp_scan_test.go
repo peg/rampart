@@ -67,13 +67,13 @@ func TestHasFileTools(t *testing.T) {
 
 func TestGeneratePolicyFromTools_Categorization(t *testing.T) {
 	tests := []struct {
-		name               string
-		tools              []MCPTool
-		wantDestructive    []string
-		wantDangerous      []string
-		wantWrite          []string
-		wantPolicyNames    []string
-		wantNoPolicyNames  []string
+		name              string
+		tools             []MCPTool
+		wantDestructive   []string
+		wantDangerous     []string
+		wantWrite         []string
+		wantPolicyNames   []string
+		wantNoPolicyNames []string
 	}{
 		{
 			name: "destructive tools denied",

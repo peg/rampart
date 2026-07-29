@@ -47,6 +47,7 @@ Which tool types this policy applies to:
 | `"read"` | File read operations |
 | `"write"` | File write/edit operations |
 | `"fetch"` | HTTP/network requests |
+| `"mcp"` | MCP tools not otherwise classified |
 | `"mcp-destructive"` | MCP tools with destructive keywords |
 | `"mcp-dangerous"` | MCP tools with dangerous keywords |
 | `"mcp__server__tool"` | Specific MCP tool by name |
@@ -95,8 +96,8 @@ rules:
 |--------|--------|
 | `deny` | Block the tool call. **Deny always wins.** |
 | `allow` | Permit the tool call. |
-| `log` | Permit but flag for review. |
-| `ask` | Pause and require human approval or denial. |
+| `watch` | Permit but flag for review. `log` remains a deprecated alias. |
+| `ask` | Request human approval through the active integration; unsupported approval paths fail closed. |
 | `webhook` | Delegate decision to external HTTP endpoint. |
 
 ### Conditions (`when`)
@@ -209,7 +210,7 @@ When `action: webhook`:
 webhook:
   url: "http://localhost:8090/verify"  # Required. Endpoint URL.
   timeout: "5s"                         # Optional. Default: 5s.
-  fail_open: true                       # Optional. Default: true.
+  fail_open: false                      # Optional. Default: false (fail closed).
 ```
 
 ## Notify Object
@@ -218,7 +219,7 @@ webhook:
 notify:
   url: "https://discord.com/api/webhooks/..."  # Required. Webhook URL.
   platform: "auto"                             # Optional. Platform-specific formatting.
-  on: ["deny", "require_approval"]             # Required. Event types.
+  on: ["deny", "ask"]                         # Optional. Event types.
 ```
 
 ### Events
@@ -226,8 +227,8 @@ notify:
 | Event | When |
 |-------|------|
 | `"deny"` | A tool call was blocked |
-| `"log"` | A tool call was flagged |
-| `"require_approval"` | A tool call requires human approval |
+| `"watch"` | A tool call was flagged (`"log"` is a legacy alias) |
+| `"ask"` | A tool call requires human approval (`"require_approval"` remains a notification-filter alias) |
 
 ### Platforms
 
@@ -298,7 +299,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log # Renamed to action: watch in v0.9.x.
+      - action: watch
         when:
           command_matches: ["curl *", "wget *"]
         message: "Network command logged"

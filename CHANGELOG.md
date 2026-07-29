@@ -7,14 +7,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-29
+
+### Added
+
+- **Zero-configuration protection across supported local agents** —
+  `rampart protect` now detects installed integrations through a shared driver
+  contract, installs the strongest supported boundary, and runs the matching
+  active verifier without requiring users to choose an adapter manually.
+- **Antigravity shared policy plugin** — `rampart setup antigravity` installs
+  one `PreToolUse` integration for the CLI and IDE, including native
+  `force_ask` approvals. Antigravity CLI 1.1.7 has completed host proof; the IDE
+  shares the tested contract, but a separate physical editor run is pending.
+- **GitHub Copilot CLI adapter and VS Code Preview hooks** — `rampart setup copilot`
+  installs one cross-platform `PreToolUse`/`PostToolUse` user hook shared by
+  Copilot CLI and VS Code agent sessions. Copilot CLI administrators can also
+  install a machine-owned policy hook with `--policy`. Latest-package startup
+  and the adapter are tested separately; authenticated hook ingestion is
+  pending, and VS Code coverage remains an upstream Preview contract.
+- **Exact one-shot approval resume** — Individually approved `/v1/tool/*`
+  requests can resume once when the host supplies stable run and tool-call
+  identifiers. The grant is short-lived, bound to the complete call payload,
+  durable across restarts, and atomically consumed across processes.
+
+### Experimental
+
+- **Gemini CLI lifecycle-hook adapter** — `rampart setup gemini` installs
+  managed `BeforeTool` and `AfterTool` hooks for the enterprise/API-key Gemini
+  CLI path, preserves unrelated settings, and provides non-executing adapter
+  verification plus a rolling latest-package startup gate. It is excluded from
+  bare `rampart protect`; authenticated host hook ingestion remains unproven,
+  and this integration does not cover Antigravity.
+
+### Changed
+
+- **Upgrade guidance refreshes managed integrations safely** — Existing hooks,
+  policies, audit logs, and credentials remain in place when the binary is
+  replaced. After upgrading, one idempotent `rampart protect` run adopts newer
+  native hook schemas, migrates recognized legacy integrations, and verifies
+  detected agent boundaries without requiring manual configuration.
+- **Integration status and setup use one source of truth** — Aliases,
+  installation detection, setup, verification, interactive setup, and protected
+  status reporting now resolve through the same integration-driver registry.
+- **Public support guidance includes editor boundaries** — The support matrix,
+  quickstart, architecture, threat model, landing page, and integration guides
+  distinguish CLI, editor, Preview, service-dependent, and administrator-owned
+  enforcement paths.
+- **Stateful policy limits now work across Rampart processes** — One-time grants
+  and call-count rules use locked, durable state so parallel hooks, plugins, and
+  proxy requests cannot each consume the same allowance independently.
+- **Managed uninstall is integration-aware and idempotent** — `rampart uninstall`
+  removes only Rampart-owned Claude Code, Cline, Codex, Copilot, Antigravity,
+  Gemini CLI, Hermes, and OpenClaw configuration while preserving unrelated host
+  settings, histories, memories, sessions, and credentials.
+- **Release gates exercise the supported operating-system boundaries** — CI now
+  checks formatting, module tidiness, static analysis, race behavior, Linux and
+  Windows builds, installers, preload contracts, Python SDK compatibility,
+  Docker packaging, and release snapshots before a release can proceed.
+- **Native hook latency avoids redundant process and policy work** — Repository
+  identity is resolved directly from the host-reported working directory with
+  one Git invocation on normal repositories, and webhook delivery reuses the
+  validated policy snapshot that produced the decision instead of reparsing
+  policy files.
+
+### Fixed
+
+- **Policy benchmarks score the declared behavior again** — Version 2 corpora
+  preserve `allow`, `watch`, `ask`, and `deny` expectations, benign controls no
+  longer count as security gaps, and over-blocking can no longer improve the
+  score. Non-strict runs still accept `ask` for a case that expects `deny`.
+- **Command policy behavior is shell-aware across operating systems** — Bash,
+  `cmd.exe`, and PowerShell wrappers are parsed by command dialect rather than
+  by the OS running Rampart. Restrictive rules also evaluate ambiguous native
+  Windows forms, including caret and PowerShell backtick escapes, while those
+  alternate interpretations can never broaden an allow rule.
+- **Windows hook upgrades recover legacy data-directory permissions first** —
+  Native hooks repair the locked `~\.rampart` layout left by affected older
+  installers before other command work and still return protocol-shaped,
+  fail-closed responses if recovery is not possible.
+- **Windows background service lifecycle is reliable** — Detached serving uses
+  the Windows process model, records the child PID, and can be stopped or
+  restarted without relying on Unix process-group behavior.
+- **Concurrent session and token updates no longer overwrite each other** —
+  Stores use cross-process locking, bounded reads, durable replacement, and
+  stricter identifier validation, including Windows-safe file replacement.
+- **Installer and container validation match published artifacts** — Installers
+  fail closed on checksum mismatches, Homebrew resolves the exact stable
+  version, and the Docker build context excludes development and test output.
+- **Policy explanations match enforcement semantics** — `policy explain` now
+  respects rule actions and ANDed fields, and environment-variable assignment
+  names are folded only on Windows rather than on macOS shells.
+
 ### Security
 
-- **Execution-granting command rules now authorize the complete shell call** —
-  `allow`, `watch`, and `webhook` rules must explicitly match a compound command
-  or independently cover every executed segment and nested substitution. A
-  benign match such as `git *` can no longer authorize an unrelated sibling
-  command, while restrictive `deny`, `ask`, and approval rules retain their
-  any-dangerous-component behavior.
+- **Required audit records are durable enforcement state** — Policy decisions
+  fail closed when their audit record cannot be persisted; response decisions
+  are separately correlated, recovery links survive rotation, and verification
+  detects truncated, reordered, or broken audit chains.
+- **Native adapters fail closed on unclassified or malformed actions** —
+  OpenClaw, Hermes, MCP, Copilot, Gemini CLI, and Antigravity adapters validate
+  structured input, evaluate every path in batched changes, and deny ambiguous
+  future tool surfaces in enforce mode.
+- **The preload boundary has bounded, structural response parsing** — The native
+  library rejects oversized or malformed policy responses, covers spawned
+  processes consistently, and never treats HTTP 4xx policy errors as an
+  availability failure eligible for fail-open behavior.
+- **HTTP and webhook boundaries are more defensive** — The server rejects
+  trailing JSON documents, limits headers, restricts query-string bearer tokens
+  to SSE connections, keeps global metrics administrator-only, and sends
+  signed webhooks with bounded requests and redacted error handling.
+- **Windows system dependency is on the patched release** — Updated
+  `golang.org/x/sys` to remove GO-2026-5024 from Rampart's module graph, even
+  though the vulnerable symbol was not reachable from Rampart.
+- **Gemini and Copilot adapters deny unknown future pre-call tools** — New tool
+  names cannot silently bypass classification in enforce mode. Allowed calls
+  still pass through each host's native permission and sandbox checks, and
+  multi-file edits evaluate every reported path with deny-wins behavior.
+- **Platform-aware zero-configuration detection** — `rampart protect` skips
+  integrations that are not supported on the current operating system and no
+  longer mistakes Antigravity's shared `~/.gemini` state for Gemini CLI.
+- **Copilot disabled-hook detection** — Verification reports when Copilot CLI's
+  `disableAllHooks` setting prevents the user-level Rampart boundary from
+  loading in the current repository.
+- **Rolling compatibility gates track upstream Gemini and Copilot releases** —
+  Disposable homes confirm the latest published packages start, then separately
+  validate generated hook configuration and destructive-call denial adapters
+  without touching normal user state or claiming host hook ingestion or
+  authenticated execution.
+- **Hermes latest-version gate rejects silent dependency fallback** — The
+  disposable Hermes harness now compares the installed distribution with
+  PyPI's current release and fails when an unsupported Python version causes
+  pip to select an older Hermes build.
+
+### Removed
+
+- **Unused legacy enforcement paths** — Removed the unreferenced daemon and
+  intercept packages, the brittle OpenClaw source-patching scripts, and the old
+  fail-open Node filesystem preload hook. Supported integrations now use the
+  maintained native hook, plugin, proxy, wrapper, or preload boundaries.
+
+## [1.4.1] - 2026-07-28
+
+### Security
+
+- **Execution grants require a whole-call command match** — An allow, watch, or
+  webhook rule can no longer authorize a compound command merely because one
+  sibling segment or nested substitution matches. Restrictive rules continue
+  inspecting every executable segment and subcommand with deny-wins behavior.
 
 ## [1.4.0] - 2026-07-25
 

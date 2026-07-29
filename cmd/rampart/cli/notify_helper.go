@@ -14,8 +14,10 @@
 package cli
 
 import (
+	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,11 +73,15 @@ func sanitizeCommand(command string) string {
 
 // sendNotification sends a webhook notification for the policy decision.
 func sendNotification(config *engine.NotifyConfig, call engine.ToolCall, decision engine.Decision, logger *slog.Logger) {
+	sendNotificationWithTimeout(config, call, decision, logger, 0)
+}
+
+func sendNotificationWithTimeout(config *engine.NotifyConfig, call engine.ToolCall, decision engine.Decision, logger *slog.Logger, timeout time.Duration) {
 	// Check if this action should trigger a notification
 	actionStr := decision.Action.String()
 	shouldNotify := false
 	for _, triggerAction := range config.On {
-		if triggerAction == actionStr {
+		if notificationActionMatches(triggerAction, actionStr) {
 			shouldNotify = true
 			break
 		}
@@ -97,7 +103,7 @@ func sendNotification(config *engine.NotifyConfig, call engine.ToolCall, decisio
 
 	// Extract command/path from tool parameters
 	command := extractCommand(call)
-	
+
 	// Sanitize command before sending to webhook
 	sanitizedCommand := sanitizeCommand(command)
 
@@ -119,12 +125,30 @@ func sendNotification(config *engine.NotifyConfig, call engine.ToolCall, decisio
 	}
 
 	// Create and send notification
-	notifier := notify.NewNotifier(config.URL, config.Platform)
+	notifier := notify.NewNotifierWithTimeout(config.URL, config.Platform, timeout)
 	if err := notifier.Send(event); err != nil {
-		logger.Error("webhook notification failed", "error", err, "url", config.URL)
+		// Notification webhook URLs often embed credentials in their path. The
+		// configured platform is enough diagnostic context without leaking them.
+		logger.Error("webhook notification failed", "error_type", fmt.Sprintf("%T", err), "platform", config.Platform)
 	} else {
 		logger.Debug("webhook notification sent", "action", actionStr, "policy", policyName)
 	}
+}
+
+// notificationActionMatches preserves the notification-only aliases accepted
+// by older configurations without reintroducing them as policy actions.
+func notificationActionMatches(configured, actual string) bool {
+	normalize := func(action string) string {
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "log":
+			return "watch"
+		case "require_approval":
+			return "ask"
+		default:
+			return strings.ToLower(strings.TrimSpace(action))
+		}
+	}
+	return normalize(configured) == normalize(actual)
 }
 
 // extractCommand pulls the relevant command/path from tool call parameters.

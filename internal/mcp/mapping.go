@@ -23,14 +23,14 @@ var DefaultToolTypeMapping = map[string]string{
 	"list_directory":   "read",
 	"write_file":       "write",
 	"create_directory": "write",
-	"delete_file":      "write",
+	"delete_file":      "mcp-destructive",
 	"move_file":        "write",
 	"execute_command":  "exec",
 	"run_command":      "exec",
 	"shell":            "exec",
 	"fetch":            "fetch",
 	"http_request":     "fetch",
-	defaultMappingKey:   "mcp",
+	defaultMappingKey:  "mcp",
 }
 
 // destructiveKeywords triggers "mcp-destructive" classification for MCP tools
@@ -48,22 +48,26 @@ var dangerousKeywords = []string{
 }
 
 // MapToolName returns the Rampart tool type for an MCP tool name.
-// Custom mappings take precedence over defaults, then keyword inference.
+// Custom mappings take precedence. Destructive inference precedes ordinary
+// defaults so an exact convenience mapping such as delete_file cannot
+// downgrade a destructive operation to a generic write.
 func MapToolName(name string, custom map[string]string) string {
 	if mapped, ok := lookupMapping(name, custom); ok {
 		return mapped
 	}
-	if mapped, ok := lookupMapping(name, DefaultToolTypeMapping); ok {
-		return mapped
-	}
 
-	// Keyword-based inference for unknown MCP tools.
 	lower := strings.ToLower(name)
 	for _, kw := range destructiveKeywords {
 		if strings.Contains(lower, kw) {
 			return "mcp-destructive"
 		}
 	}
+
+	if mapped, ok := lookupMapping(name, DefaultToolTypeMapping); ok {
+		return mapped
+	}
+
+	// Keyword-based inference for otherwise unknown MCP tools.
 	for _, kw := range dangerousKeywords {
 		if strings.Contains(lower, kw) {
 			return "mcp-dangerous"

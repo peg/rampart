@@ -31,6 +31,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/policies"
 	"github.com/peg/rampart/policies/community"
 	"github.com/peg/rampart/registry"
@@ -50,6 +51,7 @@ var builtInProfileDescriptions = map[string]string{
 }
 
 const policyRegistryCacheFileName = "registry-cache.json"
+const maxPolicyRegistryResponseBytes = 2 << 20
 
 var (
 	defaultPolicyRegistryManifestURL = "https://raw.githubusercontent.com/peg/rampart/main/registry/registry.json"
@@ -88,7 +90,7 @@ func newPolicyRegistryClient() *policyRegistryClient {
 
 	if os.Getenv("RAMPART_DEV") == "1" {
 		if override := os.Getenv("RAMPART_REGISTRY_URL"); override != "" {
-			if !strings.HasPrefix(strings.ToLower(override), "https://") {
+			if err := validateRegistryHTTPSURL(override); err != nil {
 				fmt.Fprintf(warnWriter, "WARNING: RAMPART_REGISTRY_URL=%q uses non-HTTPS scheme; ignoring override\n", override)
 			} else {
 				fmt.Fprintf(warnWriter, "WARNING: using custom registry URL from RAMPART_REGISTRY_URL=%q (development mode)\n", override)
@@ -113,7 +115,7 @@ type policyListEntry struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Tags        string `json:"tags"`
-	Source      string `json:"source,omitempty"` // "built-in" or "community" (shown in --extended mode)
+	Source      string `json:"source,omitempty"`    // "built-in" or "community" (shown in --extended mode)
 	Installed   bool   `json:"installed,omitempty"` // shown in --extended mode
 }
 
@@ -442,10 +444,7 @@ func newPolicyFetchCmd(_ *rootOptions) *cobra.Command {
 				return fmt.Errorf("policy: check destination %s: %w", dest, err)
 			}
 
-			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-				return fmt.Errorf("policy: create policies directory: %w", err)
-			}
-			if err := os.WriteFile(dest, content, 0o600); err != nil {
+			if err := atomicWritePrivateFile(dest, content); err != nil {
 				return fmt.Errorf("policy: write %s: %w", dest, err)
 			}
 
@@ -514,8 +513,6 @@ func sanitizePolicyName(name string) error {
 	return nil
 }
 
-// isBuiltInPolicyProfile is removed — use isSupportedProfile from init.go instead.
-
 func findPolicyByName(manifest *policyRegistryManifest, name string) (policyRegistryEntry, bool) {
 	for _, entry := range manifest.Policies {
 		if entry.Name == name {
@@ -550,9 +547,9 @@ func (c *policyRegistryClient) loadManifest(ctx context.Context, refresh bool) (
 		merged := mergeManifests(embedded, manifest)
 		// Cache the merged result.
 		if cacheErr == nil {
-			if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err == nil {
+			if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err == nil {
 				if data, err := json.MarshalIndent(merged, "", "  "); err == nil {
-					_ = os.WriteFile(cachePath, data, 0o644)
+					_ = atomicWritePrivateFile(cachePath, data)
 				}
 			}
 		}
@@ -610,21 +607,35 @@ func mergeManifests(base, overlay *policyRegistryManifest) *policyRegistryManife
 }
 
 func (c *policyRegistryClient) readFreshCachedManifest(cachePath string) (*policyRegistryManifest, bool, error) {
-	info, err := os.Stat(cachePath)
+	info, err := os.Lstat(cachePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("policy: stat cache file: %w", err)
 	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("policy: refusing non-regular cache file at %s", cachePath)
+	}
+	if info.Size() > maxPolicyRegistryResponseBytes {
+		return nil, false, fmt.Errorf("policy: cache file exceeds %d-byte limit", maxPolicyRegistryResponseBytes)
+	}
 
 	if c.now().Sub(info.ModTime()) > c.cacheTTL {
 		return nil, false, nil
 	}
 
-	data, err := os.ReadFile(cachePath)
+	file, err := os.Open(cachePath)
 	if err != nil {
 		return nil, false, fmt.Errorf("policy: read cache file: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxPolicyRegistryResponseBytes+1))
+	if err != nil {
+		return nil, false, fmt.Errorf("policy: read cache file: %w", err)
+	}
+	if len(data) > maxPolicyRegistryResponseBytes {
+		return nil, false, fmt.Errorf("policy: cache file exceeds %d-byte limit", maxPolicyRegistryResponseBytes)
 	}
 	manifest := &policyRegistryManifest{}
 	if err := json.Unmarshal(data, manifest); err != nil {
@@ -669,6 +680,9 @@ func validatePolicyRegistryManifest(manifest *policyRegistryManifest) error {
 		if strings.TrimSpace(entry.URL) == "" {
 			return fmt.Errorf("policy: registry manifest policy %q has empty url", entry.Name)
 		}
+		if err := validateRegistryHTTPSURL(entry.URL); err != nil {
+			return fmt.Errorf("policy: registry manifest policy %q has invalid url: %w", entry.Name, err)
+		}
 		if strings.TrimSpace(entry.SHA256) == "" {
 			return fmt.Errorf("policy: registry manifest policy %q has empty sha256", entry.Name)
 		}
@@ -684,29 +698,56 @@ func (c *policyRegistryClient) downloadPolicy(ctx context.Context, entry policyR
 
 	// Prefer remote download to receive upstream security fixes immediately.
 	// Fall back to embedded content on network failure.
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(entry.URL)), "https://") {
+	if validateRegistryHTTPSURL(entry.URL) == nil {
 		content, fetchErr := fetchURL(ctx, c.httpClient, entry.URL)
 		if fetchErr == nil {
 			if err := verifyPolicySHA256(content, entry.SHA256, entry.Name); err == nil {
-				return content, nil
+				if err := validateRegistryPolicy(content, entry.Name); err == nil {
+					return content, nil
+				}
+				fmt.Fprintf(c.warnWriter, "Warning: remote policy %q failed policy validation, using embedded version\n", entry.Name)
+			} else {
+				fmt.Fprintf(c.warnWriter, "Warning: remote policy %q failed SHA256 check, using embedded version\n", entry.Name)
 			}
-			// SHA256 mismatch from remote — fall through to embedded.
-			fmt.Fprintf(c.warnWriter, "Warning: remote policy %q failed SHA256 check, using embedded version\n", entry.Name)
 		}
 		// Network error — fall through to embedded.
 	}
 
 	// Fall back to embedded community policies.
+	if content, err := policies.Profile(entry.Name); err == nil {
+		return content, validateRegistryPolicy(content, entry.Name)
+	}
 	if content, err := community.FS.ReadFile(entry.Name + ".yaml"); err == nil {
-		return content, nil
+		return content, validateRegistryPolicy(content, entry.Name)
 	}
 
 	// No embedded copy and no HTTPS URL — cannot proceed.
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(entry.URL)), "https://") {
+	if err := validateRegistryHTTPSURL(entry.URL); err != nil {
 		return nil, fmt.Errorf("policy: refusing to download %q from non-HTTPS URL: %s", entry.Name, entry.URL)
 	}
 
 	return nil, fmt.Errorf("policy: unable to download or find embedded copy of %q", entry.Name)
+}
+
+func validateRegistryPolicy(content []byte, name string) error {
+	if _, err := engine.NewMemoryStore(content, "registry:"+name).Load(); err != nil {
+		return fmt.Errorf("policy: registry policy %q failed validation: %w", name, err)
+	}
+	return nil
+}
+
+func validateRegistryHTTPSURL(rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" {
+		return fmt.Errorf("only HTTPS URLs are supported")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("URL credentials are not allowed")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("URL fragments are not supported")
+	}
+	return nil
 }
 
 func verifyPolicySHA256(content []byte, expectedSHA, name string) error {
@@ -719,6 +760,7 @@ func verifyPolicySHA256(content []byte, expectedSHA, name string) error {
 }
 
 func fetchURL(ctx context.Context, client *http.Client, rawURL string) ([]byte, error) {
+	initialURL, _ := url.Parse(rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -729,14 +771,25 @@ func fetchURL(ctx context.Context, client *http.Client, rawURL string) ([]byte, 
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if initialURL != nil && strings.EqualFold(initialURL.Scheme, "https") &&
+		(resp.Request == nil || resp.Request.URL == nil ||
+			!strings.EqualFold(resp.Request.URL.Scheme, "https") || resp.Request.URL.User != nil) {
+		return nil, fmt.Errorf("refusing redirect to a non-public HTTPS URL")
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
+	if resp.ContentLength > maxPolicyRegistryResponseBytes {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", maxPolicyRegistryResponseBytes)
+	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPolicyRegistryResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if len(body) > maxPolicyRegistryResponseBytes {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", maxPolicyRegistryResponseBytes)
 	}
 	return body, nil
 }

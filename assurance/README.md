@@ -69,6 +69,10 @@ scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
 scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
 ```
 
+Add `--gateway` to send both Hermes canaries through a disposable localhost
+OpenAI-compatible API gateway. The isolated profile enables no messaging
+platforms and does not load source memories, sessions, rules, or workspaces.
+
 The completed Codex CLI 0.145.0 and Claude Code 2.1.220 macOS runs prove shell
 deny, allowed execution, and pre/post identity correlation through isolated
 real host processes. On macOS the disposable Claude HOME cannot use the

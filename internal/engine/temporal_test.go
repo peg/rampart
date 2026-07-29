@@ -1,15 +1,170 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEvaluateAndConsumeOnceRuleAcrossProcesses(t *testing.T) {
+	if os.Getenv("RAMPART_ONCE_PROCESS_HELPER") == "1" {
+		runOnceRuleProcessHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.yaml")
+	require.NoError(t, os.WriteFile(policyPath, []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: one-shot
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["deploy prod"]
+        once: true
+`), 0o600))
+	startPath := filepath.Join(dir, "start")
+
+	const contenders = 12
+	type child struct {
+		cmd    *exec.Cmd
+		stderr bytes.Buffer
+	}
+	children := make([]child, contenders)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		children[i].cmd = exec.Command(os.Args[0], "-test.run=^TestEvaluateAndConsumeOnceRuleAcrossProcesses$")
+		children[i].cmd.Env = append(os.Environ(),
+			"RAMPART_ONCE_PROCESS_HELPER=1",
+			"RAMPART_ONCE_POLICY="+policyPath,
+			"RAMPART_ONCE_START="+startPath,
+			"RAMPART_ONCE_READY="+readyPath,
+		)
+		children[i].cmd.Stderr = &children[i].stderr
+		require.NoError(t, children[i].cmd.Start())
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		for {
+			if _, err := os.Stat(readyPath); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for helper %d", i)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	require.NoError(t, os.WriteFile(startPath, []byte("go"), 0o600))
+
+	allowed := 0
+	denied := 0
+	for i := range children {
+		err := children[i].cmd.Wait()
+		if err == nil {
+			allowed++
+			continue
+		}
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 10 {
+			denied++
+			continue
+		}
+		t.Fatalf("helper %d failed: %v\nstderr: %s", i, err, children[i].stderr.String())
+	}
+
+	assert.Equal(t, 1, allowed, "a once rule must authorize exactly one process")
+	assert.Equal(t, contenders-1, denied)
+}
+
+func runOnceRuleProcessHelper() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewFileStore(os.Getenv("RAMPART_ONCE_POLICY")), logger)
+	if err != nil {
+		os.Exit(20)
+	}
+	if err := os.WriteFile(os.Getenv("RAMPART_ONCE_READY"), []byte("ready"), 0o600); err != nil {
+		os.Exit(21)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("RAMPART_ONCE_START")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Exit(22)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	decision := eng.EvaluateAndConsume(execCall("test", "deploy prod"), EvalOptions{})
+	if decision.Action == ActionAllow {
+		os.Exit(0)
+	}
+	if decision.Action == ActionDeny {
+		os.Exit(10)
+	}
+	os.Exit(23)
+}
+
+func TestEvaluateAndConsumeOnceRuleIsAtomic(t *testing.T) {
+	eng := setupEngine(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: one-shot
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["deploy prod"]
+        once: true
+`)
+
+	const contenders = 32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var allowed atomic.Int32
+	var denied atomic.Int32
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			decision := eng.EvaluateAndConsume(execCall("test", "deploy prod"), EvalOptions{})
+			switch decision.Action {
+			case ActionAllow:
+				allowed.Add(1)
+			case ActionDeny:
+				denied.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int32(1), allowed.Load(), "a once rule must authorize exactly one contender")
+	assert.Equal(t, int32(contenders-1), denied.Load())
+	assert.Equal(t, ActionDeny, eng.Evaluate(execCall("test", "deploy prod")).Action)
+}
 
 func TestExpiredRuleIsSkipped(t *testing.T) {
 	past := time.Now().UTC().Add(-1 * time.Hour)
@@ -198,33 +353,7 @@ func TestCleanExpiredRulesNoFile(t *testing.T) {
 	assert.Equal(t, 0, removed)
 }
 
-func TestExpiredRuleInAutoAllowSkipped(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "auto-allowed.yaml")
-
-	past := time.Now().UTC().Add(-1 * time.Hour)
-	cfg := &Config{
-		Version:       "1",
-		DefaultAction: "deny",
-		Policies: []Policy{{
-			Name:  "temp",
-			Match: Match{Tool: StringOrSlice{"exec"}},
-			Rules: []Rule{{
-				Action:    "allow",
-				When:      Condition{CommandMatches: []string{"docker *"}},
-				ExpiresAt: &past,
-			}},
-		}},
-	}
-
-	err := writeConfigAtomic(path, cfg)
-	require.NoError(t, err)
-
-	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "docker ps"}}
-	assert.False(t, MatchesAutoAllowFile(path, call), "expired auto-allow should not match")
-}
-
-func TestConsumeOnceRuleRemovesFromFile(t *testing.T) {
+func TestEvaluateAndConsumeRemovesOnceRuleFromFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")
 
@@ -250,14 +379,10 @@ policies:
 	eng, err := New(store, nil)
 	require.NoError(t, err)
 
-	// Evaluate — should match and set ConsumedOnce.
-	dec := eng.Evaluate(execCall("test", "npm publish"))
+	// Enforcement claims and removes the one-time authorization atomically.
+	dec := eng.EvaluateAndConsume(execCall("test", "npm publish"), EvalOptions{})
 	assert.Equal(t, ActionAllow, dec.Action)
 	assert.True(t, dec.ConsumedOnce)
-
-	// Consume the rule.
-	err = eng.ConsumeOnceRule(dec.ConsumedRulePolicy, dec.ConsumedRuleIndex)
-	require.NoError(t, err)
 
 	// Verify: rule is gone from file and engine.
 	data, err := os.ReadFile(path)
@@ -270,7 +395,7 @@ policies:
 	assert.Equal(t, ActionDeny, dec2.Action, "consumed once rule should no longer match")
 }
 
-func TestConsumeOnceRuleNoFilePath(t *testing.T) {
+func TestEvaluateAndConsumeWithoutFilePathFailsClosed(t *testing.T) {
 	// Load via setupEngine (which sets FilePath), then clear it to simulate
 	// an inline/embedded config with no backing file.
 	eng := setupEngine(t, `
@@ -294,17 +419,13 @@ policies:
 	}
 	eng.mu.Unlock()
 
-	dec := eng.Evaluate(execCall("test", "echo hi"))
-	assert.Equal(t, ActionAllow, dec.Action)
-	assert.True(t, dec.ConsumedOnce)
-
-	// ConsumeOnceRule should fail gracefully — no file to modify.
-	err := eng.ConsumeOnceRule(dec.ConsumedRulePolicy, dec.ConsumedRuleIndex)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no file path")
+	dec := eng.EvaluateAndConsume(execCall("test", "echo hi"), EvalOptions{})
+	assert.Equal(t, ActionDeny, dec.Action)
+	assert.False(t, dec.ConsumedOnce)
+	assert.Contains(t, dec.Message, "could not be claimed")
 }
 
-func TestConsumeOnceRuleLastRuleRemovesPolicy(t *testing.T) {
+func TestEvaluateAndConsumeLastRuleRemovesPolicy(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")
 
@@ -334,11 +455,8 @@ policies:
 	eng, err := New(store, nil)
 	require.NoError(t, err)
 
-	dec := eng.Evaluate(execCall("test", "deploy prod"))
+	dec := eng.EvaluateAndConsume(execCall("test", "deploy prod"), EvalOptions{})
 	require.True(t, dec.ConsumedOnce)
-
-	err = eng.ConsumeOnceRule(dec.ConsumedRulePolicy, dec.ConsumedRuleIndex)
-	require.NoError(t, err)
 
 	// The entire "one-and-done" policy should be gone (it had only one rule).
 	data, err := os.ReadFile(path)
@@ -437,7 +555,7 @@ policies:
 	assert.Equal(t, absProject, projectPolicy.FilePath, "project policy should point to project file")
 }
 
-func TestConsumeOnceRuleThroughLayeredStore(t *testing.T) {
+func TestEvaluateAndConsumeThroughLayeredStore(t *testing.T) {
 	dir := t.TempDir()
 
 	// Base policy — permanent rules.
@@ -453,6 +571,9 @@ policies:
       - action: allow
         when:
           command_matches: ["git *"]
+      - action: allow
+        when:
+          command_matches: ["echo deploy-now"]
 `
 	require.NoError(t, os.WriteFile(basePath, []byte(baseYAML), 0o644))
 
@@ -478,14 +599,10 @@ policies:
 	require.NoError(t, err)
 
 	// Should allow and flag as consumed.
-	dec := eng.Evaluate(execCall("test", "echo deploy-now"))
+	dec := eng.EvaluateAndConsume(execCall("test", "echo deploy-now"), EvalOptions{})
 	assert.Equal(t, ActionAllow, dec.Action)
 	assert.True(t, dec.ConsumedOnce)
 	assert.Equal(t, "custom-allow", dec.ConsumedRulePolicy)
-
-	// Consume — should remove from project file only.
-	err = eng.ConsumeOnceRule(dec.ConsumedRulePolicy, dec.ConsumedRuleIndex)
-	require.NoError(t, err)
 
 	// Project file should be cleaned up.
 	data, err := os.ReadFile(projectPath)
@@ -497,9 +614,11 @@ policies:
 	require.NoError(t, err)
 	assert.Contains(t, string(baseData), "git")
 
-	// Re-evaluation should deny.
+	// Re-evaluation remains allowed by the global rule; the project rule never
+	// granted authority beyond that global baseline.
 	dec2 := eng.Evaluate(execCall("test", "echo deploy-now"))
-	assert.Equal(t, ActionDeny, dec2.Action)
+	assert.Equal(t, ActionAllow, dec2.Action)
+	assert.False(t, dec2.ConsumedOnce)
 }
 
 func BenchmarkEvaluateWithTemporalRules(b *testing.B) {

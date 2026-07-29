@@ -5,11 +5,19 @@
 package engine
 
 import (
+	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,7 +54,8 @@ func TestGenerateAllowRule_Exec(t *testing.T) {
 		Tool:   "exec",
 		Params: map[string]any{"command": "kubectl apply -f deploy.yaml"},
 	}
-	p := GenerateAllowRule(call)
+	p, err := GenerateAllowRule(call)
+	require.NoError(t, err)
 
 	if len(p.Match.Tool) != 1 || p.Match.Tool[0] != "exec" {
 		t.Fatalf("expected tool match [exec], got %v", p.Match.Tool)
@@ -57,8 +66,8 @@ func TestGenerateAllowRule_Exec(t *testing.T) {
 	if p.Rules[0].Action != "allow" {
 		t.Errorf("expected allow action, got %s", p.Rules[0].Action)
 	}
-	if len(p.Rules[0].When.CommandMatches) != 1 || p.Rules[0].When.CommandMatches[0] != "kubectl apply*" {
-		t.Errorf("expected command_matches [kubectl apply*], got %v", p.Rules[0].When.CommandMatches)
+	if len(p.Rules[0].When.CommandMatches) != 1 || p.Rules[0].When.CommandMatches[0] != "kubectl apply -f deploy.yaml" {
+		t.Errorf("expected exact command match, got %v", p.Rules[0].When.CommandMatches)
 	}
 	if !strings.HasPrefix(p.Name, "auto-allow-kubectl-apply-") {
 		t.Errorf("unexpected name: %s", p.Name)
@@ -70,7 +79,8 @@ func TestGenerateAllowRule_Read(t *testing.T) {
 		Tool:   "read",
 		Params: map[string]any{"path": "/etc/passwd"},
 	}
-	p := GenerateAllowRule(call)
+	p, err := GenerateAllowRule(call)
+	require.NoError(t, err)
 
 	if p.Match.Tool[0] != "read" {
 		t.Fatalf("expected tool read, got %v", p.Match.Tool)
@@ -85,7 +95,8 @@ func TestGenerateAllowRule_Write(t *testing.T) {
 		Tool:   "write",
 		Params: map[string]any{"path": "/tmp/output.txt"},
 	}
-	p := GenerateAllowRule(call)
+	p, err := GenerateAllowRule(call)
+	require.NoError(t, err)
 
 	if p.Match.Tool[0] != "write" {
 		t.Fatalf("expected tool write, got %v", p.Match.Tool)
@@ -95,18 +106,155 @@ func TestGenerateAllowRule_Write(t *testing.T) {
 	}
 }
 
-func TestGenerateAllowRule_MCP(t *testing.T) {
+func TestGenerateAllowRuleRejectsUnsupportedTool(t *testing.T) {
 	call := ToolCall{
 		Tool:   "mcp.my_custom_tool",
 		Params: map[string]any{},
 	}
-	p := GenerateAllowRule(call)
+	_, err := GenerateAllowRule(call)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "explicit policy")
+}
 
-	if p.Match.Tool[0] != "mcp.my_custom_tool" {
-		t.Fatalf("expected tool mcp.my_custom_tool, got %v", p.Match.Tool)
+func TestGenerateAllowRuleRejectsEmptyAuthority(t *testing.T) {
+	tests := []ToolCall{
+		{},
+		{Tool: "exec", Params: map[string]any{"command": "   "}},
+		{Tool: "read", Params: map[string]any{}},
+		{Tool: "write", Params: map[string]any{"path": ""}},
+		{Tool: "edit", Params: map[string]any{"file_path": "   "}},
 	}
-	if !p.Rules[0].When.Default {
-		t.Error("expected default condition for MCP tool")
+	for _, call := range tests {
+		_, err := GenerateAllowRule(call)
+		require.Error(t, err, "call %#v must not create an unscoped allow", call)
+	}
+}
+
+func TestGenerateAllowRuleRejectsExactPatternExpansionPastGlobLimit(t *testing.T) {
+	// The literal input itself fits the enforcement input bound, but escaping
+	// each wildcard triples its size. Persisting this used to write a policy
+	// that the engine could never load again.
+	command := strings.Repeat("*", 3000)
+	_, err := GenerateAllowRule(ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": command},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be represented safely")
+	assert.Contains(t, err.Error(), "max 8192")
+
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	err = AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": command},
+	})
+	require.Error(t, err)
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr), "invalid generated rule must not create a poison policy file")
+}
+
+func TestGenerateAllowRuleSameSecondPrefixCollisionGetsStableHashSuffix(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 12, 34, 56, 0, time.UTC)
+	first, err := generateAllowRuleAt(ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "git push origin/main"},
+	}, now)
+	require.NoError(t, err)
+	second, err := generateAllowRuleAt(ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "git push upstream/main"},
+	}, now)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first.Name, second.Name)
+	assert.Contains(t, first.Name, "auto-allow-git-push-20260728T123456Z-")
+	assert.Contains(t, second.Name, "auto-allow-git-push-20260728T123456Z-")
+
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	require.NoError(t, appendAllowRuleLocked(path, first))
+	require.NoError(t, appendAllowRuleLocked(path, second))
+	loaded, err := NewFileStore(path).Load()
+	require.NoError(t, err)
+	require.Len(t, loaded.Policies, 2)
+}
+
+func TestAppendAllowRuleRejectsPoisonFileTransactionally(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	poisoned := []byte(`version: "1"
+default_action: deny
+policies:
+  - name: duplicate
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when: {command_matches: ["echo one"]}
+  - name: duplicate
+    match: {tool: exec}
+    rules:
+      - action: allow
+        when: {command_matches: ["echo two"]}
+`)
+	require.NoError(t, os.WriteFile(path, poisoned, 0o600))
+
+	err := AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo three"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate policy name")
+	after, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	assert.Equal(t, poisoned, after, "failed merge must leave the existing policy byte-for-byte unchanged")
+}
+
+func TestAppendAllowRuleIsExactByDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    ToolCall
+		allowed ToolCall
+		denied  ToolCall
+	}{
+		{
+			name:    "ordinary command",
+			call:    ToolCall{Tool: "exec", Params: map[string]any{"command": "npm install lodash"}},
+			allowed: ToolCall{Tool: "exec", Params: map[string]any{"command": "npm install lodash"}},
+			denied:  ToolCall{Tool: "exec", Params: map[string]any{"command": "npm install malware"}},
+		},
+		{
+			name:    "privilege wrapper",
+			call:    ToolCall{Tool: "exec", Params: map[string]any{"command": "sudo apt-get install nmap"}},
+			allowed: ToolCall{Tool: "exec", Params: map[string]any{"command": "sudo apt-get install nmap"}},
+			denied:  ToolCall{Tool: "exec", Params: map[string]any{"command": "sudo apt-get install netcat"}},
+		},
+		{
+			name:    "destructive command",
+			call:    ToolCall{Tool: "exec", Params: map[string]any{"command": "rm -rf /tmp/build"}},
+			allowed: ToolCall{Tool: "exec", Params: map[string]any{"command": "rm -rf /tmp/build"}},
+			denied:  ToolCall{Tool: "exec", Params: map[string]any{"command": "rm -rf /"}},
+		},
+		{
+			name:    "literal shell wildcard",
+			call:    ToolCall{Tool: "exec", Params: map[string]any{"command": "echo *.txt"}},
+			allowed: ToolCall{Tool: "exec", Params: map[string]any{"command": "echo *.txt"}},
+			denied:  ToolCall{Tool: "exec", Params: map[string]any{"command": "echo secrets.txt"}},
+		},
+		{
+			name:    "edit path",
+			call:    ToolCall{Tool: "edit", Params: map[string]any{"file_path": "/tmp/config[1].yaml"}},
+			allowed: ToolCall{Tool: "edit", Params: map[string]any{"file_path": "/tmp/config[1].yaml"}},
+			denied:  ToolCall{Tool: "edit", Params: map[string]any{"file_path": "/tmp/config1.yaml"}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+			require.NoError(t, AppendAllowRule(path, test.call))
+			eng, err := New(NewFileStore(path), nil)
+			require.NoError(t, err)
+			assert.Equal(t, ActionAllow, eng.Evaluate(test.allowed).Action)
+			assert.Equal(t, ActionDeny, eng.Evaluate(test.denied).Action)
+		})
 	}
 }
 
@@ -162,6 +310,170 @@ func TestAppendAllowRule(t *testing.T) {
 	}
 }
 
+func TestRemoveAllowRuleUpdatesAndDeletesPolicyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+	require.NoError(t, AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo first"},
+	}))
+	require.NoError(t, AppendAllowRule(path, ToolCall{
+		Tool:   "exec",
+		Params: map[string]any{"command": "echo second"},
+	}))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var cfg Config
+	require.NoError(t, yaml.Unmarshal(data, &cfg))
+	require.Len(t, cfg.Policies, 2)
+
+	removed, remaining, err := RemoveAllowRule(path, cfg.Policies[0].Name)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.Equal(t, 1, remaining)
+
+	removed, remaining, err = RemoveAllowRule(path, "missing")
+	require.NoError(t, err)
+	assert.False(t, removed)
+	assert.Equal(t, 1, remaining)
+
+	removed, remaining, err = RemoveAllowRule(path, cfg.Policies[1].Name)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.Zero(t, remaining)
+	_, err = os.Stat(path)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestAppendAllowRuleConcurrentWritersDoNotLoseUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto-allowed.yaml")
+
+	const writers = 32
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs <- AppendAllowRule(path, ToolCall{
+				Tool:   "read",
+				Params: map[string]any{"path": fmt.Sprintf("/tmp/concurrent-%d", i)},
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent append failed: %v", err)
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("generated YAML is invalid: %v", err)
+	}
+	if len(cfg.Policies) != writers {
+		t.Fatalf("expected %d policies after concurrent appends, got %d", writers, len(cfg.Policies))
+	}
+}
+
+func TestAppendAllowRuleAcrossProcessesDoesNotLoseUpdates(t *testing.T) {
+	if os.Getenv("RAMPART_APPEND_PROCESS_HELPER") == "1" {
+		runAppendAllowRuleProcessHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "auto-allowed.yaml")
+	startPath := filepath.Join(dir, "start")
+	const writers = 12
+	type child struct {
+		cmd    *exec.Cmd
+		stderr bytes.Buffer
+	}
+	children := make([]child, writers)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		children[i].cmd = exec.Command(os.Args[0], "-test.run=^TestAppendAllowRuleAcrossProcessesDoesNotLoseUpdates$")
+		children[i].cmd.Env = append(os.Environ(),
+			"RAMPART_APPEND_PROCESS_HELPER=1",
+			"RAMPART_APPEND_POLICY="+policyPath,
+			"RAMPART_APPEND_START="+startPath,
+			"RAMPART_APPEND_READY="+readyPath,
+			"RAMPART_APPEND_INDEX="+strconv.Itoa(i),
+		)
+		children[i].cmd.Stderr = &children[i].stderr
+		if err := children[i].cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for i := range children {
+		readyPath := filepath.Join(dir, "ready-"+strconv.Itoa(i))
+		for {
+			if _, err := os.Stat(readyPath); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for helper %d", i)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if err := os.WriteFile(startPath, []byte("go"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := range children {
+		if err := children[i].cmd.Wait(); err != nil {
+			t.Fatalf("helper %d failed: %v\nstderr: %s", i, err, children[i].stderr.String())
+		}
+	}
+
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Policies) != writers {
+		t.Fatalf("expected %d policies after process appends, got %d", writers, len(cfg.Policies))
+	}
+}
+
+func runAppendAllowRuleProcessHelper() {
+	if err := os.WriteFile(os.Getenv("RAMPART_APPEND_READY"), []byte("ready"), 0o600); err != nil {
+		os.Exit(20)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("RAMPART_APPEND_START")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Exit(21)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := AppendAllowRule(os.Getenv("RAMPART_APPEND_POLICY"), ToolCall{
+		Tool:   "read",
+		Params: map[string]any{"path": "/tmp/process-" + os.Getenv("RAMPART_APPEND_INDEX")},
+	}); err != nil {
+		os.Exit(22)
+	}
+	os.Exit(0)
+}
+
 func TestAppendAllowRule_CreatesDirectories(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "deep", "nested", "auto-allowed.yaml")
@@ -177,6 +489,168 @@ func TestAppendAllowRule_CreatesDirectories(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("file not created: %v", err)
 	}
+}
+
+func TestPolicyMutationsPreserveRichConfig(t *testing.T) {
+	operations := []struct {
+		name string
+		run  func(string) error
+	}{
+		{
+			name: "append allow rule",
+			run: func(path string) error {
+				return AppendAllowRule(path, ToolCall{Tool: "read", Params: map[string]any{"path": "/tmp/extra"}})
+			},
+		},
+		{
+			name: "migrate legacy glob",
+			run: func(path string) error {
+				_, err := MigrateAllowRuleGlobs(path)
+				return err
+			},
+		},
+		{
+			name: "clean expired rule",
+			run: func(path string) error {
+				_, err := CleanExpiredRules(path)
+				return err
+			},
+		},
+		{
+			name: "remove rule",
+			run: func(path string) error {
+				return RemoveRule(path, "rich-policy", 0)
+			},
+		},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			cfg, richRule := richPersistenceConfig()
+			path := filepath.Join(t.TempDir(), "policy.yaml")
+			require.NoError(t, writeConfigAtomic(path, cfg))
+			require.NoError(t, operation.run(path))
+
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			var got Config
+			require.NoError(t, safeUnmarshal(data, &got))
+
+			assert.Equal(t, cfg.Version, got.Version)
+			assert.Equal(t, cfg.DefaultAction, got.DefaultAction)
+			assert.Equal(t, cfg.Notify, got.Notify)
+			assert.Equal(t, cfg.Tests, got.Tests)
+
+			var richPolicy *Policy
+			for index := range got.Policies {
+				if got.Policies[index].Name == "rich-policy" {
+					richPolicy = &got.Policies[index]
+					break
+				}
+			}
+			require.NotNil(t, richPolicy)
+			assert.Equal(t, cfg.Policies[0].Description, richPolicy.Description)
+			assert.Equal(t, cfg.Policies[0].Priority, richPolicy.Priority)
+			assert.Equal(t, cfg.Policies[0].Enabled, richPolicy.Enabled)
+			assert.Equal(t, cfg.Policies[0].Match, richPolicy.Match)
+
+			var preserved *Rule
+			for index := range richPolicy.Rules {
+				if richPolicy.Rules[index].Message == richRule.Message {
+					preserved = &richPolicy.Rules[index]
+					break
+				}
+			}
+			require.NotNil(t, preserved)
+			assert.Equal(t, richRule, *preserved)
+		})
+	}
+}
+
+func richPersistenceConfig() (*Config, Rule) {
+	enabled := true
+	failOpen := true
+	depthGTE := 1
+	depthLTE := 4
+	future := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+
+	richRule := Rule{
+		Action: "webhook",
+		Ask: AskActionConfig{
+			Audit:        true,
+			HeadlessOnly: true,
+		},
+		When: Condition{
+			CommandMatches:        []string{"deploy*"},
+			CommandNotMatches:     []string{"deploy --dry-run*"},
+			CommandContains:       []string{"production"},
+			CommandEnvAssignments: []string{"DEPLOY_*"},
+			PathMatches:           []string{"/srv/**"},
+			PathNotMatches:        []string{"/srv/safe/**"},
+			URLMatches:            []string{"https://example.com/**"},
+			DomainMatches:         []string{"example.com"},
+			ResponseMatches:       []string{"secret-[0-9]+"},
+			ResponseNotMatches:    []string{"public-secret"},
+			SessionMatches:        []string{"release-*"},
+			SessionNotMatches:     []string{"release-dry-run"},
+			AgentDepth: &IntRangeCondition{
+				Gte: &depthGTE,
+				Lte: &depthLTE,
+			},
+			ToolParamMatches: map[string]string{"environment": "prod*"},
+			CallCount: &CallCountCondition{
+				Tool:   "exec",
+				Gte:    2,
+				Window: "5m",
+			},
+		},
+		Message: "rich rule",
+		Webhook: &WebhookActionConfig{
+			URL:      "https://example.com/decision",
+			Timeout:  Duration{Duration: 2 * time.Second},
+			FailOpen: &failOpen,
+		},
+		ExpiresAt: &future,
+		Once:      true,
+	}
+
+	return &Config{
+		Version:       "1",
+		DefaultAction: "deny",
+		Notify: &NotifyConfig{
+			URL:      "https://example.com/notify",
+			Platform: "webhook",
+			On:       []string{"deny", "ask"},
+		},
+		Tests: []TestCase{{
+			Name:   "inline metadata survives",
+			Tool:   "exec",
+			Agent:  "release-agent",
+			Params: map[string]any{"command": "deploy production"},
+			Expect: "webhook",
+		}},
+		Policies: []Policy{{
+			Name:        "rich-policy",
+			Description: "all supported fields survive persistence",
+			Priority:    7,
+			Enabled:     &enabled,
+			Match: Match{
+				Agent:   "release-*",
+				Session: "release/main",
+				Tool:    StringOrSlice{"exec", "write"},
+			},
+			Rules: []Rule{
+				{
+					Action:    "allow",
+					When:      Condition{CommandMatches: []string{"legacy *"}},
+					Message:   "expired legacy rule",
+					ExpiresAt: &past,
+				},
+				richRule,
+			},
+		}},
+	}, richRule
 }
 
 func TestSanitizeName(t *testing.T) {

@@ -52,10 +52,8 @@ func TestSSEHubConcurrentCloseAndBroadcast(t *testing.T) {
 	hub := newSSEHub()
 
 	// Subscribe some clients
-	var channels []chan []byte
 	for i := 0; i < 10; i++ {
-		ch, _ := hub.subscribe()
-		channels = append(channels, ch)
+		_, _ = hub.subscribe()
 	}
 
 	// Concurrent close and broadcast - should not panic or race

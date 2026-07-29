@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,10 @@ import (
 	"testing"
 	"time"
 )
+
+func requestApprovalForTest(client *hookApprovalClient, tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
+	return client.requestApprovalCtx(context.Background(), tool, command, agent, path, runID, "", message, timeout)
+}
 
 func TestHookApprovalClient_Approved(t *testing.T) {
 	var pollCount atomic.Int32
@@ -46,7 +51,7 @@ func TestHookApprovalClient_Approved(t *testing.T) {
 		logger:   testLogger(),
 	}
 
-	result := client.requestApproval("exec", "kubectl delete pod foo", "claude-code", "/tmp", "", "needs approval", 10*time.Second)
+	result := requestApprovalForTest(client, "exec", "kubectl delete pod foo", "claude-code", "/tmp", "", "needs approval", 10*time.Second)
 	if result != hookAllow {
 		t.Fatalf("expected hookAllow, got %d", result)
 	}
@@ -77,7 +82,7 @@ func TestHookApprovalClient_Denied(t *testing.T) {
 		logger:   testLogger(),
 	}
 
-	result := client.requestApproval("exec", "rm -rf /tmp/stuff", "claude-code", "/tmp", "", "dangerous", 10*time.Second)
+	result := requestApprovalForTest(client, "exec", "rm -rf /tmp/stuff", "claude-code", "/tmp", "", "dangerous", 10*time.Second)
 	if result != hookDeny {
 		t.Fatalf("expected hookDeny, got %d", result)
 	}
@@ -92,7 +97,7 @@ func TestHookApprovalClient_Unreachable(t *testing.T) {
 		errWriter: &errBuf,
 	}
 
-	result := client.requestApproval("exec", "echo hi", "claude-code", "/tmp", "", "test", 2*time.Second)
+	result := requestApprovalForTest(client, "exec", "echo hi", "claude-code", "/tmp", "", "test", 2*time.Second)
 	if result != hookAsk {
 		t.Fatalf("expected hookAsk (fallback), got %d", result)
 	}
@@ -112,7 +117,7 @@ func TestHookApprovalClient_FallbackOnUnreachablePort1(t *testing.T) {
 		logger:   logger,
 	}
 
-	result := client.requestApproval("exec", "echo hi", "claude-code", "/tmp", "", "test", 5*time.Second)
+	result := requestApprovalForTest(client, "exec", "echo hi", "claude-code", "/tmp", "", "test", 5*time.Second)
 	if result != hookAsk {
 		t.Fatalf("expected hookAsk (native prompt fallback), got %d", result)
 	}
@@ -151,7 +156,7 @@ func TestHookApprovalClient_AutoDiscoverApproved(t *testing.T) {
 		autoDiscovered: true,
 	}
 
-	result := client.requestApproval("exec", "kubectl apply -f deploy.yaml", "claude-code", "/tmp", "", "needs approval", 10*time.Second)
+	result := requestApprovalForTest(client, "exec", "kubectl apply -f deploy.yaml", "claude-code", "/tmp", "", "needs approval", 10*time.Second)
 	if result != hookAllow {
 		t.Fatalf("expected hookAllow, got %d", result)
 	}
@@ -171,7 +176,7 @@ func TestHookApprovalClient_AutoDiscoverUnreachableSilent(t *testing.T) {
 		errWriter:      &errBuf,
 	}
 
-	result := client.requestApproval("exec", "echo hi", "claude-code", "/tmp", "", "test", 5*time.Second)
+	result := requestApprovalForTest(client, "exec", "echo hi", "claude-code", "/tmp", "", "test", 5*time.Second)
 	if result != hookAsk {
 		t.Fatalf("expected hookAsk (silent fallback), got %d", result)
 	}
@@ -202,7 +207,7 @@ func TestHookApprovalClient_ExplicitUnreachableShowsWarning(t *testing.T) {
 		autoDiscovered: false,
 	}
 
-	result := client.requestApproval("exec", "echo hi", "claude-code", "/tmp", "", "test", 5*time.Second)
+	result := requestApprovalForTest(client, "exec", "echo hi", "claude-code", "/tmp", "", "test", 5*time.Second)
 	if result != hookAsk {
 		t.Fatalf("expected hookAsk, got %d", result)
 	}
@@ -240,7 +245,7 @@ func TestHookApprovalClient_Timeout(t *testing.T) {
 	}
 
 	start := time.Now()
-	result := client.requestApproval("exec", "echo hi", "claude-code", "/tmp", "", "test", 2*time.Second)
+	result := requestApprovalForTest(client, "exec", "echo hi", "claude-code", "/tmp", "", "test", 2*time.Second)
 	elapsed := time.Since(start)
 
 	if result != hookDeny {

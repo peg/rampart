@@ -24,6 +24,8 @@ package engine
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -112,6 +114,12 @@ type ToolCall struct {
 	// Tool is the tool being invoked (e.g., "exec", "read", "write").
 	Tool string
 
+	// WorkDir is the host-reported directory against which relative filesystem
+	// paths are resolved. Hook processes and policy services can run from a
+	// different directory than the agent, so using the Rampart process CWD here
+	// would evaluate a different file from the one the tool will touch.
+	WorkDir string
+
 	// Params contains tool-specific parameters.
 	// For exec: {"command": "git push", "workdir": "/home/user/project"}
 	// For read: {"path": "/etc/passwd"}
@@ -124,37 +132,165 @@ type ToolCall struct {
 	Timestamp time.Time
 }
 
+// WorkingDirectory returns the explicit host working directory, falling back
+// to common structured parameter names used by SDK and HTTP callers.
+func (tc ToolCall) WorkingDirectory() string {
+	if workDir := strings.TrimSpace(tc.WorkDir); workDir != "" {
+		return workDir
+	}
+	if workDir := strings.TrimSpace(tc.Param("workdir")); workDir != "" {
+		return workDir
+	}
+	return strings.TrimSpace(tc.Param("cwd"))
+}
+
 // Param returns a string value from Params, falling back to Input.
 // This ensures policy matching works regardless of whether the API client
 // sends tool arguments in "params" (legacy) or "input" (MCP-style).
 func (tc ToolCall) Param(key string) string {
-	if v, ok := tc.Params[key].(string); ok && v != "" {
+	if v, ok := tc.Params[key].(string); ok && strings.TrimSpace(v) != "" {
 		return v
 	}
-	v, _ := tc.Input[key].(string)
-	return v
+	if v, ok := tc.Input[key].(string); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	return ""
+}
+
+func (tc ToolCall) paramAlias(keys ...string) string {
+	for _, values := range []map[string]any{tc.Params, tc.Input} {
+		for _, key := range keys {
+			if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 // Command extracts the command string from an exec tool call's params.
 // Returns empty string if not present or not a string.
 func (tc ToolCall) Command() string {
-	// Prefer the effective (sanitized) command for policy matching.
-	// This has heredoc bodies and safe-binary quoted args stripped
-	// to reduce false positives.
-	if eff := tc.Param("command_effective"); eff != "" {
-		return eff
+	// Command input crosses an untrusted host boundary. Never accept a second,
+	// caller-supplied "effective" representation for policy matching: an agent
+	// could pair a dangerous raw command with a benign sanitized value. Any
+	// normalization must be derived internally from this raw command.
+	if strings.EqualFold(strings.TrimSpace(tc.Tool), "exec") {
+		return tc.paramAlias("command", "cmd", "input")
 	}
 	return tc.Param("command")
+}
+
+// validateSecurityInput rejects conflicting representations of fields that
+// determine what a host will execute or access. ToolCall is used by several
+// adapters, and callers may populate both Params and Input; silently choosing
+// one lets an untrusted host put a benign decoy in the preferred slot while it
+// executes a different value from another alias.
+func (tc ToolCall) validateSecurityInput() error {
+	tool := strings.ToLower(strings.TrimSpace(tc.Tool))
+	if tool == "exec" {
+		if err := validateStringAliases("command", []map[string]any{tc.Params, tc.Input}, "command", "cmd", "input"); err != nil {
+			return err
+		}
+	}
+	if isPathSecurityTool(tool) {
+		if err := validateStringAliases("path", []map[string]any{tc.Params, tc.Input}, "path", "file_path", "file", "filepath", "target"); err != nil {
+			return err
+		}
+	}
+	if isURLSecurityTool(tool) {
+		if err := validateStringAliases("url", []map[string]any{tc.Params, tc.Input}, "url", "uri", "href"); err != nil {
+			return err
+		}
+	}
+	if err := validateStringAliasesWithValues("working directory", []string{tc.WorkDir}, []map[string]any{tc.Params, tc.Input}, "workdir", "cwd"); err != nil {
+		return err
+	}
+	for _, field := range []string{"domain", "scheme"} {
+		if err := validateStringAliases(field, []map[string]any{tc.Params, tc.Input}, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isPathSecurityTool(tool string) bool {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "read", "write", "edit", "mcp-destructive":
+		return true
+	default:
+		return false
+	}
+}
+
+func isURLSecurityTool(tool string) bool {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "fetch", "http", "web_fetch", "browser":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateStringAliases(field string, maps []map[string]any, keys ...string) error {
+	return validateStringAliasesWithValues(field, nil, maps, keys...)
+}
+
+func validateStringAliasesWithValues(field string, initial []string, maps []map[string]any, keys ...string) error {
+	values := make(map[string]struct{}, len(initial)+len(maps)*len(keys))
+	for _, value := range initial {
+		if value = strings.TrimSpace(value); value != "" {
+			values[value] = struct{}{}
+		}
+	}
+	for _, valuesMap := range maps {
+		for _, key := range keys {
+			value, exists := valuesMap[key]
+			if !exists || value == nil {
+				continue
+			}
+			text, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("%s must be a string", field)
+			}
+			if text = strings.TrimSpace(text); text != "" {
+				values[text] = struct{}{}
+			}
+		}
+	}
+	if len(values) > 1 {
+		return fmt.Errorf("conflicting %s aliases", field)
+	}
+	return nil
 }
 
 // Path extracts the file path from a read/write tool call's params.
 // Claude Code uses "file_path" for Read/Write/Edit; other agents may use "path".
 // Returns empty string if not present or not a string.
 func (tc ToolCall) Path() string {
-	if p := tc.Param("file_path"); p != "" {
-		return p
+	if isPathSecurityTool(tc.Tool) {
+		return tc.paramAlias("file_path", "path", "file", "filepath", "target")
 	}
-	return tc.Param("path")
+	return tc.paramAlias("file_path", "path")
+}
+
+// URL returns the canonical network destination supplied by the host.
+func (tc ToolCall) URL() string {
+	if isURLSecurityTool(tc.Tool) {
+		return tc.paramAlias("url", "uri", "href")
+	}
+	return tc.Param("url")
+}
+
+// Domain derives the hostname from URL whenever possible. A caller-supplied
+// domain is only a fallback for adapters that report a domain without a URL;
+// it must never override a concrete destination URL.
+func (tc ToolCall) Domain() string {
+	rawURL := tc.URL()
+	if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
+		return parsed.Hostname()
+	}
+	return tc.Param("domain")
 }
 
 // Decision is the result of evaluating a tool call against all policies.

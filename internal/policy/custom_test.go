@@ -14,9 +14,11 @@
 package policy_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +52,31 @@ policies: []
 	}
 }
 
+func TestLoadCustomPolicy_AcceptsScalarToolFromExistingPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "custom.yaml")
+	err := os.WriteFile(path, []byte(`version: "1"
+policies:
+  - name: existing
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo safe"]
+`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := policy.LoadCustomPolicy(path)
+	if err != nil {
+		t.Fatalf("LoadCustomPolicy: %v", err)
+	}
+	if len(p.Policies) != 1 || len(p.Policies[0].Match.Tool) != 1 || p.Policies[0].Match.Tool[0] != "exec" {
+		t.Fatalf("unexpected scalar tool migration: %+v", p.Policies)
+	}
+}
+
 func TestSaveCustomPolicy_ValidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "custom.yaml")
@@ -65,6 +92,40 @@ func TestSaveCustomPolicy_ValidYAML(t *testing.T) {
 	var out map[string]interface{}
 	if err := yaml.Unmarshal(data, &out); err != nil {
 		t.Fatalf("saved file is not valid YAML: %v\n%s", err, data)
+	}
+}
+
+func TestUpdateCustomPolicyConcurrentWritersDoNotLoseRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "custom.yaml")
+	const writers = 24
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs <- policy.UpdateCustomPolicy(path, func(p *policy.CustomPolicy) error {
+				return p.AddRule("allow", fmt.Sprintf("tool-%d *", i), "", "exec")
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p, err := policy.LoadCustomPolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.TotalRules(); got != writers {
+		t.Fatalf("rules = %d, want %d", got, writers)
 	}
 }
 
@@ -281,6 +342,9 @@ func TestHasPattern(t *testing.T) {
 	if action != "allow" {
 		t.Errorf("action = %q, want allow", action)
 	}
+	if tool != "exec" {
+		t.Errorf("tool = %q, want exec", tool)
+	}
 
 	// Test another existing pattern
 	exists, action, tool = p.HasPattern("rm -rf /")
@@ -289,6 +353,9 @@ func TestHasPattern(t *testing.T) {
 	}
 	if action != "deny" {
 		t.Errorf("action = %q, want deny", action)
+	}
+	if tool != "exec" {
+		t.Errorf("tool = %q, want exec", tool)
 	}
 
 	// Test non-existent pattern

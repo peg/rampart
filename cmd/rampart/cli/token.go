@@ -175,19 +175,19 @@ Examples:
 			if jsonOut {
 				// Include plaintext token in JSON output (only time it's shown).
 				out := struct {
-					Token  string       `json:"token"`
-					Agent  string       `json:"agent"`
-					Policy string       `json:"policy,omitempty"`
-					Scopes []string     `json:"scopes"`
-					Expires *time.Time  `json:"expires_at,omitempty"`
-					Note   string       `json:"note,omitempty"`
+					Token   string     `json:"token"`
+					Agent   string     `json:"agent"`
+					Policy  string     `json:"policy,omitempty"`
+					Scopes  []string   `json:"scopes"`
+					Expires *time.Time `json:"expires_at,omitempty"`
+					Note    string     `json:"note,omitempty"`
 				}{
-					Token:  plaintext,
-					Agent:  tok.Agent,
-					Policy: tok.Policy,
-					Scopes: tok.Scopes,
+					Token:   plaintext,
+					Agent:   tok.Agent,
+					Policy:  tok.Policy,
+					Scopes:  tok.Scopes,
 					Expires: tok.ExpiresAt,
-					Note:   tok.Note,
+					Note:    tok.Note,
 				}
 				data, err := json.MarshalIndent(out, "", "  ")
 				if err != nil {

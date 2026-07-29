@@ -19,24 +19,23 @@ pip install rampart-sdk
 ```python
 import rampart
 
-# Create a client (reads RAMPART_URL and RAMPART_TOKEN from environment)
-client = rampart.RampartClient()
+# Reads RAMPART_URL and RAMPART_TOKEN from the environment. A context manager
+# closes the connection pool deterministically.
+with rampart.RampartClient() as client:
+    # Preview whether an exec command would be allowed. Preview methods do not
+    # consume stateful rules and must not be used as an execution boundary.
+    decision = client.check_exec("rm -rf /")
+    if not decision.allowed:
+        print(f"Command blocked: {decision.message}")
+    else:
+        print("Command is allowed")
 
-# Check if an exec command would be allowed
-decision = client.check_exec("rm -rf /")
-if not decision.allowed:
-    print(f"Command blocked: {decision.message}")
-else:
-    print("Command is allowed")
+    decision = client.check_read("/etc/passwd")
+    decision = client.check_write("/tmp/output.txt", content="Hello world")
+    decision = client.check_fetch("https://api.example.com/data")
 
-# Check other tool types
-decision = client.check_read("/etc/passwd")
-decision = client.check_write("/tmp/output.txt", content="Hello world")
-decision = client.check_fetch("https://api.example.com/data")
-
-# Check server health
-if client.health():
-    print("Rampart server is healthy")
+    if client.health():
+        print("Rampart server is healthy")
 ```
 
 ### Decorator Usage
@@ -63,7 +62,9 @@ def write_file(path: str, content: str) -> None:
     with open(path, 'w') as f:
         f.write(content)
 
-# Functions will automatically check policies before executing
+# Functions use the enforcement endpoint before executing. This records
+# call-count state and consumes matching once:true authorizations.
+# The built-in decorator client also fails closed if Rampart is unavailable.
 try:
     result = run_command("git status")
     print(result)
@@ -131,15 +132,20 @@ asyncio.run(main())
 ```python
 # Custom configuration
 client = rampart.RampartClient(
-    url="http://rampart.example.com:8080",
+    url="https://rampart.example.com:8080",
     token="your-auth-token",
     fail_open=True,  # Allow calls if server is unreachable (default)
     timeout=30.0,    # Request timeout in seconds
 )
 
-# Fail-closed mode (deny calls if server is unreachable)
+# Fail-closed mode (recommended for security boundaries)
 strict_client = rampart.RampartClient(fail_open=False)
 ```
+
+Non-loopback endpoints must use HTTPS because policy requests contain tool-call
+metadata even when no bearer token is configured. The SDK also ignores ambient
+proxy variables and refuses HTTP redirects so control-plane credentials and
+tool data remain bound to the configured Rampart endpoint.
 
 ## API Reference
 
@@ -148,13 +154,17 @@ strict_client = rampart.RampartClient(fail_open=False)
 #### Methods
 
 - `health() -> bool`: Check server health
-- `preflight(tool, params, agent=None, session=None) -> Decision`: Generic policy check
+- `preflight(tool, params, agent=None, session=None) -> Decision`: Preview a policy decision without consuming state
+- `enforce(tool, params, agent=None, session=None) -> Decision`: Authorize an actual invocation and consume stateful rules
 - `check_exec(command, agent=None, session=None, use_b64=False) -> Decision`: Check exec command
 - `check_read(path, agent=None, session=None) -> Decision`: Check file read
 - `check_write(path, content=None, agent=None, session=None) -> Decision`: Check file write  
 - `check_fetch(url, agent=None, session=None) -> Decision`: Check URL fetch
 
-All methods have async equivalents prefixed with `a` (e.g., `ahealth()`, `apreflight()`).
+All methods have async equivalents prefixed with `a` (for example,
+`ahealth()`, `apreflight()`, and `aenforce()`). The convenience `check_*`
+methods are previews; the decorators call `enforce`/`aenforce` because they sit
+on the actual execution boundary.
 
 ### Decision Object
 
@@ -162,7 +172,7 @@ All methods have async equivalents prefixed with `a` (e.g., `ahealth()`, `aprefl
 @dataclass
 class Decision:
     allowed: bool              # Whether the call is allowed
-    action: str               # Policy action: allow, deny, log, require_approval
+    action: str               # Policy action: allow, deny, watch, ask
     message: str              # Human-readable reason
     policies: List[str]       # Names of matched policies
     eval_duration_ms: float   # Evaluation time in milliseconds
@@ -191,6 +201,10 @@ class Decision:
 - `session`: Session identifier for policy context
 - `raise_on_deny`: Whether to raise exception on denial (default: True)
 
+When no custom client is supplied, decorators create a fail-closed client.
+Pass an explicitly configured client only if your application has made a
+deliberate availability-versus-enforcement choice.
+
 ## Examples
 
 ### Basic Error Handling
@@ -198,18 +212,15 @@ class Decision:
 ```python
 import rampart
 
-client = rampart.RampartClient()
-
 try:
-    decision = client.check_exec("rm -rf /")
-    if decision.allowed:
-        print("Dangerous command is somehow allowed!")
-    else:
-        print(f"Command blocked by policy: {decision.policies}")
-        
+    with rampart.RampartClient() as client:
+        decision = client.check_exec("rm -rf /")
+        if decision.allowed:
+            print("Dangerous command is somehow allowed!")
+        else:
+            print(f"Command blocked by policy: {decision.policies}")
 except rampart.RampartConnectionError:
     print("Cannot reach Rampart server")
-    
 except rampart.RampartServerError as e:
     print(f"Server error: {e.status_code} - {e.message}")
 ```
@@ -257,13 +268,11 @@ safe_file_operation = rampart.read_guard()(unsafe_file_operation)
 
 # Or check policies manually
 def manual_policy_check(path: str) -> str:
-    client = rampart.RampartClient()
-    decision = client.check_read(path)
-    
-    if not decision.allowed:
-        raise ValueError(f"File access denied: {decision.message}")
-    
-    return unsafe_file_operation(path)
+    with rampart.RampartClient(fail_open=False) as client:
+        decision = client.enforce("read", {"path": path})
+        if not decision.allowed:
+            raise ValueError(f"File access denied: {decision.message}")
+        return unsafe_file_operation(path)
 ```
 
 ## Development

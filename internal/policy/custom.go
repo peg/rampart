@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/securefile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -42,7 +44,7 @@ type CustomEntry struct {
 
 // CustomMatch defines which tools this entry applies to.
 type CustomMatch struct {
-	Tool []string `yaml:"tool,omitempty"`
+	Tool stringOrSlice `yaml:"tool,omitempty"`
 }
 
 // CustomRule is a single allow/deny rule.
@@ -92,7 +94,33 @@ func SaveCustomPolicy(path string, p *CustomPolicy) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("policy: create dir %s: %w", dir, err)
 	}
+	return filetxn.WithLock(path, func() error {
+		return saveCustomPolicyLocked(path, p)
+	})
+}
 
+// UpdateCustomPolicy performs a locked load-mutate-save transaction. Callers
+// that derive a new policy from current contents must use this helper so a
+// concurrent once:true claim cannot be overwritten by a stale snapshot.
+func UpdateCustomPolicy(path string, mutate func(*CustomPolicy) error) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("policy: create dir %s: %w", dir, err)
+	}
+	return filetxn.WithLock(path, func() error {
+		p, err := LoadCustomPolicy(path)
+		if err != nil {
+			return err
+		}
+		if err := mutate(p); err != nil {
+			return err
+		}
+		return saveCustomPolicyLocked(path, p)
+	})
+}
+
+func saveCustomPolicyLocked(path string, p *CustomPolicy) error {
+	dir := filepath.Dir(path)
 	data, err := yaml.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("policy: marshal: %w", err)
@@ -108,19 +136,28 @@ func SaveCustomPolicy(path string, p *CustomPolicy) error {
 		return fmt.Errorf("policy: create temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("policy: secure temp file: %w", err)
+	}
 
 	if _, err := tmp.Write(out); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("policy: write temp file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("policy: sync temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("policy: close temp file: %w", err)
 	}
 
-	// Atomic rename
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := filetxn.Replace(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("policy: rename %s -> %s: %w", tmpPath, path, err)
 	}
@@ -134,6 +171,7 @@ func SaveCustomPolicy(path string, p *CustomPolicy) error {
 //   - pattern: a glob pattern for the command or file path
 //   - message: a human-readable description (may be empty)
 //   - tool:    "exec", "read", "write", "edit", or "" for auto-detection
+//
 // TemporalOpts holds optional temporal parameters for rule creation.
 type TemporalOpts struct {
 	ExpiresAt *time.Time
@@ -234,7 +272,7 @@ func (p *CustomPolicy) AddRule(action, pattern, message, tool string) error {
 	// Entry not found — create a new one.
 	p.Policies = append(p.Policies, CustomEntry{
 		Name:  entryName,
-		Match: CustomMatch{Tool: matchTools},
+		Match: CustomMatch{Tool: stringOrSlice(matchTools)},
 		Rules: []CustomRule{
 			{
 				Action:  action,

@@ -16,7 +16,12 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -24,4 +29,35 @@ import (
 // from the parent terminal) on Unix systems.
 func setDetachAttrs(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}
+
+// isRampartServeProcess authenticates a PID before stop sends a signal. PID
+// files can outlive their process, and operating systems reuse numeric PIDs;
+// checking only that a PID exists could terminate an unrelated user process.
+func isRampartServeProcess(pid int) (bool, string, error) {
+	pidArg := fmt.Sprintf("%d", pid)
+	commOut, err := exec.Command("ps", "-p", pidArg, "-o", "comm=").CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, strings.TrimSpace(string(commOut)), nil
+		}
+		return false, "", err
+	}
+	argsOut, err := exec.Command("ps", "-p", pidArg, "-o", "args=").CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, strings.TrimSpace(string(argsOut)), nil
+		}
+		return false, "", err
+	}
+
+	comm := strings.TrimSpace(string(commOut))
+	args := strings.TrimSpace(string(argsOut))
+	return isRampartServeCommand(filepath.Base(comm), args), strings.TrimSpace(comm + " " + args), nil
+}
+
+func terminateRampartServeProcess(proc *os.Process) error {
+	return proc.Signal(syscall.SIGTERM)
 }

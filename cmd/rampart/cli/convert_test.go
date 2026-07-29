@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/peg/rampart/internal/engine"
 )
 
 func TestConvert_BasicSettings(t *testing.T) {
@@ -44,13 +46,13 @@ func TestConvert_BasicSettings(t *testing.T) {
 	// Deny rules come first within the rules section
 	rulesSection := out[strings.Index(out, "    rules:"):]
 	denyIdx := strings.Index(rulesSection, "action: deny")
-	approvalIdx := strings.Index(rulesSection, "action: require_approval")
+	approvalIdx := strings.Index(rulesSection, "action: ask")
 	allowIdx := strings.Index(rulesSection, "action: allow")
 	if denyIdx < 0 || approvalIdx < 0 || allowIdx < 0 {
 		t.Fatalf("missing expected actions in output:\n%s", out)
 	}
 	if denyIdx > approvalIdx || approvalIdx > allowIdx {
-		t.Error("rules should be ordered: deny, require_approval, allow")
+		t.Error("rules should be ordered: deny, ask, allow")
 	}
 
 	if !strings.Contains(out, `"rm -rf *"`) {
@@ -61,6 +63,31 @@ func TestConvert_BasicSettings(t *testing.T) {
 	}
 	if !strings.Contains(out, `"npm run *"`) {
 		t.Error("missing npm run pattern")
+	}
+
+	convertedPath := filepath.Join(t.TempDir(), "converted.yaml")
+	if err := os.WriteFile(convertedPath, []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.New(engine.NewFileStore(convertedPath), nil); err != nil {
+		t.Fatalf("converted policy is not loadable by Rampart: %v\n%s", err, out)
+	}
+}
+
+func TestConvertExpandsWindowsHomeSeparator(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	settingsPath := filepath.Join(home, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"permissions":{"allow":["Read"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := runConvert(&buf, `~\settings.json`, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "action: allow") {
+		t.Fatalf("converted policy missing allow rule:\n%s", buf.String())
 	}
 }
 

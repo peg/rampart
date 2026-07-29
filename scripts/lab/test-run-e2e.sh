@@ -19,6 +19,8 @@ grep -q -- '--allowedTools "Bash(${command})"' "${repo_root}/scripts/compat-clau
 grep -q 'keychain_unavailable_in_disposable_home' "${repo_root}/scripts/compat-claude-host.sh"
 grep -q 'default_action: deny' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q -- '--copy-env' "${repo_root}/scripts/compat-hermes-host.sh"
+grep -q -- '--gateway' "${repo_root}/scripts/compat-hermes-host.sh"
+grep -q 'API_SERVER_ENABLED=true' "${repo_root}/scripts/compat-hermes-host.sh"
 
 isolated_path_line="$(grep -n '^isolated_path=' "$runner" | cut -d: -f1)"
 tool_check_line="$(grep -n '^for tool in git go python3' "$runner" | cut -d: -f1)"
@@ -63,6 +65,14 @@ fi
 grep -q 'exact 40-character hexadecimal commit SHA' "${tmp}/invalid.err"
 
 grep -q 'openclaw-container-acceptance.sh' "$runner"
+grep -q 'CGO_ENABLED=0 GOOS=linux GOARCH=' "$runner"
+grep -q 'run_step go-test isolated env RAMPART_OPENCLAW_BIN=' "$runner"
+if grep -Eq '\$\{controller_repo\}/(preload/test_preload\.sh|scripts/test-approval-flow\.sh|scripts/compat-hermes-latest\.py)' "$runner"; then
+  echo "test-run-e2e: candidate harnesses must run from the detached worktree" >&2
+  exit 1
+fi
+grep -q '"controller_commit_sha"' "$runner"
+grep -q '"controller_dirty"' "$runner"
 "${repo_root}/scripts/lab/openclaw-container-acceptance.sh" --help >"${tmp}/openclaw-help"
 grep -q -- '--rampart' "${tmp}/openclaw-help"
 

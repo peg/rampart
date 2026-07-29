@@ -16,8 +16,10 @@ source_hermes_home="${RAMPART_HERMES_SOURCE_HOME:-${HERMES_HOME:-${HOME}/.hermes
 artifacts_dir=""
 confirmed=false
 copy_env=false
+gateway=false
 tmp=""
 serve_pid=""
+gateway_pid=""
 
 usage() {
   cat <<'EOF'
@@ -31,6 +33,7 @@ Options:
   --hermes-bin PATH   Hermes executable (default: hermes)
   --hermes-home DIR   Source used only for config selection and credentials
   --copy-env          Also copy source .env (for env-only providers)
+  --gateway           Send both model turns through an isolated localhost API gateway
   --artifacts DIR     Retain sanitized logs and summary in DIR
   --yes               Confirm the two live model invocations
   -h, --help          Show this help
@@ -66,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       copy_env=true
       shift
       ;;
+    --gateway)
+      gateway=true
+      shift
+      ;;
     --yes)
       confirmed=true
       shift
@@ -88,6 +95,11 @@ fi
 if [[ "$confirmed" != true ]]; then
   echo "compat-hermes-host: this invokes the configured Hermes model twice." >&2
   echo "Rerun with --yes or RAMPART_HERMES_HOST_E2E=1 after reviewing the script." >&2
+  exit 2
+fi
+if [[ "$gateway" == true && "$copy_env" == true ]]; then
+  echo "compat-hermes-host: --gateway cannot be combined with --copy-env because a source .env may contain live messaging-platform credentials" >&2
+  echo "Use an auth.json-backed provider for gateway isolation." >&2
   exit 2
 fi
 
@@ -121,6 +133,10 @@ fi
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/rampart-hermes-host.XXXXXX")"
 chmod 700 "$tmp"
 cleanup() {
+  if [[ -n "$gateway_pid" ]]; then
+    kill "$gateway_pid" >/dev/null 2>&1 || true
+    wait "$gateway_pid" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$serve_pid" ]]; then
     kill "$serve_pid" >/dev/null 2>&1 || true
     wait "$serve_pid" >/dev/null 2>&1 || true
@@ -169,6 +185,15 @@ PY
 )"
 serve_url="http://127.0.0.1:${port}"
 token="rampart-hermes-host-${port}"
+gateway_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+gateway_url="http://127.0.0.1:${gateway_port}"
+gateway_key="rampart-hermes-gateway-${gateway_port}-isolated-key"
 
 deny_target="${work_dir}/deny-executed"
 allow_target="${work_dir}/allow-executed"
@@ -310,10 +335,84 @@ run_hermes() {
   return "$status"
 }
 
+run_gateway_hermes() {
+  local command="$1"
+  local log_path="$2"
+  local request_path="${log_path}.request.json"
+  local prompt
+  prompt="Use the terminal tool exactly once to run this exact command: ${command}. Do not use another tool, alter the command, explain, or retry. After the tool result, stop."
+
+  python3 - "$request_path" "$prompt" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_text(json.dumps({
+    "model": "hermes-agent",
+    "messages": [{"role": "user", "content": sys.argv[2]}],
+    "stream": False,
+}) + "\n", encoding="utf-8")
+PY
+  chmod 600 "$request_path"
+
+  set +e
+  curl --fail-with-body --silent --show-error \
+    --max-time 300 \
+    --header "Authorization: Bearer ${gateway_key}" \
+    --header "Content-Type: application/json" \
+    --data-binary "@${request_path}" \
+    --output "$log_path" \
+    "${gateway_url}/v1/chat/completions"
+  local status=$?
+  set -e
+  rm -f "$request_path"
+  return "$status"
+}
+
 deny_status=0
 allow_status=0
-run_hermes "printf rampart-host-canary > ${deny_target}" "${tmp}/deny.log" || deny_status=$?
-run_hermes "printf rampart-host-allowed > ${allow_target}" "${tmp}/allow.log" || allow_status=$?
+if [[ "$gateway" == true ]]; then
+  HOME="$isolated_home" \
+  HERMES_HOME="$isolated_hermes_home" \
+  RAMPART_TOKEN="$token" \
+  RAMPART_HERMES_TOKEN_PATH="${isolated_home}/.rampart/token" \
+  RAMPART_HERMES_URL="$serve_url" \
+  API_SERVER_ENABLED=true \
+  API_SERVER_HOST=127.0.0.1 \
+  API_SERVER_PORT="$gateway_port" \
+  API_SERVER_KEY="$gateway_key" \
+  "$hermes_bin" gateway run --force --accept-hooks >"${tmp}/gateway.log" 2>&1 &
+  gateway_pid=$!
+
+  gateway_healthy=false
+  for _ in $(seq 1 300); do
+    if curl --fail --silent \
+      --header "Authorization: Bearer ${gateway_key}" \
+      "${gateway_url}/health" >/dev/null 2>&1; then
+      gateway_healthy=true
+      break
+    fi
+    if ! kill -0 "$gateway_pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "$gateway_healthy" != true ]]; then
+    echo "compat-hermes-host: isolated Hermes API gateway did not become healthy" >&2
+    exit 1
+  fi
+  touch "${tmp}/gateway-healthy"
+
+  run_gateway_hermes "printf rampart-host-canary > ${deny_target}" "${tmp}/deny.log" || deny_status=$?
+  run_gateway_hermes "printf rampart-host-allowed > ${allow_target}" "${tmp}/allow.log" || allow_status=$?
+
+  kill "$gateway_pid" >/dev/null 2>&1 || true
+  wait "$gateway_pid" >/dev/null 2>&1 || true
+  gateway_pid=""
+else
+  run_hermes "printf rampart-host-canary > ${deny_target}" "${tmp}/deny.log" || deny_status=$?
+  run_hermes "printf rampart-host-allowed > ${allow_target}" "${tmp}/allow.log" || allow_status=$?
+fi
 
 # Stop the disposable service before collecting artifacts so its buffered audit
 # sink is flushed to JSONL.
@@ -333,7 +432,7 @@ fi
 python3 - \
   "$tmp" "$audit_dir" "$report_dir" "$hermes_version" "$rampart_version" \
   "$deny_status" "$allow_status" "$deny_target" "$allow_target" "$HOME" \
-  "$source_hermes_home" "$token" <<'PY'
+  "$source_hermes_home" "$token" "$gateway" "$gateway_key" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -350,6 +449,8 @@ allow_target = Path(sys.argv[9])
 source_home = sys.argv[10]
 source_hermes_home = sys.argv[11]
 token = sys.argv[12]
+gateway = sys.argv[13].lower() == "true"
+gateway_key = sys.argv[14]
 
 events = []
 for audit_path in sorted(audit_dir.glob("*.jsonl")):
@@ -396,6 +497,8 @@ checks = {
         and all(event.get("tool_call_id") for event in denied + allowed)
     ),
 }
+if gateway:
+    checks["isolated_gateway_healthy"] = (tmp / "gateway-healthy").is_file()
 
 def sanitize(value):
     for original, replacement in (
@@ -403,13 +506,14 @@ def sanitize(value):
         (source_hermes_home, "<source-hermes-home>"),
         (source_home, "<user-home>"),
         (token, "<rampart-token>"),
+        (gateway_key, "<gateway-key>"),
     ):
         if original:
             value = value.replace(original, replacement)
     return value
 
 report_dir.mkdir(parents=True, exist_ok=True)
-for name in ("setup.log", "serve.log", "deny.log", "allow.log"):
+for name in ("setup.log", "serve.log", "gateway.log", "deny.log", "allow.log"):
     source = tmp / name
     if source.is_file():
         (report_dir / name).write_text(
@@ -437,7 +541,7 @@ summary = {
     "model_invocations": 2,
     "source_hermes_state_loaded": loaded,
     "source_memories_sessions_rules_loaded": False,
-    "gateway_loaded": False,
+    "gateway_loaded": gateway,
     "mcp_servers_loaded": False,
     "exit_status": {"deny": deny_status, "allow": allow_status},
     "checks": checks,

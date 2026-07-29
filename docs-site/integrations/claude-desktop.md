@@ -77,7 +77,10 @@ For cloud MCP servers, use a more restrictive policy (deny by default, explicit 
 
 ## Ask Behavior
 
-When a policy action is `ask`, the MCP proxy blocks and waits for human resolution via `rampart approve <id>` or the API. If denied or expired, it returns a JSON-RPC error to Claude Desktop with code `-32600` and the denial reason.
+The standalone stdio proxy has no safely reachable approval resolver. When a
+policy action is `ask`, it fails closed immediately and returns a JSON-RPC error
+to Claude Desktop with code `-32600`. Use explicit `allow` or `deny` rules until
+a service-backed exact-call approval owner is configured.
 
 ## Monitor
 

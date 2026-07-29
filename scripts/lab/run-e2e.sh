@@ -107,6 +107,11 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 controller_repo="$(git -C "$script_dir" rev-parse --show-toplevel)"
+controller_sha="$(git -C "$controller_repo" rev-parse HEAD)"
+controller_dirty=false
+if [[ -n "$(git -C "$controller_repo" status --porcelain --untracked-files=normal)" ]]; then
+  controller_dirty=true
+fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_id="${timestamp}-${sha:0:12}-$$"
 run_root="${lab_root}/runs/${run_id}"
@@ -146,6 +151,8 @@ write_summary() {
   "schema_version": 1,
   "run_id": $(json_string "$run_id"),
   "commit_sha": $(json_string "$sha"),
+  "controller_commit_sha": $(json_string "$controller_sha"),
+  "controller_dirty": $controller_dirty,
   "suite": $(json_string "$suite"),
   "status": $(json_string "$status"),
   "exit_code": $exit_code,
@@ -234,7 +241,15 @@ if [[ "$failed" -ne 0 ]]; then
 fi
 worktree_added=1
 
-python3 - "$worktree" "$sha" "$suite" "$hermes_python" "$hermes_bin" >"${artifact_dir}/environment.json" <<'PY'
+python3 - \
+  "$worktree" \
+  "$sha" \
+  "$suite" \
+  "$hermes_python" \
+  "$hermes_bin" \
+  "$controller_sha" \
+  "$controller_dirty" \
+  >"${artifact_dir}/environment.json" <<'PY'
 import json, os, platform, shutil, subprocess, sys
 
 def version(executable, *arguments):
@@ -275,6 +290,10 @@ if hermes_python:
 print(json.dumps({
     "schema_version": 1,
     "commit_sha": sys.argv[2],
+    "controller": {
+        "commit_sha": sys.argv[6],
+        "dirty": sys.argv[7] == "true",
+    },
     "suite": sys.argv[3],
     "worktree": sys.argv[1],
     "platform": platform.platform(),
@@ -285,7 +304,11 @@ print(json.dumps({
 PY
 
 run_core() {
-  run_step go-test isolated bash -c 'cd "$1" && go test ./...' _ "$worktree"
+  # Never let a test that forgets to provide a fixture discover or control the
+  # lab host's live OpenClaw installation. Tests that exercise binary discovery
+  # explicitly replace this override with their own temporary executable.
+  run_step go-test isolated env RAMPART_OPENCLAW_BIN="${run_root}/missing-openclaw" \
+    bash -c 'cd "$1" && go test ./...' _ "$worktree"
   run_step go-vet isolated bash -c 'cd "$1" && go vet ./...' _ "$worktree"
   run_step go-build isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' _ "$worktree" "${artifact_dir}/rampart"
   run_step policy-standard isolated "${artifact_dir}/rampart" --config "${worktree}/policies/standard.yaml" policy check
@@ -303,15 +326,17 @@ run_core() {
 
 run_preload() {
   local port
+  local preload_home
   port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  preload_home="${run_root}/preload-home"
   mkdir -p "${artifact_dir}/audit"
-  mkdir -p "${isolated_home}/.ssh"
-  printf '%s\n' 'rampart-lab-private-credential-canary' >"${isolated_home}/.ssh/id_rsa"
-  chmod 600 "${isolated_home}/.ssh/id_rsa"
-  HOME="$isolated_home" \
-    XDG_CONFIG_HOME="$isolated_home/.config" \
-    XDG_CACHE_HOME="$isolated_home/.cache" \
-    XDG_STATE_HOME="$isolated_home/.local/state" \
+  mkdir -p "${preload_home}/.ssh"
+  printf '%s\n' 'rampart-lab-private-credential-canary' >"${preload_home}/.ssh/id_rsa"
+  chmod 600 "${preload_home}/.ssh/id_rsa"
+  HOME="$preload_home" \
+    XDG_CONFIG_HOME="$preload_home/.config" \
+    XDG_CACHE_HOME="$preload_home/.cache" \
+    XDG_STATE_HOME="$preload_home/.local/state" \
     RAMPART_TOKEN="rampart-lab-token" \
     "${artifact_dir}/rampart" --config "${worktree}/policies/standard.yaml" \
     serve --no-openclaw-bridge --mode enforce --port "$port" \
@@ -340,13 +365,13 @@ run_preload() {
   RAMPART_ADDR="127.0.0.1:${port}" \
     RAMPART_URL="http://127.0.0.1:${port}" \
     RAMPART_TOKEN="rampart-lab-token" \
-    HOME="$isolated_home" \
-    XDG_CONFIG_HOME="$isolated_home/.config" \
-    XDG_CACHE_HOME="$isolated_home/.cache" \
-    XDG_STATE_HOME="$isolated_home/.local/state" \
+    HOME="$preload_home" \
+    XDG_CONFIG_HOME="$preload_home/.config" \
+    XDG_CACHE_HOME="$preload_home/.cache" \
+    XDG_STATE_HOME="$preload_home/.local/state" \
     RAMPART_PRELOAD_SOURCE_DIR="${worktree}/preload" \
-    RAMPART_BLOCK_CMD="cat ${isolated_home}/.ssh/id_rsa" \
-    bash "${controller_repo}/preload/test_preload.sh"
+    RAMPART_BLOCK_CMD="cat ${preload_home}/.ssh/id_rsa" \
+    bash "${worktree}/preload/test_preload.sh"
   local code=$?
   set -e
   kill "$preload_server_pid" 2>/dev/null || true
@@ -363,7 +388,7 @@ run_e2e() {
   fi
   approval_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   run_step approval-flow isolated env PORT="$approval_port" bash -c 'cd "$1" && bash "$2"' \
-    _ "$worktree" "${controller_repo}/scripts/test-approval-flow.sh"
+    _ "$worktree" "${worktree}/scripts/test-approval-flow.sh"
   if [[ "$(uname -s)" == "Linux" ]]; then
     run_step preload-enforcement run_preload
   else
@@ -384,17 +409,35 @@ run_hermes() {
     fi
   fi
   run_step "$step" isolated env RAMPART_COMPAT_REPO_ROOT="$worktree" \
-    python3 "${controller_repo}/scripts/compat-hermes-latest.py" "${args[@]}"
+    python3 "${worktree}/scripts/compat-hermes-latest.py" "${args[@]}"
 }
 
 run_openclaw() {
-  if [[ ! -x "${artifact_dir}/rampart" ]]; then
-    run_step go-build-openclaw isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
-      _ "$worktree" "${artifact_dir}/rampart"
+  local container_binary="${artifact_dir}/rampart-openclaw-linux"
+  local docker_arch
+  local docker_machine
+  if ! docker_machine="$(docker info --format '{{.Architecture}}')"; then
+    echo "run-e2e: could not determine Docker architecture for OpenClaw suite" >&2
+    failed=1
+    return
+  fi
+  case "$docker_machine" in
+    aarch64|arm64) docker_arch="arm64" ;;
+    x86_64|amd64) docker_arch="amd64" ;;
+    *)
+      echo "run-e2e: unsupported Docker architecture for OpenClaw suite: ${docker_machine}" >&2
+      failed=1
+      return
+      ;;
+  esac
+  if [[ ! -x "$container_binary" ]]; then
+    run_step go-build-openclaw isolated env CGO_ENABLED=0 GOOS=linux GOARCH="$docker_arch" \
+      bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
+      _ "$worktree" "$container_binary"
   fi
   run_step openclaw-container \
     "${worktree}/scripts/lab/openclaw-container-acceptance.sh" \
-    --rampart "${artifact_dir}/rampart" \
+    --rampart "$container_binary" \
     --artifact-dir "${artifact_dir}/openclaw-container"
 }
 

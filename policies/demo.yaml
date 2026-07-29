@@ -61,7 +61,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "kubectl apply *"
@@ -77,7 +77,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: watch
         when:
           command_matches:
             - "curl *"
@@ -115,7 +115,7 @@ tests:
     tool: exec
     params:
       command: "kubectl apply -f app.yaml"
-    expect: require_approval
+    expect: ask
 
   - name: "logs curl requests"
     tool: exec

@@ -14,7 +14,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -253,6 +252,16 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	protected := detectProtectedAgents()
 	serverIssues, serveURL := doctorServer(emit, protected)
 	issues += serverIssues
+	if serveURL != "" && token != "" {
+		resolvedToken, _, tokenErr := resolveTokenForEndpoint(serveURL, "")
+		if tokenErr != nil {
+			emit("Token endpoint", "fail", tokenErr.Error())
+			issues++
+			token = ""
+		} else {
+			token = resolvedToken
+		}
+	}
 
 	// 9. Token auth check (requires server running)
 	if serveURL != "" && token != "" {
@@ -498,8 +507,8 @@ func doctorHookBinary(emit emitFn) int {
 	if err != nil {
 		return 0
 	}
-	claudeSettingsPath := filepath.Join(home, ".claude", "settings.json")
-	data, err := os.ReadFile(claudeSettingsPath)
+	settingsPath := claudeSettingsPath(home)
+	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		return 0 // settings.json absent — hook check covers this
 	}
@@ -740,56 +749,12 @@ func doctorHermesPlugin(emit emitFn, serveURL string) (warnings int) {
 // doctorServer checks if rampart serve is running on defaultServePort.
 // Returns (issue count, serve URL for subsequent API checks).
 
-// checkPolicyVersionStamp reads the first line of a policy file looking for
-// "# rampart-policy-version: X.Y.Z". Returns a warning message if the stamp
-// version is older than the running binary, or "" if current/no stamp.
-func checkPolicyVersionStamp(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	if !scanner.Scan() {
-		return ""
-	}
-	line := scanner.Text()
-
-	const prefix = "# rampart-policy-version: "
-	if !strings.HasPrefix(line, prefix) {
-		// No stamp — policy predates version stamping (pre-v0.9.0).
-		// Don't warn: the user may have never run upgrade, or manually edited the file.
-		return ""
-	}
-
-	stampVer := strings.TrimSpace(line[len(prefix):])
-	if stampVer == build.Version || build.Version == "dev" || stampVer == "dev" {
-		return ""
-	}
-
-	// Normalize for comparison
-	stampNorm := stampVer
-	if !strings.HasPrefix(stampNorm, "v") {
-		stampNorm = "v" + stampNorm
-	}
-	binaryNorm := build.Version
-	if !strings.HasPrefix(binaryNorm, "v") {
-		binaryNorm = "v" + binaryNorm
-	}
-
-	if compareSemver(stampNorm, binaryNorm) < 0 {
-		return fmt.Sprintf("from %s, binary is %s", stampVer, build.Version)
-	}
-	return ""
-}
-
 func doctorServer(emit emitFn, protected []string) (int, string) {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := newRampartHTTPClient(2 * time.Second)
 	serveURL := resolveServeURL("")
 	url := serveURL + "/healthz"
 
-	resp, err := client.Get(url)
+	health, err := fetchRampartHealth(context.Background(), client, url)
 	if err != nil {
 		// Hook-based agents (Claude Code, Cline) evaluate policies locally.
 		// Serve is only required for LD_PRELOAD/shim modes and the dashboard.
@@ -818,20 +783,12 @@ func doctorServer(emit emitFn, protected []string) (int, string) {
 
 		return issues, ""
 	}
-	defer resp.Body.Close()
-
-	// Parse version from health response if available.
-	var health map[string]any
 	versionStr := ""
 	servePort := 0
-	if decErr := json.NewDecoder(resp.Body).Decode(&health); decErr == nil {
-		if v, ok := health["version"].(string); ok {
-			if strings.HasPrefix(v, "v") {
-				versionStr = " " + v
-			} else {
-				versionStr = " v" + v
-			}
-		}
+	if strings.HasPrefix(health.Version, "v") {
+		versionStr = " " + health.Version
+	} else {
+		versionStr = " v" + health.Version
 	}
 
 	// Extract port from URL for display.
@@ -851,7 +808,7 @@ func doctorServer(emit emitFn, protected []string) (int, string) {
 }
 
 func doctorTokenAuth(emit emitFn, serveURL, token string) int {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := newRampartHTTPClient(2 * time.Second)
 	req, err := http.NewRequest(http.MethodGet, serveURL+"/v1/policy", nil)
 	if err != nil {
 		return 0
@@ -872,7 +829,7 @@ func doctorTokenAuth(emit emitFn, serveURL, token string) int {
 }
 
 func doctorPoliciesAPI(emit emitFn, serveURL, token string) int {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := newRampartHTTPClient(2 * time.Second)
 	req, err := http.NewRequest(http.MethodGet, serveURL+"/v1/policy", nil)
 	if err != nil {
 		return 0
@@ -902,7 +859,7 @@ func doctorPoliciesAPI(emit emitFn, serveURL, token string) int {
 }
 
 func doctorPending(emit emitFn, serveURL, token string) int {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := newRampartHTTPClient(2 * time.Second)
 	req, err := http.NewRequest(http.MethodGet, serveURL+"/v1/approvals", nil)
 	if err != nil {
 		return 0
@@ -934,66 +891,53 @@ func doctorPending(emit emitFn, serveURL, token string) int {
 func doctorHooks(emit emitFn) int {
 	issues := 0
 
-	// Claude Code hooks — only check if ~/.claude/ exists
+	// Claude Code hooks — honor CLAUDE_CONFIG_DIR when it relocates ~/.claude.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return 0
 	}
-	claudeDir := filepath.Join(home, ".claude")
+	claudeDir := claudeConfigDir(home)
 	_, claudeDirErr := os.Stat(claudeDir)
 	claudeBinary, _ := exec.LookPath("claude")
 	if claudeDirErr == nil || claudeBinary != "" {
 		claudeSettingsPath := filepath.Join(claudeDir, "settings.json")
-		data, err := os.ReadFile(claudeSettingsPath)
-		if err == nil {
-			var settings map[string]any
-			if json.Unmarshal(data, &settings) == nil {
-				count := countClaudeHookMatchers(settings)
-				if count > 0 {
-					emit("Hooks", "ok", fmt.Sprintf("Claude Code (%d matchers in settings.json)", count))
-				} else {
-					emit("Hooks", "fail",
-						fmt.Sprintf("Claude Code hook not installed (expected hook in %s)", claudeSettingsPath)+
-							hintSep+"rampart setup claude-code")
-					issues++
-				}
-			} else {
-				emit("Hooks", "fail",
-					fmt.Sprintf("Claude Code settings invalid at %s", claudeSettingsPath)+
-						hintSep+"rampart setup claude-code")
+		if claudeHooksConfiguredForHome(home) {
+			assessment := claudeHookLoadAssessmentForHome(home)
+			switch {
+			case assessment.Blocked:
+				emit("Hooks", "fail", "Claude Code hooks are configured but will not load: "+assessment.Reason+hintSep+
+					"Remove the disabling setting or deploy Rampart as an approved managed hook")
 				issues++
+			case assessment.Unverified:
+				emit("Hooks", "warn", "Claude Code hook activation is unverified: "+assessment.Reason+hintSep+
+					"Run /status and /hooks inside Claude Code")
+				issues++
+			default:
+				emit("Hooks", "ok", "Claude Code (current PreToolUse, PostToolUse, and PostToolUseFailure hooks; no readable setting disables user hooks)")
 			}
 		} else {
 			emit("Hooks", "fail",
-				fmt.Sprintf("Claude Code hook not installed (expected hook in %s)", claudeSettingsPath)+
+				fmt.Sprintf("Claude Code hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", claudeSettingsPath)+
 					hintSep+"rampart setup claude-code")
 			issues++
 		}
 	}
 
-	// Cline hooks — only check if ~/Documents/Cline/ exists
+	// Cline editor and CLI share the Documents hook root; the CLI also
+	// discovers ~/.cline/hooks and workspace roots. Validate owned content and
+	// activation rather than treating any directory entry as protection.
 	clineBaseDir := filepath.Join(home, "Documents", "Cline")
-	if _, err := os.Stat(clineBaseDir); err == nil {
-		clineDir := filepath.Join(clineBaseDir, "Hooks")
-		if entries, err := os.ReadDir(clineDir); err == nil {
-			hookCount := 0
-			for _, e := range entries {
-				if strings.HasPrefix(e.Name(), "rampart-") {
-					hookCount++
-				}
-			}
-			if hookCount > 0 {
-				emit("Hooks", "ok", fmt.Sprintf("Cline (%d hook scripts)", hookCount))
-			} else {
-				emit("Hooks", "fail",
-					fmt.Sprintf("Cline hook not installed (expected Rampart hook scripts in %s)", clineDir)+
-						hintSep+"rampart setup cline")
-				issues++
-			}
+	clineCLIBaseDir := filepath.Dir(clineCLIHooksDir(home))
+	_, clineBaseErr := os.Stat(clineBaseDir)
+	_, clineCLIBaseErr := os.Stat(clineCLIBaseDir)
+	clineBinary, _ := exec.LookPath("cline")
+	if clineBaseErr == nil || clineCLIBaseErr == nil || clineBinary != "" {
+		if clineHooksConfiguredForHome(home) {
+			emit("Hooks", "ok", "Cline (current PreToolUse and PostToolUse hook files)")
 		} else {
 			emit("Hooks", "fail",
-				fmt.Sprintf("Cline hook not installed (expected Rampart hook scripts in %s)", clineDir)+
-					hintSep+"rampart setup cline")
+				fmt.Sprintf("Cline hook not installed or disabled (expected platform-native Rampart hook files in %s)", clineUserHooksDir(home))+
+					hintSep+"rampart setup cline && rampart verify cline")
 			issues++
 		}
 	}
@@ -1006,10 +950,10 @@ func doctorHooks(emit emitFn) int {
 	if codexDirErr == nil || codexBinary != "" {
 		hooksPath := filepath.Join(codexDir, "hooks.json")
 		if codexHooksConfiguredForHome(home) {
-			emit("Hooks", "ok", "Codex (PreToolUse and PostToolUse in hooks.json)")
+			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json)")
 		} else {
 			emit("Hooks", "fail",
-				fmt.Sprintf("Codex lifecycle hooks not installed or incomplete (expected Rampart hooks in %s)", hooksPath)+
+				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath)+
 					hintSep+"rampart setup codex")
 			issues++
 		}
@@ -1045,43 +989,6 @@ func doctorCoverage(emit emitFn, protected []string) int {
 			"(OpenClaw plugin only protects sessions run through OpenClaw)"+
 			hintSep+"rampart setup claude-code")
 	return 1
-}
-
-// countClaudeHookMatchers counts Rampart-related hook matchers in Claude settings.
-func countClaudeHookMatchers(settings map[string]any) int {
-	count := 0
-	hooks, ok := settings["hooks"]
-	if !ok {
-		return 0
-	}
-	hooksMap, ok := hooks.(map[string]any)
-	if !ok {
-		return 0
-	}
-	for _, v := range hooksMap {
-		arr, ok := v.([]any)
-		if !ok {
-			continue
-		}
-		for _, item := range arr {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			// Check nested hooks[].command for "rampart" (matches --remove detection)
-			if innerHooks, ok := m["hooks"].([]any); ok {
-				for _, h := range innerHooks {
-					if hm, ok := h.(map[string]any); ok {
-						if cmd, ok := hm["command"].(string); ok && strings.Contains(cmd, "rampart") {
-							count++
-							break
-						}
-					}
-				}
-			}
-		}
-	}
-	return count
 }
 
 // doctorPreload checks if the LD_PRELOAD drop-in is installed and actually
@@ -1771,11 +1678,6 @@ func doctorOpenClawProviderDiscovery(emit emitFn) (warnings int) {
 	return 1
 }
 
-func isReleaseVersion(version string) bool {
-	_, ok := normalizedReleaseVersion(version)
-	return ok
-}
-
 func pluginVersionMatchesBuildVersion(manifestVersion, buildVersion string) bool {
 	buildRelease, ok := normalizedReleaseVersion(buildVersion)
 	if !ok {
@@ -2112,6 +2014,7 @@ type hermesDoctorConfig struct {
 type hermesPluginManifest struct {
 	Name          string   `yaml:"name"`
 	Version       string   `yaml:"version"`
+	Author        string   `yaml:"author"`
 	ProvidesHooks []string `yaml:"provides_hooks"`
 }
 
@@ -2248,14 +2151,7 @@ func doctorHermesIntegration(emit emitFn, serveURL, token string) (warnings int)
 }
 
 func hermesHomeDir(home string) string {
-	if envHome := strings.TrimSpace(os.Getenv("HERMES_HOME")); envHome != "" {
-		expanded := os.ExpandEnv(envHome)
-		if strings.HasPrefix(expanded, "~"+string(os.PathSeparator)) {
-			expanded = filepath.Join(home, strings.TrimPrefix(expanded, "~"+string(os.PathSeparator)))
-		}
-		return filepath.Clean(expanded)
-	}
-	return filepath.Join(home, ".hermes")
+	return configuredAgentHome(home, "HERMES_HOME", ".hermes")
 }
 
 func hermesPluginFilesInstalled(pluginDir string) bool {
@@ -2322,7 +2218,10 @@ func hermesConfigString(config map[string]any, defaultValue string, keys ...stri
 }
 
 func hermesFailOpenTools(config map[string]any) []string {
-	defaultTools := []string{"read_file", "search_files", "browser_snapshot", "browser_get_images", "browser_vision", "vision_analyze"}
+	// The bundled plugin is fail-closed for every tool by default. Keep doctor
+	// aligned with the runtime so it never reports a fail-open exception that
+	// the operator did not explicitly configure.
+	var defaultTools []string
 	if config == nil {
 		return defaultTools
 	}

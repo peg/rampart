@@ -100,7 +100,9 @@ func resolveWatchServeConfig(cmd *cobra.Command, serveURL string) (string, strin
 		fmt.Fprintf(errW, "Note: using serve URL %s\n", resolvedURL)
 	}
 
-	if tok, source := resolveTokenValue(); tok != "" {
+	if tok, source, err := resolveTokenForEndpoint(resolvedURL, ""); err != nil {
+		return "", "", fmt.Errorf("watch: resolve serve credentials: %w", err)
+	} else if tok != "" {
 		resolvedToken = tok
 		if source == "file" {
 			fmt.Fprintln(errW, "Note: using auto-discovered serve token from ~/.rampart/token")
@@ -119,8 +121,9 @@ func latestAuditFile(dir string) (string, error) {
 	}
 	if len(matches) == 0 {
 		today := time.Now().UTC().Format("2006-01-02")
-		return filepath.Join(dir, "audit-hook-"+today+".jsonl"), nil
+		return filepath.Join(dir, today+".jsonl"), nil
 	}
+	matches = preferManagedAuditFiles(matches)
 	// Pick the most recently modified file.
 	var latest string
 	var latestMod time.Time
@@ -146,7 +149,7 @@ func expandHome(path string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("watch: audit file path is empty")
 	}
-	if !strings.HasPrefix(trimmed, "~/") && trimmed != "~" {
+	if !strings.HasPrefix(trimmed, "~/") && !strings.HasPrefix(trimmed, `~\`) && trimmed != "~" {
 		return trimmed, nil
 	}
 
@@ -157,7 +160,7 @@ func expandHome(path string) (string, error) {
 	if trimmed == "~" {
 		return home, nil
 	}
-	return filepath.Join(home, strings.TrimPrefix(trimmed, "~/")), nil
+	return filepath.Join(home, trimmed[2:]), nil
 }
 
 func homeDir() (string, error) {

@@ -52,7 +52,14 @@ When Rampart evaluates a tool call:
 2. **Project policy** (`.rampart/policy.yaml` in cwd or parent) is merged on top
 3. Both are evaluated; deny always wins
 
-The project policy **adds** rules — it cannot remove or override global denies. This ensures your global security baseline is never weakened by a malicious or misconfigured project policy.
+The project policy is **restriction-only**. It cannot remove or override global
+denies, and a checked-in allow rule cannot weaken a restrictive global default.
+Project webhook actions are forbidden so an untrusted repository cannot make
+Rampart send tool inputs to an external endpoint. Once discovered, a project
+policy that disappears or is unreadable, malformed, invalid, oversized, or
+contains a webhook action is a load error; enforcement fails closed instead of
+silently dropping repository restrictions. Put authority-granting allow rules
+in the user-owned global tier.
 
 ## The `[Project Policy]` Prefix
 
@@ -156,17 +163,16 @@ When both global and project policies have rules that match:
 
 1. **Deny always wins** — if any rule denies, the action is denied
 2. **Lower priority number = evaluated first** — use `priority: 0` to ensure your rule is checked early
-3. **Project rules can't weaken global rules** — they can only add restrictions or allow things the global policy doesn't cover
+3. **Project rules can't weaken global rules or defaults** — use project `deny`, `ask`, or `watch` rules to add restrictions
 
 ```yaml
-# This project policy allows something, but if the global policy denies it,
-# the deny wins:
+# This checked-in allow is inert when the global baseline would deny or ask:
 policies:
   - name: try-to-allow-rm
     rules:
       - action: allow
         when:
-          command_matches: ["rm -rf /"]  # ← still denied by global policy
+          command_matches: ["rm -rf /"]  # ← cannot grant repository-owned authority
 ```
 
 ## Discovering Active Policies

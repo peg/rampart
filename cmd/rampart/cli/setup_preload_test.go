@@ -11,12 +11,6 @@ import (
 	"testing"
 )
 
-func TestMain(m *testing.M) {
-	// Prevent setup commands from auto-detecting and calling the real openclaw binary.
-	os.Setenv("RAMPART_TEST", "1")
-	os.Exit(m.Run())
-}
-
 func TestGenerateShimContent(t *testing.T) {
 	shim := generateShimContent("/bin/bash", 19090, "rampart_test123")
 
@@ -32,20 +26,6 @@ func TestGenerateShimContent(t *testing.T) {
 	if !strings.Contains(shim, "#!/usr/bin/env bash") {
 		t.Error("shim should start with shebang")
 	}
-}
-
-func TestSetupOpenClaw_PatchToolsOnly(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("not supported on Windows")
-	}
-
-	root := newTestRoot()
-	cmd := newSetupOpenClawCmd(root)
-
-	// --patch-tools-only should attempt to patch (will fail gracefully without node_modules)
-	cmd.SetArgs([]string{"--patch-tools-only", "--port", "19999"})
-	// This will return an error because no tools dir exists, which is expected
-	_ = cmd.Execute()
 }
 
 func TestSetupOpenClaw_ShimOnlyFlag(t *testing.T) {
@@ -207,6 +187,14 @@ func TestSetupOpenClaw_RemoveDropin(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	openclawBin := filepath.Join(home, "bin", "openclaw")
+	if err := os.MkdirAll(filepath.Dir(openclawBin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(openclawBin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RAMPART_OPENCLAW_BIN", openclawBin)
 
 	// Create drop-in
 	dropinDir := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d")

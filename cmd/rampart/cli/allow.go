@@ -51,7 +51,7 @@ Examples:
   rampart %s "%s"
   rampart %s "%s"
 
-Run 'rampart %s --help' for more options.`,
+Run 'rampart %s --help' for more options`,
 				cmdName, cmdName, exs[0], cmdName, exs[1], cmdName, exs[2], cmdName)
 		}
 		if len(args) > 1 {
@@ -134,6 +134,17 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 			return fmt.Errorf("invalid --tool value %q; valid values are: exec, read, write, edit", opts.tool)
 		}
 	}
+	if opts.global && opts.project {
+		return fmt.Errorf("--global and --project are mutually exclusive")
+	}
+	if action == "allow" && opts.project {
+		return fmt.Errorf("project policies are restriction-only; use --global for allow rules")
+	}
+	if action == "allow" && !opts.global {
+		// Allow rules grant authority. Keep them in the user-owned global tier
+		// instead of a repository-controlled file.
+		opts.global = true
+	}
 
 	// Auto-detect tool from pattern.
 	detectedTool := opts.tool
@@ -146,7 +157,7 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 	}
 
 	// Resolve target policy file.
-	policyPath, scope, err := resolvePolicyPath(cmd, opts)
+	policyPath, scope, err := resolvePolicyPath(opts)
 	if err != nil {
 		return err
 	}
@@ -205,20 +216,6 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 		policyPath = overridesPath
 		usedUserOverride = true
 	} else {
-		// Load (or create) the custom policy file.
-		p, err := policy.LoadCustomPolicy(policyPath)
-		if err != nil {
-			return fmt.Errorf("load policy: %w", err)
-		}
-
-		// Check for duplicate pattern.
-		if exists, existingAction, existingTool := p.HasPattern(pattern); exists {
-			fmt.Fprintf(out, "\n  ⚠️  Pattern already exists: %s %s %q\n", existingAction, existingTool, pattern)
-			fmt.Fprintln(out, "  Use 'rampart rules' to view existing rules.")
-			return nil
-		}
-
-		// Add the rule with optional temporal constraints.
 		temporal := policy.TemporalOpts{Once: opts.once}
 		if opts.forDur != "" {
 			dur, err := time.ParseDuration(opts.forDur)
@@ -232,21 +229,34 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 			temporal.ExpiresAt = &exp
 		}
 
-		if temporal.ExpiresAt != nil || temporal.Once {
-			if err := p.AddRuleTemporal(action, pattern, msg, opts.tool, temporal); err != nil {
-				return fmt.Errorf("add rule: %w", err)
+		var duplicateAction, duplicateTool string
+		err := policy.UpdateCustomPolicy(policyPath, func(p *policy.CustomPolicy) error {
+			if exists, existingAction, existingTool := p.HasPattern(pattern); exists {
+				duplicateAction = existingAction
+				duplicateTool = existingTool
+				return nil
 			}
-		} else {
-			if err := p.AddRule(action, pattern, msg, opts.tool); err != nil {
-				return fmt.Errorf("add rule: %w", err)
-			}
-		}
 
-		// Save.
-		if err := policy.SaveCustomPolicy(policyPath, p); err != nil {
-			return fmt.Errorf("save policy: %w", err)
+			var addErr error
+			if temporal.ExpiresAt != nil || temporal.Once {
+				addErr = p.AddRuleTemporal(action, pattern, msg, opts.tool, temporal)
+			} else {
+				addErr = p.AddRule(action, pattern, msg, opts.tool)
+			}
+			if addErr != nil {
+				return fmt.Errorf("add rule: %w", addErr)
+			}
+			ruleCount = p.TotalRules()
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("update policy: %w", err)
 		}
-		ruleCount = p.TotalRules()
+		if duplicateAction != "" {
+			fmt.Fprintf(out, "\n  ⚠️  Pattern already exists: %s %s %q\n", duplicateAction, duplicateTool, pattern)
+			fmt.Fprintln(out, "  Use 'rampart rules' to view existing rules.")
+			return nil
+		}
 	}
 
 	// Print success (brief - details already shown in printRuleSummary).
@@ -266,10 +276,13 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 	}
 
 	// Try to reload the daemon.
-	token := resolveToken(opts.token)
 	addr, err := resolveAddrAllow(opts.apiAddr)
 	if err != nil {
 		return fmt.Errorf("resolve reload API address: %w", err)
+	}
+	token, _, err := resolveTokenForEndpoint(addr, opts.token)
+	if err != nil {
+		return fmt.Errorf("resolve reload API credentials: %w", err)
 	}
 	reloaded, reloadErr := reloadPolicy(cmd, addr, token)
 	if reloaded {
@@ -286,7 +299,7 @@ func runAllowBlock(cmd *cobra.Command, pattern, action string, opts *allowBlockO
 }
 
 // resolvePolicyPath determines where to write the rule based on flags and context.
-func resolvePolicyPath(cmd *cobra.Command, opts *allowBlockOptions) (path, scope string, err error) {
+func resolvePolicyPath(opts *allowBlockOptions) (path, scope string, err error) {
 	if opts.global && opts.project {
 		return "", "", fmt.Errorf("--global and --project are mutually exclusive")
 	}
@@ -300,14 +313,11 @@ func resolvePolicyPath(cmd *cobra.Command, opts *allowBlockOptions) (path, scope
 	}
 
 	if opts.project {
-		// suppress unused parameter warning
-		_ = cmd
 		return ".rampart" + string(filepath.Separator) + "policy.yaml", "project", nil
 	}
 
 	// Auto-detect: prefer project if we're in a git repo, else global.
 	if inGitRepo() {
-		_ = cmd
 		return ".rampart" + string(filepath.Separator) + "policy.yaml", "project", nil
 	}
 
@@ -450,7 +460,7 @@ func reloadPolicy(cmd *cobra.Command, addr, token string) (bool, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := newRampartHTTPClient(3 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err

@@ -46,7 +46,7 @@ type TestCase struct {
 	// Params are tool-specific parameters.
 	Params map[string]any `yaml:"params"`
 
-	// Expect is the expected action (allow, deny, log, require_approval, webhook).
+	// Expect is the expected action (allow, deny, watch, ask, webhook).
 	Expect string `yaml:"expect"`
 
 	// ExpectMessage is an optional glob pattern to match against the decision message.
@@ -70,7 +70,7 @@ func LoadTestSuite(path string) (*TestSuite, error) {
 	}
 
 	var suite TestSuite
-	if err := yaml.Unmarshal(data, &suite); err != nil {
+	if err := safeUnmarshal(data, &suite); err != nil {
 		return nil, fmt.Errorf("parse test file: %w", err)
 	}
 
@@ -79,7 +79,7 @@ func LoadTestSuite(path string) (*TestSuite, error) {
 	}
 
 	// Expand ~ in policy path before any other resolution.
-	if strings.HasPrefix(suite.Policy, "~/") {
+	if strings.HasPrefix(suite.Policy, "~/") || strings.HasPrefix(suite.Policy, `~\`) {
 		if home, err := os.UserHomeDir(); err == nil {
 			suite.Policy = filepath.Join(home, suite.Policy[2:])
 		}
@@ -118,7 +118,7 @@ func LoadInlineTests(policyPath string) (*TestSuite, error) {
 	}
 
 	var cases []TestCase
-	if err := yaml.Unmarshal(testsYAML, &cases); err != nil {
+	if err := safeUnmarshal(testsYAML, &cases); err != nil {
 		return nil, fmt.Errorf("parse inline tests: %w", err)
 	}
 

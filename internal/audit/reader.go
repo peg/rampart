@@ -20,13 +20,63 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 )
+
+// MaxRecordBytes is the largest JSON object Rampart will write or read as one
+// audit JSONL record. Writers compact oversized fields to size/digest metadata;
+// readers enforce the same ceiling so corrupt or hostile files cannot force an
+// unbounded allocation.
+const MaxRecordBytes = 2 * 1024 * 1024
+
+const auditReaderBufferBytes = 64 * 1024
+
+var errRecordTooLarge = fmt.Errorf("audit: record exceeds %d-byte limit", MaxRecordBytes)
+
+// OpenRegularFile opens an existing audit file only when the directory entry
+// and resulting handle both refer to the same regular, non-symlink file. It is
+// intended for streaming call sites that cannot use ReadEventsFromOffset.
+// The caller must close the returned file.
+func OpenRegularFile(path string) (*os.File, error) {
+	return openAuditRegular(path, os.O_RDONLY)
+}
+
+// readRecord reads at most one JSONL record. complete is false only for an
+// unterminated final record, which callers may retry after more data is written.
+// The returned record does not include the trailing newline.
+func readRecord(reader *bufio.Reader) (record []byte, complete bool, err error) {
+	for {
+		chunk, readErr := reader.ReadSlice('\n')
+		record = append(record, chunk...)
+
+		if readErr == nil {
+			record = record[:len(record)-1]
+			if len(record) > MaxRecordBytes {
+				return nil, false, errRecordTooLarge
+			}
+			return record, true, nil
+		}
+
+		if len(record) > MaxRecordBytes {
+			return nil, false, errRecordTooLarge
+		}
+		if errors.Is(readErr, bufio.ErrBufferFull) {
+			continue
+		}
+		if errors.Is(readErr, io.EOF) {
+			if len(record) == 0 {
+				return nil, false, io.EOF
+			}
+			return record, false, nil
+		}
+		return nil, false, readErr
+	}
+}
 
 // ReadEventsFromOffset reads audit events from path starting at the given byte offset.
 // Returns the parsed events, the new file offset, and any error.
@@ -34,7 +84,7 @@ import (
 // Partial (unterminated) lines are not consumed — the offset stays before them
 // so they can be re-read once complete.
 func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
-	f, err := os.Open(path)
+	f, err := OpenRegularFile(path)
 	if err != nil {
 		return nil, offset, err
 	}
@@ -52,42 +102,33 @@ func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
 		return nil, offset, fmt.Errorf("audit: seek %s: %w", path, err)
 	}
 
-	reader := bufio.NewReader(f)
+	reader := bufio.NewReaderSize(f, auditReaderBufferBytes)
 	cursor := offset
 	events := make([]Event, 0, 8)
 
 	for {
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, cursor, fmt.Errorf("audit: read line: %w", err)
-		}
-
-		// EOF with no data — done.
-		if line == "" && errors.Is(err, io.EOF) {
+		line, complete, readErr := readRecord(reader)
+		if errors.Is(readErr, io.EOF) {
 			return events, cursor, nil
+		}
+		if readErr != nil {
+			return nil, cursor, fmt.Errorf("audit: read record at offset %d: %w", cursor, readErr)
 		}
 
 		// Partial line (no trailing newline) — don't consume it.
-		if !strings.HasSuffix(line, "\n") {
+		if !complete {
 			return events, cursor, nil
 		}
 
-		cursor += int64(len(line))
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if errors.Is(err, io.EOF) {
-				return events, cursor, nil
-			}
+		cursor += int64(len(line) + 1)
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
 			continue
 		}
 
 		var evt Event
-		if unmarshalErr := json.Unmarshal([]byte(trimmed), &evt); unmarshalErr == nil {
+		if unmarshalErr := json.Unmarshal(trimmed, &evt); unmarshalErr == nil {
 			events = append(events, evt)
-		}
-
-		if errors.Is(err, io.EOF) {
-			return events, cursor, nil
 		}
 	}
 }

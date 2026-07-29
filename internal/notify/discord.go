@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // DiscordNotifier sends notifications to Discord using webhook embeds.
@@ -30,10 +29,8 @@ type DiscordNotifier struct {
 // NewDiscordNotifier creates a new Discord notifier.
 func NewDiscordNotifier(url string) *DiscordNotifier {
 	return &DiscordNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 
@@ -62,7 +59,7 @@ func (n *DiscordNotifier) Send(event NotifyEvent) error {
 	if event.Action == "watch" || event.Action == "log" {
 		color = 0xd29922 // orange for log
 		title = "Rampart: Command Logged"
-	} else if event.Action == "require_approval" {
+	} else if isApprovalAction(event.Action) {
 		color = 0xd29922 // amber for approval required
 		title = "Rampart: Approval Required"
 	}
@@ -72,7 +69,7 @@ func (n *DiscordNotifier) Send(event NotifyEvent) error {
 		{Name: "Agent", Value: event.Agent, Inline: true},
 	}
 
-	if event.Action == "require_approval" {
+	if isApprovalAction(event.Action) {
 		fields = append(fields,
 			discordField{Name: "Command", Value: event.Command, Inline: false},
 			discordField{Name: "Approval ID", Value: shortApprovalID(event.ApprovalID), Inline: true},

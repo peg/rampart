@@ -75,7 +75,7 @@ notify:
 		tmpFile.Close()
 
 		store := NewFileStore(tmpFile.Name())
-		
+
 		// This should never panic, even with malformed input
 		defer func() {
 			if r := recover(); r != nil {

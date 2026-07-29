@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -33,6 +32,7 @@ type DetectResult struct {
 	HasCursor      bool
 	HasWindsurf    bool
 	HasCopilot     bool
+	HasAntigravity bool
 	MCPServers     []string
 	SSHKeys        bool
 	AWSCredentials bool
@@ -59,7 +59,7 @@ func Environment() (*DetectResult, error) {
 	// If we have a home directory, check home-based detection
 	if homeDirErr == nil {
 		// Detect Claude Code
-		claudeSettingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+		claudeSettingsPath := filepath.Join(claudeConfigDir(homeDir), "settings.json")
 		if err := checkFileExists(claudeSettingsPath); err == nil {
 			result.ClaudeCode = true
 
@@ -112,23 +112,8 @@ func Environment() (*DetectResult, error) {
 			result.HasWindsurf = true
 		}
 
-		// Detect Cline extension installs.
-		clinePatterns := []string{
-			filepath.Join(homeDir, ".vscode", "extensions", "saoud-m.vscode-claude-dev-*"),
-			filepath.Join(homeDir, ".vscode", "extensions", "cline-*"),
-		}
-		if runtime.GOOS != "windows" {
-			clinePatterns = append(clinePatterns,
-				filepath.Join(homeDir, ".vscode-server", "extensions", "saoud-m.vscode-claude-dev-*"),
-				filepath.Join(homeDir, ".vscode-server", "extensions", "cline-*"),
-			)
-		}
-		for _, pattern := range clinePatterns {
-			if matches, err := filepath.Glob(pattern); err == nil && len(matches) > 0 {
-				result.HasCline = true
-				break
-			}
-		}
+		result.HasCline = ClineExtensionInstalled(homeDir)
+		result.HasCopilot = CopilotExtensionInstalled(homeDir)
 	}
 
 	// Env-based agent signals.
@@ -145,7 +130,8 @@ func Environment() (*DetectResult, error) {
 	result.HasOpenClaw = result.HasOpenClaw || hasBinary("openclaw")
 	result.HasAider = hasBinary("aider")
 	result.HasWindsurf = result.HasWindsurf || hasBinary("windsurf")
-	result.HasCopilot = hasBinary("github-copilot-cli") || hasBinary("gh-copilot")
+	result.HasCopilot = result.HasCopilot || hasBinary("copilot") || hasBinary("github-copilot-cli") || hasBinary("gh-copilot")
+	result.HasAntigravity = hasBinary("agy")
 	result.HasKubectl = hasBinary("kubectl")
 	result.HasDocker = hasBinary("docker")
 	result.HasNode = hasBinary("node")
@@ -160,6 +146,82 @@ func Environment() (*DetectResult, error) {
 
 	// Always return results, even if we couldn't access home directory
 	return result, nil
+}
+
+func claudeConfigDir(home string) string {
+	configured := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	if configured == "" {
+		return filepath.Join(home, ".claude")
+	}
+	expanded := os.ExpandEnv(configured)
+	if expanded == "~" {
+		return filepath.Clean(home)
+	}
+	if len(expanded) >= 2 && expanded[0] == '~' && (expanded[1] == '/' || expanded[1] == '\\') {
+		relative := strings.ReplaceAll(expanded[2:], "\\", "/")
+		expanded = filepath.Join(home, filepath.FromSlash(relative))
+	}
+	return filepath.Clean(expanded)
+}
+
+// ClineExtensionInstalled reports whether a Cline VS Code extension directory
+// exists in a standard desktop, Insiders, or remote-server extension root.
+// The current Marketplace identifier is saoudrizwan.claude-dev; older IDs are
+// retained so upgrades remain detectable.
+func ClineExtensionInstalled(homeDir string) bool {
+	if strings.TrimSpace(homeDir) == "" {
+		return false
+	}
+	extensionRoots := []string{
+		filepath.Join(homeDir, ".vscode", "extensions"),
+		filepath.Join(homeDir, ".vscode-insiders", "extensions"),
+		filepath.Join(homeDir, ".vscode-server", "extensions"),
+		filepath.Join(homeDir, ".vscode-server-insiders", "extensions"),
+	}
+	extensionNames := []string{
+		"saoudrizwan.claude-dev-*",
+		"saoud-m.vscode-claude-dev-*",
+		"cline-*",
+	}
+	for _, root := range extensionRoots {
+		for _, name := range extensionNames {
+			matches, err := filepath.Glob(filepath.Join(root, name))
+			if err != nil {
+				continue
+			}
+			for _, match := range matches {
+				if info, statErr := os.Stat(match); statErr == nil && info.IsDir() {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// CopilotExtensionInstalled reports whether the current Copilot Chat extension
+// is present in a desktop, Insiders, or remote VS Code extension root.
+func CopilotExtensionInstalled(homeDir string) bool {
+	if strings.TrimSpace(homeDir) == "" {
+		return false
+	}
+	for _, root := range []string{
+		filepath.Join(homeDir, ".vscode", "extensions"),
+		filepath.Join(homeDir, ".vscode-insiders", "extensions"),
+		filepath.Join(homeDir, ".vscode-server", "extensions"),
+		filepath.Join(homeDir, ".vscode-server-insiders", "extensions"),
+	} {
+		matches, err := filepath.Glob(filepath.Join(root, "github.copilot-chat-*"))
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			if info, statErr := os.Stat(match); statErr == nil && info.IsDir() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasBinary(name string) bool {
@@ -193,6 +255,9 @@ func (r *DetectResult) DetectedAgents() []string {
 	}
 	if r.HasCopilot {
 		agents = append(agents, "copilot")
+	}
+	if r.HasAntigravity {
+		agents = append(agents, "antigravity")
 	}
 	return agents
 }

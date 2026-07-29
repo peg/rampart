@@ -15,6 +15,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ var _ = generate.Presets
 func runPresetCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var buf bytes.Buffer
-	root := NewRootCmd(nil, &buf, &buf)
+	root := NewRootCmd(context.Background(), &buf, &buf)
 	root.SetArgs(append([]string{"policy", "generate", "preset"}, args...))
 	err := root.Execute()
 	return buf.String(), err

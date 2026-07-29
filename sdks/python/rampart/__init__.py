@@ -60,20 +60,17 @@ __version__ = "0.1.0"
 __all__ = [
     # Client
     "RampartClient",
-    
     # Types
     "Decision",
-    
     # Exceptions
-    "RampartError", 
+    "RampartError",
     "RampartConnectionError",
     "RampartDeniedError",
     "RampartServerError",
-    
     # Decorators
     "guard",
     "exec_guard",
-    "read_guard", 
+    "read_guard",
     "write_guard",
     "fetch_guard",
     "set_default_client",

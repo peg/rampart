@@ -12,7 +12,10 @@ description: "Install Rampart on Windows, macOS, or Linux. Get the security laye
     irm https://rampart.sh/install.ps1 | iex
     ```
     
-    This downloads the latest release, installs to `~\.rampart\bin`, adds it to your PATH, and offers to set up Claude Code hooks.
+    This downloads and validates the latest release, transactionally installs
+    it to `~\.rampart\bin`, and adds that directory to your user PATH. It does
+    not modify an agent configuration; run `rampart protect` afterward to
+    detect, configure, and behaviorally verify supported installed agents.
     
     **Manual:** Download the `.zip` from [GitHub Releases](https://github.com/peg/rampart/releases), extract `rampart.exe`, and add to your PATH.
     
@@ -30,6 +33,18 @@ description: "Install Rampart on Windows, macOS, or Linux. Get the security laye
     ```bash
     curl -fsSL https://rampart.sh/install | sh
     ```
+
+    The installer fails closed unless the release archive checksum and embedded
+    Rampart version both match the requested release. Upgrades stage and verify
+    the candidate beside the installed binary, then activate it with an atomic
+    same-filesystem rename. If final verification fails, the prior binary is
+    restored before the installer exits.
+
+    A sudden power loss can leave a `.rampart-install.*` transaction directory
+    in the install directory, but the `rampart` path will resolve to either the
+    complete old binary or the complete verified candidate. Rerun the installer
+    to retry; once no installer is running, stale transaction directories can
+    be removed.
 
 ## Homebrew (macOS & Linux)
 
@@ -77,7 +92,7 @@ sudo mv rampart /usr/local/bin/
 Multi-arch container image (amd64 + arm64), built on distroless for minimal attack surface:
 
 ```bash
-docker run --rm -p 9090:9090 ghcr.io/peg/rampart:latest
+docker run --rm -p 127.0.0.1:9090:9090 ghcr.io/peg/rampart:latest
 ```
 
 Or use with docker-compose. First, create a policy file (e.g. `mkdir policies && rampart init > policies/rampart.yaml`):
@@ -87,7 +102,7 @@ services:
   rampart:
     image: ghcr.io/peg/rampart:latest
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./policies:/policies:ro
       - rampart-audit:/audit
@@ -97,7 +112,9 @@ volumes:
   rampart-audit:
 ```
 
-Available tags include full versions such as `1.4.0`, minor versions such as `1.4`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.4.0-rc.1`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
+The loopback bind keeps the bearer-token control API off your LAN. For remote administration, put Rampart behind a trusted HTTPS reverse proxy and supply `RAMPART_TOKEN` explicitly; do not publish port 9090 directly over plaintext HTTP.
+
+Available tags include full versions such as `1.5.0`, minor versions such as `1.5`, and `latest` for the current stable release. Prereleases use their full tag, for example `1.5.0-rc.1`, and do not move `latest`. Pin to a specific version tag for reproducibility. Images are published on [GitHub Container Registry](https://github.com/peg/rampart/pkgs/container/rampart).
 
 ## Build from Source
 
@@ -123,14 +140,19 @@ Rampart works on Windows with some limitations:
 
 | Feature | Windows | macOS/Linux |
 |---------|---------|-------------|
-| `rampart serve` | ✅ Foreground only | ✅ Background supported |
+| `rampart serve` | ✅ Foreground and `--background` | ✅ Background supported |
 | `rampart setup claude-code` | ✅ | ✅ |
 | `rampart hook` | ✅ | ✅ |
 | `rampart watch` | ✅ | ✅ |
 | `rampart mcp` | ✅ | ✅ |
 | `rampart upgrade` | ❌ Re-run installer | ✅ |
 | `rampart wrap` | ❌ | ✅ |
-| `rampart preload` | ❌ | ✅ Linux only |
+| `rampart preload` | ❌ | ⚠️ Linux/macOS; native library must be built from source |
+
+The release archive and Homebrew formula install the CLI only. To use the
+optional preload boundary, check out the matching Rampart source revision and
+run `make -C preload install`. macOS coverage remains subject to SIP and
+hardened-runtime restrictions.
 
 **Path matching works cross-platform:** Policies like `**/.ssh/id_*` will match Windows paths like `C:\Users\You\.ssh\id_rsa`.
 

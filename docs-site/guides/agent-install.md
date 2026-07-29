@@ -53,7 +53,8 @@ This single command auto-detects the running AI environment, installs the backgr
 rampart quickstart --yes
 ```
 
-The `--yes` flag skips any prompts so setup can run unattended in CI, remote shells, or agent-driven installs.
+Quickstart is non-interactive. The `--yes` flag remains accepted for
+compatibility with existing CI, remote-shell, and agent-driven install scripts.
 
 **OpenClaw note:** protection applies to future tool calls, not the current session. Restart the OpenClaw gateway after this step for hooks to take effect.
 
@@ -67,7 +68,8 @@ The `--yes` flag skips any prompts so setup can run unattended in CI, remote she
 rampart doctor
 ```
 
-Expected output: all checks pass (✓). If any check fails, follow the hint printed next to it.
+Review the checks that apply to the detected integrations. A warning or failure
+means that boundary needs attention; follow the specific hint printed next to it.
 
 Check the service is running and review recent activity:
 
@@ -84,7 +86,8 @@ Mode: enforce (default_action: allow)
 Today: 0 allow · 0 deny · 0 log
 ```
 
-If you see `Protected:` with your agent listed, Rampart is active.
+Treat `Protected:` as configuration state, then use the integration's
+`rampart verify <agent>` result to confirm that its managed boundary is healthy.
 
 ---
 
@@ -94,24 +97,42 @@ Tell the user:
 
 - Rampart is installed and running (version from `rampart --version`)
 - Which environment was auto-detected and configured
-- Dashboard URL: `http://localhost:9090/dashboard/` (opens in browser to show live policy activity)
-- Token location: `~/.rampart/token` (keep this private)
+- Dashboard URL, when the local service is installed:
+  `http://localhost:9090/dashboard/`
+- Token location, when the local service is installed: `~/.rampart/token`
+  (keep this private)
 
 ---
 
 ## What Rampart does
 
-Every shell command, file access, and network request your AI agent makes is now evaluated against a policy before it executes.
+Rampart evaluates the supported tool calls that each configured host exposes
+through its named hook, plugin, proxy, or process boundary. Pre-tool calls at
+that boundary are evaluated before the host invokes the tool. Coverage outside
+that boundary, including work performed inside an already allowed process, is
+not implied. Some integrations also expose tool results for response scanning;
+others do not. Check the [support matrix](../getting-started/support-matrix.md)
+for the exact boundary and known gaps.
 
-**Blocked by default** (standard policy):
+**Examples denied by the standard policy when observed at a supported command
+boundary:**
+
 - `rm -rf /`, `rm -rf ~`, `rm -rf *` — filesystem destruction
 - `curl <url> | bash`, `wget <url> | sh` — remote code execution
 - `cat ~/.ssh/id_rsa`, `cat ~/.ssh/id_ed25519` — SSH key exfiltration
 - `cat .env`, `cat .env.*` — API key / secret access
 - `dd if=/dev/urandom of=/dev/sda` — disk destruction
-- Prompt injection patterns in tool responses — exfiltration directives, instruction overrides
 
-**Allowed by default**: everything else. The policy engine is deny-on-match, not deny-by-default — it only blocks what the rules explicitly cover.
+On integrations with a blockable post-tool boundary, response rules can also
+deny or redact matched credential and prompt-injection patterns before the host
+returns that result to the model. Integrations with observational or absent
+post-tool results do not provide this guarantee.
+
+Ordinary calls that do not match a restriction follow the active profile's
+default action. In the standalone MCP stdio proxy, destructive tools are denied
+and dangerous or unclassified tools receive an `ask` decision; because that
+proxy cannot resume a held stdio call, it fails the call closed until policy
+replaces the decision with an explicit `allow` or `deny`.
 
 ---
 
@@ -120,21 +141,30 @@ Every shell command, file access, and network request your AI agent makes is now
 To see what policies are active:
 
 ```bash
-rampart policy explain '<tool_name>'
+rampart policy explain '<command>'
 ```
 
-To add your own rules, edit `~/.rampart/policies/standard.yaml`. See [Policy Schema](../reference/policy-schema.md) for the full syntax.
+For common durable exceptions or blocks, use `rampart allow` and
+`rampart block`; these write user-owned overrides separately from Rampart's
+maintained standard policy. For a custom approval rule, edit
+`~/.rampart/policies/custom.yaml`, which setup creates as an upgrade-safe
+starter file. Do not customize `standard.yaml`, because Rampart manages that
+profile during updates. See [Customizing Policy](customizing-policy.md) and the
+[Policy Schema](../reference/policy-schema.md) for details.
 
 To require human approval before a specific operation runs:
 
 ```yaml
+version: "1"
+
 policies:
   - name: approve-production-deploys
     match:
       tool: ["exec"]
-      command_contains: ["kubectl", "helm", "--namespace prod"]
     rules:
       - action: ask
+        when:
+          command_contains: ["--namespace prod"]
         message: "Production deploy requires human approval"
 ```
 
@@ -144,10 +174,10 @@ policies:
 
 **`rampart doctor` shows hook not installed**
 
-Re-run setup for your specific agent:
+Re-run protection or setup for your specific agent:
 
 ```bash
-rampart setup openclaw     # OpenClaw native plugin on current builds
+rampart protect openclaw   # OpenClaw managed guard + behavioral verification
 rampart setup claude-code  # Claude Code native hooks
 rampart setup cline        # Cline native hooks
 ```
@@ -180,7 +210,7 @@ Then add an allow rule for your specific use case. See [Securing Claude Code](ht
 | `rampart status` | Show protected agents, mode, today's allow/deny counts |
 | `rampart watch` | Live feed of tool decisions observed by Rampart |
 | `rampart token` | Print bearer token for the dashboard |
-| `rampart policy explain '<tool>'` | Show which policy applies to a tool call |
+| `rampart policy explain '<command>'` | Trace how a command is evaluated |
 
 Docs: <https://docs.rampart.sh>  
 Issues: <https://github.com/peg/rampart/issues>

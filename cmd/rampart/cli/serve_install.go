@@ -18,19 +18,23 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"html/template"
+	htmltemplate "html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	texttemplate "text/template"
 
+	"github.com/peg/rampart/internal/filetxn"
 	"github.com/spf13/cobra"
 )
 
 const plistLabel = "sh.rampart.serve"
 
-var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
+const maxServiceStateFileBytes = 1 << 20
+
+var plistTmpl = htmltemplate.Must(htmltemplate.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -61,20 +65,57 @@ var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" e
 </plist>
 `))
 
-var systemdTmpl = template.Must(template.New("unit").Parse(`[Unit]
+var systemdTmpl = texttemplate.Must(texttemplate.New("unit").Funcs(texttemplate.FuncMap{
+	"systemdQuote": systemdQuote,
+}).Parse(`[Unit]
 Description=Rampart Approval Server
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={{.Binary}} serve{{range .Args}} {{.}}{{end}}
-Environment=RAMPART_TOKEN={{.Token}}
+ExecStart={{systemdQuote .Binary}} serve{{range .Args}} {{systemdQuote .}}{{end}}
+Environment={{systemdQuote (printf "RAMPART_TOKEN=%s" .Token)}}
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=default.target
 `))
+
+// systemdQuote renders one systemd command/environment word without allowing
+// whitespace, control characters, quotes, backslashes, or '%' specifiers to
+// change the generated unit. Quoting every word also supports install paths
+// and policy directories containing spaces.
+func systemdQuote(value string) string {
+	var b strings.Builder
+	b.Grow(len(value) + 2)
+	b.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '%':
+			// systemd expands % specifiers even in quoted strings.
+			b.WriteString("%%")
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\x%02x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
 
 // serviceConfig holds template data for service file generation.
 type serviceConfig struct {
@@ -144,6 +185,13 @@ func persistToken(token string) error {
 	if err != nil {
 		return err
 	}
+	if existing, readErr := readPersistedToken(); readErr == nil {
+		if existing == token {
+			return nil
+		}
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("inspect existing token file: %w", readErr)
+	}
 	dir := filepath.Dir(p)
 	if err := ensureRampartDirAccessible(dir); err != nil {
 		return fmt.Errorf("prepare token directory: %w", err)
@@ -170,10 +218,14 @@ func persistToken(token string) error {
 		_ = f.Close()
 		return fmt.Errorf("write temporary token file: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync temporary token file: %w", err)
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temporary token file: %w", err)
 	}
-	if err := os.Rename(tmpPath, p); err != nil {
+	if err := filetxn.Replace(tmpPath, p); err != nil {
 		return fmt.Errorf("replace token file: %w", err)
 	}
 
@@ -186,11 +238,99 @@ func readPersistedToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	info, err := os.Lstat(p)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("token path is not a regular non-symlink file: %s", p)
+	}
+	if info.Size() > maxServiceStateFileBytes {
+		return "", fmt.Errorf("token file exceeds %d bytes", maxServiceStateFileBytes)
+	}
+	if err := secureFilePermissions(p); err != nil {
+		return "", fmt.Errorf("secure token file: %w", err)
+	}
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+type privateFileSnapshot struct {
+	exists bool
+	data   []byte
+}
+
+func snapshotPrivateFile(path string) (privateFileSnapshot, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return privateFileSnapshot{}, nil
+	}
+	if err != nil {
+		return privateFileSnapshot{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return privateFileSnapshot{}, fmt.Errorf("refusing non-regular or symlinked state file: %s", path)
+	}
+	if info.Size() > maxServiceStateFileBytes {
+		return privateFileSnapshot{}, fmt.Errorf("state file %s exceeds %d bytes", path, maxServiceStateFileBytes)
+	}
+	if err := secureFilePermissions(path); err != nil {
+		return privateFileSnapshot{}, fmt.Errorf("secure state file %s: %w", path, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return privateFileSnapshot{}, err
+	}
+	return privateFileSnapshot{exists: true, data: data}, nil
+}
+
+func restorePrivateFile(path string, snapshot privateFileSnapshot) error {
+	if snapshot.exists {
+		return atomicWritePrivateFile(path, snapshot.data)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return filetxn.SyncDir(dir)
+}
+
+func snapshotServiceFiles(configPath string) (privateFileSnapshot, string, privateFileSnapshot, error) {
+	config, err := snapshotPrivateFile(configPath)
+	if err != nil {
+		return privateFileSnapshot{}, "", privateFileSnapshot{}, fmt.Errorf("snapshot service definition: %w", err)
+	}
+	tokenPath, err := tokenFilePath()
+	if err != nil {
+		return privateFileSnapshot{}, "", privateFileSnapshot{}, err
+	}
+	token, err := snapshotPrivateFile(tokenPath)
+	if err != nil {
+		return privateFileSnapshot{}, "", privateFileSnapshot{}, fmt.Errorf("snapshot service token: %w", err)
+	}
+	return config, tokenPath, token, nil
+}
+
+func rollbackServiceFiles(configPath string, config privateFileSnapshot, tokenPath string, token privateFileSnapshot) error {
+	return errors.Join(
+		restorePrivateFile(configPath, config),
+		restorePrivateFile(tokenPath, token),
+	)
+}
+
+func withRollbackError(primary, rollback error) error {
+	if rollback == nil {
+		return primary
+	}
+	return errors.Join(primary, fmt.Errorf("service rollback failed: %w", rollback))
 }
 
 func plistPath() (string, error) {
@@ -215,6 +355,30 @@ func logPath() string {
 		return "/tmp/rampart-serve.log"
 	}
 	return filepath.Join(home, ".rampart", "serve.log")
+}
+
+// stableServiceBinary prefers the PATH entry that resolves to the exact binary
+// currently running. Package managers such as Homebrew expose a stable symlink
+// while os.Executable can return a versioned Cellar path that is removed by the
+// next upgrade. Identity checking prevents an unrelated PATH binary from being
+// persisted into a trusted service definition.
+func stableServiceBinary(binary string) string {
+	name := filepath.Base(binary)
+	candidate, err := execLookPath(name)
+	if err != nil {
+		return binary
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil || samePath(candidate, binary) {
+		return binary
+	}
+
+	currentInfo, currentErr := os.Stat(binary)
+	candidateInfo, candidateErr := os.Stat(candidate)
+	if currentErr != nil || candidateErr != nil || !os.SameFile(currentInfo, candidateInfo) {
+		return binary
+	}
+	return candidate
 }
 
 // generatePlist returns the plist XML as a string.
@@ -256,7 +420,7 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS == "windows" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Windows service installation is not supported.")
-				fmt.Fprintln(cmd.ErrOrStderr(), "Run 'rampart serve' in a terminal, or use Task Scheduler or NSSM to run it at startup.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Use 'rampart serve --background' for this login, or Task Scheduler/NSSM for automatic startup.")
 				return nil
 			}
 
@@ -265,6 +429,7 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 				return fmt.Errorf("find rampart binary: %w", err)
 			}
 			binary, _ = filepath.Abs(binary)
+			binary = stableServiceBinary(binary)
 
 			token, generated, err := resolveServiceToken(tokenFlag)
 			if err != nil {
@@ -328,13 +493,22 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return err
 	}
 
-	if _, err := os.Stat(path); err == nil && !force {
+	configBefore, tokenPath, tokenBefore, err := snapshotServiceFiles(path)
+	if err != nil {
+		return err
+	}
+	if configBefore.exists && !force {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
 		return nil
 	}
-
-	_, existingErr := os.Stat(path)
-	serviceExists := existingErr == nil
+	serviceExists := configBefore.exists
+	serviceWasLoaded := false
+	if serviceExists {
+		serviceWasLoaded, err = launchctlServiceLoaded(runner)
+		if err != nil {
+			return err
+		}
+	}
 
 	content, err := generatePlist(cfg)
 	if err != nil {
@@ -345,36 +519,32 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return err
 	}
 	// Ensure log directory exists.
-	_ = os.MkdirAll(filepath.Dir(cfg.LogPath), 0o755)
+	if err := os.MkdirAll(filepath.Dir(cfg.LogPath), 0o700); err != nil {
+		return fmt.Errorf("create service log directory: %w", err)
+	}
 
-	// 0o600: plist contains RAMPART_TOKEN — must not be world-readable.
-	// Chmod after write because os.WriteFile only applies the mode on creation;
-	// an existing file with wrong permissions would not be updated otherwise.
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	// The definition contains the bearer token. Publish it atomically from an
+	// owner-only temporary file so readers never observe partial or permissive
+	// content on any supported platform.
+	if err := atomicWritePrivateFile(path, []byte(content)); err != nil {
 		return fmt.Errorf("write plist: %w", err)
 	}
-	_ = os.Chmod(path, 0o600)
 
 	// Stop before rotating the shared token. Otherwise an old process can keep
 	// authenticating with the previous token while hooks read the new one.
-	if serviceExists {
-		// A plist can exist while the job is already unloaded. Only unload a
-		// job launchctl reports as loaded; a real unload failure is fatal.
-		loaded, err := launchctlServiceLoaded(runner)
-		if err != nil {
-			return err
-		}
-		if loaded {
-			if out, err := runner("launchctl", "unload", path).CombinedOutput(); err != nil {
-				return fmt.Errorf("launchctl unload: %w\n%s", err, out)
-			}
+	if serviceWasLoaded {
+		if out, err := runner("launchctl", "unload", path).CombinedOutput(); err != nil {
+			primary := fmt.Errorf("launchctl unload: %w\n%s", err, out)
+			return withRollbackError(primary, rollbackDarwinService(runner, path, configBefore, tokenPath, tokenBefore, true))
 		}
 	}
 	if err := persistToken(cfg.Token); err != nil {
-		return fmt.Errorf("persist service token: %w", err)
+		primary := fmt.Errorf("persist service token: %w", err)
+		return withRollbackError(primary, rollbackDarwinService(runner, path, configBefore, tokenPath, tokenBefore, serviceWasLoaded))
 	}
 	if out, err := runner("launchctl", "load", path).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl load: %w\n%s", err, out)
+		primary := fmt.Errorf("launchctl load: %w\n%s", err, out)
+		return withRollbackError(primary, rollbackDarwinService(runner, path, configBefore, tokenPath, tokenBefore, serviceWasLoaded))
 	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
@@ -386,13 +556,22 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return err
 	}
 
-	if _, err := os.Stat(path); err == nil && !force {
+	configBefore, tokenPath, tokenBefore, err := snapshotServiceFiles(path)
+	if err != nil {
+		return err
+	}
+	if configBefore.exists && !force {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
 		return nil
 	}
-
-	_, existingErr := os.Stat(path)
-	serviceExists := existingErr == nil
+	serviceExists := configBefore.exists
+	priorState := systemdServiceState{}
+	if serviceExists {
+		priorState, err = inspectSystemdServiceState(runner, "rampart-serve.service")
+		if err != nil {
+			return fmt.Errorf("inspect prior systemd service state: %w", err)
+		}
+	}
 
 	content, err := generateSystemdUnit(cfg)
 	if err != nil {
@@ -402,41 +581,130 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	// Ensure log directory exists.
-	_ = os.MkdirAll(filepath.Dir(cfg.LogPath), 0o755)
 
-	// 0o600: unit file contains RAMPART_TOKEN — must not be world-readable.
-	// Chmod after write because os.WriteFile only applies the mode on creation.
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := atomicWritePrivateFile(path, []byte(content)); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
-	_ = os.Chmod(path, 0o600)
 
 	// Fail closed during token rotation: stop the old process before changing
 	// either the loaded unit or the token hooks will read.
-	if serviceExists {
+	if priorState.active {
 		if out, err := runner("systemctl", "--user", "stop", "rampart-serve.service").CombinedOutput(); err != nil {
-			return fmt.Errorf("systemctl stop: %w\n%s", err, out)
+			primary := fmt.Errorf("systemctl stop: %w\n%s", err, out)
+			return withRollbackError(primary, rollbackLinuxService(runner, path, configBefore, tokenPath, tokenBefore, priorState))
 		}
 	}
 	if out, err := runner("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
-		return fmt.Errorf("systemctl daemon-reload: %w\n%s", err, out)
+		primary := fmt.Errorf("systemctl daemon-reload: %w\n%s", err, out)
+		return withRollbackError(primary, rollbackLinuxService(runner, path, configBefore, tokenPath, tokenBefore, priorState))
 	}
 	if err := persistToken(cfg.Token); err != nil {
-		return fmt.Errorf("persist service token: %w", err)
+		primary := fmt.Errorf("persist service token: %w", err)
+		return withRollbackError(primary, rollbackLinuxService(runner, path, configBefore, tokenPath, tokenBefore, priorState))
 	}
 	if out, err := runner("systemctl", "--user", "enable", "rampart-serve.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("systemctl enable: %w\n%s", err, out)
+		primary := fmt.Errorf("systemctl enable: %w\n%s", err, out)
+		return withRollbackError(primary, rollbackLinuxService(runner, path, configBefore, tokenPath, tokenBefore, priorState))
 	}
 	if out, err := runner("systemctl", "--user", "start", "rampart-serve.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("systemctl start: %w\n%s", err, out)
+		primary := fmt.Errorf("systemctl start: %w\n%s", err, out)
+		return withRollbackError(primary, rollbackLinuxService(runner, path, configBefore, tokenPath, tokenBefore, priorState))
 	}
 	printSuccess(cmd, cfg.Token, generated, port, path)
 	return nil
 }
 
+func rollbackDarwinService(runner commandRunner, path string, configBefore privateFileSnapshot, tokenPath string, tokenBefore privateFileSnapshot, wasLoaded bool) error {
+	var rollbackErrs []error
+	if err := rollbackServiceFiles(path, configBefore, tokenPath, tokenBefore); err != nil {
+		rollbackErrs = append(rollbackErrs, err)
+	}
+	if wasLoaded {
+		loaded, err := launchctlServiceLoaded(runner)
+		if err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("inspect prior launchd service during rollback: %w", err))
+		} else if !loaded {
+			if out, loadErr := runner("launchctl", "load", path).CombinedOutput(); loadErr != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("restore prior launchd service: %w\n%s", loadErr, out))
+			}
+		}
+	}
+	return errors.Join(rollbackErrs...)
+}
+
+type systemdServiceState struct {
+	active  bool
+	enabled bool
+}
+
+func inspectSystemdServiceState(runner commandRunner, service string) (systemdServiceState, error) {
+	active, err := inspectSystemctlBooleanState(runner, "is-active", service)
+	if err != nil {
+		return systemdServiceState{}, err
+	}
+	enabled, err := inspectSystemctlBooleanState(runner, "is-enabled", service)
+	if err != nil {
+		return systemdServiceState{}, err
+	}
+	return systemdServiceState{active: active, enabled: enabled}, nil
+}
+
+func inspectSystemctlBooleanState(runner commandRunner, verb, service string) (bool, error) {
+	out, runErr := runner("systemctl", "--user", verb, service).CombinedOutput()
+	state := strings.ToLower(strings.TrimSpace(string(out)))
+	switch verb {
+	case "is-active":
+		switch state {
+		case "active", "activating", "reloading", "deactivating":
+			return true, nil
+		case "inactive", "failed", "dead", "unknown", "not-found":
+			return false, nil
+		}
+	case "is-enabled":
+		switch state {
+		case "enabled", "enabled-runtime", "linked", "linked-runtime", "alias":
+			return true, nil
+		case "disabled", "static", "indirect", "masked", "masked-runtime", "generated", "transient", "bad", "not-found":
+			return false, nil
+		}
+	}
+	if runErr != nil {
+		return false, fmt.Errorf("systemctl --user %s %s: %w\n%s", verb, service, runErr, out)
+	}
+	return false, fmt.Errorf("systemctl --user %s %s returned unrecognized state %q", verb, service, state)
+}
+
+func rollbackLinuxService(runner commandRunner, path string, configBefore privateFileSnapshot, tokenPath string, tokenBefore privateFileSnapshot, prior systemdServiceState) error {
+	var rollbackErrs []error
+	if err := rollbackServiceFiles(path, configBefore, tokenPath, tokenBefore); err != nil {
+		rollbackErrs = append(rollbackErrs, err)
+	}
+	if out, err := runner("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("reload prior systemd definition: %w\n%s", err, out))
+	}
+	enableVerb := "disable"
+	if prior.enabled {
+		enableVerb = "enable"
+	}
+	if out, err := runner("systemctl", "--user", enableVerb, "rampart-serve.service").CombinedOutput(); err != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("restore prior systemd enablement: %w\n%s", err, out))
+	}
+	activeVerb := "stop"
+	if prior.active {
+		activeVerb = "start"
+	}
+	if out, err := runner("systemctl", "--user", activeVerb, "rampart-serve.service").CombinedOutput(); err != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("restore prior systemd activity: %w\n%s", err, out))
+	}
+	return errors.Join(rollbackErrs...)
+}
+
 func launchctlServiceLoaded(runner commandRunner) (bool, error) {
-	out, err := runner("launchctl", "list", plistLabel).CombinedOutput()
+	return launchctlLabelLoaded(runner, plistLabel)
+}
+
+func launchctlLabelLoaded(runner commandRunner, label string) (bool, error) {
+	out, err := runner("launchctl", "list", label).CombinedOutput()
 	if err == nil {
 		return true, nil
 	}
@@ -449,16 +717,24 @@ func launchctlServiceLoaded(runner commandRunner) (bool, error) {
 		strings.Contains(message, "could not find specified service") {
 		return false, nil
 	}
-	return false, fmt.Errorf("launchctl list %s: %w\n%s", plistLabel, err, out)
+	return false, fmt.Errorf("launchctl list %s: %w\n%s", label, err, out)
 }
 
 func printSuccess(cmd *cobra.Command, token string, generated bool, port int, path string) {
 	w := cmd.ErrOrStderr()
+	interactive := false
+	if file, ok := w.(*os.File); ok {
+		interactive = isTerminal(file)
+	}
 	fmt.Fprintf(w, "\n✅ Rampart service installed: %s\n", path)
 	fmt.Fprintf(w, "   Dashboard: http://localhost:%d/dashboard/\n", port)
-	fmt.Fprintf(w, "   Token:     %s\n", token)
-	fmt.Fprintf(w, "   (token also saved to ~/.rampart/token — hooks read it automatically)\n")
-	if generated {
+	if interactive {
+		fmt.Fprintf(w, "   Token:     %s\n", token)
+		fmt.Fprintf(w, "   (token also saved to ~/.rampart/token — hooks read it automatically)\n")
+	} else {
+		fmt.Fprintln(w, "   Token:     saved to ~/.rampart/token")
+	}
+	if generated && interactive {
 		fmt.Fprintf(w, "\n   To persist across shell sessions:\n")
 		fmt.Fprintf(w, "     echo 'export RAMPART_TOKEN=%s' >> ~/.zshrc\n", token)
 	}

@@ -17,9 +17,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
+	policyutil "github.com/peg/rampart/internal/policy"
+	"github.com/peg/rampart/internal/securefile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,15 +34,6 @@ func DefaultAutoAllowedPath() string {
 		home = "."
 	}
 	return filepath.Join(home, ".rampart", "policies", "auto-allowed.yaml")
-}
-
-// DefaultUserOverridesPath returns the default path for durable user override rules.
-func DefaultUserOverridesPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".rampart", "policies", "user-overrides.yaml")
 }
 
 // dangerousCommandPrefixes lists command prefixes that should NEVER be
@@ -106,67 +101,80 @@ func GeneralizeCommand(cmd string) string {
 	return tokens[0] + " " + tokens[1] + "*"
 }
 
-// GenerateAllowRule creates a Policy from a ToolCall that would allow
-// similar future calls.
-func GenerateAllowRule(call ToolCall) Policy {
-	tool := call.Tool
+// GenerateAllowRule creates a narrowly scoped Policy from a ToolCall. Automatic
+// approval persistence is exact by default: it never inserts wildcards, and
+// literal glob metacharacters in commands and paths are escaped.
+func GenerateAllowRule(call ToolCall) (Policy, error) {
+	return generateAllowRuleAt(call, time.Now().UTC())
+}
+
+func generateAllowRuleAt(call ToolCall, now time.Time) (Policy, error) {
+	tool := strings.TrimSpace(call.Tool)
 	if tool == "" {
-		tool = "*"
+		return Policy{}, fmt.Errorf("persist: allow rule requires a tool")
 	}
 
-	now := time.Now().UTC()
+	now = now.UTC()
 	var ruleName string
+	var exactPattern string
 	var rule Rule
 
 	switch tool {
 	case "exec":
-		cmd := call.Command()
-		generalized := GeneralizeCommand(cmd)
+		cmd := strings.TrimSpace(call.Command())
+		if cmd == "" {
+			return Policy{}, fmt.Errorf("persist: exec allow rule requires a command")
+		}
+		exactPattern = policyutil.BuildExactAllowPattern(cmd)
+		if err := policyutil.ValidateGlobPatterns("command_matches", []string{exactPattern}); err != nil {
+			return Policy{}, fmt.Errorf("persist: exact command cannot be represented safely: %w", err)
+		}
 		tokens := strings.Fields(cmd)
 		nameParts := tokens
 		if len(nameParts) > 2 {
 			nameParts = nameParts[:2]
 		}
-		ruleName = fmt.Sprintf("auto-allow-%s", strings.Join(nameParts, "-"))
+		ruleName = fmt.Sprintf("auto-allow-%s", sanitizeName(strings.Join(nameParts, "-")))
 		rule = Rule{
 			Action: "allow",
 			When: Condition{
-				CommandMatches: []string{generalized},
+				CommandMatches: []string{exactPattern},
 			},
 		}
 
-	case "read", "write":
+	case "read", "write", "edit":
 		path := call.Path()
-		if path == "" {
-			path = "*"
+		if strings.TrimSpace(path) == "" {
+			return Policy{}, fmt.Errorf("persist: %s allow rule requires a path", tool)
 		}
 		action := tool
+		exactPattern = policyutil.BuildExactAllowPattern(path)
+		if err := policyutil.ValidateGlobPatterns("path_matches", []string{exactPattern}); err != nil {
+			return Policy{}, fmt.Errorf("persist: exact path cannot be represented safely: %w", err)
+		}
 		ruleName = fmt.Sprintf("auto-allow-%s-%s", action, sanitizeName(path))
 		rule = Rule{
 			Action: "allow",
 			When: Condition{
-				PathMatches: []string{path},
+				PathMatches: []string{exactPattern},
 			},
 		}
 
 	default:
-		// MCP or other tools: match on tool name.
-		ruleName = fmt.Sprintf("auto-allow-%s", sanitizeName(tool))
-		rule = Rule{
-			Action: "allow",
-			When: Condition{
-				Default: true,
-			},
-		}
+		return Policy{}, fmt.Errorf("persist: automatic allow is unsupported for tool %q; author an explicit policy instead", tool)
 	}
 
-	return Policy{
-		Name: fmt.Sprintf("%s-%s", ruleName, now.Format("20060102T150405Z")),
+	generated := Policy{
+		Name: fmt.Sprintf("%s-%s-%s", ruleName, now.Format("20060102T150405Z"), policyutil.ExactPatternHash(tool, exactPattern)),
 		Match: Match{
-			Tool: StringOrSlice{tool},
+			Tool: StringOrSlice{policyutil.BuildExactAllowPattern(tool)},
 		},
 		Rules: []Rule{rule},
 	}
+	if err := validatePolicy(generated, make(map[string]*regexp.Regexp)); err != nil {
+		return Policy{}, fmt.Errorf("persist: generated policy is invalid: %w", err)
+	}
+	return generated, nil
 }
 
 // MigrateAllowRuleGlobs rewrites old-format command_matches patterns that
@@ -174,6 +182,19 @@ func GenerateAllowRule(call ToolCall) Policy {
 // This migration is needed after the v0.9.7 GeneralizeCommand fix.
 // Safe to call multiple times — only rewrites if patterns are found.
 func MigrateAllowRuleGlobs(policyPath string) (int, error) {
+	if _, err := os.Stat(policyPath); os.IsNotExist(err) {
+		return 0, nil
+	}
+	var migrated int
+	err := withPolicyFileLock(policyPath, func() error {
+		var err error
+		migrated, err = migrateAllowRuleGlobsLocked(policyPath)
+		return err
+	})
+	return migrated, err
+}
+
+func migrateAllowRuleGlobsLocked(policyPath string) (int, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -183,7 +204,7 @@ func MigrateAllowRuleGlobs(policyPath string) (int, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeUnmarshal(data, &cfg); err != nil {
 		return 0, fmt.Errorf("persist: parse %s: %w", policyPath, err)
 	}
 
@@ -213,19 +234,76 @@ func MigrateAllowRuleGlobs(policyPath string) (int, error) {
 // AppendAllowRule generates an allow rule from a ToolCall and appends it
 // to the auto-allowed policy file. Creates the file and directories if needed.
 func AppendAllowRule(policyPath string, call ToolCall) error {
-	policy := GenerateAllowRule(call)
-
+	policy, err := GenerateAllowRule(call)
+	if err != nil {
+		return err
+	}
 	// Ensure directory exists.
 	dir := filepath.Dir(policyPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("persist: create policy dir: %w", err)
 	}
+	return withPolicyFileLock(policyPath, func() error {
+		return appendAllowRuleLocked(policyPath, policy)
+	})
+}
 
+// RemoveAllowRule removes a named rule from an auto-generated policy using the
+// same cross-process transaction as AppendAllowRule. It returns whether a rule
+// was removed and the number of rules left in the file.
+func RemoveAllowRule(policyPath, name string) (bool, int, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, 0, fmt.Errorf("persist: rule name is required")
+	}
+
+	removed := false
+	remaining := 0
+	err := withPolicyFileLock(policyPath, func() error {
+		data, err := os.ReadFile(policyPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("persist: read policy file: %w", err)
+		}
+		var cfg Config
+		if err := safeUnmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("persist: parse existing policy: %w", err)
+		}
+
+		for index := range cfg.Policies {
+			if cfg.Policies[index].Name != name {
+				continue
+			}
+			cfg.Policies = append(cfg.Policies[:index], cfg.Policies[index+1:]...)
+			removed = true
+			break
+		}
+		remaining = len(cfg.Policies)
+		if !removed {
+			return nil
+		}
+		if remaining > 0 {
+			return writeConfigAtomic(policyPath, &cfg)
+		}
+		if err := os.Remove(policyPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("persist: remove empty policy file: %w", err)
+		}
+		if err := syncPolicyDir(filepath.Dir(policyPath)); err != nil {
+			return fmt.Errorf("persist: sync policy directory: %w", err)
+		}
+		return nil
+	})
+	return removed, remaining, err
+}
+
+func appendAllowRuleLocked(policyPath string, policy Policy) error {
 	// Load existing config or create new one.
 	var cfg Config
 	data, err := os.ReadFile(policyPath)
 	if err == nil {
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
+		if err := safeUnmarshal(data, &cfg); err != nil {
 			return fmt.Errorf("persist: parse existing policy: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
@@ -235,6 +313,9 @@ func AppendAllowRule(policyPath string, call ToolCall) error {
 	if cfg.Version == "" {
 		cfg.Version = "1"
 		cfg.DefaultAction = "deny"
+	}
+	if err := cfg.validate(); err != nil {
+		return fmt.Errorf("persist: validate existing policy: %w", err)
 	}
 
 	// Dedup: skip if an identical rule already exists (same tool + command/path pattern).
@@ -307,142 +388,22 @@ func slicesEqual(a, b []string) bool {
 	return true
 }
 
-// cleanRule is a minimal YAML representation that omits empty fields.
-type cleanRule struct {
-	Action    string     `yaml:"action"`
-	When      cleanWhen  `yaml:"when"`
-	ExpiresAt *time.Time `yaml:"expires_at,omitempty"`
-	Once      bool       `yaml:"once,omitempty"`
-}
-
-type cleanWhen struct {
-	CommandMatches        []string `yaml:"command_matches,omitempty"`
-	CommandNotMatches     []string `yaml:"command_not_matches,omitempty"`
-	CommandContains       []string `yaml:"command_contains,omitempty"`
-	CommandEnvAssignments []string `yaml:"command_env_assignments,omitempty"`
-	PathMatches           []string `yaml:"path_matches,omitempty"`
-	Default               bool     `yaml:"default,omitempty"`
-}
-
-type cleanPolicy struct {
-	Name  string      `yaml:"name"`
-	Match cleanMatch  `yaml:"match"`
-	Rules []cleanRule `yaml:"rules"`
-}
-
-type cleanMatch struct {
-	Tool []string `yaml:"tool"`
-}
-
-type cleanConfig struct {
-	Version       string        `yaml:"version"`
-	DefaultAction string        `yaml:"default_action"`
-	Policies      []cleanPolicy `yaml:"policies"`
-}
-
-// marshalCleanYAML converts a Config to clean YAML without empty fields.
-func marshalCleanYAML(cfg *Config) ([]byte, error) {
-	clean := cleanConfig{
-		Version:       cfg.Version,
-		DefaultAction: cfg.DefaultAction,
-	}
-	for _, p := range cfg.Policies {
-		cp := cleanPolicy{
-			Name:  p.Name,
-			Match: cleanMatch{Tool: []string(p.Match.Tool)},
-		}
-		for _, r := range p.Rules {
-			cp.Rules = append(cp.Rules, cleanRule{
-				Action: r.Action,
-				When: cleanWhen{
-					CommandMatches:        r.When.CommandMatches,
-					CommandNotMatches:     r.When.CommandNotMatches,
-					CommandContains:       r.When.CommandContains,
-					CommandEnvAssignments: r.When.CommandEnvAssignments,
-					PathMatches:           r.When.PathMatches,
-					Default:               r.When.Default,
-				},
-				ExpiresAt: r.ExpiresAt,
-				Once:      r.Once,
-			})
-		}
-		clean.Policies = append(clean.Policies, cp)
-	}
-	return yaml.Marshal(&clean)
-}
-
-// MatchesAutoAllowFile checks if a ToolCall matches any rule in the auto-allow
-// policy file. Returns true if the call should be allowed immediately without
-// going through the approval queue.
-//
-// This is checked at the serve level BEFORE creating a pending approval, so
-// that user "Always Allow" decisions override require_approval policies.
-func MatchesAutoAllowFile(policyPath string, call ToolCall) bool {
-	data, err := os.ReadFile(policyPath)
-	if err != nil {
-		return false // no file = no auto-allow rules
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	for _, p := range cfg.Policies {
-		// Check tool match.
-		if len(p.Match.Tool) > 0 {
-			matched := false
-			for _, t := range p.Match.Tool {
-				if t == "*" || t == call.Tool {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-
-		// Check rules.
-		for _, r := range p.Rules {
-			if r.Action != "allow" {
-				continue
-			}
-			// Skip expired temporal rules.
-			if r.ExpiresAt != nil && time.Now().UTC().After(*r.ExpiresAt) {
-				continue
-			}
-			// Default: matches anything for this tool.
-			if r.When.Default {
-				return true
-			}
-			// Exec: command_matches.
-			if len(r.When.CommandMatches) > 0 {
-				cmd := call.Command()
-				for _, pattern := range r.When.CommandMatches {
-					if MatchGlob(pattern, cmd) {
-						return true
-					}
-				}
-			}
-			// Write/read: path_matches.
-			if len(r.When.PathMatches) > 0 {
-				path := call.Path()
-				for _, pattern := range r.When.PathMatches {
-					if MatchGlob(pattern, path) {
-						return true
-					}
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // CleanExpiredRules removes expired temporal rules from a policy file.
 // Returns the number of rules removed and any error.
 func CleanExpiredRules(policyPath string) (int, error) {
+	if _, err := os.Stat(policyPath); os.IsNotExist(err) {
+		return 0, nil
+	}
+	var removed int
+	err := withPolicyFileLock(policyPath, func() error {
+		var err error
+		removed, err = cleanExpiredRulesLocked(policyPath)
+		return err
+	})
+	return removed, err
+}
+
+func cleanExpiredRulesLocked(policyPath string) (int, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -452,7 +413,7 @@ func CleanExpiredRules(policyPath string) (int, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeUnmarshal(data, &cfg); err != nil {
 		return 0, fmt.Errorf("persist: parse policy for cleanup: %w", err)
 	}
 
@@ -486,13 +447,19 @@ func CleanExpiredRules(policyPath string) (int, error) {
 // RemoveRule removes a specific rule by policy name and rule index from
 // a policy file. Used to consume once:true rules after they fire.
 func RemoveRule(policyPath, policyName string, ruleIndex int) error {
+	return withPolicyFileLock(policyPath, func() error {
+		return removeRule(policyPath, policyName, ruleIndex, nil)
+	})
+}
+
+func removeRule(policyPath, policyName string, ruleIndex int, expected *Rule) error {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
 		return fmt.Errorf("persist: read policy for rule removal: %w", err)
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := safeUnmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("persist: parse policy for rule removal: %w", err)
 	}
 
@@ -500,10 +467,24 @@ func RemoveRule(policyPath, policyName string, ruleIndex int) error {
 		if p.Name != policyName {
 			continue
 		}
-		if ruleIndex < 0 || ruleIndex >= len(p.Rules) {
-			return fmt.Errorf("persist: rule index %d out of range for policy %q", ruleIndex, policyName)
+		removeIndex := ruleIndex
+		if expected != nil {
+			if removeIndex < 0 || removeIndex >= len(p.Rules) || !reflect.DeepEqual(p.Rules[removeIndex], *expected) {
+				removeIndex = -1
+				for candidate := range p.Rules {
+					if reflect.DeepEqual(p.Rules[candidate], *expected) {
+						removeIndex = candidate
+						break
+					}
+				}
+			}
+			if removeIndex < 0 {
+				return fmt.Errorf("persist: one-time rule no longer present in policy %q", policyName)
+			}
+		} else if removeIndex < 0 || removeIndex >= len(p.Rules) {
+			return fmt.Errorf("persist: rule index %d out of range for policy %q", removeIndex, policyName)
 		}
-		cfg.Policies[i].Rules = append(p.Rules[:ruleIndex], p.Rules[ruleIndex+1:]...)
+		cfg.Policies[i].Rules = append(p.Rules[:removeIndex], p.Rules[removeIndex+1:]...)
 		if len(cfg.Policies[i].Rules) == 0 {
 			cfg.Policies = append(cfg.Policies[:i], cfg.Policies[i+1:]...)
 		}
@@ -515,7 +496,13 @@ func RemoveRule(policyPath, policyName string, ruleIndex int) error {
 
 // writeConfigAtomic writes a Config to a YAML file atomically.
 func writeConfigAtomic(policyPath string, cfg *Config) error {
-	out, err := marshalCleanYAML(cfg)
+	if cfg == nil {
+		return fmt.Errorf("persist: policy config is nil")
+	}
+	if err := cfg.validate(); err != nil {
+		return fmt.Errorf("persist: validate policy before write: %w", err)
+	}
+	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("persist: marshal policy: %w", err)
 	}
@@ -529,17 +516,27 @@ func writeConfigAtomic(policyPath string, cfg *Config) error {
 		return fmt.Errorf("persist: create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
+	if err := securefile.OwnerOnly(tmpPath); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("persist: secure temp file: %w", err)
+	}
 
 	if _, err := tmpFile.WriteString(header + string(out)); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("persist: write temp file: %w", err)
 	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("persist: sync temp file: %w", err)
+	}
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("persist: close temp file: %w", err)
 	}
-	if err := os.Rename(tmpPath, policyPath); err != nil {
+	if err := replaceFileAtomic(tmpPath, policyPath); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("persist: rename temp file: %w", err)
 	}

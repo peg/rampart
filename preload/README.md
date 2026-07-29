@@ -1,10 +1,13 @@
 # Rampart Preload Library
 
-A production-quality LD_PRELOAD interceptor library that provides universal agent protection by intercepting exec-family syscalls and consulting the Rampart policy server before execution.
+An optional native interposition library that asks Rampart before compatible
+dynamically linked processes call supported libc exec/spawn functions. It is a
+defense-in-depth fallback, not a universal or system-wide sandbox.
 
 ## Building
 
-The compiled library is not distributed in the repository. Build it from source:
+The compiled library is not included in GitHub release archives or the Homebrew
+package. Build it from the same Rampart source revision as your CLI:
 
 ```bash
 cd preload
@@ -22,15 +25,16 @@ sudo apt install build-essential libcurl4-openssl-dev
 brew install curl
 ```
 
-`rampart setup` runs `make install` automatically when it detects the preload integration mode.
+`rampart setup` does not compile native code. Run `make install` explicitly;
+the CLI will then find the library in `~/.rampart/lib/`.
 
 ## Overview
 
 The Rampart preload library (`librampart.so` / `librampart.dylib`) works by:
 
-1. Intercepting exec-family system calls (`execve`, `execvp`, `system`, `popen`, etc.)
+1. Intercepting supported libc entry points (`execve`, `execvp`, `system`, `popen`, etc.)
 2. Consulting the Rampart policy server via HTTP before allowing execution
-3. Failing open (allowing execution) if the policy server is unreachable
+3. Applying the configured degraded behavior if the policy server is unreachable
 4. Providing comprehensive logging and debugging capabilities
 
 ```
@@ -38,7 +42,8 @@ Agent Process → calls execve() → librampart.so intercepts
   → HTTP POST to rampart serve /v1/preflight/exec
   → allowed:true → call real execve via dlsym(RTLD_NEXT)
   → allowed:false → errno=EPERM, return -1
-  → HTTP fails → fail-open (exec through)
+  → transport/5xx failure → RAMPART_FAIL_OPEN decides
+  → auth/protocol/client failure → deny in enforce mode
 ```
 
 ## Building
@@ -95,10 +100,10 @@ make all
 **Linux:**
 ```bash
 export LD_PRELOAD="./librampart.so"
-export RAMPART_URL="http://127.0.0.1:19090"
+export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token-here"
 
-# Run any command with protection
+# Run a compatible dynamically linked process tree
 python my_agent.py
 node agent.js
 ./my_binary
@@ -107,10 +112,10 @@ node agent.js
 **macOS:**
 ```bash
 export DYLD_INSERT_LIBRARIES="./librampart.dylib"
-export RAMPART_URL="http://127.0.0.1:19090"
+export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token-here"
 
-# Run any command with protection
+# Run a compatible dynamically linked process tree
 python my_agent.py
 ```
 
@@ -127,13 +132,18 @@ rampart preload --mode monitor -- risky_tool
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAMPART_URL` | `http://127.0.0.1:19090` | Policy server URL |
+| `RAMPART_URL` | `http://127.0.0.1:9090` | Policy server URL |
 | `RAMPART_TOKEN` | (none) | Bearer auth token |
 | `RAMPART_MODE` | `enforce` | `enforce` / `monitor` / `disabled` |
-| `RAMPART_FAIL_OPEN` | `1` | Fail-open when server unreachable (1=yes, 0=no) |
+| `RAMPART_FAIL_OPEN` | `1` | Allow transport and HTTP 5xx failures (1=yes, 0=no); never bypasses auth, malformed-response, or local safety failures in enforce mode |
 | `RAMPART_AGENT` | `preload` | Agent name for audit logs |
 | `RAMPART_SESSION` | `preload-<pid>` | Session ID for tracking |
 | `RAMPART_DEBUG` | `0` | Debug logging to stderr (1=on, 0=off) |
+
+These values and the initial loader chain are snapshotted when the library is
+loaded. For APIs that accept an explicit child environment (`execve`,
+`execvpe`, and `posix_spawn*`), Rampart removes caller-supplied replacements
+for those control variables and passes the trusted snapshots to the child.
 
 ### Mode Behavior
 
@@ -145,18 +155,19 @@ rampart preload --mode monitor -- risky_tool
 
 The library intercepts these libc functions:
 
-- `execve(path, argv, envp)` — Primary exec syscall
+- `execve(path, argv, envp)` — Primary libc exec entry point
 - `execvp(file, argv)` — PATH-resolved exec
 - `execvpe(file, argv, envp)` — PATH-resolved with environment (Linux only)
 - `system(command)` — Shell command execution
 - `popen(command, type)` — Pipe to shell command
 - `posix_spawn(...)` — Modern spawn API (heavily used on macOS)
+- `posix_spawnp(...)` — PATH-resolved modern spawn API
 
 ## Testing
 
 ### Integration Tests
 
-Run the comprehensive test suite:
+Run the native-library test suite:
 
 ```bash
 # Run all tests
@@ -170,7 +181,9 @@ make test
 - Library loading without crashes
 - Debug output functionality
 - Policy enforcement (when `rampart serve` is running)
-- Fail-open behavior (when server is unreachable)
+- Fail-open/fail-closed behavior for transport and server failures
+- Fail-closed behavior for authentication, malformed, and oversized responses
+- `posix_spawn` and `posix_spawnp` interception
 - `system()` and `popen()` interception
 - Monitor and disabled modes
 - Child process inheritance
@@ -192,7 +205,7 @@ RAMPART_URL=http://127.0.0.1:99999 LD_PRELOAD=./librampart.so echo "should work"
 **Policy enforcement (requires `rampart serve` running):**
 ```bash
 export LD_PRELOAD="./librampart.so"
-export RAMPART_URL="http://127.0.0.1:19090"
+export RAMPART_URL="http://127.0.0.1:9090"
 export RAMPART_TOKEN="your-token"
 
 # Should work (typically allowed)
@@ -224,26 +237,19 @@ The library is optimized for minimal latency:
 
 - **Persistent HTTP keep-alive connection** — One connection per process, reused for all policy checks
 - **Manual JSON parsing** — No external JSON library dependencies
-- **Fail-fast on errors** — Immediate fail-open if server unreachable
-- **Thread-safe** — Uses pthread mutex for curl handle protection
-
-**Target performance:**
-- < 1ms per policy check (Unix domain socket)
-- < 3ms per policy check (TCP to localhost)
-- < 0.01ms fail-open path (server unreachable)
+- **Bounded degraded behavior** — Transport/5xx failures follow `RAMPART_FAIL_OPEN`; unsafe client/protocol failures deny in enforce mode
+- **Thread/fork-safe transport state** — Uses a pthread mutex for the persistent curl handle and resets inherited connection state across `fork()` before the child performs policy checks
 
 ## Platform Support
 
 ### Linux ✅
-- **Coverage:** ~95% of dynamically-linked binaries
 - **Mechanism:** `LD_PRELOAD`
-- **Works with:** Most user-installed software, Python, Node.js, Go binaries
-- **Limitations:** Static binaries cannot be intercepted
+- **Works with:** compatible dynamically linked programs that call the intercepted libc symbols
+- **Limitations:** static binaries, direct syscalls, secure-execution contexts, and runtimes that bypass those symbols are not intercepted
 
 ### macOS ✅
-- **Coverage:** ~70-85% in typical developer environments
 - **Mechanism:** `DYLD_INSERT_LIBRARIES`
-- **Works with:** Homebrew packages, nvm/Node.js, pyenv/Python, Go binaries
+- **Works with:** compatible non-hardened user software that calls the intercepted libc symbols
 - **System Integrity Protection (SIP)** blocks system binaries but allows user software
 - **Limitations:** 
   - `/usr/bin/*` and `/System/*` binaries are protected
@@ -263,19 +269,19 @@ This library is designed to protect against **hallucinating/manipulated AI agent
 - AI agent executing `rm -rf /`
 - Malicious skills/plugins running credential theft commands
 - Unintended network exfiltration via `curl`/`wget`
-- Any exec call from the protected process tree
+- Calls through the supported interposed libc functions while the library remains loaded
 
 **What it does NOT catch:**
-- Agent explicitly unsetting `LD_PRELOAD` before exec (deliberate bypass)
-- Direct syscalls bypassing libc (requires assembly knowledge)
+- Direct syscalls or runtimes that bypass the interposed libc functions
 - Statically-linked binaries (no dynamic linker)
+- Secure-execution/SIP/hardened contexts that discard or reject loader injection
 - Non-exec file operations (`open()`, `connect()`)
 
 ### Bypass Resistance
 
 - **Low** against determined human attackers
-- **High** against AI agents (they don't know to bypass preload)
-- **Perfect** against accidental/hallucinated dangerous commands
+- Useful against accidental or model-generated commands that remain inside the
+  compatible process boundary; native host hooks remain preferred
 
 ## Known Limitations
 
@@ -289,9 +295,9 @@ This library is designed to protect against **hallucinating/manipulated AI agent
 
 ### Code Quality
 
-- **Zero undefined behavior** — Clean compilation with `-Wall -Wextra -Werror -pedantic`
-- **Thread-safe** — All global state protected by mutexes
-- **Memory leak free** — Every `malloc()` has matching `free()`
+- **Strict compilation** — Built with `-Wall -Wextra -Werror -pedantic`
+- **Thread-safe HTTP reuse** — Every shared easy-handle operation is serialized
+- **Bounded inputs** — Request and response sizes are capped; malformed JSON fails closed in enforce mode
 - **Minimal dependencies** — Only libcurl and pthreads
 
 ### Debugging
@@ -310,8 +316,8 @@ RAMPART_DEBUG=1 LD_PRELOAD=./librampart.so your_command
 
 ### Contributing
 
-1. Maintain < 600 lines in `librampart.c`
-2. All changes must pass `make test`
+1. Keep the security boundary auditable and avoid unnecessary dependencies
+2. All changes must pass `make test` and the Linux `test_preload.sh` contract suite
 3. Test on both Linux and macOS
 4. Run AddressSanitizer builds before submitting
 5. Update tests for new functionality
@@ -336,7 +342,6 @@ RAMPART_DEBUG=1 LD_PRELOAD=./librampart.so your_command
 **Performance issues:**
 - Check if keep-alive connections are working (server logs)
 - Monitor network latency to policy server
-- Consider using Unix domain socket (future enhancement)
 
 ## License
 

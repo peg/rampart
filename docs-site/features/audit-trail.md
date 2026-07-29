@@ -72,6 +72,12 @@ Each event is a JSON line:
 }
 ```
 
+Response-side evaluations are separate events so an initial allow and a later
+redaction cannot be confused. These events set `request.rampart_phase` to
+`response`, link back through `request.request_audit_id`, record only
+`response_bytes` (not the raw output), and include `response.flags` such as
+`response-evaluated` or `response-redacted`.
+
 ## Storage
 
 - **Location:** `~/.rampart/audit/` (configurable)
@@ -79,7 +85,7 @@ Each event is a JSON line:
 - **Rotation:** Daily files with chain continuity across files
 - **IDs:** ULID (time-ordered, sortable)
 - **Integrity:** External anchor every 100 events
-- **Durability:** `fsync` on every write
+- **Durability:** long-running service writes use `fsync`; short-lived native hooks use the same cross-process chain lock and a validated tail checkpoint, then rely on normal OS flush behavior to avoid adding an `fsync` delay to every agent tool call
 
 ## HTML Reports
 
@@ -93,8 +99,14 @@ rampart report
 
 The hash chain detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. A complete rewrite with a new valid chain is not detectable from the log alone.
 
+`rampart serve` verifies the complete chain when it starts. One-shot native
+hooks validate the current checkpoint, file size, and tail record before
+appending; if that checkpoint is missing or stale, they fall back to complete
+recovery. Run `rampart audit verify` whenever you need an explicit full-history
+integrity check.
+
 For stronger guarantees:
 
-- Run `rampart serve` as a [separate user](../deployment/user-separation.md) so the agent can't access audit files
+- For centralized HTTP/SDK deployments, run `rampart serve` as a [separate user](../deployment/user-separation.md) so the agent cannot access service-owned audit files; native hooks need an external sink for an independent trust boundary
 - Enable [SIEM export](siem-integration.md) for an external trust anchor
 - Use [webhook notifications](webhooks.md) for real-time alerts to an external system

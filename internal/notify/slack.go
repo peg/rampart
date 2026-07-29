@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // SlackNotifier sends notifications to Slack using incoming webhooks with Block Kit formatting.
@@ -30,10 +29,8 @@ type SlackNotifier struct {
 // NewSlackNotifier creates a new Slack notifier.
 func NewSlackNotifier(url string) *SlackNotifier {
 	return &SlackNotifier{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:    url,
+		client: newNotifyHTTPClient(),
 	}
 }
 
@@ -75,7 +72,7 @@ func (n *SlackNotifier) Send(event NotifyEvent) error {
 	if event.Action == "watch" || event.Action == "log" {
 		color = "#d29922" // orange for log
 		actionText = "Command Logged"
-	} else if event.Action == "require_approval" {
+	} else if isApprovalAction(event.Action) {
 		color = "#d29922" // amber for approval required
 		actionText = "Approval Required"
 	}
@@ -84,7 +81,7 @@ func (n *SlackNotifier) Send(event NotifyEvent) error {
 		{Type: "mrkdwn", Text: fmt.Sprintf("*Tool:*\n%s", event.Tool)},
 		{Type: "mrkdwn", Text: fmt.Sprintf("*Command/Path:*\n%s", event.Command)},
 	}
-	if event.Action == "require_approval" {
+	if isApprovalAction(event.Action) {
 		fields = append(fields,
 			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Agent:*\n%s", event.Agent)},
 			slackText{Type: "mrkdwn", Text: fmt.Sprintf("*Approval ID:*\n%s", shortApprovalID(event.ApprovalID))},

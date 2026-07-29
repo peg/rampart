@@ -16,6 +16,8 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 )
 
 // Request is the minimal JSON-RPC 2.0 request/notification envelope used by MCP.
@@ -67,4 +69,75 @@ func MarshalErrorResponse(id json.RawMessage, code int, message string) ([]byte,
 		},
 	}
 	return json.Marshal(payload)
+}
+
+// validateUniqueJSONKeys rejects duplicate object members at every nesting
+// level. Different JSON implementations are permitted to select different
+// duplicate values; a security proxy must not evaluate one interpretation and
+// forward the same bytes to a child that may execute another.
+func validateUniqueJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := validateUniqueJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple top-level JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func validateUniqueJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, compound := token.(json.Delim)
+	if !compound {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("object member name is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate object member %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := validateUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := validateUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delim)
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	want := json.Delim('}')
+	if delim == '[' {
+		want = ']'
+	}
+	if closing != want {
+		return fmt.Errorf("unexpected JSON closing delimiter %q", closing)
+	}
+	return nil
 }

@@ -22,59 +22,61 @@ from typing import List, Optional
 @dataclass
 class Decision:
     """The result of a policy evaluation.
-    
+
     Contains the policy decision and metadata about the evaluation.
     """
-    
+
     allowed: bool
     """True if the tool call would be allowed to proceed."""
-    
+
     action: str
-    """The policy action: allow, deny, log, or require_approval."""
-    
+    """The policy action: allow, deny, watch, or ask."""
+
     message: str
     """Human-readable reason for the decision."""
-    
+
     policies: List[str]
     """Names of policies that matched during evaluation."""
-    
+
     eval_duration_ms: float
     """Time taken to evaluate the policy in milliseconds."""
 
 
 class RampartError(Exception):
     """Base exception for Rampart SDK errors."""
+
     pass
 
 
 class RampartConnectionError(RampartError):
     """Raised when unable to connect to the Rampart server."""
+
     pass
 
 
 class RampartDeniedError(RampartError):
     """Raised when a tool call is denied by policy.
-    
+
     This exception contains details about which policy blocked the call
     and why it was blocked.
     """
-    
+
     def __init__(self, tool: str, policy: Optional[str] = None, message: str = ""):
         self.tool = tool
         self.policy = policy
         self.message = message
-        
+
         if policy:
             error_msg = f"Tool '{tool}' denied by policy '{policy}': {message}"
         else:
             error_msg = f"Tool '{tool}' denied: {message}"
-        
+
         super().__init__(error_msg)
 
 
 class RampartServerError(RampartError):
     """Raised when the Rampart server returns an error response."""
-    
+
     def __init__(self, status_code: int, message: str):
         self.status_code = status_code
         self.message = message

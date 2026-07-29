@@ -26,7 +26,7 @@ The dashboard HTML is served without authentication — it contains no secrets. 
 When `rampart serve` starts, it prints the token:
 
 ```
-serve: full token: 22ae11b1b9b51c5c7c71dd4a74f44b2ea429cdebc31dda59ad7b8f2dc927b9b7
+serve: full token: <generated-64-character-token>
 ```
 
 Enter this token in the dashboard's token field. It's stored in your browser's `localStorage` — never sent to any external service.

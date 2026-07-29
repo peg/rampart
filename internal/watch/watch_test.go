@@ -15,6 +15,7 @@
 package watch
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -81,4 +82,18 @@ func TestVisibleEventsRespectsScroll(t *testing.T) {
 	m.scroll = 2
 	visible := m.visibleEvents(2)
 	require.Len(t, visible, 2)
+}
+
+func TestQuietSeenIsBounded(t *testing.T) {
+	m := NewModel(Config{AuditFile: "/tmp/audit.jsonl", Agent: "all", Quiet: true})
+	for i := 0; i < maxQuietSeenEntries+100; i++ {
+		evt := audit.Event{
+			Agent:    "agent",
+			Tool:     "exec",
+			Request:  map[string]any{"command": fmt.Sprintf("unique-%d", i)},
+			Decision: audit.EventDecision{Action: "allow"},
+		}
+		m.Update(tailerMsg{event: evt})
+	}
+	assert.LessOrEqual(t, len(m.quietSeen), maxQuietSeenEntries)
 }

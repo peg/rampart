@@ -6,12 +6,13 @@ There is no universal fallback. Claude Code, Codex, and Cline normally evaluate
 local policy without `rampart serve`; Rampart-handled parse/config errors deny
 in enforce mode, while an unexpected hook-process crash or timeout follows the
 host's behavior. Managed OpenClaw denies when its policy service is unavailable.
-Hermes can fail open only for explicitly configured lower-risk tools. See the
+Hermes denies every tool by default and can fail open only for tools an operator
+explicitly opts out of that boundary. See the
 [support matrix](support-matrix.md#degraded-behavior-notes).
 
 ## How do I update Rampart?
 
-Same way you installed it. `brew upgrade rampart` for Homebrew, `go install github.com/peg/rampart/cmd/rampart@latest` for Go, or download the latest binary from [GitHub Releases](https://github.com/peg/rampart/releases). Your policies and audit logs are untouched.
+Same way you installed it. `brew upgrade rampart` for Homebrew, `go install github.com/peg/rampart/cmd/rampart@latest` for Go, or download the latest binary from [GitHub Releases](https://github.com/peg/rampart/releases). Your policies and audit logs are untouched. Then run `rampart protect` once to refresh Rampart-managed integrations and verify detected agent boundaries; unrelated hooks and agent state are preserved.
 
 ## How do I uninstall?
 
@@ -26,9 +27,9 @@ network model call when configured.
 
 ## Does it work on Windows?
 
-The policy engine and Claude Code/Codex hook setup are built and tested on
-Windows CI. A physical Windows host E2E is still pending, Cline's installed hook
-scripts currently require Bash, and `rampart wrap`/preload are Unix-only. See
+The policy engine and Claude Code/Codex/Cline hook setup are built and tested on
+Windows CI. Cline uses its current `.ps1`/PowerShell hook contract. Physical
+Windows host E2E is still pending, and `rampart wrap`/preload are Unix-only. See
 the [Windows guide](../guides/windows.md).
 
 ## Can I use project-specific policies?

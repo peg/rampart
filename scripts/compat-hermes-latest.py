@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import stat
@@ -19,7 +20,8 @@ import sys
 import tempfile
 import textwrap
 import threading
-import venv
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,106 @@ from typing import Any
 REPO_ROOT = Path(
     os.environ.get("RAMPART_COMPAT_REPO_ROOT", Path(__file__).resolve().parents[1])
 ).expanduser().absolute()
+
+PLAIN_CHILD_ENV_KEYS = (
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "TERM",
+    "CI",
+    "GITHUB_ACTIONS",
+    "RUNNER_OS",
+    "NO_PROXY",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    "PIP_CERT",
+)
+
+URL_CHILD_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "PIP_INDEX_URL",
+    "PIP_EXTRA_INDEX_URL",
+    "GOPROXY",
+)
+
+
+def credential_free_url_setting(value: str) -> str:
+    """Return a URL/list setting only when none of its entries has userinfo."""
+
+    value = value.strip()
+    if not value or "@" in value:
+        return ""
+    for item in re.split(r"[\s,|]+", value):
+        if not item or item in {"direct", "off"}:
+            continue
+        parsed = urllib.parse.urlsplit(item)
+        # Forward only standard credential-free URLs. Query strings and
+        # fragments commonly carry opaque access tokens even without userinfo.
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or not parsed.scheme
+        ):
+            return ""
+    return value
+
+
+def build_compat_env(source: dict[str, str], home: Path, temp_dir: Path) -> dict[str, str]:
+    """Build a credential-free child environment with isolated state paths."""
+
+    env: dict[str, str] = {}
+    for key in PLAIN_CHILD_ENV_KEYS:
+        if source.get(key):
+            env[key] = source[key]
+    for key in URL_CHILD_ENV_KEYS:
+        value = credential_free_url_setting(source.get(key, ""))
+        if value:
+            env[key] = value
+
+    no_proxy = [
+        entry.strip()
+        for entry in (source.get("NO_PROXY") or source.get("no_proxy") or "").split(",")
+        if entry.strip()
+    ]
+    for host in ("127.0.0.1", "localhost", "::1"):
+        if host not in no_proxy:
+            no_proxy.append(host)
+    env["NO_PROXY"] = ",".join(no_proxy)
+    env["no_proxy"] = env["NO_PROXY"]
+
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "TMPDIR": str(temp_dir),
+            "TMP": str(temp_dir),
+            "TEMP": str(temp_dir),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_CACHE_HOME": str(home / ".cache"),
+            "XDG_DATA_HOME": str(home / ".local" / "share"),
+            "XDG_STATE_HOME": str(home / ".local" / "state"),
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+            "PYTHONNOUSERSITE": "1",
+        }
+    )
+    return env
 
 
 def remove_temp_tree(path: Path) -> None:
@@ -62,15 +164,18 @@ class RampartStub(BaseHTTPRequestHandler):
             "agent": payload.get("agent") if isinstance(payload, dict) else None,
             "session": payload.get("session") if isinstance(payload, dict) else None,
             "tool_call_id_present": bool(payload.get("tool_call_id")) if isinstance(payload, dict) else False,
+            "enforce": payload.get("enforce") if isinstance(payload, dict) else None,
             "command_marker": _marker_from_command(command),
             "policy_path": str(params.get("path") or ""),
         }
         self.requests_seen.append(record)
 
         status = 200
-        if params.get("path") == "secrets/.env":
+        policy_path = str(params.get("path") or "").replace("\\", "/")
+        if policy_path == "secrets/.env" or policy_path.endswith("/secrets/.env"):
             body = {
                 "decision": "deny",
+                "allowed": False,
                 "message": "protected compatibility path",
                 "policy": "compat-path-deny",
                 "audit_id": "compat-audit-path-deny",
@@ -78,6 +183,7 @@ class RampartStub(BaseHTTPRequestHandler):
         elif "rampart-deny-marker" in command:
             body = {
                 "decision": "deny",
+                "allowed": False,
                 "message": "blocked by compatibility harness",
                 "policy": "compat-deny",
                 "audit_id": "compat-audit-deny",
@@ -85,6 +191,7 @@ class RampartStub(BaseHTTPRequestHandler):
         elif "rampart-ask-marker" in command:
             body = {
                 "decision": "ask",
+                "allowed": False,
                 "message": "requires compatibility harness approval",
                 "matched_policies": ["compat-ask"],
                 "audit_id": "compat-audit-ask",
@@ -98,6 +205,7 @@ class RampartStub(BaseHTTPRequestHandler):
         else:
             body = {
                 "decision": "allow",
+                "allowed": True,
                 "message": "allowed by compatibility harness",
                 "audit_id": "compat-audit-allow",
             }
@@ -121,7 +229,7 @@ def _marker_from_command(command: str) -> str:
     return ""
 
 
-def run(cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
+def run(cmd: list[str], *, env: dict[str, str], cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=str(cwd),
@@ -149,18 +257,54 @@ def resolve_executable(value: str) -> Path:
     return path
 
 
-def make_venv(root: Path, package: str, base_python: str | None = None) -> tuple[Path, Path]:
+def make_venv(
+    root: Path,
+    package: str,
+    env: dict[str, str],
+    base_python: str | None = None,
+) -> tuple[Path, Path]:
     venv_dir = root / "venv"
-    if base_python:
-        resolved_python = resolve_executable(base_python)
-        run([str(resolved_python), "-m", "venv", str(venv_dir)], cwd=root)
-    else:
-        venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
+    resolved_python = resolve_executable(base_python or sys.executable)
+    run([str(resolved_python), "-m", "venv", str(venv_dir)], env=env, cwd=root)
     python = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     hermes = venv_dir / ("Scripts/hermes.exe" if os.name == "nt" else "bin/hermes")
-    run([str(python), "-m", "pip", "install", "--upgrade", "pip"], cwd=root)
-    run([str(python), "-m", "pip", "install", package], cwd=root)
+    run([str(python), "-m", "pip", "install", "--upgrade", "pip"], env=env, cwd=root)
+    run([str(python), "-m", "pip", "install", package], env=env, cwd=root)
     return python, hermes
+
+
+def distribution_version(python: Path, distribution: str, env: dict[str, str]) -> str:
+    result = run(
+        [
+            str(python),
+            "-c",
+            "import importlib.metadata; print(importlib.metadata.version(" + repr(distribution) + "))",
+        ],
+        env=env,
+    )
+    return result.stdout.strip()
+
+
+def pypi_latest_version(distribution: str, env: dict[str, str]) -> str:
+    name = urllib.parse.quote(distribution, safe="")
+    request = urllib.request.Request(
+        f"https://pypi.org/pypi/{name}/json",
+        headers={"User-Agent": "rampart-hermes-compat/1"},
+    )
+    proxies: dict[str, str] = {}
+    all_proxy = env.get("all_proxy") or env.get("ALL_PROXY")
+    for scheme in ("http", "https"):
+        value = (
+            env.get(f"{scheme}_proxy")
+            or env.get(f"{scheme.upper()}_PROXY")
+            or all_proxy
+        )
+        if value:
+            proxies[scheme] = value
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+    with opener.open(request, timeout=15) as response:
+        payload = json.load(response)
+    return str(payload["info"]["version"])
 
 
 def free_port() -> int:
@@ -291,6 +435,14 @@ def main() -> int:
 
     temp = Path(tempfile.mkdtemp(prefix="rampart-hermes-compat-"))
     try:
+        home = temp / "home"
+        child_temp = temp / "tmp"
+        home.mkdir(parents=True, exist_ok=True)
+        child_temp.mkdir(parents=True, exist_ok=True)
+        env = build_compat_env(dict(os.environ), home, child_temp)
+
+        installed_package_version = None
+        published_package_version = None
         if args.hermes_python:
             hermes_python = resolve_executable(args.hermes_python)
             hermes_bin_path = resolve_executable(args.hermes_bin) if args.hermes_bin else None
@@ -298,7 +450,16 @@ def main() -> int:
                 hermes_bin = shutil.which("hermes")
                 hermes_bin_path = Path(hermes_bin) if hermes_bin else None
         else:
-            hermes_python, hermes_bin_path = make_venv(temp, args.package, args.python)
+            hermes_python, hermes_bin_path = make_venv(temp, args.package, env, args.python)
+            if args.package == "hermes-agent":
+                installed_package_version = distribution_version(hermes_python, "hermes-agent", env)
+                published_package_version = pypi_latest_version("hermes-agent", env)
+                if installed_package_version != published_package_version:
+                    raise RuntimeError(
+                        "hermes-agent resolved to "
+                        f"{installed_package_version}, but PyPI latest is {published_package_version}; "
+                        "use a Python version supported by the latest Hermes release"
+                    )
 
         hermes_home = temp / "hermes-home"
         plugin_dir = hermes_home / "plugins" / "rampart"
@@ -310,10 +471,8 @@ def main() -> int:
 
         try:
             write_hermes_config(hermes_home, serve_url)
-            env = os.environ.copy()
             env.update(
                 {
-                    "HOME": str(temp / "home"),
                     "HERMES_HOME": str(hermes_home),
                     "RAMPART_TOKEN": "compat-test-token",
                     "RAMPART_HERMES_URL": serve_url,
@@ -321,7 +480,6 @@ def main() -> int:
                     "PYTHONWARNINGS": "ignore::DeprecationWarning",
                 }
             )
-            Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
 
             run(
                 [
@@ -350,6 +508,8 @@ def main() -> int:
             paths = {entry["path"] for entry in RampartStub.requests_seen}
             if "/v1/preflight/exec" not in paths:
                 raise RuntimeError(f"expected /v1/preflight/exec request, saw {sorted(paths)}")
+            if any(entry["enforce"] is not True for entry in RampartStub.requests_seen):
+                raise RuntimeError("every Hermes pre-tool policy request must carry enforce=true")
             markers = {entry["command_marker"] for entry in RampartStub.requests_seen}
             expected = {"rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker", "rampart-auth-error-marker"}
             if not expected.issubset(markers):
@@ -359,7 +519,15 @@ def main() -> int:
                 for entry in RampartStub.requests_seen
                 if entry["path"] == "/v1/preflight/edit"
             ]
-            if patch_paths != ["safe.txt", "secrets/.env"]:
+            normalized_patch_paths = [path.replace("\\", "/") for path in patch_paths]
+            if (
+                len(normalized_patch_paths) != 2
+                or not (normalized_patch_paths[0] == "safe.txt" or normalized_patch_paths[0].endswith("/safe.txt"))
+                or not (
+                    normalized_patch_paths[1] == "secrets/.env"
+                    or normalized_patch_paths[1].endswith("/secrets/.env")
+                )
+            ):
                 raise RuntimeError(f"expected both patch targets in order, saw {patch_paths}")
 
             print(
@@ -367,6 +535,8 @@ def main() -> int:
                     {
                         "ok": True,
                         "hermes_version": hermes_version,
+                        "installed_package_version": installed_package_version,
+                        "published_package_version": published_package_version,
                         "hermes_home_isolated": str(hermes_home),
                         "plugin_dir": str(plugin_dir),
                         "requests_seen": RampartStub.requests_seen,

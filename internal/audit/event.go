@@ -85,6 +85,11 @@ type Event struct {
 	// Nil for denied calls.
 	Response *ToolResponse `json:"response,omitempty"`
 
+	// CompactedFields records fields whose original values could not fit in a
+	// bounded JSONL record. The digest lets operators correlate the compacted
+	// audit event with separately retained input without storing the input twice.
+	CompactedFields map[string]FieldCompaction `json:"compacted_fields,omitempty"`
+
 	// PrevHash is the hash of the preceding event in the chain.
 	// Empty string for the first event.
 	PrevHash string `json:"prev_hash"`
@@ -92,6 +97,14 @@ type Event struct {
 	// Hash is the SHA-256 hash of this event (excluding the hash field itself).
 	// Computed by ComputeHash after all other fields are set.
 	Hash string `json:"hash"`
+}
+
+// FieldCompaction describes an audit field that was replaced, dropped, or
+// truncated to keep a JSONL record within MaxRecordBytes.
+type FieldCompaction struct {
+	OriginalJSONBytes int    `json:"original_json_bytes"`
+	SHA256            string `json:"sha256"`
+	Disposition       string `json:"disposition"`
 }
 
 // HostContext contains non-sensitive local host identifiers.

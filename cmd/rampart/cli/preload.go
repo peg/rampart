@@ -16,7 +16,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +39,11 @@ func newPreloadCmd(_ *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "preload -- <command> [args...]",
 		Short: "Run a command with librampart preloaded",
+		Long: `Run a command with the optional Rampart native interception library.
+
+Current release archives and Homebrew packages contain the Rampart CLI, but do
+not contain librampart. Build and install the library from a Rampart source
+checkout with 'make -C preload install' before using this command.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return fmt.Errorf("preload: command is required (use: rampart preload -- <command> [args...])")
@@ -64,9 +68,9 @@ func newPreloadCmd(_ *rootOptions) *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "preload: warning: rampart serve is not reachable at %s/healthz; continuing\n", baseURL)
 			}
 
-			resolvedToken := token
-			if resolvedToken == "" {
-				resolvedToken, _ = resolveTokenValue()
+			resolvedToken, _, err := resolveTokenForEndpoint(baseURL, token)
+			if err != nil {
+				return fmt.Errorf("preload: resolve Rampart credentials: %w", err)
 			}
 
 			sessionID := strings.TrimSpace(session)
@@ -160,7 +164,7 @@ func resolvePreloadLibrary() (string, string, error) {
 	}
 
 	return "", "", fmt.Errorf(
-		"preload: %s not found\nsearched:\n  - %s\n  - %s\n  - next to the rampart binary\ninstall librampart to ~/.rampart/lib or /usr/local/lib, or place it beside the rampart binary",
+		"preload: %s not found\nsearched:\n  - %s\n  - %s\n  - next to the rampart binary\ncurrent release archives and Homebrew packages contain the CLI only; from a Rampart source checkout run 'make -C preload install', or install the library to ~/.rampart/lib or /usr/local/lib",
 		libName,
 		filepath.Join("~", ".rampart", "lib", libName),
 		filepath.Join("/usr/local/lib", libName),
@@ -169,18 +173,8 @@ func resolvePreloadLibrary() (string, string, error) {
 
 func isPreloadRuntimeReady(ctx context.Context, baseURL string) bool {
 	healthURL := baseURL + "/healthz"
-	client := &http.Client{Timeout: 300 * time.Millisecond}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
-	if err != nil {
-		return false
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	client := newRampartHTTPClient(300 * time.Millisecond)
+	return isRampartHealthReady(ctx, client, healthURL)
 }
 
 func getEnvValue(env []string, key string) string {

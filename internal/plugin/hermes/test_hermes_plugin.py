@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -84,8 +85,12 @@ class HermesPluginTests(unittest.TestCase):
             path = payload["params"]["path"]
             paths_seen.append(path)
             if path == "secrets/.env":
-                return {"decision": "deny", "message": "protected environment file"}
-            return {"decision": "allow"}
+                return {
+                    "decision": "deny",
+                    "allowed": False,
+                    "message": "protected environment file",
+                }
+            return {"decision": "allow", "allowed": True}
 
         result = plugin.evaluate_pre_tool_call(
             "patch",
@@ -130,6 +135,76 @@ class HermesPluginTests(unittest.TestCase):
         self.assertEqual(config.endpoint_mode, "preflight")
         self.assertEqual(plugin._endpoint_url(config, "exec"), "http://example.invalid/base/v1/preflight/exec")
 
+    def test_policy_token_is_never_sent_to_non_loopback_service(self) -> None:
+        config = plugin.load_config({"serve_url": "https://policy.example.invalid"})
+        with mock.patch.object(plugin._NO_REDIRECT_OPENER, "open") as opener:
+            with self.assertRaises(plugin.RampartInvalidResponse):
+                plugin.post_to_rampart(config, "exec", {"params": {"command": "pwd"}})
+        opener.assert_not_called()
+
+        self.assertTrue(plugin._is_trusted_serve_url("http://127.0.0.1:9090"))
+        self.assertTrue(plugin._is_trusted_serve_url("http://[::1]:9090"))
+        self.assertFalse(plugin._is_trusted_serve_url("http://127.0.0.1@example.invalid:9090"))
+        self.assertFalse(plugin._is_trusted_serve_url("http://localhost:9090?redirect=1"))
+
+    def test_policy_requests_refuse_redirects(self) -> None:
+        config = plugin.PluginConfig(serve_url="http://127.0.0.1:9090")
+        redirect = plugin.urllib.error.HTTPError(
+            config.serve_url,
+            307,
+            "Temporary Redirect",
+            {"Location": "https://example.invalid/collect"},
+            None,
+        )
+        with mock.patch.object(plugin, "_load_token", return_value="secret"):
+            with mock.patch.object(
+                plugin._NO_REDIRECT_OPENER, "open", side_effect=redirect
+            ) as opener:
+                with self.assertRaises(plugin.RampartInvalidResponse):
+                    plugin.post_to_rampart(
+                        config, "exec", {"params": {"command": "pwd"}}
+                    )
+        opener.assert_called_once()
+
+    def test_policy_requests_ignore_ambient_proxy_configuration(self) -> None:
+        # Passing ProxyHandler({}) suppresses urllib's default environment-backed
+        # proxy handler. An empty handler installs no proxy_open methods, so it is
+        # intentionally absent from the finalized opener.
+        self.assertFalse(
+            any(
+                isinstance(handler, plugin.urllib.request.ProxyHandler)
+                for handler in plugin._NO_REDIRECT_OPENER.handlers
+            )
+        )
+
+    def test_auth_error_response_body_is_closed(self) -> None:
+        config = plugin.PluginConfig(serve_url="http://127.0.0.1:9090")
+        body = io.BytesIO(b'{"error":"invalid token"}')
+        auth_error = plugin.urllib.error.HTTPError(
+            config.serve_url,
+            401,
+            "Unauthorized",
+            {},
+            body,
+        )
+        with mock.patch.object(
+            plugin._NO_REDIRECT_OPENER, "open", side_effect=auth_error
+        ):
+            result = plugin.post_to_rampart(config, "exec", {"params": {}})
+
+        self.assertFalse(result["allowed"])
+        self.assertTrue(body.closed)
+
+    def test_generic_metadata_does_not_serialize_nested_secrets(self) -> None:
+        _, params = plugin.normalize_tool_call(
+            "vision_analyze",
+            {"headers": {"Authorization": "Bearer plaintext-secret"}, "items": ["plaintext-secret"]},
+        )
+        encoded = json.dumps(params)
+        self.assertNotIn("plaintext-secret", encoded)
+        self.assertEqual(params["headers"], "<mapping keys=1>")
+        self.assertEqual(params["items"], "<sequence items=1>")
+
     def test_deny_decision_blocks(self) -> None:
         captured = {}
 
@@ -137,7 +212,13 @@ class HermesPluginTests(unittest.TestCase):
             captured["config"] = config
             captured["tool"] = rampart_tool
             captured["payload"] = payload
-            return {"decision": "deny", "message": "blocked", "policy": "danger", "audit_id": "audit-deny-1"}
+            return {
+                "decision": "deny",
+                "allowed": False,
+                "message": "blocked",
+                "policy": "danger",
+                "audit_id": "audit-deny-1",
+            }
 
         result = plugin.evaluate_pre_tool_call(
             "terminal",
@@ -163,11 +244,13 @@ class HermesPluginTests(unittest.TestCase):
     def test_ask_decision_blocks_without_hidden_approval(self) -> None:
         def requester(config, rampart_tool, payload):
             self.assertEqual(config.endpoint_mode, "preflight")
+            self.assertIs(payload["enforce"], True)
             self.assertNotIn("openclaw_hosted", payload)
             self.assertNotIn("skip_pending_approval", payload)
             self.assertEqual(payload["tool_call_id"], "call-ask-1")
             return {
                 "decision": "ask",
+                "allowed": False,
                 "message": "needs human review",
                 "matched_policies": ["prod-change"],
                 "audit_id": "audit-ask-1",
@@ -212,7 +295,55 @@ class HermesPluginTests(unittest.TestCase):
         self.assertEqual(result["action"], "block")
         self.assertIn("invalid authorization token", result["message"])
 
-    def test_unavailable_allows_configured_read_only_tool(self) -> None:
+    def test_unknown_tool_fails_closed_without_policy_request(self) -> None:
+        requester = mock.Mock(return_value={"decision": "allow"})
+
+        result = plugin.evaluate_pre_tool_call(
+            "future_mutating_tool",
+            {"target": "/tmp/unsafe"},
+            requester=requester,
+        )
+
+        requester.assert_not_called()
+        self.assertEqual(result["action"], "block")
+        self.assertIn("unsupported Hermes tool future_mutating_tool", result["message"])
+
+    def test_malformed_policy_responses_fail_closed(self) -> None:
+        for response in (
+            {},
+            {"decision": "future-decision"},
+            {"decision": "allow"},
+            {"decision": "allow", "allowed": False},
+            {"decision": "deny", "allowed": True},
+            ["allow"],
+        ):
+            with self.subTest(response=response):
+                result = plugin.evaluate_pre_tool_call(
+                    "terminal",
+                    {"command": "printf safe"},
+                    requester=mock.Mock(return_value=response),
+                )
+
+                self.assertEqual(result["action"], "block")
+
+    def test_registered_hook_converts_adapter_exception_to_block(self) -> None:
+        class Ctx:
+            def __init__(self):
+                self.hooks = {}
+
+            def register_hook(self, name, callback):
+                self.hooks[name] = callback
+
+        ctx = Ctx()
+        plugin.register(ctx)
+
+        with mock.patch.object(plugin, "evaluate_pre_tool_call", side_effect=ValueError("bad input")):
+            result = ctx.hooks["pre_tool_call"]("terminal", {"command": "printf safe"})
+
+        self.assertEqual(result["action"], "block")
+        self.assertIn("policy adapter error", result["message"])
+
+    def test_unavailable_blocks_read_by_default(self) -> None:
         def requester(config, rampart_tool, payload):
             raise plugin.RampartUnavailable("connection refused")
 
@@ -222,7 +353,52 @@ class HermesPluginTests(unittest.TestCase):
             requester=requester,
         )
 
+        self.assertEqual(result["action"], "block")
+        self.assertIn("unavailable", result["message"])
+
+    def test_unavailable_allows_explicitly_configured_read_only_tool(self) -> None:
+        def requester(config, rampart_tool, payload):
+            raise plugin.RampartUnavailable("connection refused")
+
+        result = plugin.evaluate_pre_tool_call(
+            "read_file",
+            {"path": "/tmp/a"},
+            config_overrides={"fail_open_tools": ["read_file"]},
+            requester=requester,
+        )
+
         self.assertIsNone(result)
+
+    def test_invalid_response_blocks_even_for_configured_fail_open_tool(self) -> None:
+        def requester(config, rampart_tool, payload):
+            raise plugin.RampartInvalidResponse("unexpected redirect")
+
+        result = plugin.evaluate_pre_tool_call(
+            "read_file",
+            {"path": "/tmp/a"},
+            config_overrides={"fail_open_tools": ["read_file"]},
+            requester=requester,
+        )
+
+        self.assertEqual(result["action"], "block")
+        self.assertIn("invalid policy response", result["message"])
+
+    def test_relative_file_path_uses_hermes_task_working_directory(self) -> None:
+        captured = {}
+
+        def requester(config, rampart_tool, payload):
+            captured["path"] = payload["params"]["path"]
+            return {"decision": "deny", "allowed": False, "message": "fixture"}
+
+        with mock.patch.dict(os.environ, {"TERMINAL_CWD": "/tmp/hermes-workspace"}):
+            plugin.evaluate_pre_tool_call(
+                "read_file",
+                {"path": "../protected/credential.txt"},
+                task_id="task-cwd",
+                requester=requester,
+            )
+
+        self.assertEqual(captured["path"], str(Path("/tmp/protected/credential.txt").resolve()))
 
     def test_register_installs_pre_tool_call_hook(self) -> None:
         class Ctx:

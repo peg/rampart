@@ -32,6 +32,7 @@ import (
 //	  "rules_total": 26,
 //	  "reload_time_ms": 12
 //	}
+//
 // reloadCooldown is the minimum time between reload API calls.
 const reloadCooldown = 1 * time.Second
 

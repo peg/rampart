@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-07-25 | Applies to: v1.4.0
+> Last reviewed: 2026-07-29 | Applies to: v1.5.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -55,20 +55,22 @@ Policy files are the security boundary. If an attacker can modify policy files, 
 
 ### 1. Interpreter Bypass
 
-Rampart evaluates the command string passed to the shell. This applies to **all integration methods** — native hooks (Claude Code, Codex, Cline), wrap mode, LD_PRELOAD, and the HTTP API all see the same command string. If an agent runs `python3 script.py`, Rampart sees and evaluates `python3 script.py` — but cannot inspect what `script.py` does internally.
+Rampart evaluates the command string passed to the shell. This applies to **all integration methods** — native hooks (Claude Code, Codex, Cline, Gemini CLI, GitHub Copilot), wrap mode, LD_PRELOAD, and the HTTP API all see the same command string. If an agent runs `python3 script.py`, Rampart sees and evaluates `python3 script.py` — but cannot inspect what `script.py` does internally.
 
 **Mitigations:**
 - **LD_PRELOAD cascade** (v0.1.9+): `rampart preload` and `rampart wrap` intercept child processes spawned by allowed commands. `python3 script.py` calling `os.system("rm -rf /")` is caught — the subprocess goes through Rampart's policy engine.
 - **Interpreter one-liner blocking** (v0.6.9+): Patterns like `python3 -c`, `node -e`, `ruby -e`, `perl -e` with dangerous system calls are blocked by default in standard/paranoid policies.
 - The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar uses LLM classification to assess intent of ambiguous commands via `action: webhook`.
 
-**Remaining surface:** LD_PRELOAD cascade only applies to wrap/preload modes, not native hooks (Claude Code, Codex, Cline). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
+**Remaining surface:** LD_PRELOAD cascade only applies to wrap/preload modes, not native hooks (Claude Code, Codex, Cline, Gemini CLI, GitHub Copilot). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
 
 **Multi-step sequences:** With file tool coverage enabled (native hooks, OpenClaw native plugin, or legacy `--patch-tools`), write-then-execute sequences are evaluated at both steps independently — the write is checked against file policies and the exec against command policies.
 
 ### 2. Audit Log Rewrite
 
 The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
+
+Audit records are capped at 2 MiB. If JSON escaping or decision guidance would exceed that limit, Rampart replaces large fields with their original encoded size and SHA-256 digest, then computes the event hash over the compacted record. This preserves a bounded, correlatable decision record instead of silently dropping the audit event.
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](../README.md#security-recommendations) so the agent can't access audit files
@@ -129,7 +131,7 @@ Rampart does **not** behave identically across every integration when policy eva
 **Current behavior:**
 - `rampart wrap` and `rampart preload` default to **fail-open** — if `rampart serve` is unreachable, commands continue without policy checks unless you configure fail-closed behavior.
 - The native OpenClaw plugin supports per-tool degraded behavior. A manual plugin setup keeps explicitly configured lower-risk tools fail-open by default; `rampart protect openclaw` removes those exceptions and configures every tool to fail closed.
-- Native hook integrations (Claude Code, Codex, Cline) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path. Codex approval-required actions still need the external Rampart queue and deny if it is unavailable.
+- Native hook integrations (Claude Code, Codex, Cline, Gemini CLI, GitHub Copilot) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path. Codex and Gemini approval-required actions still need the external Rampart queue and deny if it is unavailable; Copilot uses its native ask prompt.
 
 **Mitigations:**
 - Monitor the Rampart service and alert on downtime
@@ -147,9 +149,13 @@ Rampart imposes limits on regex patterns used for response matching to prevent R
 - **Maximum pattern length**: 500 characters
 - **Nested quantifiers**: Rejected at load time (patterns like `(a+)*`)
 - **Execution timeout**: 100ms per regex match
-- **Response cap**: 1MB maximum for response-side evaluation
+- **Response cap**: 1MB maximum for response-side evaluation; an oversized response fails closed when an applicable response rule exists
 
 These limits protect against both accidental performance degradation and malicious patterns. They prevent policy authors from creating DoS conditions, and prevent attackers from injecting malicious regex patterns via webhook-driven policy updates. Patterns exceeding these limits are rejected at policy load time with clear error messages.
+
+Glob matching is bounded separately: values used by glob conditions are limited to 8 KiB, ordinary patterns to 8 KiB, double-star patterns to 256 bytes, and each pattern to two `**` occurrences. Oversized match inputs are denied as whole values; Rampart never checks a truncated prefix. The policy loader and linter reject patterns outside these limits.
+
+`call_count` conditions retain at most 1,000 calls per tool, 1,024 active tool identities, and a 30-day window. Long-running proxy mode keeps this state in memory. One-shot native hooks share a locked state file at `~/.rampart/hook-call-counts.json`, so thresholds apply across separate hook processes. Corrupt, unavailable, or capacity-exhausted state fails closed in enforce mode.
 
 ### 8. TLS on HTTP API
 
@@ -175,12 +181,15 @@ Pending approvals are now persisted to a local JSONL journal in normal `rampart 
 - Avoid unnecessary restarts during active approval flows
 - Treat approvals as short-lived human decisions, not long-running queued work
 
+One-time (`once: true`) allow rules are claimed synchronously before an allow decision is returned. Rampart coordinates policy read-modify-write operations with a per-file cross-process lock and atomic replacement, including native hooks that run as separate processes. A failed claim is a denial; it is never allowed optimistically.
+
 ### 10. Project Policy Trust
 
 Project-local `.rampart/policy.yaml` files are loaded automatically when present. A malicious repository could include a permissive project policy.
 
 **Mitigations (v0.6.9+):**
-- Project policies can only **add restrictions**, not weaken global policies (deny-wins)
+- Project policies cannot weaken global policies or restrictive global defaults;
+  repository webhook actions are rejected
 - Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading in untrusted repos
 - Project policy denials are prefixed with `[Project Policy]` for visibility
 
@@ -199,6 +208,8 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 |-------------|--------------|---------------|-------------------|---------|
 | Native hooks (Claude Code) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
 | Native hooks (Codex CLI/IDE/desktop) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
+| Native hooks (GitHub Copilot CLI/VS Code) | ✅ | ✅ (via hooks) | ✅ PostToolUse | ❌ |
+| Antigravity CLI/IDE plugin | ✅ | ✅ (via PreToolUse) | ❌ host omits result | ❌ |
 | Native hooks (Cline) | ✅ | ✅ (via hooks) | ❌ | ❌ |
 | `rampart wrap` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
 | `rampart preload` | ✅ | ❌ | ❌ | ✅ LD_PRELOAD |
@@ -226,7 +237,7 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
 - **No LD_PRELOAD** — `rampart preload` is not available. Use native hooks or wrap mode instead.
 - **No POSIX file permissions** — `chmod 0600` is not enforced by the OS. Rampart protects its persisted token with an owner-only Windows DACL derived from the current process SID; other sensitive files need explicit Windows ACL hardening.
-- **Binary upgrade** — Windows forbids overwriting a running executable. `rampart upgrade` renames the current binary to `.rampart.exe.old` first, then installs the new one.
+- **Binary upgrade** — in-process self-upgrade is intentionally disabled on Windows. Rerun the signed PowerShell installer to verify and replace `rampart.exe`; `rampart upgrade --no-binary` remains available for policy-only refreshes.
 - **Path separators** — Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
 - **Service management** — automatic service installation is currently supported on Linux and macOS only. On Windows, run `rampart serve` directly or configure Task Scheduler/NSSM.
 

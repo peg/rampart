@@ -98,6 +98,8 @@ func TestHasRampartInMatcher(t *testing.T) {
 	}{
 		{"rampart hook", map[string]any{"hooks": []any{map[string]any{"command": "rampart hook"}}}, true},
 		{"quoted current hook", map[string]any{"hooks": []any{map[string]any{"command": "'/opt/Rampart App/rampart' hook --format claude-code"}}}, true},
+		{"other executable with exact protocol", map[string]any{"hooks": []any{map[string]any{"command": "notify hook --format claude-code"}}}, false},
+		{"protocol mentioned as an argument", map[string]any{"hooks": []any{map[string]any{"command": "notify hook --format claude-code --dry-run"}}}, false},
 		{"other hook", map[string]any{"hooks": []any{map[string]any{"command": "other"}}}, false},
 		{"no hooks key", map[string]any{"matcher": "Bash"}, false},
 		{"empty hooks", map[string]any{"hooks": []any{}}, false},
@@ -106,6 +108,28 @@ func TestHasRampartInMatcher(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := hasRampartInMatcher(tt.matcher); got != tt.want {
 				t.Errorf("hasRampartInMatcher() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRampartFormattedHookOwnershipIsNarrow(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "bare legacy", command: "rampart hook --format codex", want: true},
+		{name: "absolute legacy", command: "/retired/bin/rampart hook --format codex", want: true},
+		{name: "quoted Windows legacy", command: `& "C:\Program Files\Rampart\rampart.exe" hook --format codex`, want: true},
+		{name: "other executable", command: "notify hook --format codex", want: false},
+		{name: "lookalike basename", command: "/tmp/rampart-old hook --format codex", want: false},
+		{name: "wrapper", command: "env rampart hook --format codex", want: false},
+		{name: "extra arguments", command: "rampart hook --format codex --dry-run", want: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := hasRampartHookFormat(testCase.command, "codex"); got != testCase.want {
+				t.Fatalf("hasRampartHookFormat(%q) = %v, want %v", testCase.command, got, testCase.want)
 			}
 		})
 	}
@@ -186,6 +210,106 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 	}
 }
 
+func TestSetupClaudeCodePreservesLargeHostInteger(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"hostSequence":9007199254740993}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newSetupClaudeCodeCmd(&rootOptions{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("setup claude-code: %v", err)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := decodeUserJSON(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := settings["hostSequence"].(json.Number)
+	if !ok || sequence.String() != "9007199254740993" {
+		t.Fatalf("unrelated large integer changed: %#v", settings["hostSequence"])
+	}
+}
+
+func TestClaudeConfigDirHonoredAcrossLifecycle(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	configDir := filepath.Join(home, "custom-claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	t.Setenv("PATH", t.TempDir())
+	managedDir := t.TempDir()
+	originalManagedResolver := claudeManagedSettingsDirResolver
+	claudeManagedSettingsDirResolver = func() string { return managedDir }
+	t.Cleanup(func() { claudeManagedSettingsDirResolver = originalManagedResolver })
+
+	install := newSetupClaudeCodeCmd(&rootOptions{})
+	install.SetArgs([]string{"--force"})
+	install.SetOut(&bytes.Buffer{})
+	install.SetErr(&bytes.Buffer{})
+	if err := install.Execute(); err != nil {
+		t.Fatalf("setup claude-code: %v", err)
+	}
+
+	settingsPath := filepath.Join(configDir, "settings.json")
+	if _, err := os.Stat(settingsPath); err != nil {
+		t.Fatalf("custom Claude settings were not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("default Claude settings unexpectedly written: %v", err)
+	}
+	if !claudeHooksConfiguredForHome(home) || !claudeRampartHooksPresent(home) {
+		t.Fatal("custom Claude config was not recognized by configured/uninstall detection")
+	}
+
+	var hookStatus string
+	doctorHooks(func(name, status, _ string) {
+		if name == "Hooks" {
+			hookStatus = status
+		}
+	})
+	if hookStatus != "ok" {
+		t.Fatalf("doctor Claude hook status = %q, want ok", hookStatus)
+	}
+
+	remove := newSetupClaudeCodeCmd(&rootOptions{})
+	remove.SetArgs([]string{"--remove"})
+	remove.SetOut(&bytes.Buffer{})
+	remove.SetErr(&bytes.Buffer{})
+	if err := remove.Execute(); err != nil {
+		t.Fatalf("remove claude-code: %v", err)
+	}
+	if claudeRampartHooksPresent(home) {
+		t.Fatal("custom Claude config still contains Rampart hooks after removal")
+	}
+}
+
+func TestConfiguredAgentHomeExpandsPortableTilde(t *testing.T) {
+	home := t.TempDir()
+	for _, configured := range []string{"~", "~/agents/claude", `~\agents\claude`} {
+		t.Run(configured, func(t *testing.T) {
+			t.Setenv("CLAUDE_CONFIG_DIR", configured)
+			want := home
+			if configured != "~" {
+				want = filepath.Join(home, "agents", "claude")
+			}
+			if got := claudeConfigDir(home); got != want {
+				t.Fatalf("claudeConfigDir(%q) = %q, want %q", configured, got, want)
+			}
+		})
+	}
+}
+
 func TestSetupOpenClaw_AlreadyConfiguredMessage(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("openclaw setup is not supported on windows")
@@ -202,6 +326,7 @@ func TestSetupOpenClaw_AlreadyConfiguredMessage(t *testing.T) {
 	}
 
 	cmd := newSetupOpenClawCmd(&rootOptions{})
+	cmd.SetArgs([]string{"--shim-only"})
 	var out strings.Builder
 	cmd.SetOut(&out)
 
@@ -218,14 +343,23 @@ func TestSetupOpenClaw_AlreadyConfiguredMessage(t *testing.T) {
 	}
 }
 
-func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
+func TestSetupClaudeCode_UpgradesLegacyHookCommand(t *testing.T) {
 	tmpHome := t.TempDir()
 	testSetHome(t, tmpHome)
+	oldLookPath := execLookPath
+	oldExecutable := osExecutable
+	execLookPath = func(name string) (string, error) { return filepath.Join(tmpHome, "bin", name), nil }
+	osExecutable = func() (string, error) { return filepath.Join(tmpHome, "bin", "rampart"), nil }
+	defer func() {
+		execLookPath = oldLookPath
+		osExecutable = oldExecutable
+	}()
 
 	claudeDir := filepath.Join(tmpHome, ".claude")
 	os.MkdirAll(claudeDir, 0o755)
 
-	// All three lifecycle events must be present for "already configured".
+	// All three lifecycle events exist, but point at the legacy PATH-dependent
+	// command and must be refreshed to the current resolved binary.
 	settings := map[string]any{
 		"hooks": map[string]any{
 			"PreToolUse": []any{
@@ -241,6 +375,12 @@ func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
 	}
 	data, _ := json.MarshalIndent(settings, "", "  ")
 	os.WriteFile(filepath.Join(claudeDir, "settings.json"), data, 0o644)
+	if claudeHooksConfiguredForHome(tmpHome) {
+		t.Fatal("stale Claude hook commands must not be reported as currently configured")
+	}
+	if check := verifyClaudeHooksInstalled(); check.Status != verificationFail || !strings.Contains(check.Actual, "stale") {
+		t.Fatalf("stale Claude verification = %#v", check)
+	}
 
 	opts := &rootOptions{}
 	cmd := newSetupClaudeCodeCmd(opts)
@@ -251,8 +391,106 @@ func TestSetupClaudeCode_AlreadyInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out.String(), "already configured") {
-		t.Errorf("expected already configured message, got: %s", out.String())
+	if strings.Contains(out.String(), "already configured") {
+		t.Fatalf("stale hook was incorrectly treated as current: %s", out.String())
+	}
+	updated, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := shellQuoteCodexHookArg(toGitBashPath(filepath.Join(tmpHome, "bin", "rampart"))) + " hook --format claude-code"
+	if !strings.Contains(string(updated), want) || strings.Contains(string(updated), `"command": "rampart hook"`) {
+		t.Fatalf("legacy hook was not refreshed to %q: %s", want, updated)
+	}
+	if !claudeHooksConfiguredForHome(tmpHome) {
+		t.Fatal("refreshed Claude hook commands were not reported as configured")
+	}
+}
+
+func TestSetupClaudeCodeInvalidHookShapesRequireForceAndPreserveSettings(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		initial string
+	}{
+		{name: "hooks is not an object", initial: `{"permissions":{"allow":["Read"]},"hooks":"host-value"}`},
+		{name: "event is not an array", initial: `{"permissions":{"allow":["Read"]},"hooks":{"PreToolUse":"host-value"}}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := t.TempDir()
+			testSetHome(t, home)
+			settingsPath := filepath.Join(home, ".claude", "settings.json")
+			if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(settingsPath, []byte(testCase.initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := testExecuteRoot(t, "setup", "claude-code"); err == nil || !strings.Contains(err.Error(), "--force") {
+				t.Fatalf("invalid hook shape error = %v, want --force guidance", err)
+			}
+			unchanged, err := os.ReadFile(settingsPath)
+			if err != nil || string(unchanged) != testCase.initial {
+				t.Fatalf("refused setup changed settings: data=%q err=%v", unchanged, err)
+			}
+
+			if err := testExecuteRoot(t, "setup", "claude-code", "--force"); err != nil {
+				t.Fatalf("forced setup: %v", err)
+			}
+			settings := testReadJSONMap(t, settingsPath)
+			if _, ok := settings["permissions"]; !ok {
+				t.Fatalf("forced hook repair discarded unrelated settings: %#v", settings)
+			}
+		})
+	}
+}
+
+func TestClaudeConfiguredRequiresFullMatcherCoverage(t *testing.T) {
+	expected := currentClaudeHookCommand()
+	settings := claudeSettings{"hooks": map[string]any{}}
+	hooks := settings["hooks"].(map[string]any)
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+		matcher := ".*"
+		if event == "PreToolUse" {
+			matcher = "Bash"
+		}
+		hooks[event] = []any{map[string]any{
+			"matcher": matcher,
+			"hooks":   []any{map[string]any{"type": "command", "command": expected}},
+		}}
+	}
+	if claudeHooksUseCommand(settings, expected) {
+		t.Fatal("an exact command under a narrowed matcher must not establish complete protection")
+	}
+}
+
+func TestSetupClaudeCodeInstallAndRemoveRefuseSymlinkedSettings(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "operator-settings.json")
+	initial := []byte(`{"permissions":{"allow":["Read"]}}`)
+	if err := os.WriteFile(target, initial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, settingsPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	for _, args := range [][]string{{"setup", "claude-code"}, {"setup", "claude-code", "--remove"}} {
+		if err := testExecuteRoot(t, args...); err == nil || !strings.Contains(err.Error(), "linked") {
+			t.Fatalf("%v error = %v, want symlink refusal", args, err)
+		}
+	}
+	if info, err := os.Lstat(settingsPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("settings symlink was replaced: info=%v err=%v", info, err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != string(initial) {
+		t.Fatalf("settings target changed: data=%q err=%v", data, err)
 	}
 }
 
@@ -279,15 +517,16 @@ func TestReadLine_Empty(t *testing.T) {
 
 func TestDetectAgents(t *testing.T) {
 	agents := detectAgents()
-	if len(agents) != 7 {
-		t.Errorf("expected 7 agents, got %d", len(agents))
+	wantNames := []string{"Claude Code", "Cline", "OpenClaw", "Codex", "GitHub Copilot CLI / VS Code", "Antigravity CLI / IDE", "Aider", "Cursor", "Windsurf"}
+	if len(agents) != len(wantNames) {
+		t.Errorf("expected %d agents, got %d", len(wantNames), len(agents))
 	}
 	// Verify names
 	names := make([]string, len(agents))
 	for i, a := range agents {
 		names[i] = a.Name
 	}
-	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex", "Aider", "Cursor", "Windsurf"} {
+	for _, want := range wantNames {
 		found := false
 		for _, n := range names {
 			if n == want {

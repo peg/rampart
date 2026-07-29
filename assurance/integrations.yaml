@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v1
-baseline_release: v1.3.0
-reviewed_at: "2026-07-25"
+baseline_release: v1.4.1
+reviewed_at: "2026-07-28"
 
 # This manifest records the guarantees Rampart can support with evidence today.
 # "tested" means the Rampart adapter or mapping is exercised in isolation.
@@ -38,10 +38,10 @@ integrations:
         proves: Verification rejects incomplete or stale plugin canary results.
       - path: internal/plugin/openclaw/provider-surface-replay.mjs
         kind: integration
-        proves: Provider aliases and action consequences reach the canonical policy surface.
+        proves: Current OpenClaw built-ins and provider aliases reach typed policy surfaces, action consequences remain conservative, unknown tools fail closed locally, and every apply_patch target is evaluated with deny-wins behavior.
       - path: internal/plugin/openclaw/degraded-mode-test.mjs
         kind: failure_injection
-        proves: Managed sensitive tools deny on service errors, malformed replies, and timeouts.
+        proves: The default plugin configuration denies every tool on service errors, malformed replies, and timeouts; explicitly opted-out tools fail open.
       - path: scripts/compat-openclaw-latest.mjs
         kind: upstream_latest
         proves: The bundled plugin contract is checked against the latest published OpenClaw.
@@ -51,6 +51,10 @@ integrations:
     limitations:
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
       - Host behavior after an uncaught plugin exception is not yet independently proven fail-closed.
+      - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
+      - OpenClaw currently gives modifying hooks the original event rather than an authoritative post-composition parameter view; other parameter-mutating plugins are part of the trusted host boundary.
+      - OpenClaw before_tool_call does not expose host CWD; relative file enforcement depends on host-supplied paths and derivedPaths, so absolute or recursive policy patterns are recommended.
+      - OpenClaw after_tool_call is observational, so the native plugin does not claim blocking response redaction.
       - MCP and delegated-agent coverage need dedicated live canaries.
 
   - id: claude_code
@@ -66,7 +70,7 @@ integrations:
       file_read: tested
       file_write: tested
       network: tested
-      mcp: tested
+      mcp: unknown
       subagents: partial
     degraded:
       policy_unavailable: local
@@ -107,7 +111,7 @@ integrations:
     support_tier: supported
     setup_command: rampart setup cline
     boundary: native_hook
-    platforms: [linux, macos]
+    platforms: [linux, macos, windows]
     service_required: false
     upstream_ci: none
     coverage:
@@ -115,28 +119,37 @@ integrations:
       file_read: tested
       file_write: tested
       network: tested
-      mcp: unknown
-      subagents: unknown
+      mcp: tested
+      subagents: tested
     degraded:
       policy_unavailable: local
       adapter_error: host_defined
       timeout: host_defined
     approval: block_and_retry
     verification:
-      level: policy_only
-      command: rampart verify policy
+      level: active
+      command: rampart verify cline
       safe_canaries: true
       host_boundary: false
     evidence:
       - path: cmd/rampart/cli/cline_test.go
         kind: unit
-        proves: Setup installs the Cline pre- and post-tool hook scripts.
+        proves: Setup installs direct POSIX and Windows Cline hook artifacts, migrates owned legacy layouts, verifies activation bits, and preserves non-Rampart hooks.
       - path: cmd/rampart/cli/hook_test.go
         kind: unit
-        proves: Cline hook payloads map to allow and cancellation responses.
+        proves: Current editor and CLI envelopes, current tool names, batched commands/files/patches, MCP names, and cancellation responses are handled conservatively.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification checks both installed hook scripts and directly invokes the adapter with a destructive canary that must cancel.
     limitations:
       - No rolling latest-Cline compatibility job currently exercises the installed host.
-      - The installed hook scripts require Bash; native Windows behavior is not currently claimed.
+      - Windows .ps1 discovery and PowerShell launch behavior are source-reviewed and cross-build tested, but physical Windows host E2E is pending.
+      - Legacy Cline CLI --yolo disables runtime hooks and is incompatible with this boundary.
+      - Current upstream Cline advertises --hooks-dir but does not consume that override reliably in file-hook discovery; explicit directories require host confirmation.
+      - Current --data-dir and CLINE_DATA_DIR state overrides do not relocate hook discovery.
+      - Unknown custom/plugin pre-call tools deny until Rampart can classify them.
+      - Current Cline CLI continues after pre-hook launch, timeout, or control-parse failures; host infrastructure failures are not fail-closed.
+      - Current Cline CLI launches post-tool file hooks asynchronously and ignores their control response, so CLI post-tool decisions are audit evidence rather than continuation blocking.
       - Cline has no native Rampart approval-resume path; ask decisions cancel with context.
 
   - id: codex_cli
@@ -203,9 +216,9 @@ integrations:
       mcp: unknown
       subagents: unknown
     degraded:
-      policy_unavailable: mixed
-      adapter_error: allow
-      timeout: mixed
+      policy_unavailable: deny
+      adapter_error: deny
+      timeout: deny
     approval: block_and_retry
     verification:
       level: static
@@ -215,7 +228,7 @@ integrations:
     evidence:
       - path: internal/plugin/hermes/test_hermes_plugin.py
         kind: unit
-        proves: Tool normalization, redaction, allow, deny, ask, and service failure are tested.
+        proves: Tool normalization, redaction, allow, deny, ask, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
       - path: scripts/compat-hermes-latest.py
         kind: upstream_latest
         proves: Latest Hermes discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
@@ -225,8 +238,149 @@ integrations:
       - path: assurance/evidence/hermes-host-2026-07-24.json
         kind: live
         proves: A completed Linux host run records blocked deny execution, successful allow execution, pre-tool audit correlation, and isolated source-state use on Hermes Agent 0.19.0.
+      - path: assurance/evidence/hermes-gateway-2026-07-27.json
+        kind: live
+        proves: A completed Linux run sends deny and allow turns through an isolated localhost Hermes API gateway, records correlated audits, and loads no source memories, sessions, rules, workspaces, MCP servers, or messaging gateways.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.
-      - Read-only tools may be configured fail-open when Rampart is unavailable.
-      - Gateway, delegated-agent, and approved-execution E2E are not yet present.
+      - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
+      - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
+      - Delegated-agent and approved-execution E2E are not yet present.
+
+  - id: gemini_cli
+    display_name: Gemini CLI
+    support_tier: experimental
+    setup_command: rampart setup gemini
+    boundary: native_hook
+    platforms: [linux, macos]
+    service_required: false
+    upstream_ci: rolling_latest
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: tested
+      mcp: tested
+      subagents: partial
+    degraded:
+      policy_unavailable: local
+      adapter_error: host_defined
+      timeout: host_defined
+    approval: external
+    verification:
+      level: active
+      command: rampart verify gemini
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_gemini_test.go
+        kind: unit
+        proves: Documented Gemini tool payloads normalize to policy surfaces, and the complete enforce-mode command path converts unknown future pre-call tools into structured host denials.
+      - path: cmd/rampart/cli/setup_gemini_test.go
+        kind: unit
+        proves: Setup preserves unrelated user settings and hooks, is idempotent, supports clean removal, and refuses malformed configuration by default.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification invokes the real adapter with a destructive canary and requires both a structured denial and session-correlated audit record.
+      - path: scripts/compat-gemini-latest.mjs
+        kind: upstream_latest
+        proves: The latest published Gemini CLI package starts in isolated state while Rampart separately validates its generated settings shape and documented destructive-tool denial schema; hook ingestion is not claimed.
+    limitations:
+      - This targets Gemini CLI's continuing enterprise, Google Cloud, and paid API-key surface; Antigravity CLI compatibility is not claimed.
+      - Gemini CLI is excluded from zero-configuration auto-protection so Antigravity's shared ~/.gemini state cannot be mistaken for an installed Gemini CLI.
+      - The ordinary verifier exercises installed configuration and Rampart's adapter, not a real Gemini model/tool invocation.
+      - Gemini hooks do not currently expose a native ask result, so approval actions require rampart serve and deny when that service is unavailable.
+      - An unexpected hook crash or host timeout follows Gemini CLI behavior and is not claimed fail-closed.
+      - Physical Windows host proof and completed authenticated live-host proof are still pending.
+
+  - id: antigravity
+    display_name: Antigravity CLI / IDE
+    support_tier: supported
+    setup_command: rampart setup antigravity
+    boundary: native_plugin
+    platforms: [linux, macos, windows]
+    service_required: false
+    upstream_ci: none
+    coverage:
+      shell: verified
+      file_read: tested
+      file_write: verified
+      network: tested
+      mcp: unknown
+      subagents: tested
+    degraded:
+      policy_unavailable: local
+      adapter_error: host_defined
+      timeout: host_defined
+    approval: native
+    verification:
+      level: active
+      command: rampart verify antigravity
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_antigravity_test.go
+        kind: unit
+        proves: The documented tool surface maps to Rampart policy classes, unknown future tools deny, and approval decisions use Antigravity force_ask.
+      - path: cmd/rampart/cli/setup_antigravity_test.go
+        kind: unit
+        proves: Setup creates the documented shared CLI/IDE plugin idempotently, validates ownership structurally, removes only Rampart-owned state, and refuses foreign plugin replacement by default.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification requires an installed managed plugin plus a structured destructive-command denial with conversation-correlated audit output.
+      - path: assurance/evidence/antigravity-host-2026-07-27.json
+        kind: live
+        proves: Antigravity CLI 1.1.7 loaded the generated global plugin; an allowed command was audited and a disposable sensitive-path write was denied before modification.
+    limitations:
+      - Antigravity's current PostToolUse payload does not include the completed tool call or result, so this integration does not provide post-result secret scanning.
+      - Rampart-handled parse and policy failures deny in enforce mode, but unexpected hook-process crashes and host timeouts follow Antigravity behavior and are not claimed fail-closed.
+      - The ordinary verifier exercises plugin installation and the live Rampart adapter without invoking a model; authenticated host proof is a maintainer-only opt-in check.
+      - A rolling-latest Antigravity compatibility job and physical Windows host proof are still pending.
+
+  - id: github_copilot
+    display_name: GitHub Copilot CLI / VS Code
+    support_tier: supported
+    setup_command: rampart setup copilot
+    boundary: native_hook
+    platforms: [linux, macos, windows]
+    service_required: false
+    upstream_ci: rolling_latest
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: tested
+      mcp: tested
+      subagents: partial
+    degraded:
+      policy_unavailable: local
+      adapter_error: mixed
+      timeout: mixed
+    approval: native
+    verification:
+      level: active
+      command: rampart verify copilot
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_copilot_test.go
+        kind: unit
+        proves: Copilot CLI and VS Code payloads normalize to shared policy surfaces, multi-file writes evaluate every path, unknown future pre-call tools fail closed, and decisions include both host schemas.
+      - path: cmd/rampart/cli/setup_copilot_test.go
+        kind: unit
+        proves: Setup generates the shared cross-platform user hook idempotently, refuses to overwrite foreign files, and removes only Rampart-owned configuration.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification invokes the real adapter with a destructive canary and requires CLI and VS Code denials plus session-correlated audit output.
+      - path: scripts/compat-copilot-latest.mjs
+        kind: upstream_latest
+        proves: The latest published Copilot CLI package starts in isolated state while Rampart separately checks the generated shared hook schema and destructive denial adapter; hook ingestion is not claimed.
+    limitations:
+      - VS Code agent hooks are an upstream Preview feature and their configuration or behavior may change.
+      - Copilot CLI command-hook crashes and non-zero exits fail closed for PreToolUse, but every CLI hook timeout is fail-open, including administrator policy hooks.
+      - VS Code blocks on exit code 2 but treats other non-zero exits as warnings; Rampart returns structured decisions with exit code 0, and does not claim unexpected VS Code adapter crashes fail closed.
+      - The machine-wide --policy hook is supported by Copilot CLI only; VS Code requires the user hook plus separately managed VS Code enterprise settings and file deployment.
+      - User hooks can be modified by the user. Enterprise enforcement requires administrator-owned Copilot CLI policy hooks or OS/MDM controls around the VS Code hook file.
+      - The ordinary verifier exercises installed configuration and the Rampart adapter, not an authenticated model/tool invocation through either host.
+      - Copilot cloud agent does not load local user or administrator hook files; repository hooks require a separately deployed repository configuration.

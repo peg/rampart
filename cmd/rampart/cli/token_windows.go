@@ -8,6 +8,7 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/peg/rampart/internal/securefile"
 	"golang.org/x/sys/windows"
 )
 
@@ -22,46 +23,14 @@ var (
 	aclFromEntries       = windows.ACLFromEntries
 	getNamedSecurityInfo = windows.GetNamedSecurityInfo
 	setNamedSecurityInfo = windows.SetNamedSecurityInfo
+	secureOwnerOnlyFile  = securefile.OwnerOnly
 )
 
-// secureFilePermissions replaces the file DACL atomically with a protected
-// owner-only DACL. Reading the SID from the process token avoids account-name
-// resolution, which may be unavailable on domain and AzureAD machines.
+// secureFilePermissions delegates secret-file hardening to the shared
+// cross-platform implementation. Directory repair below remains intentionally
+// CLI-specific because it recognizes one legacy Rampart ACL shape.
 func secureFilePermissions(path string) error {
-	sid, err := currentProcessUserSID()
-	if err != nil {
-		return fmt.Errorf("get current process user SID: %w", err)
-	}
-
-	acl, err := aclFromEntries([]windows.EXPLICIT_ACCESS{
-		{
-			AccessPermissions: windows.GENERIC_ALL,
-			AccessMode:        windows.SET_ACCESS,
-			Inheritance:       windows.NO_INHERITANCE,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: windows.TrusteeValueFromSID(sid),
-			},
-		},
-	}, nil)
-	if err != nil {
-		return fmt.Errorf("build owner-only DACL: %w", err)
-	}
-
-	if err := setNamedSecurityInfo(
-		path,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
-		nil,
-		acl,
-		nil,
-	); err != nil {
-		return fmt.Errorf("set owner-only DACL: %w", err)
-	}
-
-	return nil
+	return secureOwnerOnlyFile(path)
 }
 
 // secureDirPermissions deliberately leaves the shared Rampart data directory

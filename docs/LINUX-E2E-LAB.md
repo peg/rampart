@@ -40,7 +40,9 @@ Suites are cumulative only where stated:
 | `full` | Core, runtime, Hermes, and disposable OpenClaw coverage |
 
 The OpenClaw runtime suites run the official OpenClaw image in a new disposable
-container. Only the candidate Rampart binary is mounted read-only. The state,
+container. The controller cross-builds Rampart for the Docker daemon's Linux
+architecture, so this isolated suite can also run from a macOS controller.
+Only the candidate Rampart binary is mounted read-only. The state,
 workspace, plugin, policies, Rampart token, gateway, and policy service all live
 inside the container and are deleted after evidence is collected. No host
 OpenClaw configuration, credentials, memories, sessions, databases, workspaces,
@@ -61,6 +63,13 @@ state:
 scripts/compat-hermes-host.sh --yes
 scripts/compat-claude-host.sh --yes
 ```
+
+Use `scripts/compat-hermes-host.sh --yes --gateway` to exercise the same two
+Hermes canaries through an isolated localhost API gateway rather than the
+direct one-shot CLI. It does not connect the source profile's Telegram,
+Discord, or other messaging gateways.
+Gateway mode refuses `--copy-env` so an isolated run cannot accidentally load
+live messaging-platform tokens; it requires an `auth.json`-backed provider.
 
 The Hermes harness copies only `auth.json` and non-secret model selection by
 default. Env-only providers require explicit `--copy-env`. It does not load

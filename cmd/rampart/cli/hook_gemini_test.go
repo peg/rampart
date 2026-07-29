@@ -1,0 +1,216 @@
+// Copyright 2026 The Rampart Authors
+// Licensed under the Apache License, Version 2.0
+
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+func TestParseGeminiInputNormalizesDocumentedTools(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		input    string
+		wantTool string
+		wantKey  string
+		wantVal  string
+	}{
+		{name: "shell", toolName: "run_shell_command", input: `{"command":"rm -rf /"}`, wantTool: "exec", wantKey: "command", wantVal: "rm -rf /"},
+		{name: "write", toolName: "write_file", input: `{"file_path":"/tmp/output","content":"safe"}`, wantTool: "write", wantKey: "path", wantVal: "/tmp/output"},
+		{name: "fetch", toolName: "web_fetch", input: `{"prompt":"Fetch https://example.com"}`, wantTool: "fetch", wantKey: "url", wantVal: "Fetch https://example.com"},
+		{name: "mcp", toolName: "mcp_github_create_issue", input: `{"title":"x"}`, wantTool: "mcp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := `{"session_id":"gemini-session","hook_event_name":"BeforeTool","tool_name":"` + tt.toolName + `","tool_input":` + tt.input + `}`
+			result, err := parseGeminiInput(strings.NewReader(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Tool != tt.wantTool || result.Agent != "gemini-cli" || result.RunID != "gemini-session" {
+				t.Fatalf("result = %#v", result)
+			}
+			if tt.wantKey != "" && result.Params[tt.wantKey] != tt.wantVal {
+				t.Fatalf("%s = %#v, want %q", tt.wantKey, result.Params[tt.wantKey], tt.wantVal)
+			}
+		})
+	}
+}
+
+func TestParseGeminiInputFailsClosedForUnknownBeforeTool(t *testing.T) {
+	_, err := parseGeminiInput(strings.NewReader(`{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"future_mutator","tool_input":{}}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported Gemini tool_name") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseGeminiInputRejectsMalformedKnownBeforeTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolName  string
+		toolInput string
+	}{
+		{name: "missing shell command", toolName: "run_shell_command", toolInput: `{}`},
+		{name: "non-string shell command", toolName: "shell", toolInput: `{"command":42}`},
+		{name: "missing write path", toolName: "write_file", toolInput: `{}`},
+		{name: "missing replace path", toolName: "replace", toolInput: `{}`},
+		{name: "missing read path", toolName: "read_file", toolInput: `{}`},
+		{name: "missing fetch URL", toolName: "web_fetch", toolInput: `{}`},
+		{name: "missing search query", toolName: "google_web_search", toolInput: `{}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"` + testCase.toolName + `","tool_input":` + testCase.toolInput + `}`
+			if _, err := parseGeminiInput(strings.NewReader(payload)); err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("error = %v, want required-field rejection", err)
+			}
+		})
+	}
+}
+
+func TestParseGeminiAfterToolKeepsScanningMalformedKnownInput(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{},"tool_response":{"output":"scan me"}}`
+	result, err := parseGeminiInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response != "scan me" {
+		t.Fatalf("response = %q, want scan me", result.Response)
+	}
+}
+
+func TestParseGeminiReadManyFilesEvaluatesEveryInclude(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"read_many_files","tool_input":{"include":["safe/**",".env"]}}`
+	result, err := parseGeminiInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.PolicyPaths) != 2 || result.PolicyPaths[0] != "safe/**" || result.PolicyPaths[1] != ".env" {
+		t.Fatalf("PolicyPaths = %#v", result.PolicyPaths)
+	}
+	if paths, ok := result.Params["paths"].([]string); !ok || len(paths) != 2 {
+		t.Fatalf("params.paths = %#v", result.Params["paths"])
+	}
+}
+
+func TestParseGeminiReadManyFilesRejectsOversizedIncludeBatch(t *testing.T) {
+	includes := make([]any, maxCodexPatchPaths+1)
+	for i := range includes {
+		includes[i] = filepath.Join("src", "file-"+strconv.Itoa(i))
+	}
+	payload, err := json.Marshal(map[string]any{
+		"session_id":      "s",
+		"hook_event_name": "BeforeTool",
+		"tool_name":       "read_many_files",
+		"tool_input":      map[string]any{"include": includes},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = parseGeminiInput(bytes.NewReader(payload))
+	if err == nil || !strings.Contains(err.Error(), "more than 100 paths") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseGeminiInputClassifiesDestructiveMCPTool(t *testing.T) {
+	payload := `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"mcp_filesystem_delete_file","tool_input":{"path":"important.txt"}}`
+	result, err := parseGeminiInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tool != "mcp-destructive" {
+		t.Fatalf("tool = %q, want mcp-destructive", result.Tool)
+	}
+}
+
+func TestGeminiUnknownBeforeToolEmitsStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(`{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"future_mutator","tool_input":{}}`))
+	cmd.SetArgs([]string{"hook", "--format", "gemini", "--audit-dir", filepath.Join(home, "audit")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("structured output = %q: %v", stdout.String(), err)
+	}
+	if output["decision"] != "deny" {
+		t.Fatalf("decision = %#v, want deny", output["decision"])
+	}
+}
+
+func TestGeminiMalformedKnownBeforeToolEmitsStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(`{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"run_shell_command","tool_input":{}}`))
+	cmd.SetArgs([]string{"hook", "--format", "gemini", "--audit-dir", filepath.Join(home, "audit")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("structured output = %q: %v", stdout.String(), err)
+	}
+	if output["decision"] != "deny" {
+		t.Fatalf("decision = %#v, want deny", output["decision"])
+	}
+}
+
+func TestMapGeminiToolCoversCurrentDocumentedSurface(t *testing.T) {
+	tools := []string{
+		"run_shell_command",
+		"glob", "grep_search", "list_directory", "read_file", "read_many_files", "replace", "write_file",
+		"ask_user", "write_todos",
+		"tracker_create_task", "tracker_update_task", "tracker_get_task", "tracker_list_tasks", "tracker_add_dependency", "tracker_visualize",
+		"list_mcp_resources", "read_mcp_resource",
+		"activate_skill", "get_internal_docs",
+		"enter_plan_mode", "exit_plan_mode",
+		"complete_task", "update_topic",
+		"google_web_search", "web_fetch",
+	}
+	for _, tool := range tools {
+		if got := mapGeminiTool(tool); got == "unknown" {
+			t.Errorf("current documented Gemini tool %q is not classified", tool)
+		}
+	}
+	if got := mapGeminiTool("mcp_github_create_issue"); got != "mcp" {
+		t.Fatalf("MCP tool classification = %q, want mcp", got)
+	}
+}
+
+func TestOutputGeminiHookResultPreservesHostPermissionsAndFailsClosed(t *testing.T) {
+	for _, test := range []struct {
+		decision hookDecisionType
+		want     string
+	}{
+		{decision: hookAllow, want: ""},
+		{decision: hookDeny, want: "deny"},
+		{decision: hookAsk, want: "deny"},
+		{decision: hookBlock, want: "deny"},
+	} {
+		var output bytes.Buffer
+		if err := outputGeminiHookResult(&output, test.decision, "test reason"); err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := decoded["decision"].(string); got != test.want {
+			t.Fatalf("decision %v output = %s, want %q", test.decision, output.String(), test.want)
+		}
+	}
+}

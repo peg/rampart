@@ -7,7 +7,7 @@ description: "Integrate Python AI agents with Rampart's HTTP preflight API. Chec
 
 Integrate Rampart with any Python agent framework — LangChain, CrewAI, AutoGen, or custom code.
 
-## HTTP API
+## Python SDK (recommended)
 
 Start the Rampart proxy:
 
@@ -15,70 +15,50 @@ Start the Rampart proxy:
 rampart serve
 ```
 
-Then check commands before executing them:
+Install the SDK and put its fail-closed enforcement call directly at the
+execution boundary:
+
+```bash
+pip install rampart-sdk
+```
 
 ```python
-import requests
-import time
+import subprocess
+import rampart
 
-RAMPART_URL = "http://localhost:9090"
-RAMPART_TOKEN = "your-token"
-
-def safe_exec(command: str) -> dict:
-    """Check a command with Rampart before executing."""
-    response = requests.post(
-        f"{RAMPART_URL}/v1/tool/exec",
-        headers={"Authorization": f"Bearer {RAMPART_TOKEN}"},
-        json={
-            "agent": "my-python-agent",
-            "session": "session-1",
-            "params": {"command": command}
-        }
-    )
-    result = response.json()
-
-    if result["decision"] == "deny":
-        return {"blocked": True, "reason": result["message"]}
-    elif result["decision"] == "ask":
-        # Poll for approval resolution
-        approval_id = result["approval_id"]
-        while True:
-            status_response = requests.get(f"{RAMPART_URL}/v1/approvals/{approval_id}")
-            status = status_response.json()
-            if status["status"] == "approved":
-                break
-            elif status["status"] in ["denied", "expired"]:
-                return {"blocked": True, "reason": status.get("message", "Approval denied")}
-            time.sleep(1)  # Poll every second
-
-    # Command was allowed — execute it
-    import subprocess
-    output = subprocess.run(command, shell=True, capture_output=True, text=True)
-    return {"blocked": False, "output": output.stdout}
+@rampart.exec_guard()
+def safe_exec(command: str) -> str:
+    return subprocess.check_output(command, shell=True, text=True)
 ```
+
+The decorator sends an `enforce: true` preflight at the actual call boundary,
+consumes one-shot grants and call-count state exactly once, and does not execute
+the function unless Rampart returns a consistent allow decision. Its default
+client fails closed when the policy service is unavailable or malformed.
 
 ## Preflight API
 
 Check if a command would be allowed without executing it:
 
 ```python
+import rampart
+
 def preflight(command: str) -> bool:
     """Check if a command is allowed without executing."""
-    response = requests.post(
-        f"{RAMPART_URL}/v1/preflight/exec",
-        headers={"Authorization": f"Bearer {RAMPART_TOKEN}"},
-        json={
-            "agent": "my-agent",
-            "session": "s1",
-            "params": {"command": command}
-        }
-    )
-    return response.json()["allowed"]
+    with rampart.RampartClient(fail_open=False) as client:
+        return client.check_exec(command, agent="my-agent", session="s1").allowed
 ```
+
+Preflight is a preview only. Never separate a preflight from later execution;
+use `enforce`, `aenforce`, or a guard decorator at the execution boundary.
 
 ## LD_PRELOAD Alternative
 
 For simpler integration, wrap your entire Python process:
+
+This optional path requires a source-built native library; current release and
+Homebrew packages contain only the Rampart CLI. Run `make -C preload install`
+from a matching Rampart source checkout first.
 
 ```bash
 rampart preload -- python my_agent.py
@@ -92,20 +72,14 @@ possible subprocess implementation.
 ## LangChain Example
 
 ```python
+import subprocess
+import rampart
 from langchain.tools import tool
 
 @tool
+@rampart.exec_guard()
 def run_command(command: str) -> str:
-    """Execute a shell command (Rampart-protected)."""
-    resp = requests.post(
-        f"{RAMPART_URL}/v1/tool/exec",
-        headers={"Authorization": f"Bearer {RAMPART_TOKEN}"},
-        json={"agent": "langchain", "session": "s1", "params": {"command": command}}
-    )
-    data = resp.json()
-    if data["decision"] == "deny":
-        return f"Command blocked by policy: {data['message']}"
-    # Rampart only evaluates policy — execute the command yourself
+    """Execute a shell command only after Rampart authorizes this invocation."""
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     return result.stdout
 ```
@@ -114,7 +88,7 @@ def run_command(command: str) -> str:
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/v1/tool/{toolName}` | Evaluate and execute |
+| `POST` | `/v1/tool/{toolName}` | Evaluate a host-owned tool call |
 | `POST` | `/v1/preflight/{toolName}` | Dry-run check |
 | `GET` | `/v1/approvals` | Pending approvals |
 | `POST` | `/v1/approvals/{id}/resolve` | Approve/deny |

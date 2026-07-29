@@ -15,10 +15,10 @@
 package report
 
 import (
-	"encoding/json"
-	"fmt"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"io"
 	"os"
@@ -80,13 +80,13 @@ type PolicyCount struct {
 
 // ReportEvent represents an event formatted for display in the report.
 type ReportEvent struct {
-	Time      string
-	Tool      string
-	Command   string
-	Decision  string
-	Policy    string
-	Message   string
-	CSSClass  string
+	Time     string
+	Tool     string
+	Command  string
+	Decision string
+	Policy   string
+	Message  string
+	CSSClass string
 }
 
 // GenerateHTMLReport generates a self-contained HTML report from audit events.
@@ -128,11 +128,6 @@ func ReadEventsFromDir(auditDir string) ([]audit.Event, error) {
 		}
 		allEvents = append(allEvents, events...)
 	}
-
-	// Sort events by timestamp
-	sort.Slice(allEvents, func(i, j int) bool {
-		return allEvents[i].Timestamp.Before(allEvents[j].Timestamp)
-	})
 
 	return allEvents, nil
 }
@@ -177,9 +172,9 @@ func prepareReportData(events []audit.Event, startTime, endTime time.Time) (*Rep
 			data.AllowedEvents++
 		case "deny":
 			data.DeniedEvents++
-		case "log":
+		case "log", "watch":
 			data.LoggedEvents++
-		case "ask":
+		case "ask", "require_approval":
 			data.AskEvents++
 		}
 
@@ -432,7 +427,7 @@ func prepareEventList(events []audit.Event) []ReportEvent {
 			cssClass = "decision-allow"
 		case "deny":
 			cssClass = "decision-deny"
-		case "log":
+		case "log", "watch":
 			cssClass = "decision-log"
 		}
 

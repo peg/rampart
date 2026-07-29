@@ -363,19 +363,16 @@ func detectProtectedAgents() []string {
 	}
 
 	// Claude Code hooks
-	claudeSettings := filepath.Join(home, ".claude", "settings.json")
-	if data, err := os.ReadFile(claudeSettings); err == nil {
-		var settings map[string]any
-		if json.Unmarshal(data, &settings) == nil {
-			if countClaudeHookMatchers(settings) > 0 {
-				agents = append(agents, "Claude Code (hooks)")
-			}
+	if claudeHooksConfiguredForHome(home) {
+		claudeAssessment := claudeHookLoadAssessmentForHome(home)
+		if !claudeAssessment.Blocked && !claudeAssessment.Unverified {
+			agents = append(agents, "Claude Code (hooks)")
 		}
 	}
 
-	// Cline hooks
-	clineDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if entries, err := os.ReadDir(clineDir); err == nil && len(entries) > 0 {
+	// Cline hooks: require the complete owned, platform-native pair. Merely
+	// finding an unrelated file in Cline's hook directory is not protection.
+	if clineHooksConfiguredForHome(home) {
 		agents = append(agents, "Cline (hooks)")
 	}
 
@@ -403,6 +400,24 @@ func detectProtectedAgents() []string {
 		codexWrapper := filepath.Join(home, ".local", "bin", "codex")
 		if data, err := os.ReadFile(codexWrapper); err == nil && containsRampartPreload(string(data)) {
 			agents = append(agents, "Codex (legacy wrapper)")
+		}
+	}
+
+	// Gemini CLI native hooks installed by `rampart setup gemini`.
+	if geminiHooksConfiguredForHome(home) {
+		agents = append(agents, "Gemini CLI (hooks)")
+	}
+
+	// Global plugin loaded by Antigravity CLI and IDE.
+	if antigravityPluginConfiguredForHome(home) {
+		agents = append(agents, "Antigravity CLI / IDE (plugin)")
+	}
+
+	// Shared user hooks loaded by Copilot CLI and VS Code's agent host.
+	if copilotHooksConfiguredForHome(home) {
+		workingDir, _ := os.Getwd()
+		if _, disabled := copilotCLIUserHooksDisabled(home, workingDir); !disabled {
+			agents = append(agents, "GitHub Copilot CLI / VS Code (hooks)")
 		}
 	}
 
@@ -447,7 +462,8 @@ func detectHermesPluginState() hermesPluginState {
 }
 
 func detectHermesPluginStateForHome(home string) hermesPluginState {
-	state := hermesPluginState{PluginDir: filepath.Join(home, ".hermes", "plugins", "rampart")}
+	hermesHome := hermesHomeDir(home)
+	state := hermesPluginState{PluginDir: filepath.Join(hermesHome, "plugins", "rampart")}
 	manifestPath := filepath.Join(state.PluginDir, "plugin.yaml")
 	data, err := os.ReadFile(manifestPath)
 	if err == nil {
@@ -465,7 +481,7 @@ func detectHermesPluginStateForHome(home string) hermesPluginState {
 		}
 	}
 
-	configPath := filepath.Join(home, ".hermes", "config.yaml")
+	configPath := filepath.Join(hermesHome, "config.yaml")
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		return state
@@ -546,7 +562,7 @@ func detectMode() (string, string) {
 }
 
 // todayEvents returns today's allow/deny/pending counts and the most recent deny event.
-// "pending" counts require_approval and webhook actions.
+// "pending" counts current ask, legacy require_approval, and webhook actions.
 func todayEvents() (allow, deny, pending int, lastDeny *audit.Event) {
 	return todayEventsAt(time.Now().UTC())
 }
@@ -592,7 +608,7 @@ func todayEventsAt(now time.Time) (allow, deny, pending int, lastDeny *audit.Eve
 				if lastDeny == nil || ev.Timestamp.After(lastDeny.Timestamp) {
 					lastDeny = ev
 				}
-			case "require_approval", "webhook":
+			case "ask", "require_approval", "webhook":
 				pending++
 			}
 		}

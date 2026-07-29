@@ -9,13 +9,50 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type webhookActionRequest struct {
+	Tool      string         `json:"tool"`
+	Params    map[string]any `json:"params"`
+	Agent     string         `json:"agent"`
+	Session   string         `json:"session"`
+	Policy    string         `json:"policy"`
+	Timestamp string         `json:"timestamp"`
+}
+
+type webhookActionResponse struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+func TestApprovalNotificationIsSuppressedWithoutSignedResolveURL(t *testing.T) {
+	var calls atomic.Int32
+	webhook := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls.Add(1)
+	}))
+	defer webhook.Close()
+
+	srv := New(nil, nil,
+		WithToken("test-token"),
+		WithNotify(&engine.NotifyConfig{URL: webhook.URL, Platform: "webhook", On: []string{"ask"}}),
+	)
+	srv.listenAddr = "127.0.0.1:9090"
+	now := time.Now().UTC()
+	srv.sendApprovalWebhook(
+		engine.ToolCall{Tool: "exec", Params: map[string]any{"command": "echo test"}, Timestamp: now},
+		engine.Decision{Action: engine.ActionAsk},
+		&approval.Request{ID: "approval-1", CreatedAt: now, ExpiresAt: now.Add(time.Minute)},
+	)
+	assert.Zero(t, calls.Load(), "approval notification must not emit an unusable unsigned link")
+}
 
 func setupWebhookServer(t *testing.T, webhookURL string, failOpen bool) (*Server, string) {
 	t.Helper()
@@ -80,7 +117,33 @@ func TestWebhookActionAllow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["allowed"])
 	assert.Equal(t, "allow", resp["decision"])
+}
+
+func TestWebhookAction_FinalAuditFailureFailsClosed(t *testing.T) {
+	webhookCalls := 0
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		webhookCalls++
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(webhookActionResponse{Decision: "allow"}))
+	}))
+	defer webhook.Close()
+
+	srv, token := setupWebhookServer(t, webhook.URL, true)
+	failing := &failOnWriteSink{failAt: 2}
+	srv.sink = failing
+
+	body := `{"agent":"test-agent","session":"s1","params":{"command":"dangerous deploy"}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "audit storage is unavailable")
+	assert.Equal(t, 1, webhookCalls)
+	assert.Equal(t, 2, failing.count(), "initial webhook and final allow decisions should both be attempted")
 }
 
 func TestWebhookActionDeny(t *testing.T) {
@@ -102,6 +165,7 @@ func TestWebhookActionDeny(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, false, resp["allowed"])
 	assert.Equal(t, "deny", resp["decision"])
 	assert.Equal(t, "too dangerous", resp["message"])
 }
@@ -124,6 +188,7 @@ func TestWebhookActionTimeoutFailOpen(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["allowed"])
 	assert.Equal(t, "allow", resp["decision"])
 	assert.Contains(t, resp["message"], "failing open")
 }
@@ -146,6 +211,7 @@ func TestWebhookActionTimeoutFailClosed(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, false, resp["allowed"])
 	assert.Equal(t, "deny", resp["decision"])
 	assert.Contains(t, resp["message"], "failing closed")
 }
@@ -168,6 +234,7 @@ func TestWebhookActionServerError(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["allowed"])
 	assert.Equal(t, "allow", resp["decision"])
 	assert.Contains(t, resp["message"], "failing open")
 }

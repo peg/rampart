@@ -2,9 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestTruncate(t *testing.T) {
@@ -27,21 +31,51 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-func TestResolveToken(t *testing.T) {
+func TestResolveTokenForEndpoint(t *testing.T) {
 	// Use temp dir as HOME to avoid picking up real ~/.rampart/token
 	testSetHome(t, t.TempDir())
 	t.Setenv("RAMPART_TOKEN", "env-tok")
 
-	if got := resolveToken("explicit"); got != "explicit" {
-		t.Errorf("resolveToken with explicit = %q", got)
+	if got, source, err := resolveTokenForEndpoint("http://localhost:9090", "explicit"); err != nil || got != "explicit" || source != "flag" {
+		t.Errorf("explicit token = %q/%q err=%v", got, source, err)
 	}
-	if got := resolveToken(""); got != "env-tok" {
-		t.Errorf("resolveToken with env = %q", got)
+	if got, source, err := resolveTokenForEndpoint("http://localhost:9090", ""); err != nil || got != "env-tok" || source != "env" {
+		t.Errorf("environment token = %q/%q err=%v", got, source, err)
 	}
 
 	os.Unsetenv("RAMPART_TOKEN")
-	if got := resolveToken(""); got != "" {
-		t.Errorf("resolveToken with nothing = %q", got)
+	if got, source, err := resolveTokenForEndpoint("http://localhost:9090", ""); err != nil || got != "" || source != "" {
+		t.Errorf("empty token = %q/%q err=%v", got, source, err)
+	}
+}
+
+func TestResolveApprovalRefusesRemotePersistedTokenBeforeRequest(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("RAMPART_TOKEN", "")
+	if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".rampart", "token"), []byte("persisted-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	previousClient := rampartHTTPClient
+	t.Cleanup(func() { rampartHTTPClient = previousClient })
+	rampartHTTPClient = newRampartHTTPClient(0)
+	rampartHTTPClient.Transport = redirectTestTransport(func(*http.Request) (*http.Response, error) {
+		requests++
+		return nil, fmt.Errorf("unexpected request")
+	})
+
+	cmd := &cobra.Command{}
+	err := resolveApproval(cmd, "https://attacker.example", "", "0123456789", true)
+	if err == nil || !strings.Contains(err.Error(), "auto-discovered token") {
+		t.Fatalf("resolveApproval error = %v, want persisted-token refusal", err)
+	}
+	if requests != 0 {
+		t.Fatalf("sent %d request(s) before rejecting unsafe credentials", requests)
 	}
 }
 

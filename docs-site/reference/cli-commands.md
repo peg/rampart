@@ -1,6 +1,6 @@
 ---
 title: CLI Commands
-description: "Reference every Rampart CLI command for setup, policy checks, auditing, MCP proxying, and integrations with Claude Code, Cline, OpenClaw, and Codex."
+description: "Reference every Rampart CLI command for setup, policy checks, auditing, MCP proxying, and native integrations."
 ---
 
 # CLI Commands
@@ -14,18 +14,24 @@ Complete reference for all `rampart` commands.
 Auto-detects your environment, installs `rampart serve`, configures integration hooks, and runs a health check.
 
 ```bash
-rampart quickstart                  # Interactive setup
-rampart quickstart --yes            # Non-interactive mode
-rampart quickstart -y               # Short form of --yes
+rampart quickstart                  # Detect, configure, and verify non-interactively
+rampart quickstart --yes            # Compatibility spelling for existing scripts
+rampart quickstart -y               # Short compatibility spelling
 ```
 
-`--yes` / `-y` skips prompts so setup can run unattended in CI, scripts, or agent-driven installs.
+Quickstart currently has no confirmation prompts. `--yes` / `-y` remains
+accepted so existing CI, scripts, and agent-driven installs continue to work.
 
-### `rampart protect openclaw`
+### `rampart protect`
 
-Protect OpenClaw with Rampart-managed defaults. No policy authoring is required.
+Detect installed supported agents, install their strongest native Rampart
+boundary, start the local policy service, and verify the result. OpenClaw uses
+its live plugin path; native-hook agents verify installed configuration and the
+real Rampart adapter without invoking a model. No policy authoring is required.
 
 ```bash
+rampart protect                       # Detect and protect supported installed agents
+rampart protect copilot               # Protect Copilot CLI and VS Code agent sessions
 rampart protect openclaw              # Install, activate, restart, and verify
 rampart protect openclaw --reinstall  # Replace the plugin even when versions match
 rampart protect openclaw --no-restart # Configure without restarting the gateway
@@ -40,6 +46,11 @@ Actively test expected policy decisions with fixed, non-executing canaries.
 
 ```bash
 rampart verify openclaw        # Verify policy plus the live OpenClaw plugin path
+rampart verify claude-code     # Verify Claude hook installation and adapter denial
+rampart verify cline           # Verify Cline hook installation and adapter denial
+rampart verify codex           # Verify Codex hook installation and adapter denial
+rampart verify gemini          # Verify Gemini hook installation and adapter denial
+rampart verify copilot         # Verify shared Copilot hook and dual-host denial
 rampart verify policy          # Verify the local Rampart policy path
 rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
@@ -63,10 +74,19 @@ Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `
 Install native hooks into Cline.
 
 ```bash
-rampart setup cline           # Install hooks
-rampart setup cline --force   # Overwrite existing hooks
-rampart setup cline --remove  # Remove hooks
+rampart setup cline                              # Shared user hooks
+rampart setup cline --workspace                  # .clinerules/hooks
+rampart setup cline --hooks-dir /path/to/hooks   # Explicit runtime directory
+rampart setup cline --remove                     # Remove owned user hooks
 ```
+
+Rampart installs direct executable `PreToolUse`/`PostToolUse` files on Linux
+and macOS, or direct `.ps1` files on Windows. It upgrades the owned nested
+layout from older Rampart versions but never overwrites or removes another
+owner's hook, including with `--force`. `--data-dir` is accepted for Cline CLI
+parity, but current Cline source does not use `--data-dir` or `CLINE_DATA_DIR`
+for hook discovery. Do not use Cline CLI's legacy `--yolo` mode when relying on
+Rampart because current Cline disables runtime hooks in that mode.
 
 ### `rampart setup openclaw`
 
@@ -99,6 +119,45 @@ Rampart writes wildcard `PreToolUse` and `PostToolUse` handlers to
 remain in place. The generated definition includes POSIX and Windows commands,
 does not replace the `codex` executable, and requires no preload library.
 
+### `rampart setup gemini` (experimental)
+
+Install experimental Rampart lifecycle hooks for enterprise/API-key Gemini CLI.
+
+```bash
+rampart setup gemini           # Install BeforeTool/AfterTool hooks
+rampart setup gemini --force   # Replace invalid hook configuration
+rampart setup gemini --remove  # Remove only Rampart hooks
+```
+
+Rampart writes wildcard `BeforeTool` and `AfterTool` entries to
+`~/.gemini/settings.json` while preserving unrelated settings and hooks.
+Allowed calls continue through Gemini CLI's own permission checks. Gemini's
+hook protocol has no native ask result, so approval-required calls use Rampart's
+external queue and deny when `rampart serve` is unavailable.
+This is an explicit testing path and is not installed by bare `rampart protect`;
+it does not claim Antigravity compatibility.
+
+### `rampart setup copilot`
+
+Install one shared hook integration for GitHub Copilot CLI and VS Code agent
+sessions.
+
+```bash
+rampart setup copilot                   # Install the shared user hook
+rampart setup copilot --force           # Replace a foreign rampart.json file
+rampart setup copilot --remove          # Remove the managed user hook
+rampart setup copilot --policy          # Elevated: install Copilot CLI machine policy
+rampart setup copilot --policy --remove # Elevated: remove the CLI machine policy
+```
+
+Rampart writes `$COPILOT_HOME/hooks/rampart.json` (normally
+`~/.copilot/hooks/rampart.json`) with PascalCase `PreToolUse` and `PostToolUse`
+events. Copilot CLI emits the VS Code-compatible payload for these events, so
+the same adapter protects both hosts. The `--policy` form is Copilot CLI-only;
+managed VS Code deployment requires the user hook plus VS Code enterprise/MDM
+controls. Copilot CLI hook timeouts are upstream fail-open, including policy
+hooks.
+
 ### `rampart setup` (interactive)
 
 Auto-detects installed agents and guides you through setup.
@@ -110,7 +169,7 @@ rampart setup --force        # Skip confirmations
 
 ### `rampart upgrade`
 
-Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and optionally restarts `rampart serve` if it was running.
+Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and restarts a running background, systemd, or launchd Rampart service so it uses the new executable. Homebrew-managed installations must use `brew upgrade rampart`; Windows installations must rerun `install.ps1`.
 
 ```bash
 rampart upgrade              # Upgrade to latest release
@@ -118,9 +177,10 @@ rampart upgrade v0.8.0       # Upgrade to a specific version
 rampart upgrade --yes        # Skip confirmation prompt
 rampart upgrade --dry-run    # Preview without making changes
 rampart upgrade --no-policy-update  # Skip refreshing built-in policy profiles
+rampart upgrade --no-binary # Refresh managed policies without replacing the binary
 ```
 
-After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified.
+After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
 
 ### `rampart uninstall`
 
@@ -131,13 +191,19 @@ rampart uninstall            # Interactive (prompts for confirmation)
 rampart uninstall --yes      # Skip confirmation prompt
 ```
 
+The command removes only Rampart-owned integration artifacts and preserves
+agent credentials, histories, sessions, memories, workspaces, and unrelated
+configuration. It exits unsuccessfully if an owned integration cannot be
+removed completely. Rampart policies and audit logs remain under
+`~/.rampart/` until the operator deletes or archives them explicitly.
+
 After running, delete `~/.rampart/` manually and remove any `rampart`-related lines from your shell profile.
 
 ## Core Commands
 
 ### `rampart hook`
 
-Hook handler called by Claude Code/Cline. Reads tool call from stdin, writes decision to stdout.
+Hook handler called by Claude Code, Cline, Codex, experimental Gemini CLI, and GitHub Copilot CLI / VS Code. Reads a tool call from stdin and writes the host's native decision schema to stdout.
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
@@ -178,6 +244,10 @@ rampart wrap --config policy.yaml -- agent      # Custom policy
 
 Add exec-family interception to supported dynamically linked processes via
 `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES`.
+
+Current release archives and Homebrew packages contain the CLI only. Build the
+matching native library from a Rampart source checkout with
+`make -C preload install` before using this command.
 
 ```bash
 rampart preload -- your-agent                   # Enforce mode
@@ -225,6 +295,11 @@ Only allowed events are used for rule generation — denied events represent beh
 
 Install `rampart serve` as a persistent system service. On macOS, creates a LaunchAgent plist. On Linux, creates a systemd user service (`rampart-serve.service`). Not supported on Windows.
 
+Package-manager installs use a stable executable symlink only after Rampart
+verifies that it resolves to the currently running binary. This keeps the
+service valid across Homebrew upgrades without trusting an unrelated PATH
+entry.
+
 ```bash
 rampart serve install                         # Install with defaults (port 9090)
 rampart serve install --port 8080             # Custom port
@@ -250,7 +325,9 @@ The token is saved to `~/.rampart/token` and embedded in the service file (mode 
 
 ### `rampart serve stop`
 
-Stop a `rampart serve` process that was started with `--background`. Reads the PID from `~/.rampart/serve.pid` and sends `SIGTERM`.
+Stop a `rampart serve` process that was started with `--background`. Rampart
+authenticates the PID from `~/.rampart/serve.pid` before terminating the process
+with the platform-appropriate mechanism.
 
 ```bash
 rampart serve stop
@@ -285,7 +362,7 @@ When the OpenClaw native plugin is installed, doctor shows:
 If the plugin is missing or the OpenClaw version is too old:
 ```
 ✗ OpenClaw plugin: not installed
-  → Run: rampart setup openclaw
+  → Run: rampart protect openclaw
 ```
 
 ### `rampart status`
@@ -461,7 +538,7 @@ rampart allow "npm install *"                  # Auto-detect tool type
 rampart allow "go test ./..."                  # Commands with ./ detected as exec
 rampart allow "/tmp/**" --tool read            # Explicit tool type
 rampart allow "docker build *" --global        # Write to global overrides
-rampart allow "pytest *" --project             # Write to project policy
+rampart block "pytest *" --project             # Write a restriction to project policy
 rampart allow "git push *" --yes               # Skip confirmation
 rampart allow "docker *" --for 1h              # Expires after 1 hour
 rampart allow "npm publish" --once             # Single-use — consumed after first match
@@ -535,10 +612,13 @@ rampart policy explain --config ~/.rampart/policies/user-overrides.yaml "sudo tr
 
 ### `rampart policy test`
 
-Evaluate a set of tool calls from a JSON file against your policies.
+Alias for `rampart test`. Evaluate one command, or run a YAML test suite against
+your policies.
 
 ```bash
-rampart policy test --input test-cases.json
+rampart policy test "rm -rf /"
+rampart policy test tests.yaml
+rampart policy test --run "blocks-*" --verbose tests.yaml
 ```
 
 ## Policy Management

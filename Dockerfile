@@ -20,13 +20,15 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
       -X github.com/peg/rampart/internal/build.Commit=${COMMIT} \
       -X github.com/peg/rampart/internal/build.Date=${DATE}" \
     -o /rampart ./cmd/rampart
+RUN mkdir -p /runtime-home/.rampart/policies /runtime-home/.rampart/audit
 
 # Runtime stage — distroless for minimal attack surface
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /rampart /rampart
+COPY --from=build --chown=65532:65532 /runtime-home/ /home/nonroot/
 USER nonroot:nonroot
-ENV HOME=/tmp
-WORKDIR /tmp
+ENV HOME=/home/nonroot
+WORKDIR /home/nonroot
 EXPOSE 9090
 ENTRYPOINT ["/rampart"]
 CMD ["serve", "--addr", "0.0.0.0", "--port", "9090"]

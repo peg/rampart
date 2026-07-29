@@ -318,7 +318,7 @@ func TestAllowCmd_Basic(t *testing.T) {
 	}
 }
 
-func TestAllowCmd_ProjectStillUsesProjectPolicy(t *testing.T) {
+func TestAllowCmd_ProjectIsRejected(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 	oldWd, _ := os.Getwd()
@@ -336,14 +336,13 @@ func TestAllowCmd_ProjectStillUsesProjectPolicy(t *testing.T) {
 		"--api", "http://127.0.0.1:0",
 	})
 
-	_ = cmd.Execute()
-
-	p, err := policy.LoadCustomPolicy(policyPath)
-	if err != nil {
-		t.Fatalf("load project policy: %v", err)
+	err := cmd.Execute()
+	require.Error(t, err)
+	if !strings.Contains(err.Error(), "restriction-only") {
+		t.Fatalf("error = %q, want restriction-only guidance", err)
 	}
-	if p.TotalRules() == 0 {
-		t.Fatal("expected project allow rule in project policy")
+	if _, statErr := os.Stat(policyPath); !os.IsNotExist(statErr) {
+		t.Fatalf("project allow policy should not be written: %v", statErr)
 	}
 }
 

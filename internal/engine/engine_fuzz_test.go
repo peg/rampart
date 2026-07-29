@@ -111,7 +111,7 @@ policies:
 		decision := engine.Evaluate(call)
 		_ = decision
 
-		// Test response evaluation with various response content  
+		// Test response evaluation with various response content
 		responses := []string{
 			"",
 			"normal response content",
@@ -178,7 +178,7 @@ policies:
 		// Even if engine creation succeeded, evaluation should not panic
 		call := ToolCall{
 			ID:        "test-call",
-			Agent:     "test-agent", 
+			Agent:     "test-agent",
 			Session:   "test-session",
 			Tool:      "exec",
 			Timestamp: time.Now().UTC(),

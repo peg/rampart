@@ -37,7 +37,10 @@ When 2 or more pending approvals share a run ID, the dashboard's **Active** tab 
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Approve All** resolves every pending approval in the run and caches the decision — subsequent tool calls from that run are auto-approved for the remainder of the approval timeout (default: 1 hour). No more approvals queue for that run.
+**Approve All** resolves every pending approval in the same agent/session/run
+scope and caches that exact scope for the remainder of the approval timeout
+(default: 1 hour). A different agent or session that happens to reuse the run
+ID remains isolated.
 
 **Deny All** blocks all pending requests. The agents get a denial response and can try a different approach.
 
@@ -47,7 +50,9 @@ Solo approvals (no run ID, or unique run ID) render exactly as before — no UI 
 
 ## Auto-Approve Cache
 
-After you click **Approve All**, Rampart caches the approval for that run ID. New tool calls from the same run are allowed immediately — the agent doesn't wait, no approval card is created.
+After you click **Approve All**, Rampart caches the complete agent, session, and
+run identity. New tool calls in that exact scope are allowed immediately — the
+agent doesn't wait and no approval card is created.
 
 The cache expires after the configured `--approval-timeout` (default 1 hour). After expiry, the next call from that run will queue for approval again.
 
@@ -58,7 +63,7 @@ To disable the cache for a specific run, use the API directly:
 curl -X POST http://localhost:9090/v1/approvals/bulk-resolve \
   -H "Authorization: Bearer $RAMPART_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"run_id": "YOUR_RUN_ID", "action": "deny"}'
+  -d '{"agent":"YOUR_AGENT","session":"YOUR_SESSION","run_id":"YOUR_RUN_ID","action":"deny"}'
 ```
 
 ---
@@ -73,6 +78,8 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
+  "agent": "claude-code",
+  "session": "repo/main",
   "run_id": "SESSION_ID_HERE",
   "action": "approve",
   "resolved_by": "dashboard"
@@ -88,7 +95,8 @@ Response:
 }
 ```
 
-`run_id` is required. Empty or missing `run_id` returns `400` — Rampart refuses to bulk-resolve without a run ID to prevent accidental mass-approval.
+`agent`, `session`, and `run_id` are required. Missing or empty scope fields
+return `400`; Rampart refuses to infer an authorization scope from a run ID.
 
 ### List approvals with run groups
 
@@ -104,6 +112,8 @@ Response includes both the flat `approvals` array and a `run_groups` array:
   "approvals": [...],
   "run_groups": [
     {
+      "agent": "claude-code",
+      "session": "repo/main",
       "run_id": "abc123...",
       "count": 3,
       "earliest_created_at": "2026-02-19T04:30:00Z",
@@ -113,7 +123,8 @@ Response includes both the flat `approvals` array and a `run_groups` array:
 }
 ```
 
-`run_groups` only includes groups with 2+ pending items, sorted by `earliest_created_at`. Fully backwards compatible — existing consumers ignore the new field.
+`run_groups` only includes groups with 2+ pending items in the same exact
+agent/session/run scope, sorted by `earliest_created_at`.
 
 ---
 

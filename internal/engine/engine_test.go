@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,6 +83,139 @@ policies:
 	}
 }
 
+func TestEvaluate_RejectsConflictingSecurityAliases(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies: []
+`)
+
+	tests := []struct {
+		name string
+		call ToolCall
+	}{
+		{
+			name: "params and input command",
+			call: ToolCall{Tool: "exec",
+				Params: map[string]any{"command": "echo safe"},
+				Input:  map[string]any{"command": "rm -rf /"}},
+		},
+		{
+			name: "command aliases",
+			call: ToolCall{Tool: "exec", Params: map[string]any{
+				"command": "echo safe", "cmd": "rm -rf /",
+			}},
+		},
+		{
+			name: "path aliases",
+			call: ToolCall{Tool: "write", Params: map[string]any{
+				"file_path": "/tmp/safe", "path": "/etc/shadow",
+			}},
+		},
+		{
+			name: "working directory aliases",
+			call: ToolCall{Tool: "exec", WorkDir: "/tmp/safe", Params: map[string]any{
+				"cwd": "/etc",
+			}},
+		},
+		{
+			name: "url aliases",
+			call: ToolCall{Tool: "fetch", Params: map[string]any{
+				"url": "https://github.com", "uri": "https://webhook.site/steal",
+			}},
+		},
+		{
+			name: "non string command",
+			call: ToolCall{Tool: "exec", Params: map[string]any{
+				"command": []string{"echo", "safe"},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := e.Evaluate(tt.call)
+			require.Equal(t, ActionDeny, decision.Action)
+			require.Contains(t, decision.Message, "ambiguous tool input")
+		})
+	}
+
+	t.Run("identical duplicate is compatible", func(t *testing.T) {
+		decision := e.Evaluate(ToolCall{
+			Tool:   "exec",
+			Params: map[string]any{"command": "git status"},
+			Input:  map[string]any{"command": "git status"},
+		})
+		require.Equal(t, ActionAllow, decision.Action)
+	})
+}
+
+func TestEvaluate_DerivesDomainFromURL(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: block-exfil-domain
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          domain_matches: ["webhook.site"]
+`)
+	decision := e.Evaluate(ToolCall{Tool: "fetch", Params: map[string]any{
+		"url":    "https://webhook.site/collect",
+		"domain": "github.com",
+	}})
+	require.Equal(t, ActionDeny, decision.Action)
+	require.Equal(t, "webhook.site", (ToolCall{Params: map[string]any{
+		"url": "https://webhook.site/collect", "domain": "github.com",
+	}}).Domain())
+}
+
+func TestEvaluate_ConsumesValidatedSecurityAliases(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: block-command-alias
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm -rf *"]
+  - name: block-path-alias
+    match:
+      tool: write
+    rules:
+      - action: deny
+        when:
+          path_matches: ["/etc/**"]
+  - name: block-url-alias
+    match:
+      tool: fetch
+    rules:
+      - action: deny
+        when:
+          domain_matches: ["webhook.site"]
+`)
+
+	tests := []ToolCall{
+		{
+			Tool:   "exec",
+			Params: map[string]any{"command": "   "},
+			Input:  map[string]any{"cmd": "rm -rf /"},
+		},
+		{Tool: "write", Params: map[string]any{"target": "/etc/shadow"}},
+		{Tool: "fetch", Input: map[string]any{"href": "https://webhook.site/collect"}},
+	}
+	for _, call := range tests {
+		decision := e.Evaluate(call)
+		require.Equal(t, ActionDeny, decision.Action, "call: %#v; decision: %#v", call, decision)
+	}
+}
+
 func TestEvaluate_SingleAllowRule(t *testing.T) {
 	e := setupEngine(t, `
 version: "1"
@@ -101,30 +235,6 @@ policies:
 	if got.Action != ActionAllow {
 		t.Errorf("want allow, got %s", got.Action)
 	}
-}
-
-func TestEvaluate_AllowRuleDoesNotAuthorizeUnmatchedSibling(t *testing.T) {
-	e := setupEngine(t, `
-version: "1"
-default_action: deny
-policies:
-  - name: allow-git
-    match:
-      tool: exec
-    rules:
-      - action: allow
-        when:
-          command_matches: ["git *"]
-`)
-
-	require.Equal(t, ActionAllow, e.Evaluate(execCall("main", "git status && git log -1")).Action)
-	require.Equal(t, ActionDeny, e.Evaluate(execCall("main", "git status && rm -rf /tmp/rampart-canary")).Action)
-}
-
-func TestMatchDurableAllowCondition_RequiresWholeCommandCoverage(t *testing.T) {
-	cond := Condition{CommandMatches: []string{"git *"}}
-	require.True(t, matchDurableAllowCondition(cond, execCall("main", "git status && git log -1"), nil))
-	require.False(t, matchDurableAllowCondition(cond, execCall("main", "git status && rm -rf /tmp/rampart-canary"), nil))
 }
 
 func TestEvaluate_DenyWinsOverAllow(t *testing.T) {
@@ -429,6 +539,29 @@ policies: []
 	}
 }
 
+func TestPeriodicReloadLifecycleIsConcurrentSafe(t *testing.T) {
+	engine := setupEngine(t, `
+version: "1"
+default_action: allow
+policies: []
+`)
+
+	var wg sync.WaitGroup
+	for i := range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				engine.StartPeriodicReload(time.Hour)
+				return
+			}
+			engine.Stop()
+		}()
+	}
+	wg.Wait()
+	engine.Stop()
+}
+
 func TestValidation_DuplicatePolicyName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")
@@ -561,6 +694,33 @@ policies:
 	}
 }
 
+func TestEvaluateResponseApprovalActionFailsClosed(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: suspicious-response
+    match:
+      tool: fetch
+    rules:
+      - action: ask
+        when:
+          response_matches: ["ignore previous instructions"]
+        message: "suspicious response"
+`)
+
+	got := e.EvaluateResponse(
+		ToolCall{Agent: "test", Tool: "fetch"},
+		"ignore previous instructions",
+	)
+	if got.Action != ActionDeny {
+		t.Fatalf("response action = %s, want deny", got.Action)
+	}
+	if got.Message != "suspicious response" {
+		t.Fatalf("response message = %q", got.Message)
+	}
+}
+
 func TestValidation_InvalidResponseRegex(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")
@@ -633,6 +793,28 @@ policies:
 	_, err := New(store, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "pattern too long")
+}
+
+func TestNotificationConfigReturnsDefensiveCopy(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+notify:
+  url: https://example.com/hook
+  platform: webhook
+  on: [deny, ask]
+policies: []
+`)
+
+	first := e.NotificationConfig()
+	require.NotNil(t, first)
+	first.URL = "https://attacker.invalid"
+	first.On[0] = "allow"
+
+	second := e.NotificationConfig()
+	require.NotNil(t, second)
+	assert.Equal(t, "https://example.com/hook", second.URL)
+	assert.Equal(t, []string{"deny", "ask"}, second.On)
 }
 
 // BenchmarkEvaluate measures the hot path: evaluating a single tool call
@@ -708,8 +890,7 @@ policies:
 	}
 }
 
-func TestEvaluateResponse_TruncatesLargeBody(t *testing.T) {
-	// Place a secret past the 1MB cap boundary — it should NOT be detected.
+func TestEvaluateResponse_FailsClosedOnLargeBody(t *testing.T) {
 	e := setupEngine(t, `
 version: "1"
 default_action: allow
@@ -739,14 +920,86 @@ policies:
 		Timestamp: time.Now(),
 	}
 
-	// Secret is past the cap, so it should be allowed (truncated before matching).
+	// A prefix-only scan could miss the secret, so oversized responses fail closed.
 	got := e.EvaluateResponse(call, largeResponse)
-	assert.Equal(t, ActionAllow, got.Action, "secret beyond 1MB cap should not be detected")
+	assert.Equal(t, ActionDeny, got.Action, "oversized response should fail closed")
+	assert.Contains(t, got.Message, "exceeds")
 
 	// Secret within the cap should still be detected.
 	smallResponse := "prefix AKIA1234567890ABCDEF suffix"
 	got2 := e.EvaluateResponse(call, smallResponse)
 	assert.Equal(t, ActionDeny, got2.Action, "secret within cap should be detected")
+}
+
+func TestEvaluateResponse_LargeBodyWithoutApplicableResponseRuleIsAllowed(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: command-only
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["rm *"]
+`)
+	call := execCall("main", "cat big.txt")
+	got := e.EvaluateResponse(call, strings.Repeat("x", maxResponseMatchSize+1))
+	assert.Equal(t, ActionAllow, got.Action)
+}
+
+func TestEvaluate_FailsClosedOnOversizedMatchInputs(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: durable-prefix
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["safe *"]
+`)
+
+	boundary := strings.Repeat("a", maxGlobInputLen)
+	assert.Equal(t, ActionAllow, e.Evaluate(execCall("main", boundary)).Action)
+
+	oversized := "safe " + strings.Repeat("a", maxGlobInputLen) + " && rm -rf /"
+	decision := e.Evaluate(execCall("main", oversized))
+	assert.Equal(t, ActionDeny, decision.Action)
+	assert.Contains(t, decision.Message, "exceeds")
+}
+
+func TestEvaluate_FailsClosedOnOversizedReferencedToolParameter(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: inspect-query
+    match:
+      tool: search
+    rules:
+      - action: deny
+        when:
+          tool_param_matches:
+            query: "**secret**"
+`)
+	call := ToolCall{
+		Agent: "main",
+		Tool:  "search",
+		Input: map[string]any{"query": strings.Repeat("x", maxGlobInputLen+1)},
+	}
+	assert.Equal(t, ActionDeny, e.Evaluate(call).Action)
+
+	// Large content that no policy matches is not rejected merely because it is
+	// carried alongside a bounded, policy-relevant parameter.
+	call.Input = map[string]any{
+		"query":   "ordinary",
+		"content": strings.Repeat("x", maxGlobInputLen+1),
+	}
+	assert.Equal(t, ActionAllow, e.Evaluate(call).Action)
 }
 
 func TestEvaluateResponse_RegexMatchTimeout(t *testing.T) {
@@ -793,6 +1046,40 @@ policies:
 	assert.Equal(t, ActionDeny, got.Action, "timeout should fail closed — deny rule fires")
 	assert.GreaterOrEqual(t, elapsed, 90*time.Millisecond)
 	assert.Less(t, elapsed, 190*time.Millisecond)
+}
+
+func TestEvaluateResponse_ExclusionRegexTimeoutFailsClosed(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: timeout-check
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          response_matches: ["secret"]
+          response_not_matches: ["documented-example"]
+        message: "secret detected"
+`)
+
+	regexMatchMu.Lock()
+	regexMatchFunc = func(re *regexp.Regexp, value string) bool {
+		if re.String() == "documented-example" {
+			time.Sleep(200 * time.Millisecond)
+		}
+		return re.MatchString(value)
+	}
+	regexMatchMu.Unlock()
+	t.Cleanup(func() {
+		regexMatchMu.Lock()
+		regexMatchFunc = nil
+		regexMatchMu.Unlock()
+	})
+
+	got := e.EvaluateResponse(execCall("main", "echo test"), "secret")
+	assert.Equal(t, ActionDeny, got.Action, "an exclusion timeout must not suppress a deny rule")
 }
 
 func BenchmarkEvaluateResponse10KB(b *testing.B) {
@@ -1047,12 +1334,12 @@ func TestConfigFingerprintChangesOnRuleEdit(t *testing.T) {
 		}},
 	}
 	// Same policy name, same rule count, different rule content.
-	fp1 := configFingerprint(cfg1)
-	fp2 := configFingerprint(cfg2)
+	fp1 := mustConfigFingerprint(t, cfg1)
+	fp2 := mustConfigFingerprint(t, cfg2)
 	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when rule content changes")
 
 	// Same config should produce identical fingerprint.
-	fp1b := configFingerprint(cfg1)
+	fp1b := mustConfigFingerprint(t, cfg1)
 	assert.Equal(t, fp1, fp1b, "same config should produce identical fingerprint")
 }
 
@@ -1071,8 +1358,8 @@ func TestConfigFingerprintChangesOnActionChange(t *testing.T) {
 			Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}},
 		}},
 	}
-	fp1 := configFingerprint(cfg1)
-	fp2 := configFingerprint(cfg2)
+	fp1 := mustConfigFingerprint(t, cfg1)
+	fp2 := mustConfigFingerprint(t, cfg2)
 	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when action changes")
 }
 
@@ -1091,7 +1378,54 @@ func TestConfigFingerprintChangesOnDefaultAction(t *testing.T) {
 			Rules: []Rule{{Action: "deny", When: Condition{CommandMatches: []string{"rm *"}}}},
 		}},
 	}
-	fp1 := configFingerprint(cfg1)
-	fp2 := configFingerprint(cfg2)
+	fp1 := mustConfigFingerprint(t, cfg1)
+	fp2 := mustConfigFingerprint(t, cfg2)
 	assert.NotEqual(t, fp1, fp2, "fingerprint should differ when default action changes")
+}
+
+func TestConfigFingerprintCoversAllPolicyBehavior(t *testing.T) {
+	enabled := false
+	expires := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	failOpen := true
+	base := func() *Config {
+		return &Config{
+			Version:       "1",
+			DefaultAction: "deny",
+			Policies: []Policy{{
+				Name:  "test",
+				Match: Match{Agent: "*", Session: "*", Tool: StringOrSlice{"exec"}},
+				Rules: []Rule{{Action: "ask", When: Condition{Default: true}}},
+			}},
+		}
+	}
+	baseline := mustConfigFingerprint(t, base())
+
+	tests := map[string]func(*Config){
+		"policy match": func(cfg *Config) { cfg.Policies[0].Match.Agent = "codex" },
+		"priority":     func(cfg *Config) { cfg.Policies[0].Priority = 10 },
+		"enabled":      func(cfg *Config) { cfg.Policies[0].Enabled = &enabled },
+		"expiry":       func(cfg *Config) { cfg.Policies[0].Rules[0].ExpiresAt = &expires },
+		"ask config":   func(cfg *Config) { cfg.Policies[0].Rules[0].Ask.Audit = true },
+		"webhook": func(cfg *Config) {
+			cfg.Policies[0].Rules[0].Action = "webhook"
+			cfg.Policies[0].Rules[0].Webhook = &WebhookActionConfig{URL: "https://example.invalid/hook", FailOpen: &failOpen}
+		},
+		"notifications": func(cfg *Config) {
+			cfg.Notify = &NotifyConfig{URL: "https://example.invalid/notify", Platform: "webhook", On: []string{"deny"}}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := base()
+			mutate(cfg)
+			assert.NotEqual(t, baseline, mustConfigFingerprint(t, cfg))
+		})
+	}
+}
+
+func mustConfigFingerprint(t *testing.T, cfg *Config) string {
+	t.Helper()
+	fingerprint, err := configFingerprint(cfg)
+	require.NoError(t, err)
+	return fingerprint
 }

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -30,12 +29,14 @@ import (
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/webhookaction"
 )
 
 const (
 	defaultMode             = "enforce"
 	jsonRPCDenyCode         = -32600
 	jsonRPCResponseDenyCode = -32603
+	maxPendingRequests      = 1000
 )
 
 // Option configures MCP proxy behavior.
@@ -44,9 +45,21 @@ type Option func(*Proxy)
 // WithMode sets proxy mode: enforce or monitor.
 func WithMode(mode string) Option {
 	return func(p *Proxy) {
-		if strings.TrimSpace(mode) != "" {
-			p.mode = strings.TrimSpace(mode)
-		}
+		p.mode = normalizeProxyMode(mode)
+	}
+}
+
+// normalizeProxyMode recognizes documented values case-insensitively and
+// fails closed for empty or unknown values. NewProxy cannot return an option
+// validation error, so an invalid mode must never silently disable enforcement.
+func normalizeProxyMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "monitor":
+		return "monitor"
+	case "", "enforce":
+		return defaultMode
+	default:
+		return defaultMode
 	}
 }
 
@@ -80,7 +93,9 @@ func WithFilterTools(enabled bool) Option {
 	}
 }
 
-// WithApprovalStore sets the approval store used for require_approval decisions.
+// WithApprovalStore sets an approval store used for require_approval decisions.
+// The embedding caller must expose a real resolver for this exact store; an
+// inaccessible private store would only make tool calls wait until expiry.
 func WithApprovalStore(store *approval.Store) Option {
 	return func(p *Proxy) {
 		p.approvals = store
@@ -135,9 +150,8 @@ type Proxy struct {
 }
 
 type pendingCall struct {
-	call      engine.ToolCall
-	request   map[string]any
-	createdAt time.Time
+	call    engine.ToolCall
+	request map[string]any
 }
 
 // NewProxy creates a new MCP stdio proxy.
@@ -158,9 +172,7 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 			opt(p)
 		}
 	}
-	if p.mode == "" {
-		p.mode = defaultMode
-	}
+	p.mode = normalizeProxyMode(p.mode)
 	if p.agentID == "" {
 		p.agentID = "mcp-client"
 	}
@@ -302,22 +314,46 @@ func (p *Proxy) handleClientLine(line []byte) error {
 
 func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) error {
 	trimmed := bytes.TrimSpace(line)
+	if p.mode == "enforce" {
+		if err := validateUniqueJSONKeys(trimmed); err != nil {
+			p.logger.Warn("mcp: rejecting ambiguous JSON-RPC envelope", "error", err)
+			return p.writeErrorToClient(json.RawMessage("null"), jsonRPCDenyCode, "Rampart: invalid JSON-RPC request envelope")
+		}
+	}
 
 	var req Request
 	if err := json.Unmarshal(trimmed, &req); err != nil {
-		p.logger.Debug("mcp: pass through non-json line", "error", err)
+		if p.mode == "enforce" {
+			p.logger.Warn("mcp: rejecting invalid JSON-RPC envelope", "error", err)
+			return p.writeErrorToClient(json.RawMessage("null"), jsonRPCDenyCode, "Rampart: invalid JSON-RPC request envelope")
+		}
+		p.logger.Debug("mcp: pass through non-json line in monitor mode", "error", err)
 		return p.writeToChild(line)
 	}
 
 	if req.Method == "tools/call" {
+		if p.mode == "enforce" {
+			if req.JSONRPC != "2.0" {
+				return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: invalid tools/call JSON-RPC envelope")
+			}
+			if !validRequestID(req.ID) {
+				// tools/call is an MCP request, not a notification. A missing ID
+				// cannot receive an error response, so silently drop it rather than
+				// forwarding an untrackable execution boundary.
+				if !HasID(req.ID) {
+					p.logger.Warn("mcp: dropping tools/call without a request id")
+					return nil
+				}
+				return p.writeErrorToClient(json.RawMessage("null"), jsonRPCDenyCode, "Rampart: invalid tools/call request id")
+			}
+		}
 		return p.handleToolsCall(ctx, req, line)
 	}
 
 	if p.filterTools && req.Method == "tools/list" && HasID(req.ID) {
-		p.pendingMu.Lock()
-		p.pendingToolList[NormalizedID(req.ID)] = time.Now()
-		p.evictStalePendingCalls()
-		p.pendingMu.Unlock()
+		if err := p.trackPendingToolList(req.ID); err != nil {
+			return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: "+err.Error())
+		}
 	}
 
 	return p.writeToChild(line)
@@ -332,9 +368,34 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		p.logger.Debug("mcp: tools/call params parse failed; passing through", "error", err)
 		return p.writeToChild(rawLine)
 	}
+	if strings.TrimSpace(params.Name) == "" {
+		if p.mode == "enforce" {
+			if HasID(req.ID) {
+				return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: invalid tools/call params: tool name is required")
+			}
+			return nil
+		}
+		return p.writeToChild(rawLine)
+	}
 
 	if params.Arguments == nil {
 		params.Arguments = map[string]any{}
+	}
+
+	pendingID := ""
+	reservationActive := false
+	if HasID(req.ID) {
+		var reserveErr error
+		pendingID, reserveErr = p.reservePendingCall(req.ID)
+		if reserveErr != nil {
+			return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: "+reserveErr.Error())
+		}
+		reservationActive = true
+		defer func() {
+			if reservationActive {
+				p.releasePendingCall(pendingID)
+			}
+		}()
 	}
 
 	requestData := buildRequestData(req.Method, params.Name, params.Arguments)
@@ -350,8 +411,21 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		Timestamp: time.Now().UTC(),
 	}
 
-	decision := p.engine.Evaluate(call)
-	p.writeAudit(call, decision, requestData, nil)
+	var decision engine.Decision
+	if p.mode == "enforce" {
+		decision = p.engine.Enforce(call, engine.EvalOptions{})
+	} else {
+		decision = p.engine.EvaluateWith(call, engine.EvalOptions{})
+	}
+	if err := p.writeAudit(call, decision, requestData, nil); err != nil {
+		p.logger.Error("mcp: audit write failed", "error", err)
+		if p.mode == "enforce" {
+			if HasID(req.ID) {
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: audit storage is unavailable; refusing tool call")
+			}
+			return nil
+		}
+	}
 
 	if p.mode == "enforce" && decision.Action == engine.ActionDeny {
 		message := strings.TrimSpace(decision.Message)
@@ -371,7 +445,7 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		}
 		if p.approvals == nil {
 			if HasID(req.ID) {
-				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: approval store is not configured")
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: approval required, but this MCP proxy has no approval resolver; refusing request")
 			}
 			return nil
 		}
@@ -409,7 +483,16 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 	}
 
 	if p.mode == "enforce" && decision.Action == engine.ActionWebhook {
-		webhookDecision := p.executeWebhookAction(call, decision)
+		webhookDecision := webhookaction.Execute(p.logger, call, decision)
+		webhookRequest := cloneMap(requestData)
+		webhookRequest["mcp_phase"] = "webhook_result"
+		if err := p.writeAudit(call, webhookDecision, webhookRequest, nil); err != nil {
+			p.logger.Error("mcp: webhook-result audit write failed", "error", err)
+			if HasID(req.ID) {
+				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: audit storage is unavailable; refusing tool call")
+			}
+			return nil
+		}
 		if webhookDecision.Action == engine.ActionDeny {
 			denyMsg := strings.TrimSpace(webhookDecision.Message)
 			if denyMsg == "" {
@@ -423,155 +506,112 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		// Webhook allowed — fall through to forward the call.
 	}
 
-	if HasID(req.ID) {
-		id := NormalizedID(req.ID)
+	if pendingID != "" {
 		p.pendingMu.Lock()
-		p.pendingCalls[id] = pendingCall{call: call, request: requestData, createdAt: time.Now()}
-		p.evictStalePendingCalls()
+		p.pendingCalls[pendingID] = pendingCall{call: call, request: requestData}
 		p.pendingMu.Unlock()
 	}
 
-	return p.writeToChild(rawLine)
+	if err := p.writeToChild(rawLine); err != nil {
+		return err
+	}
+	reservationActive = false
+	return nil
 }
 
-// evictStalePendingCalls removes pending calls and pending tool-list requests
-// older than 5 minutes. Must be called with pendingMu held.
-func (p *Proxy) evictStalePendingCalls() {
-	const maxAge = 5 * time.Minute
-	const maxPending = 1000
-	now := time.Now()
-	for id, pc := range p.pendingCalls {
-		if now.Sub(pc.createdAt) > maxAge {
-			delete(p.pendingCalls, id)
+func responseID(id json.RawMessage) json.RawMessage {
+	if validRequestID(id) {
+		return id
+	}
+	return json.RawMessage("null")
+}
+
+// validRequestID accepts the MCP/JSON-RPC request ID forms Rampart can track.
+// JSON-RPC discourages fractional numeric IDs, and MCP requires a request ID to
+// be a string or integer that is not null.
+func validRequestID(id json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(id)
+	if len(trimmed) == 0 {
+		return false
+	}
+	if trimmed[0] == '"' {
+		var value string
+		return json.Unmarshal(trimmed, &value) == nil
+	}
+	for index, char := range trimmed {
+		if index == 0 && char == '-' {
+			if len(trimmed) == 1 {
+				return false
+			}
+			continue
+		}
+		if char < '0' || char > '9' {
+			return false
 		}
 	}
+	return true
+}
+
+func (p *Proxy) reservePendingCall(id json.RawMessage) (string, error) {
+	key := NormalizedID(id)
+	p.pendingMu.Lock()
+	defer p.pendingMu.Unlock()
+	p.evictStalePendingCalls()
+	if _, exists := p.pendingCalls[key]; exists {
+		return "", fmt.Errorf("request id %s is already pending", key)
+	}
+	if _, exists := p.pendingToolList[key]; exists {
+		return "", fmt.Errorf("request id %s is already pending", key)
+	}
+	if len(p.pendingCalls) >= maxPendingRequests {
+		return "", fmt.Errorf("pending tools/call capacity reached")
+	}
+	// Reserve before evaluating so concurrent requests cannot race past the
+	// duplicate-ID check. The child cannot answer before writeToChild, which only
+	// happens after this placeholder is replaced with the complete pending call.
+	p.pendingCalls[key] = pendingCall{}
+	return key, nil
+}
+
+func (p *Proxy) releasePendingCall(key string) {
+	if key == "" {
+		return
+	}
+	p.pendingMu.Lock()
+	delete(p.pendingCalls, key)
+	p.pendingMu.Unlock()
+}
+
+func (p *Proxy) trackPendingToolList(id json.RawMessage) error {
+	key := NormalizedID(id)
+	p.pendingMu.Lock()
+	defer p.pendingMu.Unlock()
+	p.evictStalePendingCalls()
+	if _, exists := p.pendingCalls[key]; exists {
+		return fmt.Errorf("request id %s is already pending", key)
+	}
+	if _, exists := p.pendingToolList[key]; exists {
+		return fmt.Errorf("request id %s is already pending", key)
+	}
+	if len(p.pendingToolList) >= maxPendingRequests {
+		return fmt.Errorf("pending tools/list capacity reached")
+	}
+	p.pendingToolList[key] = time.Now()
+	return nil
+}
+
+// evictStalePendingCalls removes stale tool-list correlation only. Tool-call
+// correlation is bounded by maxPendingRequests but is intentionally never
+// discarded by age: a slow child response must still pass response policy and
+// audit enforcement. Must be called with pendingMu held.
+func (p *Proxy) evictStalePendingCalls() {
+	const maxAge = 5 * time.Minute
+	now := time.Now()
 	// Evict stale pendingToolList entries using the same TTL.
 	for id, insertedAt := range p.pendingToolList {
 		if now.Sub(insertedAt) > maxAge {
 			delete(p.pendingToolList, id)
 		}
-	}
-	// Hard cap: if still too many, evict oldest
-	if len(p.pendingCalls) > maxPending {
-		var oldestID string
-		var oldestTime time.Time
-		for id, pc := range p.pendingCalls {
-			if oldestID == "" || pc.createdAt.Before(oldestTime) {
-				oldestID = id
-				oldestTime = pc.createdAt
-			}
-		}
-		if oldestID != "" {
-			delete(p.pendingCalls, oldestID)
-		}
-	}
-}
-
-// webhookActionRequest is the payload POSTed to a webhook action endpoint.
-type webhookActionRequest struct {
-	Tool      string         `json:"tool"`
-	Params    map[string]any `json:"params"`
-	Agent     string         `json:"agent"`
-	Session   string         `json:"session"`
-	Policy    string         `json:"policy"`
-	Timestamp string         `json:"timestamp"`
-}
-
-// webhookActionResponse is the expected response from a webhook action endpoint.
-type webhookActionResponse struct {
-	Decision string `json:"decision"` // "allow" or "deny"
-	Reason   string `json:"reason"`
-}
-
-// executeWebhookAction calls the configured webhook URL and returns an allow or
-// deny decision based on the response. Mirrors proxy.Server.executeWebhookAction.
-func (p *Proxy) executeWebhookAction(call engine.ToolCall, decision engine.Decision) engine.Decision {
-	cfg := decision.WebhookConfig
-	if cfg == nil || cfg.URL == "" {
-		p.logger.Error("mcp: webhook action missing config")
-		return engine.Decision{
-			Action:  engine.ActionDeny,
-			Message: "webhook action misconfigured; denying for safety",
-		}
-	}
-
-	policyName := "unknown"
-	if len(decision.MatchedPolicies) > 0 {
-		policyName = decision.MatchedPolicies[0]
-	}
-
-	payload := webhookActionRequest{
-		Tool:      call.Tool,
-		Params:    call.Params,
-		Agent:     call.Agent,
-		Session:   call.Session,
-		Policy:    policyName,
-		Timestamp: call.Timestamp.Format(time.RFC3339),
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		p.logger.Error("mcp: webhook marshal failed", "error", err)
-		return p.webhookFallback(cfg, "marshal error")
-	}
-
-	client := &http.Client{Timeout: cfg.EffectiveTimeout()}
-	resp, err := client.Post(cfg.URL, "application/json", bytes.NewReader(body))
-	if err != nil {
-		p.logger.Error("mcp: webhook call failed", "url", cfg.URL, "error", err)
-		return p.webhookFallback(cfg, fmt.Sprintf("webhook error: %v", err))
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		p.logger.Error("mcp: webhook returned non-2xx", "url", cfg.URL, "status", resp.StatusCode)
-		return p.webhookFallback(cfg, fmt.Sprintf("webhook returned HTTP %d", resp.StatusCode))
-	}
-
-	var whResp webhookActionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&whResp); err != nil {
-		p.logger.Error("mcp: webhook response parse failed", "error", err)
-		return p.webhookFallback(cfg, "invalid webhook response")
-	}
-
-	switch strings.ToLower(whResp.Decision) {
-	case "allow":
-		p.logger.Info("mcp: webhook allowed", "url", cfg.URL, "tool", call.Tool)
-		return engine.Decision{
-			Action:          engine.ActionAllow,
-			MatchedPolicies: decision.MatchedPolicies,
-			Message:         "allowed by webhook",
-		}
-	case "deny":
-		reason := whResp.Reason
-		if reason == "" {
-			reason = "denied by webhook"
-		}
-		p.logger.Info("mcp: webhook denied", "url", cfg.URL, "tool", call.Tool, "reason", reason)
-		return engine.Decision{
-			Action:          engine.ActionDeny,
-			MatchedPolicies: decision.MatchedPolicies,
-			Message:         reason,
-		}
-	default:
-		p.logger.Error("mcp: webhook returned unknown decision", "decision", whResp.Decision)
-		return p.webhookFallback(cfg, fmt.Sprintf("unknown webhook decision: %q", whResp.Decision))
-	}
-}
-
-// webhookFallback returns the appropriate decision when a webhook call fails.
-func (p *Proxy) webhookFallback(cfg *engine.WebhookActionConfig, reason string) engine.Decision {
-	if cfg.EffectiveFailOpen() {
-		p.logger.Warn("mcp: webhook fail-open", "reason", reason)
-		return engine.Decision{
-			Action:  engine.ActionAllow,
-			Message: fmt.Sprintf("webhook unavailable, failing open: %s", reason),
-		}
-	}
-	p.logger.Warn("mcp: webhook fail-closed", "reason", reason)
-	return engine.Decision{
-		Action:  engine.ActionDeny,
-		Message: fmt.Sprintf("webhook unavailable, failing closed: %s", reason),
 	}
 }
 
@@ -613,7 +653,12 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 		result := p.engine.EvaluateResponse(pending.call, responseBody)
 		responseRequest := cloneMap(pending.request)
 		responseRequest["mcp_phase"] = "response"
-		p.writeAudit(pending.call, result, responseRequest, &audit.ToolResponse{DurationMS: result.EvalDuration.Milliseconds()})
+		if err := p.writeAudit(pending.call, result, responseRequest, &audit.ToolResponse{DurationMS: result.EvalDuration.Milliseconds()}); err != nil {
+			p.logger.Error("mcp: response audit write failed", "error", err)
+			if p.mode == "enforce" {
+				return p.writeErrorToClient(resp.ID, jsonRPCResponseDenyCode, "Rampart: audit storage is unavailable; refusing tool response")
+			}
+		}
 
 		if p.mode == "enforce" && result.Action == engine.ActionDeny {
 			message := strings.TrimSpace(result.Message)
@@ -672,7 +717,14 @@ func (p *Proxy) maybeFilterToolsList(resp Response) ([]byte, bool, error) {
 			Timestamp: time.Now().UTC(),
 		}
 		decision := p.engine.Evaluate(call)
-		p.writeAudit(call, decision, requestData, nil)
+		if err := p.writeAudit(call, decision, requestData, nil); err != nil {
+			p.logger.Error("mcp: tool-list audit write failed", "tool", name, "error", err)
+			if p.mode == "enforce" {
+				// If the enforcement record cannot be persisted, do not advertise the
+				// tool as available to the client.
+				continue
+			}
+		}
 
 		if p.mode == "enforce" && decision.Action == engine.ActionDeny {
 			continue
@@ -708,9 +760,10 @@ func buildRequestData(method, toolName string, arguments map[string]any) map[str
 	if rawURL, ok := firstString(arguments, "url", "uri", "href"); ok {
 		params["url"] = rawURL
 		if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
-			if _, exists := params["domain"]; !exists {
-				params["domain"] = parsed.Hostname()
-			}
+			// Domain and scheme are derived from the URL. Caller-supplied
+			// decoys must never override the destination policy evaluates.
+			params["domain"] = parsed.Hostname()
+			params["scheme"] = parsed.Scheme
 			if _, exists := params["path"]; !exists && parsed.Path != "" {
 				params["path"] = parsed.Path
 			}
@@ -746,21 +799,22 @@ func extractResponseBody(resp Response) string {
 	return ""
 }
 
-func (p *Proxy) writeAudit(call engine.ToolCall, decision engine.Decision, request map[string]any, response *audit.ToolResponse) {
+func (p *Proxy) writeAudit(call engine.ToolCall, decision engine.Decision, request map[string]any, response *audit.ToolResponse) error {
 	if p.sink == nil {
-		return
+		return nil
 	}
 	if request == nil {
 		request = cloneMap(call.Params)
 	}
 
 	event := audit.Event{
-		ID:        audit.NewEventID(),
-		Timestamp: time.Now().UTC(),
-		Agent:     call.Agent,
-		Session:   call.Session,
-		Tool:      call.Tool,
-		Request:   request,
+		ID:         audit.NewEventID(),
+		Timestamp:  time.Now().UTC(),
+		Agent:      call.Agent,
+		Session:    call.Session,
+		ToolCallID: call.ID,
+		Tool:       call.Tool,
+		Request:    request,
 		Decision: audit.EventDecision{
 			Action:          decision.Action.String(),
 			MatchedPolicies: decision.MatchedPolicies,
@@ -770,9 +824,7 @@ func (p *Proxy) writeAudit(call engine.ToolCall, decision engine.Decision, reque
 		Response: response,
 	}
 
-	if err := p.sink.Write(event); err != nil {
-		p.logger.Error("mcp: audit write failed", "error", err)
-	}
+	return p.sink.Write(event)
 }
 
 func (p *Proxy) writeErrorToClient(id json.RawMessage, code int, message string) error {

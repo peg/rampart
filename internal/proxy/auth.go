@@ -48,8 +48,11 @@ func (a authIdentity) HasScope(scope string) bool {
 	return false
 }
 
-// extractBearerToken extracts the bearer token from the Authorization header
-// or the "token" query parameter.
+// extractBearerToken extracts the bearer token from the Authorization header.
+// Query-string authentication is intentionally limited to the SSE endpoint,
+// because browser EventSource cannot set an Authorization header. Accepting a
+// token in URLs for every API endpoint needlessly exposes credentials through
+// access logs and referrers.
 func extractBearerToken(r *http.Request) string {
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	if auth != "" {
@@ -58,7 +61,11 @@ func extractBearerToken(r *http.Request) string {
 			return tok
 		}
 	}
-	return strings.TrimSpace(r.URL.Query().Get("token"))
+	if r.URL.Path == "/v1/events/stream" &&
+		(r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		return strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	return ""
 }
 
 // identify resolves a request to an authIdentity.
@@ -70,7 +77,7 @@ func (s *Server) identify(r *http.Request) (*authIdentity, string) {
 		return nil, "missing authorization token"
 	}
 
-	// Warn if token was passed via query parameter (leaks to logs).
+	// Warn when the EventSource compatibility path put the token in the URL.
 	if r.URL.Query().Get("token") != "" && r.Header.Get("Authorization") == "" {
 		if s.logger != nil {
 			s.logger.Warn("proxy: token passed via query parameter — use Authorization header to avoid log exposure")

@@ -67,7 +67,7 @@ func TestLearnRule_CreatesRule(t *testing.T) {
 	var result learnResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 
-	assert.Equal(t, "sudo apt-get install *", result.Pattern)
+	assert.Equal(t, "sudo apt-get install nmap", result.Pattern)
 	assert.Equal(t, "exec", result.Tool)
 	assert.Equal(t, "allow", result.Decision)
 	assert.Equal(t, "openclaw-approval", result.Source)
@@ -78,7 +78,7 @@ func TestLearnRule_CreatesRule(t *testing.T) {
 	data, err := os.ReadFile(overridesPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), result.RuleName)
-	assert.Contains(t, string(data), "sudo apt-get install *")
+	assert.Contains(t, string(data), "sudo apt-get install nmap")
 }
 
 func TestLearnRule_Duplicate409(t *testing.T) {
@@ -96,7 +96,32 @@ func TestLearnRule_Duplicate409(t *testing.T) {
 
 	var result learnResponse
 	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&result))
-	assert.Equal(t, "sudo apt-get install *", result.Pattern)
+	assert.Equal(t, "sudo apt-get install nmap", result.Pattern)
+}
+
+func TestLearnRule_CreatesExactPathRule(t *testing.T) {
+	ts, token, tmpHome := setupLearnTestServer(t)
+
+	body := `{"tool":"write","args":"/tmp/output[1].txt","decision":"allow","source":"openclaw-approval"}`
+	resp := postLearn(t, ts, token, body)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var result learnResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, "/tmp/output[[]1].txt", result.Pattern)
+
+	overrides, err := policy.LoadUserOverridesPolicy(filepath.Join(tmpHome, ".rampart", "policies", "user-overrides.yaml"))
+	require.NoError(t, err)
+	require.Len(t, overrides.Policies, 1)
+	when := overrides.Policies[0].Rules[0].When
+	assert.Equal(t, []string{"/tmp/output[[]1].txt"}, when.PathMatches)
+	assert.Empty(t, when.CommandMatches)
+}
+
+func TestLearnRule_RejectsUnsupportedAutomaticAuthority(t *testing.T) {
+	ts, token, _ := setupLearnTestServer(t)
+	resp := postLearn(t, ts, token, `{"tool":"mcp.custom","args":"value","decision":"allow"}`)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestLearnRule_MissingFields(t *testing.T) {
@@ -109,6 +134,8 @@ func TestLearnRule_MissingFields(t *testing.T) {
 		{"missing tool", `{"args":"ls","decision":"allow"}`},
 		{"missing args", `{"tool":"exec","decision":"allow"}`},
 		{"missing both", `{"decision":"allow"}`},
+		{"blank tool", `{"tool":"   ","args":"ls","decision":"allow"}`},
+		{"blank args", `{"tool":"exec","args":"   ","decision":"allow"}`},
 	}
 
 	for _, tt := range tests {
@@ -127,22 +154,23 @@ func TestLearnRule_InvalidDecision(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-func TestLearnRule_CorrectGlob(t *testing.T) {
+func TestLearnRule_UsesExactPattern(t *testing.T) {
 	tests := []struct {
 		args    string
 		pattern string
 	}{
-		{"sudo apt-get install nmap", "sudo apt-get install *"},
-		{"sudo apt-get install nmap --dry-run 2>&1 | head -1", "sudo apt-get install nmap *"},
+		{"sudo apt-get install nmap", "sudo apt-get install nmap"},
+		{"sudo apt-get install nmap --dry-run 2>&1 | head -1", "sudo apt-get install nmap --dry-run 2>&1 | head -1"},
 		{"docker run nginx", "docker run nginx"},
 		{"curl https://example.com/install.sh", "curl https://example.com/install.sh"},
 		{"ls", "ls"},
-		{"cat /etc/hosts", "cat /etc/hosts *"},
+		{"cat /etc/hosts", "cat /etc/hosts"},
+		{"echo *.txt", "echo [*].txt"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.args, func(t *testing.T) {
-			got := policy.BuildAllowPattern(tt.args)
+			got := policy.BuildExactAllowPattern(tt.args)
 			assert.Equal(t, tt.pattern, got)
 		})
 	}

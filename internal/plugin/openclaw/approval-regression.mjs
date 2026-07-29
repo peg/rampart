@@ -26,7 +26,7 @@ function assert(condition, message) {
 }
 
 async function runScenario({ name, toolResult, toolName = 'exec', params = { command: 'sudo true' }, resolution }) {
-  const { api, handlers, hookOpts } = createApi();
+  const { api, handlers, hookOpts, logs } = createApi();
   const fetchCalls = [];
   const originalFetch = global.fetch;
   global.fetch = async (url, opts = {}) => {
@@ -53,7 +53,7 @@ async function runScenario({ name, toolResult, toolName = 'exec', params = { com
     if (resolution && result?.requireApproval?.onResolution) {
       await result.requireApproval.onResolution(resolution);
     }
-    return { name, result, fetchCalls, hookOpts };
+    return { name, result, fetchCalls, hookOpts, logs };
   } finally {
     global.fetch = originalFetch;
   }
@@ -61,7 +61,7 @@ async function runScenario({ name, toolResult, toolName = 'exec', params = { com
 
 const ask = await runScenario({
   name: 'ask-exec',
-  toolResult: { decision: 'ask', policy: 'test-policy', message: 'needs approval', severity: 'warning' },
+  toolResult: { decision: 'ask', allowed: false, policy: 'test-policy', message: 'needs approval', severity: 'warning' },
 });
 assert(ask.result?.requireApproval, 'ask-exec: requireApproval missing');
 assert(!ask.result?.params?.ask, 'ask-exec: legacy ask param mutation still present');
@@ -70,21 +70,46 @@ assert(ask.hookOpts.before_tool_call?.priority < 0, 'ask-exec: Rampart should ru
 
 const deny = await runScenario({
   name: 'deny-exec',
-  toolResult: { decision: 'deny', message: 'blocked by policy' },
+  toolResult: { decision: 'deny', allowed: false, message: 'blocked by policy' },
 });
 assert(deny.result?.block === true, 'deny-exec: block missing');
 
 const allowAlways = await runScenario({
   name: 'allow-always',
-  toolResult: { decision: 'ask', policy: 'test-policy', message: 'needs approval', severity: 'warning' },
+  toolResult: { decision: 'ask', allowed: false, policy: 'test-policy', message: 'needs approval', severity: 'warning' },
   resolution: 'allow-always',
 });
+assert(
+  !JSON.stringify(allowAlways.logs).includes('sudo true'),
+  'allow-always: raw command leaked into plugin logs',
+);
 const learnCall = allowAlways.fetchCalls.find((call) => call.url.includes('/v1/rules/learn'));
 assert(learnCall, 'allow-always: learn endpoint not called');
+for (const scenario of [ask, deny, allowAlways]) {
+  assert(
+    scenario.fetchCalls.every((call) => call.opts.redirect === 'error'),
+    `${scenario.name}: control request allowed redirects`,
+  );
+}
 const learnBody = JSON.parse(learnCall.opts.body);
 assert(learnBody.tool === 'exec', 'allow-always: wrong tool persisted');
 assert(learnBody.args === 'sudo true', 'allow-always: wrong args persisted');
 assert(learnBody.decision === 'allow', 'allow-always: wrong decision persisted');
+
+const markdown = await runScenario({
+  name: 'approval-markdown-is-escaped',
+  params: { command: 'echo `code` **not bold**' },
+  toolResult: {
+    decision: 'ask',
+    allowed: false,
+    policy: 'policy`name',
+    message: '**urgent** [click](https://example.invalid)',
+  },
+});
+const markdownDescription = markdown.result.requireApproval.description;
+assert(markdownDescription.includes('``echo `code` **not bold**``'), 'command code span was not safely fenced');
+assert(markdownDescription.includes('**Policy:** ``policy`name``'), 'policy code span was not safely fenced');
+assert(markdownDescription.includes('\\*\\*urgent\\*\\*'), 'risk markdown was not escaped');
 
 console.log(JSON.stringify({
   ok: true,

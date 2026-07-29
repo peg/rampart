@@ -30,7 +30,7 @@ policies:
     match:
       tool: ["mcp-dangerous"]
     rules:
-      - action: require_approval
+      - action: ask
         message: "Risky MCP operation — approve?"
 
   # Block credential and secret file access
@@ -63,10 +63,10 @@ policies:
             - "$HOME/.aws/**"
         message: "Write outside project directory blocked"
 
-  # Log all other MCP tool calls for visibility
-  - name: log-mcp-calls
+  # Require approval for tools Rampart cannot classify from their names.
+  - name: approve-unclassified-mcp
     match:
       tool: ["mcp"]
     rules:
-      - action: log
-        message: "MCP tool call logged"
+      - action: ask
+        message: "Unclassified MCP tool call — approve?"

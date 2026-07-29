@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-from typing import Any, Callable, Dict, Optional, TypeVar, Union, cast
+from typing import Any, Callable, Dict, Optional, TypeVar, cast
 
 from .client import RampartClient
 from .types import RampartDeniedError
@@ -32,7 +32,7 @@ _default_client: Optional[RampartClient] = None
 
 def set_default_client(client: RampartClient) -> None:
     """Set the default client instance for decorators.
-    
+
     Args:
         client: The RampartClient instance to use for policy checks
     """
@@ -41,10 +41,13 @@ def set_default_client(client: RampartClient) -> None:
 
 
 def get_default_client() -> RampartClient:
-    """Get the default client instance, creating one if needed."""
+    """Get the default client, creating a fail-closed guard client if needed."""
     global _default_client
     if _default_client is None:
-        _default_client = RampartClient()
+        # Decorators sit directly on an execution boundary. Preserve the
+        # generic client's historical availability-first default, but never
+        # turn a policy-service outage into implicit authorization here.
+        _default_client = RampartClient(fail_open=False)
     return _default_client
 
 
@@ -58,10 +61,10 @@ def guard(
     raise_on_deny: bool = True,
 ) -> Callable[[F], F]:
     """Decorator to wrap a function with Rampart policy checks.
-    
+
     The decorator performs a preflight check before calling the wrapped function.
     By default, it raises RampartDeniedError if the call is denied by policy.
-    
+
     Args:
         tool_name: Name of the tool for policy evaluation
         client: RampartClient instance (uses default if None)
@@ -69,83 +72,85 @@ def guard(
         agent: Agent identifier for policy context
         session: Session identifier for policy context
         raise_on_deny: Whether to raise an exception when denied (default: True)
-    
+
     Returns:
         Decorated function that performs policy checks
-    
+
     Example:
         >>> @guard("exec")
         ... def run_command(command: str) -> str:
         ...     return subprocess.check_output(command, shell=True).decode()
-        
+
         >>> @guard("read", param_map={"file_path": "path"})
         ... def read_file(file_path: str) -> str:
         ...     with open(file_path) as f:
         ...         return f.read()
     """
-    
+
     def decorator(func: F) -> F:
         # Get function signature for parameter mapping
         sig = inspect.signature(func)
-        
+
         if asyncio.iscoroutinefunction(func):
+
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 # Extract parameters for policy check
                 bound_args = sig.bind(*args, **kwargs)
                 bound_args.apply_defaults()
                 params = _extract_params(bound_args.arguments, param_map)
-                
+
                 # Get client instance
                 policy_client = client or get_default_client()
-                
-                # Perform preflight check
-                decision = await policy_client.apreflight(
+
+                # This guard is the execution boundary, so consume stateful
+                # call-count and once:true rules rather than only previewing.
+                decision = await policy_client.aenforce(
                     tool_name, params, agent, session
                 )
-                
+
                 if not decision.allowed and raise_on_deny:
                     policy_name = decision.policies[0] if decision.policies else None
                     raise RampartDeniedError(tool_name, policy_name, decision.message)
-                
+
                 # If allowed or not raising on deny, call the original function
                 if decision.allowed:
                     return await func(*args, **kwargs)
                 else:
                     # Policy denied but not raising - return None or empty result
                     return None
-            
+
             return cast(F, async_wrapper)
-        
+
         else:
+
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 # Extract parameters for policy check
                 bound_args = sig.bind(*args, **kwargs)
                 bound_args.apply_defaults()
                 params = _extract_params(bound_args.arguments, param_map)
-                
+
                 # Get client instance
                 policy_client = client or get_default_client()
-                
-                # Perform preflight check
-                decision = policy_client.preflight(
-                    tool_name, params, agent, session
-                )
-                
+
+                # This guard is the execution boundary, so consume stateful
+                # call-count and once:true rules rather than only previewing.
+                decision = policy_client.enforce(tool_name, params, agent, session)
+
                 if not decision.allowed and raise_on_deny:
                     policy_name = decision.policies[0] if decision.policies else None
                     raise RampartDeniedError(tool_name, policy_name, decision.message)
-                
+
                 # If allowed or not raising on deny, call the original function
                 if decision.allowed:
                     return func(*args, **kwargs)
                 else:
                     # Policy denied but not raising - return None or empty result
                     return None
-            
+
             return cast(F, sync_wrapper)
-    
+
     return decorator
 
 
@@ -158,22 +163,23 @@ def exec_guard(
     raise_on_deny: bool = True,
 ) -> Callable[[F], F]:
     """Convenience decorator for exec tool policy checks.
-    
+
     Args:
         client: RampartClient instance (uses default if None)
         command_param: Name of the parameter containing the command
         agent: Agent identifier for policy context
         session: Session identifier for policy context
         raise_on_deny: Whether to raise an exception when denied
-    
+
     Example:
         >>> @exec_guard()
         ... def run_command(command: str) -> str:
         ...     return subprocess.check_output(command, shell=True).decode()
-        
+
         >>> @exec_guard(command_param="cmd")
         ... def execute(cmd: str, timeout: int = 30) -> str:
-        ...     return subprocess.check_output(cmd, shell=True, timeout=timeout).decode()
+        ...     output = subprocess.check_output(cmd, shell=True, timeout=timeout)
+        ...     return output.decode()
     """
     param_map = {command_param: "command"}
     return guard(
@@ -195,20 +201,20 @@ def read_guard(
     raise_on_deny: bool = True,
 ) -> Callable[[F], F]:
     """Convenience decorator for read tool policy checks.
-    
+
     Args:
         client: RampartClient instance (uses default if None)
         path_param: Name of the parameter containing the file path
         agent: Agent identifier for policy context
         session: Session identifier for policy context
         raise_on_deny: Whether to raise an exception when denied
-    
+
     Example:
         >>> @read_guard()
         ... def read_file(path: str) -> str:
         ...     with open(path) as f:
         ...         return f.read()
-        
+
         >>> @read_guard(path_param="filename")
         ... def load_config(filename: str) -> dict:
         ...     with open(filename) as f:
@@ -235,7 +241,7 @@ def write_guard(
     raise_on_deny: bool = True,
 ) -> Callable[[F], F]:
     """Convenience decorator for write tool policy checks.
-    
+
     Args:
         client: RampartClient instance (uses default if None)
         path_param: Name of the parameter containing the file path
@@ -243,13 +249,13 @@ def write_guard(
         agent: Agent identifier for policy context
         session: Session identifier for policy context
         raise_on_deny: Whether to raise an exception when denied
-    
+
     Example:
         >>> @write_guard()
         ... def write_file(path: str, content: str) -> None:
         ...     with open(path, 'w') as f:
         ...         f.write(content)
-        
+
         >>> @write_guard(path_param="filename", content_param="data")
         ... def save_data(filename: str, data: str) -> None:
         ...     with open(filename, 'w') as f:
@@ -258,7 +264,7 @@ def write_guard(
     param_map = {path_param: "path"}
     if content_param:
         param_map[content_param] = "content"
-    
+
     return guard(
         "write",
         client=client,
@@ -278,19 +284,19 @@ def fetch_guard(
     raise_on_deny: bool = True,
 ) -> Callable[[F], F]:
     """Convenience decorator for fetch tool policy checks.
-    
+
     Args:
         client: RampartClient instance (uses default if None)
         url_param: Name of the parameter containing the URL
         agent: Agent identifier for policy context
         session: Session identifier for policy context
         raise_on_deny: Whether to raise an exception when denied
-    
+
     Example:
         >>> @fetch_guard()
         ... def fetch_url(url: str) -> str:
         ...     return httpx.get(url).text
-        
+
         >>> @fetch_guard(url_param="endpoint")
         ... def api_call(endpoint: str, headers: dict) -> dict:
         ...     return httpx.get(endpoint, headers=headers).json()
@@ -310,20 +316,20 @@ def _extract_params(
     args: Dict[str, Any], param_map: Optional[Dict[str, str]]
 ) -> Dict[str, Any]:
     """Extract and map function parameters for policy evaluation.
-    
+
     Args:
         args: Function arguments from inspect.BoundArguments
         param_map: Mapping from function parameter names to policy parameter names
-    
+
     Returns:
         Dictionary of parameters for the policy check
     """
     if param_map is None:
         return args
-    
+
     params = {}
     for func_param, policy_param in param_map.items():
         if func_param in args:
             params[policy_param] = args[func_param]
-    
+
     return params

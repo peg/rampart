@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -385,15 +387,32 @@ func TestCleanup_IgnoresNonJSONFiles(t *testing.T) {
 	}
 }
 
+func TestStateReadRejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not consistently available on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte(`{"session_id":"linked"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "linked.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(dir, "linked", nil)
+	if _, err := m.PeekAsk("tool-use"); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+		t.Fatalf("PeekAsk symlink error = %v, want non-symlink rejection", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Concurrent access
 // ---------------------------------------------------------------------------
 
 func TestConcurrentRecordAsk(t *testing.T) {
 	// Spawn multiple goroutines all writing to the same session file.
-	// After all complete, verify that at least N asks are recorded (some
-	// may be overwritten in the last-write-wins model, but the file must
-	// always be valid JSON and the count must be > 0).
+	// Every distinct ask must survive the serialized load-modify-save cycle.
 	m, dir := newTestManager(t, "sess-concurrent")
 
 	const n = 20
@@ -419,16 +438,14 @@ func TestConcurrentRecordAsk(t *testing.T) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		t.Fatalf("state file is not valid JSON after concurrent writes: %v", err)
 	}
-	if len(s.PendingAsks) == 0 {
-		t.Error("expected at least one pending ask after concurrent writes")
+	if len(s.PendingAsks) != n {
+		t.Errorf("pending asks = %d, want %d", len(s.PendingAsks), n)
 	}
 }
 
 func TestConcurrentObserveApproval(t *testing.T) {
 	// Record N asks, then concurrently observe all approvals.
-	// Each ObserveApproval must either succeed (finding the pending ask)
-	// or fail gracefully (if another goroutine already moved it).
-	// The file must always parse as valid JSON.
+	// Each distinct pending ask should be observed exactly once.
 	const n = 10
 	m, dir := newTestManager(t, "sess-concurrent-approve")
 
@@ -446,7 +463,9 @@ func TestConcurrentObserveApproval(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("toolu_%03d", i)
-			_, _ = m.ObserveApproval(id) // error is acceptable (idempotent race)
+			if _, err := m.ObserveApproval(id); err != nil {
+				t.Errorf("ObserveApproval(%s): %v", id, err)
+			}
 		}(i)
 	}
 	wg.Wait()
@@ -460,6 +479,9 @@ func TestConcurrentObserveApproval(t *testing.T) {
 	var s State
 	if err := json.Unmarshal(data, &s); err != nil {
 		t.Fatalf("state file is not valid JSON after concurrent approvals: %v", err)
+	}
+	if len(s.PendingAsks) != 0 || len(s.SessionApprovals) != n {
+		t.Fatalf("pending=%d approvals=%d, want 0 and %d", len(s.PendingAsks), len(s.SessionApprovals), n)
 	}
 }
 
@@ -554,6 +576,7 @@ func TestValidateSessionID_PathTraversal(t *testing.T) {
 		{"slash in id", "session/evil", true},
 		{"space in id", "session evil", true},
 		{"null byte", "session\x00evil", true},
+		{"overlong", strings.Repeat("a", 201), true},
 		{"empty", "", true},
 	}
 
@@ -567,6 +590,19 @@ func TestValidateSessionID_PathTraversal(t *testing.T) {
 				t.Errorf("validateSessionID(%q) = %v, want nil", tc.sessionID, err)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsMismatchedSessionIdentity(t *testing.T) {
+	dir := t.TempDir()
+	writeStateFile(t, dir, "requested", State{
+		SessionID:        "different",
+		PendingAsks:      map[string]PendingAsk{},
+		SessionApprovals: map[string]ApprovalRecord{},
+	})
+	m := NewManager(dir, "requested", nil)
+	if _, err := m.PeekAsk("tool-1"); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("PeekAsk error = %v, want session identity mismatch", err)
 	}
 }
 

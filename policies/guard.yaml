@@ -15,8 +15,6 @@ policies:
     rules:
       - action: ask
         when:
-          tool_param_matches:
-            rampart_integration: "openclaw"
           command_matches:
             - "git push*"
             - "gh pr create*"
@@ -51,8 +49,6 @@ policies:
     rules:
       - action: ask
         when:
-          tool_param_matches:
-            rampart_integration: "openclaw"
           command_matches:
             - "sudo *"
             - "systemctl start*"
@@ -77,8 +73,6 @@ policies:
     rules:
       - action: deny
         when:
-          tool_param_matches:
-            rampart_integration: "openclaw"
           command_matches:
             - "cat **/.ssh/id_*"
             - "head **/.ssh/id_*"
@@ -109,8 +103,6 @@ policies:
     rules:
       - action: deny
         when:
-          tool_param_matches:
-            rampart_integration: "openclaw"
           command_matches:
             - "curl **"
             - "wget **"
@@ -132,8 +124,6 @@ policies:
     rules:
       - action: ask
         when:
-          tool_param_matches:
-            rampart_integration: "openclaw"
           command_matches:
             - "node **"
             - "python **"

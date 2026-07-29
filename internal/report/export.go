@@ -52,18 +52,18 @@ type ExportReport struct {
 
 // ExportTotals summarizes action counts.
 type ExportTotals struct {
-	Allow      int `json:"allow"`
-	Deny       int `json:"deny"`
-	Ask        int `json:"ask"`
-	AutoAllow  int `json:"auto_allowed"`
-	Total      int `json:"total"`
+	Allow     int `json:"allow"`
+	Deny      int `json:"deny"`
+	Ask       int `json:"ask"`
+	AutoAllow int `json:"auto_allowed"`
+	Total     int `json:"total"`
 }
 
 // ExportRule is a rule with its hit count and sample commands.
 type ExportRule struct {
-	Name     string   `json:"name"`
-	Count    int      `json:"count"`
-	Samples  []string `json:"samples"` // up to 5 example commands
+	Name    string   `json:"name"`
+	Count   int      `json:"count"`
+	Samples []string `json:"samples"` // up to 5 example commands
 }
 
 // GenerateExport reads audit logs and produces an export report.
@@ -146,7 +146,7 @@ func GenerateExport(opts ExportOptions) (*ExportReport, string, error) {
 					agg.samples = append(agg.samples, cmd)
 				}
 			}
-		case "allow":
+		case "allow", "watch", "log":
 			report.Totals.Allow++
 			for _, p := range e.Decision.MatchedPolicies {
 				agg, ok := allowed[p]
@@ -159,7 +159,7 @@ func GenerateExport(opts ExportOptions) (*ExportReport, string, error) {
 					agg.samples = append(agg.samples, cmd)
 				}
 			}
-		case "ask", "require_approval":
+		case "ask", "require_approval", "webhook":
 			report.Totals.Ask++
 			for _, p := range e.Decision.MatchedPolicies {
 				agg, ok := approval[p]
@@ -174,8 +174,6 @@ func GenerateExport(opts ExportOptions) (*ExportReport, string, error) {
 			}
 		case "auto_allow":
 			report.Totals.AutoAllow++
-		default:
-			report.Totals.Allow++
 		}
 	}
 
@@ -289,5 +287,3 @@ func aggToSorted(m map[string]*ruleAgg) []ExportRule {
 	})
 	return rules
 }
-
-

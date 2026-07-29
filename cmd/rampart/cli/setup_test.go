@@ -148,6 +148,45 @@ func TestRemoveClaudeCodeHooks_PreservesNonRampart(t *testing.T) {
 	}
 }
 
+func TestRemoveClaudeCodeHooks_PreservesCommandsSharingMatcher(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]any{"hooks": map[string]any{
+		"PreToolUse": []any{map[string]any{
+			"matcher": ".*",
+			"hooks": []any{
+				map[string]any{"type": "command", "command": "other-tool check"},
+				map[string]any{"type": "command", "command": "rampart hook --format claude-code"},
+			},
+		}},
+	}}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newSetupClaudeCodeCmd(&rootOptions{})
+	cmd.SetArgs([]string{"--remove"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), "hook --format claude-code") || !strings.Contains(string(updated), "other-tool check") {
+		t.Fatalf("shared matcher was not narrowed safely: %s", updated)
+	}
+}
+
 func TestRemoveClineHooks_WithHooks(t *testing.T) {
 	tmpHome := t.TempDir()
 	testSetHome(t, tmpHome)
@@ -157,8 +196,8 @@ func TestRemoveClineHooks_WithHooks(t *testing.T) {
 	postDir := filepath.Join(hookDir, "PostToolUse")
 	os.MkdirAll(preDir, 0o755)
 	os.MkdirAll(postDir, 0o755)
-	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte("#!/bin/bash\n"), 0o755)
-	os.WriteFile(filepath.Join(postDir, "rampart-audit"), []byte("#!/bin/bash\n"), 0o755)
+	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte(createLegacyClineHookForTest("PreToolUse")), 0o755)
+	os.WriteFile(filepath.Join(postDir, "rampart-audit"), []byte(createLegacyClineHookForTest("PostToolUse")), 0o755)
 
 	opts := &rootOptions{}
 	cmd := newSetupClineCmd(opts)
@@ -170,7 +209,7 @@ func TestRemoveClineHooks_WithHooks(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "Removed 2 Rampart hook(s)") {
+	if !strings.Contains(out.String(), "Removed 2 Rampart Cline hook(s)") {
 		t.Errorf("expected removal message, got: %s", out.String())
 	}
 }
@@ -203,7 +242,7 @@ func TestRemoveClineHooks_Workspace(t *testing.T) {
 	hookDir := filepath.Join(tmpDir, ".clinerules", "hooks")
 	preDir := filepath.Join(hookDir, "PreToolUse")
 	os.MkdirAll(preDir, 0o755)
-	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte("#!/bin/bash\n"), 0o755)
+	os.WriteFile(filepath.Join(preDir, "rampart-policy"), []byte(createLegacyClineHookForTest("PreToolUse")), 0o755)
 
 	opts := &rootOptions{}
 	cmd := newSetupClineCmd(opts)
@@ -215,7 +254,7 @@ func TestRemoveClineHooks_Workspace(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "Removed 1 Rampart hook(s)") {
+	if !strings.Contains(out.String(), "Removed 1 Rampart Cline hook(s)") {
 		t.Errorf("expected removal message, got: %s", out.String())
 	}
 }

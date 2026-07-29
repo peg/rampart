@@ -16,6 +16,7 @@ package audit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,4 +34,30 @@ func TestReadEventsFromOffset_BackwardCompatibleMissingFields(t *testing.T) {
 
 	require.Empty(t, events[0].SchemaVersion)
 	require.Nil(t, events[0].Host)
+}
+
+func TestReadEventsFromOffset_LargeRecord(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.jsonl")
+	command := strings.Repeat("x", 96*1024)
+	line := `{"id":"large","timestamp":"2026-02-12T00:00:00Z","tool":"exec","request":{"command":"` + command + `"},"decision":{"action":"allow"}}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(line), 0o600))
+
+	events, offset, err := ReadEventsFromOffset(path, 0)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, command, events[0].Request["command"])
+	require.EqualValues(t, len(line), offset)
+}
+
+func TestReadEventsFromOffset_RejectsOversizedRecord(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "oversized.jsonl")
+	record := append([]byte(strings.Repeat("x", MaxRecordBytes+1)), '\n')
+	require.NoError(t, os.WriteFile(path, record, 0o600))
+
+	events, offset, err := ReadEventsFromOffset(path, 0)
+	require.ErrorContains(t, err, "record exceeds")
+	require.Nil(t, events)
+	require.Zero(t, offset)
 }

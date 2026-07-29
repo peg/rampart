@@ -39,6 +39,36 @@ func TestNormalizeCommand(t *testing.T) {
 		{"env with path", "PATH=/usr/bin:/bin ls", "ls"},
 		{"only env", "FOO=bar", ""},
 
+		// Transparent POSIX executors must not hide the effective command.
+		{"command builtin", "command rm -rf /", "rm -rf /"},
+		{"command path search", "command -p rm -rf /", "rm -rf /"},
+		{"exec separator", "exec -- rm -rf /", "rm -rf /"},
+		{"exec argv zero", "exec -a harmless rm -rf /", "rm -rf /"},
+		{"env clean", "env -i PATH=/usr/bin rm -rf /", "rm -rf /"},
+		{"env unset", "env --unset RAMPART_MODE rm -rf /", "rm -rf /"},
+		{"env split string", `env -S 'PATH=/usr/bin rm -rf /'`, "rm -rf /"},
+		{"env attached unset", "env -uRAMPART_MODE rm -rf /", "rm -rf /"},
+		{"env attached chdir", "env -C/tmp rm -rf /", "rm -rf /"},
+		{"env attached split string", `env -S'rm -rf /'`, "rm -rf /"},
+		{"nohup", "nohup rm -rf /", "rm -rf /"},
+		{"nohup separator", "/usr/bin/nohup -- rm -rf /", "rm -rf /"},
+		{"nice adjustment", "nice -n 5 rm -rf /", "rm -rf /"},
+		{"nice attached adjustment", "nice -n5 rm -rf /", "rm -rf /"},
+		{"nice historical adjustment", "nice -5 rm -rf /", "rm -rf /"},
+		{"timeout options", "timeout --foreground -k 1s -s TERM 5s rm -rf /", "rm -rf /"},
+		{"timeout attached options", "timeout -k1s -sTERM 5s rm -rf /", "rm -rf /"},
+		{"setsid options", "setsid -cfw -- rm -rf /", "rm -rf /"},
+		{"stdbuf options", "stdbuf -i0 -oL -e 0 rm -rf /", "rm -rf /"},
+		{"nested launchers", "nohup timeout 5s nice -n5 setsid -f stdbuf -oL rm -rf /", "rm -rf /"},
+		{"nested transparent executors", "command env -i exec -- rm -rf /", "rm -rf /"},
+		{"command query is not execution", "command -v rm", "command -v rm"},
+		{"env without utility stays intact", "env -i PATH=/usr/bin", "env -i PATH=/usr/bin"},
+		{"nohup help does not execute", "nohup --help rm -rf /", "nohup --help rm -rf /"},
+		{"nice malformed adjustment stays intact", "nice -n nope rm -rf /", "nice -n nope rm -rf /"},
+		{"timeout missing duration stays intact", "timeout --foreground rm -rf /", "timeout --foreground rm -rf /"},
+		{"setsid unknown option stays intact", "setsid -x rm -rf /", "setsid -x rm -rf /"},
+		{"stdbuf malformed mode stays intact", "stdbuf -o nope rm -rf /", "stdbuf -o nope rm -rf /"},
+
 		// Compound commands
 		{"and", "rm -rf / && echo done", "rm -rf / && echo done"},
 		{"or", "rm -rf / || echo failed", "rm -rf / && echo failed"},
@@ -65,6 +95,32 @@ func TestNormalizeCommand(t *testing.T) {
 	}
 }
 
+func TestTransparentPOSIXLaunchersDoNotWidenGrants(t *testing.T) {
+	condition := Condition{CommandMatches: []string{"git *"}}
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "valid timeout executes allowed command", command: "timeout 5s git status", want: true},
+		{name: "valid nested launchers execute allowed command", command: "nohup nice -n5 stdbuf -oL git status", want: true},
+		{name: "timeout help does not execute trailing command", command: "timeout --help git status", want: false},
+		{name: "timeout unknown option remains ambiguous", command: "timeout --future-option 5s git status", want: false},
+		{name: "nice malformed option remains ambiguous", command: "nice -n nope git status", want: false},
+		{name: "setsid unknown option remains ambiguous", command: "setsid -x git status", want: false},
+		{name: "stdbuf malformed mode remains ambiguous", command: "stdbuf -o nope git status", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+			if got := matchConditionForAction(condition, call, nil, ActionAllow); got != test.want {
+				t.Fatalf("allow match for %q = %v, want %v", test.command, got, test.want)
+			}
+		})
+	}
+}
+
 func TestSplitCompoundCommand(t *testing.T) {
 	tests := []struct {
 		name string
@@ -76,9 +132,17 @@ func TestSplitCompoundCommand(t *testing.T) {
 		{"or", "a || b", []string{"a", "b"}},
 		{"semicolon", "a ; b", []string{"a", "b"}},
 		{"pipe", "a | b", []string{"a", "b"}},
-		{"mixed", "a && b | c ; d", []string{"a", "b", "c", "d"}},
+		{"ampersand", "a & b", []string{"a", "b"}},
+		{"mixed", "a && b | c ; d & e", []string{"a", "b", "c", "d", "e"}},
 		{"quoted pipe", "echo 'a|b'", []string{"echo 'a|b'"}},
 		{"quoted and", `echo "a&&b"`, []string{`echo "a&&b"`}},
+		{"quoted ampersand", `echo "a&b"`, []string{`echo "a&b"`}},
+		{"escaped ampersand", `echo a\&b`, []string{`echo a\&b`}},
+		{"fd output redirect", "command 2>&1", []string{"command 2>&1"}},
+		{"fd input redirect", "command 3<&0", []string{"command 3<&0"}},
+		{"combined output redirect", "command &>output.log", []string{"command &>output.log"}},
+		{"combined append redirect", "command &>>output.log", []string{"command &>>output.log"}},
+		{"redirect then separator", "command 2>&1 & cleanup", []string{"command 2>&1", "cleanup"}},
 		{"empty", "", nil},
 		{"empty segments", "a ;; b", []string{"a", "b"}},
 	}
@@ -93,6 +157,54 @@ func TestSplitCompoundCommand(t *testing.T) {
 			for i := range got {
 				if got[i] != tt.want[i] {
 					t.Errorf("segment %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestSplitCompoundCommand_WindowsSemantics(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want []string
+	}{
+		{
+			name: "ampersand greater-than is separator then redirect",
+			cmd:  "echo safe &>nul del secret.txt",
+			want: []string{"echo safe", ">nul del secret.txt"},
+		},
+		{
+			name: "backslash does not escape separator",
+			cmd:  `echo safe\& del secret.txt`,
+			want: []string{`echo safe\`, "del secret.txt"},
+		},
+		{
+			name: "single quote does not quote separator",
+			cmd:  `echo 'safe & del secret.txt'`,
+			want: []string{`echo 'safe`, `del secret.txt'`},
+		},
+		{
+			name: "caret escapes separator",
+			cmd:  `echo safe ^& literal`,
+			want: []string{`echo safe ^& literal`},
+		},
+		{
+			name: "descriptor redirect is not separator",
+			cmd:  `echo safe 2>&1`,
+			want: []string{`echo safe 2>&1`},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := splitCompoundCommandForOS(test.cmd, "windows")
+			if len(got) != len(test.want) {
+				t.Fatalf("splitCompoundCommandForOS(%q, windows) = %v, want %v", test.cmd, got, test.want)
+			}
+			for index := range got {
+				if got[index] != test.want[index] {
+					t.Errorf("segment %d = %q, want %q", index, got[index], test.want[index])
 				}
 			}
 		})
@@ -218,10 +330,11 @@ func TestSplitCompoundCommand_Newlines(t *testing.T) {
 }
 
 func TestMatchGlob_LongInput(t *testing.T) {
-	// Verify glob matching doesn't hang on long inputs.
+	// Oversized inputs fail as a whole rather than matching a truncated prefix.
 	long := strings.Repeat("a", 20000)
-	// Should complete quickly due to maxGlobInputLen cap.
-	_ = MatchGlob("**a**b**c", long)
+	if MatchGlob("**a**", long) {
+		t.Fatal("oversized input must not match a truncated prefix")
+	}
 }
 
 func TestNormalizeCommand_EvasionVectors(t *testing.T) {
@@ -233,12 +346,23 @@ func TestNormalizeCommand_EvasionVectors(t *testing.T) {
 		`r\m -rf /`,
 		`'r'm -rf /`,
 		`FOO=bar rm -rf /`,
+		`command rm -rf /`,
+		`exec -- rm -rf /`,
+		`env -i PATH=/usr/bin rm -rf /`,
+		`command env -u RAMPART_MODE exec rm -rf /`,
 	}
 	for _, cmd := range evasions {
 		got := NormalizeCommand(cmd)
 		if got != "rm -rf /" {
 			t.Errorf("NormalizeCommand(%q) = %q, want %q", cmd, got, "rm -rf /")
 		}
+	}
+}
+
+func TestNormalizeCommand_DeepTransparentExecutorNesting(t *testing.T) {
+	command := strings.Repeat("env ", 32) + "rm -rf /"
+	if got := NormalizeCommand(command); got != "rm -rf /" {
+		t.Fatalf("NormalizeCommand(deep env nesting) = %q, want rm command", got)
 	}
 }
 
@@ -371,6 +495,111 @@ func TestNormalizeCommand_AdversarialWrapperMatrix(t *testing.T) {
 	}
 }
 
+func TestNormalizeCommand_WindowsShellWrappers(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"cmd c", "cmd /c whoami", "whoami"},
+		{"cmd exe k", `cmd.exe /k "echo ready & del secret.txt"`, "echo ready & del secret.txt"},
+		{"cmd case insensitive", "CMD.EXE /C whoami", "whoami"},
+		{"cmd leading options", "cmd.exe /d /s /c whoami", "whoami"},
+		{"cmd attached c", "cmd.exe /cdel /q secret.txt", "del /q secret.txt"},
+		{"cmd attached k", `cmd /k"DIR C:\Temp"`, `DIR C:\Temp`},
+		{"cmd caret command escape", "cmd.exe /c d^el /q secret.txt", "del /q secret.txt"},
+		{"windows powershell", "powershell -Command Get-ChildItem", "Get-ChildItem"},
+		{"windows powershell exe", "PowerShell.EXE -COMMAND Get-ChildItem", "Get-ChildItem"},
+		{"powershell core", "pwsh -c Get-ChildItem", "Get-ChildItem"},
+		{"powershell core exe", "pwsh.exe -Command Get-ChildItem", "Get-ChildItem"},
+		{"powershell leading option", "pwsh.exe -NoProfile -Command Get-ChildItem", "Get-ChildItem"},
+		{"nested windows wrappers", `cmd /c "pwsh -c Remove-Item secret.txt"`, "Remove-Item secret.txt"},
+		{"cmd missing command", "cmd.exe /c", "cmd.exe /c"},
+		{"powershell file mode", "powershell -File script.ps1", "powershell -File script.ps1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeCommand(tt.input); got != tt.want {
+				t.Errorf("NormalizeCommand(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeCommand_WindowsHostSemantics(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "direct caret-obfuscated executable",
+			input: `d^el /q secret.txt`,
+			want:  `del /q secret.txt`,
+		},
+		{
+			name:  "cmd separator followed by redirect",
+			input: `echo safe &>nul d^el /q secret.txt`,
+			want:  `echo safe && del /q secret.txt`,
+		},
+		{
+			name:  "attached c switch",
+			input: `cmd.exe /cd^el /q secret.txt`,
+			want:  `del /q secret.txt`,
+		},
+		{
+			name:  "backslash is not an escape",
+			input: `d\el C:\Temp\secret.txt`,
+			want:  `d\el C:\Temp\secret.txt`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := normalizeCommandForOS(test.input, "windows"); got != test.want {
+				t.Errorf("normalizeCommandForOS(%q, windows) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeCommand_ExplicitWrapperOverridesHostDialect(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		hostOS string
+		want   string
+	}{
+		{
+			name:   "nested POSIX wrappers on Windows host",
+			input:  "bash -c 'sh -c rm -rf /'",
+			hostOS: "windows",
+			want:   "rm -rf /",
+		},
+		{
+			name:   "cmd wrapper on POSIX host",
+			input:  `cmd.exe /c d^el /q secret.txt`,
+			hostOS: "posix",
+			want:   `del /q secret.txt`,
+		},
+		{
+			name:   "PowerShell wrapper preserves Windows path",
+			input:  `pwsh -Command 'Remove-Item C:\Temp\secret.txt'`,
+			hostOS: "posix",
+			want:   `Remove-Item C:\Temp\secret.txt`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := normalizeCommandForOS(test.input, test.hostOS); got != test.want {
+				t.Errorf("normalizeCommandForOS(%q, %q) = %q, want %q", test.input, test.hostOS, got, test.want)
+			}
+		})
+	}
+}
+
 func TestStripShellWrapper(t *testing.T) {
 	tests := []struct {
 		tokens []string
@@ -387,6 +616,11 @@ func TestStripShellWrapper(t *testing.T) {
 		{[]string{"bash", "-l", "-c", "cat", "foo"}, []string{"cat", "foo"}},
 		// Non-standard paths
 		{[]string{"/usr/local/bin/bash", "-c", "whoami"}, []string{"whoami"}},
+		// Windows shell wrappers (parsed on every host OS)
+		{[]string{"cmd.exe", "/c", "whoami"}, []string{"whoami"}},
+		{[]string{"CMD", "/K", "echo", "ready"}, []string{"echo", "ready"}},
+		{[]string{"powershell.exe", "-Command", "Get-ChildItem"}, []string{"Get-ChildItem"}},
+		{[]string{"pwsh", "-c", "Get-ChildItem"}, []string{"Get-ChildItem"}},
 		// Nested wrappers (recursive stripping)
 		{[]string{"bash", "-c", "sh", "-c", "rm", "-rf", "/"}, []string{"rm", "-rf", "/"}},
 		// Not a wrapper
@@ -410,4 +644,17 @@ func TestStripShellWrapper(t *testing.T) {
 			}
 		}
 	}
+}
+
+func stripShellWrapper(tokens []string) []string {
+	goos := "posix"
+	for depth := 0; depth < 3; depth++ {
+		stripped, nextOS := stripShellWrapperOnceForOS(tokens, goos)
+		if strSlicesEqual(stripped, tokens) {
+			return stripped
+		}
+		tokens = stripped
+		goos = nextOS
+	}
+	return tokens
 }

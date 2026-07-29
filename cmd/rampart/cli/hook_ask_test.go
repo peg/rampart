@@ -160,8 +160,9 @@ func TestParseClaudeCodeInput_SessionAndToolUseID(t *testing.T) {
 // tool_use_id do not cause errors — they remain empty strings.
 func TestParseClaudeCodeInput_SessionIDEmpty(t *testing.T) {
 	payload := map[string]any{
-		"tool_name":  "Bash",
-		"tool_input": map[string]any{"command": "echo hi"},
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "echo hi"},
 	}
 	data, _ := json.Marshal(payload)
 
@@ -279,8 +280,7 @@ func TestHookActionAsk_HeadlessOnly_DoesNotEmitPermissionDecisionAsk(t *testing.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			writeTestRampartHealth(w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			createCount.Add(1)
 			w.WriteHeader(http.StatusCreated)

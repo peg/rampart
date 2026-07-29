@@ -54,27 +54,27 @@ func (t *fileTailer) start(ctx context.Context) <-chan tailerEvent {
 	go func() {
 		defer close(out)
 		if strings.TrimSpace(t.path) == "" {
-			out <- tailerEvent{err: errors.New("watch: audit file path is empty")}
+			publishTailerEvent(ctx, out, tailerEvent{err: errors.New("watch: audit file path is empty")})
 			return
 		}
 
 		dir := filepath.Dir(t.path)
 		watcher, err := t.newWatcher()
 		if err != nil {
-			out <- tailerEvent{err: fmt.Errorf("watch: create file watcher: %w", err)}
+			publishTailerEvent(ctx, out, tailerEvent{err: fmt.Errorf("watch: create file watcher: %w", err)})
 			return
 		}
 		defer watcher.Close()
 
 		if err := watcher.Add(dir); err != nil {
-			out <- tailerEvent{err: fmt.Errorf("watch: watch parent directory %s: %w", dir, err)}
+			publishTailerEvent(ctx, out, tailerEvent{err: fmt.Errorf("watch: watch parent directory %s: %w", dir, err)})
 			return
 		}
 
 		_ = watcher.Add(t.path)
 
 		offset := int64(0)
-		offset = t.publishAvailable(out, offset)
+		offset = t.publishAvailable(ctx, out, offset)
 
 		ticker := time.NewTicker(t.pollEvery)
 		defer ticker.Stop()
@@ -84,7 +84,7 @@ func (t *fileTailer) start(ctx context.Context) <-chan tailerEvent {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				offset = t.publishAvailable(out, offset)
+				offset = t.publishAvailable(ctx, out, offset)
 			case evt, ok := <-watcher.Events:
 				if !ok {
 					return
@@ -112,13 +112,15 @@ func (t *fileTailer) start(ctx context.Context) <-chan tailerEvent {
 					continue
 				}
 				if evt.Has(fsnotify.Write) || evt.Has(fsnotify.Create) || evt.Has(fsnotify.Chmod) {
-					offset = t.publishAvailable(out, offset)
+					offset = t.publishAvailable(ctx, out, offset)
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					continue
 				}
-				out <- tailerEvent{err: fmt.Errorf("watch: watcher error: %w", err)}
+				if !publishTailerEvent(ctx, out, tailerEvent{err: fmt.Errorf("watch: watcher error: %w", err)}) {
+					return
+				}
 			}
 		}
 	}()
@@ -126,19 +128,30 @@ func (t *fileTailer) start(ctx context.Context) <-chan tailerEvent {
 	return out
 }
 
-func (t *fileTailer) publishAvailable(out chan<- tailerEvent, offset int64) int64 {
+func (t *fileTailer) publishAvailable(ctx context.Context, out chan<- tailerEvent, offset int64) int64 {
 	newEvents, newOffset, err := audit.ReadEventsFromOffset(t.path, offset)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0
 		}
-		out <- tailerEvent{err: err}
+		publishTailerEvent(ctx, out, tailerEvent{err: err})
 		return offset
 	}
 
 	for _, event := range newEvents {
-		out <- tailerEvent{event: event}
+		if !publishTailerEvent(ctx, out, tailerEvent{event: event}) {
+			return offset
+		}
 	}
 
 	return newOffset
+}
+
+func publishTailerEvent(ctx context.Context, out chan<- tailerEvent, event tailerEvent) bool {
+	select {
+	case out <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

@@ -18,10 +18,11 @@ import (
 	"errors"
 	"net/url"
 	"os"
-	"runtime"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -145,6 +146,67 @@ func TestLoadOrCreateKeyCreateAndLoad(t *testing.T) {
 	}
 	if !bytes.Equal(created, loaded) {
 		t.Fatal("expected loaded key to match created key")
+	}
+}
+
+func TestLoadOrCreateKeyConcurrentCallersShareOneKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "signing.key")
+	const callers = 16
+	keys := make(chan []byte, callers)
+	errs := make(chan error, callers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			key, err := LoadOrCreateKey(path)
+			keys <- key
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(keys)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var expected []byte
+	for key := range keys {
+		if expected == nil {
+			expected = key
+			continue
+		}
+		if !bytes.Equal(expected, key) {
+			t.Fatal("concurrent callers loaded different signing keys")
+		}
+	}
+}
+
+func TestLoadOrCreateKeyRejectsInvalidOrLinkedKey(t *testing.T) {
+	dir := t.TempDir()
+	shortPath := filepath.Join(dir, "short.key")
+	if err := os.WriteFile(shortPath, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateKey(shortPath); err == nil || !strings.Contains(err.Error(), "exactly 32 bytes") {
+		t.Fatalf("expected invalid key length error, got %v", err)
+	}
+
+	target := filepath.Join(dir, "target.key")
+	if err := os.WriteFile(target, bytes.Repeat([]byte{'k'}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked.key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := LoadOrCreateKey(link); err == nil || !strings.Contains(err.Error(), "non-regular") {
+		t.Fatalf("expected linked key refusal, got %v", err)
 	}
 }
 

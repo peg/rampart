@@ -123,24 +123,25 @@ Rules live in one of two files:
 
 | Scope | Path | When |
 |-------|------|------|
-| **Project** | `.rampart/policy.yaml` | Inside a git repo (automatic) |
-| **Global** | `~/.rampart/policies/user-overrides.yaml` | Outside a git repo (automatic) |
+| **Project** | `.rampart/policy.yaml` | Restriction rules shared with a repository |
+| **Global** | `~/.rampart/policies/user-overrides.yaml` | User-owned allow authority |
 
 Rampart auto-detects your scope by looking for a `.git` directory. Force it explicitly:
 
 ```bash
-rampart allow "npm install *" --global   # always global
-rampart allow "npm install *" --project  # always project (.rampart/policy.yaml)
+rampart allow "npm install *" --global   # allow rules are always user-owned
+rampart block "curl * | bash" --project  # restriction shared with the repo
 ```
 
 ### Project-scoped rules (team sharing)
 
-Project rules travel with the repo. Commit `.rampart/policy.yaml` to share allow/block rules with your team:
+Project rules travel with the repo. Commit `.rampart/policy.yaml` to share
+restrictions with your team:
 
 ```bash
 # In your project root
-rampart allow "npm install *" --project
-rampart allow "yarn build" --project
+rampart block "npm publish*" --project
+rampart block "git push --force*" --project
 git add .rampart/policy.yaml
 git commit -m "chore: add rampart project rules"
 ```
@@ -319,7 +320,7 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
   match:
     tool: ["exec"]
   rules:
-    # Substring matching catches ALL wrapper bypasses (bash -c, sh -c, etc.)
+    # Substring matching catches common wrapper spellings (bash -c, sh -c, etc.)
     - action: deny
       when:
         command_contains:
@@ -331,7 +332,10 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
       message: "Policy modification commands must be run by a human, not an agent"
 ```
 
-The `command_contains` approach is robust against shell wrapper bypasses — `bash -c 'rampart allow ...'` is caught because the substring "rampart allow" appears in the command.
+The `command_contains` approach catches common shell-wrapper spellings —
+`bash -c 'rampart allow ...'` is caught because the substring "rampart allow"
+appears in the command. It is not a complete shell parser or an OS sandbox;
+use a native integration and OS isolation for adversarial workloads.
 
 This means:
 

@@ -17,6 +17,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func writeTestRampartHealth(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"service":        "rampart",
+		"status":         "ok",
+		"mode":           "enforce",
+		"uptime_seconds": 1,
+		"version":        "dev",
+	})
+}
+
 // --- ExitCode (root.go) ---
 
 type exitCodeErr struct {
@@ -81,7 +92,7 @@ func TestIsPreloadRuntimeReady(t *testing.T) {
 	t.Run("healthy", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/healthz" {
-				w.WriteHeader(http.StatusOK)
+				writeTestRampartHealth(w)
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -89,6 +100,28 @@ func TestIsPreloadRuntimeReady(t *testing.T) {
 		defer srv.Close()
 		if !isPreloadRuntimeReady(context.Background(), srv.URL) {
 			t.Error("expected true for healthy server")
+		}
+	})
+
+	t.Run("unrelated HTTP 200 service", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}))
+		defer srv.Close()
+		if isPreloadRuntimeReady(context.Background(), srv.URL) {
+			t.Error("expected false for a non-Rampart health endpoint")
+		}
+	})
+
+	t.Run("legacy Rampart health payload", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "mode": "monitor", "uptime_seconds": 1, "version": "v1.3.0",
+			})
+		}))
+		defer srv.Close()
+		if !isPreloadRuntimeReady(context.Background(), srv.URL) {
+			t.Error("expected a pre-service-marker Rampart daemon to remain compatible")
 		}
 	})
 
@@ -114,7 +147,7 @@ func TestIsPreloadRuntimeReady(t *testing.T) {
 func TestWaitForProxyReady(t *testing.T) {
 	t.Run("immediately ready", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
+			writeTestRampartHealth(w)
 		}))
 		defer srv.Close()
 		if err := waitForProxyReady(context.Background(), srv.URL); err != nil {

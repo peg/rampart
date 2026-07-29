@@ -21,8 +21,9 @@ import (
 
 func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 	agents := detectAgents()
-	if len(agents) != 7 {
-		t.Fatalf("expected 7 agents, got %d", len(agents))
+	wantNames := []string{"Claude Code", "Cline", "OpenClaw", "Codex", "GitHub Copilot CLI / VS Code", "Antigravity CLI / IDE", "Aider", "Cursor", "Windsurf"}
+	if len(agents) != len(wantNames) {
+		t.Fatalf("expected %d agents, got %d", len(wantNames), len(agents))
 	}
 
 	names := map[string]bool{}
@@ -30,7 +31,7 @@ func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
 		names[a.Name] = true
 	}
 
-	for _, want := range []string{"Claude Code", "Cline", "OpenClaw", "Codex", "Aider", "Cursor", "Windsurf"} {
+	for _, want := range wantNames {
 		if !names[want] {
 			t.Errorf("missing agent %q", want)
 		}

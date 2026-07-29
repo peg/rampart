@@ -59,6 +59,9 @@ Pass criteria:
 - trajectory contains a native Codex `bash` tool call and its successful,
   matching `tool.result` output for the test marker
 - Rampart audit contains a correlated canonical `exec` event for the same marker/session
+- a separate native `bash` attempt targets only a disposable canary beneath
+  the test temp directory, produces a correlated Rampart `deny` audit and
+  denied tool result, and leaves the canary unchanged
 - a second safe command reaches an OpenClaw approval surface, is resolved with
   `allow-once`, resumes the exact tool call, and executes successfully
 - gateway-scoped approvals must appear in `plugin.approval.list` and be resolved

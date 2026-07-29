@@ -104,7 +104,10 @@ func NewCEFFileSink(path string, logger *slog.Logger) (*CEFFileSink, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit: create cef dir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err := validateAuditDirectory(dir); err != nil {
+		return nil, err
+	}
+	f, _, err := openAuditAppend(path)
 	if err != nil {
 		return nil, fmt.Errorf("audit: open cef file: %w", err)
 	}
@@ -131,11 +134,15 @@ func (c *CEFFileSink) Close() error {
 // MultiSink wraps the primary AuditSink and additional output sinks.
 // It implements AuditSink and fans out events to syslog/CEF sinks.
 type MultiSink struct {
+	mu         sync.Mutex
 	primary    AuditSink
 	syslogSink SyslogSender
 	cefFile    *CEFFileSink
 	ch         chan Event
 	done       chan struct{}
+	closeDone  chan struct{}
+	closed     bool
+	closeErr   error
 	logger     *slog.Logger
 }
 
@@ -157,6 +164,7 @@ func NewMultiSink(primary AuditSink, syslogSink SyslogSender, cefFile *CEFFileSi
 		cefFile:    cefFile,
 		ch:         make(chan Event, 1024),
 		done:       make(chan struct{}),
+		closeDone:  make(chan struct{}),
 		logger:     logger,
 	}
 	go m.drain()
@@ -177,25 +185,53 @@ func (m *MultiSink) drain() {
 
 // Write writes to the primary sink and enqueues to secondary sinks (non-blocking).
 func (m *MultiSink) Write(event Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return fmt.Errorf("audit: write to closed sink")
+	}
 	event = applyEventDefaults(event)
-	err := m.primary.Write(event)
+	if err := m.primary.Write(event); err != nil {
+		// The primary JSONL sink is the durable authorization record. Do not
+		// publish a success-shaped event to advisory sinks when that record was
+		// rejected; callers fail closed and may retry the operation.
+		return err
+	}
 	// Non-blocking send to secondary sinks.
 	select {
 	case m.ch <- event:
 	default:
 		m.logger.Warn("audit: secondary sink channel full, dropping event", "id", event.ID)
 	}
-	return err
+	return nil
 }
 
 // Flush flushes the primary sink.
 func (m *MultiSink) Flush() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
 	return m.primary.Flush()
 }
 
 // Close closes all sinks. Drains the async channel first.
 func (m *MultiSink) Close() error {
+	m.mu.Lock()
+	if m.closed {
+		closeDone := m.closeDone
+		m.mu.Unlock()
+		<-closeDone
+		m.mu.Lock()
+		err := m.closeErr
+		m.mu.Unlock()
+		return err
+	}
+	m.closed = true
 	close(m.ch)
+	m.mu.Unlock()
+
 	<-m.done // wait for drain
 	var errs []error
 	if m.syslogSink != nil {
@@ -211,8 +247,13 @@ func (m *MultiSink) Close() error {
 	if err := m.primary.Close(); err != nil {
 		errs = append(errs, err)
 	}
+	var closeErr error
 	if len(errs) > 0 {
-		return fmt.Errorf("audit: close errors: %v", errs)
+		closeErr = fmt.Errorf("audit: close errors: %v", errs)
 	}
-	return nil
+	m.mu.Lock()
+	m.closeErr = closeErr
+	close(m.closeDone)
+	m.mu.Unlock()
+	return closeErr
 }

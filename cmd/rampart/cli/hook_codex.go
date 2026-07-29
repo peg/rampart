@@ -71,16 +71,22 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 			input.ToolName,
 		)
 	}
+	if input.HookEventName == "PreToolUse" {
+		if err := validateCodexActionParams(input.ToolName, mappedTool, params); err != nil {
+			return nil, err
+		}
+	}
 	result := &hookParseResult{
 		Tool:          mappedTool,
 		Params:        params,
+		WorkDir:       strings.TrimSpace(input.CWD),
 		Agent:         "codex",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: input.HookEventName,
 		SessionID:     input.SessionID,
 		ToolUseID:     input.ToolUseID,
 	}
-	if strings.EqualFold(strings.TrimSpace(input.ToolName), "apply_patch") {
+	if input.HookEventName == "PreToolUse" && strings.EqualFold(strings.TrimSpace(input.ToolName), "apply_patch") {
 		command, _ := params["command"].(string)
 		result.PolicyPaths, err = extractCodexPatchPaths(command)
 		if err != nil {
@@ -98,6 +104,34 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// validateCodexActionParams prevents a recognized tool name with a missing or
+// type-confused security-bearing field from falling through an allow-unmatched
+// policy. PostToolUse deliberately skips this validation so response scanning
+// remains available when a host changes its completed-call payload.
+func validateCodexActionParams(toolName, mappedTool string, params map[string]any) error {
+	normalizedTool := strings.ToLower(strings.TrimSpace(toolName))
+	context := "hook: Codex " + toolName
+	switch mappedTool {
+	case "exec":
+		_, err := requireHookStringAliases(params, "command", context, "command", "cmd", "script", "code")
+		return err
+	case "write":
+		if normalizedTool == "apply_patch" {
+			_, err := requireHookStringAliases(params, "command", "hook: Codex apply_patch", "patch command", "patch")
+			return err
+		}
+		_, err := requireHookStringAliases(params, "path", context, "file path", "file_path", "filePath")
+		return err
+	case "read":
+		_, err := requireHookStringAliases(params, "path", context, "file path", "file_path", "filePath")
+		return err
+	case "fetch":
+		_, err := requireHookStringAliases(params, "url", context, "URL", "uri", "href")
+		return err
+	}
+	return nil
 }
 
 // extractCodexPatchPaths returns every file target in Codex's apply_patch
@@ -146,7 +180,7 @@ func extractCodexPatchPaths(patch string) ([]string, error) {
 // permitted for the host tool call to proceed.
 func evaluateHookCall(eng *engine.Engine, call engine.ToolCall, policyPaths []string) (engine.ToolCall, engine.Decision) {
 	if len(policyPaths) == 0 {
-		return call, eng.Evaluate(call)
+		return call, eng.EvaluateAndConsume(call, engine.EvalOptions{})
 	}
 
 	selectedCall := call
@@ -158,7 +192,10 @@ func evaluateHookCall(eng *engine.Engine, call engine.ToolCall, policyPaths []st
 		pathCall.Input = pathCall.Params
 		pathCall.Params["path"] = path
 
-		decision := eng.Evaluate(pathCall)
+		// Claim each one-time allowance before considering the next path. This
+		// can conservatively consume an earlier allowance when a later path is
+		// denied, but it can never over-authorize a batched write.
+		decision := eng.EvaluateAndConsume(pathCall, engine.EvalOptions{})
 		rank := hookDecisionRank(decision.Action)
 		if rank > selectedRank {
 			selectedCall = pathCall
@@ -195,7 +232,10 @@ func hookDecisionRank(action engine.Action) int {
 	case engine.ActionAllow:
 		return 1
 	default:
-		return 0
+		// Unknown future actions must win a batched evaluation so the caller can
+		// normalize them to deny. Ranking them below allow would silently discard
+		// the unsupported decision when a later path is permitted.
+		return 7
 	}
 }
 
@@ -237,7 +277,8 @@ func decodeCodexToolResponse(raw json.RawMessage) (string, error) {
 }
 
 func mapCodexTool(toolName string) string {
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	normalized := strings.ToLower(strings.TrimSpace(toolName))
+	switch normalized {
 	case "bash", "shell", "shell_command", "exec_command", "code_execution":
 		return "exec"
 	case "apply_patch", "edit", "write", "write_file":
@@ -249,18 +290,19 @@ func mapCodexTool(toolName string) string {
 	case "spawn_agent", "agent":
 		return "agent"
 	}
-	if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
-		return "mcp"
+	if strings.HasPrefix(normalized, "mcp__") {
+		return classifyNativeMCPTool(toolName, nil)
 	}
 	return "unknown"
 }
 
-// resolveCodexApproval uses Rampart's external approval queue because current
-// Codex PreToolUse hooks cannot request the native approval UI. Approval is
-// resolved inside this exact hook invocation; Codex receives an empty allow
-// response afterward so its own sandbox and permission policy remain active.
-func resolveCodexApproval(
+// resolveExternalHookApproval handles hook protocols that cannot request a
+// native user prompt. The exact invocation waits on Rampart's approval queue;
+// an approval continues through the host's own sandbox, and an unavailable
+// service fails closed.
+func resolveExternalHookApproval(
 	cmd *cobra.Command,
+	format string,
 	call engine.ToolCall,
 	reason string,
 	serveURL string,
@@ -271,7 +313,7 @@ func resolveCodexApproval(
 	if serveURL == "" || !isServeRunning(serveURL) {
 		return outputHookResult(
 			cmd,
-			"codex",
+			format,
 			hookDeny,
 			false,
 			reason+"; approval requires a running Rampart service (`rampart serve`)",
@@ -310,5 +352,5 @@ func resolveCodexApproval(
 		result = hookDeny
 		reason += "; Rampart approval service was unavailable"
 	}
-	return outputHookResult(cmd, "codex", result, false, reason, extractCommand(call))
+	return outputHookResult(cmd, format, result, false, reason, extractCommand(call))
 }

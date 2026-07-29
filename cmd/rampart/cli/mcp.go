@@ -15,7 +15,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,9 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
-	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/mcp"
@@ -135,15 +132,14 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 				return fmt.Errorf("mcp: create engine: %w", err)
 			}
 
-			// Use a daily file matching the hook naming convention so
-			// `rampart watch` picks up events from both hook and MCP.
-			today := time.Now().UTC().Format("2006-01-02")
-			auditPath := filepath.Join(auditDir, "audit-hook-"+today+".jsonl")
-			auditFile, err := os.OpenFile(auditPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+			// MCP is long-running and only forwards enforce-mode calls after the
+			// corresponding audit event is durably acknowledged.
+			sink, err := audit.NewJSONLSink(auditDir,
+				audit.WithLogger(logger),
+			)
 			if err != nil {
-				return fmt.Errorf("mcp: open audit file: %w", err)
+				return fmt.Errorf("mcp: open audit trail: %w", err)
 			}
-			sink := &appendSink{file: auditFile}
 			// Load notify config from policy
 			var mcpNotifyConfig *engine.NotifyConfig
 			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
@@ -153,17 +149,6 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 			defer func() {
 				_ = countedSink.Close()
 			}()
-			approvalStore := approval.NewStore(
-				approval.WithExpireCallback(func(r *approval.Request) {
-					logger.Warn("mcp: approval expired, denying",
-						"id", r.ID,
-						"tool", r.Call.Tool,
-						"command", r.Call.Command(),
-					)
-				}),
-			)
-			defer approvalStore.Close()
-
 			child := exec.Command(args[0], args[1:]...)
 			child.Stderr = cmd.ErrOrStderr()
 
@@ -187,7 +172,6 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 				childOut,
 				mcp.WithMode(mode),
 				mcp.WithFilterTools(filterTools),
-				mcp.WithApprovalStore(approvalStore),
 				mcp.WithLogger(logger),
 				mcp.WithAgentID(agentID),
 				mcp.WithSessionID(sessionID),
@@ -294,28 +278,4 @@ func resolveMCPPolicyPath(path string) (string, func(), error) {
 	}
 
 	return tmp.Name(), func() { _ = os.Remove(tmp.Name()) }, nil
-}
-
-// appendSink implements audit.AuditSink by appending JSON lines to a file.
-// Used by hook and MCP modes to share a single daily audit file.
-type appendSink struct {
-	file *os.File
-}
-
-func (s *appendSink) Write(event audit.Event) error {
-	line, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	line = append(line, '\n')
-	_, err = s.file.Write(line)
-	return err
-}
-
-func (s *appendSink) Flush() error {
-	return s.file.Sync()
-}
-
-func (s *appendSink) Close() error {
-	return s.file.Close()
 }

@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/bridge"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/filetxn"
 	"github.com/peg/rampart/internal/proxy"
 	"github.com/peg/rampart/internal/signing"
 	"github.com/peg/rampart/internal/tlsutil"
@@ -45,9 +47,17 @@ import (
 )
 
 type serveDeps struct {
-	newWatcher    func() (*fsnotify.Watcher, error)
-	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
+	newWatcher     func() (*fsnotify.Watcher, error)
+	notifyContext  func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
+	loadSigningKey func(string) ([]byte, error)
 }
+
+const (
+	backgroundReadyFileEnv = "RAMPART_BACKGROUND_READY_FILE"
+	maxServePIDFileBytes   = 32
+)
+
+var inspectBackgroundServeProcess = isRampartServeProcess
 
 func printServeToken(w io.Writer, token string, interactive bool) {
 	if interactive {
@@ -59,9 +69,27 @@ func printServeToken(w io.Writer, token string, interactive bool) {
 
 func defaultServeDeps() serveDeps {
 	return serveDeps{
-		newWatcher:    fsnotify.NewWatcher,
-		notifyContext: signal.NotifyContext,
+		newWatcher:     fsnotify.NewWatcher,
+		notifyContext:  signal.NotifyContext,
+		loadSigningKey: signing.LoadOrCreateKey,
 	}
+}
+
+func notifyRequiresSignedApprovalLinks(cfg *engine.NotifyConfig) bool {
+	if cfg == nil || strings.TrimSpace(cfg.URL) == "" {
+		return false
+	}
+	if len(cfg.On) == 0 {
+		// The default notification set includes ask/require_approval.
+		return true
+	}
+	for _, action := range cfg.On {
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "ask", "require_approval":
+			return true
+		}
+	}
+	return false
 }
 
 func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
@@ -91,6 +119,9 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 		if deps.notifyContext != nil {
 			resolvedDeps.notifyContext = deps.notifyContext
 		}
+		if deps.loadSigningKey != nil {
+			resolvedDeps.loadSigningKey = deps.loadSigningKey
+		}
 	}
 
 	cmd := &cobra.Command{
@@ -114,45 +145,82 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					return fmt.Errorf("serve: create runtime directory: %w", err)
 				}
 
-				logPath := filepath.Join(rampartDir, "serve.log")
-				logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-				if err != nil {
-					return fmt.Errorf("serve: open log file: %w", err)
-				}
-				defer func() {
-					_ = logFile.Close()
-				}()
-
-				exePath, err := os.Executable()
-				if err != nil {
-					return fmt.Errorf("serve: resolve executable path: %w", err)
-				}
-
-				var childArgs []string
-				for _, arg := range os.Args[1:] {
-					if arg == "--background" || arg == "-b" || strings.HasPrefix(arg, "--background=") {
-						continue
-					}
-					childArgs = append(childArgs, arg)
-				}
-
-				child := exec.Command(exePath, childArgs...)
-				child.Stdout = logFile
-				child.Stderr = logFile
-				setDetachAttrs(child)
-
-				if err := child.Start(); err != nil {
-					return fmt.Errorf("serve: start background process: %w", err)
-				}
-
 				pidPath := filepath.Join(rampartDir, "serve.pid")
-				if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o600); err != nil {
-					return fmt.Errorf("serve: write pid file: %w", err)
-				}
+				return filetxn.WithLock(pidPath, func() error {
+					if err := prepareBackgroundServePID(pidPath); err != nil {
+						return err
+					}
 
-				fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=~/.rampart/serve.log)\n", child.Process.Pid)
-				printNextStep(cmd.OutOrStdout(), "rampart status")
-				return nil
+					logPath := filepath.Join(rampartDir, "serve.log")
+					if info, statErr := os.Lstat(logPath); statErr == nil &&
+						(info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+						return fmt.Errorf("serve: refusing non-regular or symlinked background log: %s", logPath)
+					} else if statErr != nil && !os.IsNotExist(statErr) {
+						return fmt.Errorf("serve: inspect background log: %w", statErr)
+					}
+					logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+					if err != nil {
+						return fmt.Errorf("serve: open log file: %w", err)
+					}
+					defer logFile.Close()
+
+					exePath, err := os.Executable()
+					if err != nil {
+						return fmt.Errorf("serve: resolve executable path: %w", err)
+					}
+
+					readyFile, err := os.CreateTemp(rampartDir, ".serve-ready-*")
+					if err != nil {
+						return fmt.Errorf("serve: create background readiness marker: %w", err)
+					}
+					readyPath := readyFile.Name()
+					if closeErr := readyFile.Close(); closeErr != nil {
+						_ = os.Remove(readyPath)
+						return fmt.Errorf("serve: close background readiness marker: %w", closeErr)
+					}
+					defer os.Remove(readyPath)
+
+					var childArgs []string
+					for _, arg := range os.Args[1:] {
+						if arg == "--background" || arg == "-b" || strings.HasPrefix(arg, "--background=") {
+							continue
+						}
+						childArgs = append(childArgs, arg)
+					}
+
+					child := exec.Command(exePath, childArgs...)
+					child.Stdout = logFile
+					child.Stderr = logFile
+					child.Env = setEnvValue(os.Environ(), backgroundReadyFileEnv, readyPath)
+					setDetachAttrs(child)
+
+					if err := child.Start(); err != nil {
+						return fmt.Errorf("serve: start background process: %w", err)
+					}
+					childPID := child.Process.Pid
+					cleanupChild := func() {
+						_ = child.Process.Kill()
+						_, _ = child.Process.Wait()
+						removeServePIDIfMatching(pidPath, childPID)
+					}
+
+					if err := atomicWritePrivateFile(pidPath, []byte(fmt.Sprintf("%d\n", childPID))); err != nil {
+						cleanupChild()
+						return fmt.Errorf("serve: write pid file: %w", err)
+					}
+					if err := waitForBackgroundReady(readyPath, childPID, 5*time.Second); err != nil {
+						cleanupChild()
+						return fmt.Errorf("serve: background process did not become ready: %w (see %s)", err, logPath)
+					}
+					if err := child.Process.Release(); err != nil {
+						cleanupChild()
+						return fmt.Errorf("serve: release background process handle: %w", err)
+					}
+
+					fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=~/.rampart/serve.log)\n", childPID)
+					printNextStep(cmd.OutOrStdout(), "rampart status")
+					return nil
+				})
 			}
 
 			if mode != "enforce" && mode != "monitor" && mode != "disabled" {
@@ -163,6 +231,10 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			rampartDir := ""
 			if home, hErr := os.UserHomeDir(); hErr == nil {
 				rampartDir = filepath.Join(home, ".rampart")
+			}
+			readyPath, err := consumeBackgroundReadyPath(rampartDir)
+			if err != nil {
+				return err
 			}
 
 			if listenAddr != "" && net.ParseIP(listenAddr) == nil {
@@ -199,6 +271,12 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				level = slog.LevelDebug
 			}
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+			if ip := net.ParseIP(listenAddr); ip != nil && !ip.IsLoopback() && tlsCfg == nil && port > 0 {
+				logger.Warn("serve: listening on a non-loopback interface without TLS; bearer tokens and approval traffic will cross the network in plaintext",
+					"addr", listenAddr,
+					"guidance", "enable --tls-auto/--tls-cert or use a trusted HTTPS reverse proxy",
+				)
+			}
 
 			// Build policy store: file, dir, or both.
 			// If the default config path is used, the file doesn't exist, and
@@ -358,7 +436,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if usingEmbedded {
 					configPathDisplay = "embedded:standard"
 				}
-				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics), proxy.WithAuditDir(auditDir), proxy.WithConfigPath(configPathDisplay))
+				proxyOpts = append(proxyOpts, proxy.WithMode(mode), proxy.WithLogger(logger), proxy.WithMetrics(metrics), proxy.WithAuditDir(auditDir), proxy.WithConfigPath(configPathDisplay), proxy.WithTLS(tlsCfg != nil))
 				if approvalTimeout > 0 {
 					proxyOpts = append(proxyOpts, proxy.WithApprovalTimeout(approvalTimeout))
 				}
@@ -377,7 +455,17 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if resolveBaseURL != "" {
 					proxyOpts = append(proxyOpts, proxy.WithResolveBaseURL(resolveBaseURL))
 				}
-				// Load or auto-generate signing key for approval resolve URLs.
+				// Load notify config once so signing requirements and proxy delivery
+				// cannot disagree about whether approval links will be emitted.
+				var notifyConfig *engine.NotifyConfig
+				if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
+					notifyConfig = cfg.Notify
+				}
+
+				// Load or auto-generate signing key for approval resolve URLs. A
+				// configured key that cannot be secured is a startup failure: silently
+				// emitting bearerless unsigned links creates an unusable and misleading
+				// approval surface.
 				if signingKeyPath == "" {
 					home, _ := os.UserHomeDir()
 					if home != "" {
@@ -385,18 +473,18 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					}
 				}
 				if signingKeyPath != "" {
-					key, keyErr := signing.LoadOrCreateKey(signingKeyPath)
+					key, keyErr := resolvedDeps.loadSigningKey(signingKeyPath)
 					if keyErr != nil {
-						logger.Warn("serve: failed to load signing key, resolve URLs will be unsigned", "error", keyErr)
-					} else {
-						proxyOpts = append(proxyOpts, proxy.WithSigner(signing.NewSigner(key)))
-						logger.Info("serve: approval URL signing enabled", "key_path", signingKeyPath)
+						return fmt.Errorf("serve: approval resolve URL signing unavailable: %w", keyErr)
 					}
+					proxyOpts = append(proxyOpts, proxy.WithSigner(signing.NewSigner(key)))
+					logger.Info("serve: approval URL signing enabled", "key_path", signingKeyPath)
+				} else if notifyRequiresSignedApprovalLinks(notifyConfig) {
+					return fmt.Errorf("serve: approval notifications require a signing key, but no user home or --signing-key path is available")
 				}
-				// Load notify config from policy file
-				if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
-					proxyOpts = append(proxyOpts, proxy.WithNotify(cfg.Notify))
-					logger.Info("serve: webhook notifications enabled", "url", cfg.Notify.URL)
+				if notifyConfig != nil {
+					proxyOpts = append(proxyOpts, proxy.WithNotify(notifyConfig))
+					logger.Info("serve: webhook notifications enabled", "platform", notifyConfig.Platform)
 				}
 				// Load per-agent token store.
 				if tokenStorePath, tsErr := token.DefaultStorePath(); tsErr == nil {
@@ -500,6 +588,12 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				}
 			}
 
+			if readyPath != "" {
+				if err := atomicWritePrivateFile(readyPath, []byte(fmt.Sprintf("%d\n", os.Getpid()))); err != nil {
+					return fmt.Errorf("serve: signal background readiness: %w", err)
+				}
+			}
+
 			sigCtx, stop := resolvedDeps.notifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
@@ -581,7 +675,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&auditDir, "audit-dir", defaultAuditDir, "Directory for audit logs")
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")
 	cmd.Flags().IntVar(&port, "port", defaultServePort, "Proxy listen port (0 = SDK-only mode)")
-	cmd.Flags().StringVar(&listenAddr, "addr", "127.0.0.1", "Bind address (default: localhost only). Use 0.0.0.0 to listen on all interfaces")
+	cmd.Flags().StringVar(&listenAddr, "addr", "127.0.0.1", "Bind address (default: localhost only). Non-loopback addresses require TLS or a trusted HTTPS reverse proxy")
 	cmd.Flags().StringVar(&syslogAddr, "syslog", "", "Syslog server address (e.g. localhost:514)")
 	cmd.Flags().BoolVar(&cef, "cef", false, "Use CEF format (with --syslog: CEF over syslog; standalone: write ~/.rampart/audit/cef.log)")
 	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")
@@ -607,7 +701,7 @@ func newServeStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop a background rampart serve process",
-		Long:  `Stop a rampart serve process started with --background by reading the PID from ~/.rampart/serve.pid and sending SIGTERM.`,
+		Long:  `Stop a rampart serve process started with --background by reading and authenticating the PID in ~/.rampart/serve.pid before terminating it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return stopBackgroundServe(cmd.OutOrStdout(), false)
 		},
@@ -620,20 +714,15 @@ func stopBackgroundServe(w io.Writer, missingOK bool) error {
 		return fmt.Errorf("serve stop: %w", err)
 	}
 	pidPath := filepath.Join(home, ".rampart", "serve.pid")
-	data, err := os.ReadFile(pidPath)
+	pid, exists, err := readServePIDFile(pidPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			if missingOK {
-				return nil
-			}
-			return fmt.Errorf("serve stop: no PID file found at %s (is rampart serve --background running?)", pidPath)
-		}
-		return fmt.Errorf("serve stop: read pid file: %w", err)
+		return fmt.Errorf("serve stop: %w", err)
 	}
-	pidStr := strings.TrimSpace(string(data))
-	pid := 0
-	if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 0 {
-		return fmt.Errorf("serve stop: invalid PID %q in %s", pidStr, pidPath)
+	if !exists {
+		if missingOK {
+			return nil
+		}
+		return fmt.Errorf("serve stop: no PID file found at %s (is rampart serve --background running?)", pidPath)
 	}
 	owned, identity, err := isRampartServeProcess(pid)
 	if err != nil {
@@ -653,7 +742,7 @@ func stopBackgroundServe(w io.Writer, missingOK bool) error {
 	if err != nil {
 		return fmt.Errorf("serve stop: find process %d: %w", pid, err)
 	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := terminateRampartServeProcess(proc); err != nil {
 		_ = os.Remove(pidPath)
 		return fmt.Errorf("serve stop: signal pid %d: %w (process may have already exited)", pid, err)
 	}
@@ -662,34 +751,102 @@ func stopBackgroundServe(w io.Writer, missingOK bool) error {
 	return nil
 }
 
-// isRampartServeProcess authenticates a PID before stop/uninstall sends a
-// signal. PID files can outlive their process, and operating systems reuse
-// numeric PIDs; checking only that a PID exists can therefore terminate an
-// unrelated user process. `ps` is available on the Unix platforms where
-// service uninstallation uses this helper. On platforms without `ps`, stop
-// fails safely instead of signaling an unverified process.
-func isRampartServeProcess(pid int) (bool, string, error) {
-	pidArg := fmt.Sprintf("%d", pid)
-	commOut, err := exec.Command("ps", "-p", pidArg, "-o", "comm=").CombinedOutput()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return false, strings.TrimSpace(string(commOut)), nil
-		}
-		return false, "", err
+func readServePIDFile(pidPath string) (int, bool, error) {
+	info, err := os.Lstat(pidPath)
+	if os.IsNotExist(err) {
+		return 0, false, nil
 	}
-	argsOut, err := exec.Command("ps", "-p", pidArg, "-o", "args=").CombinedOutput()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return false, strings.TrimSpace(string(argsOut)), nil
-		}
-		return false, "", err
+		return 0, false, fmt.Errorf("read pid file: %w", err)
 	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return 0, false, fmt.Errorf("refusing non-regular or symlinked pid file: %s", pidPath)
+	}
+	if info.Size() > maxServePIDFileBytes {
+		return 0, false, fmt.Errorf("pid file exceeds %d bytes: %s", maxServePIDFileBytes, pidPath)
+	}
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return 0, false, fmt.Errorf("read pid file: %w", err)
+	}
+	pidText := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return 0, false, fmt.Errorf("invalid PID %q in %s", pidText, pidPath)
+	}
+	return pid, true, nil
+}
 
-	comm := strings.TrimSpace(string(commOut))
-	args := strings.TrimSpace(string(argsOut))
-	return isRampartServeCommand(comm, args), strings.TrimSpace(comm + " " + args), nil
+func prepareBackgroundServePID(pidPath string) error {
+	pid, exists, err := readServePIDFile(pidPath)
+	if err != nil || !exists {
+		return err
+	}
+	owned, identity, err := inspectBackgroundServeProcess(pid)
+	if err != nil {
+		return fmt.Errorf("serve: verify existing pid %d: %w", pid, err)
+	}
+	if owned {
+		return fmt.Errorf("serve: background server is already running (pid=%d)", pid)
+	}
+	if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("serve: remove stale pid %d (%s): %w", pid, identity, err)
+	}
+	return nil
+}
+
+func removeServePIDIfMatching(pidPath string, expectedPID int) {
+	pid, exists, err := readServePIDFile(pidPath)
+	if err == nil && exists && pid == expectedPID {
+		_ = os.Remove(pidPath)
+	}
+}
+
+func consumeBackgroundReadyPath(rampartDir string) (string, error) {
+	value := strings.TrimSpace(os.Getenv(backgroundReadyFileEnv))
+	_ = os.Unsetenv(backgroundReadyFileEnv)
+	if value == "" {
+		return "", nil
+	}
+	if rampartDir == "" {
+		return "", fmt.Errorf("serve: background readiness path requires a user home")
+	}
+	absPath, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("serve: resolve background readiness path: %w", err)
+	}
+	absDir, err := filepath.Abs(rampartDir)
+	if err != nil {
+		return "", fmt.Errorf("serve: resolve runtime directory: %w", err)
+	}
+	if !samePath(filepath.Dir(absPath), absDir) || !strings.HasPrefix(filepath.Base(absPath), ".serve-ready-") {
+		return "", fmt.Errorf("serve: invalid background readiness path")
+	}
+	return absPath, nil
+}
+
+func waitForBackgroundReady(path string, pid int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	want := strconv.Itoa(pid)
+	for {
+		info, err := os.Lstat(path)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return fmt.Errorf("readiness marker became non-regular or symlinked")
+			}
+			if info.Size() <= maxServePIDFileBytes {
+				if data, readErr := os.ReadFile(path); readErr == nil && strings.TrimSpace(string(data)) == want {
+					return nil
+				}
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s", timeout)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func isRampartServeCommand(comm, args string) bool {
@@ -697,12 +854,66 @@ func isRampartServeCommand(comm, args string) bool {
 	if name != "rampart" && name != "rampart.exe" {
 		return false
 	}
-	for _, arg := range strings.Fields(args) {
-		if arg == "serve" {
-			return true
+	remaining, ok := commandLineAfterExecutable(args)
+	if !ok {
+		return false
+	}
+	fields := strings.Fields(remaining)
+	for i := 0; i < len(fields); i++ {
+		arg := fields[i]
+		switch {
+		case arg == "--config":
+			// --config is the only root flag with a separate value. Refuse a
+			// malformed command rather than treating that value as a subcommand.
+			if i+1 >= len(fields) {
+				return false
+			}
+			i++
+		case arg == "--version":
+			// Cobra exits after the root version flag; a later `serve` token is
+			// not an executed subcommand.
+			return false
+		case strings.HasPrefix(arg, "--config=") || arg == "--verbose" ||
+			strings.HasPrefix(arg, "--verbose="):
+			continue
+		case strings.HasPrefix(arg, "-"):
+			// An unknown root flag may consume a value. Failing closed avoids
+			// authenticating an unrelated/reused PID on ambiguous input.
+			return false
+		default:
+			return arg == "serve"
 		}
 	}
 	return false
+}
+
+func commandLineAfterExecutable(commandLine string) (string, bool) {
+	commandLine = strings.TrimSpace(commandLine)
+	if commandLine == "" {
+		return "", false
+	}
+	if commandLine[0] == '"' || commandLine[0] == '\'' {
+		quote := commandLine[0]
+		escaped := false
+		for i := 1; i < len(commandLine); i++ {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if commandLine[i] == '\\' {
+				escaped = true
+				continue
+			}
+			if commandLine[i] == quote {
+				return strings.TrimSpace(commandLine[i+1:]), true
+			}
+		}
+		return "", false
+	}
+	if index := strings.IndexAny(commandLine, " \t\r\n"); index >= 0 {
+		return strings.TrimSpace(commandLine[index:]), true
+	}
+	return "", false
 }
 
 func isWriteEvent(event fsnotify.Event) bool {
@@ -714,7 +925,7 @@ func isPolicyDirEvent(event fsnotify.Event, policyDir string) bool {
 		return false
 	}
 	eventPath := filepath.Clean(strings.TrimSpace(event.Name))
-	if filepath.Dir(eventPath) != filepath.Clean(policyDir) {
+	if !samePath(filepath.Dir(eventPath), policyDir) {
 		return false
 	}
 	ext := strings.ToLower(filepath.Ext(eventPath))
@@ -726,7 +937,12 @@ func isPolicyDirEvent(event fsnotify.Event, policyDir string) bool {
 }
 
 func samePath(a, b string) bool {
-	return filepath.Clean(strings.TrimSpace(a)) == filepath.Clean(strings.TrimSpace(b))
+	left := filepath.Clean(strings.TrimSpace(a))
+	right := filepath.Clean(strings.TrimSpace(b))
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func writeActivePolicyMarkdown(eng *engine.Engine) error {
@@ -739,8 +955,11 @@ func writeActivePolicyMarkdown(eng *engine.Engine) error {
 		return fmt.Errorf("resolve home directory: %w", err)
 	}
 	rampartDir := filepath.Join(home, ".rampart")
-	if err := os.MkdirAll(rampartDir, 0o755); err != nil {
+	if err := os.MkdirAll(rampartDir, 0o700); err != nil {
 		return fmt.Errorf("create runtime directory: %w", err)
+	}
+	if err := secureDirPermissions(rampartDir); err != nil {
+		return fmt.Errorf("secure runtime directory: %w", err)
 	}
 
 	defaultAction, rules := eng.GetPolicySummary()
@@ -765,7 +984,7 @@ func writeActivePolicyMarkdown(eng *engine.Engine) error {
 	b.WriteString("\nUse `rampart watch`, `rampart log`, and `rampart approve` for live transparency and approvals.\n")
 
 	outPath := filepath.Join(rampartDir, "ACTIVE_POLICY.md")
-	if err := os.WriteFile(outPath, []byte(b.String()), 0o600); err != nil {
+	if err := atomicWriteRecoverablePrivateFile(outPath, []byte(b.String())); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
 	return nil

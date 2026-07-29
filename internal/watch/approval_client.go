@@ -20,8 +20,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"time"
 )
+
+const (
+	maxApprovalResponseBytes = 4 << 20
+	maxPendingApprovals      = 1000
+)
+
+var validApprovalID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // PendingApproval represents a pending approval from the serve API.
 type PendingApproval struct {
@@ -46,10 +54,17 @@ type ApprovalClient struct {
 // NewApprovalClient creates a new client for the serve approval API.
 func NewApprovalClient(baseURL, token string) *ApprovalClient {
 	return &ApprovalClient{
-		baseURL: baseURL,
-		token:   token,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
+		baseURL:    baseURL,
+		token:      token,
+		httpClient: newControlHTTPClient(5 * time.Second),
+	}
+}
+
+func newControlHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}
 }
@@ -75,11 +90,21 @@ func (c *ApprovalClient) ListPending(ctx context.Context) ([]PendingApproval, er
 		return nil, fmt.Errorf("approval client: HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxApprovalResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("approval client: read: %w", err)
+	}
+	if len(body) > maxApprovalResponseBytes {
+		return nil, fmt.Errorf("approval client: response exceeds %d-byte limit", maxApprovalResponseBytes)
+	}
 	var result struct {
 		Approvals []PendingApproval `json:"approvals"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("approval client: decode: %w", err)
+	}
+	if len(result.Approvals) > maxPendingApprovals {
+		return nil, fmt.Errorf("approval client: response contains more than %d approvals", maxPendingApprovals)
 	}
 
 	// Filter to only pending.
@@ -95,6 +120,9 @@ func (c *ApprovalClient) ListPending(ctx context.Context) ([]PendingApproval, er
 // Resolve resolves an approval (approve or deny). If persist is true,
 // the server should create an auto-allow rule for future matching calls.
 func (c *ApprovalClient) Resolve(ctx context.Context, id string, approved bool, persist bool) error {
+	if !validApprovalID.MatchString(id) {
+		return fmt.Errorf("approval client: invalid approval ID")
+	}
 	body, _ := json.Marshal(map[string]any{
 		"approved":    approved,
 		"resolved_by": "watch-tui",

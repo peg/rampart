@@ -1,6 +1,6 @@
 ---
 title: Policy Engine
-description: "Rampart's YAML policy engine checks tool calls delivered by configured integrations. Deny, allow, log, or require approval by command, path, URL, or pattern."
+description: "Rampart's YAML policy engine checks tool calls delivered by configured integrations. Deny, allow, watch, request approval, or delegate by command, path, URL, or pattern."
 ---
 
 # Policy Engine
@@ -53,7 +53,7 @@ allow: "Allowed" {
   style.border-radius: 6
 }
 
-default: "Default Action\\n(allow or deny)" {
+default: "Default Action\\n(allow, deny, watch, or ask)" {
   style.border-radius: 6
   style.stroke-dash: 4
 }
@@ -82,8 +82,8 @@ default -> audit
 
 1. **Collect** all policies whose `match` clause fits the tool call
 2. **Within each policy**, rules evaluate top-to-bottom (first match wins)
-3. **Across policies**: any `deny` → denied. No deny + any `log` → logged. Only `allow` → allowed
-4. **Nothing matches** → configurable default action (`allow` or `deny`)
+3. **Across policies**: `deny` wins, followed by `webhook`, `ask`, `watch`, then `allow`
+4. **Nothing matches** → the configured default action (`allow`, `deny`, `watch`, or `ask`)
 
 **Deny always wins.** If any policy says deny, the call is denied. No override, no ambiguity.
 
@@ -98,6 +98,12 @@ Rampart uses glob patterns for matching:
 | `*` | Any sequence of characters (single path segment) |
 | `**` | Any sequence of characters (crosses path separators) |
 | `?` | Any single character |
+
+For exec calls, Rampart also normalizes common shell wrappers and transparent
+launchers such as `env`, `command`, `exec`, `nohup`, `nice`, `timeout`,
+`setsid`, and `stdbuf`, then checks compound command components independently.
+This is deliberate defense in depth, not a complete parser for every shell or
+an operating-system security boundary.
 
 ### Examples
 
@@ -149,13 +155,15 @@ Block the tool call. The agent receives an error with the policy's `message` fie
 
 Permit the tool call. Logged at default level.
 
-### `log`
+### `watch`
 
-Permit but flag for review. Shows with 🟡 in `rampart watch`.
+Permit but flag for review. The deprecated `log` spelling remains an alias.
 
 ### `ask`
 
-Block until a human approves:
+Request human approval through the active integration. Integrations without a
+safe approval/resume path fail closed; service-backed approval requests appear
+in the pending queue:
 
 ```yaml
 rules:
@@ -187,6 +195,8 @@ rules:
 ```
 
 The webhook receives the full tool call context and returns `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}`.
+Webhook failures deny by default. `fail_open: true` is an explicit availability
+trade-off, not the default.
 
 ## Response-Side Evaluation
 
@@ -222,7 +232,10 @@ policies:
         message: "Response contains potential credentials"
 ```
 
-Patterns use **regex** (not glob). Response bodies larger than 1 MB are truncated before matching to prevent ReDoS.
+Patterns use **regex** (not glob). If an applicable response rule exists, a
+response larger than 1 MiB fails closed rather than scanning only a prefix.
+Response-side `ask` and `webhook` matches also fail closed because the tool has
+already run and there is no safe approval or delegation boundary remaining.
 
 ### Claude Code setup
 
@@ -261,6 +274,11 @@ For MCP servers, Rampart auto-categorizes tools:
 
 - Tools with destructive keywords (`delete`, `destroy`, `remove`, `drop`) → `mcp-destructive`
 - Tools with dangerous keywords (`stop`, `restart`, `execute`, `modify`) → `mcp-dangerous`
+- Tools Rampart cannot classify from their names → `mcp`
+
+The standard profile denies `mcp-destructive` and asks before
+`mcp-dangerous` or unclassified `mcp` calls. Explicit custom mappings and
+policies can narrow that behavior for a known server.
 
 ```yaml
 policies:
@@ -373,14 +391,14 @@ Rules are written to one of two files:
 
 | Scope | Path | When used |
 |-------|------|-----------|
-| Project | `.rampart/policy.yaml` | Current directory is inside a git repo (default) |
-| Global | `~/.rampart/policies/user-overrides.yaml` | Outside a git repo (default) |
+| Project | `.rampart/policy.yaml` | Repository-owned restrictions |
+| Global | `~/.rampart/policies/user-overrides.yaml` | User-owned allow authority |
 
 Force a scope:
 
 ```bash
-rampart allow "npm install *" --global   # always global
-rampart allow "npm install *" --project  # always project
+rampart allow "npm install *" --global   # allow rules are always global
+rampart block "npm publish*" --project   # repository restriction
 ```
 
 Project rules travel with the repo (commit `.rampart/policy.yaml`). Global rules apply everywhere.

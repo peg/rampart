@@ -8,14 +8,22 @@
  * install/config checks do not touch a live OpenClaw gateway or user config.
  */
 
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import {
+  configPathsMatch,
+  normalizeConfigPath,
+  reportedConfigPath,
+} from './compat-openclaw-path.mjs';
+import { buildCompatProcessEnv, removeCompatTree } from './compat-process-env.mjs';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tempRoot = mkdtempSync(join(tmpdir(), 'rampart-openclaw-compat-'));
 const tempHome = join(tempRoot, 'home');
+const childTemp = join(tempRoot, 'tmp');
 const openclawDir = join(tempHome, '.openclaw');
 const configPath = join(openclawDir, 'openclaw.json');
 const args = process.argv.slice(2);
@@ -52,19 +60,25 @@ function runOpenClaw(openclawArgs, options = {}) {
 }
 
 function compatEnv() {
-  return {
-    ...process.env,
+  return buildCompatProcessEnv(process.env, {
     HOME: tempHome,
     USERPROFILE: tempHome,
+    TMPDIR: childTemp,
+    TMP: childTemp,
+    TEMP: childTemp,
     XDG_CONFIG_HOME: join(tempHome, '.config'),
+    XDG_CACHE_HOME: join(tempHome, '.cache'),
+    XDG_DATA_HOME: join(tempHome, '.local', 'share'),
+    XDG_STATE_HOME: join(tempHome, '.local', 'state'),
     OPENCLAW_CONFIG_PATH: configPath,
     RAMPART_TOKEN: 'compat-test-token',
     RAMPART_URL: 'http://127.0.0.1:19090',
-  };
+  });
 }
 
 function setupTempState() {
   mkdirSync(openclawDir, { recursive: true });
+  mkdirSync(childTemp, { recursive: true });
   writeFileSync(
     configPath,
     JSON.stringify(
@@ -97,13 +111,14 @@ function main() {
   const install = runOpenClaw(['plugins', 'install', pluginDir], { env });
   const validate = runOpenClaw(['config', 'validate'], { env });
   const configFile = runOpenClaw(['config', 'file'], { env });
-  const reportedConfigPath = commandOutput(configFile)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1);
-  if (reportedConfigPath !== configPath) {
-    throw new Error(`OpenClaw config file reported ${JSON.stringify(reportedConfigPath)}, expected ${JSON.stringify(configPath)}`);
+  const configFilePath = reportedConfigPath(commandOutput(configFile));
+  const configFileMatches = configPathsMatch(configFilePath, configPath, tempHome);
+  if (!configFileMatches) {
+    throw new Error(
+      `OpenClaw config file reported ${JSON.stringify(configFilePath)} `
+      + `(${JSON.stringify(normalizeConfigPath(configFilePath, tempHome))}), `
+      + `expected ${JSON.stringify(configPath)}`,
+    );
   }
   const inspect = runOpenClaw(['plugins', 'inspect', 'rampart'], { required: false, env });
   const list = inspect.status === 0
@@ -128,7 +143,7 @@ function main() {
     openclaw_source: useNpmLatest ? openclawPackage : 'PATH',
     plugin_install_checked: true,
     config_validate_checked: validate.status === 0,
-    config_file_checked: reportedConfigPath === configPath,
+    config_file_checked: configFileMatches,
     plugin_inspect_checked: inspect.status === 0,
     plugin_list_checked: inspect.status !== 0 && list.status === 0,
     bundled_plugin_harnesses: {
@@ -148,6 +163,6 @@ try {
   if (keepTemp) {
     console.error(`kept temporary directory: ${tempRoot}`);
   } else {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeCompatTree(tempRoot);
   }
 }

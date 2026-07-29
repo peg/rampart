@@ -4,11 +4,17 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -30,7 +36,7 @@ This command:
 
 Use --yes to skip confirmation prompts.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runUninstall(cmd, yes)
+			return runUninstall(cmd, opts, yes)
 		},
 	}
 
@@ -38,7 +44,7 @@ Use --yes to skip confirmation prompts.`,
 	return cmd
 }
 
-func runUninstall(cmd *cobra.Command, yes bool) error {
+func runUninstall(cmd *cobra.Command, opts *rootOptions, yes bool) error {
 	w := cmd.OutOrStdout()
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -50,10 +56,11 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	fmt.Fprintln(w, "")
 
 	if !yes {
-		fmt.Fprint(w, "This will remove Rampart from your system. Continue? [y/N] ")
-		var answer string
-		fmt.Scanln(&answer)
-		if !strings.HasPrefix(strings.ToLower(answer), "y") {
+		confirmed, err := confirmUninstall(cmd.InOrStdin(), w)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
 			fmt.Fprintln(w, "Aborted.")
 			return nil
 		}
@@ -63,133 +70,44 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	var removed []string
 	var failed []string
 
-	// Get current executable path (don't resolve "rampart" from PATH — could be malicious)
-	exe, err := os.Executable()
-	if err != nil {
-		exe = "rampart" // fallback, but prefer current binary
-	}
+	// Remove every Rampart-managed agent boundary in-process so the same
+	// ownership checks used by each setup --remove command protect unrelated
+	// agent configuration and state.
+	integrationRemoved, integrationFailed := removeManagedAgentIntegrations(cmd, opts, home)
+	removed = append(removed, integrationRemoved...)
+	failed = append(failed, integrationFailed...)
 
-	// 1. Remove hooks from Claude Code
-	claudeSettings := filepath.Join(home, ".claude", "settings.json")
-	if _, err := os.Stat(claudeSettings); err == nil {
-		fmt.Fprintln(w, "Removing Claude Code hooks...")
-		if err := runSilent(exe, "setup", "claude-code", "--remove"); err == nil {
-			removed = append(removed, "Claude Code hooks")
-		} else {
-			failed = append(failed, "Claude Code hooks")
-		}
-	}
+	// A surviving fail-closed hook or plugin still depends on Rampart. Preserve
+	// the runtime when any integration could not be removed so uninstall cannot
+	// turn a recoverable cleanup error into a completely unusable agent.
+	serviceRemoved, serviceFailed, runtimePreserved := teardownManagedRuntime(
+		w,
+		home,
+		runtime.GOOS,
+		defaultRunner,
+		len(integrationFailed) > 0,
+		stopBackgroundServe,
+		removeManagedServeServices,
+	)
+	removed = append(removed, serviceRemoved...)
+	failed = append(failed, serviceFailed...)
 
-	// 2. Remove hooks from Cline
-	clineDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if _, err := os.Stat(clineDir); err == nil {
-		fmt.Fprintln(w, "Removing Cline hooks...")
-		if err := runSilent(exe, "setup", "cline", "--remove"); err == nil {
-			removed = append(removed, "Cline hooks")
-		} else {
-			failed = append(failed, "Cline hooks")
-		}
-	}
-
-	// 3. Stop and remove service
-	fmt.Fprintln(w, "Stopping rampart serve...")
-	switch runtime.GOOS {
-	case "darwin":
-		// Kill any running rampart serve process
-		_ = runSilent("pkill", "-f", "rampart serve")
-		
-		plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.rampart.serve.plist")
-		if _, err := os.Stat(plistPath); err == nil {
-			_ = runSilent("launchctl", "unload", plistPath)
-			if err := os.Remove(plistPath); err == nil {
-				removed = append(removed, "LaunchAgent service")
-			}
-		}
-		// Also try the proxy plist name
-		proxyPlist := filepath.Join(home, "Library", "LaunchAgents", "com.rampart.proxy.plist")
-		if _, err := os.Stat(proxyPlist); err == nil {
-			_ = runSilent("launchctl", "unload", proxyPlist)
-			if err := os.Remove(proxyPlist); err == nil {
-				removed = append(removed, "LaunchAgent proxy service")
-			}
-		}
-	case "linux":
-		// Kill any running rampart serve process
-		_ = runSilent("pkill", "-f", "rampart serve")
-		
-		// Try user service first
-		_ = runSilent("systemctl", "--user", "stop", "rampart-serve")
-		_ = runSilent("systemctl", "--user", "disable", "rampart-serve")
-		_ = runSilent("systemctl", "--user", "stop", "rampart-proxy")
-		_ = runSilent("systemctl", "--user", "disable", "rampart-proxy")
-		
-		serviceFiles := []string{
-			filepath.Join(home, ".config", "systemd", "user", "rampart-serve.service"),
-			filepath.Join(home, ".config", "systemd", "user", "rampart-proxy.service"),
-		}
-		for _, sf := range serviceFiles {
-			if _, err := os.Stat(sf); err == nil {
-				if err := os.Remove(sf); err == nil {
-					removed = append(removed, "systemd service")
-				}
-			}
-		}
-		_ = runSilent("systemctl", "--user", "daemon-reload")
-	case "windows":
-		// Kill any running rampart.exe serve process
-		// taskkill /F /IM rampart.exe only kills by image name, which would kill
-		// the uninstall process too. Use wmic to find serve processes.
-		_ = runSilent("powershell", "-Command",
-			"Get-Process rampart -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like '*serve*'} | Stop-Process -Force")
-		removed = append(removed, "running serve process (if any)")
-	}
-
-	// 4. Remove from PATH (Windows only)
-	if runtime.GOOS == "windows" {
+	// Remove from PATH (Windows only)
+	if !runtimePreserved && runtime.GOOS == "windows" {
 		fmt.Fprintln(w, "Removing from PATH...")
 		if removeFromWindowsPath(home) {
 			removed = append(removed, "PATH entry")
 		}
 	}
 
-	// 5. Remove shell shim if present
-	shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")
-	if _, err := os.Stat(shimPath); err == nil {
-		if err := os.Remove(shimPath); err == nil {
-			removed = append(removed, "shell shim")
-		}
-	}
-
-	// 6. Remove OpenClaw gateway drop-in (LD_PRELOAD + RAMPART_URL injection)
-	dropIn := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
-	if _, err := os.Stat(dropIn); err == nil {
-		if err := os.Remove(dropIn); err == nil {
-			removed = append(removed, "OpenClaw gateway drop-in (rampart.conf)")
-			// Reload systemd so the removed drop-in takes effect
-			_ = runSilent("systemctl", "--user", "daemon-reload")
-			_ = runSilent("systemctl", "--user", "restart", "openclaw-gateway.service")
-		} else {
-			failed = append(failed, fmt.Sprintf("OpenClaw gateway drop-in (%s)", dropIn))
-		}
-	}
-
-	// 7. Restore patched OpenClaw file tools from backups
-	toolCandidates := openclawToolsCandidates()
-	toolNames := []string{"read", "write", "edit", "grep"}
-	for _, dir := range toolCandidates {
-		if _, err := os.Stat(dir); err != nil {
-			continue
-		}
-		for _, tool := range toolNames {
-			backup := filepath.Join(dir, tool+".js.rampart-backup")
-			target := filepath.Join(dir, tool+".js")
-			if _, err := os.Stat(backup); err == nil {
-				if err := os.Rename(backup, target); err == nil {
-					removed = append(removed, fmt.Sprintf("restored %s.js", tool))
-				}
+	// Remove a legacy shell shim if present.
+	if !runtimePreserved {
+		shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")
+		if _, err := os.Stat(shimPath); err == nil {
+			if err := os.Remove(shimPath); err == nil {
+				removed = append(removed, "shell shim")
 			}
 		}
-		break // only restore from the first found dir
 	}
 
 	// Summary
@@ -207,6 +125,13 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 			fmt.Fprintf(w, "    • %s\n", f)
 		}
 	}
+	if runtimePreserved {
+		fmt.Fprintln(w, "")
+		fmt.Fprintln(w, "Uninstall paused before removing the Rampart runtime.")
+		fmt.Fprintln(w, "Repair the cleanup errors above, then rerun `rampart uninstall`.")
+		fmt.Fprintln(w, "Do not delete ~/.rampart or the Rampart binary while a managed integration or runtime remains installed.")
+		return fmt.Errorf("uninstall incomplete: %d Rampart-managed item(s) could not be removed; runtime preserved", len(failed))
+	}
 
 	// Final instructions
 	fmt.Fprintln(w, "")
@@ -214,15 +139,15 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Almost done! To complete uninstallation, delete the Rampart directory:")
 	fmt.Fprintln(w, "")
-	
+
 	rampartDir := filepath.Join(home, ".rampart")
 	switch runtime.GOOS {
 	case "windows":
-		fmt.Fprintf(w, "    Remove-Item -Recurse %s\n", rampartDir)
+		fmt.Fprintf(w, "    Remove-Item -LiteralPath %s -Recurse -Force\n", powershellQuoteClineArg(rampartDir))
 		fmt.Fprintln(w, "")
 		fmt.Fprintln(w, "Then restart your terminal to update PATH.")
 	default:
-		fmt.Fprintf(w, "    rm -rf %s\n", rampartDir)
+		fmt.Fprintf(w, "    rm -rf -- %s\n", shellQuoteCodexHookArg(rampartDir))
 		if runtime.GOOS != "windows" {
 			fmt.Fprintln(w, "")
 			fmt.Fprintln(w, "If you added Rampart to your shell profile, remove that line from:")
@@ -234,12 +159,306 @@ func runUninstall(cmd *cobra.Command, yes bool) error {
 	if exe, err := os.Executable(); err == nil {
 		if !strings.Contains(exe, ".rampart") {
 			fmt.Fprintln(w, "")
-			fmt.Fprintf(w, "The rampart binary at %s can also be deleted.\n", exe)
+			fmt.Fprintf(w, "The rampart binary at %q can also be deleted.\n", exe)
 		}
 	}
 
 	fmt.Fprintln(w, "")
+	if len(failed) > 0 {
+		return fmt.Errorf("uninstall incomplete: %d Rampart-managed item(s) could not be removed", len(failed))
+	}
 	return nil
+}
+
+type stopBackgroundServeFunc func(io.Writer, bool) error
+type removeManagedServeServicesFunc func(string, string, commandRunner) ([]string, []string)
+
+func teardownManagedRuntime(
+	w io.Writer,
+	home, goos string,
+	runner commandRunner,
+	preserve bool,
+	stopBackground stopBackgroundServeFunc,
+	removeServices removeManagedServeServicesFunc,
+) (removed, failed []string, preserved bool) {
+	if preserve {
+		fmt.Fprintln(w, "Preserving rampart serve because one or more agent integrations could not be removed safely.")
+		return nil, nil, true
+	}
+
+	// The background fallback is the only unmanaged-by-service process the
+	// uninstaller stops directly. stopBackgroundServe authenticates the PID
+	// file against a Rampart `serve` process immediately before signaling, so a
+	// stale or reused PID can never turn into a broad process kill.
+	fmt.Fprintln(w, "Stopping rampart serve...")
+	if err := stopBackground(w, true); err != nil {
+		failed = append(failed, fmt.Sprintf("background serve process: %v", err))
+	}
+	removed, serviceFailed := removeServices(home, goos, runner)
+	failed = append(failed, serviceFailed...)
+	// A partial runtime teardown is not a successful uninstall. Keep the binary,
+	// PATH entry, and compatibility shim available so any surviving service or
+	// hook can still call Rampart and a retry can repair the remaining state.
+	return removed, failed, len(failed) > 0
+}
+
+func confirmUninstall(in io.Reader, out io.Writer) (bool, error) {
+	fmt.Fprint(out, "This will remove Rampart from your system. Continue? [y/N] ")
+	answer, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("uninstall: read confirmation: %w", err)
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return strings.HasPrefix(answer, "y"), nil
+}
+
+func removeManagedServeServices(home, goos string, runner commandRunner) (removed, failed []string) {
+	switch goos {
+	case "darwin":
+		for _, service := range rampartLaunchdServices(home) {
+			managed, err := managedLaunchdServiceFile(service.PlistPath, service.Label)
+			if err != nil {
+				failed = append(failed, err.Error())
+				continue
+			}
+			if !managed {
+				continue
+			}
+
+			// Only remove a loaded job after both its fixed path and contents
+			// establish Rampart ownership. A missing job is a normal stale-file
+			// case; an inspection failure is not proof that it is safe to leave a
+			// running job behind while deleting its definition.
+			loaded, err := launchctlLabelLoaded(runner, service.Label)
+			if err != nil {
+				failed = append(failed, fmt.Sprintf("inspect managed LaunchAgent %s: %v", service.Label, err))
+				continue
+			}
+			if loaded {
+				if err := runner("launchctl", "remove", service.Label).Run(); err != nil {
+					failed = append(failed, fmt.Sprintf("stop managed LaunchAgent %s: %v", service.Label, err))
+					continue
+				}
+			}
+			if err := os.Remove(service.PlistPath); err != nil {
+				failed = append(failed, fmt.Sprintf("remove managed LaunchAgent %q: %v", service.PlistPath, err))
+				continue
+			}
+			removed = append(removed, "LaunchAgent service "+service.Label)
+		}
+
+	case "linux":
+		serviceDir := filepath.Join(home, ".config", "systemd", "user")
+		services := []struct {
+			name string
+			path string
+		}{
+			{name: "rampart-serve.service", path: filepath.Join(serviceDir, "rampart-serve.service")},
+			{name: "rampart-proxy.service", path: filepath.Join(serviceDir, "rampart-proxy.service")},
+		}
+		removedAny := false
+		for _, service := range services {
+			managed, err := managedSystemdServiceFile(service.path)
+			if err != nil {
+				failed = append(failed, err.Error())
+				continue
+			}
+			if !managed {
+				continue
+			}
+
+			if err := runner("systemctl", "--user", "stop", service.name).Run(); err != nil {
+				failed = append(failed, fmt.Sprintf("stop managed systemd service %s: %v", service.name, err))
+				continue
+			}
+			if err := runner("systemctl", "--user", "disable", service.name).Run(); err != nil {
+				failed = append(failed, fmt.Sprintf("disable managed systemd service %s: %v", service.name, err))
+				continue
+			}
+			if err := os.Remove(service.path); err != nil {
+				failed = append(failed, fmt.Sprintf("remove managed systemd service %q: %v", service.path, err))
+				continue
+			}
+			removedAny = true
+			removed = append(removed, "systemd service "+service.name)
+		}
+		if removedAny {
+			if err := runner("systemctl", "--user", "daemon-reload").Run(); err != nil {
+				failed = append(failed, fmt.Sprintf("reload systemd user manager: %v", err))
+			}
+		}
+	}
+	return removed, failed
+}
+
+func managedLaunchdServiceFile(path, label string) (bool, error) {
+	data, exists, err := readRegularServiceFile(path)
+	if err != nil || !exists {
+		return false, err
+	}
+	actualLabel, args, err := launchdServiceIdentity(data)
+	if err != nil {
+		return false, fmt.Errorf("parse LaunchAgent %q: %w", path, err)
+	}
+	if actualLabel != label || !isRampartServeArguments(args) {
+		return false, fmt.Errorf("refusing to remove unrecognized LaunchAgent at %q", path)
+	}
+	return true, nil
+}
+
+func launchdServiceIdentity(data []byte) (label string, programArguments []string, err error) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	lastKey := ""
+	inProgramArguments := false
+	labelSeen := false
+	programArgumentsSeen := false
+	for {
+		token, decodeErr := decoder.Token()
+		if errors.Is(decodeErr, io.EOF) {
+			return label, programArguments, nil
+		}
+		if decodeErr != nil {
+			return "", nil, decodeErr
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			switch element.Name.Local {
+			case "key":
+				var key string
+				if err := decoder.DecodeElement(&key, &element); err != nil {
+					return "", nil, err
+				}
+				lastKey = strings.TrimSpace(key)
+			case "array":
+				inProgramArguments = lastKey == "ProgramArguments"
+				if inProgramArguments {
+					if programArgumentsSeen {
+						return "", nil, fmt.Errorf("duplicate ProgramArguments key")
+					}
+					programArgumentsSeen = true
+				}
+				lastKey = ""
+			case "string":
+				var value string
+				if err := decoder.DecodeElement(&value, &element); err != nil {
+					return "", nil, err
+				}
+				if inProgramArguments {
+					programArguments = append(programArguments, value)
+				} else if lastKey == "Label" {
+					if labelSeen {
+						return "", nil, fmt.Errorf("duplicate Label key")
+					}
+					labelSeen = true
+					label = value
+				}
+				lastKey = ""
+			}
+		case xml.EndElement:
+			if element.Name.Local == "array" {
+				inProgramArguments = false
+			}
+		}
+	}
+}
+
+func isRampartServeArguments(args []string) bool {
+	if len(args) < 2 {
+		return false
+	}
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(args[0])))
+	if name != "rampart" && name != "rampart.exe" {
+		return false
+	}
+	// Managed definitions generated by Rampart put `serve` in the first
+	// argument position. Finding that word later could claim an unrelated
+	// command such as `rampart doctor --output serve`.
+	return strings.TrimSpace(args[1]) == "serve"
+}
+
+func managedSystemdServiceFile(path string) (bool, error) {
+	data, exists, err := readRegularServiceFile(path)
+	if err != nil || !exists {
+		return false, err
+	}
+	var execStarts []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) >= len("ExecStart=") && strings.EqualFold(line[:len("ExecStart=")], "ExecStart=") {
+			execStarts = append(execStarts, strings.TrimSpace(line[len("ExecStart="):]))
+		}
+	}
+	if len(execStarts) != 1 {
+		return false, fmt.Errorf("refusing to remove systemd service with %d ExecStart directives at %q", len(execStarts), path)
+	}
+	binary, args, ok := splitServiceCommand(execStarts[0])
+	if !ok || !isRampartServeArguments(append([]string{binary}, args...)) {
+		return false, fmt.Errorf("refusing to remove unrecognized systemd service at %q", path)
+	}
+	return true, nil
+}
+
+func splitServiceCommand(command string) (binary string, args []string, ok bool) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "", nil, false
+	}
+	remaining := ""
+	if command[0] == '"' {
+		end := 1
+		escaped := false
+		for ; end < len(command); end++ {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if command[end] == '\\' {
+				escaped = true
+				continue
+			}
+			if command[end] == '"' {
+				break
+			}
+		}
+		if end >= len(command) {
+			return "", nil, false
+		}
+		decoded, err := strconv.Unquote(command[:end+1])
+		if err != nil {
+			return "", nil, false
+		}
+		binary = decoded
+		remaining = command[end+1:]
+	} else {
+		fields := strings.Fields(command)
+		if len(fields) == 0 {
+			return "", nil, false
+		}
+		binary = fields[0]
+		remaining = strings.TrimSpace(strings.TrimPrefix(command, binary))
+	}
+	return binary, strings.Fields(remaining), true
+}
+
+func readRegularServiceFile(path string) ([]byte, bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("inspect service file %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("refusing to remove non-regular service file at %q", path)
+	}
+	if info.Size() > maxServiceStateFileBytes {
+		return nil, false, fmt.Errorf("refusing to read service file larger than %d bytes at %q", maxServiceStateFileBytes, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, fmt.Errorf("read service file %q: %w", path, err)
+	}
+	return data, true, nil
 }
 
 // removeFromWindowsPath removes ~/.rampart/bin from the user PATH on Windows.
@@ -249,7 +468,7 @@ func removeFromWindowsPath(home string) bool {
 	}
 
 	rampartBin := filepath.Join(home, ".rampart", "bin")
-	
+
 	// Get current user PATH
 	cmd := exec.Command("powershell", "-Command",
 		"[Environment]::GetEnvironmentVariable('PATH', 'User')")
@@ -260,7 +479,7 @@ func removeFromWindowsPath(home string) bool {
 
 	currentPath := strings.TrimSpace(string(out))
 	paths := strings.Split(currentPath, ";")
-	
+
 	// Filter out rampart bin
 	var newPaths []string
 	found := false
@@ -284,12 +503,4 @@ func removeFromWindowsPath(home string) bool {
 	cmd = exec.Command("powershell", "-Command",
 		fmt.Sprintf("[Environment]::SetEnvironmentVariable('PATH', '%s', 'User')", escapedPath))
 	return cmd.Run() == nil
-}
-
-// runSilent runs a command and returns any error, suppressing output.
-func runSilent(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
 }

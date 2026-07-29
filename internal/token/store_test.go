@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -155,6 +156,43 @@ func TestRevoke(t *testing.T) {
 	}
 }
 
+func TestRevokeRequiresUnambiguousNonEmptyPrefix(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(filepath.Join(dir, "tokens.json"))
+	_, _, _ = store.Create("codex", "", "", nil, nil)
+	_, _, _ = store.Create("claude-code", "", "", nil, nil)
+
+	if _, err := store.Revoke(""); err == nil {
+		t.Fatal("empty prefix should be rejected")
+	}
+	if _, err := store.Revoke(Prefix); err == nil {
+		t.Fatal("ambiguous prefix should be rejected")
+	}
+	if got := store.Count(); got != 2 {
+		t.Fatalf("ambiguous revoke changed %d active tokens, want 2", got)
+	}
+}
+
+func TestRevokeAcceptsMaskedPrefixAndFullPlaintext(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(filepath.Join(dir, "tokens.json"))
+	firstPlaintext, first, _ := store.Create("codex", "", "", nil, nil)
+	secondPlaintext, _, _ := store.Create("claude-code", "", "", nil, nil)
+
+	if _, err := store.Revoke(first.MaskedPrefix); err != nil {
+		t.Fatalf("revoke masked prefix: %v", err)
+	}
+	if result := store.Lookup(firstPlaintext); !result.Revoked {
+		t.Fatal("masked-prefix revoke did not revoke first token")
+	}
+	if _, err := store.Revoke(secondPlaintext); err != nil {
+		t.Fatalf("revoke full plaintext token: %v", err)
+	}
+	if result := store.Lookup(secondPlaintext); !result.Revoked {
+		t.Fatal("full-token revoke did not revoke second token")
+	}
+}
+
 func TestExpiredToken(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewStore(filepath.Join(dir, "tokens.json"))
@@ -211,6 +249,44 @@ func TestFilePermissions(t *testing.T) {
 	perm := info.Mode().Perm()
 	if perm != 0o600 {
 		t.Errorf("expected 0600 permissions, got %o", perm)
+	}
+}
+
+func TestExistingStoreIsHardenedOnLoad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode assertion")
+	}
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(path, []byte("{\"tokens\":[]}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("permissions = %04o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestNewStoreRefusesSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix symlink semantics")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	if err := os.WriteFile(target, []byte("{\"tokens\":[]}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "tokens.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(link); err == nil {
+		t.Fatal("NewStore accepted a symlinked authentication store")
 	}
 }
 
@@ -297,5 +373,99 @@ func TestAutoReload(t *testing.T) {
 	result = store1.Lookup(plaintext)
 	if !result.Revoked {
 		t.Error("token should be revoked after auto-reload")
+	}
+}
+
+func TestAutoReloadDetectsAtomicReplacementWithPreservedMtime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+
+	serverStore, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, tok, err := serverStore.Create("codex", "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cliStore, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cliStore.Revoke(tok.MaskedID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, originalInfo.ModTime(), originalInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	if result := serverStore.Lookup(plaintext); !result.Revoked {
+		t.Fatal("atomic replacement with preserved mtime did not invalidate cached credentials")
+	}
+}
+
+func TestConcurrentStoresDoNotLoseCreatedTokens(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+	const count = 20
+	stores := make([]*Store, count)
+	for i := range stores {
+		var err error
+		stores[i], err = NewStore(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i, store := range stores {
+		wg.Add(1)
+		go func(i int, store *Store) {
+			defer wg.Done()
+			if _, _, err := store.Create("agent", "", "concurrent", nil, nil); err != nil {
+				t.Errorf("Create(%d): %v", i, err)
+			}
+		}(i, store)
+	}
+	wg.Wait()
+
+	loaded, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Count(); got != count {
+		t.Fatalf("active token count = %d, want %d", got, count)
+	}
+}
+
+func TestRemovedOrCorruptStoreInvalidatesCachedTokens(t *testing.T) {
+	for _, mode := range []string{"removed", "corrupt"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "tokens.json")
+			store, _ := NewStore(path)
+			plaintext, _, err := store.Create("codex", "", "", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "removed" {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				time.Sleep(time.Millisecond)
+				if err := os.WriteFile(path, []byte("{corrupt"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if result := store.Lookup(plaintext); result.Found {
+				t.Fatal("cached token remained active after authentication store became unavailable")
+			}
+		})
 	}
 }

@@ -19,6 +19,18 @@ rampart version
 brew upgrade rampart
 ```
 
+If `rampart serve install` was run from an older Homebrew release, its service
+definition may contain a versioned `Cellar` path. Reinstall that service once
+after upgrading (repeat any non-default service flags you use):
+
+```bash
+rampart serve install --force
+```
+
+Current releases persist Homebrew's stable `rampart` symlink after verifying it
+resolves to the running binary, so later `brew upgrade rampart` operations do
+not strand the service on a removed version directory.
+
 ### Go Install
 
 ```bash
@@ -33,7 +45,9 @@ Rerun the official PowerShell installer:
 irm https://rampart.sh/install.ps1 | iex
 ```
 
-For the v1.2.x to v1.3.0 upgrade, use this installer instead of `rampart upgrade`. The installer can repair the affected legacy `~\.rampart` ACL before accessing the existing binary; an installed `rampart.exe` inside that locked directory may be unable to start and repair itself.
+Use this installer for every Windows binary upgrade; in-process self-upgrade is
+intentionally disabled on Windows. The installer also repairs the affected
+legacy `~\.rampart` ACL found on v1.2.x installations.
 
 ### Manual Binary
 
@@ -57,21 +71,34 @@ sudo mv rampart /usr/local/bin/
 
 ```bash
 rampart version
-rampart doctor
+rampart upgrade --no-binary
+rampart protect
 ```
+
+Run `rampart protect` once after replacing the binary. It preserves user-owned
+configuration, refreshes Rampart-managed hooks and plugins for detected agents,
+migrates recognized legacy integrations, and runs the matching behavioral
+verification. This is especially important when a release adds a newer native
+host boundary.
 
 ## What Upgrades Preserve
 
-Upgrades only replace the binary. Everything else stays:
+Binary upgrades preserve user-owned state. The self-upgrader also refreshes
+unchanged Rampart-managed built-in policy profiles; edited and custom policies
+are preserved:
 
 | Preserved | Location |
 |-----------|----------|
 | Your policies | `~/.rampart/policies/` |
 | Audit logs | `~/.rampart/audit/` |
 | Signing key | `~/.rampart/signing.key` |
-| Agent hooks | `~/.claude/settings.json` etc. |
+| Agent configuration and non-Rampart hooks | `~/.claude/settings.json` etc. |
 
-No need to re-run `rampart setup` after upgrading — your hooks and policies carry over.
+Existing Rampart hooks keep calling the upgraded binary, so enforcement remains
+in place during the transition. Run `rampart protect` once to refresh only the
+managed integration entries and adopt any newer hook or plugin format. Custom
+policies, unrelated host hooks, memories, sessions, and credentials are not
+replaced.
 
 ## Breaking Changes
 

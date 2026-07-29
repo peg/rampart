@@ -16,7 +16,6 @@ package audit
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 )
@@ -43,13 +42,8 @@ func (s *JSONLSink) writeAnchorLocked(event Event) error {
 	}
 
 	path := filepath.Join(s.dir, anchorFilename)
-	tmpPath := path + ".tmp"
-
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return fmt.Errorf("audit: write anchor tmp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("audit: replace anchor: %w", err)
+	if err := replaceAuditMetadata(path, data, s.fsync); err != nil {
+		return fmt.Errorf("audit: write anchor: %w", err)
 	}
 
 	s.logger.Info("audit: wrote chain anchor",

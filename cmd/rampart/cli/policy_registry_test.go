@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +13,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/peg/rampart/policies"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -70,6 +74,33 @@ func TestVerifyPolicySHA256(t *testing.T) {
 	assert.Contains(t, err.Error(), "sha256 mismatch")
 }
 
+func TestValidateRegistryHTTPSURL(t *testing.T) {
+	require.NoError(t, validateRegistryHTTPSURL("https://example.com/policy.yaml"))
+	require.Error(t, validateRegistryHTTPSURL("http://example.com/policy.yaml"))
+	require.Error(t, validateRegistryHTTPSURL("https://"))
+	require.Error(t, validateRegistryHTTPSURL("https://token@example.com/policy.yaml"))
+	require.Error(t, validateRegistryHTTPSURL("https://example.com/policy.yaml#fragment"))
+}
+
+func TestValidateRegistryPolicyRejectsInvalidContent(t *testing.T) {
+	require.NoError(t, validateRegistryPolicy([]byte("version: \"1\"\npolicies: []\n"), "valid"))
+	err := validateRegistryPolicy([]byte("not: [valid"), "invalid")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed validation")
+}
+
+func TestFetchURLRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(maxPolicyRegistryResponseBytes+1))
+		_, _ = w.Write([]byte("oversized"))
+	}))
+	defer server.Close()
+
+	_, err := fetchURL(context.Background(), server.Client(), server.URL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "response exceeds")
+}
+
 func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
@@ -109,6 +140,28 @@ func TestPolicyFetch_SHA256Mismatch(t *testing.T) {
 	dest := filepath.Join(home, ".rampart", "policies", "test-bad-hash.yaml")
 	_, statErr := os.Stat(dest)
 	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestDownloadPolicyFallsBackToEmbeddedFirstPartyProfile(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	want, err := policies.Profile("mcp-server")
+	require.NoError(t, err)
+	sum := sha256.Sum256(want)
+	client := &policyRegistryClient{
+		httpClient: server.Client(),
+		warnWriter: io.Discard,
+	}
+	got, err := client.downloadPolicy(context.Background(), policyRegistryEntry{
+		Name:   "mcp-server",
+		URL:    server.URL + "/mcp-server.yaml",
+		SHA256: hex.EncodeToString(sum[:]),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 func TestPolicyList_UsesCacheAndRefresh(t *testing.T) {
@@ -157,6 +210,42 @@ func TestPolicyRemove_RefusesBuiltIn(t *testing.T) {
 	_, _, err := runCLI(t, "policy", "remove", "standard")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "built-in profile")
+}
+
+func TestPolicyRegistryCacheRefusesSymlink(t *testing.T) {
+	skipOnWindows(t, "Unix symlink semantics")
+	dir := t.TempDir()
+	target := filepath.Join(dir, "attacker-manifest.json")
+	if err := os.WriteFile(target, []byte(`{"version":"1","policies":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(dir, policyRegistryCacheFileName)
+	if err := os.Symlink(target, cachePath); err != nil {
+		t.Fatal(err)
+	}
+	client := &policyRegistryClient{cacheTTL: time.Hour, now: time.Now}
+	if _, ok, err := client.readFreshCachedManifest(cachePath); err == nil || ok {
+		t.Fatalf("cache read ok=%t err=%v, want symlink refusal", ok, err)
+	}
+}
+
+func TestPolicyRegistryCacheEnforcesReadLimit(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), policyRegistryCacheFileName)
+	file, err := os.Create(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxPolicyRegistryResponseBytes + 1); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	client := &policyRegistryClient{cacheTTL: time.Hour, now: time.Now}
+	if _, ok, err := client.readFreshCachedManifest(cachePath); err == nil || ok {
+		t.Fatalf("cache read ok=%t err=%v, want size-limit refusal", ok, err)
+	}
 }
 
 func TestPolicyRemove_RemovesInstalledPolicy(t *testing.T) {

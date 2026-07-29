@@ -2,7 +2,6 @@ package cli
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -16,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/policies"
@@ -24,11 +24,7 @@ import (
 // testArchiveName returns the archive filename for the current platform (e.g., rampart_1.1.0_darwin_arm64.tar.gz).
 func testArchiveName(version string) string {
 	goos, arch, _ := upgradePlatform(runtime.GOOS, runtime.GOARCH)
-	ext := "tar.gz"
-	if goos == "windows" {
-		ext = "zip"
-	}
-	return fmt.Sprintf("rampart_%s_%s_%s.%s", version, goos, arch, ext)
+	return fmt.Sprintf("rampart_%s_%s_%s.tar.gz", version, goos, arch)
 }
 
 func TestLookupSHA256(t *testing.T) {
@@ -106,6 +102,8 @@ func makeMultiFileArchive(t *testing.T, files map[string][]byte) []byte {
 
 func TestNewUpgradeCmdAlreadyLatest(t *testing.T) {
 	deps := &upgradeDeps{
+		goos:   "linux",
+		goarch: runtime.GOARCH,
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.2.3", nil
 		},
@@ -124,6 +122,43 @@ func TestNewUpgradeCmdAlreadyLatest(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Already on latest (v1.2.3)") {
 		t.Fatalf("unexpected output: %q", out.String())
+	}
+}
+
+func TestNewUpgradeCmdAlreadyLatestWarnsAboutRemovedPolicyAction(t *testing.T) {
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte("version: \"1\"\ndefault_action: deny\npolicies:\n  - name: legacy\n    rules:\n      - action: require_approval\n        when:\n          default: true\n")
+	if err := os.WriteFile(filepath.Join(policyDir, "custom.yaml"), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &upgradeDeps{
+		goos:        "linux",
+		userHomeDir: func() (string, error) { return dir, nil },
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.3.0", nil
+		},
+		latestRelease: func(context.Context, *http.Client, string) (string, error) {
+			return "v1.3.0", nil
+		},
+		updatePolicies: func(io.Writer, bool) error { return nil },
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Policy migration required") ||
+		!strings.Contains(out.String(), "custom.yaml") {
+		t.Fatalf("missing removed-action guidance: %q", out.String())
 	}
 }
 
@@ -147,6 +182,7 @@ func TestNewUpgradeCmdAlreadyLatestStillRefreshesStockPolicy(t *testing.T) {
 	}
 
 	deps := &upgradeDeps{
+		goos: "linux",
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.2.3", nil
 		},
@@ -200,6 +236,7 @@ func TestNewUpgradeCmdPreservesModifiedBuiltInPolicy(t *testing.T) {
 	}
 
 	deps := &upgradeDeps{
+		goos: "linux",
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.2.3", nil
 		},
@@ -229,10 +266,7 @@ func TestNewUpgradeCmdPreservesModifiedBuiltInPolicy(t *testing.T) {
 	}
 }
 
-func TestNewUpgradeCmdFlagsStaleBuiltInForReview(t *testing.T) {
-	if build.Version == "dev" {
-		t.Skip("stale-version detection disabled for dev builds")
-	}
+func TestUpgradeStandardPoliciesMigratesStaleLegacyWithBackup(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
@@ -250,33 +284,29 @@ func TestNewUpgradeCmdFlagsStaleBuiltInForReview(t *testing.T) {
 		t.Fatalf("write stale policy: %v", err)
 	}
 
-	deps := &upgradeDeps{
-		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
-			return "v1.2.3", nil
-		},
-		latestRelease: func(context.Context, *http.Client, string) (string, error) {
-			return "v1.2.3", nil
-		},
-	}
-
 	var out bytes.Buffer
-	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"--yes"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
+	if err := upgradeStandardPoliciesForVersion(&out, false, "v1.2.3"); err != nil {
+		t.Fatalf("upgradeStandardPoliciesForVersion returned error: %v", err)
 	}
 
 	got, err := os.ReadFile(standardPath)
 	if err != nil {
 		t.Fatalf("read policy: %v", err)
 	}
-	if !bytes.Equal(got, stale) {
-		t.Fatal("expected stale built-in policy to be left unchanged pending review")
+	want := versionStampedPolicyContentForVersion(standard, "v1.2.3")
+	if !bytes.Equal(got, want) {
+		t.Fatal("expected stale built-in policy to be migrated to current managed content")
 	}
-	if !strings.Contains(out.String(), "Review stale built-ins: standard.yaml") {
-		t.Fatalf("expected stale review output, got %q", out.String())
+	backupPath := standardPath + ".rampart-backup-0.0.1"
+	backup, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatalf("read legacy backup: %v", err)
+	}
+	if !bytes.Equal(backup, stale) {
+		t.Fatal("expected backup to preserve the exact legacy policy")
+	}
+	if !strings.Contains(out.String(), "Backed up legacy: standard.yaml") {
+		t.Fatalf("expected legacy backup output, got %q", out.String())
 	}
 }
 
@@ -296,7 +326,8 @@ func TestNewUpgradeCmdDryRun(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 1234, true, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
+		validateCandidate:    acceptUpgradeCandidate,
 	}
 
 	var out bytes.Buffer
@@ -323,6 +354,8 @@ func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
 	}
 
 	deps := &upgradeDeps{
+		goos:   "linux",
+		goarch: runtime.GOARCH,
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.0.0", nil
 		},
@@ -330,7 +363,9 @@ func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "rampart-proxy.service" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "rampart-proxy.service" },
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
 	}
 
 	var out bytes.Buffer
@@ -348,6 +383,50 @@ func TestNewUpgradeCmdDryRunSystemd(t *testing.T) {
 	}
 }
 
+func TestNewUpgradeCmdDryRunLaunchd(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "rampart")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+	service := launchdService{
+		Label:     "com.rampart.proxy",
+		PlistPath: filepath.Join(dir, "Library", "LaunchAgents", "com.rampart.proxy.plist"),
+	}
+
+	deps := &upgradeDeps{
+		goos:   "darwin",
+		goarch: runtime.GOARCH,
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.0.0", nil
+		},
+		executablePath: func() (string, error) { return exe, nil },
+		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
+			return 0, false, nil
+		},
+		detectSystemdService: func(commandRunner, func() (string, error), string) string {
+			t.Fatal("systemd detection must not run on Darwin")
+			return ""
+		},
+		detectLaunchdServices: func(commandRunner, func() (string, error), string) []launchdService {
+			return []launchdService{service}
+		},
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"v1.1.0", "--dry-run", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "would restart launchd service: com.rampart.proxy") {
+		t.Fatalf("dry-run output missing launchd restart line: %q", out.String())
+	}
+}
+
 func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 	skipOnWindows(t, "upgrade not supported on Windows")
 	dir := t.TempDir()
@@ -358,9 +437,11 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + fmt.Sprintf("rampart_1.1.0_linux_%s.tar.gz", runtime.GOARCH) + "\n")
 
 	deps := &upgradeDeps{
+		goos:   "linux",
+		goarch: runtime.GOARCH,
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.0.0", nil
 		},
@@ -368,7 +449,8 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
+		validateCandidate:    acceptUpgradeCandidate,
 		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
 			if strings.HasSuffix(url, "checksums.txt") {
 				return checksums, nil
@@ -387,8 +469,11 @@ func TestNewUpgradeCmdSuccessNoServe(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "✓ rampart upgraded to v1.1.0") {
+	if !strings.Contains(out.String(), "✓ rampart binary upgraded to v1.1.0") {
 		t.Fatalf("missing success line: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "run 'rampart protect' once") {
+		t.Fatalf("missing managed-integration refresh guidance: %q", out.String())
 	}
 }
 
@@ -402,10 +487,12 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + fmt.Sprintf("rampart_1.1.0_linux_%s.tar.gz", runtime.GOARCH) + "\n")
 
 	var restarted string
 	deps := &upgradeDeps{
+		goos:   "linux",
+		goarch: runtime.GOARCH,
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.0.0", nil
 		},
@@ -413,7 +500,9 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			return 0, false, nil
 		},
-		detectSystemdService: func(commandRunner) string { return "rampart-proxy.service" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "rampart-proxy.service" },
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
 		restartSystemdService: func(_ commandRunner, svc string, out io.Writer) error {
 			restarted = svc
 			fmt.Fprintf(out, "✓ restarted %s\n", svc)
@@ -438,7 +527,7 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "✓ rampart upgraded to v1.1.0") {
+	if !strings.Contains(got, "✓ rampart binary upgraded to v1.1.0") {
 		t.Fatalf("missing success line: %q", got)
 	}
 	if restarted != "rampart-proxy.service" {
@@ -446,6 +535,74 @@ func TestNewUpgradeCmdSystemdRestart(t *testing.T) {
 	}
 	if !strings.Contains(got, "✓ restarted rampart-proxy.service") {
 		t.Fatalf("missing restarted confirmation: %q", got)
+	}
+}
+
+func TestNewUpgradeCmdLaunchdRestart(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "rampart")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+
+	archive := makeArchive(t, "rampart", []byte("new-binary"))
+	sum := sha256.Sum256(archive)
+	archiveName := fmt.Sprintf("rampart_1.1.0_darwin_%s.tar.gz", runtime.GOARCH)
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + archiveName + "\n")
+	services := []launchdService{
+		{Label: "com.rampart.proxy", PlistPath: filepath.Join(dir, "com.rampart.proxy.plist")},
+		{Label: plistLabel, PlistPath: filepath.Join(dir, plistLabel+".plist")},
+	}
+
+	var restarted []string
+	deps := &upgradeDeps{
+		goos:   "darwin",
+		goarch: runtime.GOARCH,
+		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
+			return "v1.0.0", nil
+		},
+		executablePath: func() (string, error) { return exe, nil },
+		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
+			return 0, false, nil
+		},
+		detectSystemdService: func(commandRunner, func() (string, error), string) string {
+			t.Fatal("systemd detection must not run on Darwin")
+			return ""
+		},
+		detectLaunchdServices: func(commandRunner, func() (string, error), string) []launchdService {
+			return services
+		},
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
+		restartLaunchdService: func(_ commandRunner, service launchdService, out io.Writer) error {
+			restarted = append(restarted, service.Label)
+			fmt.Fprintf(out, "✓ restarted %s\n", service.Label)
+			return nil
+		},
+		downloadURL: func(_ context.Context, _ *http.Client, url string) ([]byte, error) {
+			if strings.HasSuffix(url, "checksums.txt") {
+				return checksums, nil
+			}
+			return archive, nil
+		},
+		pathEnv: func() string { return "" },
+	}
+
+	var out bytes.Buffer
+	cmd := newUpgradeCmdWithDeps(&rootOptions{}, deps)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"v1.1.0", "--yes", "--no-policy-update"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if strings.Join(restarted, ",") != "com.rampart.proxy,"+plistLabel {
+		t.Fatalf("unexpected launchd restarts: %v", restarted)
+	}
+	if !strings.Contains(out.String(), "✓ restarted com.rampart.proxy") ||
+		!strings.Contains(out.String(), "✓ restarted "+plistLabel) {
+		t.Fatalf("missing launchd restart confirmations: %q", out.String())
 	}
 }
 
@@ -460,11 +617,13 @@ func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
 
 	archive := makeArchive(t, "rampart", []byte("new-binary"))
 	sum := sha256.Sum256(archive)
-	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + testArchiveName("1.1.0") + "\n")
+	checksums := []byte(hex.EncodeToString(sum[:]) + "  " + fmt.Sprintf("rampart_1.1.0_linux_%s.tar.gz", runtime.GOARCH) + "\n")
 
 	pidStopped := false
 	var restarted string
 	deps := &upgradeDeps{
+		goos:   "linux",
+		goarch: runtime.GOARCH,
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) {
 			return "v1.0.0", nil
 		},
@@ -476,7 +635,9 @@ func TestNewUpgradeCmdSystemdTakesPriorityOverPID(t *testing.T) {
 			pidStopped = true
 			return nil
 		},
-		detectSystemdService: func(commandRunner) string { return "rampart-serve.service" },
+		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "rampart-serve.service" },
+		validateCandidate:    acceptUpgradeCandidate,
+		prepareServeVerifier: acceptServeRestartVerification,
 		restartSystemdService: func(_ commandRunner, svc string, out io.Writer) error {
 			restarted = svc
 			return nil
@@ -526,6 +687,15 @@ func makeArchive(t *testing.T, name string, payload []byte) []byte {
 		t.Fatalf("close gzip: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func acceptUpgradeCandidate(context.Context, string, string) error { return nil }
+
+func acceptServeRestartVerification(
+	func() (string, error),
+	func(string) ([]byte, error),
+) (serveRestartVerifier, error) {
+	return func(context.Context, string, time.Time) error { return nil }, nil
 }
 
 func TestUpgradeStandardPoliciesUpdatesBuiltIns(t *testing.T) {
@@ -682,7 +852,7 @@ policies:
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "⚠️  Migration notice for v0.6.6:") {
+	if !strings.Contains(got, "⚠️  Policy migration required:") {
 		t.Fatalf("missing migration header: %q", got)
 	}
 	if !strings.Contains(got, "~/.rampart/policies/custom.yaml (policy: \"approve-deploys\")") {
@@ -693,70 +863,5 @@ policies:
 	}
 	if !strings.Contains(errOut.String(), "continuing automatically") {
 		t.Fatalf("missing non-interactive continuation note: %q", errOut.String())
-	}
-}
-
-// makeZipArchive builds an in-memory zip archive containing the given files.
-func makeZipArchive(t *testing.T, files map[string][]byte) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for name, payload := range files {
-		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", name, err)
-		}
-		if _, err := w.Write(payload); err != nil {
-			t.Fatalf("zip write %s: %v", name, err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	return buf.Bytes()
-}
-
-func TestExtractRampartBinaryFromZip(t *testing.T) {
-	archive := makeZipArchive(t, map[string][]byte{
-		"rampart.exe": []byte("windows-binary"),
-	})
-	got, err := extractRampartBinaryFromZip(archive)
-	if err != nil {
-		t.Fatalf("extractRampartBinaryFromZip returned error: %v", err)
-	}
-	if string(got) != "windows-binary" {
-		t.Fatalf("unexpected payload: %q", string(got))
-	}
-}
-
-// TestExtractRampartBinaryFromZip_GoreleaserLayout tests the real goreleaser
-// zip layout where the binary lives in a versioned subdirectory.
-func TestExtractRampartBinaryFromZip_GoreleaserLayout(t *testing.T) {
-	// Goreleaser produces: rampart_0.7.1_windows_amd64/rampart.exe
-	archive := makeZipArchive(t, map[string][]byte{
-		"rampart_0.7.1_windows_amd64/rampart.exe": []byte("real-windows-binary"),
-		"rampart_0.7.1_windows_amd64/LICENSE":     []byte("Apache 2.0"),
-		"rampart_0.7.1_windows_amd64/README.md":   []byte("# Rampart"),
-	})
-	got, err := extractRampartBinaryFromZip(archive)
-	if err != nil {
-		t.Fatalf("extractRampartBinaryFromZip failed on goreleaser layout: %v", err)
-	}
-	if string(got) != "real-windows-binary" {
-		t.Fatalf("unexpected payload: %q", string(got))
-	}
-}
-
-func TestExtractRampartBinaryFromZip_NotFound(t *testing.T) {
-	archive := makeZipArchive(t, map[string][]byte{
-		"LICENSE":   []byte("Apache 2.0"),
-		"README.md": []byte("# Rampart"),
-	})
-	_, err := extractRampartBinaryFromZip(archive)
-	if err == nil {
-		t.Fatal("expected error when rampart.exe not in archive, got nil")
-	}
-	if !strings.Contains(err.Error(), "rampart.exe not found") {
-		t.Fatalf("unexpected error message: %v", err)
 	}
 }

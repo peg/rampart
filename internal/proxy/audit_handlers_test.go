@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -187,6 +188,25 @@ func TestAuditExport(t *testing.T) {
 	})
 }
 
+func TestAuditExportRefusesSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation commonly requires elevated Windows privileges")
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(target, []byte("must-not-leak\n"), 0o600))
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "2026-02-18.jsonl")))
+
+	ts, token := setupAuditTestServer(t, dir)
+	resp := doGet(t, ts, token, "/v1/audit/export?date=2026-02-18")
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "must-not-leak")
+}
+
 func TestAuditStats(t *testing.T) {
 	dir := t.TempDir()
 	writeAuditFile(t, dir, "2026-02-17", []map[string]any{
@@ -218,6 +238,13 @@ func TestAuditStats(t *testing.T) {
 	byAgent := body["by_agent"].(map[string]any)
 	assert.Equal(t, float64(2), byAgent["claude"])
 	assert.Equal(t, float64(1), byAgent["other"])
+}
+
+func TestAuditStatsRejectsUnboundedRange(t *testing.T) {
+	ts, token := setupAuditTestServer(t, t.TempDir())
+	resp := doGet(t, ts, token, "/v1/audit/stats?from=0001-01-01&to=9999-12-31")
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestAuditNoDir(t *testing.T) {
@@ -289,7 +316,7 @@ func TestAuditEvents_SessionFilter(t *testing.T) {
 
 	events := []map[string]any{
 		{"id": "01", "agent": "claude", "session": "rampart/staging", "tool": "exec", "decision": map[string]any{"action": "allow"}},
-		{"id": "02", "agent": "claude", "session": "myrepo/main",    "tool": "exec", "decision": map[string]any{"action": "deny"}},
+		{"id": "02", "agent": "claude", "session": "myrepo/main", "tool": "exec", "decision": map[string]any{"action": "deny"}},
 		{"id": "03", "agent": "claude", "session": "rampart/staging", "tool": "read", "decision": map[string]any{"action": "allow"}},
 	}
 	writeAuditFile(t, dir, today, events)
@@ -316,7 +343,7 @@ func TestAuditStats_BySession(t *testing.T) {
 
 	events := []map[string]any{
 		{"id": "01", "agent": "claude", "session": "rampart/staging", "tool": "exec", "decision": map[string]any{"action": "allow"}},
-		{"id": "02", "agent": "claude", "session": "myrepo/main",    "tool": "exec", "decision": map[string]any{"action": "deny"}},
+		{"id": "02", "agent": "claude", "session": "myrepo/main", "tool": "exec", "decision": map[string]any{"action": "deny"}},
 		{"id": "03", "agent": "claude", "session": "rampart/staging", "tool": "read", "decision": map[string]any{"action": "allow"}},
 	}
 	writeAuditFile(t, dir, today, events)

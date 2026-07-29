@@ -9,16 +9,29 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   render:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install D2
-        run: curl -fsSL https://d2lang.com/install.sh | sh -s --
         env:
-          SHELL: /bin/bash
+          D2_VERSION: v0.7.1
+          D2_SHA256: eb172adf59f38d1e5a70ab177591356754ffaf9bebb84e0ca8b767dfb421dad7
+        run: |
+          archive="/tmp/d2-${D2_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLo "$archive" \
+            "https://github.com/terrastruct/d2/releases/download/${D2_VERSION}/d2-${D2_VERSION}-linux-amd64.tar.gz"
+          echo "$D2_SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C /tmp
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "/tmp/d2-${D2_VERSION}/bin/d2" "$HOME/.local/bin/d2"
 
       - name: Render architecture.svg
         run: |

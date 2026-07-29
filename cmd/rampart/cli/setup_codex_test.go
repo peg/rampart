@@ -25,7 +25,7 @@ func TestSetupCodexInstallsNativeHooksWithoutCodexOrPreload(t *testing.T) {
 		t.Fatalf("setup codex: %v", err)
 	}
 
-	settings := readCodexHookSettings(t, filepath.Join(home, ".codex", "hooks.json"))
+	settings := testReadJSONMap(t, filepath.Join(home, ".codex", "hooks.json"))
 	assertRampartCodexHook(t, settings, "PreToolUse")
 	assertRampartCodexHook(t, settings, "PostToolUse")
 	if !strings.Contains(stdout.String(), "Open `/hooks`") {
@@ -42,14 +42,33 @@ func TestSetupCodexHonorsCodexHome(t *testing.T) {
 	codexHome := filepath.Join(home, "isolated-codex")
 	t.Setenv("CODEX_HOME", codexHome)
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
 		t.Fatalf("setup codex: %v", err)
 	}
-	assertRampartCodexHook(t, readCodexHookSettings(t, filepath.Join(codexHome, "hooks.json")), "PreToolUse")
+	assertRampartCodexHook(t, testReadJSONMap(t, filepath.Join(codexHome, "hooks.json")), "PreToolUse")
 	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatalf("default Codex home should remain untouched: %v", err)
+	}
+}
+
+func TestCodexHomeDirExpandsPortableTildeForms(t *testing.T) {
+	home := t.TempDir()
+	tests := []struct {
+		name       string
+		configured string
+		want       string
+	}{
+		{name: "tilde only", configured: "~", want: home},
+		{name: "slash", configured: "~/isolated-codex", want: filepath.Join(home, "isolated-codex")},
+		{name: "backslash", configured: `~\isolated-codex`, want: filepath.Join(home, "isolated-codex")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CODEX_HOME", tt.configured)
+			if got := codexHomeDir(home); got != tt.want {
+				t.Fatalf("codexHomeDir() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -64,7 +83,7 @@ func TestSetupCodexPreservesOtherHooksAndIsIdempotent(t *testing.T) {
 	  "description": "user hooks",
 	  "hooks": {
 	    "PreToolUse": [
-	      {"matcher":"Bash","hooks":[{"type":"command","command":"user-policy"}]}
+	      {"matcher":"Bash","hooks":[{"type":"command","command":"user-policy"},{"type":"command","command":"notify hook --format codex --dry-run"}]}
 	    ],
 	    "SessionStart": [
 	      {"hooks":[{"type":"command","command":"session-notes"}]}
@@ -76,14 +95,12 @@ func TestSetupCodexPreservesOtherHooksAndIsIdempotent(t *testing.T) {
 	}
 
 	for iteration := 0; iteration < 2; iteration++ {
-		cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-		cmd.SetArgs([]string{"setup", "codex"})
-		if err := cmd.Execute(); err != nil {
+		if err := testExecuteRoot(t, "setup", "codex"); err != nil {
 			t.Fatalf("setup iteration %d: %v", iteration+1, err)
 		}
 	}
 
-	settings := readCodexHookSettings(t, hooksPath)
+	settings := testReadJSONMap(t, hooksPath)
 	if settings["description"] != "user hooks" {
 		t.Fatalf("description was overwritten: %#v", settings["description"])
 	}
@@ -92,11 +109,81 @@ func TestSetupCodexPreservesOtherHooksAndIsIdempotent(t *testing.T) {
 	if len(pre) != 2 {
 		t.Fatalf("PreToolUse entries = %d, want user + one Rampart entry", len(pre))
 	}
+	userMatcher := pre[0].(map[string]any)
+	if got := len(userMatcher["hooks"].([]any)); got != 2 {
+		t.Fatalf("protocol-mentioning user handler was removed: %#v", userMatcher)
+	}
 	if len(hooks["SessionStart"].([]any)) != 1 {
 		t.Fatal("unrelated SessionStart hooks were not preserved")
 	}
 	assertRampartCodexHook(t, settings, "PreToolUse")
 	assertRampartCodexHook(t, settings, "PostToolUse")
+}
+
+func TestSetupCodexPreservesLargeHostInteger(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksPath, []byte(`{"hostSequence":9007199254740993}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
+		t.Fatalf("setup codex: %v", err)
+	}
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := decodeUserJSON(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := settings["hostSequence"].(json.Number)
+	if !ok || sequence.String() != "9007199254740993" {
+		t.Fatalf("unrelated large integer changed: %#v", settings["hostSequence"])
+	}
+}
+
+func TestSetupCodexRefreshesStaleCommandsBeforeReportingConfigured(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	oldLookPath := execLookPath
+	oldExecutable := osExecutable
+	execLookPath = func(name string) (string, error) { return filepath.Join(home, "bin", name), nil }
+	osExecutable = func() (string, error) { return filepath.Join(home, "bin", "rampart"), nil }
+	defer func() {
+		execLookPath = oldLookPath
+		osExecutable = oldExecutable
+	}()
+
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"'/old/rampart' hook --format codex","commandWindows":"\"C:\\\\old\\\\rampart.exe\" hook --format codex"}]}],"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"'/old/rampart' hook --format codex","commandWindows":"\"C:\\\\old\\\\rampart.exe\" hook --format codex"}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if codexHooksConfiguredForHome(home) {
+		t.Fatal("stale Codex hook commands must not be reported as currently configured")
+	}
+	if check := verifyCodexHooksInstalled(); check.Status != verificationFail || !strings.Contains(check.Actual, "stale") {
+		t.Fatalf("stale Codex verification = %#v", check)
+	}
+
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if !codexHooksConfiguredForHome(home) {
+		t.Fatal("refreshed Codex hook commands were not reported as configured")
+	}
+	if check := verifyCodexHooksInstalled(); check.Status != verificationPass {
+		t.Fatalf("refreshed Codex verification = %#v", check)
+	}
 }
 
 func TestSetupCodexMigratesAndRemovesManagedWrapper(t *testing.T) {
@@ -136,19 +223,15 @@ func TestSetupCodexRemovePreservesUnrelatedHooks(t *testing.T) {
 	if err := os.WriteFile(hooksPath, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	setup := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	setup.SetArgs([]string{"setup", "codex"})
-	if err := setup.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
 		t.Fatal(err)
 	}
 
-	remove := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	remove.SetArgs([]string{"setup", "codex", "--remove"})
-	if err := remove.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex", "--remove"); err != nil {
 		t.Fatal(err)
 	}
 
-	settings := readCodexHookSettings(t, hooksPath)
+	settings := testReadJSONMap(t, hooksPath)
 	hooks := settings["hooks"].(map[string]any)
 	pre := hooks["PreToolUse"].([]any)
 	if len(pre) != 1 {
@@ -159,6 +242,52 @@ func TestSetupCodexRemovePreservesUnrelatedHooks(t *testing.T) {
 	}
 	if _, ok := hooks["PostToolUse"]; ok {
 		t.Fatal("empty Rampart-only PostToolUse group remained after removal")
+	}
+}
+
+func TestSetupCodexPreservesHandlersSharingRampartMatcher(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"hooks":{"PreToolUse":[{"matcher":"*","note":"preserve","hooks":[{"type":"command","command":"user-policy"},{"type":"command","command":"'/retired/rampart' hook --format codex"}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	settings := testReadJSONMap(t, hooksPath)
+	hooks := settings["hooks"].(map[string]any)
+	pre := hooks["PreToolUse"].([]any)
+	if len(pre) != 2 {
+		t.Fatalf("PreToolUse entries = %d, want preserved user matcher + current Rampart matcher", len(pre))
+	}
+	preserved := pre[0].(map[string]any)
+	if preserved["note"] != "preserve" {
+		t.Fatalf("shared matcher metadata was lost: %#v", preserved)
+	}
+	handlers := preserved["hooks"].([]any)
+	if len(handlers) != 1 || handlers[0].(map[string]any)["command"] != "user-policy" {
+		t.Fatalf("shared matcher handlers were not narrowed safely: %#v", handlers)
+	}
+
+	if err := testExecuteRoot(t, "setup", "codex", "--remove"); err != nil {
+		t.Fatal(err)
+	}
+	settings = testReadJSONMap(t, hooksPath)
+	hooks = settings["hooks"].(map[string]any)
+	pre = hooks["PreToolUse"].([]any)
+	if len(pre) != 1 {
+		t.Fatalf("PreToolUse entries after remove = %d, want preserved user matcher", len(pre))
+	}
+	preserved = pre[0].(map[string]any)
+	handlers = preserved["hooks"].([]any)
+	if preserved["note"] != "preserve" || len(handlers) != 1 || handlers[0].(map[string]any)["command"] != "user-policy" {
+		t.Fatalf("uninstall changed the shared user matcher: %#v", preserved)
 	}
 }
 
@@ -173,18 +302,14 @@ func TestSetupCodexInvalidJSONRequiresForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+	if err := testExecuteRoot(t, "setup", "codex"); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("invalid JSON error = %v, want --force guidance", err)
 	}
 
-	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex", "--force"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex", "--force"); err != nil {
 		t.Fatalf("force setup: %v", err)
 	}
-	assertRampartCodexHook(t, readCodexHookSettings(t, hooksPath), "PreToolUse")
+	assertRampartCodexHook(t, testReadJSONMap(t, hooksPath), "PreToolUse")
 }
 
 func TestSetupCodexInvalidHookShapeRequiresForce(t *testing.T) {
@@ -198,31 +323,65 @@ func TestSetupCodexInvalidHookShapeRequiresForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+	if err := testExecuteRoot(t, "setup", "codex"); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("invalid hook shape error = %v, want --force guidance", err)
 	}
 
-	cmd = NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
-	cmd.SetArgs([]string{"setup", "codex", "--force"})
-	if err := cmd.Execute(); err != nil {
+	if err := testExecuteRoot(t, "setup", "codex", "--force"); err != nil {
 		t.Fatalf("force setup: %v", err)
 	}
-	assertRampartCodexHook(t, readCodexHookSettings(t, hooksPath), "PreToolUse")
+	assertRampartCodexHook(t, testReadJSONMap(t, hooksPath), "PreToolUse")
 }
 
-func readCodexHookSettings(t *testing.T, path string) map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
+func TestCodexInstallAndRemoveRefuseSymlinkedHooksFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "operator-hooks.json")
+	initial := []byte(`{"hooks":{"SessionStart":[]}}`)
+	if err := os.WriteFile(target, initial, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatal(err)
+	path := filepath.Join(dir, "hooks.json")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
 	}
-	return settings
+
+	if err := installCodexHooks(path, "rampart hook --format codex", "rampart.exe hook --format codex", false); err == nil || !strings.Contains(err.Error(), "linked") {
+		t.Fatalf("install error = %v, want symlink refusal", err)
+	}
+	if removed, err := removeCodexHooks(path); err == nil || removed || !strings.Contains(err.Error(), "linked") {
+		t.Fatalf("remove = (%v, %v), want symlink refusal", removed, err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("hooks symlink was replaced: info=%v err=%v", info, err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != string(initial) {
+		t.Fatalf("hooks target changed: data=%q err=%v", data, err)
+	}
+}
+
+func TestCodexConfiguredRequiresFullMatcherCoverage(t *testing.T) {
+	command, commandWindows := currentCodexHookCommands()
+	handler := map[string]any{
+		"type": "command", "command": command, "commandWindows": commandWindows,
+	}
+	settings := map[string]any{"hooks": map[string]any{
+		"PreToolUse":  []any{map[string]any{"matcher": "Bash", "hooks": []any{handler}}},
+		"PostToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{handler}}},
+	}}
+	if codexHooksUseCommands(settings, command, commandWindows) {
+		t.Fatal("an exact command under a narrowed matcher must not establish complete protection")
+	}
+}
+
+func TestCodexOwnershipRejectsOtherProtocolExecutable(t *testing.T) {
+	handler := map[string]any{
+		"command":        "notify hook --format codex",
+		"commandWindows": `& "C:\Tools\notify.exe" hook --format codex`,
+	}
+	if isRampartCodexHandler(handler) {
+		t.Fatal("unrelated executable was claimed as a Rampart Codex handler")
+	}
 }
 
 func assertRampartCodexHook(t *testing.T, settings map[string]any, event string) {

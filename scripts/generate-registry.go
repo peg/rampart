@@ -177,7 +177,8 @@ func parseFirstPartyPolicy(path string) (registryEntry, error) {
 		name = strings.TrimSuffix(filepath.Base(path), ".yaml")
 	}
 
-	sum := sha256.Sum256(content)
+	normalizedContent := strings.ReplaceAll(string(content), "\r\n", "\n")
+	sum := sha256.Sum256([]byte(normalizedContent))
 	sha := hex.EncodeToString(sum[:])
 
 	baseName := strings.TrimSuffix(filepath.Base(path), ".yaml")

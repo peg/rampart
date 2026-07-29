@@ -58,7 +58,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "aws s3 cp *"
@@ -76,7 +76,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: require_approval
+      - action: ask
         when:
           command_matches:
             - "pip install *"
@@ -90,7 +90,7 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: log
+      - action: watch
         when:
           command_matches:
             - "curl *"
@@ -168,7 +168,7 @@ tests:
   - name: "approves pip install"
     tool: exec
     params: { command: "pip install pandas" }
-    expect: require_approval
+    expect: ask
   - name: "blocks raw dataset write"
     tool: write
     params: { path: "/home/user/project/data/raw/sales.csv" }
@@ -180,4 +180,4 @@ tests:
   - name: "approves s3 upload"
     tool: exec
     params: { command: "aws s3 cp model.pkl s3://bucket/" }
-    expect: require_approval
+    expect: ask

@@ -56,7 +56,7 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 	case !serverRunning:
 		// LD_PRELOAD/shim agents need serve running
 		if runtime.GOOS == "windows" {
-			fmt.Fprintln(w, "\n→ Next: rampart serve   (keep this terminal open, or use Task Scheduler for background)")
+			fmt.Fprintln(w, "\n→ Next: rampart serve --background   (use Task Scheduler for automatic startup)")
 		} else {
 			fmt.Fprintln(w, "\n→ Next: rampart serve")
 		}
@@ -112,7 +112,10 @@ func isHookBasedOnly(protected []string) bool {
 	for _, p := range protected {
 		if !(strings.Contains(p, "Claude Code (hooks)") ||
 			strings.Contains(p, "Cline (hooks)") ||
-			strings.Contains(p, "Codex (hooks)")) {
+			strings.Contains(p, "Codex (hooks)") ||
+			strings.Contains(p, "Gemini CLI (hooks)") ||
+			strings.Contains(p, "Antigravity CLI / IDE (plugin)") ||
+			strings.Contains(p, "GitHub Copilot CLI / VS Code (hooks)")) {
 			return false
 		}
 	}

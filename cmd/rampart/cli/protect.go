@@ -5,19 +5,23 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/filetxn"
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
 
-func newProtectCmd() *cobra.Command {
+func newProtectCmd(rootOpts *rootOptions) *cobra.Command {
 	var noRestart bool
 	var noVerify bool
 	var reinstall bool
@@ -25,15 +29,17 @@ func newProtectCmd() *cobra.Command {
 	var timeout time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "protect [openclaw]",
+		Use:   "protect [agent]",
 		Short: "Protect an installed agent with safe managed defaults",
 		Long: `Install and activate Rampart's managed safety guard for an agent harness.
 
 No policy file or rule authoring is required. Protect installs the native
 integration, starts Rampart's policy service, enables fail-closed degraded
-behavior, and verifies the live boundary with non-destructive canaries.
+behavior, and verifies the installed boundary. Native-hook integrations use
+non-destructive adapter canaries; OpenClaw exercises its live plugin path.
 
-OpenClaw is the first fully supported zero-configuration target.`,
+Without an agent argument, Rampart detects installed supported agents and
+protects each one through its strongest available native boundary.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensureDefaultRampartDirAccessible(); err != nil {
@@ -43,26 +49,61 @@ OpenClaw is the first fully supported zero-configuration target.`,
 			if len(args) == 1 {
 				target = strings.ToLower(strings.TrimSpace(args[0]))
 			}
+			var drivers []integrationDriver
 			if target == "" {
-				if !isOpenClawInstalled() {
-					return fmt.Errorf("protect: no supported agent harness detected; OpenClaw is currently the zero-configuration target (Hermes support remains experimental)")
+				detected, err := detectInstalledIntegrationDrivers()
+				if err != nil {
+					return fmt.Errorf("protect: detect installed agents: %w", err)
 				}
-				target = "openclaw"
-			}
-			if target != "openclaw" {
-				return fmt.Errorf("protect: unsupported target %q; OpenClaw is currently supported and Hermes remains experimental", target)
-			}
-			if !isOpenClawInstalled() {
-				return fmt.Errorf("protect: OpenClaw was not found; install OpenClaw first, then rerun `rampart protect openclaw`")
+				if len(detected) == 0 {
+					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Antigravity, GitHub Copilot, Cline; Gemini CLI and Hermes remain experimental)")
+				}
+				drivers = detected
+				fmt.Fprintf(cmd.OutOrStdout(), "Detected %d supported agent(s): ", len(drivers))
+				for i, driver := range drivers {
+					if i > 0 {
+						fmt.Fprint(cmd.OutOrStdout(), ", ")
+					}
+					fmt.Fprint(cmd.OutOrStdout(), driver.DisplayName)
+				}
+				fmt.Fprintln(cmd.OutOrStdout())
+			} else {
+				driver, ok := findIntegrationDriver(target)
+				if !ok {
+					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, antigravity, copilot, cline; Gemini CLI and Hermes remain experimental)", target)
+				}
+				if !driver.AutoProtect {
+					return fmt.Errorf("protect: %s remains experimental; use `rampart setup %s` and `rampart verify %s` for explicit testing", driver.DisplayName, driver.ID, driver.VerifyTarget)
+				}
+				if !integrationDriverSupportsPlatform(driver, runtime.GOOS) {
+					return fmt.Errorf("protect: %s is not supported on %s", driver.DisplayName, runtime.GOOS)
+				}
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("protect: resolve home: %w", err)
+				}
+				if driver.Installed == nil || !driver.Installed(home) {
+					return fmt.Errorf("protect: %s was not found; install it first, then rerun `rampart protect %s`", driver.DisplayName, driver.ID)
+				}
+				drivers = []integrationDriver{driver}
+				if !driver.OpenClaw && (cmd.Flags().Changed("no-restart") || cmd.Flags().Changed("reinstall")) {
+					return fmt.Errorf("protect: --no-restart and --reinstall apply only to OpenClaw")
+				}
 			}
 
-			return runProtectOpenClaw(cmd, protectOpenClawOptions{
-				NoRestart: noRestart,
-				NoVerify:  noVerify,
-				Reinstall: reinstall,
-				ServeURL:  serveURL,
-				Timeout:   timeout,
-			})
+			var protectErrors []error
+			for _, driver := range drivers {
+				if driver.OpenClaw {
+					if err := runProtectOpenClaw(cmd, protectOpenClawOptions{NoRestart: noRestart, NoVerify: noVerify, Reinstall: reinstall, ServeURL: serveURL, Timeout: timeout}); err != nil {
+						protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
+					}
+					continue
+				}
+				if err := runProtectHookDriver(cmd, rootOpts, driver, protectHookOptions{NoVerify: noVerify, ServeURL: serveURL, Timeout: timeout}); err != nil {
+					protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
+				}
+			}
+			return errors.Join(protectErrors...)
 		},
 	}
 
@@ -72,6 +113,50 @@ OpenClaw is the first fully supported zero-configuration target.`,
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override used for verification")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for each active verification check")
 	return cmd
+}
+
+type protectHookOptions struct {
+	NoVerify bool
+	ServeURL string
+	Timeout  time.Duration
+}
+
+func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver integrationDriver, opts protectHookOptions) error {
+	w := cmd.OutOrStdout()
+	errW := cmd.ErrOrStderr()
+	fmt.Fprintf(w, "\nProtecting %s through %s...\n", driver.DisplayName, driver.Boundary)
+	guardPath, err := installManagedGuardPolicy()
+	if err != nil {
+		return fmt.Errorf("protect %s: install managed Guard policy: %w", driver.ID, err)
+	}
+	fmt.Fprintf(w, "✓ Managed Guard policy installed at %s\n", guardPath)
+	if err := ensureServeRunning(w, errW); err != nil {
+		return fmt.Errorf("protect %s: start Rampart policy service: %w", driver.ID, err)
+	}
+	if err := runIntegrationSetup(cmd, rootOpts, driver); err != nil {
+		return fmt.Errorf("protect %s: configure native integration: %w", driver.ID, err)
+	}
+	if opts.NoVerify {
+		fmt.Fprintf(w, "Rampart protection is configured for %s. Behavioral verification was skipped.\n", driver.DisplayName)
+		fmt.Fprintf(w, "Run `rampart verify %s` to prove the boundary.\n", driver.VerifyTarget)
+		return nil
+	}
+	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Errorf("protect %s: resolve serve URL: %w", driver.ID, err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, resolvedURL, opts.Timeout)
+	fmt.Fprintln(w)
+	printVerificationReport(w, report)
+	if report.Summary.Failed > 0 {
+		return exitCodeError{code: 1}
+	}
+	if report.Summary.Unverified > 0 {
+		return exitCodeError{code: 2}
+	}
+	fmt.Fprintf(w, "\nRampart configuration and adapter verification passed for %s. Restart or reload the host if setup requested it.\n", driver.DisplayName)
+	return nil
 }
 
 type protectOpenClawOptions struct {
@@ -113,19 +198,10 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 	if err != nil {
 		return fmt.Errorf("protect: find OpenClaw: %w", err)
 	}
-	_, configPath, err := resolveOpenClawStateDir(bin)
-	if err != nil {
-		return fmt.Errorf("protect: resolve OpenClaw config: %w", err)
-	}
-	changed, err := configureOpenClawGuardModeAtPath(configPath)
-	if err != nil {
+	if err := configureOpenClawGuardMode(bin, w, errW); err != nil {
 		return fmt.Errorf("protect: enable fail-closed OpenClaw guard mode: %w", err)
 	}
-	if changed {
-		fmt.Fprintln(w, "✓ Enabled fail-closed behavior when Rampart is unavailable")
-	} else {
-		fmt.Fprintln(w, "✓ Fail-closed degraded behavior is already enabled")
-	}
+	fmt.Fprintln(w, "✓ Enabled fail-closed behavior when Rampart is unavailable")
 
 	if !opts.NoRestart {
 		if err := restartOpenClawGateway(); err != nil {
@@ -168,12 +244,7 @@ func openClawPluginCurrent(state openClawPluginState) bool {
 		state.ManifestVersion != want || state.RuntimeVersion != want {
 		return false
 	}
-	installed, err := os.ReadFile(filepath.Join(state.Dir, "index.js"))
-	if err != nil {
-		return false
-	}
-	bundled, err := ocplugin.PluginFS.ReadFile("index.js")
-	return err == nil && bytes.Equal(installed, bundled)
+	return ocplugin.Current(state.Dir)
 }
 
 func installManagedGuardPolicy() (string, error) {
@@ -196,84 +267,76 @@ func installManagedGuardPolicy() (string, error) {
 	return dest, nil
 }
 
-func configureOpenClawGuardModeAtPath(configPath string) (bool, error) {
-	var cfg map[string]any
-	data, err := os.ReadFile(configPath)
-	if err == nil {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return false, fmt.Errorf("parse %s: %w", configPath, err)
+func configureOpenClawGuardMode(openclawBin string, w, errW io.Writer) error {
+	stateDir, configPath, err := resolveOpenClawStateDir(openclawBin)
+	if err != nil {
+		return fmt.Errorf("resolve active OpenClaw state: %w", err)
+	}
+	if err := setOpenClawExecAskAt(stateDir, configPath, "off"); err != nil {
+		return fmt.Errorf("repair tools.exec.ask ownership: %w", err)
+	}
+	if err := ensureOpenClawApprovalHardening(w, errW); err != nil {
+		return fmt.Errorf("repair OpenClaw approval timeout: %w", err)
+	}
+
+	const patch = `{"plugins":{"entries":{"rampart":{"enabled":true,"config":{"failOpen":false,"failOpenTools":null,"serveUrl":"http://localhost:9090"}}}}}`
+	var stdout, stderr bytes.Buffer
+	cmd := osexec.Command(openclawBin, "config", "patch", "--stdin")
+	cmd.Stdin = strings.NewReader(patch)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	patchErr := cmd.Run()
+	if patchErr == nil {
+		_, _ = io.Copy(w, &stdout)
+		_, _ = io.Copy(errW, &stderr)
+		return nil
+	}
+
+	// config patch is newer than Rampart's original OpenClaw host floor. Probe
+	// the command before falling back: a supported command that rejected the
+	// write (schema, Nix mode, permissions) must remain a hard failure.
+	if err := osexec.Command(openclawBin, "config", "patch", "--help").Run(); err == nil {
+		_, _ = io.Copy(w, &stdout)
+		_, _ = io.Copy(errW, &stderr)
+		return fmt.Errorf("OpenClaw config patch: %w", patchErr)
+	}
+
+	// Older supported hosts still provide path-based config set. Apply the
+	// fail-closed values before enablement. Each host-owned write is validated
+	// and include-aware; no Rampart whole-file rewrite is used.
+	legacyWrites := [][]string{
+		{"config", "set", "plugins.entries.rampart.config.failOpenTools", "[]", "--json"},
+		{"config", "set", "plugins.entries.rampart.config.failOpen", "false", "--json"},
+		{"config", "set", "plugins.entries.rampart.config.serveUrl", `"http://localhost:9090"`, "--json"},
+		{"config", "set", "plugins.entries.rampart.enabled", "true", "--json"},
+	}
+	for _, args := range legacyWrites {
+		legacyCmd := osexec.Command(openclawBin, args...)
+		legacyCmd.Stdout = w
+		legacyCmd.Stderr = errW
+		if err := legacyCmd.Run(); err != nil {
+			return fmt.Errorf("OpenClaw config patch unavailable (%v); fallback `%s` failed: %w", patchErr, strings.Join(args, " "), err)
 		}
-	} else if os.IsNotExist(err) {
-		cfg = make(map[string]any)
-	} else {
-		return false, fmt.Errorf("read %s: %w", configPath, err)
 	}
-
-	plugins, err := jsonObject(cfg, "plugins")
-	if err != nil {
-		return false, err
-	}
-	entries, err := jsonObject(plugins, "entries")
-	if err != nil {
-		return false, err
-	}
-	rampartEntry, err := jsonObject(entries, "rampart")
-	if err != nil {
-		return false, err
-	}
-	pluginConfig, err := jsonObject(rampartEntry, "config")
-	if err != nil {
-		return false, err
-	}
-
-	changed := false
-	if enabled, ok := rampartEntry["enabled"].(bool); !ok || !enabled {
-		rampartEntry["enabled"] = true
-		changed = true
-	}
-	if failOpen, ok := pluginConfig["failOpen"].(bool); !ok || failOpen {
-		pluginConfig["failOpen"] = false
-		changed = true
-	}
-	const managedServeURL = "http://localhost:9090"
-	if serveURL, ok := pluginConfig["serveUrl"].(string); !ok || serveURL != managedServeURL {
-		pluginConfig["serveUrl"] = managedServeURL
-		changed = true
-	}
-	if _, ok := pluginConfig["failOpenTools"]; ok {
-		delete(pluginConfig, "failOpenTools")
-		changed = true
-	}
-	if !changed {
-		return false, nil
-	}
-
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal %s: %w", configPath, err)
-	}
-	out = append(out, '\n')
-	if err := atomicWritePrivateFile(configPath, out); err != nil {
-		return false, fmt.Errorf("write %s: %w", configPath, err)
-	}
-	return true, nil
-}
-
-func jsonObject(parent map[string]any, key string) (map[string]any, error) {
-	value, ok := parent[key]
-	if !ok {
-		child := make(map[string]any)
-		parent[key] = child
-		return child, nil
-	}
-	child, ok := value.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must be a JSON object", key)
-	}
-	return child, nil
+	return nil
 }
 
 func atomicWritePrivateFile(path string, data []byte) error {
+	return atomicWritePrivateFileWithMode(path, data, 0o600)
+}
+
+func atomicWritePrivateFileWithMode(path string, data []byte, mode os.FileMode) error {
+	return atomicWritePrivateFileWithModeAndDurability(path, data, mode, true)
+}
+
+// atomicWriteRecoverablePrivateFile atomically publishes owner-only derived
+// state without forcing it to stable storage. It is only for files that are
+// safely regenerated when absent, stale, or partial after a system crash.
+func atomicWriteRecoverablePrivateFile(path string, data []byte) error {
+	return atomicWritePrivateFileWithModeAndDurability(path, data, 0o600, false)
+}
+
+func atomicWritePrivateFileWithModeAndDurability(path string, data []byte, mode os.FileMode, durable bool) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
@@ -284,22 +347,31 @@ func atomicWritePrivateFile(path string, data []byte) error {
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
+	if err := secureFilePermissions(tmpPath); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure temporary file: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
+	if durable {
+		if err := tmp.Sync(); err != nil {
+			tmp.Close()
+			return err
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return fmt.Errorf("set temporary file mode: %w", err)
+	}
+	replace := filetxn.ReplaceAtomic
+	if durable {
+		replace = filetxn.Replace
+	}
+	if err := replace(tmpPath, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil

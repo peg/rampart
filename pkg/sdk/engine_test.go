@@ -159,6 +159,7 @@ policies:
 	}
 
 	// Verify that bare string keys DON'T collide with our typed keys.
+	//lint:ignore SA1029 The built-in string key is intentional collision-test input.
 	ctx2 := context.WithValue(context.Background(), "rampart-agent", "wrong-agent")
 	call := engine.ToolCall{
 		Agent: func() string {

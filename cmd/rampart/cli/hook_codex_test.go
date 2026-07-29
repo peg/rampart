@@ -43,6 +43,17 @@ func TestParseCodexInput(t *testing.T) {
 			wantTool: "exec",
 		},
 		{
+			name: "code execution alias",
+			payload: `{
+				"session_id":"session-1",
+				"hook_event_name":"PreToolUse",
+				"tool_name":"code_execution",
+				"tool_use_id":"call_code",
+				"tool_input":{"code":"print('ok')"}
+			}`,
+			wantTool: "exec",
+		},
+		{
 			name: "apply patch",
 			payload: `{
 				"session_id":"session-1",
@@ -197,6 +208,52 @@ policies:
 	}
 }
 
+func TestEvaluateHookCallClaimsOnceBeforeLaterBatchDeny(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(policyPath, []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: batch-policy
+    match:
+      agent: codex
+      tool: write
+    rules:
+      - action: allow
+        when:
+          path_matches: ["safe.txt"]
+        once: true
+      - action: deny
+        when:
+          path_matches: ["**/.env"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := engine.New(engine.NewFileStore(policyPath), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := engine.ToolCall{
+		Agent:  "codex",
+		Tool:   "write",
+		Params: map[string]any{},
+		Input:  map[string]any{},
+	}
+
+	_, decision := evaluateHookCall(eng, call, []string{"safe.txt", "secrets/.env"})
+	if decision.Action != engine.ActionDeny {
+		t.Fatalf("decision = %s, want deny", decision.Action)
+	}
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "safe.txt") {
+		t.Fatal("one-time allowance was not claimed before the later batch denial")
+	}
+}
+
 func TestParseCodexInputRejectsOversizedPatch(t *testing.T) {
 	var patch strings.Builder
 	patch.WriteString("*** Begin Patch\n")
@@ -232,6 +289,61 @@ func TestParseCodexInputRejectsUnsafeOrUnsupportedPayloads(t *testing.T) {
 		if _, err := parseCodexInput(strings.NewReader(payload)); err == nil {
 			t.Fatalf("expected payload to be rejected: %s", payload)
 		}
+	}
+}
+
+func TestParseCodexInputRejectsMalformedKnownPreTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolName  string
+		toolInput string
+	}{
+		{name: "missing exec command", toolName: "Bash", toolInput: `{}`},
+		{name: "non-string exec command", toolName: "shell", toolInput: `{"command":42}`},
+		{name: "missing write path", toolName: "write_file", toolInput: `{}`},
+		{name: "missing read path", toolName: "Read", toolInput: `{}`},
+		{name: "missing fetch URL", toolName: "browser_navigate", toolInput: `{}`},
+		{name: "missing patch", toolName: "apply_patch", toolInput: `{"command":" "}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := `{"session_id":"session","hook_event_name":"PreToolUse","tool_name":"` + testCase.toolName + `","tool_use_id":"call","tool_input":` + testCase.toolInput + `}`
+			if _, err := parseCodexInput(strings.NewReader(payload)); err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("error = %v, want required-field rejection", err)
+			}
+		})
+	}
+}
+
+func TestParseCodexPostToolKeepsScanningMalformedKnownInput(t *testing.T) {
+	payload := `{"session_id":"session","hook_event_name":"PostToolUse","tool_name":"apply_patch","tool_use_id":"call","tool_input":{},"tool_response":{"output":"scan me"}}`
+	result, err := parseCodexInput(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response != "scan me" {
+		t.Fatalf("response = %q, want scan me", result.Response)
+	}
+}
+
+func TestCodexMalformedKnownPreToolUseEmitsStructuredDeny(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	var stdout bytes.Buffer
+	root := NewRootCmd(context.Background(), &stdout, io.Discard)
+	root.SetIn(strings.NewReader(`{"session_id":"session","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"call","tool_input":{}}`))
+	root.SetArgs([]string{"hook", "--format", "codex", "--audit-dir", filepath.Join(home, "audit")})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("hook command returned an ordinary host error instead of a structured denial: %v", err)
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output %q: %v", stdout.String(), err)
+	}
+	specific, ok := output["hookSpecificOutput"].(map[string]any)
+	if !ok || specific["permissionDecision"] != "deny" {
+		t.Fatalf("malformed known Codex tool must deny in enforce mode: %#v", output)
 	}
 }
 
@@ -321,7 +433,7 @@ func TestResolveCodexApprovalPreservesExactToolIdentity(t *testing.T) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+			writeTestRampartHealth(w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -349,7 +461,7 @@ func TestResolveCodexApprovalPreservesExactToolIdentity(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	if err := resolveCodexApproval(cmd, call, "approval required", server.URL, "token", false, logger); err != nil {
+	if err := resolveExternalHookApproval(cmd, "codex", call, "approval required", server.URL, "token", false, logger); err != nil {
 		t.Fatal(err)
 	}
 	var output map[string]any

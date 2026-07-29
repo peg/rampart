@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -30,6 +32,8 @@ import (
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -40,6 +44,28 @@ type mockSink struct {
 	mu     sync.Mutex
 	events []audit.Event
 }
+
+type failingSink struct{}
+
+func (*failingSink) Write(audit.Event) error { return fmt.Errorf("disk unavailable") }
+func (*failingSink) Flush() error            { return nil }
+func (*failingSink) Close() error            { return nil }
+
+type failOnNthSink struct {
+	writes int
+	failAt int
+}
+
+func (s *failOnNthSink) Write(audit.Event) error {
+	s.writes++
+	if s.writes == s.failAt {
+		return fmt.Errorf("disk unavailable")
+	}
+	return nil
+}
+
+func (*failOnNthSink) Flush() error { return nil }
+func (*failOnNthSink) Close() error { return nil }
 
 func (m *mockSink) Write(event audit.Event) error {
 	m.mu.Lock()
@@ -151,6 +177,87 @@ func TestHandleToolsCall_Allow(t *testing.T) {
 	p.pendingMu.Unlock()
 }
 
+func TestHandleToolsCall_AuditFailureFailsClosedInEnforceMode(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &failingSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"}) + "\n"))
+	if err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("request with an unpersisted enforcement decision reached the child")
+	}
+	if !strings.Contains(parentOut.String(), "audit storage is unavailable") {
+		t.Fatalf("unexpected client response: %s", parentOut.String())
+	}
+}
+
+func TestHandleToolsCall_AuditFailureRemainsObservableInMonitorMode(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	p := NewProxy(eng, &failingSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("monitor"), WithLogger(silentLogger()))
+	p.parentOut = &bytes.Buffer{}
+
+	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"}) + "\n"))
+	if err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() == 0 {
+		t.Fatal("monitor mode should not block on audit storage failure")
+	}
+}
+
+func TestHandleToolsCall_WebhookResultAuditFailureFailsClosed(t *testing.T) {
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"decision":"allow"}`)
+	}))
+	defer webhook.Close()
+
+	eng := buildTestEngine(t, fmt.Sprintf(`
+version: "1"
+default_action: allow
+policies:
+  - name: webhook-check
+    match:
+      tool: exec
+    rules:
+      - action: webhook
+        when:
+          command_matches: ["deploy prod"]
+        webhook:
+          url: %q
+          timeout: 2s
+          fail_open: false
+`, webhook.URL))
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	sink := &failOnNthSink{failAt: 2}
+	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "execute_command", map[string]any{"command": "deploy prod"}) + "\n"))
+	if err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("request with an unpersisted webhook result reached the child")
+	}
+	if !strings.Contains(parentOut.String(), "audit storage is unavailable") {
+		t.Fatalf("unexpected client response: %s", parentOut.String())
+	}
+	if sink.writes != 2 {
+		t.Fatalf("audit writes = %d, want initial webhook and final result", sink.writes)
+	}
+}
+
 func TestHandleToolsCall_Deny(t *testing.T) {
 	eng := buildDenyAllEngine(t)
 	childIn := &bytes.Buffer{}
@@ -192,6 +299,29 @@ func TestHandleToolsCall_Deny(t *testing.T) {
 	}
 }
 
+func TestHandleToolsCall_ConflictingCommandAliasesFailClosed(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	line := []byte(makeToolsCallJSON(1, "execute_command", map[string]any{
+		"command": "echo safe",
+		"cmd":     "rm -rf /",
+	}) + "\n")
+	if err := p.handleClientLine(line); err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("ambiguous request reached the child process")
+	}
+	if !strings.Contains(parentOut.String(), "ambiguous tool input") {
+		t.Fatalf("unexpected client response: %s", parentOut.String())
+	}
+}
+
 func TestHandleToolsCall_RequireApproval(t *testing.T) {
 	eng := buildAskEngine(t)
 	childIn := &bytes.Buffer{}
@@ -226,7 +356,7 @@ func TestHandleToolsCall_RequireApproval(t *testing.T) {
 		}
 	}
 
-	if err := store.Resolve(pending.ID, true, "test", false); err != nil {
+	if err := store.Resolve(pending.ID, true, "test"); err != nil {
 		t.Fatalf("resolve approval: %v", err)
 	}
 
@@ -244,6 +374,34 @@ func TestHandleToolsCall_RequireApproval(t *testing.T) {
 	}
 	if parentOut.Len() != 0 {
 		t.Fatal("approved require_approval request should not return an error")
+	}
+}
+
+func TestHandleToolsCall_RequireApprovalWithoutResolverFailsImmediately(t *testing.T) {
+	eng := buildAskEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	line := []byte(makeToolsCallJSON(22, "exec_command", map[string]any{"command": "ls"}) + "\n")
+	if err := p.handleClientLine(line); err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("approval-required call must not reach the MCP server")
+	}
+
+	var response Response
+	if err := json.Unmarshal(bytes.TrimSpace(parentOut.Bytes()), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Error == nil {
+		t.Fatal("expected JSON-RPC error")
+	}
+	if !strings.Contains(response.Error.Message, "no approval resolver") {
+		t.Fatalf("unexpected error message: %s", response.Error.Message)
 	}
 }
 
@@ -281,7 +439,7 @@ func TestHandleToolsCall_RequireApprovalDenied(t *testing.T) {
 		}
 	}
 
-	if err := store.Resolve(pending.ID, false, "test", false); err != nil {
+	if err := store.Resolve(pending.ID, false, "test"); err != nil {
 		t.Fatalf("resolve approval: %v", err)
 	}
 
@@ -321,6 +479,78 @@ func TestHandleToolsCall_MonitorMode_PassesThrough(t *testing.T) {
 	if childIn.Len() == 0 {
 		t.Error("monitor mode should forward all requests")
 	}
+}
+
+func TestHandleToolsCall_MonitorModeDoesNotMutateEnforcementState(t *testing.T) {
+	t.Run("once rule", func(t *testing.T) {
+		eng := buildTestEngine(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: one-shot
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        once: true
+        when:
+          command_matches: ["deploy prod"]
+`)
+		childIn := &bytes.Buffer{}
+		p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+			WithMode("monitor"), WithLogger(silentLogger()))
+		p.parentOut = &bytes.Buffer{}
+
+		for id := 1; id <= 2; id++ {
+			if err := p.handleClientLine([]byte(makeToolsCallJSON(id, "execute_command", map[string]any{"command": "deploy prod"}) + "\n")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		call := engine.ToolCall{Tool: "exec", Params: map[string]any{"command": "deploy prod"}}
+		if decision := eng.Enforce(call, engine.EvalOptions{}); decision.Action != engine.ActionAllow {
+			t.Fatalf("first real enforcement after monitor = %s, want allow", decision.Action)
+		}
+		if decision := eng.Enforce(call, engine.EvalOptions{}); decision.Action != engine.ActionDeny {
+			t.Fatalf("second real enforcement = %s, want consumed once rule to deny", decision.Action)
+		}
+	})
+
+	t.Run("call count", func(t *testing.T) {
+		eng := buildTestEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: exec-limit
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          call_count:
+            gte: 2
+            window: 1h
+`)
+		childIn := &bytes.Buffer{}
+		p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+			WithMode("monitor"), WithLogger(silentLogger()))
+		p.parentOut = &bytes.Buffer{}
+
+		for id := 1; id <= 2; id++ {
+			if err := p.handleClientLine([]byte(makeToolsCallJSON(id, "execute_command", map[string]any{"command": "echo safe"}) + "\n")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := eng.CallCounts(time.Hour)["exec"]; got != 0 {
+			t.Fatalf("monitor telemetry count = %d, want 0", got)
+		}
+		call := engine.ToolCall{Tool: "exec", Params: map[string]any{"command": "echo safe"}}
+		if decision := eng.Enforce(call, engine.EvalOptions{}); decision.Action != engine.ActionAllow {
+			t.Fatalf("first real enforcement after monitor = %s, want allow", decision.Action)
+		}
+		if decision := eng.Enforce(call, engine.EvalOptions{}); decision.Action != engine.ActionDeny {
+			t.Fatalf("second real enforcement = %s, want call-count deny", decision.Action)
+		}
+	})
 }
 
 func TestHandleToolsCall_Notification_NoDenyResponse(t *testing.T) {
@@ -385,6 +615,10 @@ func TestHandleChildLine_AllowedResponse(t *testing.T) {
 	if parentOut.Len() == 0 {
 		t.Fatal("expected response forwarded to parent")
 	}
+	events := sink.getEvents()
+	if len(events) != 1 || events[0].ToolCallID != "test-id" {
+		t.Fatalf("response audit correlation = %#v, want tool_call_id test-id", events)
+	}
 
 	// Pending call should be consumed
 	p.pendingMu.Lock()
@@ -392,6 +626,32 @@ func TestHandleChildLine_AllowedResponse(t *testing.T) {
 		t.Error("pending call should be consumed after response")
 	}
 	p.pendingMu.Unlock()
+}
+
+func TestHandleChildLine_AuditFailureBlocksResponseInEnforceMode(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &failingSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+	p.pendingCalls["1"] = pendingCall{
+		call: engine.ToolCall{
+			ID: "test-id", Agent: "mcp-client", Session: "mcp-proxy", Tool: "read_file",
+		},
+		request: map[string]any{"mcp_method": "tools/call", "mcp_tool": "read_file"},
+	}
+
+	respLine := []byte(makeResponseJSON(1, map[string]any{"content": "hello"}) + "\n")
+	if err := p.handleChildLine(respLine, parentOut); err != nil {
+		t.Fatalf("handleChildLine: %v", err)
+	}
+	var resp Response
+	if err := json.Unmarshal(bytes.TrimSpace(parentOut.Bytes()), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Error == nil || !strings.Contains(resp.Error.Message, "audit storage is unavailable") {
+		t.Fatalf("expected audit-storage denial, got %#v", resp.Error)
+	}
 }
 
 func TestHandleChildLine_DeniedResponse(t *testing.T) {
@@ -650,22 +910,124 @@ func TestPendingCallIDMatching(t *testing.T) {
 // Test: Edge cases
 // ---------------------------------------------------------------------------
 
-func TestHandleClientLine_MalformedJSON(t *testing.T) {
+func TestHandleClientLine_EnforceRejectsMalformedJSONAndBatch(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	for _, test := range []struct {
+		name string
+		line string
+	}{
+		{name: "malformed", line: "this is not json\n"},
+		{name: "non-object", line: `"not an envelope"` + "\n"},
+		{name: "batch", line: "[" + makeToolsCallJSON(1, "execute_command", map[string]any{"command": "echo bypass"}) + "]\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			childIn := &bytes.Buffer{}
+			parentOut := &bytes.Buffer{}
+			p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+				WithMode("enforce"), WithLogger(silentLogger()))
+			p.parentOut = parentOut
+
+			if err := p.handleClientLine([]byte(test.line)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if childIn.Len() != 0 {
+				t.Fatal("invalid JSON-RPC envelope reached the child")
+			}
+			if !strings.Contains(parentOut.String(), "invalid JSON-RPC request envelope") {
+				t.Fatalf("unexpected client response: %s", parentOut.String())
+			}
+		})
+	}
+}
+
+func TestHandleClientLine_EnforceRejectsDuplicateJSONMembers(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	for _, line := range []string{
+		// A child parser choosing the first method would execute tools/call while
+		// Go's decoder evaluates the last method as benign.
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","method":"initialize","params":{"name":"execute_command","arguments":{"command":"echo bypass"}}}` + "\n",
+		// Reject parser differentials in nested tool arguments as well.
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_command","arguments":{"command":"echo allowed","command":"echo bypass"}}}` + "\n",
+	} {
+		childIn := &bytes.Buffer{}
+		parentOut := &bytes.Buffer{}
+		p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+			WithMode("enforce"), WithLogger(silentLogger()))
+		p.parentOut = parentOut
+
+		if err := p.handleClientLine([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+		if childIn.Len() != 0 {
+			t.Fatal("ambiguous JSON reached child")
+		}
+		if !strings.Contains(parentOut.String(), "invalid JSON-RPC request envelope") {
+			t.Fatalf("unexpected client response: %s", parentOut.String())
+		}
+	}
+}
+
+func TestHandleClientLine_MonitorPreservesDuplicateJSONMembers(t *testing.T) {
 	eng := buildAllowAllEngine(t)
 	childIn := &bytes.Buffer{}
-	sink := &mockSink{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("monitor"), WithLogger(silentLogger()))
+	p.parentOut = &bytes.Buffer{}
+	line := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","method":"ping"}` + "\n")
+	require.NoError(t, p.handleClientLine(line))
+	assert.Equal(t, string(line), childIn.String())
+}
 
-	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithLogger(silentLogger()))
+func TestHandleClientLine_MonitorPassesThroughMalformedJSON(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("monitor"), WithLogger(silentLogger()))
 	p.parentOut = &bytes.Buffer{}
 
-	// Malformed JSON should pass through to child
-	err := p.handleClientLine([]byte("this is not json\n"))
-	if err != nil {
+	if err := p.handleClientLine([]byte("this is not json\n")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if childIn.Len() == 0 {
-		t.Error("malformed JSON should be forwarded to child")
+		t.Error("monitor mode should preserve malformed peer traffic for diagnostics")
+	}
+}
+
+func TestHandleToolsCall_EnforceRejectsUntrackableOrIncompleteRequests(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		line string
+	}{
+		{
+			name: "notification without id",
+			line: `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"execute_command","arguments":{"command":"echo bypass"}}}` + "\n",
+		},
+		{
+			name: "invalid params without id",
+			line: `{"jsonrpc":"2.0","method":"tools/call","params":"not-an-object"}` + "\n",
+		},
+		{
+			name: "missing tool name",
+			line: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{"command":"echo bypass"}}}` + "\n",
+		},
+		{
+			name: "wrong protocol version",
+			line: `{"jsonrpc":"1.0","id":1,"method":"tools/call","params":{"name":"execute_command","arguments":{"command":"echo bypass"}}}` + "\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			eng := buildAllowAllEngine(t)
+			childIn := &bytes.Buffer{}
+			p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+				WithMode("enforce"), WithLogger(silentLogger()))
+			p.parentOut = &bytes.Buffer{}
+			if err := p.handleClientLine([]byte(test.line)); err != nil {
+				t.Fatal(err)
+			}
+			if childIn.Len() != 0 {
+				t.Fatal("invalid tools/call reached the child")
+			}
+		})
 	}
 }
 
@@ -942,12 +1304,17 @@ func TestSecurityBypass_DuplicateID(t *testing.T) {
 		WithLogger(silentLogger()))
 	p.parentOut = parentOut
 
-	// Two calls with same ID — second should overwrite first pending
+	// Two calls with the same outstanding ID are invalid JSON-RPC. The second
+	// must not overwrite response-policy correlation for the first.
 	line1 := []byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/a"}) + "\n")
 	line2 := []byte(makeToolsCallJSON(1, "write_file", map[string]any{"path": "/b"}) + "\n")
 
-	p.handleClientLine(line1)
-	p.handleClientLine(line2)
+	if err := p.handleClientLine(line1); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.handleClientLine(line2); err != nil {
+		t.Fatal(err)
+	}
 
 	p.pendingMu.Lock()
 	pending, ok := p.pendingCalls["1"]
@@ -956,10 +1323,60 @@ func TestSecurityBypass_DuplicateID(t *testing.T) {
 	if !ok {
 		t.Fatal("expected pending call")
 	}
-	// The second call should be the one stored
-	if pending.request["mcp_tool"] != "write_file" {
-		t.Errorf("expected second call to overwrite; got tool=%v", pending.request["mcp_tool"])
+	if pending.request["mcp_tool"] != "read_file" {
+		t.Errorf("first pending call was overwritten; got tool=%v", pending.request["mcp_tool"])
 	}
+	if strings.Count(childIn.String(), "\n") != 1 {
+		t.Fatalf("duplicate request reached child: %q", childIn.String())
+	}
+	if !strings.Contains(parentOut.String(), "already pending") {
+		t.Fatalf("duplicate request did not receive protocol error: %s", parentOut.String())
+	}
+}
+
+func TestPendingToolListCapacityFailsClosed(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithFilterTools(true), WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	now := time.Now()
+	for index := 0; index < maxPendingRequests; index++ {
+		p.pendingToolList[fmt.Sprintf("%d", index)] = now
+	}
+	line := []byte(`{"jsonrpc":"2.0","id":"overflow","method":"tools/list","params":{}}` + "\n")
+	if err := p.handleClientLine(line); err != nil {
+		t.Fatal(err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("untracked tools/list request reached child at capacity")
+	}
+	if !strings.Contains(parentOut.String(), "pending tools/list capacity reached") {
+		t.Fatalf("unexpected client response: %s", parentOut.String())
+	}
+}
+
+func TestPendingToolCallCapacityNeverAgeEvictsSecurityCorrelation(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+
+	// Zero-valued pending entries are older than any TTL. They model child
+	// calls whose responses are delayed indefinitely; bounded correlation must
+	// remain fail-closed instead of being silently forgotten.
+	for index := 0; index < maxPendingRequests; index++ {
+		p.pendingCalls[fmt.Sprintf("old-%d", index)] = pendingCall{}
+	}
+	line := []byte(makeToolsCallJSON("overflow", "read_file", map[string]any{"path": "/tmp/x"}) + "\n")
+	require.NoError(t, p.handleClientLine(line))
+	assert.Empty(t, childIn.String())
+	assert.Contains(t, parentOut.String(), "pending tools/call capacity reached")
+	assert.Len(t, p.pendingCalls, maxPendingRequests)
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,6 +1423,35 @@ func TestWithMode_Empty(t *testing.T) {
 		WithMode(""))
 	if p.mode != "enforce" {
 		t.Errorf("expected default mode 'enforce' for empty string, got %q", p.mode)
+	}
+}
+
+func TestWithMode_NormalizesKnownValuesAndFailsClosedForUnknown(t *testing.T) {
+	eng := buildDenyAllEngine(t)
+	for _, test := range []struct {
+		mode string
+		want string
+	}{
+		{mode: " MONITOR ", want: "monitor"},
+		{mode: "ENFORCE", want: "enforce"},
+		{mode: "disabled", want: "enforce"},
+		{mode: "typo", want: "enforce"},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			childIn := &bytes.Buffer{}
+			p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+				WithMode(test.mode), WithLogger(silentLogger()))
+			p.parentOut = &bytes.Buffer{}
+			if p.mode != test.want {
+				t.Fatalf("mode = %q, want %q", p.mode, test.want)
+			}
+			if err := p.handleClientLine([]byte(makeToolsCallJSON(1, "execute_command", map[string]any{"command": "whoami"}) + "\n")); err != nil {
+				t.Fatal(err)
+			}
+			if test.want == "enforce" && childIn.Len() != 0 {
+				t.Fatal("unknown/enforce mode failed open")
+			}
+		})
 	}
 }
 
@@ -1075,6 +1521,17 @@ func TestBuildRequestData_URLWithExistingPath(t *testing.T) {
 	result := buildRequestData("tools/call", "fetch", args)
 	if result["path"] != "/existing" {
 		t.Errorf("existing path should not be overwritten; got %v", result["path"])
+	}
+}
+
+func TestBuildRequestData_URLOverridesCallerDerivedMetadata(t *testing.T) {
+	result := buildRequestData("tools/call", "fetch", map[string]any{
+		"url":    "https://webhook.site/collect",
+		"domain": "github.com",
+		"scheme": "file",
+	})
+	if result["domain"] != "webhook.site" || result["scheme"] != "https" {
+		t.Fatalf("derived metadata = domain %v scheme %v", result["domain"], result["scheme"])
 	}
 }
 

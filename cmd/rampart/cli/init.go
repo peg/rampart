@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
@@ -134,7 +133,11 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 
 				// Print detection results
 				if result.ClaudeCode {
-					if _, err := fmt.Fprint(cmd.OutOrStdout(), "  ✓ Claude Code found (~/.claude/settings.json)\n"); err != nil {
+					settingsPath := "Claude settings"
+					if home, homeErr := os.UserHomeDir(); homeErr == nil {
+						settingsPath = claudeSettingsPath(home)
+					}
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  ✓ Claude Code found (%s)\n", settingsPath); err != nil {
 						return fmt.Errorf("cli: write detect output: %w", err)
 					}
 				} else {
@@ -252,9 +255,9 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 				}
 
 				if !policyExists || force {
-					// Stamp with version so doctor can detect stale policies.
-					stamped := []byte(fmt.Sprintf("# rampart-policy-version: %s\n", build.Version))
-					stamped = append(stamped, content...)
+					// Stamp installed profiles with version and content provenance so upgrades can
+					// distinguish Rampart-managed content from local edits.
+					stamped := versionStampedPolicyContent(content)
 					if err := os.WriteFile(profilePath, stamped, 0o600); err != nil {
 						return fmt.Errorf("cli: write profile file %s: %w", profilePath, err)
 					}
