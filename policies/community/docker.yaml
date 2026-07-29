@@ -24,13 +24,13 @@ policies:
       - action: deny
         when:
           command_matches:
-            - "docker run *--privileged*"
-            - "docker run *--pid=host*"
-            - "docker run *--network=host*"
-            - "docker run *-v /:/host*"
-            - "docker run *-v /etc:/*"
-            - "docker run *-v /var/run/docker.sock*"
-            - "docker run *--cap-add=SYS_ADMIN*"
+            - "docker run **--privileged**"
+            - "docker run **--pid=host**"
+            - "docker run **--network=host**"
+            - "docker run **-v /:/host**"
+            - "docker run **-v /etc:/**"
+            - "docker run **-v /var/run/docker.sock**"
+            - "docker run **--cap-add=SYS_ADMIN**"
         message: "Privileged/host-access container blocked"
 
   - name: block-system-prune
@@ -86,3 +86,40 @@ policies:
             - "docker buildx build *"
             - "docker compose build*"
         message: "Container build"
+
+tests:
+  - name: "blocks privileged container breakout with host paths"
+    tool: exec
+    params:
+      command: "docker run --privileged -v /:/host alpine chroot /host /bin/sh"
+    expect: deny
+
+  - name: "blocks mass system prune"
+    tool: exec
+    params:
+      command: "docker system prune -a --volumes"
+    expect: deny
+
+  - name: "asks before registry push"
+    tool: exec
+    params:
+      command: "docker push example/app:latest"
+    expect: ask
+
+  - name: "asks before compose lifecycle change"
+    tool: exec
+    params:
+      command: "docker compose up -d"
+    expect: ask
+
+  - name: "watches container builds"
+    tool: exec
+    params:
+      command: "docker build ."
+    expect: watch
+
+  - name: "allows benign container inspection"
+    tool: exec
+    params:
+      command: "docker ps"
+    expect: allow

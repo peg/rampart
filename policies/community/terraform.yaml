@@ -79,3 +79,34 @@ policies:
             - "terraform state pull*"
             - "tofu state pull*"
         message: "State pull blocked — contains secrets. Use terraform output for specific values."
+
+tests:
+  - name: "blocks auto-approved destroy"
+    tool: exec
+    params:
+      command: "terraform destroy -auto-approve"
+    expect: deny
+
+  - name: "blocks raw state extraction"
+    tool: exec
+    params:
+      command: "terraform state pull"
+    expect: deny
+
+  - name: "asks before state changes"
+    tool: exec
+    params:
+      command: "terraform apply plan.tfplan"
+    expect: ask
+
+  - name: "watches planning"
+    tool: exec
+    params:
+      command: "terraform plan"
+    expect: watch
+
+  - name: "allows benign version inspection"
+    tool: exec
+    params:
+      command: "terraform version"
+    expect: allow

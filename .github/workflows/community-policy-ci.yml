@@ -68,7 +68,7 @@ jobs:
             ./rampart policy lint "$file"
           done
 
-      - name: Bench policies
+      - name: Test changed policies
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             changed=$(git diff --name-only \
@@ -79,13 +79,13 @@ jobs:
             changed=$(find policies/community -maxdepth 1 -name '*.yaml' -type f -print)
           fi
           if [ -z "$changed" ]; then
-            echo "No community policy YAML changes — skipping bench"
+            echo "No community policy YAML changes — skipping behavioral tests"
             exit 0
           fi
           for file in $changed; do
             [ ! -f "$file" ] && continue
-            echo "Benchmarking $file..."
-            ./rampart bench --policy "$file" --min-coverage 60
+            echo "Testing $file..."
+            ./rampart test --no-color "$file"
           done
 
       - name: Check registry.json is up to date

@@ -122,26 +122,39 @@ default_action: allow
 policies:
   - name: my-rule
     # ... your rules ...
+
+tests:
+  - name: blocks dangerous operation
+    tool: exec
+    params:
+      command: "my-tool delete --all"
+    expect: deny
+
+  - name: allows benign inspection
+    tool: exec
+    params:
+      command: "my-tool list"
+    expect: allow
 ```
 
 ### 2. Validate locally
 
 ```bash
 rampart policy lint policies/community/my-policy.yaml
-rampart bench --policy policies/community/my-policy.yaml --min-coverage 60
+rampart test policies/community/my-policy.yaml
 ```
 
 ### 3. Submit a PR
 
 - Fork the repo
 - Add your policy file with the metadata header
-- CI will automatically run lint, bench, and metadata validation
+- CI will automatically run lint, inline behavioral tests, and metadata validation
 - Maintainer review → merge → policy appears in the next registry update
 
 ### Quality Gates (enforced by CI)
 
 - `rampart policy lint` passes (no errors)
-- `rampart bench --min-coverage 60` passes
+- `rampart test policies/community/my-policy.yaml` passes
 - All required metadata fields present (`@name`, `@description`, `@author`, `@tags`, `@min-rampart`)
 - `@min-rampart` is valid semver format (`X.Y.Z`)
 
@@ -149,6 +162,7 @@ rampart bench --policy policies/community/my-policy.yaml --min-coverage 60
 
 1. **Start permissive** — block the dangerous stuff, allow everything else
 2. **Use `ask`** for risky-but-legitimate operations
-3. **Include `log` rules** for audit trail on read-only operations
-4. **Add clear comments** explaining what each rule does and why
-5. **Don't assume a specific setup** — work across cloud providers, cluster configs, etc.
+3. **Include `watch` rules** for audit visibility on read-only operations
+4. **Add inline tests** for restrictive, approval, observation, and benign behavior
+5. **Add clear comments** explaining what each rule does and why
+6. **Don't assume a specific setup** — work across cloud providers, cluster configs, etc.

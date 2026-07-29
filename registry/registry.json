@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated_at": "2026-07-28T10:02:04Z",
+  "updated_at": "2026-07-29T17:38:07Z",
   "policies": [
     {
       "name": "mcp-server",
@@ -29,7 +29,7 @@
         "iam"
       ],
       "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/aws-cli.yaml",
-      "sha256": "2e4af15a37216e3635d9de5e019e09ecd7c867ad8f4a96c8d18be794987b0f34",
+      "sha256": "e7b8157e1bf0ada0a72be99f7b5abb40d4d11ca0983a389504fdc0c988b3252c",
       "version": "1.0.0",
       "author": "@rampart-team",
       "min_rampart": "0.6.0"
@@ -43,7 +43,7 @@
         "compose"
       ],
       "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/docker.yaml",
-      "sha256": "365c5acbf45d56c78ea44f68ba92134cb75395920cba712adc6f6feb86b1926a",
+      "sha256": "0afdb91c6685d14a960ed4f5d48290e5e7b67cec542581ef789b0f3eb9fe1048",
       "version": "1.0.0",
       "author": "@rampart-team",
       "min_rampart": "0.6.0"
@@ -57,7 +57,7 @@
         "cluster"
       ],
       "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/kubernetes.yaml",
-      "sha256": "f31c71614fc1e3151b9a1ce529c03cc96a5020ad0db1ffa50e718a6aa75184b0",
+      "sha256": "d3b375ee819b98033d9443bd05ee10f5ae474aa6823a5cf25d14c205e1128c00",
       "version": "1.0.0",
       "author": "@rampart-team",
       "min_rampart": "0.6.0"
@@ -72,7 +72,7 @@
         "pip"
       ],
       "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/node-python.yaml",
-      "sha256": "47fd8fc17dbdd0a0e97aee22d1607f6b893adf6f3b6016eb185784119023ddb0",
+      "sha256": "eb3cec5b75a48a125c29a6d5fa35e98dde2aab5f201887765b58a5c6adc22a39",
       "version": "1.0.0",
       "author": "@rampart-team",
       "min_rampart": "0.6.0"
@@ -86,7 +86,7 @@
         "opentofu"
       ],
       "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/community/terraform.yaml",
-      "sha256": "58289ced05730f93924bcce188edb2b8f034e327515b81fcf635b874c33d6955",
+      "sha256": "1d070ea814ec317a5d2bdad0319392855c5ad6635f374d3db7e75a914e5a6031",
       "version": "1.0.0",
       "author": "@rampart-team",
       "min_rampart": "0.6.0"

@@ -91,3 +91,46 @@ policies:
             - "**/.env.example"
             - "**/.env.template"
         message: "Environment file blocked — use .env.example for reference"
+
+tests:
+  - name: "blocks global npm installs"
+    tool: exec
+    params:
+      command: "npm install -g suspicious-package"
+    expect: deny
+
+  - name: "blocks shell-capable eval"
+    tool: exec
+    params:
+      command: "node -e require('child_process').execSync('id')"
+    expect: deny
+
+  - name: "asks before package publish"
+    tool: exec
+    params:
+      command: "npm publish"
+    expect: ask
+
+  - name: "blocks registry credential reads"
+    tool: read
+    params:
+      path: "/home/user/project/.npmrc"
+    expect: deny
+
+  - name: "blocks dotenv reads"
+    tool: read
+    params:
+      path: "/home/user/project/.env"
+    expect: deny
+
+  - name: "allows dotenv templates"
+    tool: read
+    params:
+      path: "/home/user/project/.env.example"
+    expect: allow
+
+  - name: "allows project-local installs"
+    tool: exec
+    params:
+      command: "npm install"
+    expect: allow

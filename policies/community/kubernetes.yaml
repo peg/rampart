@@ -78,3 +78,34 @@ policies:
             - "kubectl top *"
             - "kubectl exec *"
         message: "Cluster diagnostic command"
+
+tests:
+  - name: "blocks namespace deletion"
+    tool: exec
+    params:
+      command: "kubectl delete namespace production"
+    expect: deny
+
+  - name: "blocks direct secret extraction"
+    tool: exec
+    params:
+      command: "kubectl get secret database -o json"
+    expect: deny
+
+  - name: "asks before applying a manifest"
+    tool: exec
+    params:
+      command: "kubectl apply -f deployment.yaml"
+    expect: ask
+
+  - name: "watches diagnostic reads"
+    tool: exec
+    params:
+      command: "kubectl get pods"
+    expect: watch
+
+  - name: "allows benign client inspection"
+    tool: exec
+    params:
+      command: "kubectl version --client"
+    expect: allow
