@@ -16,9 +16,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const ManifestSchemaVersion = "rampart.assurance.v1"
+const ManifestSchemaVersion = "rampart.assurance.v2"
 
-var integrationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var integrationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 type Manifest struct {
 	SchemaVersion   string        `yaml:"schema_version"`
@@ -34,6 +34,7 @@ type Integration struct {
 	SetupCommand    string            `yaml:"setup_command"`
 	Boundary        string            `yaml:"boundary"`
 	Platforms       []string          `yaml:"platforms"`
+	AutoProtect     *bool             `yaml:"auto_protect"`
 	ServiceRequired bool              `yaml:"service_required"`
 	UpstreamCI      string            `yaml:"upstream_ci"`
 	Coverage        map[string]string `yaml:"coverage"`
@@ -121,6 +122,9 @@ func (m *Manifest) Validate(repoRoot string) error {
 		if len(integration.Platforms) == 0 {
 			problems = append(problems, prefix+": platforms must not be empty")
 		}
+		if integration.AutoProtect == nil {
+			problems = append(problems, prefix+": auto_protect must be explicitly true or false")
+		}
 		for _, platform := range integration.Platforms {
 			if !oneOf(platform, "linux", "macos", "windows") {
 				problems = append(problems, prefix+": invalid platform "+platform)
@@ -177,6 +181,14 @@ func (m *Manifest) Validate(repoRoot string) error {
 			}
 			if !hasEvidenceKind(integration.Evidence, "live") {
 				problems = append(problems, prefix+": verified tier requires live evidence")
+			}
+		}
+		if integration.AutoProtect != nil && *integration.AutoProtect {
+			if integration.SupportTier == "experimental" || integration.SupportTier == "limited" {
+				problems = append(problems, prefix+": auto_protect requires verified or supported tier")
+			}
+			if integration.Verification.Level != "active" || !integration.Verification.SafeCanaries {
+				problems = append(problems, prefix+": auto_protect requires active safe verification")
 			}
 		}
 

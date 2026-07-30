@@ -3,9 +3,12 @@
 This directory turns Rampart's security claims into reviewable data and
 executable evidence.
 
-- `integrations.yaml` records the current boundary, coverage, degraded behavior,
-  approval behavior, verification level, evidence, and limitations of each
-  agent-harness integration.
+- `integrations.yaml` uses each canonical runtime target as its id and records
+  bare `rampart protect` eligibility, boundary, coverage, degraded behavior,
+  approval behavior,
+  verification level, evidence, and limitations of each agent-harness
+  integration. Its current schema is `rampart.assurance.v2`; tests keep its
+  runtime and public support claims synchronized.
 - `corpus.yaml` is the shared adversarial decision corpus. The assurance tests
   run every case through the real policy engine and bundled policy profiles.
 

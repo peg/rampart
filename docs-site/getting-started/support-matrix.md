@@ -18,64 +18,73 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     <tr>
       <th>Surface</th>
       <th>Best path</th>
+      <th>Bare protect</th>
       <th><code>rampart serve</code></th>
       <th>Approval UX</th>
       <th>Support tier</th>
     </tr>
   </thead>
   <tbody>
-    <tr class="tier-supported">
+    <tr class="tier-supported" data-integration="claude-code">
       <td data-label="Surface"><strong>Claude Code</strong></td>
       <td data-label="Best path">Native hooks<br><code>rampart setup claude-code</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
       <td data-label="Approval UX">Claude native approval prompt</td>
       <td data-label="Support tier"><strong>Supported</strong><br>2.1.220 mapping review + isolated shell host proof</td>
     </tr>
-    <tr class="tier-supported">
+    <tr class="tier-supported" data-integration="codex">
       <td data-label="Surface"><strong>Codex CLI, IDE, desktop</strong></td>
       <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup codex</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local allow/deny;<br>required for approval queue</td>
       <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
       <td data-label="Support tier"><strong>Supported</strong><br>opt-in host proof available</td>
     </tr>
-    <tr class="tier-supported">
+    <tr class="tier-supported" data-integration="cline">
       <td data-label="Surface"><strong>Cline</strong></td>
       <td data-label="Best path">Native hooks<br><code>rampart setup cline</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
       <td data-label="Support tier"><strong>Supported</strong><br>current editor/CLI source contract + adapter/setup tests; no current host proof</td>
     </tr>
-    <tr class="tier-experimental">
+    <tr class="tier-experimental" data-integration="gemini">
       <td data-label="Surface"><strong>Gemini CLI (enterprise/API key)</strong></td>
       <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup gemini</code></td>
+      <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Not required for local allow/deny;<br>required for external approvals</td>
       <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
       <td data-label="Support tier"><strong>Experimental</strong><br>adapter-tested; authenticated host proof pending; not Antigravity</td>
     </tr>
-    <tr class="tier-supported">
+    <tr class="tier-supported" data-integration="antigravity">
       <td data-label="Surface"><strong>Antigravity CLI / IDE</strong></td>
       <td data-label="Best path">Shared policy plugin<br><code>rampart setup antigravity</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">Native <code>force_ask</code> prompt</td>
       <td data-label="Support tier"><strong>Supported</strong><br>CLI 1.1.7 host-verified; IDE contract-tested, physical IDE proof pending</td>
     </tr>
-    <tr class="tier-supported">
+    <tr class="tier-supported" data-integration="copilot">
       <td data-label="Surface"><strong>GitHub Copilot CLI / VS Code</strong></td>
       <td data-label="Best path">Shared native lifecycle hooks<br><code>rampart setup copilot</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">Native Copilot prompt</td>
       <td data-label="Support tier"><strong>Supported</strong> CLI adapter<br>package startup + adapter evidence; authenticated hook ingestion pending; VS Code is contract-tested Preview</td>
     </tr>
-    <tr class="tier-recommended">
+    <tr class="tier-recommended" data-integration="openclaw">
       <td data-label="Surface"><strong>OpenClaw &gt;= 2026.5.2</strong></td>
       <td data-label="Best path">Managed native guard<br><code>rampart protect openclaw</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">First-class plugin approvals / native approval UI</td>
       <td data-label="Support tier"><strong>Verified</strong></td>
     </tr>
-    <tr class="tier-experimental">
+    <tr class="tier-experimental" data-integration="hermes">
       <td data-label="Surface"><strong>Hermes Agent</strong></td>
       <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
+      <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
       <td data-label="Support tier"><strong>Experimental</strong><br>0.19.0 shell deny/allow host proof; native approval/resume pending</td>
@@ -83,6 +92,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">Native plugin startup/interception; approval delivery was not the launch baseline</td>
       <td data-label="Support tier">Supported</td>
@@ -90,6 +100,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.3.28 - 2026.4.28</strong></td>
       <td data-label="Best path">Native plugin<br><code>rampart setup openclaw</code></td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">Native enforcement; approval UX less polished than current builds</td>
       <td data-label="Support tier">Supported</td>
@@ -97,6 +108,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     <tr class="tier-legacy">
       <td data-label="Surface"><strong>OpenClaw &lt; 2026.3.28</strong></td>
       <td data-label="Best path">Legacy shim + bridge + patching</td>
+      <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">Legacy bridge/shim behavior</td>
       <td data-label="Support tier">Legacy compatibility</td>
@@ -104,6 +116,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Cursor / Claude Desktop</strong></td>
       <td data-label="Best path">MCP proxy<br><code>rampart mcp --</code></td>
+      <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">MCP error / proxy-mediated behavior</td>
       <td data-label="Support tier">Supported</td>
@@ -111,6 +124,7 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
     <tr class="tier-supported">
       <td data-label="Surface"><strong>Custom / Python / CI</strong></td>
       <td data-label="Best path">HTTP API</td>
+      <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX">Caller-defined</td>
       <td data-label="Support tier">Supported</td>

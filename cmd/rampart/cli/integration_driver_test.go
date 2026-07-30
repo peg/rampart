@@ -6,8 +6,102 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/peg/rampart/internal/assurance"
 )
+
+func TestIntegrationDriversMatchAssuranceManifest(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve integration driver test path")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
+	manifest, err := assurance.LoadManifest(filepath.Join(repoRoot, "assurance", "integrations.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.Validate(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	byTarget := make(map[string]assurance.Integration, len(manifest.Integrations))
+	for _, integration := range manifest.Integrations {
+		byTarget[integration.ID] = integration
+	}
+
+	driverTargets := make(map[string]bool)
+	for _, driver := range supportedIntegrationDrivers() {
+		driverTargets[driver.ID] = true
+		integration, found := byTarget[driver.ID]
+		if !found {
+			t.Errorf("runtime integration driver %q is missing from assurance/integrations.yaml", driver.ID)
+			continue
+		}
+		if driver.DisplayName != integration.DisplayName {
+			t.Errorf("driver %q display name = %q, manifest = %q", driver.ID, driver.DisplayName, integration.DisplayName)
+		}
+		if driver.VerifyTarget != integration.ID {
+			t.Errorf("driver %q verify target = %q, manifest id = %q", driver.ID, driver.VerifyTarget, integration.ID)
+		}
+		if integration.AutoProtect == nil || driver.AutoProtect != *integration.AutoProtect {
+			t.Errorf("driver %q auto-protect = %t, manifest = %v", driver.ID, driver.AutoProtect, integration.AutoProtect)
+		}
+		if got := integrationBoundaryKind(driver.Boundary); got != integration.Boundary {
+			t.Errorf("driver %q boundary = %q (%q), manifest = %q", driver.ID, driver.Boundary, got, integration.Boundary)
+		}
+		if diff := platformDifference(driver.Platforms, integration.Platforms); diff != "" {
+			t.Errorf("driver %q platform mismatch: %s", driver.ID, diff)
+		}
+		if strings.HasPrefix(integration.SetupCommand, "rampart setup ") && driver.SetupCommand == nil {
+			t.Errorf("driver %q has no setup command callback for manifest command %q", driver.ID, integration.SetupCommand)
+		}
+	}
+
+	for _, integration := range manifest.Integrations {
+		if integration.AutoProtect != nil && *integration.AutoProtect && !driverTargets[integration.ID] {
+			t.Errorf("manifest integration %q enables bare protect without a runtime driver", integration.ID)
+		}
+	}
+}
+
+func integrationBoundaryKind(boundary string) string {
+	switch {
+	case strings.Contains(boundary, "plugin"):
+		return "native_plugin"
+	case strings.Contains(boundary, "hook"):
+		return "native_hook"
+	default:
+		return ""
+	}
+}
+
+func platformDifference(driverPlatforms, manifestPlatforms []string) string {
+	driverSet := make(map[string]bool, len(driverPlatforms))
+	for _, platform := range driverPlatforms {
+		driverSet[platform] = true
+	}
+	manifestSet := make(map[string]bool, len(manifestPlatforms))
+	for _, platform := range manifestPlatforms {
+		if platform == "macos" {
+			platform = "darwin"
+		}
+		manifestSet[platform] = true
+	}
+	for platform := range driverSet {
+		if !manifestSet[platform] {
+			return "driver includes " + platform + " but manifest does not"
+		}
+	}
+	for platform := range manifestSet {
+		if !driverSet[platform] {
+			return "manifest includes " + platform + " but driver does not"
+		}
+	}
+	return ""
+}
 
 func TestFindIntegrationDriverResolvesCanonicalIDsAndAliases(t *testing.T) {
 	for input, want := range map[string]string{

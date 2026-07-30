@@ -1,7 +1,9 @@
-schema_version: rampart.assurance.v1
-baseline_release: v1.4.1
-reviewed_at: "2026-07-28"
+schema_version: rampart.assurance.v2
+baseline_release: v1.5.0
+reviewed_at: "2026-07-29"
 
+# Version 2 uses the canonical Rampart command target as each integration id
+# and requires an explicit declaration of bare `rampart protect` eligibility.
 # This manifest records the guarantees Rampart can support with evidence today.
 # "tested" means the Rampart adapter or mapping is exercised in isolation.
 # "verified" means a completed live host-boundary run is recorded as evidence,
@@ -13,6 +15,7 @@ integrations:
     setup_command: rampart protect openclaw
     boundary: native_plugin
     platforms: [linux, macos]
+    auto_protect: true
     service_required: true
     upstream_ci: rolling_latest
     coverage:
@@ -57,12 +60,13 @@ integrations:
       - OpenClaw after_tool_call is observational, so the native plugin does not claim blocking response redaction.
       - MCP and delegated-agent coverage need dedicated live canaries.
 
-  - id: claude_code
+  - id: claude-code
     display_name: Claude Code
     support_tier: supported
     setup_command: rampart setup claude-code
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -112,6 +116,7 @@ integrations:
     setup_command: rampart setup cline
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -152,12 +157,13 @@ integrations:
       - Current Cline CLI launches post-tool file hooks asynchronously and ignores their control response, so CLI post-tool decisions are audit evidence rather than continuation blocking.
       - Cline has no native Rampart approval-resume path; ask decisions cancel with context.
 
-  - id: codex_cli
+  - id: codex
     display_name: Codex
     support_tier: supported
     setup_command: rampart setup codex
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -206,6 +212,7 @@ integrations:
     setup_command: rampart setup hermes
     boundary: native_plugin
     platforms: [linux, macos]
+    auto_protect: false
     service_required: true
     upstream_ci: rolling_latest
     coverage:
@@ -248,12 +255,13 @@ integrations:
       - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
       - Delegated-agent and approved-execution E2E are not yet present.
 
-  - id: gemini_cli
+  - id: gemini
     display_name: Gemini CLI
     support_tier: experimental
     setup_command: rampart setup gemini
     boundary: native_hook
     platforms: [linux, macos]
+    auto_protect: false
     service_required: false
     upstream_ci: rolling_latest
     coverage:
@@ -300,6 +308,7 @@ integrations:
     setup_command: rampart setup antigravity
     boundary: native_plugin
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -338,12 +347,13 @@ integrations:
       - The ordinary verifier exercises plugin installation and the live Rampart adapter without invoking a model; authenticated host proof is a maintainer-only opt-in check.
       - A rolling-latest Antigravity compatibility job and physical Windows host proof are still pending.
 
-  - id: github_copilot
+  - id: copilot
     display_name: GitHub Copilot CLI / VS Code
     support_tier: supported
     setup_command: rampart setup copilot
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: rolling_latest
     coverage:
