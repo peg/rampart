@@ -47,11 +47,11 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 	switch {
 	case !serverRunning && len(protected) == 0:
 		// Nothing set up yet
-		fmt.Fprintln(w, "\n→ Get started: rampart init && rampart setup claude-code")
+		fmt.Fprintln(w, "\n→ Get started: rampart protect")
 
 	case !serverRunning && isHookBasedOnly(protected):
 		// Hook-based agents don't need serve for basic allow/deny
-		fmt.Fprintln(w, "\n→ Protection active via hooks. Optional: rampart serve   (for dashboard + approvals)")
+		fmt.Fprintln(w, "\n→ Hooks configured. Optional: rampart serve   (for dashboard + approvals)")
 
 	case !serverRunning:
 		// LD_PRELOAD/shim agents need serve running
@@ -63,7 +63,7 @@ func printStatusHints(w io.Writer, serverRunning bool, protected []string, allow
 
 	case len(protected) == 0:
 		// Serve running but no agents connected
-		fmt.Fprintln(w, "\n→ Next: rampart setup claude-code")
+		fmt.Fprintln(w, "\n→ Next: rampart protect")
 
 	case total == 0:
 		// Everything set up, no events yet

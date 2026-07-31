@@ -68,12 +68,14 @@ func latestAuditEvent(auditDir string) (audit.Event, error) {
 }
 
 type verificationReport struct {
-	SchemaVersion string              `json:"schema_version"`
-	GeneratedAt   string              `json:"generated_at"`
-	Target        string              `json:"target"`
-	SafeCanaries  bool                `json:"safe_canaries"`
-	Summary       verificationSummary `json:"summary"`
-	Checks        []verificationCheck `json:"checks"`
+	SchemaVersion  string              `json:"schema_version"`
+	GeneratedAt    string              `json:"generated_at"`
+	Target         string              `json:"target"`
+	SafeCanaries   bool                `json:"safe_canaries"`
+	Assurance      assuranceLevel      `json:"assurance_level"`
+	Summary        verificationSummary `json:"summary"`
+	Checks         []verificationCheck `json:"checks"`
+	policyEndpoint string
 }
 
 type behavioralCanary struct {
@@ -132,6 +134,7 @@ implementation.`,
 				return fmt.Errorf("verify: resolve serve URL: %w", err)
 			}
 			report := runBehavioralVerification(cmd.Context(), target, resolvedURL, timeout)
+			receiptErr := writeVerificationReceipt(report)
 			if jsonOut {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
 					return fmt.Errorf("verify: encode report: %w", err)
@@ -144,6 +147,9 @@ implementation.`,
 			}
 			if report.Summary.Unverified > 0 {
 				return exitCodeError{code: 2}
+			}
+			if receiptErr != nil {
+				return fmt.Errorf("verify: persist assurance evidence: %w", receiptErr)
 			}
 			return nil
 		},
@@ -240,11 +246,12 @@ func runBehavioralVerification(ctx context.Context, target, serveURL string, tim
 		timeout = 5 * time.Second
 	}
 	report := verificationReport{
-		SchemaVersion: verifyJSONSchemaVersion,
-		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
-		Target:        target,
-		SafeCanaries:  true,
-		Checks:        make([]verificationCheck, 0),
+		SchemaVersion:  verifyJSONSchemaVersion,
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		Target:         target,
+		SafeCanaries:   true,
+		Checks:         make([]verificationCheck, 0),
+		policyEndpoint: strings.TrimRight(serveURL, "/"),
 	}
 
 	if target != "policy" {
@@ -1079,7 +1086,7 @@ func findPluginVerificationResult(value any) (map[string]any, bool) {
 }
 
 func summarizeVerification(report verificationReport) verificationReport {
-	report.Summary.Checks = len(report.Checks)
+	report.Summary = verificationSummary{Checks: len(report.Checks)}
 	for _, check := range report.Checks {
 		switch check.Status {
 		case verificationPass:
@@ -1090,6 +1097,7 @@ func summarizeVerification(report verificationReport) verificationReport {
 			report.Summary.Unverified++
 		}
 	}
+	report.Assurance = assuranceLevelForReport(report)
 	return report
 }
 
@@ -1119,4 +1127,7 @@ func printVerificationReport(w io.Writer, report verificationReport) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "%d passed, %d failed, %d unverified\n", report.Summary.Passed, report.Summary.Failed, report.Summary.Unverified)
+	if report.Assurance != "" {
+		fmt.Fprintf(w, "Assurance: %s\n", strings.ToUpper(strings.ReplaceAll(string(report.Assurance), "_", " ")))
+	}
 }

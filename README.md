@@ -72,7 +72,16 @@ Recheck the boundary at any time:
 
 ```bash
 rampart verify openclaw
+rampart status
 ```
+
+`rampart status` separates installed configuration from behavioral evidence.
+It reports OpenClaw's live plugin check as `HOST VERIFIED` and native-hook
+adapter canaries as `ADAPTER VERIFIED`, with stale evidence invalidated after
+Rampart, the configured boundary, the policy endpoint, local policy state, or a
+detected host executable changes.
+Verification receipts contain only check IDs/outcomes and fingerprints—never
+prompts, commands, credentials, host output, or agent memory.
 
 Direct setup for supported integration paths remains available:
 
@@ -699,7 +708,7 @@ rampart serve stop                           # Stop background server
 rampart doctor                               # Health check (colored output)
 rampart doctor --fix                         # Auto-apply missing patches
 rampart doctor --json                        # Machine-readable (exit 1 on issues)
-rampart status                               # Quick dashboard: what's protected
+rampart status                               # Quick dashboard: configuration + assurance evidence
 rampart watch                                # Live TUI event stream
 
 # Policy
