@@ -50,12 +50,25 @@ rampart verify claude-code     # Verify Claude hook installation and adapter den
 rampart verify cline           # Verify Cline hook installation and adapter denial
 rampart verify codex           # Verify Codex hook installation and adapter denial
 rampart verify gemini          # Verify Gemini hook installation and adapter denial
+rampart verify antigravity     # Verify Antigravity plugin installation and adapter denial
 rampart verify copilot         # Verify shared Copilot hook and dual-host denial
 rampart verify policy          # Verify the local Rampart policy path
 rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
 
-Verification does not execute commands, read files, send messages, contact external hosts, or add canary events to the audit log. A failed expectation exits with status 1; an incomplete or unreachable check exits with status 2.
+Verification does not execute commands, read files, send messages, contact external hosts, or add canary events to the audit log. A failed expectation exits with status 1; an incomplete or unreachable check exits with status 2. Human and JSON reports identify the resulting `policy_verified`, `adapter_verified`, `host_verified`, `unverified`, or `degraded` assurance level.
+
+For integration targets, a completed run also records a minimal verification
+receipt under `~/.rampart/verification/`. The receipt contains check IDs and
+outcomes, Rampart build identity, an environment fingerprint, and timestamps;
+it does not contain prompts, commands, host output, credentials, or filesystem
+paths. OpenClaw's live plugin verifier earns `host_verified`; the ordinary
+native-hook commands earn `adapter_verified` because they invoke Rampart's
+adapter without asking a model to act. Receipts expire after seven days and are
+treated as stale when Rampart, the configured boundary, the selected policy
+endpoint, local policy-file metadata, or a detected host executable changes.
+They are local status caches, not tamper-resistant
+attestations.
 
 ### `rampart setup claude-code`
 
@@ -367,14 +380,22 @@ If the plugin is missing or the OpenClaw version is too old:
 
 ### `rampart status`
 
-Quick dashboard showing protected agents, enforcement mode, and today's event counts.
+Quick dashboard showing configured agents, the strongest current verification
+evidence, enforcement mode, and today's event counts.
 
 ```bash
 rampart status
 rampart status --json      # Machine-readable snapshot
 ```
 
-`--json` emits a stable status payload (`schema_version: "rampart.status.v1"`) with mode, protection state, server flags, today's counts, and optional last deny details.
+`--json` emits a stable status payload (`schema_version: "rampart.status.v1"`)
+with mode, the backward-compatible `protected_agents` list, per-integration
+`integrations` evidence, server flags, today's counts, and optional last deny
+details. Assurance levels distinguish `detected`, `configured`,
+`adapter_verified`, `host_verified`, `unverified`, and `degraded`; stale
+receipts fall back to current configuration state and explain why proof must be
+rerun. Evidence for a service-required integration is also stale whenever the
+local Rampart policy service is unavailable.
 
 ### `rampart inventory`
 

@@ -20,25 +20,29 @@ import (
 // deliberately contains only lifecycle operations shared by the CLI. Tool
 // payload normalization remains in the adapter that owns the host protocol.
 type integrationDriver struct {
-	ID           string
-	Aliases      []string
-	DisplayName  string
-	Boundary     string
-	VerifyTarget string
-	Installed    func(home string) bool
-	SetupCommand func(opts *rootOptions) *cobra.Command
-	VerifyChecks func(ctx context.Context, timeout time.Duration) []verificationCheck
-	OpenClaw     bool
-	AutoProtect  bool
-	Platforms    []string
-	Configured   func(home string) bool
+	ID              string
+	Aliases         []string
+	DisplayName     string
+	Boundary        string
+	VerifyTarget    string
+	ProofLevel      assuranceLevel
+	Executables     []string
+	Installed       func(home string) bool
+	SetupCommand    func(opts *rootOptions) *cobra.Command
+	VerifyChecks    func(ctx context.Context, timeout time.Duration) []verificationCheck
+	OpenClaw        bool
+	AutoProtect     bool
+	ServiceRequired bool
+	Platforms       []string
+	Configured      func(home string) bool
 }
 
 func supportedIntegrationDrivers() []integrationDriver {
 	return []integrationDriver{
 		{
 			ID: "openclaw", DisplayName: "OpenClaw", Boundary: "native plugin", VerifyTarget: "openclaw", OpenClaw: true,
-			AutoProtect: true, Platforms: []string{"linux", "darwin"},
+			ProofLevel: assuranceHostVerified, Executables: []string{"openclaw"},
+			AutoProtect: true, ServiceRequired: true, Platforms: []string{"linux", "darwin"},
 			Installed:  func(_ string) bool { return isOpenClawInstalled() },
 			Configured: func(_ string) bool { return isOpenClawPluginConfigured() },
 			VerifyChecks: func(ctx context.Context, timeout time.Duration) []verificationCheck {
@@ -47,6 +51,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "claude-code", Aliases: []string{"claude"}, DisplayName: "Claude Code", Boundary: "native hooks", VerifyTarget: "claude-code",
+			ProofLevel: assuranceAdapterVerified, Executables: []string{"claude"},
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("claude", claudeConfigDir(home))
@@ -59,6 +64,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "codex", DisplayName: "Codex", Boundary: "native hooks", VerifyTarget: "codex",
+			ProofLevel: assuranceAdapterVerified, Executables: []string{"codex"},
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("codex", codexHomeDir(home))
@@ -71,6 +77,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "gemini", Aliases: []string{"gemini-cli"}, DisplayName: "Gemini CLI", Boundary: "experimental native hooks", VerifyTarget: "gemini",
+			ProofLevel: assuranceAdapterVerified, Executables: []string{"gemini"},
 			AutoProtect: false, Platforms: []string{"linux", "darwin"},
 			Installed: func(home string) bool {
 				_, err := execLookPath("gemini")
@@ -84,6 +91,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "antigravity", Aliases: []string{"agy"}, DisplayName: "Antigravity CLI / IDE", Boundary: "native plugin hook", VerifyTarget: "antigravity",
+			ProofLevel: assuranceAdapterVerified, Executables: []string{"agy"},
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("agy",
@@ -99,6 +107,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "copilot", Aliases: []string{"copilot-cli", "github-copilot"}, DisplayName: "GitHub Copilot CLI / VS Code", Boundary: "native hooks", VerifyTarget: "copilot",
+			ProofLevel: assuranceAdapterVerified, Executables: []string{"copilot"},
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed:    func(home string) bool { return copilotInstalledForHome(home) },
 			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupCopilotCmd() },
@@ -109,6 +118,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 		},
 		{
 			ID: "cline", DisplayName: "Cline", Boundary: "native hooks", VerifyTarget: "cline",
+			ProofLevel: assuranceAdapterVerified, Executables: []string{"cline"},
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("cline", filepath.Join(home, "Documents", "Cline"), filepath.Join(home, ".cline")) ||

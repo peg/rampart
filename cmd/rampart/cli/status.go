@@ -51,6 +51,7 @@ type statusSnapshot struct {
 	generatedAt   time.Time
 	buildVersion  string
 	protected     []string
+	integrations  []integrationAssuranceStatus
 	mode          string
 	defaultAction string
 	serverRunning bool
@@ -62,16 +63,17 @@ type statusSnapshot struct {
 }
 
 type statusJSONOutput struct {
-	SchemaVersion string              `json:"schema_version"`
-	GeneratedAt   time.Time           `json:"generated_at"`
-	BuildVersion  string              `json:"build_version"`
-	Protected     []string            `json:"protected_agents"`
-	Mode          string              `json:"mode"`
-	DefaultAction string              `json:"default_action"`
-	ServerRunning bool                `json:"server_running"`
-	HookOnly      bool                `json:"hook_only"`
-	Today         statusTodayJSON     `json:"today"`
-	LastDeny      *statusLastDenyJSON `json:"last_deny,omitempty"`
+	SchemaVersion string                       `json:"schema_version"`
+	GeneratedAt   time.Time                    `json:"generated_at"`
+	BuildVersion  string                       `json:"build_version"`
+	Protected     []string                     `json:"protected_agents"`
+	Integrations  []integrationAssuranceStatus `json:"integrations"`
+	Mode          string                       `json:"mode"`
+	DefaultAction string                       `json:"default_action"`
+	ServerRunning bool                         `json:"server_running"`
+	HookOnly      bool                         `json:"hook_only"`
+	Today         statusTodayJSON              `json:"today"`
+	LastDeny      *statusLastDenyJSON          `json:"last_deny,omitempty"`
 }
 
 type statusTodayJSON struct {
@@ -107,6 +109,7 @@ func runStatus(w io.Writer, jsonOut bool) error {
 		useColor,
 	)
 	fmt.Fprintln(w, box)
+	printIntegrationAssurance(w, snapshot.integrations, snapshot.generatedAt)
 
 	printStatusHints(w, snapshot.serverRunning, snapshot.protected, snapshot.allow, snapshot.deny, snapshot.pending)
 	return nil
@@ -117,15 +120,17 @@ func collectStatusSnapshot(generatedAt time.Time) statusSnapshot {
 		generatedAt = time.Now().UTC()
 	}
 	protected := detectProtectedAgents()
+	serverRunning := isServeRunningLocal()
 	mode, defaultAction := detectMode()
 	allow, deny, pending, lastDeny := todayEventsAt(generatedAt)
 	return statusSnapshot{
 		generatedAt:   generatedAt,
 		buildVersion:  build.Version,
 		protected:     protected,
+		integrations:  collectIntegrationAssuranceStatuses(generatedAt, serverRunning),
 		mode:          mode,
 		defaultAction: defaultAction,
-		serverRunning: isServeRunningLocal(),
+		serverRunning: serverRunning,
 		hookOnly:      isHookBasedOnly(protected),
 		allow:         allow,
 		deny:          deny,
@@ -139,12 +144,17 @@ func writeStatusJSON(w io.Writer, snapshot statusSnapshot) error {
 	if protected == nil {
 		protected = []string{}
 	}
+	integrations := snapshot.integrations
+	if integrations == nil {
+		integrations = []integrationAssuranceStatus{}
+	}
 
 	out := statusJSONOutput{
 		SchemaVersion: statusSchemaVersion,
 		GeneratedAt:   snapshot.generatedAt,
 		BuildVersion:  snapshot.buildVersion,
 		Protected:     protected,
+		Integrations:  integrations,
 		Mode:          snapshot.mode,
 		DefaultAction: snapshot.defaultAction,
 		ServerRunning: snapshot.serverRunning,
@@ -294,11 +304,11 @@ func buildStatusBox(
 
 	// ── Protected ───────────────────────────────────────────────────────────
 
-	protectedStr := "None — run 'rampart setup' to protect an agent"
+	protectedStr := "None — run 'rampart protect' to protect detected agents"
 	if len(protected) > 0 {
 		protectedStr = strings.Join(protected, ", ")
 	}
-	protectedLine := lbl("Protected") + protectedStr
+	protectedLine := lbl("Configured") + protectedStr
 
 	// ── Mode ────────────────────────────────────────────────────────────────
 

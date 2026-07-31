@@ -147,6 +147,7 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 	}
 	time.Sleep(150 * time.Millisecond)
 	report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, resolvedURL, opts.Timeout)
+	receiptErr := writeVerificationReceipt(report)
 	fmt.Fprintln(w)
 	printVerificationReport(w, report)
 	if report.Summary.Failed > 0 {
@@ -154,6 +155,9 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 	}
 	if report.Summary.Unverified > 0 {
 		return exitCodeError{code: 2}
+	}
+	if receiptErr != nil {
+		return fmt.Errorf("protect %s: persist assurance evidence: %w", driver.ID, receiptErr)
 	}
 	fmt.Fprintf(w, "\nRampart configuration and adapter verification passed for %s. Restart or reload the host if setup requested it.\n", driver.DisplayName)
 	return nil
@@ -226,6 +230,7 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 	// restarted local gateway a chance to expose the plugin verification method.
 	time.Sleep(350 * time.Millisecond)
 	report := runBehavioralVerification(cmd.Context(), "openclaw", resolvedURL, opts.Timeout)
+	receiptErr := writeVerificationReceipt(report)
 	fmt.Fprintln(w)
 	printVerificationReport(w, report)
 	if report.Summary.Failed > 0 {
@@ -233,6 +238,9 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 	}
 	if report.Summary.Unverified > 0 {
 		return exitCodeError{code: 2}
+	}
+	if receiptErr != nil {
+		return fmt.Errorf("protect: persist assurance evidence: %w", receiptErr)
 	}
 	fmt.Fprintln(w, "\nRampart is actively protecting OpenClaw.")
 	return nil

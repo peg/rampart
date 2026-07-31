@@ -81,13 +81,17 @@ Expected output (example):
 ```
 🛡️ Rampart Status
 
-Protected: OpenClaw (plugin)
+Configured: OpenClaw (plugin)
 Mode: enforce (default_action: allow)
 Today: 0 allow · 0 deny · 0 log
+
+Assurance evidence
+  ✓ OpenClaw                     HOST VERIFIED · checked 2m ago
 ```
 
-Treat `Protected:` as configuration state, then use the integration's
-`rampart verify <agent>` result to confirm that its managed boundary is healthy.
+`Configured` reports the installed boundary. `Assurance evidence` reports the
+strongest recent proof Rampart can support on this machine. Run the suggested
+`rampart verify <agent>` command whenever evidence is missing or stale.
 
 ---
 
@@ -207,7 +211,7 @@ Then add an allow rule for your specific use case. See [Securing Claude Code](ht
 |---------|--------------|
 | `rampart quickstart --yes` | Full non-interactive setup |
 | `rampart doctor` | Health check — hooks, service, permissions |
-| `rampart status` | Show protected agents, mode, today's allow/deny counts |
+| `rampart status` | Show configured agents, assurance evidence, mode, and today's counts |
 | `rampart watch` | Live feed of tool decisions observed by Rampart |
 | `rampart token` | Print bearer token for the dashboard |
 | `rampart policy explain '<command>'` | Trace how a command is evaluated |

@@ -46,8 +46,21 @@ func TestIntegrationDriversMatchAssuranceManifest(t *testing.T) {
 		if driver.VerifyTarget != integration.ID {
 			t.Errorf("driver %q verify target = %q, manifest id = %q", driver.ID, driver.VerifyTarget, integration.ID)
 		}
+		wantProof := assuranceAdapterVerified
+		if integration.Verification.HostBoundary && integration.Verification.Command == "rampart verify "+driver.VerifyTarget {
+			wantProof = assuranceHostVerified
+		}
+		if driver.ProofLevel != wantProof {
+			t.Errorf("driver %q proof level = %q, manifest host boundary = %t", driver.ID, driver.ProofLevel, integration.Verification.HostBoundary)
+		}
+		if len(driver.Executables) == 0 {
+			t.Errorf("driver %q has no executable identity for receipt invalidation", driver.ID)
+		}
 		if integration.AutoProtect == nil || driver.AutoProtect != *integration.AutoProtect {
 			t.Errorf("driver %q auto-protect = %t, manifest = %v", driver.ID, driver.AutoProtect, integration.AutoProtect)
+		}
+		if driver.ServiceRequired != integration.ServiceRequired {
+			t.Errorf("driver %q service-required = %t, manifest = %t", driver.ID, driver.ServiceRequired, integration.ServiceRequired)
 		}
 		if got := integrationBoundaryKind(driver.Boundary); got != integration.Boundary {
 			t.Errorf("driver %q boundary = %q (%q), manifest = %q", driver.ID, driver.Boundary, got, integration.Boundary)
