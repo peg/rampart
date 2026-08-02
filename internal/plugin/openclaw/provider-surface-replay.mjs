@@ -310,6 +310,24 @@ for (const [name, params, context, expectedConsequence] of [
   scenarios.push(name);
 }
 
+await runPolicyScenario({
+  name: 'ask-user-is-local-user-interaction',
+  event: {
+    toolName: 'ask_user',
+    params: {
+      questions: [{ header: 'Confirm', question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+    },
+  },
+  expectedTool: 'message',
+  assertResult: (_result, body) => {
+    assert(
+      body.params.rampart_consequence === 'openclaw:routine-reply',
+      `ask_user should stay scoped to the originating user: ${JSON.stringify(body.params)}`,
+    );
+  },
+});
+scenarios.push('ask-user-is-local-user-interaction');
+
 for (const [name, params, expectedConsequence, expectedDomain] of [
   [
     'browser-status-is-read-only',
@@ -398,6 +416,12 @@ const ask = await runPolicyScenario({
   },
 });
 assert(ask.result.requireApproval.timeoutBehavior === 'deny', 'approval should deny on timeout');
+assert(ask.result.requireApproval.pluginId === 'rampart', 'approval should identify its owning plugin');
+assert(
+  JSON.stringify(ask.result.requireApproval.allowedDecisions) === JSON.stringify(['allow-once', 'allow-always', 'deny']),
+  `unexpected approval decisions: ${JSON.stringify(ask.result.requireApproval.allowedDecisions)}`,
+);
+assert(ask.result.requireApproval.timeoutReason.includes('denied'), 'approval should explain timeout denial');
 scenarios.push('write-tool-hosted-approval');
 
 const authError = await withPlugin({

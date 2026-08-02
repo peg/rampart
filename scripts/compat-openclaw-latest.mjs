@@ -108,7 +108,10 @@ function main() {
   const pluginDir = join(repoRoot, 'internal', 'plugin', 'openclaw');
 
   const version = runOpenClaw(['--version'], { env });
-  const install = runOpenClaw(['plugins', 'install', pluginDir], { env });
+  // OpenClaw 2026.7.2 requires explicit confirmation for local, non-ClawHub
+  // plugin sources. --force is also supported by the current stable train, so
+  // use the same non-interactive installation path users receive from Rampart.
+  const install = runOpenClaw(['plugins', 'install', pluginDir, '--force'], { env });
   const validate = runOpenClaw(['config', 'validate'], { env });
   const configFile = runOpenClaw(['config', 'file'], { env });
   const configFilePath = reportedConfigPath(commandOutput(configFile));
@@ -142,6 +145,7 @@ function main() {
     openclaw_version: commandOutput(version).split('\n')[0],
     openclaw_source: useNpmLatest ? openclawPackage : 'PATH',
     plugin_install_checked: true,
+    plugin_install_force_checked: true,
     config_validate_checked: validate.status === 0,
     config_file_checked: configFileMatches,
     plugin_inspect_checked: inspect.status === 0,
