@@ -1510,7 +1510,7 @@ func ensureServeRunning(w io.Writer, errW io.Writer) error {
 func ensureServeRunningForURL(w io.Writer, errW io.Writer, serveURL string) error {
 	serveURL = strings.TrimRight(strings.TrimSpace(serveURL), "/")
 	if serveURL == "" {
-		return fmt.Errorf("Rampart policy service URL is empty")
+		return fmt.Errorf("rampart policy service URL is empty")
 	}
 	if isSetupServeReachableAt(serveURL) {
 		fmt.Fprintf(w, "✓ Rampart serve is running at %s\n", serveURL)
@@ -1569,11 +1569,6 @@ func startServeBackgroundFallback(rampartBin, serveURL string, w io.Writer, errW
 		}
 	}
 	return fmt.Errorf("rampart serve --background did not become reachable after 5s")
-}
-
-// isSetupServeReachable does a quick healthz check against the default serve port.
-func isSetupServeReachable() bool {
-	return isSetupServeReachableAt(fmt.Sprintf("http://localhost:%d", defaultServePort))
 }
 
 func isSetupServeReachableAt(serveURL string) bool {

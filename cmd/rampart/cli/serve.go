@@ -897,11 +897,6 @@ func isRampartServeCommandForExecutable(comm, args, expectedExecutable string) b
 	return false
 }
 
-func commandLineAfterExecutable(commandLine string) (string, bool) {
-	_, remaining, ok := splitCommandLineExecutable(commandLine)
-	return remaining, ok
-}
-
 func splitCommandLineExecutable(commandLine string) (string, string, bool) {
 	commandLine = strings.TrimSpace(commandLine)
 	if commandLine == "" {
