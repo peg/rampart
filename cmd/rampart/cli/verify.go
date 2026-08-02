@@ -206,7 +206,7 @@ implementation.`,
 		},
 	}
 
-	cmd.Flags().BoolVar(&all, "all", false, "Verify policy and every configured integration without invoking a model")
+	cmd.Flags().BoolVar(&all, "all", false, "Verify policy and every behaviorally verifiable configured integration without invoking a model")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output a machine-readable verification report")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover)")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for each active verification check")
@@ -1220,9 +1220,10 @@ func printVerificationReport(w io.Writer, report verificationReport) {
 }
 
 func printVerificationBatchReport(w io.Writer, report verificationBatchReport) {
-	fmt.Fprintf(w, "Rampart behavioral verification — all configured integrations (%d targets)\n\n", report.Summary.Targets)
+	fmt.Fprintf(w, "Rampart behavioral verification — configured integrations with safe verifiers (%d targets)\n\n", report.Summary.Targets)
 	fmt.Fprintln(w, "Safe canaries only: no models, commands, file reads, messages, or external network requests are invoked.")
 	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
+	fmt.Fprintln(w, "Static-only integrations are not included; use `rampart doctor` for their installation status.")
 	for index, result := range report.Results {
 		if index > 0 {
 			fmt.Fprintln(w)
