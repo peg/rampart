@@ -55,6 +55,10 @@ const openclawMinVersion = "2026.3.28"
 //  6. Run rampart doctor for a health summary.
 //  7. Print success and next steps.
 func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
+	return runSetupOpenClawPluginForServeURL(w, errW, "")
+}
+
+func runSetupOpenClawPluginForServeURL(w io.Writer, errW io.Writer, requestedServeURL string) error {
 	// 1. Locate openclaw.
 	openclawBin, err := findOpenClawBinary()
 	if err != nil {
@@ -80,11 +84,15 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 		return fmt.Errorf("OpenClaw version %s is too old — need >= %s for before_tool_call hook\n  Upgrade: npm install -g openclaw@latest", version, openclawMinVersion)
 	}
 	fmt.Fprintf(w, "✓ OpenClaw version: %s (>= %s required)\n", version, openclawMinVersion)
+	serveURL, err := resolveServeURLStrict(requestedServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Errorf("resolve Rampart policy service URL: %w", err)
+	}
 
 	// Start the policy service only after proving that the requested host exists
 	// and supports the native security hook. A missing, malformed, or outdated
 	// OpenClaw install must not mutate Rampart's background-service state.
-	if err := ensureServeRunning(w, errW); err != nil {
+	if err := ensureServeRunningForURL(w, errW, serveURL); err != nil {
 		return fmt.Errorf("start Rampart policy service: %w", err)
 	}
 
@@ -141,8 +149,8 @@ func runSetupOpenClawPlugin(w io.Writer, errW io.Writer) error {
 	fmt.Fprintln(w, "✅ Rampart is protecting your OpenClaw agent")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "  Protected tools: exec, read, write, edit, web_fetch, browser, message")
-	serveStatus := "http://localhost:9090"
-	if isSetupServeReachable() {
+	serveStatus := serveURL
+	if isSetupServeReachableAt(serveURL) {
 		serveStatus += " (running)"
 	} else {
 		serveStatus += " (not running — start with: rampart serve --background)"
@@ -1492,9 +1500,25 @@ func modernOpenClawVersion() (string, bool) {
 // ensureServeRunning checks whether rampart serve is reachable, and if not,
 // installs and starts it as a systemd/launchd service via `rampart serve install`.
 func ensureServeRunning(w io.Writer, errW io.Writer) error {
-	if isSetupServeReachable() {
-		fmt.Fprintln(w, "✓ Rampart serve is running")
+	serveURL, err := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Errorf("resolve Rampart policy service URL: %w", err)
+	}
+	return ensureServeRunningForURL(w, errW, serveURL)
+}
+
+func ensureServeRunningForURL(w io.Writer, errW io.Writer, serveURL string) error {
+	serveURL = strings.TrimRight(strings.TrimSpace(serveURL), "/")
+	if serveURL == "" {
+		return fmt.Errorf("Rampart policy service URL is empty")
+	}
+	if isSetupServeReachableAt(serveURL) {
+		fmt.Fprintf(w, "✓ Rampart serve is running at %s\n", serveURL)
 		return nil
+	}
+	defaultURL := fmt.Sprintf("http://localhost:%d", defaultServePort)
+	if serveURL != defaultURL {
+		return fmt.Errorf("configured Rampart policy service %s is unreachable; start that service or remove the endpoint override before retrying", serveURL)
 	}
 
 	fmt.Fprintln(w, "Starting rampart serve...")
@@ -1511,7 +1535,7 @@ func ensureServeRunning(w io.Writer, errW io.Writer) error {
 		// Wait up to 3 seconds for serve to come up.
 		for i := 0; i < 6; i++ {
 			time.Sleep(500 * time.Millisecond)
-			if isSetupServeReachable() {
+			if isSetupServeReachableAt(serveURL) {
 				fmt.Fprintln(w, "✓ Rampart serve started (system service)")
 				return nil
 			}
@@ -1521,7 +1545,7 @@ func ensureServeRunning(w io.Writer, errW io.Writer) error {
 		fmt.Fprintf(errW, "⚠ rampart serve service install failed (%v); trying background fallback\n", installErr)
 	}
 
-	if err := startServeBackgroundFallback(rampartBin, w, errW); err != nil {
+	if err := startServeBackgroundFallback(rampartBin, serveURL, w, errW); err != nil {
 		if installErr != nil {
 			return fmt.Errorf("rampart serve service install failed (%v) and background fallback failed: %w", installErr, err)
 		}
@@ -1530,7 +1554,7 @@ func ensureServeRunning(w io.Writer, errW io.Writer) error {
 	return nil
 }
 
-func startServeBackgroundFallback(rampartBin string, w io.Writer, errW io.Writer) error {
+func startServeBackgroundFallback(rampartBin, serveURL string, w io.Writer, errW io.Writer) error {
 	cmd := osexec.Command(rampartBin, "serve", "--background")
 	cmd.Stdout = w
 	cmd.Stderr = errW
@@ -1539,7 +1563,7 @@ func startServeBackgroundFallback(rampartBin string, w io.Writer, errW io.Writer
 	}
 	for i := 0; i < 10; i++ {
 		time.Sleep(500 * time.Millisecond)
-		if isSetupServeReachable() {
+		if isSetupServeReachableAt(serveURL) {
 			fmt.Fprintln(w, "✓ Rampart serve started (background fallback)")
 			return nil
 		}
@@ -1549,7 +1573,12 @@ func startServeBackgroundFallback(rampartBin string, w io.Writer, errW io.Writer
 
 // isSetupServeReachable does a quick healthz check against the default serve port.
 func isSetupServeReachable() bool {
+	return isSetupServeReachableAt(fmt.Sprintf("http://localhost:%d", defaultServePort))
+}
+
+func isSetupServeReachableAt(serveURL string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	return isRampartHealthReady(ctx, newRampartHTTPClient(2*time.Second), "http://localhost:9090/healthz")
+	healthURL := strings.TrimRight(serveURL, "/") + "/healthz"
+	return isRampartHealthReady(ctx, newRampartHTTPClient(2*time.Second), healthURL)
 }
