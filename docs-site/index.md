@@ -97,6 +97,9 @@ rampart protect openclaw
 
 # Codex CLI, IDE, and desktop
 rampart setup codex
+
+# Re-check policy and every configured active-verifier integration
+rampart verify --all
 ```
 
 That's it. Pick the integration that matches your agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One safe verification command for configured boundaries** —
+  `rampart verify --all` runs the policy canaries plus every configured
+  integration with an active behavioral verifier, without invoking a model or
+  executing the represented actions. Machine-readable output uses
+  `rampart.verify-all.v1`, retains per-target reports, and distinguishes failed
+  targets from incomplete or unreachable checks.
+- **OpenClaw prerelease warning gate** — Scheduled compatibility CI keeps the
+  latest stable OpenClaw path blocking while checking the beta package as a
+  non-blocking advisory, so upstream contract changes are visible before they
+  reach stable without overstating prerelease support.
+
+### Changed
+
+- **Explicit service endpoints are lifecycle-wide** —
+  `rampart protect --serve-url` now selects the endpoint used for service health, host
+  configuration, and behavioral verification. Non-default endpoints must
+  already be reachable, and OpenClaw accepts only a local loopback service
+  without credentials or URL suffixes.
+- **OpenClaw approvals use the current ownership contract** — Approval cards
+  identify Rampart as their owner, advertise `allow-once`, `allow-always`, and
+  `deny`, explain timeout denial, and persist policy only for `allow-always`.
+  OpenClaw's local `ask_user` interaction is classified separately from an
+  outbound or cross-conversation message.
+
+### Security
+
+- **Background service identity survives legitimate binary names safely** — A
+  private, bounded `serve.state` records the executable that launched the
+  service, allowing renamed Rampart binaries to be authenticated by exact path
+  while malformed, permissive, stale, or symlinked state falls back to the
+  stricter legacy process-name check.
+
 ## [1.5.0] - 2026-07-29
 
 ### Added

@@ -50,6 +50,22 @@ they are not cryptographic signatures or substitutes for rerunning the harness.
 
 ## Run the local gate
 
+For an installed Rampart environment, first run the safe behavioral aggregate:
+
+```bash
+rampart verify --all
+rampart verify --all --json
+```
+
+It always checks the policy path and adds each configured integration that has
+an active safe verifier. No model or represented action is invoked. Exit status
+1 means at least one target failed; status 2 means no target failed but at least
+one remained unverified. The JSON form uses `rampart.verify-all.v1` and contains
+the complete per-target `rampart.verify.v1` reports.
+
+Static-only integrations are deliberately absent. Use `rampart doctor` to
+inspect them; for Hermes runtime proof, use the isolated harness below.
+
 From a Rampart source checkout:
 
 ```bash

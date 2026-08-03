@@ -10,6 +10,12 @@ methods, with different assurance levels and boundaries. Choose the guide for
 your agent below, then check the [support matrix](../getting-started/support-matrix.md)
 for the evidence and known limitations of that path.
 
+After setup, `rampart verify --all` safely checks the policy engine and every
+configured integration with an active behavioral verifier without invoking a
+model. Static-only integrations such as Hermes remain visible in
+`rampart doctor` and require their isolated compatibility harness for runtime
+evidence.
+
 ## Integration Methods
 
 | Method | How It Works | Best For |

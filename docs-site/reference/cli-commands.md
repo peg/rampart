@@ -33,6 +33,7 @@ real Rampart adapter without invoking a model. No policy authoring is required.
 rampart protect                       # Detect and protect supported installed agents
 rampart protect copilot               # Protect Copilot CLI and VS Code agent sessions
 rampart protect openclaw              # Install, activate, restart, and verify
+rampart protect openclaw --serve-url http://127.0.0.1:19090
 rampart protect openclaw --reinstall  # Replace the plugin even when versions match
 rampart protect openclaw --no-restart # Configure without restarting the gateway
 rampart protect openclaw --no-verify  # Configure without running behavioral canaries
@@ -40,11 +41,18 @@ rampart protect openclaw --no-verify  # Configure without running behavioral can
 
 The command installs managed Guard and OpenClaw policies, enables the bundled native plugin, starts the local policy service, configures every OpenClaw tool to fail closed when Rampart is unavailable, restarts the gateway, and runs safe behavioral verification. Existing unrelated OpenClaw settings and custom Rampart policy files are preserved.
 
+An explicit `--serve-url` is authoritative for startup checks, host
+configuration, and verification. OpenClaw's native plugin accepts only a
+loopback HTTP(S) service. A non-default explicit endpoint must already be
+reachable; Rampart does not silently start or verify against the default port.
+
 ### `rampart verify`
 
 Actively test expected policy decisions with fixed, non-executing canaries.
 
 ```bash
+rampart verify --all            # Verify policy + every configured active-verifier integration
+rampart verify --all --json     # Emit aggregate schema rampart.verify-all.v1
 rampart verify openclaw        # Verify policy plus the live OpenClaw plugin path
 rampart verify claude-code     # Verify Claude hook installation and adapter denial
 rampart verify cline           # Verify Cline hook installation and adapter denial
@@ -57,6 +65,14 @@ rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
 
 Verification does not execute commands, read files, send messages, contact external hosts, or add canary events to the audit log. A failed expectation exits with status 1; an incomplete or unreachable check exits with status 2. Human and JSON reports identify the resulting `policy_verified`, `adapter_verified`, `host_verified`, `unverified`, or `degraded` assurance level.
+
+`--all` always checks the policy path, then every configured integration on the
+current platform that exposes an active safe verifier. It does not invoke a
+model. Static-only integrations are excluded rather than counted as passing;
+use `rampart doctor` for their installation status. The aggregate JSON report
+uses `rampart.verify-all.v1`, retains the per-target `rampart.verify.v1`
+reports, and exits 1 if any target fails or 2 if none fail but at least one is
+unverified.
 
 For integration targets, a completed run also records a minimal verification
 receipt under `~/.rampart/verification/`. The receipt contains check IDs and

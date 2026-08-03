@@ -46,6 +46,20 @@ Both should return `active`.
 
 No external downloads, no npm install — the plugin is bundled inside the `rampart` binary.
 
+To use a different local port, start that service first and make the endpoint
+explicit:
+
+```bash
+rampart serve --addr 127.0.0.1 --port 19090 --background
+rampart protect openclaw --serve-url http://127.0.0.1:19090
+```
+
+The explicit URL is authoritative for startup checks, plugin configuration,
+and verification. The managed OpenClaw path accepts only loopback HTTP(S) URLs
+without embedded credentials, paths, queries, or fragments. Rampart will not
+silently fall back to port 9090 when an explicit non-default endpoint is
+unreachable.
+
 For advanced setups that manage their own policies or require the legacy compatibility path, use `rampart setup openclaw` and configure degraded behavior explicitly.
 
 ### Security scanner note
@@ -94,6 +108,7 @@ With the native plugin, **supported OpenClaw tool calls are intercepted**. Polic
 | `web_search` | ✅ Native plugin | Always allowed by default |
 | `browser` | ✅ Native plugin | Read-only inspection is allowed; navigation uses domain rules; clicks, typing, uploads, and other mutations require approval |
 | `message` | ✅ Native plugin | Read actions always allowed; sends to unknown channels require approval |
+| `ask_user` | ✅ Native plugin | Structured questions to the originating user are classified as local interaction, not cross-conversation messaging |
 | `canvas` | ✅ Native plugin | Always allowed (UI only) |
 | `sessions_spawn` | ✅ Native plugin | Subagents cannot spawn further agents |
 | `process` / `nodes` / `gateway` / `subagents` | ✅ Native plugin | Known read-only status operations are allowed; mutations require approval |
@@ -147,6 +162,10 @@ rampart init --profile openclaw
 
 When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a durable rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
 
+The Rampart-owned approval card explicitly offers `allow-once`, `allow-always`,
+and `deny`, and denies on timeout. Only `allow-always` creates a durable rule.
+One-time approvals, denials, timeouts, and cancellations never change policy.
+
 Automatic approvals are exact by default. Rampart never inserts a wildcard or
 strips arguments, pipes, or redirects when persisting an approved command.
 Literal wildcard characters are escaped as policy literals. Exact automatic
@@ -192,7 +211,11 @@ For release-candidate validation, run the latest-OpenClaw compatibility harness 
 node scripts/compat-openclaw-latest.mjs --npm-latest
 ```
 
-That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as recommended, also run the opt-in live runtime audit regression:
+That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as verified, also run the opt-in live runtime audit regression:
+
+Scheduled CI also checks the current OpenClaw beta package as a non-blocking
+advisory. A green beta job is early compatibility evidence only; it does not
+make an unreleased OpenClaw version part of Rampart's supported stable baseline.
 
 ```bash
 export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root

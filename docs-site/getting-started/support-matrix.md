@@ -11,6 +11,23 @@ Rampart is policy, approval, audit, and proof infrastructure for agents that nee
 
 For release-candidate validation and latest-agent checks, use the [Release Compatibility Gate](release-compatibility-gate.md). The support tier below should match the most recent evidence from the exact Rampart candidate build and bundled plugin metadata.
 
+## Verify configured boundaries safely
+
+```bash
+rampart verify --all
+```
+
+This runs the policy canaries plus every configured integration on the current
+platform that has an active behavioral verifier. It does not invoke a model or
+execute the represented actions. A target is not promoted merely because its
+configuration exists: OpenClaw's live plugin can earn `host_verified`, while
+ordinary native-hook checks earn `adapter_verified` unless a separate real-host
+run is recorded.
+
+Static-only integrations are excluded from the aggregate rather than reported
+as passing. In particular, use `rampart doctor` for Hermes installation status
+and the isolated Hermes harness for runtime evidence.
+
 ## At a glance
 
 <table class="support-matrix-table">
@@ -149,7 +166,10 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
   administrator-owned machine policy hook, while VS Code hooks remain an
   upstream Preview surface covered by contract and adapter tests
 - **OpenClaw >= 2026.5.2** → `rampart protect openclaw` installs and verifies
-  the managed native guard with fail-closed service behavior and native approval UI
+  the managed native guard with fail-closed service behavior and native approval
+  UI. An explicit `--serve-url` is used consistently for startup, plugin
+  configuration, and verification; it must be loopback, and a non-default
+  endpoint must already be reachable
 - **Cline** → current editor and CLI payloads plus POSIX and Windows discovery
   artifacts are covered by adapter/setup tests; physical Windows and rolling
   latest-Cline host proof remain pending. Legacy CLI `--yolo` disables hooks,
@@ -164,7 +184,8 @@ For release-candidate validation and latest-agent checks, use the [Release Compa
   pending, and this does not cover Antigravity
 - **Hermes Agent** → experimental plugin path with a completed isolated
   Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than
-  resume until Hermes exposes a first-class plugin approval flow
+  resume until Hermes exposes a first-class plugin approval flow. Its built-in
+  status check remains static, so it is not included in `rampart verify --all`
 
 ## Degraded behavior notes
 
