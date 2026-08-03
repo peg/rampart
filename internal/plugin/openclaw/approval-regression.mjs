@@ -66,6 +66,13 @@ const ask = await runScenario({
 assert(ask.result?.requireApproval, 'ask-exec: requireApproval missing');
 assert(!ask.result?.params?.ask, 'ask-exec: legacy ask param mutation still present');
 assert(ask.result.requireApproval.title.includes('exec approval required'), 'ask-exec: wrong title');
+assert(ask.result.requireApproval.pluginId === 'rampart', 'ask-exec: approval plugin ownership missing');
+assert(
+  JSON.stringify(ask.result.requireApproval.allowedDecisions) === JSON.stringify(['allow-once', 'allow-always', 'deny']),
+  'ask-exec: allowed approval decisions drifted',
+);
+assert(ask.result.requireApproval.timeoutReason.includes('denied'), 'ask-exec: explicit timeout reason missing');
+assert(ask.result.requireApproval.timeoutBehavior === 'deny', 'ask-exec: stable timeout fallback missing');
 assert(ask.hookOpts.before_tool_call?.priority < 0, 'ask-exec: Rampart should run as a late before_tool_call hook');
 
 const deny = await runScenario({
@@ -79,13 +86,26 @@ const allowAlways = await runScenario({
   toolResult: { decision: 'ask', allowed: false, policy: 'test-policy', message: 'needs approval', severity: 'warning' },
   resolution: 'allow-always',
 });
+const nonPersistentResolutions = [];
+for (const resolution of ['allow-once', 'deny', 'timeout', 'cancelled']) {
+  const scenario = await runScenario({
+    name: `resolution-${resolution}`,
+    toolResult: { decision: 'ask', allowed: false, policy: 'test-policy', message: 'needs approval', severity: 'warning' },
+    resolution,
+  });
+  assert(
+    !scenario.fetchCalls.some((call) => call.url.includes('/v1/rules/learn')),
+    `${scenario.name}: non-persistent resolution unexpectedly created a durable rule`,
+  );
+  nonPersistentResolutions.push(scenario);
+}
 assert(
   !JSON.stringify(allowAlways.logs).includes('sudo true'),
   'allow-always: raw command leaked into plugin logs',
 );
 const learnCall = allowAlways.fetchCalls.find((call) => call.url.includes('/v1/rules/learn'));
 assert(learnCall, 'allow-always: learn endpoint not called');
-for (const scenario of [ask, deny, allowAlways]) {
+for (const scenario of [ask, deny, allowAlways, ...nonPersistentResolutions]) {
   assert(
     scenario.fetchCalls.every((call) => call.opts.redirect === 'error'),
     `${scenario.name}: control request allowed redirects`,
@@ -117,5 +137,6 @@ console.log(JSON.stringify({
     { name: ask.name, result: ask.result },
     { name: deny.name, result: deny.result },
     { name: allowAlways.name, learnPersisted: true },
+    ...nonPersistentResolutions.map((scenario) => ({ name: scenario.name, learnPersisted: false })),
   ],
 }, null, 2));

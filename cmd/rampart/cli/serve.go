@@ -850,13 +850,23 @@ func waitForBackgroundReady(path string, pid int, timeout time.Duration) error {
 }
 
 func isRampartServeCommand(comm, args string) bool {
-	name := strings.ToLower(filepath.Base(strings.TrimSpace(comm)))
-	if name != "rampart" && name != "rampart.exe" {
-		return false
-	}
-	remaining, ok := commandLineAfterExecutable(args)
+	return isRampartServeCommandForExecutable(comm, args, "")
+}
+
+func isRampartServeCommandForExecutable(comm, args, expectedExecutable string) bool {
+	executable, remaining, ok := splitCommandLineExecutable(args)
 	if !ok {
 		return false
+	}
+	if expectedExecutable != "" {
+		if !samePath(executable, expectedExecutable) {
+			return false
+		}
+	} else {
+		name := strings.ToLower(filepath.Base(strings.TrimSpace(comm)))
+		if name != "rampart" && name != "rampart.exe" {
+			return false
+		}
 	}
 	fields := strings.Fields(remaining)
 	for i := 0; i < len(fields); i++ {
@@ -887,10 +897,10 @@ func isRampartServeCommand(comm, args string) bool {
 	return false
 }
 
-func commandLineAfterExecutable(commandLine string) (string, bool) {
+func splitCommandLineExecutable(commandLine string) (string, string, bool) {
 	commandLine = strings.TrimSpace(commandLine)
 	if commandLine == "" {
-		return "", false
+		return "", "", false
 	}
 	if commandLine[0] == '"' || commandLine[0] == '\'' {
 		quote := commandLine[0]
@@ -905,15 +915,15 @@ func commandLineAfterExecutable(commandLine string) (string, bool) {
 				continue
 			}
 			if commandLine[i] == quote {
-				return strings.TrimSpace(commandLine[i+1:]), true
+				return commandLine[1:i], strings.TrimSpace(commandLine[i+1:]), true
 			}
 		}
-		return "", false
+		return "", "", false
 	}
 	if index := strings.IndexAny(commandLine, " \t\r\n"); index >= 0 {
-		return strings.TrimSpace(commandLine[index:]), true
+		return commandLine[:index], strings.TrimSpace(commandLine[index:]), true
 	}
-	return "", false
+	return "", "", false
 }
 
 func isWriteEvent(event fsnotify.Event) bool {

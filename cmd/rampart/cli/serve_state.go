@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -15,13 +16,17 @@ import (
 // serveState is written by `rampart serve` so other commands (doctor, watch, log)
 // can discover the serve URL and port without requiring flags or env vars.
 type serveState struct {
-	URL     string `json:"url"`
-	Port    int    `json:"port"`
-	PID     int    `json:"pid"`
-	Started string `json:"started"`
+	URL        string `json:"url"`
+	Port       int    `json:"port"`
+	PID        int    `json:"pid"`
+	Started    string `json:"started"`
+	Executable string `json:"executable,omitempty"`
 }
 
-const serveStateFile = "serve.state"
+const (
+	serveStateFile         = "serve.state"
+	maxServeStateFileBytes = 64 << 10
+)
 
 // writeServeState writes the serve state to ~/.rampart/serve.state.
 func writeServeState(dir string, port, pid int, tls bool) error {
@@ -29,17 +34,54 @@ func writeServeState(dir string, port, pid int, tls bool) error {
 	if tls {
 		scheme = "https"
 	}
+	executable, _ := os.Executable()
+	if executable != "" {
+		executable, _ = filepath.Abs(executable)
+	}
 	state := serveState{
-		URL:     fmt.Sprintf("%s://localhost:%d", scheme, port),
-		Port:    port,
-		PID:     pid,
-		Started: time.Now().UTC().Format(time.RFC3339),
+		URL:        fmt.Sprintf("%s://localhost:%d", scheme, port),
+		Port:       port,
+		PID:        pid,
+		Started:    time.Now().UTC().Format(time.RFC3339),
+		Executable: executable,
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
 	return atomicWriteRecoverablePrivateFile(filepath.Join(dir, serveStateFile), data)
+}
+
+// serveExecutableForPID returns the executable identity published by the
+// running service. It is used only to make process authentication stricter:
+// malformed, stale, permissive, or symlinked state falls back to the legacy
+// exact `rampart serve` process-name check.
+func serveExecutableForPID(pid int) string {
+	dir, err := rampartDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(dir, serveStateFile)
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maxServeStateFileBytes {
+		return ""
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var state serveState
+	if json.Unmarshal(data, &state) != nil || state.PID != pid || strings.TrimSpace(state.Executable) == "" {
+		return ""
+	}
+	executable, err := filepath.Abs(state.Executable)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(executable)
 }
 
 // removeServeState removes the state file on shutdown.

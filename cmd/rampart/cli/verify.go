@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const verifyJSONSchemaVersion = "rampart.verify.v1"
+const (
+	verifyJSONSchemaVersion    = "rampart.verify.v1"
+	verifyAllJSONSchemaVersion = "rampart.verify-all.v1"
+)
 
 type verificationStatus string
 
@@ -78,6 +82,25 @@ type verificationReport struct {
 	policyEndpoint string
 }
 
+type verificationBatchSummary struct {
+	Targets           int `json:"targets"`
+	PassedTargets     int `json:"passed_targets"`
+	FailedTargets     int `json:"failed_targets"`
+	UnverifiedTargets int `json:"unverified_targets"`
+	Checks            int `json:"checks"`
+	PassedChecks      int `json:"passed_checks"`
+	FailedChecks      int `json:"failed_checks"`
+	UnverifiedChecks  int `json:"unverified_checks"`
+}
+
+type verificationBatchReport struct {
+	SchemaVersion string                   `json:"schema_version"`
+	GeneratedAt   string                   `json:"generated_at"`
+	SafeCanaries  bool                     `json:"safe_canaries"`
+	Summary       verificationBatchSummary `json:"summary"`
+	Results       []verificationReport     `json:"results"`
+}
+
 type behavioralCanary struct {
 	ID       string
 	Name     string
@@ -94,6 +117,7 @@ type preflightResponse struct {
 }
 
 func newVerifyCmd() *cobra.Command {
+	var all bool
 	var jsonOut bool
 	var serveURL string
 	var timeout time.Duration
@@ -110,6 +134,33 @@ verification also runs fixed canaries through the live before_tool_call
 implementation.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all {
+				if len(args) > 0 {
+					return fmt.Errorf("verify: --all cannot be combined with target %q", args[0])
+				}
+				resolvedURL, err := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+				if err != nil {
+					return fmt.Errorf("verify: resolve serve URL: %w", err)
+				}
+				report, receiptErr := runAllBehavioralVerifications(cmd.Context(), resolvedURL, timeout)
+				if jsonOut {
+					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
+						return fmt.Errorf("verify: encode aggregate report: %w", err)
+					}
+				} else {
+					printVerificationBatchReport(cmd.OutOrStdout(), report)
+				}
+				if report.Summary.FailedTargets > 0 {
+					return exitCodeError{code: 1}
+				}
+				if report.Summary.UnverifiedTargets > 0 {
+					return exitCodeError{code: 2}
+				}
+				if receiptErr != nil {
+					return fmt.Errorf("verify: persist aggregate assurance evidence: %w", receiptErr)
+				}
+				return nil
+			}
 			target := ""
 			if len(args) == 1 {
 				target = strings.ToLower(strings.TrimSpace(args[0]))
@@ -155,10 +206,69 @@ implementation.`,
 		},
 	}
 
+	cmd.Flags().BoolVar(&all, "all", false, "Verify policy and every behaviorally verifiable configured integration without invoking a model")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output a machine-readable verification report")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover)")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for each active verification check")
 	return cmd
+}
+
+func configuredVerificationTargets(home string) []string {
+	targets := []string{"policy"}
+	seen := map[string]struct{}{"policy": {}}
+	for _, driver := range supportedIntegrationDrivers() {
+		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) || driver.Configured == nil || !driver.Configured(home) {
+			continue
+		}
+		target := strings.TrimSpace(driver.VerifyTarget)
+		if target == "" {
+			target = driver.ID
+		}
+		if _, exists := seen[target]; exists {
+			continue
+		}
+		seen[target] = struct{}{}
+		targets = append(targets, target)
+	}
+	return targets
+}
+
+func runAllBehavioralVerifications(ctx context.Context, serveURL string, timeout time.Duration) (verificationBatchReport, error) {
+	report := verificationBatchReport{
+		SchemaVersion: verifyAllJSONSchemaVersion,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		SafeCanaries:  true,
+		Results:       make([]verificationReport, 0),
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return report, fmt.Errorf("verify all: resolve home: %w", err)
+	}
+	var receiptErrors []error
+	for _, target := range configuredVerificationTargets(home) {
+		result := runBehavioralVerification(ctx, target, serveURL, timeout)
+		report.Results = append(report.Results, result)
+		report.Summary.Targets++
+		report.Summary.Checks += result.Summary.Checks
+		report.Summary.PassedChecks += result.Summary.Passed
+		report.Summary.FailedChecks += result.Summary.Failed
+		report.Summary.UnverifiedChecks += result.Summary.Unverified
+		if !result.SafeCanaries {
+			report.SafeCanaries = false
+		}
+		switch {
+		case result.Summary.Failed > 0:
+			report.Summary.FailedTargets++
+		case result.Summary.Unverified > 0:
+			report.Summary.UnverifiedTargets++
+		default:
+			report.Summary.PassedTargets++
+		}
+		if err := writeVerificationReceipt(result); err != nil {
+			receiptErrors = append(receiptErrors, fmt.Errorf("%s: %w", target, err))
+		}
+	}
+	return report, errors.Join(receiptErrors...)
 }
 
 func behavioralCanaries(target string) []behavioralCanary {
@@ -1106,6 +1216,31 @@ func printVerificationReport(w io.Writer, report verificationReport) {
 	fmt.Fprintln(w, "Safe canaries only: no commands, file reads, messages, or external network requests are executed.")
 	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
 	fmt.Fprintln(w)
+	printVerificationResult(w, report)
+}
+
+func printVerificationBatchReport(w io.Writer, report verificationBatchReport) {
+	fmt.Fprintf(w, "Rampart behavioral verification — configured integrations with safe verifiers (%d targets)\n\n", report.Summary.Targets)
+	fmt.Fprintln(w, "Safe canaries only: no models, commands, file reads, messages, or external network requests are invoked.")
+	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
+	fmt.Fprintln(w, "Static-only integrations are not included; use `rampart doctor` for their installation status.")
+	for index, result := range report.Results {
+		if index > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "\n[%s]\n", result.Target)
+		printVerificationResult(w, result)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "Aggregate: %d targets passed, %d failed, %d unverified; %d checks total\n",
+		report.Summary.PassedTargets,
+		report.Summary.FailedTargets,
+		report.Summary.UnverifiedTargets,
+		report.Summary.Checks,
+	)
+}
+
+func printVerificationResult(w io.Writer, report verificationReport) {
 	for _, check := range report.Checks {
 		icon := "?"
 		switch check.Status {

@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -106,7 +108,7 @@ cat > "$RAMPART_TEST_STDIN"
 	}
 	prepareOpenClawGuardTest(t, dir, bin)
 
-	if err := configureOpenClawGuardMode(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := configureOpenClawGuardMode(bin, "http://127.0.0.1:19090", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsPath)
@@ -131,7 +133,7 @@ cat > "$RAMPART_TEST_STDIN"
 	}
 	entry := patch["plugins"].(map[string]any)["entries"].(map[string]any)["rampart"].(map[string]any)
 	pluginConfig := entry["config"].(map[string]any)
-	if entry["enabled"] != true || pluginConfig["failOpen"] != false || pluginConfig["failOpenTools"] != nil || pluginConfig["serveUrl"] != "http://localhost:9090" {
+	if entry["enabled"] != true || pluginConfig["failOpen"] != false || pluginConfig["failOpenTools"] != nil || pluginConfig["serveUrl"] != "http://127.0.0.1:19090" {
 		t.Fatalf("unexpected managed guard patch: %#v", entry)
 	}
 }
@@ -156,7 +158,7 @@ printf '\n' >> "$RAMPART_TEST_ARGS"
 	}
 	prepareOpenClawGuardTest(t, dir, bin)
 
-	if err := configureOpenClawGuardMode(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := configureOpenClawGuardMode(bin, "http://localhost:9090", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsPath)
@@ -206,12 +208,70 @@ touch "$RAMPART_TEST_MARKER"
 	}
 	prepareOpenClawGuardTest(t, dir, bin)
 
-	err := configureOpenClawGuardMode(bin, &bytes.Buffer{}, &bytes.Buffer{})
+	err := configureOpenClawGuardMode(bin, "http://localhost:9090", &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "config patch") {
 		t.Fatalf("expected supported host rejection, got %v", err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("fallback bypassed a supported host rejection: %v", err)
+	}
+}
+
+func TestNormalizeOpenClawServeURLRequiresLoopbackRoot(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want string
+		ok   bool
+	}{
+		{raw: "http://localhost:9090/", want: "http://localhost:9090", ok: true},
+		{raw: "https://127.0.0.1:19090", want: "https://127.0.0.1:19090", ok: true},
+		{raw: "http://[::1]:9090", want: "http://[::1]:9090", ok: true},
+		{raw: "https://rampart.example.com", ok: false},
+		{raw: "http://localhost:9090/path", ok: false},
+		{raw: "http://user:secret@localhost:9090", ok: false},
+	} {
+		t.Run(test.raw, func(t *testing.T) {
+			got, err := normalizeOpenClawServeURL(test.raw)
+			if test.ok {
+				if err != nil || got != test.want {
+					t.Fatalf("normalizeOpenClawServeURL(%q) = %q, %v; want %q", test.raw, got, err, test.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("normalizeOpenClawServeURL(%q) unexpectedly returned %q", test.raw, got)
+			}
+		})
+	}
+}
+
+func TestEnsureServeRunningHonorsReachableExplicitEndpoint(t *testing.T) {
+	uptime := 1.0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"service": "rampart", "status": "ok", "mode": "enforce",
+			"version": "test", "uptime_seconds": uptime,
+		})
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := ensureServeRunningForURL(&out, &bytes.Buffer{}, srv.URL); err != nil {
+		t.Fatalf("ensureServeRunningForURL: %v", err)
+	}
+	if !strings.Contains(out.String(), srv.URL) {
+		t.Fatalf("output does not identify explicit endpoint: %q", out.String())
+	}
+}
+
+func TestEnsureServeRunningDoesNotReplaceUnreachableExplicitEndpoint(t *testing.T) {
+	err := ensureServeRunningForURL(&bytes.Buffer{}, &bytes.Buffer{}, "http://127.0.0.1:1")
+	if err == nil || !strings.Contains(err.Error(), "configured Rampart policy service") {
+		t.Fatalf("error = %v, want explicit-endpoint failure", err)
 	}
 }
 

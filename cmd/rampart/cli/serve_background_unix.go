@@ -55,7 +55,7 @@ func isRampartServeProcess(pid int) (bool, string, error) {
 
 	comm := strings.TrimSpace(string(commOut))
 	args := strings.TrimSpace(string(argsOut))
-	return isRampartServeCommand(filepath.Base(comm), args), strings.TrimSpace(comm + " " + args), nil
+	return isRampartServeCommandForExecutable(filepath.Base(comm), args, serveExecutableForPID(pid)), strings.TrimSpace(comm + " " + args), nil
 }
 
 func terminateRampartServeProcess(proc *os.Process) error {

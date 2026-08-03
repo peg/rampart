@@ -279,6 +279,47 @@ func TestIsRampartServeCommand(t *testing.T) {
 	}
 }
 
+func TestIsRampartServeCommandAuthenticatesPublishedExecutable(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "rampart-openclaw-candidate")
+	args := executable + " serve --port 19090"
+	if !isRampartServeCommandForExecutable("rampart-o", args, executable) {
+		t.Fatal("published executable identity did not authenticate a renamed Rampart server")
+	}
+	if isRampartServeCommandForExecutable("rampart-o", args, filepath.Join(t.TempDir(), "rampart-openclaw-candidate")) {
+		t.Fatal("mismatched executable identity authenticated")
+	}
+	if isRampartServeCommand("rampart-o", args) {
+		t.Fatal("renamed binary authenticated without published executable identity")
+	}
+}
+
+func TestServeStatePublishesPrivateExecutableIdentity(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	dir := filepath.Join(home, ".rampart")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const pid = 4242
+	if err := writeServeState(dir, 19090, pid, false); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err = filepath.Abs(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := serveExecutableForPID(pid); !samePath(got, want) {
+		t.Fatalf("serveExecutableForPID() = %q, want %q", got, want)
+	}
+	if got := serveExecutableForPID(pid + 1); got != "" {
+		t.Fatalf("mismatched PID returned executable %q", got)
+	}
+}
+
 func TestSamePath(t *testing.T) {
 	tests := []struct {
 		a, b string
