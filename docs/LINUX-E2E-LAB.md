@@ -116,7 +116,9 @@ receives structural checks for authorization headers, credentialed URLs, and
 secret assignments. `credential-scan.json`
 records only finding types and relative paths; it never reproduces a matched
 value. Any finding changes the run to failed. Do not publish or upload artifacts
-from a failed credential scan.
+from a failed credential scan. Disposable homes, build caches, temporary files,
+generated local tokens, and canaries are removed on every exit; only the
+evidence directory (and an explicitly requested source worktree) is retained.
 
 ## Invoke over SSH
 

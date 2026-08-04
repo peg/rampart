@@ -25,6 +25,7 @@ grep -q -- '--gateway' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q 'API_SERVER_ENABLED=true' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q '^umask 077$' "$runner"
 grep -q 'scan-artifacts.py' "$runner"
+grep -q 'rm -rf "$isolated_home" "$tmp_dir" "$run_root/go-build" "$run_root/preload-home"' "$runner"
 
 mkdir -p "${tmp}/scan-clean" "${tmp}/scan-secret"
 printf '%s\n' '{"status":"passed","token":"[REDACTED]"}' >"${tmp}/scan-clean/summary.json"

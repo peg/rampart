@@ -184,6 +184,10 @@ cleanup() {
   if [[ "$worktree_added" -eq 1 && "$keep_worktree" -ne 1 ]]; then
     git -C "$controller_repo" worktree remove --force "$worktree" >/dev/null 2>&1 || exit_code=1
   fi
+  # Retain only the evidence boundary. Disposable homes can contain generated
+  # Rampart tokens and canaries even though the controller environment is
+  # cleared, so they must not survive a completed or interrupted run.
+  rm -rf "$isolated_home" "$tmp_dir" "$run_root/go-build" "$run_root/preload-home" || exit_code=1
   # Write a controlled summary first so it is covered by the scan. The final
   # rewrite below changes only the scan status and overall exit status.
   write_summary "$exit_code"
