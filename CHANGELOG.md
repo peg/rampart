@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **E2E evidence fails closed on credential material** — Linux lab runs now use
+  private filesystem permissions, clear the controller environment before
+  candidate execution, and reject retained artifacts containing credential
+  files or secret-shaped values without reproducing matched values in reports.
 - **Background service identity survives legitimate binary names safely** — A
   private, bounded `serve.state` records the executable that launched the
   service, allowing renamed Rampart binaries to be authenticated by exact path

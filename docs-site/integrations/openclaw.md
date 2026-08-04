@@ -220,6 +220,7 @@ make an unreleased OpenClaw version part of Rampart's supported stable baseline.
 ```bash
 export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
 export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export CODEX_HOME="$HOME/.codex"
 export OPENCLAW_STATE_DIR="$HOME/.openclaw"
 export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
 RAMPART_OPENCLAW_RUNTIME=1 \
@@ -227,7 +228,20 @@ RAMPART_OPENCLAW_RESTART_SERVICES= \
 node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-Use a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses primary-state paths and service restarts. It requires real Codex app-server turns with correlated trajectory and Rampart canonical `exec` audit evidence, including a native plugin approval with `allow-once` exact resume and successful execution, plus a denied disposable canary that remains unchanged.
+Use a mode-`0700`, disposable OpenClaw state and authenticated Codex test agent
+whose gateway is already running against that state. Create a dedicated test
+login inside the isolated state; never copy production `auth.json`,
+`auth-profiles.json`, refresh tokens, or agent homes. The root must include the
+private `credential-isolation.json` attestation described in the
+[OpenClaw acceptance checklist](https://github.com/peg/rampart/blob/main/docs/design/openclaw-approval-acceptance-checklist.md).
+Before starting the
+isolated gateway, configure `plugins.entries.rampart` with `enabled: true`,
+`serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses
+primary, outside-root, or symlinked paths, inherited credential variables, raw
+artifact retention, and service restarts. It requires real Codex app-server
+turns with correlated trajectory and Rampart canonical `exec` audit evidence,
+including a native plugin approval with `allow-once` exact resume and successful
+execution, plus a denied disposable canary that remains unchanged.
 
 Or check plugin status directly:
 

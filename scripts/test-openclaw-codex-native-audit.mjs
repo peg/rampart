@@ -19,9 +19,10 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, statSync } from 'node:fs';
 import {
   access,
+  chmod,
   copyFile,
   mkdir,
   mkdtemp,
@@ -31,7 +32,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir, homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,6 +51,7 @@ if (!yes) {
     '  RAMPART_OPENCLAW_RUNTIME=1 \\',
     '  RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root \\',
     '  HOME=/path/to/disposable/root/home \\',
+    '  CODEX_HOME=/path/to/disposable/root/home/.codex \\',
     '  OPENCLAW_STATE_DIR=/path/to/disposable/root/home/.openclaw \\',
     '  OPENCLAW_CONFIG_PATH=/path/to/disposable/root/home/.openclaw/openclaw.json \\',
     '  RAMPART_OPENCLAW_RESTART_SERVICES= \\',
@@ -63,9 +65,12 @@ const serveUrl = `http://127.0.0.1:${port}`;
 const agentId = process.env.RAMPART_OPENCLAW_AGENT || 'main';
 const openclawConfigPath = process.env.OPENCLAW_CONFIG_PATH || join(homedir(), '.openclaw', 'openclaw.json');
 const openclawStateDir = process.env.OPENCLAW_STATE_DIR || join(homedir(), '.openclaw');
+const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
 const sessionsDir = join(openclawStateDir, 'agents', agentId, 'sessions');
 const tokenPath = join(homedir(), '.rampart', 'token');
 const isolationRoot = process.env.RAMPART_OPENCLAW_ISOLATION_ROOT;
+const credentialAttestationPath = isolationRoot ? join(isolationRoot, 'credential-isolation.json') : '';
+const accountHome = resolve(userInfo().homedir);
 const restartServices = (process.env.RAMPART_OPENCLAW_RESTART_SERVICES ?? 'openclaw-gateway.service,openclaw-node.service')
   .split(',')
   .map((s) => s.trim())
@@ -76,12 +81,44 @@ function isWithin(root, candidate) {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
+function assertNoSymlinkComponents(root, candidate, label) {
+  const rootPath = resolve(root);
+  const candidatePath = resolve(candidate);
+  const rel = relative(rootPath, candidatePath);
+  const parts = rel === '' ? [] : rel.split(/[\\/]+/);
+  let current = rootPath;
+  for (const part of parts) {
+    current = join(current, part);
+    if (existsSync(current) && lstatSync(current).isSymbolicLink()) {
+      console.error(`Refusing OpenClaw runtime regression: ${label} traverses a symbolic link.`);
+      process.exit(2);
+    }
+  }
+}
+
 if (!isolationRoot) {
   console.error('Refusing OpenClaw runtime regression without RAMPART_OPENCLAW_ISOLATION_ROOT.');
   process.exit(2);
 }
+if (
+  !existsSync(isolationRoot) ||
+  lstatSync(isolationRoot).isSymbolicLink() ||
+  !statSync(isolationRoot).isDirectory()
+) {
+  console.error('Refusing OpenClaw runtime regression: isolation root must be an existing real directory.');
+  process.exit(2);
+}
+if (
+  resolve(homedir()) === accountHome ||
+  resolve(openclawStateDir) === join(accountHome, '.openclaw') ||
+  resolve(codexHome) === join(accountHome, '.codex')
+) {
+  console.error('Refusing OpenClaw runtime regression against the operating-system account\'s primary agent state.');
+  process.exit(2);
+}
 for (const [label, path] of [
   ['HOME', homedir()],
+  ['CODEX_HOME', codexHome],
   ['OPENCLAW_CONFIG_PATH', openclawConfigPath],
   ['OPENCLAW_STATE_DIR', openclawStateDir],
   ['Rampart token path', tokenPath],
@@ -90,6 +127,43 @@ for (const [label, path] of [
     console.error(`Refusing OpenClaw runtime regression: ${label} is outside the disposable isolation root.`);
     process.exit(2);
   }
+  assertNoSymlinkComponents(isolationRoot, path, label);
+}
+if ((statSync(isolationRoot).mode & 0o077) !== 0) {
+  console.error('Refusing OpenClaw runtime regression: isolation root must be private (mode 0700).');
+  process.exit(2);
+}
+if (
+  !existsSync(credentialAttestationPath) ||
+  lstatSync(credentialAttestationPath).isSymbolicLink() ||
+  !statSync(credentialAttestationPath).isFile()
+) {
+  console.error('Refusing OpenClaw runtime regression without credential-isolation.json in the isolation root.');
+  process.exit(2);
+}
+if ((statSync(credentialAttestationPath).mode & 0o077) !== 0) {
+  console.error('Refusing OpenClaw runtime regression: credential-isolation.json must be private (mode 0600).');
+  process.exit(2);
+}
+let credentialAttestation;
+try {
+  credentialAttestation = JSON.parse(await readFile(credentialAttestationPath, 'utf8'));
+} catch (err) {
+  console.error(`Refusing OpenClaw runtime regression: credential isolation attestation is invalid (${err.message}).`);
+  process.exit(2);
+}
+if (
+  credentialAttestation?.schema_version !== 1 ||
+  credentialAttestation?.purpose !== 'rampart-openclaw-codex-e2e' ||
+  credentialAttestation?.credential_source !== 'dedicated-test-login' ||
+  credentialAttestation?.production_credentials_copied !== false
+) {
+  console.error('Refusing OpenClaw runtime regression: credential isolation attestation does not confirm a dedicated test login.');
+  process.exit(2);
+}
+if (process.env.RAMPART_KEEP_RUNTIME_ARTIFACTS === '1') {
+  console.error('Refusing OpenClaw runtime regression: raw runtime artifact retention is disabled for credentialed tests.');
+  process.exit(2);
 }
 if (restartServices.length > 0) {
   console.error('Refusing OpenClaw runtime regression when service restarts are configured.');
@@ -148,12 +222,41 @@ let denyCommand;
 let denyPrompt;
 let testPolicyPath;
 
+// Candidate binaries and host CLIs receive only the state and controls needed
+// by this proof. In particular, API keys, shell startup variables, agent
+// sockets, and unrelated service tokens from the operator environment are not
+// inherited. Subscription authentication remains inside the dedicated state.
+const isolatedTmpDir = join(isolationRoot, 'tmp');
+const childEnv = {
+  HOME: homedir(),
+  CODEX_HOME: codexHome,
+  OPENCLAW_STATE_DIR: openclawStateDir,
+  OPENCLAW_CONFIG_PATH: openclawConfigPath,
+  TMPDIR: isolatedTmpDir,
+  XDG_CACHE_HOME: join(homedir(), '.cache'),
+  XDG_CONFIG_HOME: join(homedir(), '.config'),
+  XDG_DATA_HOME: join(homedir(), '.local', 'share'),
+  XDG_STATE_HOME: join(homedir(), '.local', 'state'),
+};
+for (const name of [
+  'PATH',
+  'LANG',
+  'LC_ALL',
+  'TERM',
+  'USER',
+  'LOGNAME',
+]) {
+  if (process.env[name] !== undefined) childEnv[name] = process.env[name];
+}
+
 function redact(text) {
   return String(text ?? '')
     .replace(/(token=)[A-Za-z0-9._~+/-]+/gi, '$1[REDACTED]')
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1[REDACTED]')
     .replace(/("Authorization"\s*:\s*")[^"]+/gi, '$1[REDACTED]')
-    .replace(/("token"\s*:\s*")[^"]+/gi, '$1[REDACTED]');
+    .replace(/("token"\s*:\s*")[^"]+/gi, '$1[REDACTED]')
+    .replace(/(?<![A-Za-z0-9])sk-(?:proj-|svcacct-|ant-)?[A-Za-z0-9_-]{12,}/g, '[REDACTED_PROVIDER_KEY]')
+    .replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]');
 }
 
 function fail(message) {
@@ -165,7 +268,7 @@ function run(cmd, args = [], opts = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(cmd, args, {
       cwd: opts.cwd ?? repoRoot,
-      env: opts.env ?? process.env,
+      env: opts.env ?? childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -196,7 +299,7 @@ function startCaptured(cmd, args = [], opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 60_000;
   const child = spawn(cmd, args, {
     cwd: opts.cwd ?? repoRoot,
-    env: opts.env ?? process.env,
+    env: opts.env ?? childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   activeAgentChild = child;
@@ -313,7 +416,7 @@ async function startRampart() {
     '--audit-dir', auditDir,
   ], {
     cwd: repoRoot,
-    env: process.env,
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (d) => { serverLogs += d.toString(); });
@@ -667,7 +770,9 @@ async function cleanup() {
 }
 
 try {
-  tmpRoot = await mkdtemp(join(tmpdir(), 'rampart-openclaw-runtime-'));
+  await mkdir(isolatedTmpDir, { recursive: true, mode: 0o700 });
+  await chmod(isolatedTmpDir, 0o700);
+  tmpRoot = await mkdtemp(join(isolatedTmpDir, 'rampart-openclaw-runtime-'));
   auditDir = join(tmpRoot, 'audit');
   await mkdir(auditDir, { recursive: true });
   await writeFile(join(tmpRoot, 'README.txt'), 'Temporary files for Rampart/OpenClaw runtime regression.\n', 'utf8');

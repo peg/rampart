@@ -180,6 +180,7 @@ For OpenClaw's verified support tier, also run the opt-in runtime audit regressi
 ```bash
 export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
 export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export CODEX_HOME="$HOME/.codex"
 export OPENCLAW_STATE_DIR="$HOME/.openclaw"
 export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
 RAMPART_OPENCLAW_RUNTIME=1 \
@@ -187,7 +188,18 @@ RAMPART_OPENCLAW_RESTART_SERVICES= \
 node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-The isolation root must contain a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false` before starting that gateway. Never point the test at a primary OpenClaw home. The script refuses paths outside the isolation root and refuses service restarts.
+The mode-`0700` isolation root must contain a prepared, disposable OpenClaw
+state and authenticated Codex test agent whose gateway is already running
+against that state. Perform a new login with a dedicated test identity inside
+that state; never copy production `auth.json`, `auth-profiles.json`, refresh
+tokens, or agent homes. Add a mode-`0600` `credential-isolation.json` with the
+schema in the
+[OpenClaw acceptance checklist](https://github.com/peg/rampart/blob/main/docs/design/openclaw-approval-acceptance-checklist.md).
+Configure `plugins.entries.rampart` with `enabled: true`, `serveUrl:
+http://127.0.0.1:19090`, and `failOpen: false` before starting that gateway. The
+script refuses primary, outside-root, or symlinked state; raw artifact retention;
+and service restarts. Candidate child processes receive only an allowlisted
+environment.
 
 That live regression is intentionally separate from scheduled CI because it uses a real OpenClaw Codex app-server. It proves routine native-shell interception, the complete hosted approval path (pending plugin approval, `allow-once`, exact tool-call resume, and successful execution), and a native hard-deny whose disposable canary remains unchanged. Every path requires correlated trajectory and Rampart canonical `exec` audit evidence.
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 usage() {
   cat <<'EOF'
@@ -121,12 +122,15 @@ isolated_home="${run_root}/home"
 tmp_dir="${run_root}/tmp"
 events_file="${artifact_dir}/events.jsonl"
 summary_file="${artifact_dir}/summary.json"
+credential_scan_file="${artifact_dir}/credential-scan.json"
 worktree_added=0
 preload_server_pid=0
 failed=0
+credential_scan_status="pending"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 mkdir -p "$artifact_dir" "$isolated_home" "$tmp_dir"
+chmod 700 "$run_root" "$artifact_dir" "$isolated_home" "$tmp_dir"
 
 json_string() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
@@ -158,7 +162,11 @@ write_summary() {
   "exit_code": $exit_code,
   "started_at": $(json_string "$started_at"),
   "finished_at": $(json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)"),
-  "worktree_retained": $([[ "$keep_worktree" -eq 1 ]] && echo true || echo false)
+  "worktree_retained": $([[ "$keep_worktree" -eq 1 ]] && echo true || echo false),
+  "credential_scan": {
+    "status": $(json_string "$credential_scan_status"),
+    "report": "credential-scan.json"
+  }
 }
 EOF
 }
@@ -175,6 +183,17 @@ cleanup() {
   fi
   if [[ "$worktree_added" -eq 1 && "$keep_worktree" -ne 1 ]]; then
     git -C "$controller_repo" worktree remove --force "$worktree" >/dev/null 2>&1 || exit_code=1
+  fi
+  # Write a controlled summary first so it is covered by the scan. The final
+  # rewrite below changes only the scan status and overall exit status.
+  write_summary "$exit_code"
+  if env -i PATH="$isolated_path" LANG="${LANG:-C.UTF-8}" \
+    python3 "${script_dir}/scan-artifacts.py" --root "$artifact_dir" >"$credential_scan_file"; then
+    credential_scan_status="passed"
+  else
+    credential_scan_status="failed"
+    exit_code=1
+    echo "run-e2e: credential-shaped material detected; artifacts must not be published" >&2
   fi
   write_summary "$exit_code"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -245,7 +264,7 @@ worktree_added=1
 # back to the constrained suite PATH for dependencies such as Go. The suites
 # themselves still run with only isolated_path.
 environment_probe_path="${PATH:+${PATH}:}${isolated_path}"
-PATH="$environment_probe_path" python3 - \
+env -i PATH="$environment_probe_path" LANG="${LANG:-C.UTF-8}" python3 - \
   "$worktree" \
   "$sha" \
   "$suite" \
@@ -331,13 +350,13 @@ run_core() {
 run_preload() {
   local port
   local preload_home
-  port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  port="$(isolated python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   preload_home="${run_root}/preload-home"
   mkdir -p "${artifact_dir}/audit"
   mkdir -p "${preload_home}/.ssh"
   printf '%s\n' 'rampart-lab-private-credential-canary' >"${preload_home}/.ssh/id_rsa"
   chmod 600 "${preload_home}/.ssh/id_rsa"
-  HOME="$preload_home" \
+  isolated env HOME="$preload_home" \
     XDG_CONFIG_HOME="$preload_home/.config" \
     XDG_CACHE_HOME="$preload_home/.cache" \
     XDG_STATE_HOME="$preload_home/.local/state" \
@@ -347,7 +366,7 @@ run_preload() {
     --audit-dir "${artifact_dir}/audit" >"${artifact_dir}/preload-server.log" 2>&1 &
   preload_server_pid=$!
   for _ in $(seq 1 100); do
-    if curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
+    if isolated curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
       break
     fi
     if ! kill -0 "$preload_server_pid" 2>/dev/null; then
@@ -358,7 +377,7 @@ run_preload() {
     fi
     sleep 0.1
   done
-  if ! curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null; then
+  if ! isolated curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null; then
     kill "$preload_server_pid" 2>/dev/null || true
     wait "$preload_server_pid" 2>/dev/null || true
     preload_server_pid=0
@@ -366,7 +385,7 @@ run_preload() {
     return 1
   fi
   set +e
-  RAMPART_ADDR="127.0.0.1:${port}" \
+  isolated env RAMPART_ADDR="127.0.0.1:${port}" \
     RAMPART_URL="http://127.0.0.1:${port}" \
     RAMPART_TOKEN="rampart-lab-token" \
     HOME="$preload_home" \
@@ -390,7 +409,7 @@ run_e2e() {
     run_step go-build-runtime isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
       _ "$worktree" "${artifact_dir}/rampart"
   fi
-  approval_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  approval_port="$(isolated python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   run_step approval-flow isolated env PORT="$approval_port" bash -c 'cd "$1" && bash "$2"' \
     _ "$worktree" "${worktree}/scripts/test-approval-flow.sh"
   if [[ "$(uname -s)" == "Linux" ]]; then
@@ -420,7 +439,7 @@ run_openclaw() {
   local container_binary="${artifact_dir}/rampart-openclaw-linux"
   local docker_arch
   local docker_machine
-  if ! docker_machine="$(docker info --format '{{.Architecture}}')"; then
+  if ! docker_machine="$(isolated docker info --format '{{.Architecture}}')"; then
     echo "run-e2e: could not determine Docker architecture for OpenClaw suite" >&2
     failed=1
     return
@@ -439,7 +458,7 @@ run_openclaw() {
       bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
       _ "$worktree" "$container_binary"
   fi
-  run_step openclaw-container \
+  run_step openclaw-container isolated \
     "${worktree}/scripts/lab/openclaw-container-acceptance.sh" \
     --rampart "$container_binary" \
     --artifact-dir "${artifact_dir}/openclaw-container"

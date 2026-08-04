@@ -64,6 +64,7 @@ Run this only when you intentionally want a real local OpenClaw runtime check:
 ```bash
 export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
 export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export CODEX_HOME="$HOME/.codex"
 export OPENCLAW_STATE_DIR="$HOME/.openclaw"
 export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
 RAMPART_OPENCLAW_RUNTIME=1 \
@@ -71,7 +72,19 @@ RAMPART_OPENCLAW_RESTART_SERVICES= \
 node scripts/test-openclaw-codex-native-audit.mjs
 ```
 
-Run it only with a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script starts the ephemeral policy service at that address, runs real OpenClaw Codex app-server turns, leaves OpenClaw config untouched, and restores the isolated token state. It proves routine native-shell interception, a native plugin approval with `allow-once` exact resume and successful execution, plus a native deny with no canary side effect.
+Run it only with a prepared, disposable OpenClaw state and authenticated Codex
+test agent whose gateway is already running against that state. Use a dedicated
+test login created inside the isolated state; never copy production
+`auth.json`, `auth-profiles.json`, or refresh tokens. The isolation root must
+also contain the private `credential-isolation.json` attestation documented in
+`docs/design/openclaw-approval-acceptance-checklist.md`. Before starting the
+isolated gateway, configure `plugins.entries.rampart` with `enabled: true`,
+`serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script starts the
+ephemeral policy service at that address, runs real OpenClaw Codex app-server
+turns with an allowlisted environment, leaves OpenClaw config untouched, and
+restores the isolated token state. It proves routine native-shell interception,
+a native plugin approval with `allow-once` exact resume and successful
+execution, plus a native deny with no canary side effect.
 
 By default the script resolves the approval through `plugin.approval.*`. When
 OpenClaw scopes approvals to a connected UI client, set

@@ -46,6 +46,7 @@ Pass criteria:
 ```bash
 export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
 export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
+export CODEX_HOME="$HOME/.codex"
 export OPENCLAW_STATE_DIR="$HOME/.openclaw"
 export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
 RAMPART_OPENCLAW_RUNTIME=1 \
@@ -74,7 +75,31 @@ Pass criteria:
 - the approved execution has its own correlated trajectory and Rampart `ask` audit event
 - OpenClaw config remains untouched and the isolated Rampart token file is restored after the test
 
-The isolation root must contain a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses primary-state paths and service restarts. Do not count a successful OpenClaw command or trajectory as sufficient by itself. The audit event is the proof that the native shell path crossed Rampart policy evaluation.
+The isolation root must be mode `0700` and contain a prepared, disposable
+OpenClaw state and authenticated Codex test agent whose gateway is already
+running against that state. Authenticate by performing a new login for a
+dedicated test identity in this isolated state. Never copy `auth.json`,
+`auth-profiles.json`, a refresh token, or a live agent home into it. Add a mode
+`0600` `$RAMPART_OPENCLAW_ISOLATION_ROOT/credential-isolation.json` file:
+
+```json
+{
+  "schema_version": 1,
+  "purpose": "rampart-openclaw-codex-e2e",
+  "credential_source": "dedicated-test-login",
+  "production_credentials_copied": false
+}
+```
+
+Before starting the isolated gateway, configure `plugins.entries.rampart` with
+`enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The
+script refuses primary-state or symlinked paths, non-private roots, inherited
+API credentials, raw artifact retention, and service restarts. Its child
+processes receive an allowlisted environment. The attestation prevents an
+accidental production-auth run; machine/account separation remains the real
+security boundary. Do not count a successful OpenClaw command or trajectory as
+sufficient by itself. The audit event is the proof that the native shell path
+crossed Rampart policy evaluation.
 
 ## Installed integration checks
 
