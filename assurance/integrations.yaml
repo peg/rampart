@@ -50,7 +50,7 @@ integrations:
         proves: The bundled plugin contract is checked against the latest published OpenClaw.
       - path: scripts/lab/openclaw-container-acceptance.sh
         kind: live
-        proves: A disposable OpenClaw installation exercises the real plugin boundary.
+        proves: A disposable OpenClaw installation resolves the stable npm release and exercises the real plugin boundary.
     limitations:
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
       - Host behavior after an uncaught plugin exception is not yet independently proven fail-closed.

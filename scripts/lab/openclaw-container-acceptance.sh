@@ -6,13 +6,15 @@ usage() {
 Usage: openclaw-container-acceptance.sh --rampart PATH --artifact-dir PATH [options]
 
 Run the Rampart zero-configuration OpenClaw acceptance test in a disposable
-official OpenClaw container. No host OpenClaw state, service, session, workspace,
-memory, or credentials are mounted into the container.
+official OpenClaw container, upgraded to an exact resolved npm release. No host
+OpenClaw state, service, session, workspace, memory, or credentials are mounted
+into the container.
 
 Options:
   --rampart PATH       Native Linux Rampart candidate binary (required)
   --artifact-dir PATH  Directory for logs and JSON evidence (required)
   --image IMAGE        OpenClaw image (default: ghcr.io/openclaw/openclaw:latest)
+  --openclaw-version V npm version or dist-tag (default: latest)
   --help               Show this help
 EOF
 }
@@ -20,6 +22,7 @@ EOF
 rampart_bin=""
 artifact_dir=""
 image="${RAMPART_OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}"
+openclaw_version="${RAMPART_OPENCLAW_VERSION:-latest}"
 official_latest_image="ghcr.io/openclaw/openclaw:latest"
 
 while [[ $# -gt 0 ]]; do
@@ -39,6 +42,11 @@ while [[ $# -gt 0 ]]; do
       image="$2"
       shift 2
       ;;
+    --openclaw-version)
+      [[ $# -ge 2 ]] || { echo "openclaw-acceptance: --openclaw-version requires a value" >&2; exit 2; }
+      openclaw_version="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -54,6 +62,10 @@ done
 [[ -n "$rampart_bin" ]] || { echo "openclaw-acceptance: --rampart is required" >&2; exit 2; }
 [[ -x "$rampart_bin" ]] || { echo "openclaw-acceptance: candidate is not executable: $rampart_bin" >&2; exit 2; }
 [[ -n "$artifact_dir" ]] || { echo "openclaw-acceptance: --artifact-dir is required" >&2; exit 2; }
+[[ "$openclaw_version" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] || {
+  echo "openclaw-acceptance: invalid OpenClaw npm version or dist-tag: $openclaw_version" >&2
+  exit 2
+}
 command -v docker >/dev/null 2>&1 || { echo "openclaw-acceptance: docker is required" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "openclaw-acceptance: python3 is required" >&2; exit 2; }
 
@@ -102,6 +114,34 @@ docker run -d \
   "$image" \
   -lc 'mkdir -p /tmp/rampart-home /tmp/openclaw-state /tmp/openclaw-workspace && sleep infinity' \
   >"${artifact_dir}/container-id.txt"
+
+# The official rolling container can lag the stable npm dist-tag. Resolve the
+# tag once, retain its registry identity, and install that immutable version so
+# the acceptance proof matches the package most users receive.
+docker exec --user root "$container" npm view \
+  "openclaw@${openclaw_version}" version dist.integrity dist.tarball gitHead --json \
+  >"${artifact_dir}/npm-package.json"
+resolved_npm_version="$(python3 - "${artifact_dir}/npm-package.json" <<'PY'
+import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    metadata = json.load(handle)
+version = metadata.get("version") if isinstance(metadata, dict) else None
+if not isinstance(version, str) or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._+-]*", version):
+    raise SystemExit(f"invalid resolved OpenClaw npm version: {version!r}")
+print(version)
+PY
+)"
+docker exec --user root "$container" npm install --global --force --no-audit --no-fund \
+  "openclaw@${resolved_npm_version}" 2>&1 | tee "${artifact_dir}/npm-install.log"
+installed_npm_version="$(docker exec "$container" node -p \
+  "require('/usr/local/lib/node_modules/openclaw/package.json').version")"
+if [[ "$installed_npm_version" != "$resolved_npm_version" ]]; then
+  echo "openclaw-acceptance: installed npm version ${installed_npm_version} does not match resolved ${resolved_npm_version}" >&2
+  exit 1
+fi
+printf 'requested=%s\nresolved=%s\ninstalled=%s\n' \
+  "$openclaw_version" "$resolved_npm_version" "$installed_npm_version" \
+  >"${artifact_dir}/npm-version.txt"
 
 docker exec "$container" openclaw --version | tee "${artifact_dir}/openclaw-version.log"
 docker exec "$container" openclaw config set gateway.mode local

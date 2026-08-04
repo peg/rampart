@@ -73,8 +73,12 @@ if grep -Eq '\$\{controller_repo\}/(preload/test_preload\.sh|scripts/test-approv
 fi
 grep -q '"controller_commit_sha"' "$runner"
 grep -q '"controller_dirty"' "$runner"
+grep -q 'PATH="$environment_probe_path" python3 -' "$runner"
 "${repo_root}/scripts/lab/openclaw-container-acceptance.sh" --help >"${tmp}/openclaw-help"
 grep -q -- '--rampart' "${tmp}/openclaw-help"
+grep -q -- '--openclaw-version' "${tmp}/openclaw-help"
+grep -q 'npm view' "${repo_root}/scripts/lab/openclaw-container-acceptance.sh"
+grep -q 'npm install --global' "${repo_root}/scripts/lab/openclaw-container-acceptance.sh"
 
 "${repo_root}/scripts/lab/test-compat-codex-host.sh"
 

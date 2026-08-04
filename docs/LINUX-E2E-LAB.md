@@ -39,19 +39,21 @@ Suites are cumulative only where stated:
 | `openclaw` | `core` plus the disposable OpenClaw container acceptance test |
 | `full` | Core, runtime, Hermes, and disposable OpenClaw coverage |
 
-The OpenClaw runtime suites run the official OpenClaw image in a new disposable
-container. The controller cross-builds Rampart for the Docker daemon's Linux
-architecture, so this isolated suite can also run from a macOS controller.
-Only the candidate Rampart binary is mounted read-only. The state,
-workspace, plugin, policies, Rampart token, gateway, and policy service all live
-inside the container and are deleted after evidence is collected. No host
-OpenClaw configuration, credentials, memories, sessions, databases, workspaces,
-or user services are read or modified.
+The OpenClaw runtime suites start from the official OpenClaw image, resolve the
+current stable npm dist-tag to an exact version, and install that version in a
+new disposable container. This prevents a lagging container tag from silently
+testing an older package than users receive. The controller cross-builds
+Rampart for the Docker daemon's Linux architecture, so this isolated suite can
+also run from a macOS controller. Only the candidate Rampart binary is mounted
+read-only. The state, workspace, plugin, policies, Rampart token, gateway, and
+policy service all live inside the container and are deleted after evidence is
+collected. No host OpenClaw configuration, credentials, memories, sessions,
+databases, workspaces, or user services are read or modified.
 
-The acceptance step records the OpenClaw image metadata and digest, the first
-zero-config installation log, a machine-readable 12-canary report, a second
-idempotency run, the resulting non-secret plugin configuration, and installed
-file checksums.
+The acceptance step records the OpenClaw image metadata and digest, resolved npm
+package metadata and installed version, the first zero-config installation log,
+a machine-readable 12-canary report, a second idempotency run, the resulting
+non-secret plugin configuration, and installed file checksums.
 
 ## Opt-in real host proofs
 

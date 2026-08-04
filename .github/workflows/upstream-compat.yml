@@ -109,7 +109,7 @@ jobs:
       - name: Build candidate Rampart
         run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/rampart-openclaw-candidate" ./cmd/rampart
 
-      - name: Validate zero-configuration protection in latest official image
+      - name: Validate zero-configuration protection with latest stable package
         run: |
           scripts/lab/openclaw-container-acceptance.sh \
             --rampart "$RUNNER_TEMP/rampart-openclaw-candidate" \

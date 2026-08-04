@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `deny`, explain timeout denial, and persist policy only for `allow-always`.
   OpenClaw's local `ask_user` interaction is classified separately from an
   outbound or cross-conversation message.
+- **OpenClaw acceptance follows the stable package** — The disposable Linux
+  gate resolves and records the exact `openclaw@latest` npm release before
+  exercising zero-configuration protection, so a lagging container tag cannot
+  silently test an older version than users install.
 
 ### Security
 
