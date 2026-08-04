@@ -46,6 +46,12 @@ That means:
 - `~/.rampart/config.yaml` is the persistent local default
 - if nothing is configured, Rampart falls back to discovered local state and then localhost defaults
 
+For `rampart protect`, the resolved service URL is used consistently for
+startup checks, host configuration, and behavioral verification. An explicit
+non-default endpoint must already be reachable; Rampart will not silently start
+the default service instead. OpenClaw's native plugin further requires a
+loopback HTTP(S) URL and rejects credentials, paths, queries, and fragments.
+
 ### Which setting should I use?
 
 Use **`url`** unless you have a specific reason not to.

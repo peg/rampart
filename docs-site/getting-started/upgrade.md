@@ -73,13 +73,17 @@ sudo mv rampart /usr/local/bin/
 rampart version
 rampart upgrade --no-binary
 rampart protect
+rampart verify --all
 ```
 
 Run `rampart protect` once after replacing the binary. It preserves user-owned
 configuration, refreshes Rampart-managed hooks and plugins for detected agents,
 migrates recognized legacy integrations, and runs the matching behavioral
 verification. This is especially important when a release adds a newer native
-host boundary.
+host boundary. The aggregate verifier then re-checks the policy path and each
+configured integration with an active safe verifier without invoking a model.
+Use `rampart doctor` as well when you have a static-only integration such as
+Hermes.
 
 ## What Upgrades Preserve
 

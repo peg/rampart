@@ -33,6 +33,19 @@ Support tiers are intentionally separate from feature breadth:
 
 ## Running the gate
 
+To check an installed environment without invoking a model or executing the
+represented actions:
+
+```bash
+rampart verify --all
+rampart verify --all --json
+```
+
+The aggregate includes the policy path and configured integrations with active
+safe verifiers. Static-only integrations such as Hermes are intentionally
+excluded; inspect them with `rampart doctor` and use the isolated host harness
+when runtime evidence is required.
+
 ```bash
 make security-assurance
 ```

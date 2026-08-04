@@ -48,7 +48,14 @@ To detect and protect every installed supported agent with managed defaults:
 
 ```bash
 rampart protect
+rampart verify --all
 ```
+
+The second command reruns fixed, non-executing canaries for the policy engine
+and every configured integration that has an active behavioral verifier. It
+does not invoke a model or perform the represented actions. Static-only paths,
+including the experimental Hermes plugin, are reported by `rampart doctor`
+instead of being overstated as behaviorally verified.
 
 ---
 
@@ -271,6 +278,17 @@ message, contacting an external host, or adding verification noise to the audit
 log. Verification requires Rampart's local admin token and rejects incomplete or
 stale plugin self-reports.
 
+For a non-default local service, pass the endpoint explicitly:
+
+```bash
+rampart protect openclaw --serve-url http://127.0.0.1:19090
+```
+
+That endpoint is authoritative for service startup checks, OpenClaw plugin
+configuration, and verification. OpenClaw accepts only a loopback Rampart URL;
+an explicitly selected non-default service must already be reachable, and
+Rampart will not silently start or verify against port 9090 instead.
+
 `rampart serve` is part of this path. The plugin calls the local Rampart service for policy evaluation, approvals, and audit flow.
 
 ### How exec approvals work
@@ -282,6 +300,9 @@ In practice, that means:
 - safe commands run normally, with no prompt
 - denied commands are blocked immediately
 - only commands that match a Rampart `ask` rule show an OpenClaw approval card
+- the card offers `allow-once`, `allow-always`, and `deny`; timeout denies
+- only `allow-always` writes a durable rule, while one-time, denied, timed-out,
+  and cancelled resolutions do not change policy
 
 ### What the plugin protects
 
@@ -334,6 +355,11 @@ hermes plugins enable rampart
 ```
 
 The plugin registers a Hermes `pre_tool_call` hook and sends sanitized tool metadata to Rampart before execution. It defaults to `/v1/preflight/{tool}` with execution intent, so one-time grants and call counters are enforced without creating hidden approvals that Hermes cannot resume. `ask` decisions block with an approval-required message until Hermes has a first-class plugin approval/resume flow. Service outages deny every Hermes tool by default.
+
+Hermes currently has a static installation check rather than a safe built-in
+host verifier. Use `rampart doctor` for local status, then the isolated Hermes
+compatibility harness for release evidence. `rampart verify --all` intentionally
+does not count Hermes as behaviorally verified.
 
 ---
 
@@ -674,6 +700,7 @@ Rampart maps to the [OWASP Top 10 for Agentic Applications](https://genai.owasp.
 ```bash
 # Setup
 rampart protect                             # Detect, configure, and verify supported installed agents
+rampart verify --all                        # Safely verify policy + configured active-verifier integrations
 rampart protect openclaw                    # Zero-config guard + live behavioral verification
 rampart verify openclaw                     # Re-run safe canaries through the live plugin
 rampart quickstart                           # Auto-detect, install, configure, health check

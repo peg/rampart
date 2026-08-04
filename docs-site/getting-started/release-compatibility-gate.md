@@ -11,7 +11,9 @@ Use this checklist before publishing a Rampart release that advertises agent int
 
 Rampart uses these tiers in the support matrix:
 
-- **Recommended**: actively tested against the current stable runtime, polished approval UX, and clear `rampart doctor` checks.
+- **Verified**: the installed boundary has an active safe host verifier or fresh
+  completed host evidence against the current stable runtime, with limitations
+  documented separately.
 - **Supported**: documented and regression-covered, with narrower UX or less frequent runtime smoke coverage.
 - **Experimental**: installable and useful, but with known limits that are still part of the public contract.
 - **Legacy compatibility**: maintained where practical for older clients, but not the preferred path.
@@ -38,6 +40,8 @@ Gemini CLI remains **experimental** because consumer Google sign-in is retired, 
    - Record latest stable OpenClaw from npm.
    - Record latest stable Hermes Agent from PyPI.
    - Treat upstream release notes touching plugin discovery, hook dispatch, approval behavior, native tool relay, model/tool execution, or security boundaries as compatibility-relevant.
+   - Install and record released stable versions for the candidate baseline.
+     Prerelease checks are advisory and never substitute for the stable gate.
 
 3. **Validate current Claude Code**
    - Review Anthropic's current tool and hook references for newly hook-visible
@@ -59,6 +63,8 @@ Gemini CLI remains **experimental** because consumer Google sign-in is retired, 
    - Exercise allow, ask, and deny with a unique marker.
    - For command execution paths, require OpenClaw runtime evidence plus a correlated Rampart audit event for canonical `exec`.
    - Check for stale shim, dist patch, or duplicate enforcement paths before calling the result clean.
+   - Keep the stable compatibility job blocking. Treat the OpenClaw beta job as
+     non-blocking early warning; a green beta run is not a support claim.
 
 5. **Validate current Codex**
    - Run `rampart verify codex` against the installed candidate hook definition.
@@ -124,13 +130,25 @@ Gemini CLI remains **experimental** because consumer Google sign-in is retired, 
    - Exercise the real Hermes plugin dispatcher, including plugin discovery and `pre_tool_call` hook registration.
    - Prove deny blocks before execution, allow continues, `ask` blocks with an approval-required/no-resume message, Rampart auth failures fail closed for mutating tools, and mutating tools fail closed when Rampart is unavailable.
    - Do not restart or mutate a live Discord, Telegram, or other long-running Hermes gateway for this gate.
+   - Run `rampart doctor` for local installation status. Do not count Hermes in
+     `rampart verify --all`: its built-in verification level remains static.
 
-10. **Run `rampart doctor` as a support-contract check**
+10. **Run the aggregate safe verifier**
+   - Run `rampart verify --all --json` from the exact candidate build.
+   - Require the policy target and every configured active-verifier integration
+     to pass. Exit 1 is a failed expectation; exit 2 is an incomplete or
+     unreachable target.
+   - Archive the `rampart.verify-all.v1` report with the candidate evidence.
+     It invokes no model and does not replace the real-host checks above.
+   - Confirm static-only paths are absent rather than misleadingly reported as
+     passing.
+
+11. **Run `rampart doctor` as a support-contract check**
    - Group findings by integration surface.
    - Classify each finding as blocker, expected optional local gap, or follow-up diagnostic improvement.
    - Do not collapse OpenClaw, Hermes, Claude Code, Codex, and Cline findings into one global yes/no.
 
-11. **Publish claims that match the evidence**
+12. **Publish claims that match the evidence**
    - Coverage means tool calls delivered through the named integration
      boundary, not all syscalls, packets, or behavior inside allowed processes.
    - A harness proves a live check is available; only a completed sanitized run
@@ -138,7 +156,7 @@ Gemini CLI remains **experimental** because consumer Google sign-in is retired, 
    - A completed Claude Code shell host proof supports only the shell claim;
      file, network, MCP, subagent, crash, and timeout behavior keep their own
      evidence levels until separately exercised.
-   - OpenClaw can be called recommended only when the latest stable path has fresh runtime/audit proof.
+   - OpenClaw can be called verified only when the latest stable path has fresh runtime/audit proof.
    - Hermes can be called an experimental policy gate when isolated latest-Hermes plugin dispatch has deny, allow, ask-block, and fail-closed proof.
    - First-class Hermes support requires Hermes-owned approval/resume APIs plus live or staging end-to-end validation.
 
@@ -157,7 +175,7 @@ scripts/compat-codex-host.sh --yes
 
 The Hermes harness installs or uses an isolated Hermes runtime and never touches the active gateway. The OpenClaw harness can run either the `openclaw` on `PATH` or `--npm-latest` for the latest npm package, uses a temporary home/state directory, and validates plugin installation plus the bundled plugin behavior checks. The Gemini and Copilot gates use disposable homes and start the latest published packages, then separately validate candidate-generated configuration shapes and exercise their adapters without credentials or model calls. Their version commands do not prove that either host ingested or dispatched the hooks. Harnesses propagate only an allowlist of runtime variables and standard credential-free registry/proxy URLs; URLs containing userinfo, query strings, or fragments are dropped.
 
-For OpenClaw's recommended support tier, also run the opt-in runtime audit regression before a release promotion:
+For OpenClaw's verified support tier, also run the opt-in runtime audit regression before a release promotion:
 
 ```bash
 export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root

@@ -113,6 +113,12 @@ Use this only when you understand the approval ownership tradeoff. If a policy r
 
 ## Verification
 
+Hermes does not yet expose a safe built-in host verifier, so there is no
+`rampart verify hermes` command. `rampart verify --all` intentionally skips the
+Hermes plugin instead of treating its static configuration as behavioral proof.
+Use `rampart doctor` to confirm local installation and service requirements,
+then use the isolated compatibility harness for runtime evidence.
+
 Use the isolated latest-Hermes compatibility harness before enabling the plugin on a live gateway:
 
 ```bash
