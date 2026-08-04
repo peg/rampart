@@ -241,10 +241,10 @@ if [[ "$failed" -ne 0 ]]; then
 fi
 worktree_added=1
 
-# Record tools from both the constrained execution PATH and the controller's
-# PATH. The suites themselves still run with only isolated_path, but host-only
-# integrations such as OpenClaw and Hermes remain useful environment metadata.
-environment_probe_path="${isolated_path}${PATH:+:${PATH}}"
+# Prefer the controller's actual tools when recording host context, then fall
+# back to the constrained suite PATH for dependencies such as Go. The suites
+# themselves still run with only isolated_path.
+environment_probe_path="${PATH:+${PATH}:}${isolated_path}"
 PATH="$environment_probe_path" python3 - \
   "$worktree" \
   "$sha" \
