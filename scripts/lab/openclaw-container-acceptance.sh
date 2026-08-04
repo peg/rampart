@@ -133,6 +133,11 @@ PY
 )"
 docker exec --user root "$container" npm install --global --force --no-audit --no-fund \
   "openclaw@${resolved_npm_version}" 2>&1 | tee "${artifact_dir}/npm-install.log"
+# npm lifecycle code can initialize the configured OpenClaw state while it is
+# running as root. Return every disposable runtime directory to the image's
+# unprivileged user before invoking OpenClaw itself.
+docker exec --user root "$container" chown -R node:node \
+  /tmp/rampart-home /tmp/openclaw-state /tmp/openclaw-workspace
 installed_npm_version="$(docker exec "$container" node -p \
   "require('/usr/local/lib/node_modules/openclaw/package.json').version")"
 if [[ "$installed_npm_version" != "$resolved_npm_version" ]]; then
