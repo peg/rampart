@@ -110,9 +110,10 @@ log per step, audit records produced by the preload check, and SHA-256 checksums
 The runner returns a nonzero status if any required step fails.
 
 The runner creates its run tree with private permissions, clears the inherited
-environment before candidate tests, and scans every retained text artifact for
-credential filenames, private keys, provider tokens, JWTs, authorization
-headers, credentialed URLs, and secret assignments. `credential-scan.json`
+environment before candidate tests, and scans every retained artifact for
+credential filenames and concrete key/token signatures. Text evidence also
+receives structural checks for authorization headers, credentialed URLs, and
+secret assignments. `credential-scan.json`
 records only finding types and relative paths; it never reproduces a matched
 value. Any finding changes the run to failed. Do not publish or upload artifacts
 from a failed credential scan.

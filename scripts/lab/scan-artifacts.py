@@ -105,6 +105,12 @@ def scan(root):
         files_checked += 1
         bytes_checked += size
         for kind, signature in SIGNATURES:
+            # Generic key/value vocabulary is common in compiled programs and
+            # loses the line/field structure that makes it meaningful in text.
+            # Keep scanning binaries for concrete provider tokens, JWTs,
+            # credentialed URLs, authorization headers, and private keys.
+            if content_kind == "binary" and kind == "secret_assignment":
+                continue
             if signature.search(content):
                 findings.append({"path": relative, "kind": kind})
 

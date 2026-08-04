@@ -41,6 +41,12 @@ if grep -q 'abcdefghijklmnopqrstuvwxyz1234567890' "${tmp}/secret-scan.json"; the
   echo "test-run-e2e: credential scanner disclosed a matched value" >&2
   exit 1
 fi
+printf '\0%s%s\0' 'sk-proj-' 'abcdefghijklmnopqrstuvwxyz1234567890' >"${tmp}/scan-secret/provider.bin"
+if python3 "$artifact_scanner" --root "${tmp}/scan-secret" >"${tmp}/binary-secret-scan.json"; then
+  echo "test-run-e2e: credential scanner accepted a binary containing a key-shaped value" >&2
+  exit 1
+fi
+grep -q '"path": "provider.bin"' "${tmp}/binary-secret-scan.json"
 
 native_root="${tmp}/native-openclaw"
 mkdir -p "${native_root}/home/.openclaw" "${native_root}/home/.codex"
