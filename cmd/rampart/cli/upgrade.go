@@ -1748,7 +1748,7 @@ func maybeWarnRequireApprovalMigration(out io.Writer, errOut io.Writer, in io.Re
 	fmt.Fprintln(out, "   Replace it with `action: ask`. For service-backed/headless approvals, use:")
 	fmt.Fprintln(out, "   action: ask + ask.headless_only: true")
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "   See https://rampart.sh/docs/migration/v0.6.6 for full migration steps.")
+	fmt.Fprintln(out, "   See https://docs.rampart.sh/migration/v0.6.6/ for full migration steps.")
 	fmt.Fprintln(out, "")
 
 	inFile, inIsFile := in.(*os.File)

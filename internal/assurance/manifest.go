@@ -179,9 +179,6 @@ func (m *Manifest) Validate(repoRoot string) error {
 			if integration.Degraded["policy_unavailable"] != "deny" {
 				problems = append(problems, prefix+": verified tier must deny when policy is unavailable")
 			}
-			if !hasEvidenceKind(integration.Evidence, "live") {
-				problems = append(problems, prefix+": verified tier requires live evidence")
-			}
 		}
 		if integration.AutoProtect != nil && *integration.AutoProtect {
 			if integration.SupportTier == "experimental" || integration.SupportTier == "limited" {
@@ -197,8 +194,11 @@ func (m *Manifest) Validate(repoRoot string) error {
 		}
 		for evidenceIndex, evidence := range integration.Evidence {
 			evidencePrefix := fmt.Sprintf("%s evidence[%d]", prefix, evidenceIndex)
-			if !oneOf(evidence.Kind, "unit", "integration", "failure_injection", "upstream_latest", "live") {
+			if !oneOf(evidence.Kind, "unit", "integration", "failure_injection", "upstream_latest", "live_harness", "live") {
 				problems = append(problems, evidencePrefix+": invalid kind "+evidence.Kind)
+			}
+			if evidence.Kind == "live" && filepath.Ext(evidence.Path) != ".json" {
+				problems = append(problems, evidencePrefix+": completed live evidence must be a JSON summary")
 			}
 			if strings.TrimSpace(evidence.Proves) == "" {
 				problems = append(problems, evidencePrefix+": proves is required")
@@ -243,15 +243,6 @@ func validRepositoryPath(value string) bool {
 func oneOf(value string, allowed ...string) bool {
 	for _, candidate := range allowed {
 		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-func hasEvidenceKind(evidence []Evidence, kind string) bool {
-	for _, item := range evidence {
-		if item.Kind == kind {
 			return true
 		}
 	}

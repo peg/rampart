@@ -19,7 +19,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import {
   access,
   chmod,
@@ -69,8 +69,8 @@ const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
 const sessionsDir = join(openclawStateDir, 'agents', agentId, 'sessions');
 const tokenPath = join(homedir(), '.rampart', 'token');
 const isolationRoot = process.env.RAMPART_OPENCLAW_ISOLATION_ROOT;
-const credentialAttestationPath = isolationRoot ? join(isolationRoot, 'credential-isolation.json') : '';
-const accountHome = resolve(userInfo().homedir);
+const operatorDeclarationPath = isolationRoot ? join(isolationRoot, 'credential-isolation.json') : '';
+const accountHome = realpathSync(userInfo().homedir);
 const restartServices = (process.env.RAMPART_OPENCLAW_RESTART_SERVICES ?? 'openclaw-gateway.service,openclaw-node.service')
   .split(',')
   .map((s) => s.trim())
@@ -79,6 +79,21 @@ const restartServices = (process.env.RAMPART_OPENCLAW_RESTART_SERVICES ?? 'openc
 function isWithin(root, candidate) {
   const rel = relative(resolve(root), resolve(candidate));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+// Resolve every existing path component so a symlinked parent cannot turn a
+// lexically isolated path into the operator account's primary agent state.
+// The final path does not need to exist yet.
+function canonicalPath(candidate) {
+  let current = resolve(candidate);
+  const suffix = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    suffix.unshift(current.slice(parent.length + (parent.endsWith('/') ? 0 : 1)));
+    current = parent;
+  }
+  return resolve(realpathSync(current), ...suffix);
 }
 
 function assertNoSymlinkComponents(root, candidate, label) {
@@ -108,10 +123,19 @@ if (
   console.error('Refusing OpenClaw runtime regression: isolation root must be an existing real directory.');
   process.exit(2);
 }
+const canonicalIsolationRoot = canonicalPath(isolationRoot);
+const canonicalHome = canonicalPath(homedir());
+const canonicalOpenClawState = canonicalPath(openclawStateDir);
+const canonicalCodexHome = canonicalPath(codexHome);
+const primaryOpenClawState = canonicalPath(join(accountHome, '.openclaw'));
+const primaryCodexHome = canonicalPath(join(accountHome, '.codex'));
+const primaryRampartState = canonicalPath(join(accountHome, '.rampart'));
 if (
-  resolve(homedir()) === accountHome ||
-  resolve(openclawStateDir) === join(accountHome, '.openclaw') ||
-  resolve(codexHome) === join(accountHome, '.codex')
+  canonicalHome === accountHome ||
+  canonicalOpenClawState === primaryOpenClawState ||
+  canonicalCodexHome === primaryCodexHome ||
+  [primaryOpenClawState, primaryCodexHome, primaryRampartState]
+    .some((primaryState) => isWithin(primaryState, canonicalIsolationRoot))
 ) {
   console.error('Refusing OpenClaw runtime regression against the operating-system account\'s primary agent state.');
   process.exit(2);
@@ -128,37 +152,41 @@ for (const [label, path] of [
     process.exit(2);
   }
   assertNoSymlinkComponents(isolationRoot, path, label);
+  if (!isWithin(canonicalIsolationRoot, canonicalPath(path))) {
+    console.error(`Refusing OpenClaw runtime regression: ${label} resolves outside the disposable isolation root.`);
+    process.exit(2);
+  }
 }
 if ((statSync(isolationRoot).mode & 0o077) !== 0) {
   console.error('Refusing OpenClaw runtime regression: isolation root must be private (mode 0700).');
   process.exit(2);
 }
 if (
-  !existsSync(credentialAttestationPath) ||
-  lstatSync(credentialAttestationPath).isSymbolicLink() ||
-  !statSync(credentialAttestationPath).isFile()
+  !existsSync(operatorDeclarationPath) ||
+  lstatSync(operatorDeclarationPath).isSymbolicLink() ||
+  !statSync(operatorDeclarationPath).isFile()
 ) {
-  console.error('Refusing OpenClaw runtime regression without credential-isolation.json in the isolation root.');
+  console.error('Refusing OpenClaw runtime regression without the credential-isolation.json operator declaration.');
   process.exit(2);
 }
-if ((statSync(credentialAttestationPath).mode & 0o077) !== 0) {
+if ((statSync(operatorDeclarationPath).mode & 0o077) !== 0) {
   console.error('Refusing OpenClaw runtime regression: credential-isolation.json must be private (mode 0600).');
   process.exit(2);
 }
-let credentialAttestation;
+let operatorDeclaration;
 try {
-  credentialAttestation = JSON.parse(await readFile(credentialAttestationPath, 'utf8'));
+  operatorDeclaration = JSON.parse(await readFile(operatorDeclarationPath, 'utf8'));
 } catch (err) {
-  console.error(`Refusing OpenClaw runtime regression: credential isolation attestation is invalid (${err.message}).`);
+  console.error(`Refusing OpenClaw runtime regression: credential isolation declaration is invalid (${err.message}).`);
   process.exit(2);
 }
 if (
-  credentialAttestation?.schema_version !== 1 ||
-  credentialAttestation?.purpose !== 'rampart-openclaw-codex-e2e' ||
-  credentialAttestation?.credential_source !== 'dedicated-test-login' ||
-  credentialAttestation?.production_credentials_copied !== false
+  operatorDeclaration?.schema_version !== 1 ||
+  operatorDeclaration?.purpose !== 'rampart-openclaw-codex-e2e' ||
+  operatorDeclaration?.credential_source !== 'dedicated-test-login' ||
+  operatorDeclaration?.production_credentials_copied !== false
 ) {
-  console.error('Refusing OpenClaw runtime regression: credential isolation attestation does not confirm a dedicated test login.');
+  console.error('Refusing OpenClaw runtime regression: credential isolation declaration does not acknowledge a dedicated test login.');
   process.exit(2);
 }
 if (process.env.RAMPART_KEEP_RUNTIME_ARTIFACTS === '1') {

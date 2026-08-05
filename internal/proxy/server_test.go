@@ -1483,7 +1483,7 @@ func TestHostedApprovalResolveRecordsAuditWithoutPendingApproval(t *testing.T) {
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
-	body := `{"agent":"hermes","session":"discord/thread/test","run_id":"run-1","tool":"exec","tool_call_id":"tool-call-1","host_approval_id":"hermes-approval-1","approval_owner":{"host":"hermes","mode":"hosted","surface":"discord","supports_exact_resume":true},"outcome":"approved","scope":"once","resolved_by":"trevor","message":"approved in Hermes"}`
+	body := `{"agent":"hermes","session":"discord/thread/test","run_id":"run-1","tool":"exec","tool_call_id":"tool-call-1","host_approval_id":"hermes-approval-1","approval_owner":{"host":"hermes","mode":"hosted","surface":"discord","supports_exact_resume":true},"outcome":"approved","scope":"once","resolved_by":"operator","message":"approved in Hermes"}`
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/hosted-approvals/audit-1/resolve", bytes.NewBufferString(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)

@@ -9,7 +9,9 @@ Use this page as the canonical support contract for Rampart's main integration s
 
 Rampart is policy, approval, audit, and proof infrastructure for agents that need real system access. This matrix describes current support evidence, not future-feature commitments. Optional containment, fleet controls, and broader enterprise administration should not be inferred from these support tiers.
 
-For release-candidate validation and latest-agent checks, use the [Release Compatibility Gate](release-compatibility-gate.md). The support tier below should match the most recent evidence from the exact Rampart candidate build and bundled plugin metadata.
+Support tiers are tied to Rampart's public
+[integration assurance manifest](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml)
+and completed evidence from the exact candidate build.
 
 ## Verify configured boundaries safely
 
@@ -227,7 +229,6 @@ It does not imply syscall, packet, or arbitrary subprocess inspection.
 ## Related guides
 
 - [Quick Start](quickstart.md)
-- [Release Compatibility Gate](release-compatibility-gate.md)
 - [Security Assurance](security-assurance.md)
 - [How Rampart Works](how-it-works.md)
 - [OpenClaw integration](../integrations/openclaw.md)

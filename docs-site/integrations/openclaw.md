@@ -16,7 +16,7 @@ The recommended managed path is fail closed: if the Rampart policy service is un
     - **OpenClaw 2026.4.29 - 2026.5.1**: Supported for native plugin startup/interception; plugin approval delivery was not the launch baseline.
     - **OpenClaw 2026.3.28 - 2026.4.28**: Native plugin works for tool enforcement, but Rampart's polished approval path is supported on newer OpenClaw builds.
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades.
-    - Refresh release claims against the latest stable OpenClaw before publishing a new Rampart release. See the [Release Compatibility Gate](../getting-started/release-compatibility-gate.md).
+    - Published support claims are tied to the evidence in Rampart's [integration assurance manifest](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
 
     `rampart protect openclaw` uses the native plugin on current supported OpenClaw versions. `rampart setup openclaw` remains available for advanced and legacy configurations.
 
@@ -205,43 +205,9 @@ For end-to-end confidence, validate one case in each state:
 - fresh ask, for example `sudo id`
 - hard deny, for example `rm -rf /tmp`
 
-For release-candidate validation, run the latest-OpenClaw compatibility harness in a temporary state directory:
-
-```bash
-node scripts/compat-openclaw-latest.mjs --npm-latest
-```
-
-That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as verified, also run the opt-in live runtime audit regression:
-
-Scheduled CI also checks the current OpenClaw beta package as a non-blocking
-advisory. A green beta job is early compatibility evidence only; it does not
-make an unreleased OpenClaw version part of Rampart's supported stable baseline.
-
-```bash
-export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
-export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
-export CODEX_HOME="$HOME/.codex"
-export OPENCLAW_STATE_DIR="$HOME/.openclaw"
-export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
-RAMPART_OPENCLAW_RUNTIME=1 \
-RAMPART_OPENCLAW_RESTART_SERVICES= \
-node scripts/test-openclaw-codex-native-audit.mjs
-```
-
-Use a mode-`0700`, disposable OpenClaw state and authenticated Codex test agent
-whose gateway is already running against that state. Create a dedicated test
-login inside the isolated state; never copy production `auth.json`,
-`auth-profiles.json`, refresh tokens, or agent homes. The root must include the
-private `credential-isolation.json` attestation described in the
-[OpenClaw acceptance checklist](https://github.com/peg/rampart/blob/main/docs/design/openclaw-approval-acceptance-checklist.md).
-Before starting the
-isolated gateway, configure `plugins.entries.rampart` with `enabled: true`,
-`serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses
-primary, outside-root, or symlinked paths, inherited credential variables, raw
-artifact retention, and service restarts. It requires real Codex app-server
-turns with correlated trajectory and Rampart canonical `exec` audit evidence,
-including a native plugin approval with `allow-once` exact resume and successful
-execution, plus a denied disposable canary that remains unchanged.
+Maintainers can reproduce the current stable-package and credentialed native
+runtime proofs with the single canonical
+[OpenClaw release acceptance checklist](https://github.com/peg/rampart/blob/main/docs/design/openclaw-approval-acceptance-checklist.md).
 
 Or check plugin status directly:
 

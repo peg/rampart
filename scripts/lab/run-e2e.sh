@@ -117,6 +117,7 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_id="${timestamp}-${sha:0:12}-$$"
 run_root="${lab_root}/runs/${run_id}"
 artifact_dir="${run_root}/artifacts"
+bin_dir="${run_root}/bin"
 worktree="${run_root}/worktree"
 isolated_home="${run_root}/home"
 tmp_dir="${run_root}/tmp"
@@ -129,8 +130,8 @@ failed=0
 credential_scan_status="pending"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-mkdir -p "$artifact_dir" "$isolated_home" "$tmp_dir"
-chmod 700 "$run_root" "$artifact_dir" "$isolated_home" "$tmp_dir"
+mkdir -p "$artifact_dir" "$bin_dir" "$isolated_home" "$tmp_dir"
+chmod 700 "$run_root" "$artifact_dir" "$bin_dir" "$isolated_home" "$tmp_dir"
 
 json_string() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
@@ -187,7 +188,7 @@ cleanup() {
   # Retain only the evidence boundary. Disposable homes can contain generated
   # Rampart tokens and canaries even though the controller environment is
   # cleared, so they must not survive a completed or interrupted run.
-  rm -rf "$isolated_home" "$tmp_dir" "$run_root/go-build" "$run_root/preload-home" || exit_code=1
+  rm -rf "$bin_dir" "$isolated_home" "$tmp_dir" "$run_root/go-build" "$run_root/preload-home" || exit_code=1
   # Write a controlled summary first so it is covered by the scan. The final
   # rewrite below changes only the scan status and overall exit status.
   write_summary "$exit_code"
@@ -201,9 +202,9 @@ cleanup() {
   fi
   write_summary "$exit_code"
   if command -v sha256sum >/dev/null 2>&1; then
-    find "$artifact_dir" -type f ! -name checksums.txt -print0 | sort -z | xargs -0 sha256sum >"${artifact_dir}/checksums.txt"
+    (cd "$artifact_dir" && find . -type f ! -name checksums.txt -print0 | sort -z | xargs -0 sha256sum) >"${artifact_dir}/checksums.txt"
   elif command -v shasum >/dev/null 2>&1; then
-    find "$artifact_dir" -type f ! -name checksums.txt -print0 | sort -z | xargs -0 shasum -a 256 >"${artifact_dir}/checksums.txt"
+    (cd "$artifact_dir" && find . -type f ! -name checksums.txt -print0 | sort -z | xargs -0 shasum -a 256) >"${artifact_dir}/checksums.txt"
   fi
   echo "run-e2e: status=$([[ "$exit_code" -eq 0 ]] && echo passed || echo failed) run_id=$run_id"
   echo "run-e2e: artifacts=$artifact_dir"
@@ -268,8 +269,12 @@ worktree_added=1
 # back to the constrained suite PATH for dependencies such as Go. The suites
 # themselves still run with only isolated_path.
 environment_probe_path="${PATH:+${PATH}:}${isolated_path}"
-env -i PATH="$environment_probe_path" LANG="${LANG:-C.UTF-8}" python3 - \
-  "$worktree" \
+env -i \
+  HOME="$isolated_home" \
+  PATH="$environment_probe_path" \
+  LANG="${LANG:-C.UTF-8}" \
+  GOMODCACHE="${RAMPART_LAB_GOMODCACHE:-$lab_root/go-mod}" \
+  python3 - \
   "$sha" \
   "$suite" \
   "$hermes_python" \
@@ -281,7 +286,7 @@ import json, os, platform, shutil, subprocess, sys
 
 def version(executable, *arguments):
     if os.path.sep in executable:
-        path = os.path.abspath(executable) if os.path.exists(executable) else None
+        path = executable if os.path.exists(executable) else None
     else:
         path = shutil.which(executable)
     if not path:
@@ -295,16 +300,15 @@ def version(executable, *arguments):
             timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        return {"path": path, "version": "", "version_error": type(error).__name__}
+        return {"version": "", "version_error": type(error).__name__}
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     return {
-        "path": path,
         "version": lines[0] if lines else "",
         "version_exit_code": result.returncode,
     }
 
-hermes_python = sys.argv[4]
-hermes_bin = sys.argv[5] or "hermes"
+hermes_python = sys.argv[3]
+hermes_bin = sys.argv[4] or "hermes"
 tools = {
     "go": version("go", "version"),
     "node": version("node", "--version"),
@@ -316,13 +320,12 @@ if hermes_python:
 
 print(json.dumps({
     "schema_version": 1,
-    "commit_sha": sys.argv[2],
+    "commit_sha": sys.argv[1],
     "controller": {
-        "commit_sha": sys.argv[6],
-        "dirty": sys.argv[7] == "true",
+        "commit_sha": sys.argv[5],
+        "dirty": sys.argv[6] == "true",
     },
-    "suite": sys.argv[3],
-    "worktree": sys.argv[1],
+    "suite": sys.argv[2],
     "platform": platform.platform(),
     "machine": platform.machine(),
     "python": sys.version.split()[0],
@@ -337,8 +340,8 @@ run_core() {
   run_step go-test isolated env RAMPART_OPENCLAW_BIN="${run_root}/missing-openclaw" \
     bash -c 'cd "$1" && go test ./...' _ "$worktree"
   run_step go-vet isolated bash -c 'cd "$1" && go vet ./...' _ "$worktree"
-  run_step go-build isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' _ "$worktree" "${artifact_dir}/rampart"
-  run_step policy-standard isolated "${artifact_dir}/rampart" --config "${worktree}/policies/standard.yaml" policy check
+  run_step go-build isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' _ "$worktree" "${bin_dir}/rampart"
+  run_step policy-standard isolated "${bin_dir}/rampart" --config "${worktree}/policies/standard.yaml" policy check
   run_step hermes-plugin-unit isolated bash -c 'cd "$1" && python3 -m unittest internal/plugin/hermes/test_hermes_plugin.py' _ "$worktree"
   if command -v node >/dev/null 2>&1; then
     run_step openclaw-plugin-smoke isolated node "${worktree}/internal/plugin/openclaw/smoke-test.mjs"
@@ -365,7 +368,7 @@ run_preload() {
     XDG_CACHE_HOME="$preload_home/.cache" \
     XDG_STATE_HOME="$preload_home/.local/state" \
     RAMPART_TOKEN="rampart-lab-token" \
-    "${artifact_dir}/rampart" --config "${worktree}/policies/standard.yaml" \
+    "${bin_dir}/rampart" --config "${worktree}/policies/standard.yaml" \
     serve --no-openclaw-bridge --mode enforce --port "$port" \
     --audit-dir "${artifact_dir}/audit" >"${artifact_dir}/preload-server.log" 2>&1 &
   preload_server_pid=$!
@@ -409,9 +412,9 @@ run_preload() {
 
 run_e2e() {
   local approval_port
-  if [[ ! -x "${artifact_dir}/rampart" ]]; then
+  if [[ ! -x "${bin_dir}/rampart" ]]; then
     run_step go-build-runtime isolated bash -c 'cd "$1" && go build -o "$2" ./cmd/rampart' \
-      _ "$worktree" "${artifact_dir}/rampart"
+      _ "$worktree" "${bin_dir}/rampart"
   fi
   approval_port="$(isolated python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   run_step approval-flow isolated env PORT="$approval_port" bash -c 'cd "$1" && bash "$2"' \
@@ -440,7 +443,7 @@ run_hermes() {
 }
 
 run_openclaw() {
-  local container_binary="${artifact_dir}/rampart-openclaw-linux"
+  local container_binary="${bin_dir}/rampart-openclaw-linux"
   local docker_arch
   local docker_machine
   if ! docker_machine="$(isolated docker info --format '{{.Architecture}}')"; then

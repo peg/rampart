@@ -1,15 +1,17 @@
 # Rampart Python SDK
 
-[![PyPI version](https://badge.fury.io/py/rampart-sdk.svg)](https://badge.fury.io/py/rampart-sdk)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Python SDK for [Rampart](https://rampart.sh), an open-source policy engine for AI agent tool calls.
 
-## Installation
+## Installation from source
+
+The Python SDK is currently an alpha, source-distributed integration. It is not
+published as `rampart-sdk` on PyPI.
 
 ```bash
-pip install rampart-sdk
+python -m pip install ./sdks/python
 ```
 
 ## Quick Start
@@ -311,6 +313,6 @@ Contributions are welcome! Please see the [Contributing Guide](https://github.co
 
 ## Support
 
-- 📖 [Documentation](https://rampart.sh/docs)
+- 📖 [Documentation](https://docs.rampart.sh/integrations/python-agents/)
 - 🐛 [Issue Tracker](https://github.com/peg/rampart/issues)
 - 💬 [Discussions](https://github.com/peg/rampart/discussions)

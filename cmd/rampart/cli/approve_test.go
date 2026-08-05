@@ -80,12 +80,13 @@ func TestResolveApprovalRefusesRemotePersistedTokenBeforeRequest(t *testing.T) {
 }
 
 func TestResolveAddr(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	t.Setenv("RAMPART_API", "")
+	t.Setenv("RAMPART_URL", "")
+	t.Setenv("RAMPART_SERVE_URL", "")
 	defaultAddr := fmt.Sprintf("http://localhost:%d", defaultServePort)
 
 	t.Run("empty addr falls back to default", func(t *testing.T) {
-		os.Unsetenv("RAMPART_API")
-		os.Unsetenv("RAMPART_URL")
-		os.Unsetenv("RAMPART_SERVE_URL")
 		if got, err := resolveAddr(""); err != nil || got != defaultAddr {
 			t.Fatalf("got %q err=%v", got, err)
 		}
@@ -99,7 +100,6 @@ func TestResolveAddr(t *testing.T) {
 	})
 
 	t.Run("empty addr uses serve url resolution chain", func(t *testing.T) {
-		os.Unsetenv("RAMPART_API")
 		t.Setenv("RAMPART_URL", "http://proxy:7777/")
 		if got, err := resolveAddr(""); err != nil || got != "http://proxy:7777" {
 			t.Fatalf("got %q err=%v", got, err)
@@ -109,9 +109,6 @@ func TestResolveAddr(t *testing.T) {
 	t.Run("empty addr uses config API override", func(t *testing.T) {
 		home := t.TempDir()
 		testSetHome(t, home)
-		os.Unsetenv("RAMPART_API")
-		os.Unsetenv("RAMPART_URL")
-		os.Unsetenv("RAMPART_SERVE_URL")
 		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -127,9 +124,6 @@ func TestResolveAddr(t *testing.T) {
 	t.Run("explicit serve-url alias resolves when url unset", func(t *testing.T) {
 		home := t.TempDir()
 		testSetHome(t, home)
-		os.Unsetenv("RAMPART_API")
-		os.Unsetenv("RAMPART_URL")
-		os.Unsetenv("RAMPART_SERVE_URL")
 		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -152,9 +146,6 @@ func TestResolveAddr(t *testing.T) {
 	t.Run("invalid config surfaces error", func(t *testing.T) {
 		home := t.TempDir()
 		testSetHome(t, home)
-		os.Unsetenv("RAMPART_API")
-		os.Unsetenv("RAMPART_URL")
-		os.Unsetenv("RAMPART_SERVE_URL")
 		if err := os.MkdirAll(filepath.Join(home, ".rampart"), 0o755); err != nil {
 			t.Fatal(err)
 		}

@@ -55,67 +55,7 @@ Arguments:
 
 This is a deterministic harness for the highest-leverage plugin regression: approval-path behavior without depending on model tool selection.
 
-It still does **not** prove that the currently installed OpenClaw + Codex app-server runtime is firing the hook for native shell calls. Use the live runtime regression below for that.
-
-## Live Codex app-server shell-audit regression
-
-Run this only when you intentionally want a real local OpenClaw runtime check:
-
-```bash
-export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
-export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
-export CODEX_HOME="$HOME/.codex"
-export OPENCLAW_STATE_DIR="$HOME/.openclaw"
-export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
-RAMPART_OPENCLAW_RUNTIME=1 \
-RAMPART_OPENCLAW_RESTART_SERVICES= \
-node scripts/test-openclaw-codex-native-audit.mjs
-```
-
-Run it only with a prepared, disposable OpenClaw state and authenticated Codex
-test agent whose gateway is already running against that state. Use a dedicated
-test login created inside the isolated state; never copy production
-`auth.json`, `auth-profiles.json`, or refresh tokens. The isolation root must
-also contain the private `credential-isolation.json` attestation documented in
-`docs/design/openclaw-approval-acceptance-checklist.md`. Before starting the
-isolated gateway, configure `plugins.entries.rampart` with `enabled: true`,
-`serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script starts the
-ephemeral policy service at that address, runs real OpenClaw Codex app-server
-turns with an allowlisted environment, leaves OpenClaw config untouched, and
-restores the isolated token state. It proves routine native-shell interception,
-a native plugin approval with `allow-once` exact resume and successful
-execution, plus a native deny with no canary side effect.
-
-By default the script resolves the approval through `plugin.approval.*`. When
-OpenClaw scopes approvals to a connected UI client, set
-`RAMPART_OPENCLAW_APPROVAL_DRIVER=external` and
-`RAMPART_OPENCLAW_APPROVAL_PROOF_FILE` to that disposable client's log. The
-test then requires the matching request plus the client's
-`plugin approval: allowed once` confirmation before it can pass.
-
-Pass criteria:
-- a Codex app-server binding exists in modern OpenClaw plugin state (or the
-  legacy `*.jsonl.codex-app-server.json` sidecar on older releases)
-- the OpenClaw trajectory contains a native Codex `bash` tool call and its
-  successful, matching `tool.result` output for the marker command
-- the temporary Rampart audit log contains a correlated canonical `exec` event for that marker command
-- a disposable canary beneath the script's temporary directory reaches native
-  `bash`, receives a matching Rampart `deny` audit and denied tool result, and
-  remains byte-for-byte unchanged
-- a second safe command is approved once through `plugin.approval.resolve`, resumes, executes, and has correlated trajectory plus Rampart `ask` audit evidence
-
-A successful assistant response or OpenClaw trajectory alone is not enough; this test fails unless Rampart audit proves the native shell call crossed the policy path.
-
-## Live validation notes
-
-For a real end-to-end OpenClaw validation, do not rely on plain chat text alone as proof. The important thing is that the assistant actually makes a real tool call.
-
-Recommended live checks:
-- `sudo true` after an `Allow Always` decision, should run without prompting
-- `sudo id` as a fresh privileged command, should prompt
-- `rm -rf /tmp`, should hard-deny
-
-Important:
-- make sure `rampart-serve.service` is running before drawing conclusions
-- if Rampart serve is down, sensitive tools block instead of silently failing open; manual installs may keep lower-risk tools in `failOpenTools`, while `rampart protect openclaw` configures every tool to fail closed
-- durable learned rules from the OpenClaw plugin are written to `~/.rampart/policies/user-overrides.yaml`
+These local checks do **not** prove that an installed OpenClaw + Codex
+app-server runtime fires the hook for native shell calls. The single canonical
+procedure and pass criteria for that credentialed proof live in the
+[OpenClaw release acceptance checklist](../../../docs/design/openclaw-approval-acceptance-checklist.md).

@@ -98,5 +98,7 @@ Each harness uses disposable state, harmless marker canaries, and explicit
 isolation checks. A harness existing in the repository proves that the check is
 available; only a completed sanitized run substantiates a host-passed claim.
 
-See the [Release Compatibility Gate](release-compatibility-gate.md) for the full
-candidate-release procedure.
+The repository's
+[`assurance/README.md`](https://github.com/peg/rampart/blob/main/assurance/README.md)
+defines the candidate gate and the distinction between an available harness
+and a completed result.

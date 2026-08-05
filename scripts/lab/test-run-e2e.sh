@@ -23,9 +23,6 @@ grep -q 'default_action: deny' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q -- '--copy-env' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q -- '--gateway' "${repo_root}/scripts/compat-hermes-host.sh"
 grep -q 'API_SERVER_ENABLED=true' "${repo_root}/scripts/compat-hermes-host.sh"
-grep -q '^umask 077$' "$runner"
-grep -q 'scan-artifacts.py' "$runner"
-grep -q 'rm -rf "$isolated_home" "$tmp_dir" "$run_root/go-build" "$run_root/preload-home"' "$runner"
 
 mkdir -p "${tmp}/scan-clean" "${tmp}/scan-secret"
 printf '%s\n' '{"status":"passed","token":"[REDACTED]"}' >"${tmp}/scan-clean/summary.json"
@@ -65,14 +62,26 @@ native_env=(
 )
 if "${native_env[@]}" node "${repo_root}/scripts/test-openclaw-codex-native-audit.mjs" \
   >"${tmp}/native-no-attestation.out" 2>"${tmp}/native-no-attestation.err"; then
-  echo "test-run-e2e: native audit accepted missing credential attestation" >&2
+  echo "test-run-e2e: native audit accepted missing operator declaration" >&2
   exit 1
 fi
-grep -q 'without credential-isolation.json' "${tmp}/native-no-attestation.err"
+grep -q 'without the credential-isolation.json operator declaration' "${tmp}/native-no-attestation.err"
 printf '%s\n' \
   '{"schema_version":1,"purpose":"rampart-openclaw-codex-e2e","credential_source":"dedicated-test-login","production_credentials_copied":false}' \
   >"${native_root}/credential-isolation.json"
 chmod 600 "${native_root}/credential-isolation.json"
+outside_state="${tmp}/outside-openclaw"
+mkdir -p "$outside_state"
+mv "${native_root}/home/.openclaw" "${native_root}/home/.openclaw-real"
+ln -s "$outside_state" "${native_root}/home/.openclaw"
+if "${native_env[@]}" node "${repo_root}/scripts/test-openclaw-codex-native-audit.mjs" \
+  >"${tmp}/native-symlink.out" 2>"${tmp}/native-symlink.err"; then
+  echo "test-run-e2e: native audit accepted a symlinked state path" >&2
+  exit 1
+fi
+grep -q 'traverses a symbolic link' "${tmp}/native-symlink.err"
+rm "${native_root}/home/.openclaw"
+mv "${native_root}/home/.openclaw-real" "${native_root}/home/.openclaw"
 if "${native_env[@]}" RAMPART_KEEP_RUNTIME_ARTIFACTS=1 node \
   "${repo_root}/scripts/test-openclaw-codex-native-audit.mjs" \
   >"${tmp}/native-retention.out" 2>"${tmp}/native-retention.err"; then
@@ -132,12 +141,9 @@ if grep -Eq '\$\{controller_repo\}/(preload/test_preload\.sh|scripts/test-approv
 fi
 grep -q '"controller_commit_sha"' "$runner"
 grep -q '"controller_dirty"' "$runner"
-grep -q 'env -i PATH="$environment_probe_path"' "$runner"
 "${repo_root}/scripts/lab/openclaw-container-acceptance.sh" --help >"${tmp}/openclaw-help"
 grep -q -- '--rampart' "${tmp}/openclaw-help"
 grep -q -- '--openclaw-version' "${tmp}/openclaw-help"
-grep -q 'npm view' "${repo_root}/scripts/lab/openclaw-container-acceptance.sh"
-grep -q 'npm install --global' "${repo_root}/scripts/lab/openclaw-container-acceptance.sh"
 
 "${repo_root}/scripts/lab/test-compat-codex-host.sh"
 

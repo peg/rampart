@@ -267,8 +267,8 @@ func TestToGitBashPath(t *testing.T) {
 	}{
 		{
 			name:     "windows path with backslashes",
-			input:    `C:\Users\trev\.rampart\bin\rampart.exe`,
-			expected: "/c/Users/trev/.rampart/bin/rampart.exe",
+			input:    `C:\Users\alice\.rampart\bin\rampart.exe`,
+			expected: "/c/Users/alice/.rampart/bin/rampart.exe",
 		},
 		{
 			name:     "windows path uppercase drive",

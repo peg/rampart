@@ -94,7 +94,7 @@ default_action: allow  # Was: deny
 **Better fix** — start from an example template:
 
 ```bash
-cp policies/examples/web-developer.yaml ~/.rampart/policy.yaml
+cp policies/examples/web-developer.yaml ~/.rampart/policies/custom.yaml
 ```
 
 !!! warning "Don't use `deny` as default until you're ready"

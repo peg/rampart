@@ -17,7 +17,7 @@ Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
 **Boundary-specific failure behavior.** Managed native integrations fail closed
 when enforcement is unavailable. Optional compatibility boundaries such as the
 shell wrapper and preload library can be configured to fail open. See the
-[threat model](THREAT-MODEL.md) for the trade-offs and exact boundary guarantees.
+[threat model](https://docs.rampart.sh/reference/threat-model/) for the trade-offs and exact boundary guarantees.
 
 **Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call
 run?" — and doesn't need a general-purpose policy language. The custom engine's

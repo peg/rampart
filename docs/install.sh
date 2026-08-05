@@ -2,7 +2,7 @@
 # Rampart install script.
 #
 # Canonical source for the website and legacy installer copies. Keep
-# docs/install, docs/install.sh, and scripts/install.sh byte-for-byte synced
+# docs/install and docs/install.sh byte-for-byte synced
 # with this file.
 # Usage: curl -fsSL https://rampart.sh/install | sh
 #        curl -fsSL https://rampart.sh/install | sh -s -- --version v0.1.0
