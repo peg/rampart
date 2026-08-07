@@ -12,12 +12,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type linkedAuditEvent struct {
 	id        string
 	hash      string
 	prevHash  string
+	timestamp time.Time
 	file      string
 	start     int64
 	recordLen int64
@@ -126,6 +128,7 @@ func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, 
 				id:        event.ID,
 				hash:      event.Hash,
 				prevHash:  event.PrevHash,
+				timestamp: event.Timestamp,
 				file:      name,
 				start:     recordStart,
 				recordLen: int64(len(record) + 1),
@@ -166,22 +169,40 @@ func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, 
 		}
 	}
 	roots := children[""]
-	if len(roots) != 1 {
-		return recoveredChainState{}, fmt.Errorf("verify audit chain: expected one root event, found %d", len(roots))
+	if len(roots) == 0 {
+		return recoveredChainState{}, fmt.Errorf("verify audit chain: no root event found")
 	}
 
 	visited := 0
-	tail := roots[0]
-	for {
-		visited++
-		next := children[tail.hash]
-		if len(next) == 0 {
-			break
+	var tail *linkedAuditEvent
+	var previousEpochLatest time.Time
+	rootHashes := make(map[string]struct{}, len(roots))
+	for index, root := range roots {
+		rootHashes[root.hash] = struct{}{}
+		if root.timestamp.IsZero() {
+			return recoveredChainState{}, fmt.Errorf("verify %s event %s: legacy chain root has no timestamp", root.file, root.id)
 		}
-		tail = next[0]
-		if visited > len(eventsByHash) {
-			return recoveredChainState{}, fmt.Errorf("verify audit chain: cycle detected")
+		if index > 0 && !root.timestamp.After(previousEpochLatest) {
+			return recoveredChainState{}, fmt.Errorf("verify %s event %s: legacy chain epoch overlaps or precedes the prior epoch", root.file, root.id)
 		}
+
+		epochLatest := root.timestamp
+		tail = root
+		for {
+			visited++
+			if tail.timestamp.After(epochLatest) {
+				epochLatest = tail.timestamp
+			}
+			next := children[tail.hash]
+			if len(next) == 0 {
+				break
+			}
+			tail = next[0]
+			if visited > len(eventsByHash) {
+				return recoveredChainState{}, fmt.Errorf("verify audit chain: cycle detected")
+			}
+		}
+		previousEpochLatest = epochLatest
 	}
 	if visited != len(eventsByHash) {
 		return recoveredChainState{}, fmt.Errorf("verify audit chain: %d events are disconnected", len(eventsByHash)-visited)
@@ -193,7 +214,14 @@ func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, 
 		}
 		if header.chainContinue == "" {
 			if header.prevFile != "" {
-				return recoveredChainState{}, fmt.Errorf("verify %s line %d: empty chain continuation references prev_file %q", header.file, header.line, header.prevFile)
+				first := firstEventByFile[header.file]
+				legacyEpochRoot := false
+				if first != nil {
+					_, legacyEpochRoot = rootHashes[first.hash]
+				}
+				if len(roots) == 1 || first == nil || first.prevHash != "" || !legacyEpochRoot {
+					return recoveredChainState{}, fmt.Errorf("verify %s line %d: empty chain continuation references prev_file %q", header.file, header.line, header.prevFile)
+				}
 			}
 		} else {
 			previous, ok := eventsByHash[header.chainContinue]
