@@ -39,19 +39,21 @@ Suites are cumulative only where stated:
 | `openclaw` | `core` plus the disposable OpenClaw container acceptance test |
 | `full` | Core, runtime, Hermes, and disposable OpenClaw coverage |
 
-The OpenClaw runtime suites run the official OpenClaw image in a new disposable
-container. The controller cross-builds Rampart for the Docker daemon's Linux
-architecture, so this isolated suite can also run from a macOS controller.
-Only the candidate Rampart binary is mounted read-only. The state,
-workspace, plugin, policies, Rampart token, gateway, and policy service all live
-inside the container and are deleted after evidence is collected. No host
-OpenClaw configuration, credentials, memories, sessions, databases, workspaces,
-or user services are read or modified.
+The OpenClaw runtime suites start from the official OpenClaw image, resolve the
+current stable npm dist-tag to an exact version, and install that version in a
+new disposable container. This prevents a lagging container tag from silently
+testing an older package than users receive. The controller cross-builds
+Rampart for the Docker daemon's Linux architecture, so this isolated suite can
+also run from a macOS controller. Only the candidate Rampart binary is mounted
+read-only. The state, workspace, plugin, policies, Rampart token, gateway, and
+policy service all live inside the container and are deleted after evidence is
+collected. No host OpenClaw configuration, credentials, memories, sessions,
+databases, workspaces, or user services are read or modified.
 
-The acceptance step records the OpenClaw image metadata and digest, the first
-zero-config installation log, a machine-readable 12-canary report, a second
-idempotency run, the resulting non-secret plugin configuration, and installed
-file checksums.
+The acceptance step records the OpenClaw image metadata and digest, resolved npm
+package metadata and installed version, the first zero-config installation log,
+a machine-readable 12-canary report, a second idempotency run, the resulting
+non-secret plugin configuration, and installed file checksums.
 
 ## Opt-in real host proofs
 
@@ -85,6 +87,10 @@ plugins, MCP servers, and project instructions.
 Both harnesses run one deny and one allow canary, remove their disposable
 runtime, and optionally retain sanitized evidence with `--artifacts DIR`.
 
+The separate credentialed OpenClaw + Codex native-runtime proof is documented
+once in the
+[OpenClaw release acceptance checklist](design/openclaw-approval-acceptance-checklist.md).
+
 To validate the VM's installed Hermes environment instead of downloading the
 latest package into a temporary virtual environment, provide its interpreter
 and optional CLI path:
@@ -104,8 +110,27 @@ By default, results are stored under:
 ```
 
 Each result contains `summary.json`, `environment.json`, `events.jsonl`, one
-log per step, audit records produced by the preload check, and SHA-256 checksums.
-The runner returns a nonzero status if any required step fails.
+log per step, audit records produced by the preload check, and SHA-256 checksums
+with relative filenames. Candidate binaries are disposable runtime inputs and
+are deleted rather than retained as evidence. The runner returns a nonzero
+status if any required step fails.
+
+The runner creates its run tree with private permissions, clears the inherited
+environment before candidate tests, and scans every retained artifact for
+credential filenames and concrete key/token signatures. Text evidence also
+receives structural checks for authorization headers, credentialed URLs, and
+secret assignments. `credential-scan.json`
+records only finding types and relative paths; it never reproduces a matched
+value. Any finding changes the run to failed. Disposable homes, build caches,
+candidate binaries, temporary files, generated local tokens, and canaries are
+removed on every exit; only the evidence directory (and an explicitly requested
+source worktree) is retained.
+
+These are private local diagnostic artifacts by default. A passed credential
+scan means the scanner found none of its defined credential signatures; it does
+not prove that every log is suitable for publication. Publish only the compact,
+manually reviewed summaries described in [`assurance/README.md`](../assurance/README.md),
+not a raw lab artifact directory.
 
 ## Invoke over SSH
 

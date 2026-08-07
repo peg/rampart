@@ -13,17 +13,17 @@ Ready-to-use policy templates. Copy one, customize it, go.
 
 ```bash
 # Copy a template
-cp policies/examples/web-developer.yaml ~/.rampart/policy.yaml
+cp policies/examples/web-developer.yaml ~/.rampart/policies/custom.yaml
 
 # Customize it
-$EDITOR ~/.rampart/policy.yaml
+$EDITOR ~/.rampart/policies/custom.yaml
 
 # Validate your changes
-rampart test ~/.rampart/policy.yaml
-rampart policy lint ~/.rampart/policy.yaml
+rampart test ~/.rampart/policies/custom.yaml
+rampart policy lint ~/.rampart/policies/custom.yaml
 
 # Apply it
-rampart setup claude-code --config ~/.rampart/policy.yaml
+rampart setup claude-code --config ~/.rampart/policies/custom.yaml
 ```
 
 ## Writing Your Own

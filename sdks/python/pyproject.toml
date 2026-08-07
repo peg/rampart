@@ -57,7 +57,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://rampart.sh"
-Documentation = "https://rampart.sh/docs"
+Documentation = "https://docs.rampart.sh/integrations/python-agents/"
 Repository = "https://github.com/peg/rampart"
 Issues = "https://github.com/peg/rampart/issues"
 

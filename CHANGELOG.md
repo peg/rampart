@@ -32,9 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `deny`, explain timeout denial, and persist policy only for `allow-always`.
   OpenClaw's local `ask_user` interaction is classified separately from an
   outbound or cross-conversation message.
+- **OpenClaw acceptance follows the stable package** — The disposable Linux
+  gate resolves and records the exact `openclaw@latest` npm release before
+  exercising zero-configuration protection, so a lagging container tag cannot
+  silently test an older version than users install.
 
 ### Security
 
+- **E2E evidence fails closed on credential material** — Linux lab runs now use
+  private filesystem permissions, clear the controller environment before
+  candidate execution, and reject retained artifacts containing credential
+  files or secret-shaped values without reproducing matched values in reports.
 - **Background service identity survives legitimate binary names safely** — A
   private, bounded `serve.state` records the executable that launched the
   service, allowing renamed Rampart binaries to be authenticated by exact path

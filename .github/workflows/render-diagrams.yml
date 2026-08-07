@@ -1,13 +1,20 @@
 name: Render Diagrams
 
 on:
+  pull_request:
+    paths:
+      - 'docs/architecture.d2'
+      - 'docs/architecture.svg'
+      - '.github/workflows/render-diagrams.yml'
   push:
     branches: [main, staging]
     paths:
       - 'docs/architecture.d2'
+      - 'docs/architecture.svg'
+      - '.github/workflows/render-diagrams.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,6 +26,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install D2
         env:
@@ -33,17 +42,13 @@ jobs:
           mkdir -p "$HOME/.local/bin"
           install -m 0755 "/tmp/d2-${D2_VERSION}/bin/d2" "$HOME/.local/bin/d2"
 
-      - name: Render architecture.svg
+      - name: Verify architecture.svg is current
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           d2 --theme 200 --layout elk --pad 40 \
             docs/architecture.d2 \
-            docs/architecture.svg
-
-      - name: Commit updated SVG
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/architecture.svg
-          git diff --staged --quiet || git commit -m "chore: re-render architecture.svg from docs/architecture.d2"
-          git push
+            "$RUNNER_TEMP/architecture.svg"
+          cmp -s docs/architecture.svg "$RUNNER_TEMP/architecture.svg" || {
+            echo "docs/architecture.svg is stale; render docs/architecture.d2 and commit the result" >&2
+            exit 1
+          }

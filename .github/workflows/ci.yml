@@ -133,11 +133,9 @@ jobs:
         run: |
           cmp -s install.sh docs/install
           cmp -s install.sh docs/install.sh
-          cmp -s install.sh scripts/install.sh
           sh -n install.sh
           sh -n docs/install
           sh -n docs/install.sh
-          sh -n scripts/install.sh
 
       - name: Test Unix installer integrity handling
         if: runner.os != 'Windows'
@@ -147,7 +145,7 @@ jobs:
         if: runner.os == 'Linux'
         run: cmp -s docs-site/index.html docs/index.html
 
-      - name: API reference uses one canonical source
+      - name: Repository documents use canonical sources
         if: runner.os == 'Linux'
         run: sh scripts/check-api-reference.sh
 

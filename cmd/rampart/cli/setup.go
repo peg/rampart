@@ -1325,11 +1325,11 @@ func defaultPolicyContent() string {
 // toGitBashPath converts a Windows path to Git Bash compatible format.
 // Claude Code on Windows runs hooks through Git Bash (/usr/bin/bash), which
 // doesn't understand Windows backslash paths. Without this conversion, paths
-// like 'C:\Users\trev\.rampart\bin\rampart.exe' are mangled to
+// like 'C:\Users\alice\.rampart\bin\rampart.exe' are mangled to
 // 'C:Userstrev.rampartbinrampart.exe' causing 'command not found' errors.
 //
 // Examples:
-//   - C:\Users\trev\.rampart\bin\rampart.exe -> /c/Users/trev/.rampart/bin/rampart.exe
+//   - C:\Users\alice\.rampart\bin\rampart.exe -> /c/Users/alice/.rampart/bin/rampart.exe
 //   - D:\Program Files\rampart.exe -> /d/Program Files/rampart.exe
 //   - /usr/local/bin/rampart -> /usr/local/bin/rampart (unchanged)
 func toGitBashPath(windowsPath string) string {

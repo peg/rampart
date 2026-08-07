@@ -68,11 +68,11 @@ func TestMatchGlob(t *testing.T) {
 
 		// Cross-platform: Windows backslash paths should match forward-slash patterns.
 		// This is critical for Windows Claude Code support.
-		{"**/.ssh/id_*", `C:\Users\Trevor\.ssh\id_rsa`, true},
-		{"**/.ssh/id_*", `C:\Users\Trevor\.ssh\id_ed25519`, true},
-		{"**/.ssh/id_*", `C:\Users\Trevor\Documents\file.txt`, false},
-		{"**/.*", `C:\Users\Trevor\.env`, true},
-		{"**/.env", `C:\Users\Trevor\project\.env`, true},
+		{"**/.ssh/id_*", `C:\Users\Alice\.ssh\id_rsa`, true},
+		{"**/.ssh/id_*", `C:\Users\Alice\.ssh\id_ed25519`, true},
+		{"**/.ssh/id_*", `C:\Users\Alice\Documents\file.txt`, false},
+		{"**/.*", `C:\Users\Alice\.env`, true},
+		{"**/.env", `C:\Users\Alice\project\.env`, true},
 
 		// Zero-depth: "**/.env" should match bare ".env" (no directory prefix).
 		// This is gitignore semantics — "**" matches zero or more path segments.

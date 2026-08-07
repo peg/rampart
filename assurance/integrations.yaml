@@ -49,8 +49,8 @@ integrations:
         kind: upstream_latest
         proves: The bundled plugin contract is checked against the latest published OpenClaw.
       - path: scripts/lab/openclaw-container-acceptance.sh
-        kind: live
-        proves: A disposable OpenClaw installation exercises the real plugin boundary.
+        kind: live_harness
+        proves: A disposable OpenClaw installation resolves the stable npm release and exercises the real plugin boundary.
     limitations:
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
       - Host behavior after an uncaught plugin exception is not yet independently proven fail-closed.
@@ -97,7 +97,7 @@ integrations:
         kind: unit
         proves: Setup preserves existing settings while installing required hook events.
       - path: scripts/compat-claude-host.sh
-        kind: integration
+        kind: live_harness
         proves: An opt-in state-isolated harness can prove deny, execution, and pre/post correlation through a real Claude Code process.
       - path: assurance/evidence/claude-host-2026-07-25.json
         kind: live
@@ -194,7 +194,7 @@ integrations:
         kind: integration
         proves: Active verification checks installed hook configuration and directly invokes the adapter with a destructive canary that must deny.
       - path: scripts/compat-codex-host.sh
-        kind: live
+        kind: live_harness
         proves: An opt-in credential-isolated harness proves deny and allow behavior through a real ephemeral Codex process.
       - path: assurance/evidence/codex-host-2026-07-25.json
         kind: live
@@ -240,7 +240,7 @@ integrations:
         kind: upstream_latest
         proves: Latest Hermes discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
       - path: scripts/compat-hermes-host.sh
-        kind: integration
+        kind: live_harness
         proves: An opt-in auth-minimized harness proves deny and allowed execution through a real isolated Hermes model/tool loop.
       - path: assurance/evidence/hermes-host-2026-07-24.json
         kind: live

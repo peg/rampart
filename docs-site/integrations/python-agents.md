@@ -7,7 +7,7 @@ description: "Integrate Python AI agents with Rampart's HTTP preflight API. Chec
 
 Integrate Rampart with any Python agent framework — LangChain, CrewAI, AutoGen, or custom code.
 
-## Python SDK (recommended)
+## Python SDK (source-distributed alpha)
 
 Start the Rampart proxy:
 
@@ -15,11 +15,12 @@ Start the Rampart proxy:
 rampart serve
 ```
 
-Install the SDK and put its fail-closed enforcement call directly at the
-execution boundary:
+The SDK is not currently published on PyPI. From a Rampart source checkout,
+install it and put its fail-closed enforcement call directly at the execution
+boundary:
 
 ```bash
-pip install rampart-sdk
+python -m pip install ./sdks/python
 ```
 
 ```python

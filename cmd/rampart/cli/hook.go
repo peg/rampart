@@ -710,7 +710,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					"To diagnose: run `" + explainCmd + "` to see which policy applies, " +
 					"or `rampart watch` to view the live audit log. " +
 					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
-					"see https://rampart.sh/docs/exceptions for guidance."
+					"see https://docs.rampart.sh/getting-started/troubleshooting/ for guidance."
 
 				// Prepend the specific deny reason if available — gives the agent
 				// (and user) immediate context on why the call was blocked.

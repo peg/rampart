@@ -44,7 +44,7 @@ func TestCommittedLiveEvidenceSummaries(t *testing.T) {
 	datePattern := regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 	for _, integration := range manifest.Integrations {
 		for _, evidence := range integration.Evidence {
-			if evidence.Kind != "live" || filepath.Ext(evidence.Path) != ".json" {
+			if evidence.Kind != "live" {
 				continue
 			}
 			t.Run(integration.ID, func(t *testing.T) {
@@ -88,6 +88,23 @@ func TestCommittedLiveEvidenceSummaries(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestCompletedLiveEvidenceMustBeJSON(t *testing.T) {
+	root := repositoryRoot(t)
+	manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Integrations[0].Evidence = append(manifest.Integrations[0].Evidence, Evidence{
+		Path:   "scripts/lab/openclaw-container-acceptance.sh",
+		Kind:   "live",
+		Proves: "An available harness is not a completed result.",
+	})
+	err = manifest.Validate(root)
+	if err == nil || !strings.Contains(err.Error(), "completed live evidence must be a JSON summary") {
+		t.Fatalf("expected live-summary validation failure, got %v", err)
 	}
 }
 
@@ -154,7 +171,6 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 		"policies/openclaw.yaml":                        {"# rampart-policy-version: " + version},
 		"docs-site/index.html":                          {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
 		"docs/index.html":                               {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
-		"docs-site/reference/threat-model.md":           {"Applies to: v" + version},
 		"docs/THREAT-MODEL.md":                          {"Applies to: v" + version},
 	}
 	for name, required := range expectations {

@@ -161,7 +161,7 @@ Approve it → Claude continues. Deny it → Claude gets an explanation and trie
 The default policy blocks destructive commands. Your project probably needs more nuance. Open the policy file and edit it:
 
 ```bash
-$EDITOR ~/.rampart/policy.yaml
+$EDITOR ~/.rampart/policies/custom.yaml
 ```
 
 Here's what a real policy looks like:
@@ -213,7 +213,7 @@ After editing, validate before trusting it:
 
 ```bash
 # Check for syntax errors and common mistakes
-rampart policy lint ~/.rampart/policy.yaml
+rampart policy lint ~/.rampart/policies/custom.yaml
 
 # Test a specific command against your policy
 rampart test "git push origin main"
