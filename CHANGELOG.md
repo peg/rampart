@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while malformed, permissive, stale, or symlinked state falls back to the
   stricter legacy process-name check.
 
+### Fixed
+
+- **Claude Code string tool responses remain visible** — `PostToolUse` and
+  `PostToolUseFailure` now accept plain-string, object, and array response
+  payloads while preserving response-policy scanning and fail-closed handling
+  for genuinely malformed hook input.
+
 ## [1.5.0] - 2026-07-29
 
 ### Added

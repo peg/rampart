@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -248,6 +249,83 @@ func TestParseClaudeCodeInputPostToolKeepsScanningMalformedKnownInput(t *testing
 	}
 	if result.Response != "scan me" {
 		t.Fatalf("response = %q, want scan me", result.Response)
+	}
+}
+
+func TestParseClaudeCodeInputAcceptsPostToolResponseShapes(t *testing.T) {
+	tests := []struct {
+		name     string
+		event    string
+		response string
+		want     string
+	}{
+		{
+			name:     "PostToolUse plain string",
+			event:    "PostToolUse",
+			response: `"On branch master\nnothing to commit"`,
+			want:     "On branch master\nnothing to commit",
+		},
+		{
+			name:     "PostToolUseFailure plain string",
+			event:    "PostToolUseFailure",
+			response: `"command exited with status 1"`,
+			want:     "command exited with status 1",
+		},
+		{
+			name:     "PostToolUse nested array",
+			event:    "PostToolUse",
+			response: `[{"text":"first"},"second"]`,
+			want:     "first\nsecond",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := fmt.Sprintf(
+				`{"hook_event_name":%q,"tool_name":"Bash","tool_input":{"command":"git status"},"tool_response":%s}`,
+				testCase.event,
+				testCase.response,
+			)
+			result, err := parseClaudeCodeInput(strings.NewReader(payload), testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Response != testCase.want {
+				t.Fatalf("response = %q, want %q", result.Response, testCase.want)
+			}
+			if result.RawResponse == nil {
+				t.Fatal("raw response was discarded")
+			}
+		})
+	}
+}
+
+func TestClaudeCodeStringPostToolResponseDoesNotFailClosed(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	configPath := filepath.Join(home, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte("version: \"1\"\ndefault_action: allow\npolicies: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
+		t.Run(event, func(t *testing.T) {
+			payload := fmt.Sprintf(
+				`{"hook_event_name":%q,"tool_name":"Bash","tool_input":{"command":"git status"},"tool_response":"On branch master\nnothing to commit"}`,
+				event,
+			)
+			stdout, _, err := runHookWithStdin(t, &rootOptions{configPath: configPath}, payload)
+			if err != nil {
+				t.Fatalf("hook failed: %v", err)
+			}
+			var output hookOutput
+			if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+				t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+			}
+			if output.Decision == "block" {
+				t.Fatalf("valid string response failed closed: %s", stdout)
+			}
+		})
 	}
 }
 

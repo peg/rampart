@@ -244,6 +244,48 @@ func TestClaudeUnknownPostToolBlocksAndRedactsResponse(t *testing.T) {
 	}
 }
 
+func TestClaudeStringPostToolResponsePolicyBlocksAndRedacts(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	policyPath := filepath.Join(home, "response-policy.yaml")
+	policy := `version: "1"
+default_action: allow
+policies:
+  - name: block-response-secret
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          response_matches: ["secret-[0-9]+"]
+        message: "protected response"
+`
+	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"hook_event_name":"PostToolUse","session_id":"s","tool_use_id":"tool-1","tool_name":"Bash","tool_input":{"command":"printf secret"},"tool_response":"output contains secret-42"}`
+	stdout, stderr, err := runHookWithStdin(
+		t,
+		&rootOptions{configPath: policyPath},
+		payload,
+		"--mode", "enforce",
+		"--audit-dir", filepath.Join(home, "audit"),
+	)
+	if err != nil {
+		t.Fatalf("hook returned an ordinary host error: %v (stderr=%q)", err, stderr)
+	}
+	var output hookOutput
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output = %q: %v", stdout, err)
+	}
+	if output.Decision != "block" || !strings.Contains(output.Reason, "protected response") {
+		t.Fatalf("output = %#v, want response-policy block", output)
+	}
+	if output.HookSpecificOutput == nil || output.HookSpecificOutput.UpdatedToolOutput != redactedToolOutput {
+		t.Fatalf("updated tool output = %#v, want scalar redaction", output.HookSpecificOutput)
+	}
+}
+
 func TestHookLoadsProjectPolicyFromHostWorkingDirectory(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
