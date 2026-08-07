@@ -135,6 +135,19 @@ grep -q 'exact 40-character hexadecimal commit SHA' "${tmp}/invalid.err"
 grep -q 'openclaw-container-acceptance.sh' "$runner"
 grep -q 'CGO_ENABLED=0 GOOS=linux GOARCH=' "$runner"
 grep -q 'run_step go-test isolated env RAMPART_OPENCLAW_BIN=' "$runner"
+python3 - "$runner" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+run_preload = text.split("run_preload() {", 1)[1].split("\n}\n\nrun_e2e()", 1)[0]
+if 'isolated env HOME="$preload_home"' in run_preload:
+    raise SystemExit("preload server must not background the isolated shell wrapper")
+if 'env -i \\\n    HOME="$preload_home"' not in run_preload:
+    raise SystemExit("preload server must directly background an isolated external process")
+if "preload_server_pid=$!" not in run_preload:
+    raise SystemExit("preload server PID is not tracked for cleanup")
+PY
 if grep -Eq '\$\{controller_repo\}/(preload/test_preload\.sh|scripts/test-approval-flow\.sh|scripts/compat-hermes-latest\.py)' "$runner"; then
   echo "test-run-e2e: candidate harnesses must run from the detached worktree" >&2
   exit 1

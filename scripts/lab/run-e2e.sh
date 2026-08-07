@@ -363,10 +363,20 @@ run_preload() {
   mkdir -p "${preload_home}/.ssh"
   printf '%s\n' 'rampart-lab-private-credential-canary' >"${preload_home}/.ssh/id_rsa"
   chmod 600 "${preload_home}/.ssh/id_rsa"
-  isolated env HOME="$preload_home" \
+  # Launch the external env process directly. Backgrounding the isolated shell
+  # function would make $! identify its wrapper instead of the Rampart server,
+  # leaving the real server alive after the wrapper is terminated.
+  env -i \
+    HOME="$preload_home" \
     XDG_CONFIG_HOME="$preload_home/.config" \
     XDG_CACHE_HOME="$preload_home/.cache" \
     XDG_STATE_HOME="$preload_home/.local/state" \
+    TMPDIR="$tmp_dir" \
+    GOCACHE="$run_root/go-build" \
+    GOMODCACHE="${RAMPART_LAB_GOMODCACHE:-$lab_root/go-mod}" \
+    PATH="$isolated_path" \
+    LANG="${LANG:-C.UTF-8}" \
+    CI=1 \
     RAMPART_TOKEN="rampart-lab-token" \
     "${bin_dir}/rampart" --config "${worktree}/policies/standard.yaml" \
     serve --no-openclaw-bridge --mode enforce --port "$port" \

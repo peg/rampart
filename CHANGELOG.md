@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Chronological legacy epochs can be validated and recovered without rewriting
   existing logs, while altered hashes, missing links, forks, overlaps, and
   disconnected epochs still fail closed.
+- **Linux lab teardown stops the process it started** — The isolated preload
+  check now tracks the actual Rampart server rather than a background shell
+  wrapper, so successful and interrupted runs cannot leave a test service
+  behind after their disposable state is removed.
 
 ## [1.5.0] - 2026-07-29
 
