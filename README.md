@@ -195,7 +195,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 |-------|--------------|-------------|
 | **Claude Code** | `rampart setup claude-code` | Native pre/post tool hooks via `~/.claude/settings.json` |
 | **OpenClaw** | `rampart protect openclaw` | Zero-config native guard + active verification |
-| **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin |
+| **Hermes Agent** | `rampart setup hermes` | Experimental `pre_tool_call` user plugin; Hermes 0.20 gateway host proof, native approval/resume pending |
 | **Cline** | `rampart setup cline` | Platform-native editor/CLI hook files |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Gemini CLI** | `rampart setup gemini` | Experimental enterprise/API-key `BeforeTool`/`AfterTool` hooks |

@@ -420,7 +420,7 @@ if ($TestMode) {
     $version = "installer-test"
     $expectedCandidateVersion = $TestExpectedVersion
     if (-not (Test-StrictReleaseVersion $expectedCandidateVersion)) {
-        Write-Err "Invalid release version: $expectedCandidateVersion. Expected a tag such as v1.5.0 or v1.5.0-rc.1."
+        Write-Err "Invalid release version: $expectedCandidateVersion. Expected a tag such as v1.6.0 or v1.6.0-rc.1."
         exit 1
     }
     $tempZip = [System.IO.Path]::GetFullPath($TestArchivePath)
@@ -449,7 +449,7 @@ if ($TestMode) {
         exit 1
     }
     if (-not (Test-StrictReleaseVersion $version)) {
-        Write-Err "Invalid release version: $version. Expected a tag such as v1.5.0 or v1.5.0-rc.1."
+        Write-Err "Invalid release version: $version. Expected a tag such as v1.6.0 or v1.6.0-rc.1."
         exit 1
     }
     Write-Status "Latest version: $version"

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-07
+
 ### Added
 
 - **One safe verification command for configured boundaries** —
@@ -36,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate resolves and records the exact `openclaw@latest` npm release before
   exercising zero-configuration protection, so a lagging container tag cannot
   silently test an older version than users install.
+- **Hermes host assurance follows the current release** — An isolated Linux
+  gateway run now proves deny, allow, and correlated pre-tool auditing through
+  Hermes Agent 0.20.0 using only model, provider, toolset, and authentication
+  state. Hermes remains experimental until it exposes a dependable native
+  approval/resume contract and fail-closed plugin execution.
 
 ### Security
 
@@ -55,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PostToolUseFailure` now accept plain-string, object, and array response
   payloads while preserving response-policy scanning and fail-closed handling
   for genuinely malformed hook input.
+- **Existing OpenClaw policy upgrades preserve operator intent** — Managed
+  installs keep the primary configured policy authoritative, migrate only the
+  narrowly recognized legacy stock duplicate, and retain correct release and
+  content-hash metadata around the embedded policy payload.
+- **Historical audit service restarts verify without weakening integrity** —
+  Chronological legacy epochs can be validated and recovered without rewriting
+  existing logs, while altered hashes, missing links, forks, overlaps, and
+  disconnected epochs still fail closed.
 
 ## [1.5.0] - 2026-07-29
 

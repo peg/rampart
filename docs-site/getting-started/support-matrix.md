@@ -106,7 +106,7 @@ and the isolated Hermes harness for runtime evidence.
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
-      <td data-label="Support tier"><strong>Experimental</strong><br>0.19.0 shell deny/allow host proof; native approval/resume pending</td>
+      <td data-label="Support tier"><strong>Experimental</strong><br>0.20.0 gateway deny/allow host proof; native approval/resume pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
@@ -185,7 +185,7 @@ and the isolated Hermes harness for runtime evidence.
   memory, and delegated-agent calls; a real authenticated host proof is still
   pending, and this does not cover Antigravity
 - **Hermes Agent** → experimental plugin path with a completed isolated
-  Hermes 0.19.0 shell deny/allow host run; `ask` decisions block rather than
+  Hermes 0.20.0 gateway deny/allow host run; `ask` decisions block rather than
   resume until Hermes exposes a first-class plugin approval flow. Its built-in
   status check remains static, so it is not included in `rampart verify --all`
 
