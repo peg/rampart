@@ -19,7 +19,7 @@ default_action: ask
 policies:
   # ── Self-modification protection ──────────────────────────────────────
   # Agents cannot modify their own Rampart policy or disable enforcement.
-  - name: block-self-modification
+  - name: openclaw-block-self-modification
     description: "Prevent AI agents from modifying their own Rampart policy"
     match:
       tool: ["exec"]
