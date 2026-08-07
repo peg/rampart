@@ -63,9 +63,10 @@ func TestExitCode(t *testing.T) {
 func TestExtractToolResponse(t *testing.T) {
 	tests := []struct {
 		name string
-		resp map[string]any
+		resp any
 		want string
 	}{
+		{"plain string", "hello", "hello"},
 		{"stdout only", map[string]any{"stdout": "hello"}, "hello"},
 		{"stdout+stderr", map[string]any{"stdout": "out", "stderr": "err"}, "out\nerr"},
 		{"content", map[string]any{"content": "body"}, "body"},
@@ -75,6 +76,7 @@ func TestExtractToolResponse(t *testing.T) {
 		{"non-string ignored", map[string]any{"count": 42}, ""},
 		{"empty map", map[string]any{}, ""},
 		{"priority order", map[string]any{"stdout": "a", "content": "b"}, "a\nb"},
+		{"top-level array", []any{"first", map[string]any{"text": "second"}}, "first\nsecond"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
