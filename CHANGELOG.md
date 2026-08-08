@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-07
+
+### Added
+
+- **One safe verification command for configured boundaries** —
+  `rampart verify --all` runs the policy canaries plus every configured
+  integration with an active behavioral verifier, without invoking a model or
+  executing the represented actions. Machine-readable output uses
+  `rampart.verify-all.v1`, retains per-target reports, and distinguishes failed
+  targets from incomplete or unreachable checks.
+- **OpenClaw prerelease warning gate** — Scheduled compatibility CI keeps the
+  latest stable OpenClaw path blocking while checking the beta package as a
+  non-blocking advisory, so upstream contract changes are visible before they
+  reach stable without overstating prerelease support.
+
+### Changed
+
+- **Explicit service endpoints are lifecycle-wide** —
+  `rampart protect --serve-url` now selects the endpoint used for service health, host
+  configuration, and behavioral verification. Non-default endpoints must
+  already be reachable, and OpenClaw accepts only a local loopback service
+  without credentials or URL suffixes.
+- **OpenClaw approvals use the current ownership contract** — Approval cards
+  identify Rampart as their owner, advertise `allow-once`, `allow-always`, and
+  `deny`, explain timeout denial, and persist policy only for `allow-always`.
+  OpenClaw's local `ask_user` interaction is classified separately from an
+  outbound or cross-conversation message.
+- **OpenClaw acceptance follows the stable package** — The disposable Linux
+  gate resolves and records the exact `openclaw@latest` npm release before
+  exercising zero-configuration protection, so a lagging container tag cannot
+  silently test an older version than users install.
+- **Hermes host assurance follows the current release** — An isolated Linux
+  gateway run now proves deny, allow, and correlated pre-tool auditing through
+  Hermes Agent 0.20.0 using only model, provider, toolset, and authentication
+  state. Hermes remains experimental until it exposes a dependable native
+  approval/resume contract and fail-closed plugin execution.
+
+### Security
+
+- **E2E evidence fails closed on credential material** — Linux lab runs now use
+  private filesystem permissions, clear the controller environment before
+  candidate execution, and reject retained artifacts containing credential
+  files or secret-shaped values without reproducing matched values in reports.
+- **Background service identity survives legitimate binary names safely** — A
+  private, bounded `serve.state` records the executable that launched the
+  service, allowing renamed Rampart binaries to be authenticated by exact path
+  while malformed, permissive, stale, or symlinked state falls back to the
+  stricter legacy process-name check.
+
+### Fixed
+
+- **Claude Code string tool responses remain visible** — `PostToolUse` and
+  `PostToolUseFailure` now accept plain-string, object, and array response
+  payloads while preserving response-policy scanning and fail-closed handling
+  for genuinely malformed hook input.
+- **Existing OpenClaw policy upgrades preserve operator intent** — Managed
+  installs keep the primary configured policy authoritative, migrate only the
+  narrowly recognized legacy stock duplicate, and retain correct release and
+  content-hash metadata around the embedded policy payload.
+- **Historical audit service restarts verify without weakening integrity** —
+  Chronological legacy epochs can be validated and recovered without rewriting
+  existing logs, while altered hashes, missing links, forks, overlaps, and
+  disconnected epochs still fail closed.
+- **Linux lab teardown stops the process it started** — The isolated preload
+  check now tracks the actual Rampart server rather than a background shell
+  wrapper, so successful and interrupted runs cannot leave a test service
+  behind after their disposable state is removed.
+
 ## [1.5.0] - 2026-07-29
 
 ### Added

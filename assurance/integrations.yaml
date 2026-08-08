@@ -1,7 +1,9 @@
-schema_version: rampart.assurance.v1
-baseline_release: v1.4.1
-reviewed_at: "2026-07-28"
+schema_version: rampart.assurance.v2
+baseline_release: v1.6.0
+reviewed_at: "2026-08-07"
 
+# Version 2 uses the canonical Rampart command target as each integration id
+# and requires an explicit declaration of bare `rampart protect` eligibility.
 # This manifest records the guarantees Rampart can support with evidence today.
 # "tested" means the Rampart adapter or mapping is exercised in isolation.
 # "verified" means a completed live host-boundary run is recorded as evidence,
@@ -13,6 +15,7 @@ integrations:
     setup_command: rampart protect openclaw
     boundary: native_plugin
     platforms: [linux, macos]
+    auto_protect: true
     service_required: true
     upstream_ci: rolling_latest
     coverage:
@@ -46,8 +49,8 @@ integrations:
         kind: upstream_latest
         proves: The bundled plugin contract is checked against the latest published OpenClaw.
       - path: scripts/lab/openclaw-container-acceptance.sh
-        kind: live
-        proves: A disposable OpenClaw installation exercises the real plugin boundary.
+        kind: live_harness
+        proves: A disposable OpenClaw installation resolves the stable npm release and exercises the real plugin boundary.
     limitations:
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
       - Host behavior after an uncaught plugin exception is not yet independently proven fail-closed.
@@ -57,12 +60,13 @@ integrations:
       - OpenClaw after_tool_call is observational, so the native plugin does not claim blocking response redaction.
       - MCP and delegated-agent coverage need dedicated live canaries.
 
-  - id: claude_code
+  - id: claude-code
     display_name: Claude Code
     support_tier: supported
     setup_command: rampart setup claude-code
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -93,7 +97,7 @@ integrations:
         kind: unit
         proves: Setup preserves existing settings while installing required hook events.
       - path: scripts/compat-claude-host.sh
-        kind: integration
+        kind: live_harness
         proves: An opt-in state-isolated harness can prove deny, execution, and pre/post correlation through a real Claude Code process.
       - path: assurance/evidence/claude-host-2026-07-25.json
         kind: live
@@ -112,6 +116,7 @@ integrations:
     setup_command: rampart setup cline
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -152,12 +157,13 @@ integrations:
       - Current Cline CLI launches post-tool file hooks asynchronously and ignores their control response, so CLI post-tool decisions are audit evidence rather than continuation blocking.
       - Cline has no native Rampart approval-resume path; ask decisions cancel with context.
 
-  - id: codex_cli
+  - id: codex
     display_name: Codex
     support_tier: supported
     setup_command: rampart setup codex
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -188,7 +194,7 @@ integrations:
         kind: integration
         proves: Active verification checks installed hook configuration and directly invokes the adapter with a destructive canary that must deny.
       - path: scripts/compat-codex-host.sh
-        kind: live
+        kind: live_harness
         proves: An opt-in credential-isolated harness proves deny and allow behavior through a real ephemeral Codex process.
       - path: assurance/evidence/codex-host-2026-07-25.json
         kind: live
@@ -206,6 +212,7 @@ integrations:
     setup_command: rampart setup hermes
     boundary: native_plugin
     platforms: [linux, macos]
+    auto_protect: false
     service_required: true
     upstream_ci: rolling_latest
     coverage:
@@ -233,7 +240,7 @@ integrations:
         kind: upstream_latest
         proves: Latest Hermes discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
       - path: scripts/compat-hermes-host.sh
-        kind: integration
+        kind: live_harness
         proves: An opt-in auth-minimized harness proves deny and allowed execution through a real isolated Hermes model/tool loop.
       - path: assurance/evidence/hermes-host-2026-07-24.json
         kind: live
@@ -241,6 +248,9 @@ integrations:
       - path: assurance/evidence/hermes-gateway-2026-07-27.json
         kind: live
         proves: A completed Linux run sends deny and allow turns through an isolated localhost Hermes API gateway, records correlated audits, and loads no source memories, sessions, rules, workspaces, MCP servers, or messaging gateways.
+      - path: assurance/evidence/hermes-gateway-2026-08-07.json
+        kind: live
+        proves: A completed Linux Hermes Agent 0.20.0 gateway run repeats deny, allow, and correlated pre-tool audit proof from the exact merged staging baseline while loading only isolated model, provider, toolset, and authentication state.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.
@@ -248,12 +258,13 @@ integrations:
       - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
       - Delegated-agent and approved-execution E2E are not yet present.
 
-  - id: gemini_cli
+  - id: gemini
     display_name: Gemini CLI
     support_tier: experimental
     setup_command: rampart setup gemini
     boundary: native_hook
     platforms: [linux, macos]
+    auto_protect: false
     service_required: false
     upstream_ci: rolling_latest
     coverage:
@@ -300,6 +311,7 @@ integrations:
     setup_command: rampart setup antigravity
     boundary: native_plugin
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: none
     coverage:
@@ -338,12 +350,13 @@ integrations:
       - The ordinary verifier exercises plugin installation and the live Rampart adapter without invoking a model; authenticated host proof is a maintainer-only opt-in check.
       - A rolling-latest Antigravity compatibility job and physical Windows host proof are still pending.
 
-  - id: github_copilot
+  - id: copilot
     display_name: GitHub Copilot CLI / VS Code
     support_tier: supported
     setup_command: rampart setup copilot
     boundary: native_hook
     platforms: [linux, macos, windows]
+    auto_protect: true
     service_required: false
     upstream_ci: rolling_latest
     coverage:

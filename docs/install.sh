@@ -2,13 +2,13 @@
 # Rampart install script.
 #
 # Canonical source for the website and legacy installer copies. Keep
-# docs/install, docs/install.sh, and scripts/install.sh byte-for-byte synced
+# docs/install and docs/install.sh byte-for-byte synced
 # with this file.
 # Usage: curl -fsSL https://rampart.sh/install | sh
 #        curl -fsSL https://rampart.sh/install | sh -s -- --version v0.1.0
 #        curl -fsSL https://rampart.sh/install | sh -s -- --auto-setup
-#        RAMPART_INSTALL_DRY_RUN=1 sh install.sh --version v1.5.0
-#        RAMPART_VERSION=v1.5.0 RAMPART_INSTALL_DIR=$HOME/.local/bin sh install.sh
+#        RAMPART_INSTALL_DRY_RUN=1 sh install.sh --version v1.6.0
+#        RAMPART_VERSION=v1.6.0 RAMPART_INSTALL_DIR=$HOME/.local/bin sh install.sh
 set -e
 
 REPO="peg/rampart"
@@ -107,7 +107,7 @@ esac
 # caller-controlled value cannot introduce path separators or option syntax.
 SEMVER_RE='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
 if ! printf '%s\n' "$VERSION" | grep -Eq "$SEMVER_RE"; then
-    error "Invalid release version: ${VERSION}. Expected a tag such as v1.5.0 or v1.5.0-rc.1."
+    error "Invalid release version: ${VERSION}. Expected a tag such as v1.6.0 or v1.6.0-rc.1."
 fi
 
 info "Installing ${BOLD}rampart ${VERSION}${RESET}"

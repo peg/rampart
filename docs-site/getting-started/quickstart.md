@@ -39,11 +39,20 @@ Before you dive in, skim the [integration support matrix](support-matrix.md) if 
 
 ```bash
 rampart quickstart
+rampart verify --all
 ```
 
 This discovers integrations in Rampart's current auto-protect registry, installs
 the service when the selected path needs it, wires up the appropriate boundary,
-and verifies the result. Done.
+and verifies the result. The second command gives you one aggregate re-check of
+the policy engine and every configured integration with an active behavioral
+verifier.
+
+`rampart verify --all` uses fixed safe canaries. It does not invoke a model,
+execute commands, read files, send messages, or contact external hosts. Static-only
+integrations such as the experimental Hermes plugin are intentionally excluded;
+use `rampart doctor` for their installation status and their isolated
+compatibility harness for release evidence.
 
 Then use your agent normally. Rampart is invisible until something needs to be blocked or approved.
 
@@ -131,10 +140,15 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
 ## Verify It's Working
 
 ```bash
+rampart verify --all
 rampart doctor
 ```
 
-Doctor should tell you which integration path is active, whether `serve` is optional or required for that path, and what coverage gaps remain. If something's off, it should tell you exactly what to fix.
+The aggregate verifier proves expected policy and adapter/plugin behavior for
+configured integrations with safe verifiers. It exits 1 for a failed
+expectation and 2 when a check is incomplete or unreachable. Doctor then tells
+you which integration paths are installed—including static-only paths—whether
+`serve` is optional or required, and what coverage gaps remain.
 
 ## Test the Policy Engine
 

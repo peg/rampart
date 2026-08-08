@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -16,6 +17,79 @@ import (
 
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 )
+
+func TestConfiguredVerificationTargetsIncludesPolicyAndConfiguredHooks(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	command, commandWindows := currentCodexHookCommands()
+	if err := installCodexHooks(hooksPath, command, commandWindows, false); err != nil {
+		t.Fatal(err)
+	}
+
+	targets := configuredVerificationTargets(home)
+	if got := strings.Join(targets, ","); got != "policy,codex" {
+		t.Fatalf("configured verification targets = %q, want policy,codex", got)
+	}
+}
+
+func TestRunAllBehavioralVerificationsWritesAggregateEvidence(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("RAMPART_TOKEN", "verification-token")
+	command, commandWindows := currentCodexHookCommands()
+	if err := installCodexHooks(filepath.Join(home, ".codex", "hooks.json"), command, commandWindows, false); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer verification-token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		var body struct {
+			Params map[string]any `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		decision := "deny"
+		if body.Params["command"] == "pwd" {
+			decision = "allow"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"allowed": decision == "allow", "decision": decision, "message": "safe test decision",
+		})
+	}))
+	defer server.Close()
+
+	report, err := runAllBehavioralVerifications(context.Background(), server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SchemaVersion != verifyAllJSONSchemaVersion || !report.SafeCanaries {
+		t.Fatalf("unexpected aggregate metadata: %#v", report)
+	}
+	if report.Summary.Targets != 2 || report.Summary.PassedTargets != 2 || report.Summary.Checks != 12 {
+		t.Fatalf("unexpected aggregate summary: %#v", report.Summary)
+	}
+	if len(report.Results) != 2 || report.Results[0].Target != "policy" || report.Results[1].Target != "codex" {
+		t.Fatalf("unexpected aggregate results: %#v", report.Results)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".rampart", "verification", "codex.json")); err != nil {
+		t.Fatalf("aggregate verification receipt missing: %v", err)
+	}
+}
+
+func TestVerifyAllRejectsExplicitTarget(t *testing.T) {
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &out, &errOut)
+	cmd.SetArgs([]string{"verify", "codex", "--all"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--all cannot be combined") {
+		t.Fatalf("error = %v, want --all target conflict", err)
+	}
+}
 
 func TestBehavioralVerificationSafeCanariesPass(t *testing.T) {
 	installVerificationToken(t, "verification-token")

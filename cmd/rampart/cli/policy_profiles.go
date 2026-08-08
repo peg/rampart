@@ -52,8 +52,14 @@ func parseManagedPolicyHeaders(data []byte) (version, contentHash string, conten
 		line := string(content[:idx])
 		switch {
 		case strings.HasPrefix(line, managedPolicyVersionPrefix):
+			if version != "" {
+				return version, contentHash, content
+			}
 			version = strings.TrimSpace(strings.TrimPrefix(line, managedPolicyVersionPrefix))
 		case strings.HasPrefix(line, managedPolicyHashPrefix):
+			if contentHash != "" {
+				return version, contentHash, content
+			}
 			contentHash = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, managedPolicyHashPrefix)))
 		default:
 			return version, contentHash, content

@@ -97,6 +97,9 @@ rampart protect openclaw
 
 # Codex CLI, IDE, and desktop
 rampart setup codex
+
+# Re-check policy and every configured active-verifier integration
+rampart verify --all
 ```
 
 That's it. Pick the integration that matches your agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
@@ -233,96 +236,12 @@ verify -> outcomes.approval
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
-## What's New in v1.4
+## Current release
 
-- **Native Codex lifecycle hooks** — One user-level setup covers Codex CLI, IDE,
-  and desktop host-exposed shell, file, patch, MCP, web, and delegated-agent
-  calls without replacing the Codex executable.
-- **Current Claude Code tool mapping** — Claude Code 2.1.220 hook-visible tools
-  are classified, unknown future pre-call tools deny in enforce mode, and an
-  isolated shell allow/deny host proof is recorded.
-- **Stronger experimental Hermes enforcement** — Batched patches use
-  deny-wins evaluation, with an isolated Hermes 0.19.0 shell host proof and
-  rolling latest-plugin checks. Approval/resume and plugin-failure limitations
-  keep the integration experimental.
-- **Executable security assurance** — A public manifest, adversarial corpus,
-  sanitized evidence summaries, and CI gate connect support claims to their
-  actual test level. [Read the assurance model →](getting-started/security-assurance.md)
-- **Exact-context approvals** — An approval retry must match the originating
-  host identity and normalized action payload instead of being reusable across
-  otherwise identical sessions.
-
-## What's New in v1.3
-
-- **Zero-configuration OpenClaw protection** — `rampart protect openclaw` installs managed policies, enables the native plugin, starts the local service, configures fail-closed behavior, restarts the gateway, and verifies the boundary.
-- **Active behavioral verification** — `rampart verify openclaw` sends fixed, non-executing canaries through the live plugin and policy path, then reports which expected decisions were observed.
-- **Safer managed defaults** — Routine local work continues while destructive actions and credential access are denied, and publishing, deployment, opaque execution, and cross-conversation messaging require approval.
-- **Fail-closed integration hardening** — Invalid policy responses, non-loopback policy URLs, installed-plugin tampering, and unavailable managed protection are detected instead of silently allowing tool calls.
-- **Repeatable Linux evidence** — The lab runner validates an exact commit in an isolated worktree and retains structured logs, summaries, environment metadata, and checksums.
-- **Patched release toolchain** — CI, release, Docker, and upstream compatibility gates use Go 1.25.12.
-
-### v1.2
-
-- **Audit recovery is release-hardened** — `rampart serve` reconstructs the audit chain head from the latest valid JSONL event across log files, so absent, stale, or tampered anchors cannot reset the next `prev_hash`.
-- **Hosted approval foundation** — Rampart can support host-owned approval flows without creating a second hidden Rampart approval queue, preserving a single user-facing approval owner.
-- **Experimental Hermes policy gate correlation** — Hermes tool-call metadata reaches Rampart audit records so policy-gate decisions can be traced back to the originating Hermes tool call.
-
-### v1.1
-
-- **Machine-readable diagnostics** — `rampart status --json`, `rampart doctor --json`, and `rampart inventory --json` expose structured runtime and integration state for automation.
-- **OpenClaw gateway v4 support** — the bundled plugin speaks the current gateway/status response contract while preserving native approval and audit ownership.
-- **Codex native shell audit coverage** — the release gate now proves Codex app-server native shell calls correlate with canonical Rampart `exec` audit events.
-- **Patched release toolchain** — CI, release, and Docker builds now use Go 1.25.10.
-
-### v1.0
-
-- **Update checks are sane** — `rampart doctor` understands the 1.0 release line and no longer suggests downgrading release candidates to the older stable `v0.9.22` release.
-- **OpenClaw 2026.5.6 verified for launch** — Rampart uses OpenClaw's first-class plugin approval path as the single human-approval owner, with Rampart handling policy, audit, and durable allow-always persistence. [Details →](integrations/openclaw.md)
-- **Degraded mode is explicit** — sensitive OpenClaw tools block when `rampart serve` is unavailable, while only configured lower-risk `failOpenTools` may proceed.
-- **Setup and doctor are launch-strict** — `rampart setup openclaw` installs the native plugin cleanly, repairs approval-hardening drift, and `rampart doctor` checks plugin state, serve reachability, approval timeout alignment, and version coherence.
-- **Matching and bypass regressions are tighter** — shell-wrapper normalization, URL/domain handling, path matching, and OpenClaw plugin approval/degraded-mode tests now cover the hard edges found during the 1.0 RC pass.
-
-### v0.9.22
-
-- **Runtime config is finally less weird** — Rampart now has a documented persistent local config file at `~/.rampart/config.yaml`, with a clear `url` / `serve_url` / `api` precedence model for hooks, approvals, reloads, and service-backed flows. [Details →](getting-started/configuration.md)
-- **Config resolution is stricter and more trustworthy** — malformed local config no longer silently falls back to the wrong endpoint during approval, hook, preload, watch, or reload paths.
-- **OpenClaw approval integrity is tighter** — ambiguous `PostToolUseFailure` events no longer get mislabeled as Rampart denials, which keeps native approval history and audit state more honest. [Details →](guides/openclaw-approval.md)
-- **OpenClaw docs are now aligned with reality** — native plugin first, single approval owner, legacy dist patching treated as compatibility-only. [Details →](integrations/openclaw.md)
-
-### v0.9.21
-
-- **OpenClaw trust signals tightened** — `rampart status` is more careful about when it claims OpenClaw bridge/plugin state.
-- **Built-in self-modification policy tuned** — human-readable docs and PR text can mention Rampart commands without tripping the policy, while real self-modifying command invocations remain protected.
-- **Support contract clarified** — the published support matrix now clearly splits recommended, supported, and legacy OpenClaw integration tiers.
-
-### v0.9.20
-
-- **OpenClaw approval trust** — Native Discord exec approvals are the supported path for Rampart's OpenClaw integration. OpenClaw owns approval UI/state, Rampart owns policy, audit, and allow-always persistence. [Details →](integrations/openclaw.md)
-- **Durable Allow Always** — OpenClaw approvals can persist safe learned rules to `user-overrides.yaml`.
-- **Sensitive degraded-mode behavior** — High-risk OpenClaw tools stop silently bypassing policy when the service is unavailable.
-
-### v0.9.13
-
-- **`plugins.allow` set automatically** — Setup now adds `rampart` to OpenClaw's `plugins.allow` config. Existing plugins are preserved — only appends, never overwrites. No more "plugins.allow is empty" warning in `openclaw doctor`.
-- **Plugin version corrected** — Plugin now reports the actual Rampart version instead of `0.1.0`.
-- **`rampart doctor` false positives fixed** — Dist-patch and ask-mode warnings are now suppressed when the native plugin is active (both are irrelevant with plugin integration).
-- **Enforcement verified** — Confirmed `before_tool_call` is properly awaited and blocking in OpenClaw 2026.3.28+. Deny decisions are enforced end-to-end, not just logged.
-
-### v0.9.12
-
-- **Plugin bundled in binary** — The OpenClaw plugin is now embedded directly in the `rampart` binary. `rampart setup openclaw` works on any machine — no external checkout or npm install required. [Learn more →](integrations/openclaw.md)
-- **Bridge hardened** — Errors during approval escalations now fail closed (deny) instead of silently allowing.
-- **Learn endpoint secured** — `POST /v1/rules/learn` now rate-limited and restricted to `allow` decisions only.
-
-### v0.9.11
-
-- **`openclaw.yaml` security hardening** — Closed `bash *`/`sh *`/`curl *`/`wget *` exec bypass holes. Dedicated `block-force-push` policy. Tightened docker/kubectl/git subcommand allowlists.
-- **`default_action: ask` in openclaw.yaml** — Novel or unlisted tool calls surface for human approval instead of silently failing.
-- **`sessions_spawn` depth guard** — Subagents cannot spawn further agents.
-
-### v0.9.10
-
-- **Native OpenClaw plugin** — `rampart setup openclaw` auto-detects your OpenClaw version and installs a native `before_tool_call` hook. Intercepts supported OpenClaw tool calls (exec, read, write, web_fetch, browser, message) without fragile dist patching; degraded behavior still depends on tool class and configuration. Requires OpenClaw >= 2026.3.28. [Learn more →](integrations/openclaw.md)
-- **Always Allow writeback** — Click "Always Allow" in the OpenClaw approval UI and Rampart writes a permanent exact rule to `~/.rampart/policies/user-overrides.yaml`.
-- **Approval store persistence** — Pending approvals survive `rampart serve` restarts via JSONL journal.
-- **`rampart doctor` plugin check** — Shows `✓ OpenClaw plugin: installed` when the native hook is active.
+Rampart v1.6.0 adds one-command behavioral verification across configured
+boundaries, current OpenClaw approval ownership and stable-package gating,
+safer service lifecycle identity, seamless policy and historical-audit
+upgrades, and isolated Hermes 0.20 host evidence. See the
+[release notes](https://github.com/peg/rampart/releases/latest) for the concise
+upgrade summary or the repository
+[changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.

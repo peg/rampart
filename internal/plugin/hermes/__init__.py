@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 DEFAULT_SERVE_URL = "http://127.0.0.1:9090"
 DEFAULT_TIMEOUT_MS = 3000

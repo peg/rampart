@@ -16,7 +16,7 @@ The recommended managed path is fail closed: if the Rampart policy service is un
     - **OpenClaw 2026.4.29 - 2026.5.1**: Supported for native plugin startup/interception; plugin approval delivery was not the launch baseline.
     - **OpenClaw 2026.3.28 - 2026.4.28**: Native plugin works for tool enforcement, but Rampart's polished approval path is supported on newer OpenClaw builds.
     - **OpenClaw < 2026.3.28**: Legacy shim + bridge — exec-only coverage, requires re-patching after upgrades.
-    - Refresh release claims against the latest stable OpenClaw before publishing a new Rampart release. See the [Release Compatibility Gate](../getting-started/release-compatibility-gate.md).
+    - Published support claims are tied to the evidence in Rampart's [integration assurance manifest](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
 
     `rampart protect openclaw` uses the native plugin on current supported OpenClaw versions. `rampart setup openclaw` remains available for advanced and legacy configurations.
 
@@ -45,6 +45,20 @@ systemctl --user is-active rampart-serve.service
 Both should return `active`.
 
 No external downloads, no npm install — the plugin is bundled inside the `rampart` binary.
+
+To use a different local port, start that service first and make the endpoint
+explicit:
+
+```bash
+rampart serve --addr 127.0.0.1 --port 19090 --background
+rampart protect openclaw --serve-url http://127.0.0.1:19090
+```
+
+The explicit URL is authoritative for startup checks, plugin configuration,
+and verification. The managed OpenClaw path accepts only loopback HTTP(S) URLs
+without embedded credentials, paths, queries, or fragments. Rampart will not
+silently fall back to port 9090 when an explicit non-default endpoint is
+unreachable.
 
 For advanced setups that manage their own policies or require the legacy compatibility path, use `rampart setup openclaw` and configure degraded behavior explicitly.
 
@@ -94,6 +108,7 @@ With the native plugin, **supported OpenClaw tool calls are intercepted**. Polic
 | `web_search` | ✅ Native plugin | Always allowed by default |
 | `browser` | ✅ Native plugin | Read-only inspection is allowed; navigation uses domain rules; clicks, typing, uploads, and other mutations require approval |
 | `message` | ✅ Native plugin | Read actions always allowed; sends to unknown channels require approval |
+| `ask_user` | ✅ Native plugin | Structured questions to the originating user are classified as local interaction, not cross-conversation messaging |
 | `canvas` | ✅ Native plugin | Always allowed (UI only) |
 | `sessions_spawn` | ✅ Native plugin | Subagents cannot spawn further agents |
 | `process` / `nodes` / `gateway` / `subagents` | ✅ Native plugin | Known read-only status operations are allowed; mutations require approval |
@@ -147,6 +162,10 @@ rampart init --profile openclaw
 
 When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a durable rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
 
+The Rampart-owned approval card explicitly offers `allow-once`, `allow-always`,
+and `deny`, and denies on timeout. Only `allow-always` creates a durable rule.
+One-time approvals, denials, timeouts, and cancellations never change policy.
+
 Automatic approvals are exact by default. Rampart never inserts a wildcard or
 strips arguments, pipes, or redirects when persisting an approved command.
 Literal wildcard characters are escaped as policy literals. Exact automatic
@@ -186,31 +205,15 @@ For end-to-end confidence, validate one case in each state:
 - fresh ask, for example `sudo id`
 - hard deny, for example `rm -rf /tmp`
 
-For release-candidate validation, run the latest-OpenClaw compatibility harness in a temporary state directory:
-
-```bash
-node scripts/compat-openclaw-latest.mjs --npm-latest
-```
-
-That isolated harness validates plugin install/config and bundled plugin behavior. Before promoting a release that claims OpenClaw as recommended, also run the opt-in live runtime audit regression:
-
-```bash
-export RAMPART_OPENCLAW_ISOLATION_ROOT=/path/to/disposable/root
-export HOME="$RAMPART_OPENCLAW_ISOLATION_ROOT/home"
-export OPENCLAW_STATE_DIR="$HOME/.openclaw"
-export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
-RAMPART_OPENCLAW_RUNTIME=1 \
-RAMPART_OPENCLAW_RESTART_SERVICES= \
-node scripts/test-openclaw-codex-native-audit.mjs
-```
-
-Use a prepared, disposable OpenClaw state and authenticated Codex test agent whose gateway is already running against that state. Before starting the isolated gateway, configure `plugins.entries.rampart` with `enabled: true`, `serveUrl: http://127.0.0.1:19090`, and `failOpen: false`. The script refuses primary-state paths and service restarts. It requires real Codex app-server turns with correlated trajectory and Rampart canonical `exec` audit evidence, including a native plugin approval with `allow-once` exact resume and successful execution, plus a denied disposable canary that remains unchanged.
+Maintainers can reproduce the current stable-package and credentialed native
+runtime proofs with the single canonical
+[OpenClaw release acceptance checklist](https://github.com/peg/rampart/blob/main/docs/design/openclaw-approval-acceptance-checklist.md).
 
 Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v1.5.0  active
+# rampart  v1.6.0  active
 ```
 
 ## Troubleshooting

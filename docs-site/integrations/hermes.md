@@ -113,6 +113,12 @@ Use this only when you understand the approval ownership tradeoff. If a policy r
 
 ## Verification
 
+Hermes does not yet expose a safe built-in host verifier, so there is no
+`rampart verify hermes` command. `rampart verify --all` intentionally skips the
+Hermes plugin instead of treating its static configuration as behavioral proof.
+Use `rampart doctor` to confirm local installation and service requirements,
+then use the isolated compatibility harness for runtime evidence.
+
 Use the isolated latest-Hermes compatibility harness before enabling the plugin on a live gateway:
 
 ```bash
@@ -135,8 +141,8 @@ cannot accidentally load source messaging-platform credentials:
 scripts/compat-hermes-host.sh --yes --gateway --rampart-bin ./rampart
 ```
 
-A completed isolated Hermes 0.19.0 Linux run proved those properties through
-both the direct CLI and a disposable localhost API gateway. The gateway run
+A completed isolated Hermes 0.20.0 Linux gateway run, plus earlier 0.19.0
+direct and gateway runs, proved those properties. The current gateway run
 loaded only isolated model, provider, toolset, and authentication state; it did
 not load normal memories, sessions, rules, workspaces, messaging gateways, or
 MCP configuration. See

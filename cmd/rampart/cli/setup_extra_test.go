@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/peg/rampart/internal/build"
+	"github.com/peg/rampart/policies"
 )
 
 func TestHasRampartHook(t *testing.T) {
@@ -591,5 +594,29 @@ func TestInstallOpenClawPolicyVersionStamped(t *testing.T) {
 			snippet = snippet[:40]
 		}
 		t.Fatalf("expected installed OpenClaw policy to be version stamped, got: %q", snippet)
+	}
+	version, hash, installedContent := parseManagedPolicyHeaders(content)
+	if version != build.Version || hash == "" {
+		t.Fatalf("managed headers = version %q hash %q, want version %q and a content hash", version, hash, build.Version)
+	}
+	embedded, err := policies.Profile("openclaw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(installedContent, embedded) {
+		t.Fatal("installed OpenClaw policy payload does not match the embedded profile")
+	}
+}
+
+func TestManagedPolicyHeadersPreserveEmbeddedReleaseMetadata(t *testing.T) {
+	payload := []byte("# rampart-policy-version: 1.5.0\n# Rampart built-in profile: openclaw\nversion: \"1\"\npolicies: []\n")
+	installed := versionStampedPolicyContentForVersion(payload, "1.6.0")
+
+	version, hash, content := parseManagedPolicyHeaders(installed)
+	if version != "1.6.0" || hash == "" {
+		t.Fatalf("managed headers = version %q hash %q, want outer version and hash", version, hash)
+	}
+	if !bytes.Equal(content, payload) {
+		t.Fatalf("managed payload was truncated at embedded release metadata:\n%s", content)
 	}
 }

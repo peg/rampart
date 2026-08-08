@@ -44,7 +44,7 @@ func TestCommittedLiveEvidenceSummaries(t *testing.T) {
 	datePattern := regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 	for _, integration := range manifest.Integrations {
 		for _, evidence := range integration.Evidence {
-			if evidence.Kind != "live" || filepath.Ext(evidence.Path) != ".json" {
+			if evidence.Kind != "live" {
 				continue
 			}
 			t.Run(integration.ID, func(t *testing.T) {
@@ -91,6 +91,23 @@ func TestCommittedLiveEvidenceSummaries(t *testing.T) {
 	}
 }
 
+func TestCompletedLiveEvidenceMustBeJSON(t *testing.T) {
+	root := repositoryRoot(t)
+	manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Integrations[0].Evidence = append(manifest.Integrations[0].Evidence, Evidence{
+		Path:   "scripts/lab/openclaw-container-acceptance.sh",
+		Kind:   "live",
+		Proves: "An available harness is not a completed result.",
+	})
+	err = manifest.Validate(root)
+	if err == nil || !strings.Contains(err.Error(), "completed live evidence must be a JSON summary") {
+		t.Fatalf("expected live-summary validation failure, got %v", err)
+	}
+}
+
 func TestPublicSupportMatrixNamesEveryAssuredIntegration(t *testing.T) {
 	root := repositoryRoot(t)
 	manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
@@ -103,8 +120,30 @@ func TestPublicSupportMatrixNamesEveryAssuredIntegration(t *testing.T) {
 	}
 	page := strings.ToLower(string(data))
 	for _, integration := range manifest.Integrations {
-		if !strings.Contains(page, strings.ToLower(integration.DisplayName)) {
-			t.Errorf("public support matrix does not name assured integration %q", integration.DisplayName)
+		marker := `data-integration="` + strings.ToLower(integration.ID) + `"`
+		start := strings.Index(page, marker)
+		if start < 0 {
+			t.Errorf("public support matrix does not contain assured integration %q", integration.ID)
+			continue
+		}
+		end := strings.Index(page[start:], "</tr>")
+		if end < 0 {
+			t.Errorf("public support matrix row for %q is not closed", integration.DisplayName)
+			continue
+		}
+		row := page[start : start+end]
+		if !strings.Contains(row, strings.ToLower(integration.DisplayName)) {
+			t.Errorf("public support matrix row for %q does not contain display name %q", integration.ID, integration.DisplayName)
+		}
+		if !strings.Contains(row, strings.ToLower(integration.SetupCommand)) {
+			t.Errorf("public support matrix row for %q does not contain setup command %q", integration.DisplayName, integration.SetupCommand)
+		}
+		wantAuto := "no"
+		if integration.AutoProtect != nil && *integration.AutoProtect {
+			wantAuto = "yes"
+		}
+		if !strings.Contains(row, `data-label="bare protect">`+wantAuto) {
+			t.Errorf("public support matrix row for %q does not report bare protect as %q", integration.DisplayName, wantAuto)
 		}
 	}
 }
@@ -123,6 +162,7 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 	version := string(matches[1])
 
 	expectations := map[string][]string{
+		"assurance/integrations.yaml":                   {"baseline_release: v" + version},
 		"internal/plugin/openclaw/package.json":         {`"version": "` + version + `"`},
 		"internal/plugin/openclaw/openclaw.plugin.json": {`"version": "` + version + `"`},
 		"internal/plugin/openclaw/index.js":             {`export const version = "` + version + `";`},
@@ -131,7 +171,6 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 		"policies/openclaw.yaml":                        {"# rampart-policy-version: " + version},
 		"docs-site/index.html":                          {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
 		"docs/index.html":                               {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
-		"docs-site/reference/threat-model.md":           {"Applies to: v" + version},
 		"docs/THREAT-MODEL.md":                          {"Applies to: v" + version},
 	}
 	for name, required := range expectations {
@@ -250,6 +289,7 @@ func TestVerifiedTierCannotUsePolicyOnlyEvidence(t *testing.T) {
 			SetupCommand: "rampart protect example",
 			Boundary:     "native_hook",
 			Platforms:    []string{"linux"},
+			AutoProtect:  boolPointer(false),
 			UpstreamCI:   "none",
 			Approval:     "native",
 			Coverage: map[string]string{
@@ -274,6 +314,10 @@ func TestVerifiedTierCannotUsePolicyOnlyEvidence(t *testing.T) {
 	}
 }
 
+func boolPointer(value bool) *bool {
+	return &value
+}
+
 func TestEvidenceCannotEscapeRepository(t *testing.T) {
 	root := repositoryRoot(t)
 	manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
@@ -285,6 +329,41 @@ func TestEvidenceCannotEscapeRepository(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "repository-relative") {
 		t.Fatalf("expected unsafe evidence path failure, got %v", err)
 	}
+}
+
+func TestRuntimeMetadataMustBeExplicitAndConsistent(t *testing.T) {
+	root := repositoryRoot(t)
+	load := func(t *testing.T) *Manifest {
+		t.Helper()
+		manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return manifest
+	}
+
+	t.Run("auto protect is required", func(t *testing.T) {
+		manifest := load(t)
+		manifest.Integrations[0].AutoProtect = nil
+		err := manifest.Validate(root)
+		if err == nil || !strings.Contains(err.Error(), "auto_protect must be explicitly true or false") {
+			t.Fatalf("expected missing auto-protect failure, got %v", err)
+		}
+	})
+
+	t.Run("experimental integrations are explicit", func(t *testing.T) {
+		manifest := load(t)
+		for index := range manifest.Integrations {
+			if manifest.Integrations[index].SupportTier == "experimental" {
+				manifest.Integrations[index].AutoProtect = boolPointer(true)
+				break
+			}
+		}
+		err := manifest.Validate(root)
+		if err == nil || !strings.Contains(err.Error(), "auto_protect requires verified or supported tier") {
+			t.Fatalf("expected experimental auto-protect failure, got %v", err)
+		}
+	})
 }
 
 func TestEvidencePathsUsePortableRepositorySyntax(t *testing.T) {

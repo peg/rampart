@@ -238,6 +238,48 @@ policies:
 	assert.Contains(t, err.Error(), "duplicate policy name")
 }
 
+func TestDirStore_AllowsOnlyLegacyManagedOpenClawCollision(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, filepath.Join(dir, "openclaw.yaml"), `
+version: "1"
+policies:
+  - name: block-self-modification
+    match: {tool: exec}
+    rules: [{action: deny, when: {command_matches: ["rampart *"]}}]
+`)
+	writeTestFile(t, filepath.Join(dir, "standard.yaml"), `
+version: "1"
+policies:
+  - name: block-self-modification
+    match: {tool: exec}
+    rules: [{action: deny, when: {default: true}}]
+`)
+
+	cfg, err := NewDirStore(dir, nil).Load()
+	require.NoError(t, err)
+	require.Len(t, cfg.Policies, 1)
+	assert.Equal(t, filepath.Join(dir, "openclaw.yaml"), cfg.Policies[0].FilePath)
+}
+
+func TestDirStore_LegacyProfileNamesDoNotExcuseOtherDuplicates(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, name := range []string{"openclaw.yaml", "standard.yaml"} {
+		writeTestFile(t, filepath.Join(dir, name), `
+version: "1"
+policies:
+  - name: unexpected-duplicate
+    match: {tool: exec}
+    rules: [{action: deny, when: {default: true}}]
+`)
+	}
+
+	_, err := NewDirStore(dir, nil).Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate policy name")
+}
+
 func TestMultiStore_FileAndDir(t *testing.T) {
 	dir := t.TempDir()
 	policyDir := filepath.Join(dir, "policies")
@@ -272,6 +314,65 @@ policies:
 	assert.Len(t, cfg.Policies, 2)
 	assert.Equal(t, "main-policy", cfg.Policies[0].Name)
 	assert.Equal(t, "auto-allow-git", cfg.Policies[1].Name)
+}
+
+func TestMultiStore_PrimaryPolicyWinsCrossLayerDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies")
+	require.NoError(t, os.MkdirAll(policyDir, 0o755))
+
+	primaryPath := filepath.Join(dir, "rampart.yaml")
+	writeTestFile(t, primaryPath, `
+version: "1"
+default_action: deny
+policies:
+  - name: shared-policy
+    match: {tool: exec}
+    rules: [{action: deny, when: {default: true}}]
+`)
+	writeTestFile(t, filepath.Join(policyDir, "openclaw.yaml"), `
+version: "1"
+default_action: ask
+policies:
+  - name: shared-policy
+    match: {tool: exec}
+    rules: [{action: allow, when: {default: true}}]
+  - name: directory-only
+    match: {tool: read}
+    rules: [{action: ask, when: {default: true}}]
+`)
+
+	cfg, err := NewMultiStore(primaryPath, policyDir, nil).Load()
+	require.NoError(t, err)
+	assert.Equal(t, "deny", cfg.DefaultAction)
+	require.Len(t, cfg.Policies, 2)
+	assert.Equal(t, "shared-policy", cfg.Policies[0].Name)
+	assert.Equal(t, primaryPath, cfg.Policies[0].FilePath)
+	assert.Equal(t, "directory-only", cfg.Policies[1].Name)
+}
+
+func TestMultiStore_DirectoryDuplicatesStillFailClosed(t *testing.T) {
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies")
+	require.NoError(t, os.MkdirAll(policyDir, 0o755))
+
+	primaryPath := filepath.Join(dir, "rampart.yaml")
+	writeTestFile(t, primaryPath, `version: "1"
+policies: []
+`)
+	for _, name := range []string{"a.yaml", "b.yaml"} {
+		writeTestFile(t, filepath.Join(policyDir, name), `
+version: "1"
+policies:
+  - name: directory-duplicate
+    match: {tool: exec}
+    rules: [{action: deny, when: {default: true}}]
+`)
+	}
+
+	_, err := NewMultiStore(primaryPath, policyDir, nil).Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate policy name")
 }
 
 func TestMultiStore_DirOnly(t *testing.T) {

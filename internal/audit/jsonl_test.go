@@ -642,6 +642,121 @@ func TestJSONLSink_RecoverySupportsLegacyReopenAfterRotation(t *testing.T) {
 	assert.EqualValues(t, 4, state.eventCount)
 }
 
+func TestJSONLSink_RecoverySupportsLegacyRestartEpochs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	started := time.Now().UTC().Add(-4 * time.Hour)
+
+	firstRoot := sampleEvent("exec")
+	firstRoot.ID = NewEventID()
+	firstRoot.Timestamp = started
+	firstRoot.PrevHash = ""
+	require.NoError(t, firstRoot.ComputeHash())
+	firstTail := sampleEvent("read")
+	firstTail.ID = NewEventID()
+	firstTail.Timestamp = started.Add(time.Hour)
+	firstTail.PrevHash = firstRoot.Hash
+	require.NoError(t, firstTail.ComputeHash())
+	secondRoot := sampleEvent("write")
+	secondRoot.ID = NewEventID()
+	secondRoot.Timestamp = started.Add(2 * time.Hour)
+	secondRoot.PrevHash = ""
+	require.NoError(t, secondRoot.ComputeHash())
+	secondTail := sampleEvent("exec")
+	secondTail.ID = NewEventID()
+	secondTail.Timestamp = started.Add(3 * time.Hour)
+	secondTail.PrevHash = secondRoot.Hash
+	require.NoError(t, secondTail.ComputeHash())
+
+	lines := make([][]byte, 0, 5)
+	for _, event := range []Event{firstRoot, firstTail, secondRoot, secondTail} {
+		encoded, err := json.Marshal(event)
+		require.NoError(t, err)
+		lines = append(lines, encoded)
+	}
+	lines = append(lines, nil)
+	require.NoError(t, os.WriteFile(path, bytes.Join(lines, []byte{'\n'}), 0o600))
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	state, err := recoverChainStateFromDir(dir, logger)
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, state.eventCount)
+	assert.Equal(t, secondTail.Hash, state.lastHash)
+
+	sink, err := NewJSONLSink(dir, WithFsync(false), WithLogger(logger))
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(sampleEvent("exec")))
+	require.NoError(t, sink.Close())
+	assertLastEventPrevHash(t, path, secondTail.Hash)
+}
+
+func TestJSONLSink_RecoverySupportsLegacyEmptyContinuationAtNewEpoch(t *testing.T) {
+	dir := t.TempDir()
+	firstName := "2026-05-25.jsonl"
+	secondName := "2026-05-26.jsonl"
+	started := time.Date(2026, 5, 25, 20, 0, 0, 0, time.UTC)
+
+	first := sampleEvent("exec")
+	first.ID = NewEventID()
+	first.Timestamp = started
+	first.PrevHash = ""
+	require.NoError(t, first.ComputeHash())
+	second := sampleEvent("write")
+	second.ID = NewEventID()
+	second.Timestamp = started.Add(6 * time.Hour)
+	second.PrevHash = ""
+	require.NoError(t, second.ComputeHash())
+
+	firstLine, err := json.Marshal(first)
+	require.NoError(t, err)
+	headerLine, err := json.Marshal(chainHeader{ChainContinue: "", PrevFile: firstName})
+	require.NoError(t, err)
+	secondLine, err := json.Marshal(second)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, firstName), append(firstLine, '\n'), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, secondName),
+		bytes.Join([][]byte{headerLine, secondLine, nil}, []byte{'\n'}), 0o600))
+
+	state, err := recoverChainStateFromDir(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, state.eventCount)
+	assert.Equal(t, second.Hash, state.lastHash)
+}
+
+func TestJSONLSink_RecoveryRejectsOverlappingLegacyEpochs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-05-23.jsonl")
+	started := time.Date(2026, 5, 23, 4, 0, 0, 0, time.UTC)
+
+	firstRoot := sampleEvent("exec")
+	firstRoot.ID = NewEventID()
+	firstRoot.Timestamp = started
+	firstRoot.PrevHash = ""
+	require.NoError(t, firstRoot.ComputeHash())
+	firstTail := sampleEvent("read")
+	firstTail.ID = NewEventID()
+	firstTail.Timestamp = started.Add(3 * time.Hour)
+	firstTail.PrevHash = firstRoot.Hash
+	require.NoError(t, firstTail.ComputeHash())
+	overlappingRoot := sampleEvent("write")
+	overlappingRoot.ID = NewEventID()
+	overlappingRoot.Timestamp = started.Add(2 * time.Hour)
+	overlappingRoot.PrevHash = ""
+	require.NoError(t, overlappingRoot.ComputeHash())
+
+	lines := make([][]byte, 0, 4)
+	for _, event := range []Event{firstRoot, firstTail, overlappingRoot} {
+		encoded, err := json.Marshal(event)
+		require.NoError(t, err)
+		lines = append(lines, encoded)
+	}
+	lines = append(lines, nil)
+	require.NoError(t, os.WriteFile(path, bytes.Join(lines, []byte{'\n'}), 0o600))
+
+	_, err := recoverChainStateFromDir(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.ErrorContains(t, err, "overlaps or precedes")
+}
+
 func TestJSONLSink_TamperedAnchorFallsBack(t *testing.T) {
 	dir := t.TempDir()
 

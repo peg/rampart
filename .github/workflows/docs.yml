@@ -6,6 +6,8 @@ on:
     paths:
       - 'docs-site/**'
       - 'docs/API-REFERENCE.md'
+      - 'docs/ARCHITECTURE.md'
+      - 'docs/THREAT-MODEL.md'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
       - 'scripts/check-api-reference.sh'
@@ -15,6 +17,8 @@ on:
     paths:
       - 'docs-site/**'
       - 'docs/API-REFERENCE.md'
+      - 'docs/ARCHITECTURE.md'
+      - 'docs/THREAT-MODEL.md'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
       - 'scripts/check-api-reference.sh'
@@ -40,7 +44,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Check canonical API reference wrapper
+      - name: Check canonical document wrappers
         run: sh scripts/check-api-reference.sh
 
       - name: Install Python dependencies

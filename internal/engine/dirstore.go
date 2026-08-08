@@ -146,18 +146,19 @@ func NewMultiStore(file, dir string, logger *slog.Logger) *MultiStore {
 
 // Load reads the primary file (if set) and all directory files, merging them.
 func (s *MultiStore) Load() (*Config, error) {
-	var allFiles []string
-
-	// Primary config file first.
+	var primary *Config
 	if s.file != "" {
 		absFile, err := filepath.Abs(s.file)
 		if err != nil {
 			return nil, fmt.Errorf("engine: resolve file %q: %w", s.file, err)
 		}
-		allFiles = append(allFiles, absFile)
+		primary, err = NewFileStore(absFile).Load()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Then directory files in sorted order.
+	var dirFiles []string
 	if s.dir != "" {
 		absDir, err := filepath.Abs(s.dir)
 		if err != nil {
@@ -169,7 +170,6 @@ func (s *MultiStore) Load() (*Config, error) {
 			return nil, fmt.Errorf("engine: read dir %q: %w", absDir, err)
 		}
 		if err == nil {
-			var dirFiles []string
 			for _, e := range entries {
 				if e.IsDir() {
 					continue
@@ -188,17 +188,55 @@ func (s *MultiStore) Load() (*Config, error) {
 				}
 			}
 			sort.Strings(dirFiles)
-			allFiles = append(allFiles, dirFiles...)
 		} else {
 			s.logger.Debug("engine: config dir does not exist, skipping", "dir", absDir)
 		}
 	}
 
-	if len(allFiles) == 0 {
+	if primary == nil && len(dirFiles) == 0 {
 		return nil, fmt.Errorf("engine: no config file or directory specified")
 	}
+	if len(dirFiles) == 0 {
+		return primary, nil
+	}
 
-	return mergeYAMLFiles(allFiles, s.logger)
+	directory, err := mergeYAMLFiles(dirFiles, s.logger)
+	if err != nil {
+		return nil, err
+	}
+	if primary == nil {
+		return directory, nil
+	}
+
+	// MultiStore is an explicit layering construct: the primary file wins on
+	// name collisions, matching Rampart's historical behavior. Directory files
+	// are still merged and validated together first, so duplicates within the
+	// policy directory remain hard errors instead of becoming order-dependent.
+	seen := make(map[string]struct{}, len(primary.Policies))
+	for _, policy := range primary.Policies {
+		seen[policy.Name] = struct{}{}
+	}
+	for _, policy := range directory.Policies {
+		if _, duplicate := seen[policy.Name]; duplicate {
+			s.logger.Debug("engine: primary policy overrides directory policy", "name", policy.Name, "primary", s.file, "directory", policy.FilePath)
+			continue
+		}
+		seen[policy.Name] = struct{}{}
+		primary.Policies = append(primary.Policies, policy)
+	}
+	if primary.DefaultAction == "" {
+		primary.DefaultAction = directory.DefaultAction
+	}
+	if primary.Notify == nil {
+		primary.Notify = directory.Notify
+	}
+	if primary.responseRegexCache == nil {
+		primary.responseRegexCache = make(map[string]*regexp.Regexp)
+	}
+	for pattern, compiled := range directory.responseRegexCache {
+		primary.responseRegexCache[pattern] = compiled
+	}
+	return primary, nil
 }
 
 // Path returns a description of the sources.
@@ -344,7 +382,7 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 		Version:            "1",
 		responseRegexCache: make(map[string]*regexp.Regexp),
 	}
-	seen := make(map[string]bool) // track policy names for dedup
+	seen := make(map[string]string) // policy name -> first source path
 	var loadedFiles []string
 
 	for _, f := range files {
@@ -375,16 +413,27 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 			merged.Notify = cfg.Notify
 		}
 
-		// Merge policies, skipping duplicates.
+		// Merge policies. Unexpected duplicate names fail closed; the one
+		// explicitly recognized legacy managed-profile collision is retired by
+		// the next OpenClaw policy refresh.
 		for _, p := range cfg.Policies {
 			if p.Name == "" {
 				return nil, fmt.Errorf("engine: policy in %q has no name", f)
 			}
-			if seen[p.Name] {
+			if firstPath, duplicate := seen[p.Name]; duplicate {
+				if isLegacyManagedProfileCollision(p.Name, firstPath, f) {
+					// Rampart <=1.5 shipped block-self-modification in both the
+					// OpenClaw and standard managed profiles. Directory ordering
+					// historically made the OpenClaw rule authoritative. Preserve
+					// exactly that narrow upgrade path while continuing to fail
+					// closed on every other duplicate.
+					logger.Warn("engine: skipped legacy managed profile duplicate", "name", p.Name, "first", firstPath, "duplicate", f)
+					continue
+				}
 				return nil, fmt.Errorf("engine: duplicate policy name %q in %q", p.Name, f)
 			}
 			p.FilePath = f
-			seen[p.Name] = true
+			seen[p.Name] = f
 			merged.Policies = append(merged.Policies, p)
 		}
 		for pattern, compiled := range cfg.responseRegexCache {
@@ -400,6 +449,16 @@ func mergeYAMLFiles(files []string, logger *slog.Logger) (*Config, error) {
 
 	logger.Info("engine: loaded policy files", "files", loadedFiles, "policies", len(merged.Policies))
 	return merged, nil
+}
+
+func isLegacyManagedProfileCollision(name, firstPath, duplicatePath string) bool {
+	if name != "block-self-modification" {
+		return false
+	}
+	first := filepath.Base(firstPath)
+	duplicate := filepath.Base(duplicatePath)
+	return (first == "openclaw.yaml" && duplicate == "standard.yaml") ||
+		(first == "standard.yaml" && duplicate == "openclaw.yaml")
 }
 
 // LayeredStore wraps a base PolicyStore and layers an optional extra policy file on top.

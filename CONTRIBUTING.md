@@ -138,6 +138,12 @@ at `rampart.sh`. Keep those two files byte-for-byte identical; CI enforces this.
 `docs-site/index.md` is a different file: it is the MkDocs homepage served at
 `docs.rampart.sh`.
 
+User guides live only in `docs-site/`. Files under `docs/guides/`, plus the old
+community-policy and migration URLs, are compatibility redirects for existing
+`rampart.sh` links and must not become second copies. Repository specifications
+such as the threat model, architecture, and release-lab procedures remain under
+`docs/` and may be linked from the user site.
+
 ## Testing
 
 ### Requirements

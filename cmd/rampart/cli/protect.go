@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,7 +112,7 @@ protects each one through its strongest available native boundary.`,
 	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "Do not restart the OpenClaw gateway after configuration")
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip active behavioral verification")
 	cmd.Flags().BoolVar(&reinstall, "reinstall", false, "Reinstall the bundled OpenClaw plugin even when it is current")
-	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override used for verification")
+	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override used for startup, host configuration, and verification")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for each active verification check")
 	return cmd
 }
@@ -125,12 +127,16 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 	w := cmd.OutOrStdout()
 	errW := cmd.ErrOrStderr()
 	fmt.Fprintf(w, "\nProtecting %s through %s...\n", driver.DisplayName, driver.Boundary)
+	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Errorf("protect %s: resolve serve URL: %w", driver.ID, err)
+	}
 	guardPath, err := installManagedGuardPolicy()
 	if err != nil {
 		return fmt.Errorf("protect %s: install managed Guard policy: %w", driver.ID, err)
 	}
 	fmt.Fprintf(w, "✓ Managed Guard policy installed at %s\n", guardPath)
-	if err := ensureServeRunning(w, errW); err != nil {
+	if err := ensureServeRunningForURL(w, errW, resolvedURL); err != nil {
 		return fmt.Errorf("protect %s: start Rampart policy service: %w", driver.ID, err)
 	}
 	if err := runIntegrationSetup(cmd, rootOpts, driver); err != nil {
@@ -141,12 +147,9 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 		fmt.Fprintf(w, "Run `rampart verify %s` to prove the boundary.\n", driver.VerifyTarget)
 		return nil
 	}
-	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
-	if err != nil {
-		return fmt.Errorf("protect %s: resolve serve URL: %w", driver.ID, err)
-	}
 	time.Sleep(150 * time.Millisecond)
 	report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, resolvedURL, opts.Timeout)
+	receiptErr := writeVerificationReceipt(report)
 	fmt.Fprintln(w)
 	printVerificationReport(w, report)
 	if report.Summary.Failed > 0 {
@@ -154,6 +157,9 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 	}
 	if report.Summary.Unverified > 0 {
 		return exitCodeError{code: 2}
+	}
+	if receiptErr != nil {
+		return fmt.Errorf("protect %s: persist assurance evidence: %w", driver.ID, receiptErr)
 	}
 	fmt.Fprintf(w, "\nRampart configuration and adapter verification passed for %s. Restart or reload the host if setup requested it.\n", driver.DisplayName)
 	return nil
@@ -170,6 +176,14 @@ type protectOpenClawOptions struct {
 func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 	w := cmd.OutOrStdout()
 	errW := cmd.ErrOrStderr()
+	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Errorf("protect: resolve serve URL: %w", err)
+	}
+	resolvedURL, err = normalizeOpenClawServeURL(resolvedURL)
+	if err != nil {
+		return fmt.Errorf("protect: invalid OpenClaw policy service URL: %w", err)
+	}
 	fmt.Fprintln(w, "Protecting OpenClaw with Rampart managed defaults...")
 
 	guardPath, err := installManagedGuardPolicy()
@@ -185,12 +199,12 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 
 	state := getOpenClawPluginState()
 	if opts.Reinstall || !openClawPluginCurrent(state) {
-		if err := runSetupOpenClawPlugin(w, errW); err != nil {
+		if err := runSetupOpenClawPluginForServeURL(w, errW, resolvedURL); err != nil {
 			return fmt.Errorf("protect: configure OpenClaw integration: %w", err)
 		}
 	} else {
 		fmt.Fprintf(w, "✓ OpenClaw plugin v%s is installed and enabled\n", ocplugin.Version())
-		if err := ensureServeRunning(w, errW); err != nil {
+		if err := ensureServeRunningForURL(w, errW, resolvedURL); err != nil {
 			return fmt.Errorf("protect: start Rampart policy service: %w", err)
 		}
 	}
@@ -198,7 +212,7 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 	if err != nil {
 		return fmt.Errorf("protect: find OpenClaw: %w", err)
 	}
-	if err := configureOpenClawGuardMode(bin, w, errW); err != nil {
+	if err := configureOpenClawGuardMode(bin, resolvedURL, w, errW); err != nil {
 		return fmt.Errorf("protect: enable fail-closed OpenClaw guard mode: %w", err)
 	}
 	fmt.Fprintln(w, "✓ Enabled fail-closed behavior when Rampart is unavailable")
@@ -218,14 +232,11 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 		return nil
 	}
 
-	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
-	if err != nil {
-		return fmt.Errorf("protect: resolve serve URL: %w", err)
-	}
 	// The policy directory is hot-reloaded. A short delay also gives a freshly
 	// restarted local gateway a chance to expose the plugin verification method.
 	time.Sleep(350 * time.Millisecond)
 	report := runBehavioralVerification(cmd.Context(), "openclaw", resolvedURL, opts.Timeout)
+	receiptErr := writeVerificationReceipt(report)
 	fmt.Fprintln(w)
 	printVerificationReport(w, report)
 	if report.Summary.Failed > 0 {
@@ -233,6 +244,9 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 	}
 	if report.Summary.Unverified > 0 {
 		return exitCodeError{code: 2}
+	}
+	if receiptErr != nil {
+		return fmt.Errorf("protect: persist assurance evidence: %w", receiptErr)
 	}
 	fmt.Fprintln(w, "\nRampart is actively protecting OpenClaw.")
 	return nil
@@ -267,7 +281,11 @@ func installManagedGuardPolicy() (string, error) {
 	return dest, nil
 }
 
-func configureOpenClawGuardMode(openclawBin string, w, errW io.Writer) error {
+func configureOpenClawGuardMode(openclawBin, serveURL string, w, errW io.Writer) error {
+	serveURL, err := normalizeOpenClawServeURL(serveURL)
+	if err != nil {
+		return err
+	}
 	stateDir, configPath, err := resolveOpenClawStateDir(openclawBin)
 	if err != nil {
 		return fmt.Errorf("resolve active OpenClaw state: %w", err)
@@ -279,7 +297,7 @@ func configureOpenClawGuardMode(openclawBin string, w, errW io.Writer) error {
 		return fmt.Errorf("repair OpenClaw approval timeout: %w", err)
 	}
 
-	const patch = `{"plugins":{"entries":{"rampart":{"enabled":true,"config":{"failOpen":false,"failOpenTools":null,"serveUrl":"http://localhost:9090"}}}}}`
+	patch := fmt.Sprintf(`{"plugins":{"entries":{"rampart":{"enabled":true,"config":{"failOpen":false,"failOpenTools":null,"serveUrl":%s}}}}}`, strconv.Quote(serveURL))
 	var stdout, stderr bytes.Buffer
 	cmd := osexec.Command(openclawBin, "config", "patch", "--stdin")
 	cmd.Stdin = strings.NewReader(patch)
@@ -307,7 +325,7 @@ func configureOpenClawGuardMode(openclawBin string, w, errW io.Writer) error {
 	legacyWrites := [][]string{
 		{"config", "set", "plugins.entries.rampart.config.failOpenTools", "[]", "--json"},
 		{"config", "set", "plugins.entries.rampart.config.failOpen", "false", "--json"},
-		{"config", "set", "plugins.entries.rampart.config.serveUrl", `"http://localhost:9090"`, "--json"},
+		{"config", "set", "plugins.entries.rampart.config.serveUrl", strconv.Quote(serveURL), "--json"},
 		{"config", "set", "plugins.entries.rampart.enabled", "true", "--json"},
 	}
 	for _, args := range legacyWrites {
@@ -319,6 +337,21 @@ func configureOpenClawGuardMode(openclawBin string, w, errW io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func normalizeOpenClawServeURL(raw string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", fmt.Errorf("expected an absolute HTTP(S) URL")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return "", fmt.Errorf("credentials, paths, queries, and fragments are not allowed")
+	}
+	if !isLoopbackURL(trimmed) {
+		return "", fmt.Errorf("OpenClaw's native plugin accepts only a loopback Rampart service")
+	}
+	return trimmed, nil
 }
 
 func atomicWritePrivateFile(path string, data []byte) error {

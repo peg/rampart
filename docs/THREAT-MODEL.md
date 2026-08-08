@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-07-29 | Applies to: v1.5.0+
+> Last reviewed: 2026-08-07 | Applies to: v1.6.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -49,7 +49,10 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 └─────────────────────────────────────────────┘
 ```
 
-Policy files are the security boundary. If an attacker can modify policy files, Rampart's guarantees do not hold. This is why [user separation](../README.md#security-recommendations) is recommended for production.
+Policy files are the security boundary. If an attacker can modify policy files,
+Rampart's guarantees do not hold. This is why
+[user separation](https://docs.rampart.sh/deployment/user-separation/) is
+recommended for production.
 
 ## Known Limitations
 
@@ -70,15 +73,21 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 
 The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
 
+Rampart v1.6 also validates older logs containing chronological chain epochs
+created by legacy service restarts. Recovery verifies every event hash,
+internal link, continuation header, epoch order, and whole-graph connectivity
+without rewriting the existing records. Forks, missing references,
+disconnected events, and overlapping epochs fail verification.
+
 Audit records are capped at 2 MiB. If JSON escaping or decision guidance would exceed that limit, Rampart replaces large fields with their original encoded size and SHA-256 digest, then computes the event hash over the compacted record. This preserves a bounded, correlatable decision record instead of silently dropping the audit event.
 
 **Mitigations:**
-- Run `rampart serve` as a [separate user](../README.md#security-recommendations) so the agent can't access audit files
+- Run `rampart serve` as a [separate user](https://docs.rampart.sh/deployment/user-separation/) so the agent can't access audit files
 - Enable SIEM export (`--syslog` or `--cef`) to send events to an external immutable system
 - Webhook notifications send real-time alerts to Discord/Slack — a separate record
 - External chain anchors every 100 events provide additional integrity checkpoints
 
-**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](../README.md#siem-integration).
+**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](https://docs.rampart.sh/features/siem-integration/).
 
 ### 3. Token Exposure in Wrap Mode
 
@@ -88,7 +97,7 @@ The `rampart wrap` shim needs a bearer token to authenticate with `rampart serve
 - Run `rampart serve` as a separate user and store the token in that user's home directory with restricted permissions
 - Use native hooks (`rampart setup claude-code`) instead of wrap mode — hooks don't require a token file
 
-**Resolution:** Use [user separation](../README.md#security-recommendations) for production deployments, or prefer native hooks which don't require a token file.
+**Resolution:** Use [user separation](https://docs.rampart.sh/deployment/user-separation/) for production deployments, or prefer native hooks which don't require a token file.
 
 ### 4. Encoding and Obfuscation
 

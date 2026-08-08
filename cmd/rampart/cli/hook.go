@@ -47,7 +47,7 @@ type hookInput struct {
 	// Tool-specific fields
 	ToolName     string         `json:"tool_name"`
 	ToolInput    map[string]any `json:"tool_input"`
-	ToolResponse map[string]any `json:"tool_response,omitempty"`
+	ToolResponse any            `json:"tool_response,omitempty"`
 }
 
 // hookOutput is the JSON response for Claude Code hooks.
@@ -114,7 +114,7 @@ type hookParseResult struct {
 	WorkDir       string   // host-reported working directory for project policy discovery
 	Agent         string
 	Response      string // non-empty for PostToolUse events
-	RawResponse   map[string]any
+	RawResponse   any
 	RunID         string // run ID derived from session_id (or env overrides)
 	HookEventName string // e.g. "PreToolUse", "PostToolUse", "PostToolUseFailure"
 	SessionID     string // raw session_id from Claude Code input (for session state)
@@ -710,7 +710,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					"To diagnose: run `" + explainCmd + "` to see which policy applies, " +
 					"or `rampart watch` to view the live audit log. " +
 					"To allow this operation, update the policy at ~/.rampart/policies/ — " +
-					"see https://rampart.sh/docs/exceptions for guidance."
+					"see https://docs.rampart.sh/getting-started/troubleshooting/ for guidance."
 
 				// Prepend the specific deny reason if available — gives the agent
 				// (and user) immediate context on why the call was blocked.
@@ -1110,7 +1110,7 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	}
 
 	// Extract response text from PostToolUse tool_response.
-	if len(input.ToolResponse) > 0 {
+	if input.ToolResponse != nil {
 		result.Response = extractToolResponse(input.ToolResponse)
 		result.RawResponse = input.ToolResponse
 	}
@@ -1186,11 +1186,12 @@ func validateClaudePreToolParams(toolName string, params map[string]any) error {
 	}
 }
 
-// extractToolResponse extracts every string leaf from the tool_response map.
+// extractToolResponse extracts every string leaf from a tool response.
 // Host response schemas vary and frequently nest model-visible content inside
-// arrays and result objects. Traversing the complete value prevents a nested
-// credential or prompt-injection marker from bypassing response policies.
-func extractToolResponse(resp map[string]any) string {
+// arrays and result objects; some hosts also return a plain string. Traversing
+// the complete value prevents a nested credential or prompt-injection marker
+// from bypassing response policies.
+func extractToolResponse(resp any) string {
 	parts := make([]string, 0, 4)
 	stack := []any{resp}
 	for len(stack) > 0 {

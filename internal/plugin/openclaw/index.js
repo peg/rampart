@@ -5,7 +5,7 @@
  * Replaces brittle dist-file patching with the official OpenClaw plugin API.
  *
  * @see https://github.com/peg/rampart
- * @version 1.5.0
+ * @version 1.6.0
  */
 
 import { readFile } from "fs/promises";
@@ -147,6 +147,10 @@ const OPENCLAW_TOOL_CLASS = new Map([
   ["web_search", "web_search"],
   ["browser", "browser"],
   ["message", "message"],
+  // OpenClaw 2026.7.2's ask_user tool only presents structured questions to
+  // the originating user. Route it through the existing message policy class
+  // while preserving a distinct host name for audit and approval display.
+  ["ask_user", "message"],
   ["canvas", "canvas"],
   ["process", "process"],
   ["nodes", "nodes"],
@@ -445,7 +449,7 @@ function addBrowserURLFacts(policyParams) {
 
 // Add host-derived facts used only for policy evaluation. These fields are
 // never returned to OpenClaw as executable tool parameters.
-function policyParamsForTool(toolName, params, ctx) {
+function policyParamsForTool(toolName, params, ctx, originalToolName = toolName) {
   const policyParams = { ...(params ?? {}) };
 
   // Scope the managed Guard layer to calls that actually crossed the native
@@ -463,7 +467,14 @@ function policyParamsForTool(toolName, params, ctx) {
   }
   if (toolName !== "message") return policyParams;
 
-  policyParams.rampart_consequence = `openclaw:${classifyMessageConsequence(policyParams, ctx)}`;
+  // ask_user is a local interaction with the user who initiated the current
+  // turn. It neither sends to another recipient nor mutates external state.
+  // Classify it explicitly instead of inferring from message-style fields that
+  // this newer tool does not carry.
+  const messageConsequence = String(originalToolName).trim().toLowerCase() === "ask_user"
+    ? "routine-reply"
+    : classifyMessageConsequence(policyParams, ctx);
+  policyParams.rampart_consequence = `openclaw:${messageConsequence}`;
   const originChannel = ctx?.channelId ?? ctx?.chatId ?? ctx?.channelContext?.chat?.id;
   if (originChannel !== undefined && originChannel !== null) {
     policyParams.rampart_origin_channel = String(originChannel);
@@ -701,7 +712,7 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
 export const id = "rampart";
 export const name = "Rampart";
 export const description = "Independent safety guard for unattended AI agent actions";
-export const version = "1.5.0";
+export const version = "1.6.0";
 
 // OpenClaw runs higher-priority before_tool_call hooks first, so place Rampart
 // late among normal plugins as defense in depth. Priority alone is not an
@@ -744,7 +755,7 @@ export function register(api) {
       );
     }
 
-    const basePolicyParams = policyParamsForTool(toolName, params, ctx);
+    const basePolicyParams = policyParamsForTool(toolName, params, ctx, originalToolName);
     const policyVariants = policyPaths.length > 0
       ? policyPaths.map((path) => ({ ...basePolicyParams, path }))
       : [basePolicyParams];
@@ -856,6 +867,7 @@ export function register(api) {
         api.logger.info(`[rampart] returning requireApproval for ${displayToolName}`);
         return {
           requireApproval: {
+            pluginId: id,
             title: `🛡️ Rampart — ${displayToolName} approval required`,
             description: [
               `**Command:** ${markdownInlineCode(subjectPreview)}`,
@@ -864,6 +876,10 @@ export function register(api) {
             ].filter(Boolean).join("\n"),
             severity,
             timeoutMs: pluginConfig.approvalTimeoutMs ?? 120_000,
+            allowedDecisions: ["allow-once", "allow-always", "deny"],
+            timeoutReason: "rampart: approval timed out — tool call denied",
+            // Retained for the stable OpenClaw train while 2026.7.2 migrates
+            // to unconditional deny-on-timeout behavior.
             timeoutBehavior: "deny",
             onResolution: async (resolution) => {
               api.logger.info(`[rampart] plugin approval resolved: ${displayToolName} → ${safeLogLabel(resolution)}`);

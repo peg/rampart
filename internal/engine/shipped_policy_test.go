@@ -51,6 +51,27 @@ func TestShippedPolicyFilesPassStrictValidation(t *testing.T) {
 	}
 }
 
+func TestStandardAndOpenClawProfilesHaveUniquePolicyNames(t *testing.T) {
+	standard, err := NewFileStore(filepath.Join("..", "..", "policies", "standard.yaml")).Load()
+	if err != nil {
+		t.Fatalf("load standard policy: %v", err)
+	}
+	openclaw, err := NewFileStore(filepath.Join("..", "..", "policies", "openclaw.yaml")).Load()
+	if err != nil {
+		t.Fatalf("load OpenClaw policy: %v", err)
+	}
+
+	standardNames := make(map[string]struct{}, len(standard.Policies))
+	for _, policy := range standard.Policies {
+		standardNames[policy.Name] = struct{}{}
+	}
+	for _, policy := range openclaw.Policies {
+		if _, duplicate := standardNames[policy.Name]; duplicate {
+			t.Fatalf("standard.yaml and openclaw.yaml both define policy %q", policy.Name)
+		}
+	}
+}
+
 func TestStandardPolicyBlocksMixedCaseDestructiveCommandOnCaseInsensitiveHosts(t *testing.T) {
 	if !platformUsesCaseInsensitiveNames(runtime.GOOS) {
 		t.Skip("case-insensitive host behavior is covered on macOS and Windows CI")

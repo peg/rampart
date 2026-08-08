@@ -94,7 +94,7 @@ default_action: allow  # Was: deny
 **Better fix** — start from an example template:
 
 ```bash
-cp policies/examples/web-developer.yaml ~/.rampart/policy.yaml
+cp policies/examples/web-developer.yaml ~/.rampart/policies/custom.yaml
 ```
 
 !!! warning "Don't use `deny` as default until you're ready"
@@ -165,7 +165,7 @@ rampart test --tool read "/etc/shadow"
 
 ```bash
 openclaw plugins list
-# Should show: rampart  1.5.0  ✓ active
+# Should show: rampart  1.6.0  ✓ active
 
 rampart doctor
 # Should show: ✓ OpenClaw plugin: installed (before_tool_call hook active)

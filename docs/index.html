@@ -27,7 +27,7 @@
       "url": "https://rampart.sh",
       "applicationCategory": "SecurityApplication",
       "operatingSystem": "Linux, macOS, Windows",
-      "softwareVersion": "1.5.0",
+      "softwareVersion": "1.6.0",
       "offers": {
         "@type": "Offer",
         "price": "0",
@@ -1114,7 +1114,7 @@
 <section class="hero">
     <div class="container hero-grid">
         <div>
-            <div class="eyebrow"><span class="eyebrow-dot"></span>v1.5.0 · hardened multi-agent enforcement</div>
+            <div class="eyebrow"><span class="eyebrow-dot"></span>v1.6.0 · verified agent boundaries</div>
             <h1>Your agent has root.<br><span class="accent">That’s the problem.</span></h1>
             <p class="hero-sub">Rampart sits in the execution path. Run <code>rampart protect openclaw</code> for a managed, fail-closed OpenClaw guard that verifies itself, or use <code>rampart quickstart</code> for other supported agents.</p>
             <div class="install-cluster">
@@ -1371,6 +1371,7 @@
         <div class="setup-box panel">
             <p style="color:var(--heading);font-weight:700;margin-bottom:12px;text-align:center;">Then do the part that actually wires protection:</p>
             <pre><span style="color:var(--accent)">$</span> rampart quickstart     <span style="color:var(--text-dim)"># detect agent, install service, wire integration, verify setup</span>
+<span style="color:var(--accent)">$</span> rampart verify --all   <span style="color:var(--text-dim)"># safe aggregate check; no model calls</span>
 
 <span style="color:var(--accent)">$</span> rampart protect openclaw <span style="color:var(--text-dim)"># managed fail-closed guard + verification</span>
 

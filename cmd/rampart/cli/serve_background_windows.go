@@ -70,7 +70,7 @@ func isRampartServeProcess(pid int) (bool, string, error) {
 		return false, "", fmt.Errorf("decode Windows process %d: %w", pid, err)
 	}
 	description := strings.TrimSpace(identity.Name + " " + identity.CommandLine)
-	return isRampartServeCommand(identity.Name, identity.CommandLine), description, nil
+	return isRampartServeCommandForExecutable(identity.Name, identity.CommandLine, serveExecutableForPID(pid)), description, nil
 }
 
 func terminateRampartServeProcess(proc *os.Process) error {

@@ -16,9 +16,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const ManifestSchemaVersion = "rampart.assurance.v1"
+const ManifestSchemaVersion = "rampart.assurance.v2"
 
-var integrationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var integrationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 type Manifest struct {
 	SchemaVersion   string        `yaml:"schema_version"`
@@ -34,6 +34,7 @@ type Integration struct {
 	SetupCommand    string            `yaml:"setup_command"`
 	Boundary        string            `yaml:"boundary"`
 	Platforms       []string          `yaml:"platforms"`
+	AutoProtect     *bool             `yaml:"auto_protect"`
 	ServiceRequired bool              `yaml:"service_required"`
 	UpstreamCI      string            `yaml:"upstream_ci"`
 	Coverage        map[string]string `yaml:"coverage"`
@@ -121,6 +122,9 @@ func (m *Manifest) Validate(repoRoot string) error {
 		if len(integration.Platforms) == 0 {
 			problems = append(problems, prefix+": platforms must not be empty")
 		}
+		if integration.AutoProtect == nil {
+			problems = append(problems, prefix+": auto_protect must be explicitly true or false")
+		}
 		for _, platform := range integration.Platforms {
 			if !oneOf(platform, "linux", "macos", "windows") {
 				problems = append(problems, prefix+": invalid platform "+platform)
@@ -175,8 +179,13 @@ func (m *Manifest) Validate(repoRoot string) error {
 			if integration.Degraded["policy_unavailable"] != "deny" {
 				problems = append(problems, prefix+": verified tier must deny when policy is unavailable")
 			}
-			if !hasEvidenceKind(integration.Evidence, "live") {
-				problems = append(problems, prefix+": verified tier requires live evidence")
+		}
+		if integration.AutoProtect != nil && *integration.AutoProtect {
+			if integration.SupportTier == "experimental" || integration.SupportTier == "limited" {
+				problems = append(problems, prefix+": auto_protect requires verified or supported tier")
+			}
+			if integration.Verification.Level != "active" || !integration.Verification.SafeCanaries {
+				problems = append(problems, prefix+": auto_protect requires active safe verification")
 			}
 		}
 
@@ -185,8 +194,11 @@ func (m *Manifest) Validate(repoRoot string) error {
 		}
 		for evidenceIndex, evidence := range integration.Evidence {
 			evidencePrefix := fmt.Sprintf("%s evidence[%d]", prefix, evidenceIndex)
-			if !oneOf(evidence.Kind, "unit", "integration", "failure_injection", "upstream_latest", "live") {
+			if !oneOf(evidence.Kind, "unit", "integration", "failure_injection", "upstream_latest", "live_harness", "live") {
 				problems = append(problems, evidencePrefix+": invalid kind "+evidence.Kind)
+			}
+			if evidence.Kind == "live" && filepath.Ext(evidence.Path) != ".json" {
+				problems = append(problems, evidencePrefix+": completed live evidence must be a JSON summary")
 			}
 			if strings.TrimSpace(evidence.Proves) == "" {
 				problems = append(problems, evidencePrefix+": proves is required")
@@ -231,15 +243,6 @@ func validRepositoryPath(value string) bool {
 func oneOf(value string, allowed ...string) bool {
 	for _, candidate := range allowed {
 		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-func hasEvidenceKind(evidence []Evidence, kind string) bool {
-	for _, item := range evidence {
-		if item.Kind == kind {
 			return true
 		}
 	}

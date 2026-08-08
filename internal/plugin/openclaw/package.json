@@ -1,6 +1,6 @@
 {
   "name": "rampart",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Rampart AI agent firewall — OpenClaw native plugin (before_tool_call hook)",
   "type": "module",
   "main": "index.js",
