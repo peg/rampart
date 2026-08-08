@@ -263,6 +263,9 @@ rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 
 Add policy enforcement to agents that launch commands through `$SHELL`.
 
+This is a cooperative boundary for `$SHELL` and PATH-resolved common shells.
+Absolute shell paths and direct process APIs are outside the boundary.
+
 ```bash
 rampart wrap -- aider                           # Enforce mode
 rampart wrap --mode monitor -- agent            # Audit only

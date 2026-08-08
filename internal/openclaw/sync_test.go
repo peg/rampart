@@ -124,7 +124,10 @@ func TestFormatOpenClawConfigOutput(t *testing.T) {
 	output := FormatOpenClawConfig(result)
 	assert.Contains(t, output, "rampart openclaw sync")
 	assert.Contains(t, output, "standard profile")
-	assert.Contains(t, output, "tools:")
+	assert.Contains(t, output, "ADVISORY ONLY")
+	assert.Contains(t, output, "not equivalent Rampart enforcement")
+	assert.Contains(t, output, "File read/write restrictions are not translated")
+	assert.NotContains(t, output, "Rampart policy enforcement via OpenClaw native controls")
 }
 
 func TestFormatIncludesExecApprovals(t *testing.T) {

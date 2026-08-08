@@ -1,8 +1,12 @@
 name: Docker
 
 on:
-  push:
-    tags: ['v*']
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Exact validated SemVer tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,13 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ inputs.release_tag }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Require strict SemVer tag from main
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
@@ -45,13 +49,13 @@ jobs:
           images: ghcr.io/peg/rampart
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(inputs.release_tag, '-') }}
+            type=raw,value=latest,enable=${{ !contains(inputs.release_tag, '-') }}
 
       - name: Compute build metadata
         id: build
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           printf 'version=%s\ncommit=%s\ndate=%s\n' \
             "${RELEASE_TAG#v}" \

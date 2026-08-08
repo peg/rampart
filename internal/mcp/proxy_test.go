@@ -1093,20 +1093,60 @@ func TestHandleToolsCall_NilArguments(t *testing.T) {
 	}
 }
 
-func TestHandleChildLine_MalformedJSON(t *testing.T) {
+func TestHandleChildLine_MalformedJSONFailsClosed(t *testing.T) {
 	eng := buildAllowAllEngine(t)
 	parentOut := &bytes.Buffer{}
 	sink := &mockSink{}
 
 	p := NewProxy(eng, sink, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
-		WithLogger(silentLogger()))
+		WithMode("enforce"), WithLogger(silentLogger()))
 
 	err := p.handleChildLine([]byte("not json at all\n"), parentOut)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "reject child JSON-RPC response") {
+		t.Fatalf("malformed child response error = %v, want fail-closed rejection", err)
 	}
-	if parentOut.Len() == 0 {
-		t.Error("malformed child output should pass through to parent")
+	if parentOut.Len() != 0 {
+		t.Fatalf("malformed child output reached parent: %q", parentOut.String())
+	}
+}
+
+func TestHandleChildLine_MalformedJSONPassesThroughInMonitorMode(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+		WithMode("monitor"), WithLogger(silentLogger()))
+
+	if err := p.handleChildLine([]byte("not json at all\n"), parentOut); err != nil {
+		t.Fatalf("monitor mode malformed child response: %v", err)
+	}
+	if parentOut.String() != "not json at all\n" {
+		t.Fatalf("monitor output = %q", parentOut.String())
+	}
+}
+
+func TestHandleChildLine_DuplicateResponseKeysFailClosed(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	tests := []struct {
+		name string
+		line string
+	}{
+		{name: "id", line: `{"jsonrpc":"2.0","id":1,"id":2,"result":{"content":"safe"}}`},
+		{name: "result", line: `{"jsonrpc":"2.0","id":1,"result":{"content":"safe"},"result":{"content":"secret"}}`},
+		{name: "nested result", line: `{"jsonrpc":"2.0","id":1,"result":{"content":"safe","content":"secret"}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parentOut := &bytes.Buffer{}
+			p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+				WithMode("enforce"), WithLogger(silentLogger()))
+			err := p.handleChildLine([]byte(test.line+"\n"), parentOut)
+			if err == nil || !strings.Contains(err.Error(), "duplicate object member") {
+				t.Fatalf("duplicate response error = %v", err)
+			}
+			if parentOut.Len() != 0 {
+				t.Fatalf("ambiguous response reached parent: %q", parentOut.String())
+			}
+		})
 	}
 }
 
