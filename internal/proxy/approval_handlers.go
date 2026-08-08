@@ -85,7 +85,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if s.shouldNotify(decision.Action.String()) {
-		go s.sendApprovalWebhook(call, decision, pending)
+		s.enqueueNotification("approval", func() { s.sendApprovalWebhook(call, decision, pending) })
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{

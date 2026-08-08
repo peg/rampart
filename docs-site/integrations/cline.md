@@ -11,9 +11,10 @@ file, web, agent, and MCP calls before execution and to scan tool results after
 execution.
 
 Rampart's adapter and installer are tested on Linux, macOS, and Windows build
-targets. The Windows `.ps1` contract is verified against current Cline source
-and covered by unit/cross-build tests; a physical Windows Cline host E2E is
-still pending. A rolling latest-Cline host job is also not yet in place.
+targets. A rolling job checks latest Cline package startup, generated hooks,
+and adapter denial on Linux and Windows. The Windows `.ps1` contract is also
+covered by unit/cross-build tests; authenticated host ingestion and a physical
+Windows Cline E2E are still pending.
 
 ## Setup
 
@@ -52,11 +53,12 @@ rampart setup cline --hooks-dir /absolute/path/to/hooks
 the editor and CLI. Avoid installing the same Rampart pair at both user and
 workspace scope unless you intentionally want duplicate hook evaluation.
 
-Current Cline CLI source searches `~/Documents/Cline/Hooks`, `~/.cline/hooks`,
-`.clinerules/hooks`, and `.cline/hooks`. `CLINE_DIR` relocates the `~/.cline`
-root. In the upstream source reviewed for this release, `--data-dir` and
-`CLINE_DATA_DIR` relocate runtime state but do **not** relocate hook discovery.
-Rampart accepts `--data-dir` for command-line parity and reports that fact.
+Current Cline CLI source and its path tests search `~/Documents/Cline/Hooks`,
+`~/.cline/hooks`, `.clinerules/hooks`, and `.cline/hooks`. `CLINE_DIR` relocates
+the `~/.cline` root. `--data-dir` and `CLINE_DATA_DIR` relocate runtime state
+but do **not** relocate hook discovery, despite broader wording in the CLI
+README's environment-variable summary. Rampart accepts `--data-dir` for
+command-line parity and reports the source-verified behavior.
 
 Cline CLI advertises `--hooks-dir`, but the reviewed loader currently stores
 the override without consuming it in file-hook discovery. Rampart can install

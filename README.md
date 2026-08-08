@@ -373,6 +373,12 @@ rampart wrap -- opencode
 rampart wrap -- python my_agent.py
 ```
 
+This is a cooperative shell boundary. Rampart also prepends wrappers for
+PATH-resolved `bash`, `zsh`, and `sh`, but it cannot intercept absolute shell
+paths such as `/bin/sh`, direct process APIs, or native file/network access.
+Prefer a native integration where available; use `rampart preload` when you
+need compatible exec-family interposition.
+
 ---
 
 ## Add preload coverage to a process

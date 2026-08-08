@@ -104,6 +104,55 @@ func TestSetupGeminiInvalidJSONRequiresForce(t *testing.T) {
 	assertRampartGeminiHook(t, testReadJSONMap(t, settingsPath), "BeforeTool")
 }
 
+func TestSetupGeminiPreservesLargeIntegerSettings(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	settingsPath := filepath.Join(home, ".gemini", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const largeInteger = "9007199254740993"
+	if err := os.WriteFile(settingsPath, []byte(`{"unrelatedCounter":`+largeInteger+`}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := testExecuteRoot(t, "setup", "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), largeInteger) {
+		t.Fatalf("large integer was rounded during setup: %s", data)
+	}
+}
+
+func TestSetupGeminiRefusesSymlinkedSettings(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	settingsPath := filepath.Join(home, ".gemini", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target.json")
+	if err := os.WriteFile(target, []byte(`{"owner":"user"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, settingsPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := testExecuteRoot(t, "setup", "gemini"); err == nil || !strings.Contains(err.Error(), "linked or non-regular") {
+		t.Fatalf("symlink setup error = %v", err)
+	}
+	if err := testExecuteRoot(t, "setup", "gemini", "--remove"); err == nil || !strings.Contains(err.Error(), "linked or non-regular") {
+		t.Fatalf("symlink remove error = %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != `{"owner":"user"}` {
+		t.Fatalf("symlink target changed: data=%q err=%v", data, err)
+	}
+}
+
 func TestGeminiOwnershipRejectsOtherProtocolExecutableAndRefreshesStaleRampart(t *testing.T) {
 	other := map[string]any{"hooks": []any{map[string]any{
 		"type": "command", "command": "notify hook --format gemini",

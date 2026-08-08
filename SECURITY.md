@@ -4,9 +4,9 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 1.3.x   | ✅ Current release |
-| 1.2.x   | ⚠️ Critical fixes only |
-| < 1.2   | ❌ No longer supported |
+| 1.6.x   | ✅ Current release |
+| 1.5.x   | ⚠️ Critical fixes only |
+| < 1.5   | ❌ No longer supported |
 
 ## Reporting a Vulnerability
 
@@ -40,7 +40,10 @@ Rampart's threat model is documented in [`docs/THREAT-MODEL.md`](docs/THREAT-MOD
   documented; managed OpenClaw protection fails closed, while compatibility
   paths such as preload may fail open
 - **Deny-wins evaluation** — any deny from any policy overrides all allows
-- **Local-first** — no data leaves the machine, no cloud dependency, no telemetry
+- **Local-first by default** — Rampart has no telemetry or mandatory cloud
+  dependency; explicitly configured notification, decision-webhook, semantic
+  verification, and SIEM integrations send their documented data to the
+  operator-selected endpoint
 - **Hash-chained audit** — tamper-evident append-only trail with SIEM export
 
 The machine-readable integration guarantees, evidence paths, known limitations,

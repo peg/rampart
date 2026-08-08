@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **MCP response handling now fails closed on ambiguous child output** — Enforce
+  mode rejects malformed JSON and duplicate object keys at every nesting level,
+  while monitor mode retains explicit pass-through behavior.
+- **Notification delivery has bounded, credential-aware behavior** — Service,
+  wrapper, and MCP notification paths cap concurrent work, redact common secret
+  shapes from command fields, and avoid logging credential-bearing webhook
+  URLs on transport failures.
+
+### Fixed
+
+- **MCP proxy failures cannot strand the child server** — Proxy failure or
+  cancellation now terminates and reaps the child process; normal child exit
+  cancels the proxy cleanly.
+- **Experimental Gemini setup preserves host-owned settings safely** — Setup
+  retains large JSON integers and refuses symlinked or non-regular settings
+  files during install, detection, and removal.
+- **Container releases share the binary release quality gate** — GHCR images
+  publish only after the exact tag passes release policy, full CI, and binary
+  publication, preventing an independent failed release from advancing
+  container tags.
+
+### Changed
+
+- **Compatibility boundaries describe their real coverage** — `rampart wrap`
+  now identifies itself as a cooperative shell boundary, and the deprecated
+  hidden `rampart openclaw sync` command labels its output advisory rather than
+  equivalent enforcement.
+- **Cline latest-package drift is monitored continuously** — Isolated Linux and
+  Windows checks validate current package startup, generated hook artifacts,
+  and a destructive adapter cancellation without credentials or model calls.
+
 ## [1.6.0] - 2026-08-07
 
 ### Added

@@ -15,13 +15,36 @@ package notify
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestSanitizeCommand(t *testing.T) {
+	command := "curl -H 'Authorization: Bearer secret-value' https://example.test --password=hunter2 sk-abcdefghijklmnopqrstuvwxyz"
+	sanitized := SanitizeCommand(command)
+	for _, secret := range []string{"secret-value", "hunter2", "sk-abcdefghijklmnopqrstuvwxyz"} {
+		if strings.Contains(sanitized, secret) {
+			t.Fatalf("sanitized command retained %q: %s", secret, sanitized)
+		}
+	}
+}
+
+func TestNotificationTransportErrorOmitsCredentialBearingURL(t *testing.T) {
+	err := notificationTransportError("post webhook", &url.Error{
+		Op:  "Post",
+		URL: "https://hooks.example.test/services/plaintext-secret",
+		Err: errors.New("connection refused"),
+	})
+	if strings.Contains(err.Error(), "plaintext-secret") || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("transport error was not safely reduced: %v", err)
+	}
+}
 
 func TestDetectPlatform(t *testing.T) {
 	tests := []struct {

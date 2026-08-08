@@ -36,6 +36,13 @@ one-shot hooks wait for delivery with a one-second network timeout so the hook
 process cannot exit before sending, while a slow webhook cannot consume the
 agent host's full hook timeout.
 
+Notification delivery is best-effort and is never an authorization dependency.
+Long-running services bound concurrent deliveries and drop excess alerts with
+a local warning rather than accumulating unbounded work. Rampart redacts common
+credential shapes from the `command` field before delivery, but no redactor can
+recognize every application-specific secret; treat the configured endpoint as
+trusted for the event data you choose to send.
+
 ## Payload Format
 
 Rampart sends a JSON POST to your webhook URL:

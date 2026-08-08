@@ -313,7 +313,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		)
 
 		if s.shouldNotify(decision.Action.String()) {
-			go s.sendApprovalWebhook(call, decision, pending)
+			s.enqueueNotification("approval", func() { s.sendApprovalWebhook(call, decision, pending) })
 		}
 
 		resp["approval_id"] = pending.ID
@@ -492,7 +492,7 @@ func (s *Server) writeAuditRecord(
 				Agent:     req.Agent,
 				Timestamp: time.Now().UTC(),
 			}
-			go s.sendWebhook(call, decision)
+			s.enqueueNotification("decision", func() { s.sendWebhook(call, decision) })
 		}
 	}
 	return eventID, nil

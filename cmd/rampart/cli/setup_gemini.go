@@ -68,15 +68,21 @@ Run 'rampart setup gemini --remove' to uninstall.`,
 
 func installGeminiHooks(path, command string, force bool) error {
 	settings := make(map[string]any)
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
+	exists, err := regularConfigFileExists(path)
+	if err != nil {
+		return fmt.Errorf("setup gemini: inspect %s: %w", path, err)
+	}
+	if exists {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("setup gemini: read %s: %w", path, err)
+		}
+		if err := decodeUserJSON(data, &settings); err != nil {
 			if !force {
 				return fmt.Errorf("setup gemini: existing %s has invalid JSON (use --force to replace): %w", path, err)
 			}
 			settings = make(map[string]any)
 		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("setup gemini: read %s: %w", path, err)
 	}
 
 	hooks, ok := settings["hooks"].(map[string]any)
@@ -109,12 +115,17 @@ func installGeminiHooks(path, command string, force bool) error {
 }
 
 func geminiHooksConfiguredForHome(home string) bool {
-	data, err := os.ReadFile(filepath.Join(home, ".gemini", "settings.json"))
+	path := filepath.Join(home, ".gemini", "settings.json")
+	exists, err := regularConfigFileExists(path)
+	if err != nil || !exists {
+		return false
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 	var settings map[string]any
-	if json.Unmarshal(data, &settings) != nil {
+	if decodeUserJSON(data, &settings) != nil {
 		return false
 	}
 	hooks, ok := settings["hooks"].(map[string]any)
@@ -181,15 +192,19 @@ func replaceGeminiRampartMatcher(existing any, rampartMatcher map[string]any) []
 }
 
 func removeGeminiHooks(path string) (bool, error) {
+	exists, err := regularConfigFileExists(path)
+	if err != nil {
+		return false, fmt.Errorf("setup gemini: inspect %s: %w", path, err)
+	}
+	if !exists {
+		return false, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
 		return false, fmt.Errorf("setup gemini: read %s: %w", path, err)
 	}
 	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
+	if err := decodeUserJSON(data, &settings); err != nil {
 		return false, fmt.Errorf("setup gemini: parse %s: %w", path, err)
 	}
 	hooks, ok := settings["hooks"].(map[string]any)

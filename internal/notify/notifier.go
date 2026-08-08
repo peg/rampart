@@ -17,8 +17,10 @@ package notify
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -75,6 +77,7 @@ func NewGenericNotifier(url string) *GenericNotifier {
 
 // Send posts the event as JSON to the webhook URL.
 func (n *GenericNotifier) Send(event NotifyEvent) error {
+	event = sanitizeEvent(event)
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
@@ -82,7 +85,7 @@ func (n *GenericNotifier) Send(event NotifyEvent) error {
 
 	resp, err := n.client.Post(n.url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
-		return fmt.Errorf("post webhook: %w", err)
+		return notificationTransportError("post webhook", err)
 	}
 	defer resp.Body.Close()
 
@@ -91,4 +94,12 @@ func (n *GenericNotifier) Send(event NotifyEvent) error {
 	}
 
 	return nil
+}
+
+func notificationTransportError(operation string, err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return fmt.Errorf("%s: %w", operation, urlErr.Err)
+	}
+	return fmt.Errorf("%s failed (%T)", operation, err)
 }

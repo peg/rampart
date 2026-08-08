@@ -145,7 +145,7 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
 				mcpNotifyConfig = cfg.Notify
 			}
-			countedSink := &decisionCounterSink{sink: sink, notifyConfig: mcpNotifyConfig, logger: logger}
+			countedSink := newDecisionCounterSink(sink, mcpNotifyConfig, logger)
 			defer func() {
 				_ = countedSink.Close()
 			}()
@@ -203,9 +203,18 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 				}
 			}()
 
-			waitErr := <-waitCh
-			cancel()
-			proxyErr := <-proxyErrCh
+			waitErr, proxyErr, contextErr := superviseMCPProcess(
+				cmd.Context(),
+				cancel,
+				func() error {
+					if child.Process == nil {
+						return nil
+					}
+					return child.Process.Kill()
+				},
+				waitCh,
+				proxyErrCh,
+			)
 
 			resolvedDeps.signalStop(sigCh)
 			close(sigCh)
@@ -222,6 +231,9 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 
 			if proxyErr != nil {
 				return fmt.Errorf("mcp: proxy failed: %w", proxyErr)
+			}
+			if contextErr != nil {
+				return contextErr
 			}
 
 			if waitErr == nil {
@@ -243,6 +255,45 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session identity for policy evaluation and audit (default: mcp-proxy). Advisory only — not verified by Rampart.")
 
 	return cmd
+}
+
+func superviseMCPProcess(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	terminateChild func() error,
+	waitCh <-chan error,
+	proxyErrCh <-chan error,
+) (waitErr, proxyErr, contextErr error) {
+	terminate := func() error {
+		if terminateChild == nil {
+			return nil
+		}
+		if err := terminateChild(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("terminate child process: %w", err)
+		}
+		return nil
+	}
+
+	select {
+	case waitErr = <-waitCh:
+		cancel()
+		proxyErr = <-proxyErrCh
+	case proxyErr = <-proxyErrCh:
+		cancel()
+		if err := terminate(); err != nil {
+			proxyErr = errors.Join(proxyErr, err)
+		}
+		waitErr = <-waitCh
+	case <-ctx.Done():
+		contextErr = ctx.Err()
+		cancel()
+		if err := terminate(); err != nil {
+			contextErr = errors.Join(contextErr, err)
+		}
+		waitErr = <-waitCh
+		proxyErr = <-proxyErrCh
+	}
+	return waitErr, proxyErr, contextErr
 }
 
 func resolveMCPPolicyPath(path string) (string, func(), error) {

@@ -54,6 +54,7 @@ type teamsFact struct {
 
 // Send sends a notification to Teams using MessageCard format.
 func (n *TeamsNotifier) Send(event NotifyEvent) error {
+	event = sanitizeEvent(event)
 	// Choose theme color and title based on action
 	themeColor := "f85149" // red for deny
 	title := "🛡️ Rampart: Command Denied"
@@ -108,7 +109,7 @@ func (n *TeamsNotifier) Send(event NotifyEvent) error {
 
 	resp, err := n.client.Post(n.url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
-		return fmt.Errorf("post teams webhook: %w", err)
+		return notificationTransportError("post teams webhook", err)
 	}
 	defer resp.Body.Close()
 
