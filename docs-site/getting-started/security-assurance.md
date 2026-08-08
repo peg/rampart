@@ -38,7 +38,7 @@ support.
 | **Antigravity CLI / IDE** | Antigravity CLI 1.1.7 loaded the generated plugin; an allowed command was audited and a disposable sensitive-path write was denied before modification. | PostToolUse omits tool results; rolling-latest and physical Windows host proof are pending. |
 | **GitHub Copilot CLI / VS Code** | Latest-package isolated startup plus separate shared-schema and dual-schema destructive-call adapter checks. | Package startup does not prove hook ingestion; authenticated CLI and VS Code host proof remain pending, VS Code hooks remain Preview, and CLI timeouts fail open. |
 | **Cline** | Current editor/CLI payload and tool mapping tests; direct POSIX and Windows setup, ownership, and migration tests; cross-build coverage. | A rolling latest-Cline job, completed current-host proof, and physical Windows E2E. Current CLI hook errors/timeouts fail open and post-tool control is ignored. |
-| **Hermes Agent** | Isolated Hermes 0.19.0 Linux direct and localhost API-gateway proofs: deny did not execute, allow executed, and pre-tool audit identity correlated. | Hermes can skip crashing plugin callbacks, delegated-agent proof is pending, and it does not expose a stable plugin approval/resume primitive. |
+| **Hermes Agent** | Isolated Hermes 0.20.0 Linux gateway proof, plus earlier 0.19.0 direct and gateway runs: deny did not execute, allow executed, and pre-tool audit identity correlated. | Hermes can skip crashing plugin callbacks, delegated-agent proof is pending, and it does not expose a stable plugin approval/resume primitive. |
 
 The canonical source is
 [`assurance/integrations.yaml`](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).

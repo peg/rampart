@@ -14,7 +14,7 @@ import (
 )
 
 func TestVersionReadsManifest(t *testing.T) {
-	if got, want := Version(), "1.5.0"; got != want {
+	if got, want := Version(), "1.6.0"; got != want {
 		t.Fatalf("Version() = %q, want %q", got, want)
 	}
 }
@@ -97,7 +97,7 @@ func TestExtractRollsBackManagedPluginOnActivationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldManifest = bytes.Replace(oldManifest, []byte("version: 1.5.0"), []byte("version: 1.4.0"), 1)
+	oldManifest = bytes.Replace(oldManifest, []byte("version: 1.6.0"), []byte("version: 1.5.0"), 1)
 	if err := os.WriteFile(manifestPath, oldManifest, 0o600); err != nil {
 		t.Fatal(err)
 	}

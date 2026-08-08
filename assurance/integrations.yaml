@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.5.0
-reviewed_at: "2026-07-29"
+baseline_release: v1.6.0
+reviewed_at: "2026-08-07"
 
 # Version 2 uses the canonical Rampart command target as each integration id
 # and requires an explicit declaration of bare `rampart protect` eligibility.
@@ -248,6 +248,9 @@ integrations:
       - path: assurance/evidence/hermes-gateway-2026-07-27.json
         kind: live
         proves: A completed Linux run sends deny and allow turns through an isolated localhost Hermes API gateway, records correlated audits, and loads no source memories, sessions, rules, workspaces, MCP servers, or messaging gateways.
+      - path: assurance/evidence/hermes-gateway-2026-08-07.json
+        kind: live
+        proves: A completed Linux Hermes Agent 0.20.0 gateway run repeats deny, allow, and correlated pre-tool audit proof from the exact merged staging baseline while loading only isolated model, provider, toolset, and authentication state.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.

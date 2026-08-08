@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-07-29 | Applies to: v1.5.0+
+> Last reviewed: 2026-08-07 | Applies to: v1.6.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -72,6 +72,12 @@ Rampart evaluates the command string passed to the shell. This applies to **all 
 ### 2. Audit Log Rewrite
 
 The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
+
+Rampart v1.6 also validates older logs containing chronological chain epochs
+created by legacy service restarts. Recovery verifies every event hash,
+internal link, continuation header, epoch order, and whole-graph connectivity
+without rewriting the existing records. Forks, missing references,
+disconnected events, and overlapping epochs fail verification.
 
 Audit records are capped at 2 MiB. If JSON escaping or decision guidance would exceed that limit, Rampart replaces large fields with their original encoded size and SHA-256 digest, then computes the event hash over the compacted record. This preserves a bounded, correlatable decision record instead of silently dropping the audit event.
 

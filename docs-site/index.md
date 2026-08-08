@@ -238,10 +238,10 @@ verify -> outcomes.approval
 
 ## Current release
 
-Rampart v1.5.0 introduced zero-configuration protection across supported local
-agents, native Codex and Claude Code improvements, Antigravity and GitHub
-Copilot integration paths, stronger exact-context approvals, and executable
-security assurance. See the
+Rampart v1.6.0 adds one-command behavioral verification across configured
+boundaries, current OpenClaw approval ownership and stable-package gating,
+safer service lifecycle identity, seamless policy and historical-audit
+upgrades, and isolated Hermes 0.20 host evidence. See the
 [release notes](https://github.com/peg/rampart/releases/latest) for the concise
 upgrade summary or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.
