@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
@@ -33,6 +34,15 @@ func TestValidateWrapPlatform(t *testing.T) {
 				t.Fatalf("validateWrapPlatform(%q) error = %v, wantErr %v", tt.goos, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestWrapHelpStatesCooperativeBoundary(t *testing.T) {
+	cmd := newWrapCmd(&rootOptions{}, nil)
+	for _, want := range []string{"cooperative shell", "absolute shell paths", "direct process"} {
+		if !strings.Contains(strings.ToLower(cmd.Long), want) {
+			t.Fatalf("wrap help missing %q: %s", want, cmd.Long)
+		}
 	}
 }
 
@@ -565,21 +575,49 @@ func TestDecisionCounterSink_DoesNotCountFailedPersistence(t *testing.T) {
 }
 
 func TestDecisionCounterSink_WithNotify(t *testing.T) {
-	mock := &mockAuditSink{}
-	sink := &decisionCounterSink{
-		sink:         mock,
-		notifyConfig: &engine.NotifyConfig{URL: "http://localhost:1234/webhook", On: []string{"deny"}},
-		logger:       testLogger(),
-	}
+	notificationMutex.Lock()
+	lastNotificationTime = time.Time{}
+	notificationMutex.Unlock()
+	t.Cleanup(func() {
+		notificationMutex.Lock()
+		lastNotificationTime = time.Time{}
+		notificationMutex.Unlock()
+	})
 
-	// Just verify it doesn't panic with notify config set
+	received := make(chan string, 1)
+	webhook := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			received <- "decode-error: " + err.Error()
+			return
+		}
+		command, _ := payload["command"].(string)
+		received <- command
+	}))
+	defer webhook.Close()
+
+	mock := &mockAuditSink{}
+	sink := newDecisionCounterSink(mock,
+		&engine.NotifyConfig{URL: webhook.URL, On: []string{"deny"}},
+		testLogger(),
+	)
+
 	sink.Write(audit.Event{
 		Tool:     "exec",
+		Request:  map[string]any{"command": "deploy --password=hunter2"},
 		Decision: audit.EventDecision{Action: "deny", Message: "blocked"},
 	})
 
 	eval, denied, _ := sink.Counts()
 	if eval != 1 || denied != 1 {
 		t.Errorf("counts wrong: eval=%d denied=%d", eval, denied)
+	}
+	select {
+	case command := <-received:
+		if strings.Contains(command, "hunter2") || !strings.Contains(command, "[REDACTED]") {
+			t.Fatalf("notification command was not sanitized: %q", command)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for notification")
 	}
 }

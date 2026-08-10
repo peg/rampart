@@ -53,6 +53,7 @@ type discordField struct {
 
 // Send sends a notification to Discord using embeds format.
 func (n *DiscordNotifier) Send(event NotifyEvent) error {
+	event = sanitizeEvent(event)
 	// Choose color and title based on action
 	color := 0xf85149 // red for deny
 	title := "Rampart: Command Denied"
@@ -103,7 +104,7 @@ func (n *DiscordNotifier) Send(event NotifyEvent) error {
 
 	resp, err := n.client.Post(n.url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
-		return fmt.Errorf("post discord webhook: %w", err)
+		return notificationTransportError("post discord webhook", err)
 	}
 	defer resp.Body.Close()
 

@@ -187,22 +187,38 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 	}
 }
 
-func TestDockerPublicationRunsFromReleaseTagPush(t *testing.T) {
+func TestDockerPublicationUsesValidatedReleaseTag(t *testing.T) {
 	root := repositoryRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "docker.yml"))
+	dockerData, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "docker.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	workflow := strings.ReplaceAll(string(data), "\r\n", "\n")
-	if !strings.Contains(workflow, "on:\n  push:\n    tags: ['v*']") {
-		t.Fatal("Docker publication must run directly from a version-tag push")
+	dockerWorkflow := strings.ReplaceAll(string(dockerData), "\r\n", "\n")
+	if !strings.Contains(dockerWorkflow, "on:\n  workflow_call:") ||
+		!strings.Contains(dockerWorkflow, "release_tag:") {
+		t.Fatal("Docker publication must accept an explicit tag from the release workflow")
 	}
-	if strings.Contains(workflow, "github.event.release.tag_name") ||
-		strings.Contains(workflow, "types: [published]") {
-		t.Fatal("Docker publication must not depend on a release event created by GITHUB_TOKEN")
+	if strings.Contains(dockerWorkflow, "on:\n  push:") ||
+		strings.Contains(dockerWorkflow, "github.event.release.tag_name") {
+		t.Fatal("Docker publication must not publish independently from a tag or release event")
 	}
-	if !strings.Contains(workflow, "RELEASE_TAG: ${{ github.ref_name }}") {
-		t.Fatal("Docker publication must derive release metadata from the pushed tag")
+	if !strings.Contains(dockerWorkflow, "RELEASE_TAG: ${{ inputs.release_tag }}") {
+		t.Fatal("Docker publication must use the validated tag supplied by its caller")
+	}
+
+	releaseData, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseWorkflow := strings.ReplaceAll(string(releaseData), "\r\n", "\n")
+	for _, required := range []string{
+		"needs: [tag-policy, quality, release]",
+		"uses: ./.github/workflows/docker.yml",
+		"release_tag: ${{ github.ref_name }}",
+	} {
+		if !strings.Contains(releaseWorkflow, required) {
+			t.Fatalf("release workflow must gate Docker publication with %q", required)
+		}
 	}
 }
 

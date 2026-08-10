@@ -203,7 +203,7 @@ and the isolated Hermes harness for runtime evidence.
   other hook errors as warnings; unexpected crashes are not claimed fail-closed.
 - **Cline**: Rampart enables POSIX files with executable permissions; Cline's
   Hooks UI can disable them. Windows uses `.ps1` file presence and PowerShell.
-  `--data-dir`/`CLINE_DATA_DIR` do not currently relocate hook discovery, and
+  Current Cline source keeps hooks outside `--data-dir`/`CLINE_DATA_DIR`, and
   legacy CLI `--yolo` bypasses runtime hooks entirely. Current Cline CLI logs
   and continues after pre-hook errors/timeouts/invalid control output, and runs
   post-tool hooks asynchronously without consuming their control response.

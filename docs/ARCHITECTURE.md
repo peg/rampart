@@ -4,11 +4,12 @@
 
 Rampart is a policy enforcement layer between AI agents and their tools.
 Supported integrations send host-exposed tool calls through Rampart, which
-evaluates them against YAML policies and returns allow, deny, or log. Decisions
-that reach Rampart are written to a hash-chained audit trail.
+evaluates them against YAML policies and returns allow, deny, watch, ask, or a
+configured decision-webhook action. Decisions that reach Rampart are written
+to a hash-chained audit trail.
 
 ```
-Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch
+Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch / Ask / Webhook
                                             → Audit (always)
 ```
 
@@ -23,7 +24,10 @@ shell wrapper and preload library can be configured to fail open. See the
 run?" — and doesn't need a general-purpose policy language. The custom engine's
 hot path is benchmarked in this repository; results vary by policy set and host.
 
-**Local-first.** No data leaves the machine. No cloud dependency. No telemetry. You're adding a security layer, not another SaaS.
+**Local-first by default.** Rampart has no telemetry or mandatory cloud
+dependency. Data leaves the machine only when the operator explicitly
+configures a notification, decision webhook, semantic verifier, or remote SIEM
+destination.
 
 **Deny-wins evaluation.** If any policy says deny, the call is denied. No ambiguity, no override. Within a priority level, first match wins.
 
@@ -36,7 +40,8 @@ Loads YAML policies, evaluates tool calls. The hot path.
 Evaluation order:
 1. Collect all policies whose `match` clause fits the tool call
 2. Within each policy, rules evaluate top-to-bottom (first match wins)
-3. Across policies: any `deny` → denied. No deny + any `log` → logged. Only `allow` → allowed
+3. Across policies, the restrictive precedence is `deny`, `webhook`,
+   `require_approval`, `ask`, `watch`, then `allow`
 4. Nothing matches → configurable default action
 
 Policies hot-reload via fsnotify. Edit the YAML, Rampart picks it up.
@@ -69,7 +74,7 @@ Thread-safe store for human approval decisions. ULID-keyed, configurable timeout
 
 ### Wrap Command (`cmd/rampart/cli/wrap.go`)
 
-`rampart wrap -- <command>` starts an embedded proxy, generates a shell shim, sets `$SHELL` to the shim, and execs the child process. Every shell command the child spawns goes through the shim, which checks the preflight API before executing. The agent doesn't need modification.
+`rampart wrap -- <command>` starts an embedded proxy, generates a shell shim, sets `$SHELL`, prepends PATH-resolved shell wrappers, and starts the child process. Commands that use that cooperative shell boundary are checked before execution. Absolute shell paths and direct process APIs do not pass through the shim.
 
 ## Integration Patterns
 
@@ -96,7 +101,7 @@ uses the host's native `force_ask` decision for approval rules. Antigravity's
 current `PostToolUse` payload omits the tool call and result, so Rampart does
 not install a misleading post-result scanner.
 
-**`rampart wrap`** — Wrap any process. No code changes, no config beyond a policy file. The shell shim intercepts commands transparently. Best for: agents without a native hook or plugin, and standalone scripts.
+**`rampart wrap`** — Add a cooperative shell boundary without agent code changes. Best for agents that honor `$SHELL` or resolve common shells through `PATH`; it is not subprocess interposition.
 
 **HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.
 
