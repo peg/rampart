@@ -67,6 +67,10 @@ URL_CHILD_ENV_KEYS = (
     "GOPROXY",
 )
 
+HERMES_RELEASE_API = "https://api.github.com/repos/NousResearch/hermes-agent/releases/latest"
+HERMES_RELEASE_TAG = re.compile(r"^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(?:\.[0-9]+)?$")
+HERMES_RELEASE_NAME = re.compile(r"^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)")
+
 
 def credential_free_url_setting(value: str) -> str:
     """Return a URL/list setting only when none of its entries has userinfo."""
@@ -127,6 +131,9 @@ def build_compat_env(source: dict[str, str], home: Path, temp_dir: Path) -> dict
             "XDG_STATE_HOME": str(home / ".local" / "state"),
             "PIP_DISABLE_PIP_VERSION_CHECK": "1",
             "PYTHONNOUSERSITE": "1",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
         }
     )
     return env
@@ -262,6 +269,7 @@ def make_venv(
     package: str,
     env: dict[str, str],
     base_python: str | None = None,
+    editable: bool = False,
 ) -> tuple[Path, Path]:
     venv_dir = root / "venv"
     resolved_python = resolve_executable(base_python or sys.executable)
@@ -269,7 +277,11 @@ def make_venv(
     python = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     hermes = venv_dir / ("Scripts/hermes.exe" if os.name == "nt" else "bin/hermes")
     run([str(python), "-m", "pip", "install", "--upgrade", "pip"], env=env, cwd=root)
-    run([str(python), "-m", "pip", "install", package], env=env, cwd=root)
+    install = [str(python), "-m", "pip", "install"]
+    if editable:
+        install.append("--editable")
+    install.append(package)
+    run(install, env=env, cwd=root)
     return python, hermes
 
 
@@ -285,12 +297,9 @@ def distribution_version(python: Path, distribution: str, env: dict[str, str]) -
     return result.stdout.strip()
 
 
-def pypi_latest_version(distribution: str, env: dict[str, str]) -> str:
-    name = urllib.parse.quote(distribution, safe="")
-    request = urllib.request.Request(
-        f"https://pypi.org/pypi/{name}/json",
-        headers={"User-Agent": "rampart-hermes-compat/1"},
-    )
+def url_opener(env: dict[str, str]) -> urllib.request.OpenerDirector:
+    """Build an opener from the already credential-scrubbed environment."""
+
     proxies: dict[str, str] = {}
     all_proxy = env.get("all_proxy") or env.get("ALL_PROXY")
     for scheme in ("http", "https"):
@@ -301,10 +310,33 @@ def pypi_latest_version(distribution: str, env: dict[str, str]) -> str:
         )
         if value:
             proxies[scheme] = value
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-    with opener.open(request, timeout=15) as response:
+    return urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+
+
+def github_latest_release(env: dict[str, str]) -> tuple[str, str, str]:
+    """Resolve Hermes' official stable GitHub release and exact source checkout."""
+
+    request = urllib.request.Request(
+        HERMES_RELEASE_API,
+        headers={"User-Agent": "rampart-hermes-compat/1"},
+    )
+    with url_opener(env).open(request, timeout=15) as response:
         payload = json.load(response)
-    return str(payload["info"]["version"])
+    if payload.get("draft") or payload.get("prerelease"):
+        raise RuntimeError("Hermes latest release API returned a draft or prerelease")
+    tag = str(payload.get("tag_name", ""))
+    name = str(payload.get("name", ""))
+    if not HERMES_RELEASE_TAG.fullmatch(tag):
+        raise RuntimeError(f"Hermes latest release returned an invalid tag: {tag!r}")
+    version_match = HERMES_RELEASE_NAME.match(name)
+    if not version_match:
+        raise RuntimeError(f"Hermes latest release returned an invalid name: {name!r}")
+    source = (
+        "git+https://github.com/NousResearch/hermes-agent.git@"
+        + urllib.parse.quote(tag, safe="")
+        + "#egg=hermes-agent"
+    )
+    return tag, version_match.group(1), source
 
 
 def free_port() -> int:
@@ -426,7 +458,10 @@ def child_probe_code(unused_port: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Rampart's Hermes plugin against an isolated latest Hermes runtime.")
-    parser.add_argument("--package", default="hermes-agent", help="pip package spec to install, default: hermes-agent")
+    parser.add_argument(
+        "--package",
+        help="Explicit pip package spec to test instead of Hermes' official latest GitHub release",
+    )
     parser.add_argument("--python", help="Base Python interpreter used to create the isolated environment")
     parser.add_argument("--hermes-python", help="Use an existing Python interpreter with Hermes installed instead of creating a venv")
     parser.add_argument("--hermes-bin", help="Hermes executable to report version from when --hermes-python is used")
@@ -442,7 +477,8 @@ def main() -> int:
         env = build_compat_env(dict(os.environ), home, child_temp)
 
         installed_package_version = None
-        published_package_version = None
+        official_release_version = None
+        official_release_tag = None
         if args.hermes_python:
             hermes_python = resolve_executable(args.hermes_python)
             hermes_bin_path = resolve_executable(args.hermes_bin) if args.hermes_bin else None
@@ -450,15 +486,18 @@ def main() -> int:
                 hermes_bin = shutil.which("hermes")
                 hermes_bin_path = Path(hermes_bin) if hermes_bin else None
         else:
-            hermes_python, hermes_bin_path = make_venv(temp, args.package, env, args.python)
-            if args.package == "hermes-agent":
+            package = args.package
+            editable = False
+            if package is None:
+                official_release_tag, official_release_version, package = github_latest_release(env)
+                editable = True
+            hermes_python, hermes_bin_path = make_venv(temp, package, env, args.python, editable=editable)
+            if args.package is None:
                 installed_package_version = distribution_version(hermes_python, "hermes-agent", env)
-                published_package_version = pypi_latest_version("hermes-agent", env)
-                if installed_package_version != published_package_version:
+                if installed_package_version != official_release_version:
                     raise RuntimeError(
-                        "hermes-agent resolved to "
-                        f"{installed_package_version}, but PyPI latest is {published_package_version}; "
-                        "use a Python version supported by the latest Hermes release"
+                        f"Hermes release {official_release_tag} installed distribution "
+                        f"{installed_package_version}, expected {official_release_version}"
                     )
 
         hermes_home = temp / "hermes-home"
@@ -536,7 +575,8 @@ def main() -> int:
                         "ok": True,
                         "hermes_version": hermes_version,
                         "installed_package_version": installed_package_version,
-                        "published_package_version": published_package_version,
+                        "official_release_version": official_release_version,
+                        "official_release_tag": official_release_tag,
                         "hermes_home_isolated": str(hermes_home),
                         "plugin_dir": str(plugin_dir),
                         "requests_seen": RampartStub.requests_seen,

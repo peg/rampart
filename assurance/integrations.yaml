@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.6.0
-reviewed_at: "2026-08-07"
+baseline_release: v1.6.1
+reviewed_at: "2026-08-10"
 
 # Version 2 uses the canonical Rampart command target as each integration id
 # and requires an explicit declaration of bare `rampart protect` eligibility.
@@ -23,11 +23,11 @@ integrations:
       file_read: verified
       file_write: verified
       network: partial
-      mcp: unknown
+      mcp: not_covered
       subagents: partial
     degraded:
       policy_unavailable: deny
-      adapter_error: unknown
+      adapter_error: host_defined
       timeout: deny
     approval: native
     verification:
@@ -74,7 +74,7 @@ integrations:
       file_read: tested
       file_write: tested
       network: tested
-      mcp: unknown
+      mcp: tested
       subagents: partial
     degraded:
       policy_unavailable: local
@@ -90,6 +90,9 @@ integrations:
       - path: cmd/rampart/cli/hook_test.go
         kind: unit
         proves: Claude hook payloads map to structured allow, ask, and deny responses.
+      - path: cmd/rampart/cli/hook_mcp_test.go
+        kind: unit
+        proves: Claude MCP tool names pass through the shared native-hook classifier, including conservative destructive-tool classification.
       - path: cmd/rampart/cli/hook_ask_test.go
         kind: integration
         proves: Invalid policy and malformed input fail closed through the hook protocol.
@@ -220,8 +223,8 @@ integrations:
       file_read: tested
       file_write: tested
       network: tested
-      mcp: unknown
-      subagents: unknown
+      mcp: not_covered
+      subagents: not_covered
     degraded:
       policy_unavailable: deny
       adapter_error: deny
@@ -238,7 +241,7 @@ integrations:
         proves: Tool normalization, redaction, allow, deny, ask, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
       - path: scripts/compat-hermes-latest.py
         kind: upstream_latest
-        proves: Latest Hermes discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
+        proves: Hermes' official latest stable GitHub release is resolved independently of PyPI, then discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
       - path: scripts/compat-hermes-host.sh
         kind: live_harness
         proves: An opt-in auth-minimized harness proves deny and allowed execution through a real isolated Hermes model/tool loop.
@@ -255,8 +258,8 @@ integrations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.
       - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
-      - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
-      - Delegated-agent and approved-execution E2E are not yet present.
+      - Hermes tools outside the plugin's typed map, including MCP and delegated-agent tools, fail closed but are not claimed as covered policy surfaces.
+      - Delegated-agent and approved-execution E2E are not present.
 
   - id: gemini
     display_name: Gemini CLI
@@ -319,7 +322,7 @@ integrations:
       file_read: tested
       file_write: verified
       network: tested
-      mcp: unknown
+      mcp: tested
       subagents: tested
     degraded:
       policy_unavailable: local
@@ -334,7 +337,7 @@ integrations:
     evidence:
       - path: cmd/rampart/cli/hook_antigravity_test.go
         kind: unit
-        proves: The documented tool surface maps to Rampart policy classes, unknown future tools deny, and approval decisions use Antigravity force_ask.
+        proves: The documented tool and MCP surfaces map to Rampart policy classes, destructive MCP operations are classified conservatively, unknown future tools deny, and approval decisions use Antigravity force_ask.
       - path: cmd/rampart/cli/setup_antigravity_test.go
         kind: unit
         proves: Setup creates the documented shared CLI/IDE plugin idempotently, validates ownership structurally, removes only Rampart-owned state, and refuses foreign plugin replacement by default.

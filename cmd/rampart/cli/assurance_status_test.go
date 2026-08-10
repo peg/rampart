@@ -9,7 +9,33 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
 )
+
+func TestHermesUsesCommonStaticAssuranceStatus(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", t.TempDir())
+	hermesHome := filepath.Join(home, ".hermes")
+	if err := hermesplugin.Extract(filepath.Join(hermesHome, "plugins", "rampart")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hermesHome, "config.yaml"), []byte("plugins:\n  enabled: [rampart]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(time.Now().UTC(), false), "hermes")
+	if !ok {
+		t.Fatal("Hermes assurance status missing")
+	}
+	if !status.Installed || !status.Configured || status.AssuranceLevel != assuranceConfigured {
+		t.Fatalf("Hermes assurance status = %#v", status)
+	}
+	if status.VerificationCommand != "rampart doctor" || status.RecommendedCommand != "rampart doctor" {
+		t.Fatalf("Hermes static verification guidance = %#v", status)
+	}
+}
 
 func TestVerificationReceiptPromotesConfiguredIntegration(t *testing.T) {
 	home := t.TempDir()

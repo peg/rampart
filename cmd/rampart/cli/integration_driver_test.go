@@ -43,15 +43,25 @@ func TestIntegrationDriversMatchAssuranceManifest(t *testing.T) {
 		if driver.DisplayName != integration.DisplayName {
 			t.Errorf("driver %q display name = %q, manifest = %q", driver.ID, driver.DisplayName, integration.DisplayName)
 		}
-		if driver.VerifyTarget != integration.ID {
-			t.Errorf("driver %q verify target = %q, manifest id = %q", driver.ID, driver.VerifyTarget, integration.ID)
-		}
-		wantProof := assuranceAdapterVerified
-		if integration.Verification.HostBoundary && integration.Verification.Command == "rampart verify "+driver.VerifyTarget {
-			wantProof = assuranceHostVerified
-		}
-		if driver.ProofLevel != wantProof {
-			t.Errorf("driver %q proof level = %q, manifest host boundary = %t", driver.ID, driver.ProofLevel, integration.Verification.HostBoundary)
+		activeVerification := integration.Verification.Level == "active"
+		if activeVerification {
+			if driver.VerifyTarget != integration.ID || driver.VerifyChecks == nil {
+				t.Errorf("driver %q active verification target/checks = %q/%t, want %q/true", driver.ID, driver.VerifyTarget, driver.VerifyChecks != nil, integration.ID)
+			}
+			wantProof := assuranceAdapterVerified
+			if integration.Verification.HostBoundary && integration.Verification.Command == "rampart verify "+driver.VerifyTarget {
+				wantProof = assuranceHostVerified
+			}
+			if driver.ProofLevel != wantProof {
+				t.Errorf("driver %q proof level = %q, manifest host boundary = %t", driver.ID, driver.ProofLevel, integration.Verification.HostBoundary)
+			}
+		} else {
+			if driver.VerifyTarget != "" || driver.VerifyChecks != nil {
+				t.Errorf("driver %q must not advertise behavioral verification for manifest level %q", driver.ID, integration.Verification.Level)
+			}
+			if got := integrationDriverVerificationCommand(driver); got != integration.Verification.Command {
+				t.Errorf("driver %q verification command = %q, manifest = %q", driver.ID, got, integration.Verification.Command)
+			}
 		}
 		if len(driver.Executables) == 0 {
 			t.Errorf("driver %q has no executable identity for receipt invalidation", driver.ID)
@@ -139,8 +149,9 @@ func TestFindIntegrationDriverResolvesCanonicalIDsAndAliases(t *testing.T) {
 	if !ok || gemini.AutoProtect {
 		t.Fatal("experimental Gemini CLI must remain explicit setup/verification, not zero-configuration protection")
 	}
-	if _, ok := findIntegrationDriver("hermes"); ok {
-		t.Fatal("experimental Hermes must not be advertised as zero-configuration protection")
+	hermes, ok := findIntegrationDriver("hermes")
+	if !ok || hermes.AutoProtect || hermes.VerifyTarget != "" || hermes.VerifyChecks != nil || integrationDriverVerificationCommand(hermes) != "rampart doctor" {
+		t.Fatal("experimental Hermes must use explicit setup and static verification without entering verify --all")
 	}
 }
 

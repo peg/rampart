@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 )
 
@@ -27,10 +28,17 @@ func TestConfiguredVerificationTargetsIncludesPolicyAndConfiguredHooks(t *testin
 	if err := installCodexHooks(hooksPath, command, commandWindows, false); err != nil {
 		t.Fatal(err)
 	}
+	hermesHome := filepath.Join(home, ".hermes")
+	if err := hermesplugin.Extract(filepath.Join(hermesHome, "plugins", "rampart")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hermesHome, "config.yaml"), []byte("plugins:\n  enabled: [rampart]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	targets := configuredVerificationTargets(home)
 	if got := strings.Join(targets, ","); got != "policy,codex" {
-		t.Fatalf("configured verification targets = %q, want policy,codex", got)
+		t.Fatalf("configured verification targets = %q, want policy,codex (static Hermes must be skipped)", got)
 	}
 }
 

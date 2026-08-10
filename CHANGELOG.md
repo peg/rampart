@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bundled plugin freshness is component-aware** — Doctor compares installed
+  OpenClaw and Hermes files with the exact plugin payload embedded in the
+  running binary, so core-only patch releases do not create false version
+  warnings and same-version file drift is still detected.
+- **Hermes latest compatibility follows the supported release channel** — The
+  isolated gate resolves Hermes' official stable GitHub release and uses its
+  permitted editable checkout path instead of treating lagging PyPI metadata
+  as the current Hermes release.
+
+### Changed
+
+- **Integration assurance has no indefinite unknown state** — Every declared
+  surface is now proven, partial, or explicitly not covered; host-owned failure
+  behavior is labeled as such, and schema validation rejects new `unknown`
+  claims.
+- **Hermes participates in the common status model** — Configured Hermes
+  plugins appear with explicit static assurance and `rampart doctor` guidance,
+  while remaining excluded from behavioral `rampart verify --all`.
+- **Release metadata and bundled component versions are independent** — Public
+  release metadata now identifies v1.6.1, while unchanged embedded plugins keep
+  their own internally synchronized component versions.
+
+## [1.6.1] - 2026-08-10
+
 ### Security
 
 - **MCP response handling now fails closed on ambiguous child output** — Enforce

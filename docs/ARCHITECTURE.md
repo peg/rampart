@@ -138,6 +138,10 @@ policies/            Built-in profiles (standard, paranoid, yolo)
 
 **Pattern matching has gaps.** Common evasion techniques (shell wrappers like `bash -c`, quoted binaries, escaped characters) are handled via normalization and `command_contains` substring matching. However, novel obfuscation (`find / -delete`, variable expansion, encoded payloads) can bypass static patterns. Combine with [semantic verification](https://github.com/peg/rampart-verify) for intent-based classification.
 
-**Proxy mode is voluntary.** A compromised agent could bypass `localhost:9090` by making direct calls. `rampart wrap` is harder to bypass (it controls `$SHELL`), but not impossible. For mandatory enforcement, pair with network-level controls (iptables, network namespaces).
+**Compatibility boundaries are voluntary.** A compromised agent can bypass an
+HTTP proxy by making direct calls, and it can bypass `rampart wrap` by ignoring
+`$SHELL`, using an absolute shell path, or calling a process API directly. Use a
+native hook/plugin where one is supported. For mandatory process or network
+enforcement, pair Rampart with operating-system sandboxing or network controls.
 
 **Response-side evaluation is pattern-based.** Rampart scans tool responses for credential patterns (AWS keys, private keys, API tokens) using regex matching. This catches accidental credential leaks but is not a full DLP solution.

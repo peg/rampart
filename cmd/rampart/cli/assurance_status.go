@@ -383,7 +383,7 @@ func collectIntegrationAssuranceStatuses(now time.Time, serverRunning bool) []in
 			ID: driver.ID, DisplayName: driver.DisplayName, Boundary: driver.Boundary,
 			Installed: installed, Configured: configured, ServiceRequired: driver.ServiceRequired,
 			AssuranceLevel:      assuranceDetected,
-			VerificationCommand: "rampart verify " + driver.VerifyTarget,
+			VerificationCommand: integrationDriverVerificationCommand(driver),
 		}
 		if driver.AutoProtect {
 			status.RecommendedCommand = "rampart protect " + driver.ID

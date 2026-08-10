@@ -213,7 +213,8 @@ Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v1.6.0  active
+# The rampart plugin should be active. Its component version can differ from
+# the Rampart CLI patch version when the embedded plugin did not change.
 ```
 
 ## Troubleshooting

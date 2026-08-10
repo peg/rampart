@@ -22,7 +22,10 @@ executable evidence.
 - **live evidence** — a reviewed JSON summary records a completed host run.
 - **partial** — some routes are covered, but the surface has known exclusions.
 - **not_covered** — the integration does not intercept the surface.
-- **unknown** — no reliable claim is made until evidence is added.
+
+The public manifest does not allow an indefinite `unknown` state. A surface
+must be evidenced, narrowed to `partial`, or explicitly marked `not_covered`.
+Host-owned error and timeout behavior is recorded as `host_defined`.
 
 Support tiers are intentionally separate from feature breadth:
 
