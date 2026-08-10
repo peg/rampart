@@ -373,6 +373,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			if syslogSender != nil || cefFilePtr != nil {
 				sink = audit.NewMultiSink(jsonlSink, syslogSender, cefFilePtr, logger)
 			}
+			sink = audit.NewRedactingSink(sink)
 
 			defer func() {
 				_ = sink.Close()

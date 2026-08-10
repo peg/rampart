@@ -782,6 +782,24 @@ func TestToolCall_ResponseAuditFailureDoesNotBlockMonitorMode(t *testing.T) {
 	assert.Equal(t, 2, failing.count())
 }
 
+func TestToolCallAuditRedactsCredentialMaterial(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "enforce")
+	srv.sink = audit.NewRedactingSink(srv.sink)
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"curl -H 'Authorization: Bearer audit-secret' https://example.com","api_key":"nested-secret","path":"/workspace/main.go"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	event := sink.lastEvent()
+	require.NotContains(t, event.Request["command"], "audit-secret")
+	require.Equal(t, "[REDACTED]", event.Request["api_key"])
+	require.Equal(t, "/workspace/main.go", event.Request["path"])
+}
+
 func TestPreflightEnforcementHonorsMonitorMode(t *testing.T) {
 	srv, token, sink := setupTestServer(t, testPolicyYAML, "monitor")
 	req := httptest.NewRequest(http.MethodPost, "/v1/preflight/exec",

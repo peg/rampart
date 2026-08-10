@@ -145,7 +145,7 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
 				mcpNotifyConfig = cfg.Notify
 			}
-			countedSink := newDecisionCounterSink(sink, mcpNotifyConfig, logger)
+			countedSink := newDecisionCounterSink(audit.NewRedactingSink(sink), mcpNotifyConfig, logger)
 			defer func() {
 				_ = countedSink.Close()
 			}()

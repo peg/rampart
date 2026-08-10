@@ -135,7 +135,7 @@ available, or rampart preload for compatible exec-family interposition.`,
 			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
 				notifyConfig = cfg.Notify
 			}
-			countedSink := newDecisionCounterSink(sink, notifyConfig, logger)
+			countedSink := newDecisionCounterSink(audit.NewRedactingSink(sink), notifyConfig, logger)
 			defer func() {
 				_ = countedSink.Close()
 			}()
