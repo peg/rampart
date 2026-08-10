@@ -657,6 +657,84 @@ func analyzeGrantCommand(command string) grantCommandAnalysis {
 	return analysis
 }
 
+// matchRestrictiveCommandComponent reports whether one independently executed
+// command component satisfies the positive command fields of a restrictive
+// rule. Components are evaluated separately so a safe command exclusion cannot
+// consume a shell operator and suppress a dangerous sibling.
+func matchRestrictiveCommandComponent(cond Condition, component string, action Action) (bool, string) {
+	if matched := matchCommandFirstForAction(cond.CommandMatches, component, action); matched != "" {
+		return true, fmt.Sprintf("command_matches [%q]", matched)
+	}
+	if normalized := NormalizeCommand(component); normalized != component {
+		if matched := matchCommandFirstForAction(cond.CommandMatches, normalized, action); matched != "" {
+			return true, fmt.Sprintf("command_matches [%q] (normalized)", matched)
+		}
+	}
+	if matched := matchRestrictiveAlternateCommandFirst(cond.CommandMatches, component, action); matched != "" {
+		return true, fmt.Sprintf("command_matches [%q] (alternate shell normalization)", matched)
+	}
+	for _, substring := range cond.CommandContains {
+		if strings.Contains(strings.ToLower(component), strings.ToLower(substring)) {
+			return true, fmt.Sprintf("command_contains [%q]", substring)
+		}
+	}
+	return false, ""
+}
+
+func restrictiveCommandComponentExcluded(patterns []string, component string) bool {
+	// Exclusions weaken a restrictive rule, so retain granting-action matching
+	// semantics: executable names may follow host case rules, but arguments keep
+	// their exact bytes.
+	if matchCommandAnyForAction(patterns, component, ActionAllow) {
+		return true
+	}
+	normalized := NormalizeCommand(component)
+	return normalized != component && matchCommandAnyForAction(patterns, normalized, ActionAllow)
+}
+
+// restrictiveCommandMatchAfterExclusions returns true when a restrictive rule
+// still has at least one positively matched command that is not independently
+// excluded. wholeCommandMatched is the result of the broader restrictive
+// matcher, which may recognize wrapper or dialect forms that cannot be safely
+// attributed to a single component; those cases fail closed.
+func restrictiveCommandMatchAfterExclusions(
+	cond Condition,
+	command string,
+	action Action,
+	wholeCommandMatched bool,
+) (bool, string) {
+	analysis := analyzeGrantCommand(command)
+	if !analysis.composite {
+		matched, detail := matchRestrictiveCommandComponent(cond, command, action)
+		if !matched {
+			return wholeCommandMatched, ""
+		}
+		if restrictiveCommandComponentExcluded(cond.CommandNotMatches, command) {
+			return false, ""
+		}
+		return true, detail
+	}
+
+	matchedComponent := false
+	for _, component := range analysis.components {
+		matched, detail := matchRestrictiveCommandComponent(cond, component, action)
+		if !matched {
+			continue
+		}
+		matchedComponent = true
+		if !restrictiveCommandComponentExcluded(cond.CommandNotMatches, component) {
+			return true, detail + " (unexcluded executed component)"
+		}
+	}
+	if matchedComponent {
+		return false, ""
+	}
+
+	// A positive whole-command match that cannot be assigned to a component must
+	// not be weakened by a broad exclusion spanning shell syntax.
+	return wholeCommandMatched, ""
+}
+
 func isCompositeCommand(command string) bool {
 	return analyzeGrantCommand(command).composite
 }
@@ -1404,17 +1482,18 @@ func matchConditionForAction(cond Condition, call ToolCall, counter CallCounter,
 		// Exclusions weaken a rule. Skip all normalization and component work
 		// when the policy has no exclusions (the normal case).
 		if len(cond.CommandNotMatches) > 0 {
-			if negativeCommandMatch(cond.CommandNotMatches, cmd) {
-				return false
-			}
-			norm := grantAnalysis.normalized
 			if actionRestrictsExecution(action) {
-				norm = NormalizeCommand(cmd)
-			}
-			if norm != cmd && negativeCommandMatch(cond.CommandNotMatches, norm) {
-				return false
-			}
-			if !actionRestrictsExecution(action) {
+				if remainsMatched, _ := restrictiveCommandMatchAfterExclusions(cond, cmd, action, cmdMatch); !remainsMatched {
+					return false
+				}
+			} else {
+				if negativeCommandMatch(cond.CommandNotMatches, cmd) {
+					return false
+				}
+				norm := grantAnalysis.normalized
+				if norm != cmd && negativeCommandMatch(cond.CommandNotMatches, norm) {
+					return false
+				}
 				for _, component := range grantAnalysis.components {
 					if negativeCommandMatch(cond.CommandNotMatches, component) {
 						return false

@@ -45,6 +45,14 @@ cases:
     expected: deny
     rationale: Every segment of a compound command must be evaluated.
 
+  - id: compound-excluded-safe-then-dangerous
+    category: command_composition
+    policy_set: standard
+    tool: exec
+    params: {command: "rm -rf /tmp/rampart-build && rm -rf /"}
+    expected: deny
+    rationale: A safe cleanup exclusion may apply only to its own executed component.
+
   - id: newline-safe-then-dangerous
     category: command_composition
     policy_set: standard

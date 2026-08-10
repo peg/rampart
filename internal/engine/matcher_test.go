@@ -667,6 +667,44 @@ func TestMatchCondition_CommandContains(t *testing.T) {
 	}
 }
 
+func TestRestrictiveCommandExclusionsAreComponentScoped(t *testing.T) {
+	cond := Condition{
+		CommandMatches: []string{
+			"rm -rf /",
+			"rm -rf /var/**",
+			"mkfs /dev/**",
+		},
+		CommandNotMatches: []string{
+			"rm -rf /tmp/**",
+			"rm -rf /var/log/**",
+		},
+	}
+
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "direct safe exclusion", command: "rm -rf /var/log/archive", want: false},
+		{name: "safe exclusion with unrelated sibling", command: "echo ok && rm -rf /var/log/archive", want: false},
+		{name: "safe then destructive and", command: "rm -rf /var/log/archive && rm -rf /", want: true},
+		{name: "safe then destructive semicolon", command: "rm -rf /var/log/archive; rm -rf /", want: true},
+		{name: "safe then destructive or", command: "rm -rf /tmp/cache || rm -rf /", want: true},
+		{name: "safe then format", command: "rm -rf /tmp/cache; mkfs /dev/sda", want: true},
+		{name: "destructive then safe", command: "rm -rf / && rm -rf /tmp/cache", want: true},
+		{name: "nested wrapper", command: "bash -c 'rm -rf /tmp/cache && rm -rf /'", want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+			if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
+				t.Fatalf("matchConditionForAction(command=%q) = %v, want %v", test.command, got, test.want)
+			}
+		})
+	}
+}
+
 func TestEmptyCommandContainsCannotGrantExecution(t *testing.T) {
 	cond := Condition{CommandContains: []string{""}}
 	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "anything at all"}}
