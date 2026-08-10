@@ -43,6 +43,7 @@ type openClawPayload struct {
 
 // Send posts an OpenClaw-friendly approval event payload.
 func (n *OpenClawNotifier) Send(event NotifyEvent) error {
+	event = sanitizeEvent(event)
 	payload := openClawPayload{
 		Text:       fmt.Sprintf("🛡️ Rampart: Approval required for `%s` (agent: %s). Approve or deny at %s", event.Command, event.Agent, event.ResolveURL),
 		ApprovalID: event.ApprovalID,
@@ -57,7 +58,7 @@ func (n *OpenClawNotifier) Send(event NotifyEvent) error {
 
 	resp, err := n.client.Post(n.url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
-		return fmt.Errorf("post openclaw webhook: %w", err)
+		return notificationTransportError("post openclaw webhook", err)
 	}
 	defer resp.Body.Close()
 

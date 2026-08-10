@@ -66,6 +66,7 @@ type slackText struct {
 
 // Send sends a notification to Slack using Block Kit format.
 func (n *SlackNotifier) Send(event NotifyEvent) error {
+	event = sanitizeEvent(event)
 	// Choose color based on action
 	color := "#f85149" // red for deny
 	actionText := "Command Denied"
@@ -133,7 +134,7 @@ func (n *SlackNotifier) Send(event NotifyEvent) error {
 
 	resp, err := n.client.Post(n.url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
-		return fmt.Errorf("post slack webhook: %w", err)
+		return notificationTransportError("post slack webhook", err)
 	}
 	defer resp.Body.Close()
 

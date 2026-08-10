@@ -36,6 +36,7 @@ import (
 const defaultMode = "enforce"
 const redactedResponse = "[REDACTED: sensitive content removed by Rampart]"
 const statusCallCountWindow = time.Hour
+const maxConcurrentNotifications = 4
 
 // Server is Rampart's HTTP proxy runtime for policy-aware tool calls.
 type Server struct {
@@ -57,6 +58,7 @@ type Server struct {
 	server              *http.Server
 	startedAt           time.Time
 	notifyConfig        *engine.NotifyConfig
+	notificationSlots   chan struct{}
 	metricsEnabled      bool
 	auditDir            string
 	sse                 *sseHub
@@ -166,14 +168,15 @@ func WithConfigPath(path string) Option {
 // New creates a new proxy server.
 func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 	s := &Server{
-		engine:      eng,
-		sink:        sink,
-		approvals:   nil, // initialized after options
-		mode:        defaultMode,
-		logger:      slog.Default(),
-		startedAt:   time.Now().UTC(),
-		sse:         newSSEHub(),
-		stopCleanup: make(chan struct{}),
+		engine:            eng,
+		sink:              sink,
+		approvals:         nil, // initialized after options
+		mode:              defaultMode,
+		logger:            slog.Default(),
+		startedAt:         time.Now().UTC(),
+		sse:               newSSEHub(),
+		stopCleanup:       make(chan struct{}),
+		notificationSlots: make(chan struct{}, maxConcurrentNotifications),
 	}
 
 	for _, opt := range opts {

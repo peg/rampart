@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/peg/rampart/internal/approval"
@@ -41,7 +42,7 @@ func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
 
 	notifier := notify.NewNotifier(s.notifyConfig.URL, s.notifyConfig.Platform)
 	if err := notifier.Send(event); err != nil {
-		s.logger.Error("proxy: webhook notification failed", "error", err)
+		s.logger.Error("proxy: webhook notification failed", "error_type", fmt.Sprintf("%T", err), "platform", s.notifyConfig.Platform)
 	} else {
 		s.logger.Debug("proxy: webhook notification sent", "action", decision.Action.String())
 	}
@@ -77,8 +78,23 @@ func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decis
 
 	notifier := notify.NewNotifier(s.notifyConfig.URL, s.notifyConfig.Platform)
 	if err := notifier.Send(event); err != nil {
-		s.logger.Error("proxy: approval webhook notification failed", "error", err)
+		s.logger.Error("proxy: approval webhook notification failed", "error_type", fmt.Sprintf("%T", err), "platform", s.notifyConfig.Platform)
 	} else {
 		s.logger.Debug("proxy: webhook notification sent", "action", decision.Action.String(), "approval_id", pending.ID)
+	}
+}
+
+func (s *Server) enqueueNotification(kind string, send func()) {
+	if send == nil {
+		return
+	}
+	select {
+	case s.notificationSlots <- struct{}{}:
+		go func() {
+			defer func() { <-s.notificationSlots }()
+			send()
+		}()
+	default:
+		s.logger.Warn("proxy: notification dropped because delivery capacity is full", "kind", kind)
 	}
 }

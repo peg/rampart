@@ -54,6 +54,24 @@ func TestApprovalNotificationIsSuppressedWithoutSignedResolveURL(t *testing.T) {
 	assert.Zero(t, calls.Load(), "approval notification must not emit an unusable unsigned link")
 }
 
+func TestNotificationDispatchIsBounded(t *testing.T) {
+	srv := New(nil, nil)
+	started := make(chan struct{}, maxConcurrentNotifications)
+	release := make(chan struct{})
+	for range maxConcurrentNotifications {
+		srv.enqueueNotification("test", func() {
+			started <- struct{}{}
+			<-release
+		})
+		<-started
+	}
+
+	var overflowRan atomic.Bool
+	srv.enqueueNotification("overflow", func() { overflowRan.Store(true) })
+	assert.False(t, overflowRan.Load(), "delivery above the concurrency limit must be dropped")
+	close(release)
+}
+
 func setupWebhookServer(t *testing.T, webhookURL string, failOpen bool) (*Server, string) {
 	t.Helper()
 

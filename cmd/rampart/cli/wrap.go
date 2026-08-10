@@ -77,7 +77,13 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "wrap -- <command> [args...]",
-		Short: "Wrap a process with Rampart policy enforcement",
+		Short: "Add cooperative shell policy enforcement to a process",
+		Long: `Run a process with Rampart's cooperative shell policy boundary.
+
+Wrap covers commands launched through $SHELL or the PATH-resolved bash, zsh,
+and sh wrappers supplied to the child. It does not interpose direct process
+APIs or absolute shell paths such as /bin/sh. Use a native integration when
+available, or rampart preload for compatible exec-family interposition.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return fmt.Errorf("wrap: command is required (use: rampart wrap -- <command> [args...])")
@@ -91,7 +97,6 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 			if mode != "enforce" && mode != "monitor" {
 				return fmt.Errorf("wrap: invalid mode %q (must be enforce or monitor)", mode)
 			}
-
 			if auditDir == "" {
 				home, err := os.UserHomeDir()
 				if err != nil {
@@ -130,7 +135,7 @@ func newWrapCmd(opts *rootOptions, deps *wrapDeps) *cobra.Command {
 			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
 				notifyConfig = cfg.Notify
 			}
-			countedSink := &decisionCounterSink{sink: sink, notifyConfig: notifyConfig, logger: logger}
+			countedSink := newDecisionCounterSink(sink, notifyConfig, logger)
 			defer func() {
 				_ = countedSink.Close()
 			}()
@@ -487,8 +492,8 @@ exec "$REAL_SHELL" $ORIG_ARGS
 // createShellWrappers creates a temp directory with wrapper scripts for common
 // shells (bash, zsh, sh). Each wrapper checks RAMPART_ACTIVE — if set, routes
 // through Rampart policy before executing. If not set, passes straight through
-// to the real shell. This catches agents that hardcode /bin/bash or /bin/zsh
-// instead of reading $SHELL.
+// to the real shell. PATH-based lookups are covered; absolute paths such as
+// /bin/bash cannot be shadowed by these wrappers.
 func createShellWrappers(proxyURL, tokenFile, mode string) (string, error) {
 	dir, err := os.MkdirTemp("", "rampart-shells-*")
 	if err != nil {
@@ -617,13 +622,25 @@ exec "$REAL" $ORIG_ARGS
 type decisionCounterSink struct {
 	sink audit.AuditSink
 
-	notifyConfig *engine.NotifyConfig
-	logger       *slog.Logger
+	notifyConfig      *engine.NotifyConfig
+	logger            *slog.Logger
+	notificationSlots chan struct{}
 
 	mu        sync.Mutex
 	evaluated int
 	denied    int
 	logged    int
+}
+
+const maxConcurrentSinkNotifications = 4
+
+func newDecisionCounterSink(sink audit.AuditSink, notifyConfig *engine.NotifyConfig, logger *slog.Logger) *decisionCounterSink {
+	return &decisionCounterSink{
+		sink:              sink,
+		notifyConfig:      notifyConfig,
+		logger:            logger,
+		notificationSlots: make(chan struct{}, maxConcurrentSinkNotifications),
+	}
 }
 
 func (s *decisionCounterSink) Write(event audit.Event) error {
@@ -659,10 +676,26 @@ func (s *decisionCounterSink) Write(event audit.Event) error {
 			MatchedPolicies: event.Decision.MatchedPolicies,
 			Message:         event.Decision.Message,
 		}
-		go sendNotification(s.notifyConfig, call, decision, s.logger)
+		s.enqueueNotification(call, decision)
 	}
 
 	return nil
+}
+
+func (s *decisionCounterSink) enqueueNotification(call engine.ToolCall, decision engine.Decision) {
+	if s.notificationSlots == nil {
+		s.logger.Warn("webhook notification dropped because delivery is not initialized")
+		return
+	}
+	select {
+	case s.notificationSlots <- struct{}{}:
+		go func() {
+			defer func() { <-s.notificationSlots }()
+			sendNotification(s.notifyConfig, call, decision, s.logger)
+		}()
+	default:
+		s.logger.Warn("webhook notification dropped because delivery capacity is full")
+	}
 }
 
 func (s *decisionCounterSink) Flush() error {

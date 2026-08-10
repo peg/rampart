@@ -33,17 +33,17 @@ func newOpenClawCmd(opts *rootOptions) *cobra.Command {
 
 func newOpenClawSyncCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sync",
-		Short: "Generate OpenClaw config from Rampart policies",
-		Long: `Read your Rampart policy YAML and generate equivalent OpenClaw configuration.
+		Use:        "sync",
+		Short:      "Generate an advisory OpenClaw migration reference",
+		Hidden:     true,
+		Deprecated: "use `rampart protect openclaw`; native plugin enforcement cannot be reproduced losslessly as OpenClaw configuration",
+		Long: `Read your Rampart policy YAML and generate an advisory OpenClaw migration reference.
 
-Output includes:
-  - tools.deny entries for blocked tool categories
-  - exec-approvals.json patterns for command-level control
-  - File path restrictions for read/write policies
+The output is not equivalent enforcement. OpenClaw's native configuration
+cannot represent Rampart's command-deny and file-path policy semantics
+losslessly. Standard-profile deny patterns are emitted as documentation only.
 
-This lets you maintain one policy source (Rampart YAML) and sync it
-to OpenClaw's native enforcement.`,
+Use 'rampart protect openclaw' for the supported native plugin boundary.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			configPath := opts.configPath
 

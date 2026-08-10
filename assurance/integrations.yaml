@@ -118,7 +118,7 @@ integrations:
     platforms: [linux, macos, windows]
     auto_protect: true
     service_required: false
-    upstream_ci: none
+    upstream_ci: rolling_latest
     coverage:
       shell: tested
       file_read: tested
@@ -147,11 +147,11 @@ integrations:
         kind: integration
         proves: Active verification checks both installed hook scripts and directly invokes the adapter with a destructive canary that must cancel.
     limitations:
-      - No rolling latest-Cline compatibility job currently exercises the installed host.
+      - The rolling latest-Cline job proves isolated package startup, generated hook shape, and direct adapter denial; it does not prove authenticated host ingestion.
       - Windows .ps1 discovery and PowerShell launch behavior are source-reviewed and cross-build tested, but physical Windows host E2E is pending.
       - Legacy Cline CLI --yolo disables runtime hooks and is incompatible with this boundary.
       - Current upstream Cline advertises --hooks-dir but does not consume that override reliably in file-hook discovery; explicit directories require host confirmation.
-      - Current --data-dir and CLINE_DATA_DIR state overrides do not relocate hook discovery.
+      - Current source keeps hook discovery under Documents/Cline/Hooks and CLINE_DIR/hooks; --data-dir and CLINE_DATA_DIR relocate state only, despite broader wording in the CLI README.
       - Unknown custom/plugin pre-call tools deny until Rampart can classify them.
       - Current Cline CLI continues after pre-hook launch, timeout, or control-parse failures; host infrastructure failures are not fail-closed.
       - Current Cline CLI launches post-tool file hooks asynchronously and ignores their control response, so CLI post-tool decisions are audit evidence rather than continuation blocking.

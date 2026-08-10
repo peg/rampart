@@ -617,9 +617,18 @@ func (p *Proxy) evictStalePendingCalls() {
 
 func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 	trimmed := bytes.TrimSpace(line)
+	if p.mode == "enforce" {
+		if err := validateUniqueJSONKeys(trimmed); err != nil {
+			p.logger.Warn("mcp: rejecting invalid or ambiguous child JSON-RPC envelope", "error", err)
+			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
+		}
+	}
 
 	var resp Response
 	if err := json.Unmarshal(trimmed, &resp); err != nil {
+		if p.mode == "enforce" {
+			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
+		}
 		p.logger.Debug("mcp: child line is not JSON-RPC response; pass through", "error", err)
 		return p.writeToClient(parentOut, line)
 	}
