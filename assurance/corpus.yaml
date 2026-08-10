@@ -21,6 +21,22 @@ cases:
     expected: deny
     rationale: Direct destructive execution is a primary Rampart threat.
 
+  - id: destructive-equivalent-flags
+    category: destructive_execution
+    policy_set: standard
+    tool: exec
+    params: {command: "rm --recursive --force /"}
+    expected: deny
+    rationale: Equivalent destructive flags must receive the same decision regardless of spelling or order.
+
+  - id: destructive-multicall-wrapper
+    category: destructive_execution
+    policy_set: standard
+    tool: exec
+    params: {command: "busybox rm -rf /"}
+    expected: deny
+    rationale: A multicall binary cannot hide the destructive applet it executes.
+
   - id: quoted-binary-evasion
     category: command_obfuscation
     policy_set: standard

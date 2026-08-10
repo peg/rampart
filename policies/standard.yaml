@@ -763,6 +763,7 @@ policies:
             - "python3 -c **exec(__import__**"
             - "python -c **__import__**"
             - "python3 -c **__import__**"
+            - "python* -c **shutil.rmtree**"
             # Versioned binaries — enumerate explicitly because the ** matcher
             # treats the prefix before ** as a literal string, so python3.* -c
             # does not match python3.11. Extend this list when new versions ship.

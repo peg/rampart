@@ -523,6 +523,13 @@ func matchRestrictiveAlternateCommandFirst(patterns []string, command string, ac
 	if !actionRestrictsExecution(action) {
 		return ""
 	}
+	if mayNeedRestrictiveCommandAliases(command) {
+		for _, alias := range restrictiveCommandAliases(command) {
+			if matched := matchCommandFirstForAction(patterns, alias, action); matched != "" {
+				return matched
+			}
+		}
+	}
 	if looksLikeCmdWrapper(command) {
 		if matched := matchRestrictiveCommandDialectFirst(patterns, command, action, "windows"); matched != "" {
 			return matched
@@ -550,6 +557,153 @@ func matchRestrictiveAlternateCommandFirst(patterns []string, command string, ac
 		}
 	}
 	return ""
+}
+
+func mayNeedRestrictiveCommandAliases(command string) bool {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return false
+	}
+	head := trimmed
+	if end := strings.IndexAny(head, " \t\r\n"); end >= 0 {
+		head = head[:end]
+	}
+	base := strings.ToLower(shellWrapperBasename(head))
+	if base != strings.ToLower(head) {
+		return true
+	}
+	switch base {
+	case "rm", "find", "busybox", "toybox":
+		return true
+	case "bash", "sh", "zsh", "dash":
+		return strings.Contains(command, "<<<")
+	default:
+		return false
+	}
+}
+
+// restrictiveCommandAliases returns conservative semantic spellings used only
+// by deny/ask matching. They let a compact policy describe an operation rather
+// than every executable path, equivalent flag order, or multicall wrapper.
+func restrictiveCommandAliases(command string) []string {
+	normalized := NormalizeCommand(command)
+	if normalized == "" {
+		normalized = command
+	}
+	segments := SplitCompoundCommand(normalized)
+	if len(segments) == 0 {
+		segments = []string{normalized}
+	}
+
+	seen := make(map[string]bool)
+	aliases := make([]string, 0, len(segments)*2)
+	appendAlias := func(tokens []string) {
+		if len(tokens) == 0 {
+			return
+		}
+		alias := strings.TrimSpace(strings.Join(tokens, " "))
+		if alias == "" || alias == command || seen[alias] {
+			return
+		}
+		seen[alias] = true
+		aliases = append(aliases, alias)
+	}
+
+	for _, segment := range segments {
+		tokens := tokenizeForOS(segment, "posix")
+		if len(tokens) == 0 {
+			continue
+		}
+		base := strings.ToLower(shellWrapperBasename(tokens[0]))
+		if (base == "busybox" || base == "toybox") && len(tokens) > 1 && !strings.HasPrefix(tokens[1], "-") {
+			tokens = tokens[1:]
+			base = strings.ToLower(shellWrapperBasename(tokens[0]))
+		}
+		tokens[0] = base
+		appendAlias(tokens)
+
+		if base == "rm" {
+			if canonical := canonicalRestrictiveRM(tokens); canonical != nil {
+				appendAlias(canonical)
+			}
+		}
+		if base == "find" {
+			if canonical := canonicalRestrictiveFindDelete(tokens); canonical != nil {
+				appendAlias(canonical)
+			}
+		}
+		if base == "bash" || base == "sh" || base == "zsh" || base == "dash" {
+			for i, token := range tokens {
+				if token != "<<<" || i+1 >= len(tokens) {
+					continue
+				}
+				appendAlias(tokens[i+1:])
+			}
+		}
+	}
+	return aliases
+}
+
+func canonicalRestrictiveRM(tokens []string) []string {
+	recursive := false
+	force := false
+	operands := make([]string, 0, len(tokens))
+	optionsEnded := false
+	for _, token := range tokens[1:] {
+		if optionsEnded {
+			operands = append(operands, token)
+			continue
+		}
+		if token == "--" {
+			optionsEnded = true
+			continue
+		}
+		switch token {
+		case "--recursive":
+			recursive = true
+			continue
+		case "--force":
+			force = true
+			continue
+		}
+		if len(token) > 1 && token[0] == '-' && token[1] != '-' {
+			for _, flag := range token[1:] {
+				switch flag {
+				case 'r', 'R':
+					recursive = true
+				case 'f':
+					force = true
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(token, "--") {
+			continue
+		}
+		operands = append(operands, token)
+	}
+	if !recursive || !force {
+		return nil
+	}
+	return append([]string{"rm", "-rf"}, operands...)
+}
+
+func canonicalRestrictiveFindDelete(tokens []string) []string {
+	hasDelete := false
+	target := ""
+	for _, token := range tokens[1:] {
+		if token == "-delete" {
+			hasDelete = true
+			continue
+		}
+		if target == "" && !strings.HasPrefix(token, "-") {
+			target = token
+		}
+	}
+	if !hasDelete || target == "" {
+		return nil
+	}
+	return []string{"rm", "-rf", target}
 }
 
 func matchRestrictiveCommandDialectFirst(patterns []string, command string, action Action, dialect string) string {

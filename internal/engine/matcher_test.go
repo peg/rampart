@@ -906,6 +906,37 @@ func TestMatchCondition_AdversarialExecReleaseMatrix(t *testing.T) {
 	}
 }
 
+func TestRestrictiveCommandSemanticAliases(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"rm -rf /", "rm -rf /etc", "rm -rf /etc/**"}}
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "absolute executable", command: "/bin/rm -rf /", want: true},
+		{name: "combined reversed flags", command: "rm -fr /", want: true},
+		{name: "separate flags", command: "rm -r -f /", want: true},
+		{name: "long flags", command: "rm --recursive --force /", want: true},
+		{name: "extra flags and option terminator", command: "rm -vfr -- /", want: true},
+		{name: "busybox applet", command: "busybox rm -rf /", want: true},
+		{name: "toybox applet", command: "toybox rm -rf /etc", want: true},
+		{name: "find delete", command: "find / -delete", want: true},
+		{name: "shell here string", command: "bash <<< 'rm -rf /'", want: true},
+		{name: "shell stdin here string", command: "bash -s <<< 'rm -rf /etc'", want: true},
+		{name: "force without recursive", command: "rm -f /", want: false},
+		{name: "safe find delete", command: "find /tmp/cache -delete", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+			if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
+				t.Fatalf("matchConditionForAction(command=%q) = %v, want %v; aliases=%q", test.command, got, test.want, restrictiveCommandAliases(test.command))
+			}
+		})
+	}
+}
+
 func TestMatchCondition_AgentDepth(t *testing.T) {
 	gte1 := 1
 	lte2 := 2
