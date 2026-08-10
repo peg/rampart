@@ -248,9 +248,13 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny rampart serve bare", tool: "exec", command: "rampart serve", expected: engine.ActionDeny},
 		{name: "deny rampart serve mode disabled", tool: "exec", command: "rampart serve --mode disabled", expected: engine.ActionDeny},
 		{name: "deny rampart upgrade", tool: "exec", command: "rampart upgrade", expected: engine.ActionDeny},
-		{name: "allow rampart serve stop", tool: "exec", command: "rampart serve stop", expected: engine.ActionAllow},
-		{name: "allow rampart serve install", tool: "exec", command: "rampart serve install", expected: engine.ActionAllow},
+		{name: "deny rampart serve stop", tool: "exec", command: "rampart serve stop", expected: engine.ActionDeny},
+		{name: "deny rampart serve install", tool: "exec", command: "rampart serve install", expected: engine.ActionDeny},
+		{name: "deny rampart serve uninstall", tool: "exec", command: "rampart serve uninstall", expected: engine.ActionDeny},
+		{name: "deny hook tamper with operational comment", tool: "exec", command: "printf '{}' > ~/.claude/settings.json # rampart status", expected: engine.ActionDeny},
+		{name: "deny rampart kill with operational comment", tool: "exec", command: "pkill rampart # rampart status", expected: engine.ActionDeny},
 		{name: "allow rampart version", tool: "exec", command: "rampart version", expected: engine.ActionAllow},
+		{name: "allow rampart status", tool: "exec", command: "rampart status", expected: engine.ActionAllow},
 	}
 
 	for _, tc := range tests {

@@ -33,28 +33,14 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Allow read-only operational commands. Note: "rampart serve" is NOT
-      # allowed here — an agent must not be able to restart the enforcer
-      # with different flags (e.g. --mode disabled, --addr 0.0.0.0).
-      - action: allow
-        when:
-          command_contains:
-            - "rampart serve stop"
-            - "rampart serve install"
-            - "rampart serve uninstall"
-            - "rampart version"
-            - "rampart status"
-            - "rampart doctor"
-            - "rampart log"
-            - "rampart watch"
-            - "rampart convert"
-        message: "Operational rampart commands are allowed"
       # Block actual Rampart mutation/setup invocations. Avoid bare substring
       # matching here: docs, PR bodies, and quoted text can legitimately mention
       # commands like `rampart setup openclaw` without trying to execute them.
       # SECURITY: "rampart serve" denied because an agent could restart with
-      # --mode disabled or altered flags. "rampart upgrade" denied because
-      # an agent could replace the binary. Safe serve subcommands are allowed above.
+      # --mode disabled or altered flags, stop enforcement, or uninstall the
+      # service. "rampart upgrade" is denied because it can replace the binary.
+      # Read-only operational commands do not match these mutation rules and
+      # fall through to the rest of the standard policy normally.
       - action: deny
         when:
           command_matches:

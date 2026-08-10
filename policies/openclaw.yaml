@@ -24,19 +24,6 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      - action: allow
-        when:
-          command_contains:
-            - "rampart serve stop"
-            - "rampart serve install"
-            - "rampart serve uninstall"
-            - "rampart version"
-            - "rampart status"
-            - "rampart doctor"
-            - "rampart log"
-            - "rampart watch"
-            - "rampart convert"
-        message: "Read-only Rampart commands allowed"
       # Block actual Rampart mutation/setup invocations. Avoid bare substring
       # matching here: docs, PR bodies, and quoted text can legitimately mention
       # commands like `rampart setup openclaw` without trying to execute them.
