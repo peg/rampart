@@ -137,7 +137,7 @@ func (m *Manifest) Validate(repoRoot string) error {
 				problems = append(problems, prefix+": missing coverage."+surface)
 				continue
 			}
-			if !oneOf(value, "verified", "tested", "partial", "not_covered", "unknown") {
+			if !oneOf(value, "verified", "tested", "partial", "not_covered") {
 				problems = append(problems, prefix+": invalid coverage."+surface+" "+value)
 			}
 		}
@@ -153,7 +153,7 @@ func (m *Manifest) Validate(repoRoot string) error {
 				problems = append(problems, prefix+": missing degraded."+failure)
 				continue
 			}
-			if !oneOf(value, "deny", "allow", "local", "mixed", "host_defined", "unknown") {
+			if !oneOf(value, "deny", "allow", "local", "mixed", "host_defined") {
 				problems = append(problems, prefix+": invalid degraded."+failure+" "+value)
 			}
 		}
@@ -254,12 +254,12 @@ func needsLimitations(integration Integration) bool {
 		return true
 	}
 	for _, value := range integration.Coverage {
-		if value == "partial" || value == "not_covered" || value == "unknown" {
+		if value == "partial" || value == "not_covered" {
 			return true
 		}
 	}
 	for _, value := range integration.Degraded {
-		if value == "allow" || value == "mixed" || value == "host_defined" || value == "unknown" {
+		if value == "allow" || value == "mixed" || value == "host_defined" {
 			return true
 		}
 	}

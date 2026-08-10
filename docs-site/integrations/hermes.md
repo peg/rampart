@@ -126,6 +126,10 @@ python scripts/compat-hermes-latest.py
 ```
 
 The harness creates a temporary Hermes state, installs the Rampart plugin there, exercises Hermes plugin discovery plus `pre_tool_call` dispatch, and verifies deny, allow, `ask` blocking, and fail-closed behavior without restarting any long-running Hermes gateway.
+By default it resolves Hermes' official latest stable GitHub release and uses
+an isolated editable checkout of that exact tag, the development install path
+Hermes permits. `--package` is an explicit maintainer
+override; it is not the definition of the latest supported Hermes release.
 
 Maintainers can also run the opt-in real-host harness:
 
@@ -157,6 +161,16 @@ contract and remaining gaps.
     can conservatively block an `ask` decision, but it cannot honestly promise
     a first-class pause and resume flow or fail-closed behavior after every
     host-level plugin failure.
+
+## Provider authentication errors
+
+If Hermes reports `Provider authentication failed`, the failure happened before
+Hermes attempted a tool call, so it is outside Rampart's policy boundary. From
+a terminal on the Hermes host, use `hermes auth status <provider>` to inspect the
+selected provider without printing credential values. Run `hermes model` to
+renew OAuth or replace an API key, then restart the long-running gateway so it
+loads the updated provider state. Do not paste raw gateway logs into a public
+issue; they can contain provider details.
 
 For manual verification, use a deny rule for a harmless command and confirm Hermes blocks it before execution:
 

@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
+import os
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -43,6 +47,9 @@ class CompatEnvironmentTests(unittest.TestCase):
         self.assertEqual(env["TMPDIR"], "/tmp/isolated-tmp")
         self.assertEqual(env["NO_PROXY"], "127.0.0.1,localhost,::1")
         self.assertEqual(env["no_proxy"], env["NO_PROXY"])
+        self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
         for key in (
             "HTTP_PROXY",
             "ALL_PROXY",
@@ -55,6 +62,42 @@ class CompatEnvironmentTests(unittest.TestCase):
             "PIP_TRUSTED_HOST",
         ):
             self.assertNotIn(key, env)
+
+    def test_official_release_resolves_validated_github_checkout(self) -> None:
+        payload = {
+            "tag_name": "v2026.8.3",
+            "name": "Hermes Agent v0.20.0 (2026.8.3)",
+            "draft": False,
+            "prerelease": False,
+        }
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(MODULE, "url_opener", return_value=opener):
+            tag, version, source = MODULE.github_latest_release({})
+
+        self.assertEqual(tag, "v2026.8.3")
+        self.assertEqual(version, "0.20.0")
+        self.assertEqual(
+            source,
+            "git+https://github.com/NousResearch/hermes-agent.git@v2026.8.3#egg=hermes-agent",
+        )
+
+    def test_official_release_rejects_untrusted_metadata(self) -> None:
+        for payload in (
+            {"tag_name": "../../main", "name": "Hermes Agent v0.20.0", "draft": False, "prerelease": False},
+            {"tag_name": "v2026.8.3", "name": "Hermes 0.20.0", "draft": False, "prerelease": False},
+            {"tag_name": "v2026.8.3", "name": "Hermes Agent v0.20.0", "draft": False, "prerelease": True},
+        ):
+            with self.subTest(payload=payload):
+                response = mock.MagicMock()
+                response.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
+                opener = mock.Mock()
+                opener.open.return_value = response
+                with mock.patch.object(MODULE, "url_opener", return_value=opener):
+                    with self.assertRaises(RuntimeError):
+                        MODULE.github_latest_release({})
 
 
 if __name__ == "__main__":
