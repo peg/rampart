@@ -9,7 +9,8 @@ var sanitizePatterns = []struct {
 	re          *regexp.Regexp
 	replacement string
 }{
-	{regexp.MustCompile(`'Authorization:\s+(Bearer|Basic)\s+[^']+'`), "'[REDACTED]'"},
+	{regexp.MustCompile(`(?i)'Authorization:\s+(Bearer|Basic)\s+[^']+'`), "'[REDACTED]'"},
+	{regexp.MustCompile(`(?i)"Authorization:\s+(Bearer|Basic)\s+[^"]+"`), `"[REDACTED]"`},
 	{regexp.MustCompile(`\s-p'[^']*'`), " [REDACTED]"},
 	{regexp.MustCompile(`\s-p"[^"]*"`), " [REDACTED]"},
 	{regexp.MustCompile(`\s-p[A-Za-z0-9][^\s]*`), " [REDACTED]"},
@@ -22,8 +23,10 @@ var sanitizePatterns = []struct {
 	{regexp.MustCompile(`xoxp-[a-zA-Z0-9-]+`), "[REDACTED]"},
 	{regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`), "[REDACTED]"},
 	{regexp.MustCompile(`AKIA[0-9A-Z]{16}`), "[REDACTED]"},
-	{regexp.MustCompile(`Authorization:\s+(Bearer|Basic)\s+\S+`), "Authorization: $1 [REDACTED]"},
+	{regexp.MustCompile(`(?i)Authorization:\s+(Bearer|Basic)\s+\S+`), "Authorization: $1 [REDACTED]"},
 	{regexp.MustCompile(`(?i)\b(api_?key|auth_?token|token|secret|access_?token)\s*[=:]\s*[A-Za-z0-9+/]{40,}={0,2}`), "[REDACTED]"},
+	{regexp.MustCompile(`(?i)(--(?:api[-_]?key|auth[-_]?token|access[-_]?token|token|secret))(=|\s+)(?:"[^"]*"|'[^']*'|[^\s]+)`), "$1$2[REDACTED]"},
+	{regexp.MustCompile(`(?i)(\b(?:api[-_]?key|auth[-_]?token|access[-_]?token|password|token|secret)\b\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s&]+)`), "$1[REDACTED]"},
 }
 
 // SanitizeCommand removes common credential shapes before command or path

@@ -26,12 +26,37 @@ import (
 )
 
 func TestSanitizeCommand(t *testing.T) {
-	command := "curl -H 'Authorization: Bearer secret-value' https://example.test --password=hunter2 sk-abcdefghijklmnopqrstuvwxyz"
+	command := `curl -H 'authorization: Bearer secret-value' https://example.test?token=short-query --password=hunter2 --api-key short-flag sk-abcdefghijklmnopqrstuvwxyz`
 	sanitized := SanitizeCommand(command)
-	for _, secret := range []string{"secret-value", "hunter2", "sk-abcdefghijklmnopqrstuvwxyz"} {
+	for _, secret := range []string{"secret-value", "short-query", "hunter2", "short-flag", "sk-abcdefghijklmnopqrstuvwxyz"} {
 		if strings.Contains(sanitized, secret) {
 			t.Fatalf("sanitized command retained %q: %s", secret, sanitized)
 		}
+	}
+}
+
+func TestSanitizeCommandShortCredentialForms(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		secret  string
+	}{
+		{name: "double quoted authorization", command: `curl -H "AUTHORIZATION: Basic short-basic" example.test`, secret: "short-basic"},
+		{name: "unquoted authorization", command: "curl -H authorization: Bearer short-bearer example.test", secret: "short-bearer"},
+		{name: "CLI flag equals", command: "tool --auth-token=short-auth", secret: "short-auth"},
+		{name: "CLI flag space", command: "tool --access_token short-access", secret: "short-access"},
+		{name: "environment assignment", command: "API_KEY=short-key tool", secret: "short-key"},
+		{name: "password assignment", command: "PASSWORD=short-password tool", secret: "short-password"},
+		{name: "URL query", command: "curl https://example.test?token=short-query&mode=test", secret: "short-query"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sanitized := SanitizeCommand(test.command)
+			if strings.Contains(sanitized, test.secret) || !strings.Contains(sanitized, "[REDACTED]") {
+				t.Fatalf("SanitizeCommand(%q) = %q", test.command, sanitized)
+			}
+		})
 	}
 }
 

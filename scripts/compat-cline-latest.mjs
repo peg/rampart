@@ -108,17 +108,25 @@ function main() {
   // shim directly; the shim then resolves the platform-specific optional
   // dependency exactly as a global installation does.
   runNpm(['install', '--prefix', packageRoot, '--no-save', '--no-audit', '--no-fund', clinePackage]);
-  const clineWrapper = join(packageRoot, 'node_modules', 'cline', 'bin', 'cline');
+  const clineRoot = join(packageRoot, 'node_modules', 'cline');
+  const clineManifest = JSON.parse(readFileSync(join(clineRoot, 'package.json'), 'utf8'));
+  const clineVersion = clineManifest.version;
+  if (typeof clineVersion !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(clineVersion)) {
+    throw new Error(`published Cline package has an invalid version: ${JSON.stringify(clineVersion)}`);
+  }
+  const clineWrapper = join(clineRoot, 'bin', 'cline');
   if (!existsSync(clineWrapper)) {
     throw new Error(`published Cline wrapper is missing: ${clineWrapper}`);
   }
   const version = run(process.execPath, [clineWrapper, '--version']);
   const hostDiagnostics = `${version.stdout}\n${version.stderr}`;
-  const versionMatch = hostDiagnostics.match(/\b([0-9]+\.[0-9]+\.[0-9]+)\b/);
-  if (!versionMatch) throw new Error(`could not parse Cline CLI version: ${hostDiagnostics}`);
+  const reportedVersions = hostDiagnostics.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/g) || [];
+  if (!reportedVersions.includes(clineVersion)) {
+    throw new Error(`Cline CLI did not report installed package version ${clineVersion}: ${hostDiagnostics}`);
+  }
 
   const payload = JSON.stringify({
-    clineVersion: versionMatch[1],
+    clineVersion,
     hookName: 'tool_call',
     taskId: 'rampart-cline-latest',
     tool_call: {
@@ -136,7 +144,7 @@ function main() {
   console.log(JSON.stringify({
     ok: true,
     cline_source: clinePackage,
-    cline_version: versionMatch[1],
+    cline_version: clineVersion,
     generated_user_hooks_valid: true,
     destructive_tool_call_cancelled: true,
     authenticated_host_tool_call: false,

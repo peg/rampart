@@ -97,8 +97,6 @@ available, or rampart preload for compatible exec-family interposition.`,
 			if mode != "enforce" && mode != "monitor" {
 				return fmt.Errorf("wrap: invalid mode %q (must be enforce or monitor)", mode)
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(), "wrap: cooperative shell boundary; absolute shell paths and direct process APIs are not intercepted")
-
 			if auditDir == "" {
 				home, err := os.UserHomeDir()
 				if err != nil {
