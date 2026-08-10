@@ -92,6 +92,36 @@ policies:
         message: "Sensitive credential detected in response"
 `
 
+func TestHTTPToolNameCanonicalizationPreservesPolicyScope(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "enforce")
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		{name: "tool endpoint", path: "/v1/tool/Exec", wantStatus: http.StatusForbidden},
+		{name: "preflight endpoint", path: "/v1/preflight/EXEC", wantStatus: http.StatusOK},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, test.path,
+				strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"rm -rf /"}}`))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			srv.handler().ServeHTTP(recorder, req)
+
+			require.Equal(t, test.wantStatus, recorder.Code)
+			var response map[string]any
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			require.Equal(t, "deny", response["decision"])
+			require.Equal(t, "exec", sink.lastEvent().Tool)
+		})
+	}
+}
+
 type mockSink struct {
 	mu     sync.Mutex
 	events []audit.Event

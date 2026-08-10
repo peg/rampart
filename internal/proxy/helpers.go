@@ -19,6 +19,34 @@ import (
 	"github.com/peg/rampart/internal/engine"
 )
 
+const maxToolNameLength = 128
+
+// canonicalToolName normalizes the policy tool class at the HTTP trust
+// boundary. Policy scopes are case-sensitive, while several security-field
+// extractors intentionally recognize canonical tool classes case-insensitively;
+// using one representation prevents those two views from disagreeing.
+func canonicalToolName(raw string) (string, error) {
+	name := strings.ToLower(strings.TrimSpace(raw))
+	if name == "" {
+		return "", fmt.Errorf("tool name is required")
+	}
+	if len(name) > maxToolNameLength {
+		return "", fmt.Errorf("tool name exceeds %d bytes", maxToolNameLength)
+	}
+	for _, char := range name {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		switch char {
+		case '_', '-', '.', ':':
+			continue
+		default:
+			return "", fmt.Errorf("tool name contains unsupported character %q", char)
+		}
+	}
+	return name, nil
+}
+
 // decodeJSONBody accepts exactly one JSON value plus optional trailing
 // whitespace. Keeping this check in one place prevents request smuggling by
 // concatenating a second object that individual handlers would otherwise

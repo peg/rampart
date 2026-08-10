@@ -27,7 +27,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = map[string]any{}
 	}
-	toolName := r.PathValue("toolName")
+	toolName, err := canonicalToolName(r.PathValue("toolName"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid tool name: %v", err))
+		return
+	}
 	if err := prepareToolRequest(toolName, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid tool input: %v", err))
 		return
@@ -577,7 +581,11 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	toolName := r.PathValue("toolName")
+	toolName, err := canonicalToolName(r.PathValue("toolName"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid tool name: %v", err))
+		return
+	}
 	if err := prepareToolRequest(toolName, &req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid tool input: %v", err))
 		return

@@ -63,6 +63,12 @@ Common decision/action values across responses:
 ## POST /v1/tool/{toolName}
 Evaluates a tool call against active policy. In `enforce` mode, deny decisions are blocked; approval-required decisions are queued.
 
+`toolName` is a host-owned policy class, not an agent-authored argument. Rampart
+normalizes it to lowercase and uses the canonical value consistently for input
+preparation, policy evaluation, approvals, and audit. Integrations must map each
+host operation to its truthful policy class before calling this endpoint; do not
+allow model output to choose or relabel the route.
+
 ### Request Headers
 - `Authorization: Bearer <token>` (admin or an evaluation-scoped agent token;
   an agent token overrides the request's `agent` identity)

@@ -9,6 +9,39 @@ import (
 	"testing"
 )
 
+func TestCanonicalToolName(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "canonical exec", raw: "exec", want: "exec"},
+		{name: "mixed case and whitespace", raw: "  Exec  ", want: "exec"},
+		{name: "structured custom name", raw: "MCP.Custom-Tool:V1", want: "mcp.custom-tool:v1"},
+		{name: "empty", raw: "  ", wantErr: true},
+		{name: "path separator", raw: "custom/tool", wantErr: true},
+		{name: "embedded whitespace", raw: "web fetch", wantErr: true},
+		{name: "non ascii", raw: "exéc", wantErr: true},
+		{name: "too long", raw: strings.Repeat("a", maxToolNameLength+1), wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := canonicalToolName(test.raw)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("canonicalToolName(%q) = %q, want error", test.raw, got)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("canonicalToolName(%q) = %q, %v; want %q", test.raw, got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestPrepareToolRequestRejectsConflictingAliases(t *testing.T) {
 	tests := []struct {
 		name string
