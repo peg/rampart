@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -559,6 +560,172 @@ func matchRestrictiveAlternateCommandFirst(patterns []string, command string, ac
 	return ""
 }
 
+// matchRestrictiveCommandCandidateFirst applies every conservative
+// interpretation of one independently executed command component. It is used
+// only by deny/ask actions; ambiguous parsing must never widen an allow.
+func matchRestrictiveCommandCandidateFirst(patterns []string, command string, action Action) string {
+	if matched := matchCommandFirstForAction(patterns, command, action); matched != "" {
+		return matched
+	}
+	if normalized := NormalizeCommand(command); normalized != command {
+		if matched := matchCommandFirstForAction(patterns, normalized, action); matched != "" {
+			return matched
+		}
+	}
+	return matchRestrictiveAlternateCommandFirst(patterns, command, action)
+}
+
+// restrictivePOSIXBodyCandidates exposes commands behind ordinary POSIX shell
+// grouping and control words. The transformation is deliberately restrictive-
+// only and operates at component boundaries, so quoted prose is left intact.
+func restrictivePOSIXBodyCandidates(component string) []string {
+	original := strings.TrimSpace(component)
+	if original == "" {
+		return nil
+	}
+
+	seen := map[string]bool{original: true}
+	result := make([]string, 0, 2)
+	appendCandidate := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && !seen[candidate] {
+			seen[candidate] = true
+			result = append(result, candidate)
+		}
+	}
+
+	candidate := original
+	changed := false
+	for {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			break
+		}
+		if candidate[0] == '(' || candidate[0] == '{' {
+			candidate = candidate[1:]
+			changed = true
+			continue
+		}
+		word, rest := leadingShellWord(candidate)
+		switch word {
+		case "if", "elif", "while", "until", "then", "do", "else", "!":
+			candidate = rest
+			changed = true
+			continue
+		}
+		break
+	}
+	if changed {
+		appendCandidate(trimRestrictiveShellClosers(candidate))
+	}
+
+	// A case arm begins after its unquoted pattern terminator. Only consider
+	// this form when the component itself starts with the case keyword.
+	if word, _ := leadingShellWord(original); word == "case" {
+		if body := suffixAfterUnquotedByte(original, ')'); body != "" {
+			appendCandidate(trimRestrictiveShellClosers(body))
+		}
+	}
+	return result
+}
+
+func leadingShellWord(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	end := strings.IndexAny(value, " \t\r\n")
+	if end < 0 {
+		return strings.ToLower(value), ""
+	}
+	return strings.ToLower(value[:end]), strings.TrimSpace(value[end:])
+}
+
+func trimRestrictiveShellClosers(value string) string {
+	value = strings.TrimSpace(value)
+	for value != "" {
+		changed := false
+		for _, suffix := range []string{")", "}"} {
+			if strings.HasSuffix(value, suffix) {
+				value = strings.TrimSpace(strings.TrimSuffix(value, suffix))
+				changed = true
+			}
+		}
+		wordStart := strings.LastIndexAny(value, " \t\r\n") + 1
+		last := strings.ToLower(value[wordStart:])
+		switch last {
+		case "fi", "done", "esac":
+			value = strings.TrimSpace(value[:wordStart])
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return value
+}
+
+func suffixAfterUnquotedByte(value string, target byte) string {
+	inSingle, inDouble, escaped := false, false, false
+	for i := 0; i < len(value); i++ {
+		char := value[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if char == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if char == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if !inSingle && !inDouble && char == target {
+			return strings.TrimSpace(value[i+1:])
+		}
+	}
+	return ""
+}
+
+func restrictiveCommandCandidates(command string) []string {
+	analysis := analyzeGrantCommand(command)
+	seen := make(map[string]bool)
+	candidates := make([]string, 0, len(analysis.components)+4)
+	appendCandidate := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || seen[candidate] {
+			return
+		}
+		seen[candidate] = true
+		candidates = append(candidates, candidate)
+		for _, body := range restrictivePOSIXBodyCandidates(candidate) {
+			if !seen[body] {
+				seen[body] = true
+				candidates = append(candidates, body)
+			}
+		}
+	}
+	appendCandidate(command)
+	for _, component := range analysis.components {
+		appendCandidate(component)
+	}
+	return candidates
+}
+
+func matchRestrictiveCommandFirst(patterns []string, command string, action Action) string {
+	for _, candidate := range restrictiveCommandCandidates(command) {
+		if matched := matchRestrictiveCommandCandidateFirst(patterns, candidate, action); matched != "" {
+			return matched
+		}
+	}
+	return ""
+}
+
 func mayNeedRestrictiveCommandAliases(command string) bool {
 	trimmed := strings.TrimSpace(command)
 	if trimmed == "" {
@@ -586,9 +753,10 @@ func mayNeedRestrictiveCommandAliases(command string) bool {
 // by deny/ask matching. They let a compact policy describe an operation rather
 // than every executable path, equivalent flag order, or multicall wrapper.
 func restrictiveCommandAliases(command string) []string {
-	normalized := NormalizeCommand(command)
+	withoutComment := stripUnquotedShellComment(command)
+	normalized := NormalizeCommand(withoutComment)
 	if normalized == "" {
-		normalized = command
+		normalized = withoutComment
 	}
 	segments := SplitCompoundCommand(normalized)
 	if len(segments) == 0 {
@@ -623,12 +791,12 @@ func restrictiveCommandAliases(command string) []string {
 		appendAlias(tokens)
 
 		if base == "rm" {
-			if canonical := canonicalRestrictiveRM(tokens); canonical != nil {
+			for _, canonical := range canonicalRestrictiveRM(tokens) {
 				appendAlias(canonical)
 			}
 		}
 		if base == "find" {
-			if canonical := canonicalRestrictiveFindDelete(tokens); canonical != nil {
+			for _, canonical := range canonicalRestrictiveFindDelete(tokens) {
 				appendAlias(canonical)
 			}
 		}
@@ -644,12 +812,20 @@ func restrictiveCommandAliases(command string) []string {
 	return aliases
 }
 
-func canonicalRestrictiveRM(tokens []string) []string {
+func canonicalRestrictiveRM(tokens []string) [][]string {
 	recursive := false
 	force := false
 	operands := make([]string, 0, len(tokens))
 	optionsEnded := false
-	for _, token := range tokens[1:] {
+	for index := 1; index < len(tokens); index++ {
+		token := tokens[index]
+		if shellRedirectionConsumesNext(token) {
+			index++
+			continue
+		}
+		if isShellRedirectionToken(token) {
+			continue
+		}
 		if optionsEnded {
 			operands = append(operands, token)
 			continue
@@ -685,25 +861,102 @@ func canonicalRestrictiveRM(tokens []string) []string {
 	if !recursive || !force {
 		return nil
 	}
-	return append([]string{"rm", "-rf"}, operands...)
+	aliases := make([][]string, 0, len(operands))
+	for _, operand := range operands {
+		aliases = append(aliases, []string{"rm", "-rf", cleanRestrictivePOSIXPath(operand)})
+	}
+	return aliases
 }
 
-func canonicalRestrictiveFindDelete(tokens []string) []string {
-	hasDelete := false
-	target := ""
-	for _, token := range tokens[1:] {
-		if token == "-delete" {
-			hasDelete = true
+func stripUnquotedShellComment(value string) string {
+	inSingle, inDouble, escaped := false, false, false
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		if escaped {
+			escaped = false
 			continue
 		}
-		if target == "" && !strings.HasPrefix(token, "-") {
-			target = token
+		if char == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if char == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if char == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if char == '#' && !inSingle && !inDouble &&
+			(index == 0 || value[index-1] == ' ' || value[index-1] == '\t' || value[index-1] == '\r' || value[index-1] == '\n') {
+			return strings.TrimSpace(value[:index])
 		}
 	}
-	if !hasDelete || target == "" {
+	return value
+}
+
+func canonicalRestrictiveFindDelete(tokens []string) [][]string {
+	hasDelete := false
+	targets := make([]string, 0, 2)
+	expressionStarted := false
+	for index := 1; index < len(tokens); index++ {
+		token := tokens[index]
+		if token == "-delete" {
+			hasDelete = true
+			expressionStarted = true
+			continue
+		}
+		if expressionStarted {
+			continue
+		}
+		if token == "--" || token == "-H" || token == "-L" || token == "-P" {
+			continue
+		}
+		if token == "-D" && index+1 < len(tokens) {
+			index++
+			continue
+		}
+		if strings.HasPrefix(token, "-O") {
+			continue
+		}
+		if strings.HasPrefix(token, "-") || token == "!" || token == "(" {
+			expressionStarted = true
+			continue
+		}
+		targets = append(targets, token)
+	}
+	if !hasDelete || len(targets) == 0 {
 		return nil
 	}
-	return []string{"rm", "-rf", target}
+	aliases := make([][]string, 0, len(targets))
+	for _, target := range targets {
+		aliases = append(aliases, []string{"rm", "-rf", cleanRestrictivePOSIXPath(target)})
+	}
+	return aliases
+}
+
+func cleanRestrictivePOSIXPath(value string) string {
+	if strings.HasPrefix(value, "/") {
+		return pathpkg.Clean(value)
+	}
+	return value
+}
+
+func shellRedirectionConsumesNext(token string) bool {
+	switch token {
+	case ">", ">>", "<", "<<", "<<<", "1>", "1>>", "2>", "2>>":
+		return true
+	default:
+		return false
+	}
+}
+
+func isShellRedirectionToken(token string) bool {
+	if shellRedirectionConsumesNext(token) || strings.Contains(token, ">&") || strings.Contains(token, "<&") {
+		return true
+	}
+	return strings.ContainsAny(token, "><")
 }
 
 func matchRestrictiveCommandDialectFirst(patterns []string, command string, action Action, dialect string) string {
@@ -816,16 +1069,8 @@ func analyzeGrantCommand(command string) grantCommandAnalysis {
 // rule. Components are evaluated separately so a safe command exclusion cannot
 // consume a shell operator and suppress a dangerous sibling.
 func matchRestrictiveCommandComponent(cond Condition, component string, action Action) (bool, string) {
-	if matched := matchCommandFirstForAction(cond.CommandMatches, component, action); matched != "" {
-		return true, fmt.Sprintf("command_matches [%q]", matched)
-	}
-	if normalized := NormalizeCommand(component); normalized != component {
-		if matched := matchCommandFirstForAction(cond.CommandMatches, normalized, action); matched != "" {
-			return true, fmt.Sprintf("command_matches [%q] (normalized)", matched)
-		}
-	}
-	if matched := matchRestrictiveAlternateCommandFirst(cond.CommandMatches, component, action); matched != "" {
-		return true, fmt.Sprintf("command_matches [%q] (alternate shell normalization)", matched)
+	if matched := matchRestrictiveCommandFirst(cond.CommandMatches, component, action); matched != "" {
+		return true, fmt.Sprintf("command_matches [%q] (restrictive command interpretation)", matched)
 	}
 	for _, substring := range cond.CommandContains {
 		if strings.Contains(strings.ToLower(component), strings.ToLower(substring)) {
@@ -839,11 +1084,21 @@ func restrictiveCommandComponentExcluded(patterns []string, component string) bo
 	// Exclusions weaken a restrictive rule, so retain granting-action matching
 	// semantics: executable names may follow host case rules, but arguments keep
 	// their exact bytes.
-	if matchCommandAnyForAction(patterns, component, ActionAllow) {
-		return true
+	for _, candidate := range restrictiveCommandCandidates(component) {
+		if matchCommandAnyForAction(patterns, candidate, ActionAllow) {
+			return true
+		}
+		if normalized := NormalizeCommand(candidate); normalized != candidate &&
+			matchCommandAnyForAction(patterns, normalized, ActionAllow) {
+			return true
+		}
+		for _, alias := range restrictiveCommandAliases(candidate) {
+			if matchCommandAnyForAction(patterns, alias, ActionAllow) {
+				return true
+			}
+		}
 	}
-	normalized := NormalizeCommand(component)
-	return normalized != component && matchCommandAnyForAction(patterns, normalized, ActionAllow)
+	return false
 }
 
 // restrictiveCommandMatchAfterExclusions returns true when a restrictive rule
@@ -1114,56 +1369,11 @@ func ExplainConditionForAction(cond Condition, call ToolCall, action Action) (bo
 			return true, detail
 		}
 
-		// command_matches (glob) — mirror matchCondition: try raw, normalized,
-		// compound segments, and subcommands.
+		// command_matches (glob) — enforcement has already confirmed the whole
+		// condition; reuse the same restrictive candidate pipeline for detail.
 		if len(cond.CommandMatches) > 0 {
-			if matched := matchCommandFirstForAction(cond.CommandMatches, cmd, action); matched != "" {
-				return true, fmt.Sprintf("command_matches [%q]", matched)
-			}
-			// Try normalized form.
-			norm := NormalizeCommand(cmd)
-			if norm != cmd {
-				if matched := matchCommandFirstForAction(cond.CommandMatches, norm, action); matched != "" {
-					return true, fmt.Sprintf("command_matches [%q] (normalized)", matched)
-				}
-				if actionRestrictsExecution(action) {
-					for _, seg := range SplitCompoundCommand(norm) {
-						if matched := matchCommandFirstForAction(cond.CommandMatches, seg, action); matched != "" {
-							return true, fmt.Sprintf("command_matches [%q] (normalized compound segment)", matched)
-						}
-					}
-				}
-			}
-			if actionRestrictsExecution(action) {
-				// A restrictive rule applies to the entire call when any command it
-				// executes matches. Execution-granting rules must match the complete
-				// call; matching one benign segment must never authorize its siblings.
-				for _, seg := range SplitCompoundCommand(cmd) {
-					if matched := matchCommandFirstForAction(cond.CommandMatches, seg, action); matched != "" {
-						return true, fmt.Sprintf("command_matches [%q] (compound segment)", matched)
-					}
-					nseg := NormalizeCommand(seg)
-					if nseg != seg {
-						if matched := matchCommandFirstForAction(cond.CommandMatches, nseg, action); matched != "" {
-							return true, fmt.Sprintf("command_matches [%q] (normalized compound segment)", matched)
-						}
-					}
-				}
-				// Check subcommands (command substitution, backticks, eval).
-				for _, sub := range ExtractSubcommands(cmd) {
-					if matched := matchCommandFirstForAction(cond.CommandMatches, sub, action); matched != "" {
-						return true, fmt.Sprintf("command_matches [%q] (subcommand)", matched)
-					}
-					nsub := NormalizeCommand(sub)
-					if nsub != sub {
-						if matched := matchCommandFirstForAction(cond.CommandMatches, nsub, action); matched != "" {
-							return true, fmt.Sprintf("command_matches [%q] (normalized subcommand)", matched)
-						}
-					}
-				}
-			}
-			if matched := matchRestrictiveAlternateCommandFirst(cond.CommandMatches, cmd, action); matched != "" {
-				return true, fmt.Sprintf("command_matches [%q] (alternate shell normalization)", matched)
+			if matched := matchRestrictiveCommandFirst(cond.CommandMatches, cmd, action); matched != "" {
+				return true, fmt.Sprintf("command_matches [%q] (restrictive command interpretation)", matched)
 			}
 		}
 
@@ -1545,9 +1755,6 @@ func matchConditionForAction(cond Condition, call ToolCall, counter CallCounter,
 			return false
 		}
 		cmdMatch := false
-		positiveCommandMatch := func(patterns []string, command string) bool {
-			return matchCommandAnyForAction(patterns, command, action)
-		}
 		negativeAction := ActionDeny
 		if actionRestrictsExecution(action) {
 			// Exclusions weaken a restrictive rule, so preserve argument casing.
@@ -1562,54 +1769,7 @@ func matchConditionForAction(cond Condition, call ToolCall, counter CallCounter,
 			grantAnalysis = analyzeGrantCommand(cmd)
 			cmdMatch, _ = matchGrantCommandFieldWithAnalysis(cond, cmd, action, grantAnalysis)
 		} else if len(cond.CommandMatches) > 0 {
-			cmdMatch = positiveCommandMatch(cond.CommandMatches, cmd)
-			if !cmdMatch {
-				// Try normalized form.
-				norm := NormalizeCommand(cmd)
-				if norm != cmd {
-					cmdMatch = positiveCommandMatch(cond.CommandMatches, norm)
-					if !cmdMatch {
-						for _, seg := range SplitCompoundCommand(norm) {
-							if positiveCommandMatch(cond.CommandMatches, seg) {
-								cmdMatch = true
-								break
-							}
-						}
-					}
-				}
-				// Restrictive rules apply when any executed segment or subcommand
-				// matches, so a dangerous child cannot hide inside a larger call.
-				if !cmdMatch {
-					for _, seg := range SplitCompoundCommand(cmd) {
-						if positiveCommandMatch(cond.CommandMatches, seg) {
-							cmdMatch = true
-							break
-						}
-						nseg := NormalizeCommand(seg)
-						if nseg != seg && positiveCommandMatch(cond.CommandMatches, nseg) {
-							cmdMatch = true
-							break
-						}
-					}
-				}
-				// Check subcommands (command substitution, backticks, eval).
-				if !cmdMatch {
-					for _, sub := range ExtractSubcommands(cmd) {
-						if positiveCommandMatch(cond.CommandMatches, sub) {
-							cmdMatch = true
-							break
-						}
-						nsub := NormalizeCommand(sub)
-						if nsub != sub && positiveCommandMatch(cond.CommandMatches, nsub) {
-							cmdMatch = true
-							break
-						}
-					}
-				}
-				if !cmdMatch && matchRestrictiveAlternateCommandFirst(cond.CommandMatches, cmd, action) != "" {
-					cmdMatch = true
-				}
-			}
+			cmdMatch = matchRestrictiveCommandFirst(cond.CommandMatches, cmd, action) != ""
 		}
 
 		// command_contains is ORed with command_matches. Restrictive actions use
