@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-08-11
+
+### Security
+
+- **Audit credentials are redacted before persistence or external display** —
+  Common credential shapes, sensitive parameter values, and encoded command
+  copies are scrubbed before events reach JSONL, syslog, CEF, API, SSE, or
+  dashboard boundaries while preserving useful policy and correlation data.
+- **Restrictive command matching closes compound-command parser gaps** —
+  Wrapped, grouped, chained, and multi-target command forms are evaluated
+  conservatively, including destructive `rm` and `find` variants, and the most
+  restrictive matching component wins.
+- **MCP and HTTP request identities are canonical at the trust boundary** —
+  Enforce mode rejects duplicate or case-shadowed JSON-RPC fields, malformed
+  correlated responses, and ambiguous tool-call parameters; reserved Rampart
+  policy classes require canonical lowercase spelling while custom identities
+  retain their exact case.
+- **Rampart-owned enforcement state no longer receives broad allow rules** —
+  Shipped policies protect Rampart binaries, services, policies, integration
+  hooks, plugins, and configuration without granting blanket self-management
+  exceptions.
+
 ### Fixed
 
 - **Bundled plugin freshness is component-aware** — Doctor compares installed
@@ -28,8 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plugins appear with explicit static assurance and `rampart doctor` guidance,
   while remaining excluded from behavioral `rampart verify --all`.
 - **Release metadata and bundled component versions are independent** — Public
-  release metadata now identifies v1.6.1, while unchanged embedded plugins keep
-  their own internally synchronized component versions.
+  release versions can advance while unchanged embedded plugins keep their own
+  internally synchronized component versions.
+- **Public assurance is limited to reproducible evidence** — Credential-aware
+  maintainer host harnesses, dated attestations, and duplicated lab procedures
+  are no longer published; active safe verifiers, the adversarial corpus, and
+  credential-free rolling compatibility checks remain the claim basis.
 
 ## [1.6.1] - 2026-08-10
 
