@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // Request is the minimal JSON-RPC 2.0 request/notification envelope used by MCP.
@@ -88,6 +89,29 @@ func validateUniqueJSONKeys(data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// decodeCanonicalJSONObject rejects case-shadowed protocol fields before Go's
+// case-insensitive struct decoder can choose a different value than an MCP peer
+// using exact JavaScript object keys. Unknown extension fields remain allowed.
+func decodeCanonicalJSONObject(data []byte, canonicalKeys ...string) (map[string]json.RawMessage, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, fmt.Errorf("expected JSON object")
+	}
+	canonical := make(map[string]string, len(canonicalKeys))
+	for _, key := range canonicalKeys {
+		canonical[strings.ToLower(key)] = key
+	}
+	for key := range object {
+		if expected, protected := canonical[strings.ToLower(key)]; protected && key != expected {
+			return nil, fmt.Errorf("noncanonical object member %q; use %q", key, expected)
+		}
+	}
+	return object, nil
 }
 
 func validateUniqueJSONValue(decoder *json.Decoder) error {

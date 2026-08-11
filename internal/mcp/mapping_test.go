@@ -15,6 +15,9 @@ func TestMapToolNameDestructiveInferencePrecedesOrdinaryDefaults(t *testing.T) {
 	if got := MapToolName("execute_command", nil); got != "exec" {
 		t.Fatalf("execute_command = %q, want exec", got)
 	}
+	if got := MapToolName("move_file", nil); got != "mcp-dangerous" {
+		t.Fatalf("move_file = %q, want mcp-dangerous", got)
+	}
 }
 
 func TestMapToolNameExplicitCustomMappingStillWins(t *testing.T) {

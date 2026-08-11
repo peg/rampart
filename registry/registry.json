@@ -1,13 +1,13 @@
 {
   "version": "1",
-  "updated_at": "2026-07-29T17:38:07Z",
+  "updated_at": "2026-08-11T01:04:32Z",
   "policies": [
     {
       "name": "mcp-server",
       "description": "First-party policy profile",
       "tags": null,
       "url": "https://raw.githubusercontent.com/peg/rampart/main/registry/policies/mcp-server.yaml",
-      "sha256": "91badc1dbad59b40ed5531590d348d8da1873eac4c3fb79295341eb82ae07511",
+      "sha256": "3cafc5b2806d0b812c9b2b74d95da2c6a7c098870fae13176626208901b052ee",
       "version": "1.0.0",
       "author": ""
     },
