@@ -24,13 +24,15 @@ var DefaultToolTypeMapping = map[string]string{
 	"write_file":       "write",
 	"create_directory": "write",
 	"delete_file":      "mcp-destructive",
-	"move_file":        "write",
-	"execute_command":  "exec",
-	"run_command":      "exec",
-	"shell":            "exec",
-	"fetch":            "fetch",
-	"http_request":     "fetch",
-	defaultMappingKey:  "mcp",
+	// A move carries both a source and destination; generic write-path mapping
+	// cannot safely guess which field the downstream server will honor.
+	"move_file":       "mcp-dangerous",
+	"execute_command": "exec",
+	"run_command":     "exec",
+	"shell":           "exec",
+	"fetch":           "fetch",
+	"http_request":    "fetch",
+	defaultMappingKey: "mcp",
 }
 
 // destructiveKeywords triggers "mcp-destructive" classification for MCP tools

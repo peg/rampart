@@ -584,6 +584,11 @@ rampart audit stats            # Decision breakdown
 rampart audit search           # Query by tool, agent, decision, time range
 ```
 
+Before persistence or SIEM export, Rampart redacts common credential shapes,
+sensitive parameter keys, and encoded command copies. Audit logs still contain
+operational metadata and command structure, so treat the directory as sensitive
+and keep its existing owner-only permissions.
+
 ---
 
 ## Live dashboard

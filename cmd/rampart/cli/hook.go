@@ -521,7 +521,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return fmt.Errorf("hook: open audit trail: %w", err)
 			}
 			defer auditSink.Close()
-			appendAudit := auditSink.Write
+			appendAudit := audit.NewRedactingSink(auditSink).Write
 
 			// Read hook input through a bounded buffer before parsing. Hook payloads
 			// are single JSON objects; accepting an unbounded stream would let a

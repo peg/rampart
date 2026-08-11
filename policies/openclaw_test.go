@@ -100,6 +100,9 @@ func TestOpenClawPolicyDecisions(t *testing.T) {
 		{name: "deny: wrapped rampart setup", tool: "exec", command: "bash -c 'rampart setup openclaw'", expected: engine.ActionDeny},
 		{name: "deny: absolute path rampart setup", tool: "exec", command: "/usr/local/bin/rampart setup openclaw", expected: engine.ActionDeny},
 		{name: "deny: rampart policy", tool: "exec", command: "rampart policy generate", expected: engine.ActionDeny},
+		{name: "deny: rampart service stop", tool: "exec", command: "rampart serve stop", expected: engine.ActionDeny},
+		{name: "deny: rampart service uninstall", tool: "exec", command: "rampart serve uninstall", expected: engine.ActionDeny},
+		{name: "deny: mutation with operational comment", tool: "exec", command: "rampart allow 'curl *' # rampart status", expected: engine.ActionDeny},
 
 		// ── catch-all: unrecognized tools use default_action: ask ──────
 		// default_action is ask so novel tools surface for human approval

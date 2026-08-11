@@ -33,28 +33,14 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Allow read-only operational commands. Note: "rampart serve" is NOT
-      # allowed here — an agent must not be able to restart the enforcer
-      # with different flags (e.g. --mode disabled, --addr 0.0.0.0).
-      - action: allow
-        when:
-          command_contains:
-            - "rampart serve stop"
-            - "rampart serve install"
-            - "rampart serve uninstall"
-            - "rampart version"
-            - "rampart status"
-            - "rampart doctor"
-            - "rampart log"
-            - "rampart watch"
-            - "rampart convert"
-        message: "Operational rampart commands are allowed"
       # Block actual Rampart mutation/setup invocations. Avoid bare substring
       # matching here: docs, PR bodies, and quoted text can legitimately mention
       # commands like `rampart setup openclaw` without trying to execute them.
       # SECURITY: "rampart serve" denied because an agent could restart with
-      # --mode disabled or altered flags. "rampart upgrade" denied because
-      # an agent could replace the binary. Safe serve subcommands are allowed above.
+      # --mode disabled or altered flags, stop enforcement, or uninstall the
+      # service. "rampart upgrade" is denied because it can replace the binary.
+      # Read-only operational commands do not match these mutation rules and
+      # fall through to the rest of the standard policy normally.
       - action: deny
         when:
           command_matches:
@@ -137,6 +123,40 @@ policies:
             - "./rampart setup hermes --help"
             - "./rampart setup hermes -h"
         message: "Policy modification commands must be run by a human, not an agent"
+      # Protect the adapter files that enforce Rampart for supported agents.
+      # These paths are intentionally precise: broad config-directory denies
+      # would prevent normal agent and user workflows. Shell references are
+      # blocked because a shell can disguise writes; direct read stays usable.
+      - action: deny
+        when:
+          command_contains:
+            - ".codex/hooks.json"
+            - '.codex\hooks.json'
+            - ".gemini/settings.json"
+            - '.gemini\settings.json'
+            - ".gemini/config/plugins/rampart"
+            - '.gemini\config\plugins\rampart'
+            - ".copilot/hooks/rampart.json"
+            - '.copilot\hooks\rampart.json'
+            - ".hermes/plugins/rampart"
+            - '.hermes\plugins\rampart'
+            - ".hermes/config.yaml"
+            - '.hermes\config.yaml'
+            - ".openclaw/extensions/rampart"
+            - '.openclaw\extensions\rampart'
+            - ".openclaw/hooks/rampart"
+            - '.openclaw\hooks\rampart'
+            - ".openclaw/openclaw.json"
+            - '.openclaw\openclaw.json'
+            - "Documents/Cline/Hooks/PreToolUse"
+            - 'Documents\Cline\Hooks\PreToolUse'
+            - "Documents/Cline/Hooks/PostToolUse"
+            - 'Documents\Cline\Hooks\PostToolUse'
+            - ".cline/hooks/"
+            - '.cline\hooks\'
+            - ".clinerules/hooks/"
+            - '.clinerules\hooks\'
+        message: "Rampart integration files may only be changed by a human"
       # Block shell redirects writing to .rampart directory (config/policy tampering)
       - action: deny
         when:
@@ -586,50 +606,15 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Block SSH private key access (allow .pub files)
+      # Match key-material paths rather than trying to enumerate every possible
+      # reader or copier. This covers redirects, extra operands, and relative
+      # paths. Public keys remain available through the direct read tool.
       - action: deny
         when:
-          command_matches:
-            - "cat **/.ssh/id_*"
-            - "head **/.ssh/id_*"
-            - "tail **/.ssh/id_*"
-            - "less **/.ssh/id_*"
-            - "more **/.ssh/id_*"
-            - "base64 **/.ssh/id_*"
-            - "cp **/.ssh/id_*"
-            - "*mv*/.ssh/id_*"
-            - "xxd **/.ssh/id_*"
-            - "hexdump **/.ssh/id_*"
-            - "od **/.ssh/id_*"
-            - "strings **/.ssh/id_*"
-          command_not_matches:
-            - "cat **/.ssh/*.pub"
-            - "head **/.ssh/*.pub"
-            - "tail **/.ssh/*.pub"
-            - "less **/.ssh/*.pub"
-            - "more **/.ssh/*.pub"
-            - "base64 **/.ssh/*.pub"
-            - "cp **/.ssh/*.pub"
-            - "*mv*/.ssh/*.pub"
-            - "xxd **/.ssh/*.pub"
-            - "hexdump **/.ssh/*.pub"
-            - "od **/.ssh/*.pub"
-            - "strings **/.ssh/*.pub"
+          command_contains:
+            - ".ssh/id_"
+            - '.ssh\id_'
         message: "SSH private key access blocked"
-      # Block scp/rsync/sftp exfil of SSH keys
-      # Note: -i flag exclusion removed — it's bypassable via dual-key attacks
-      # (scp -i auth_key exfil_key remote:). Users needing -i can use ssh-agent
-      # or add a local policy override.
-      - action: deny
-        when:
-          command_matches:
-            - "*scp*/.ssh/id_*"
-            - "*rsync*/.ssh/id_*"
-            - "*sftp*/.ssh/id_*"
-          command_not_matches:
-            - "*.pub *"
-            - "*.pub"
-        message: "SSH key transfer blocked"
       - action: deny
         when:
           command_matches:
@@ -777,6 +762,7 @@ policies:
             - "python3 -c **exec(__import__**"
             - "python -c **__import__**"
             - "python3 -c **__import__**"
+            - "python* -c **shutil.rmtree**"
             # Versioned binaries — enumerate explicitly because the ** matcher
             # treats the prefix before ** as a literal string, so python3.* -c
             # does not match python3.11. Extend this list when new versions ship.
@@ -1084,6 +1070,21 @@ policies:
             - "**/.gnupg/**"
             # Rampart self-modification via write/edit tool
             - "**/.rampart/**"
+            - "**/.codex/hooks.json"
+            - "**/.gemini/settings.json"
+            - "**/.gemini/config/plugins/rampart/**"
+            - "**/.copilot/hooks/rampart.json"
+            - "**/.hermes/plugins/rampart/**"
+            - "**/.hermes/config.yaml"
+            - "**/.openclaw/extensions/rampart/**"
+            - "**/.openclaw/hooks/rampart/**"
+            - "**/.openclaw/openclaw.json"
+            - "**/Documents/Cline/Hooks/PreToolUse"
+            - "**/Documents/Cline/Hooks/PreToolUse.ps1"
+            - "**/Documents/Cline/Hooks/PostToolUse"
+            - "**/Documents/Cline/Hooks/PostToolUse.ps1"
+            - "**/.cline/hooks/**"
+            - "**/.clinerules/hooks/**"
             # Shell configs (often contain secrets or PATH manipulation)
             - "**/.bashrc"
             - "**/.bash_profile"
