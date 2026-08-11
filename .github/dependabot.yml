@@ -1,7 +1,10 @@
+# Ordinary version updates flow through staging. GitHub still opens security
+# update pull requests against the default branch.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
+    target-branch: staging
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -12,18 +15,22 @@ updates:
 
   - package-ecosystem: docker
     directory: /
+    target-branch: staging
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    # CI requires Docker Go updates to include the matching go.mod change.
 
   - package-ecosystem: github-actions
     directory: /
+    target-branch: staging
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
 
   - package-ecosystem: pip
     directory: /
+    target-branch: staging
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
@@ -32,6 +39,7 @@ updates:
 
   - package-ecosystem: pip
     directory: /sdks/python
+    target-branch: staging
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
