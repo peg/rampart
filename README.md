@@ -103,7 +103,7 @@ rampart setup cline
 rampart setup codex
 rampart verify codex
 
-# Antigravity CLI (host-verified) and IDE (shared contract)
+# Antigravity CLI and IDE (shared tested contract)
 rampart setup antigravity
 rampart verify antigravity
 
@@ -133,7 +133,7 @@ Check the broader installation state:
 rampart doctor
 ```
 
-Current integration coverage, live-host evidence, and known gaps are published
+Current integration coverage and known gaps are published
 in the [support matrix](https://docs.rampart.sh/getting-started/support-matrix/)
 and [security-assurance guide](https://docs.rampart.sh/getting-started/security-assurance/).
 
@@ -199,7 +199,7 @@ configured Rampart boundary are written to a hash-chained audit trail.
 | **Cline** | `rampart setup cline` | Platform-native editor/CLI hook files |
 | **Codex** | `rampart setup codex` | Native user-level lifecycle hooks for CLI, IDE, and desktop |
 | **Gemini CLI** | `rampart setup gemini` | Experimental enterprise/API-key `BeforeTool`/`AfterTool` hooks |
-| **Antigravity** | `rampart setup antigravity` | Shared CLI/IDE `PreToolUse` plugin; CLI 1.1.7 host-verified, IDE contract-tested |
+| **Antigravity** | `rampart setup antigravity` | Shared CLI/IDE `PreToolUse` plugin with installed-plugin and adapter checks |
 | **GitHub Copilot** | `rampart setup copilot` | Shared hooks; CLI package startup + adapter tested, authenticated ingestion pending; VS Code Preview contract-tested |
 | **Any agent** | `rampart wrap -- <agent>` | Shell wrapping via `$SHELL` |
 | **MCP servers** | `rampart mcp -- <server>` | MCP protocol proxy |
@@ -325,8 +325,8 @@ Run `rampart verify openclaw` to test behavior; use `rampart doctor` for a wider
 ## Antigravity
 
 Rampart installs one global plugin shared by Antigravity CLI and the
-Antigravity IDE. The CLI 1.1.7 path has completed host proof; the IDE shares the
-reviewed contract, but a separate physical IDE host run remains pending:
+Antigravity IDE. The CLI and IDE share the reviewed contract; installed-plugin
+and adapter behavior are verified without invoking a model:
 
 ```bash
 rampart setup antigravity
@@ -714,7 +714,7 @@ rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # Advanced/manual OpenClaw integration management
 rampart setup codex                          # Codex native lifecycle hooks
-rampart setup antigravity                    # CLI host-verified; IDE shares the tested plugin contract
+rampart setup antigravity                    # CLI and IDE share the tested plugin contract
 rampart setup copilot                        # Copilot CLI adapter + VS Code Preview hooks
 rampart verify codex                         # Verify hook install + native deny response
 rampart verify antigravity                   # Verify plugin install + native deny response
@@ -791,7 +791,7 @@ rampart upgrade --no-binary                 # Refresh policies only
 | Cline | `rampart setup cline` | Linux, macOS, Windows* |
 | Codex CLI, IDE, desktop | `rampart setup codex` | Linux, macOS, Windows |
 | Gemini CLI (enterprise/API key) | `rampart setup gemini` | Experimental; Linux, macOS |
-| Antigravity CLI / IDE | `rampart setup antigravity` | Linux, macOS, Windows; CLI 1.1.7 host proof, IDE contract-tested |
+| Antigravity CLI / IDE | `rampart setup antigravity` | Linux, macOS, Windows; installed-plugin and adapter verification |
 | GitHub Copilot CLI / VS Code | `rampart setup copilot` | Linux, macOS, Windows; CLI adapter-tested, VS Code Preview contract-tested |
 | Claude Desktop MCP servers | `rampart mcp` | Linux, macOS, Windows |
 | Aider, OpenCode, Continue | `rampart wrap` | Linux, macOS |

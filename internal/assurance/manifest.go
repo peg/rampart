@@ -194,11 +194,8 @@ func (m *Manifest) Validate(repoRoot string) error {
 		}
 		for evidenceIndex, evidence := range integration.Evidence {
 			evidencePrefix := fmt.Sprintf("%s evidence[%d]", prefix, evidenceIndex)
-			if !oneOf(evidence.Kind, "unit", "integration", "failure_injection", "upstream_latest", "live_harness", "live") {
+			if !oneOf(evidence.Kind, "unit", "integration", "failure_injection", "upstream_latest") {
 				problems = append(problems, evidencePrefix+": invalid kind "+evidence.Kind)
-			}
-			if evidence.Kind == "live" && filepath.Ext(evidence.Path) != ".json" {
-				problems = append(problems, evidencePrefix+": completed live evidence must be a JSON summary")
 			}
 			if strings.TrimSpace(evidence.Proves) == "" {
 				problems = append(problems, evidencePrefix+": proves is required")

@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: openclaw-container-acceptance.sh --rampart PATH --artifact-dir PATH [options]
+Usage: compat-openclaw-container.sh --rampart PATH --artifact-dir PATH [options]
 
 Run the Rampart zero-configuration OpenClaw acceptance test in a disposable
 official OpenClaw container, upgraded to an exact resolved npm release. No host

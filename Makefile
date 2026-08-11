@@ -6,7 +6,7 @@ LDFLAGS  = -s -w \
 	-X github.com/peg/rampart/internal/build.Commit=$(COMMIT) \
 	-X github.com/peg/rampart/internal/build.Date=$(DATE)
 
-.PHONY: build test vet clean linux lab-runner-test lab-e2e security-assurance
+.PHONY: build test vet clean linux security-assurance
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o rampart ./cmd/rampart
@@ -22,12 +22,6 @@ vet:
 
 clean:
 	rm -f rampart rampart-linux
-
-lab-runner-test:
-	scripts/lab/test-run-e2e.sh
-
-lab-e2e:
-	scripts/lab/run-e2e.sh --sha "$$(git rev-parse HEAD)" --suite e2e --no-fetch
 
 security-assurance:
 	scripts/security-assurance.sh
