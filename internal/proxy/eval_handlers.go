@@ -480,7 +480,7 @@ func (s *Server) writeAuditRecord(
 		s.logger.Error("proxy: audit write failed", "error", err)
 		return "", fmt.Errorf("write audit event: %w", err)
 	}
-	s.broadcastSSE(map[string]any{"type": "audit", "event": event})
+	s.broadcastAuditEvent(event)
 
 	// Fire webhook notification if configured
 	if s.notifyConfig != nil && s.notifyConfig.URL != "" {

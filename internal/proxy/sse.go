@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/peg/rampart/internal/audit"
 )
 
 type sseHub struct {
@@ -128,4 +130,10 @@ func (s *Server) broadcastSSE(msg map[string]any) {
 		return
 	}
 	s.sse.broadcast([]byte("data: " + string(payload) + "\n\n"))
+}
+
+// broadcastAuditEvent applies the same credential redaction used by persistent
+// and external audit sinks before an event reaches the live dashboard stream.
+func (s *Server) broadcastAuditEvent(event audit.Event) {
+	s.broadcastSSE(map[string]any{"type": "audit", "event": audit.RedactEvent(event)})
 }

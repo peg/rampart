@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -156,5 +157,143 @@ func TestCIPolicyBlocksUnknownAndDangerousMCPTools(t *testing.T) {
 		if decision.Action != ActionDeny {
 			t.Fatalf("CI %s decision = %s, want deny", tool, decision.Action)
 		}
+	}
+}
+
+func TestMCPServerPolicyGatesUnclassifiedAndDangerousTools(t *testing.T) {
+	path := filepath.Join("..", "..", "policies", "mcp-server.yaml")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewFileStore(path), logger)
+	if err != nil {
+		t.Fatalf("load MCP server policy: %v", err)
+	}
+
+	tests := []struct {
+		tool string
+		want Action
+	}{
+		{tool: "mcp", want: ActionAsk},
+		{tool: "mcp-dangerous", want: ActionAsk},
+		{tool: "mcp-destructive", want: ActionDeny},
+	}
+	for _, tc := range tests {
+		t.Run(tc.tool, func(t *testing.T) {
+			if got := eng.Evaluate(ToolCall{Agent: "mcp-client", Tool: tc.tool}); got.Action != tc.want {
+				t.Fatalf("MCP server %s decision = %s, want %s", tc.tool, got.Action, tc.want)
+			}
+		})
+	}
+}
+
+func TestStandardPolicyProtectsInstalledIntegrationBoundaries(t *testing.T) {
+	path := filepath.Join("..", "..", "policies", "standard.yaml")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewFileStore(path), logger)
+	if err != nil {
+		t.Fatalf("load standard policy: %v", err)
+	}
+
+	paths := []string{
+		"/home/user/.codex/hooks.json",
+		"/home/user/.gemini/settings.json",
+		"/home/user/.gemini/config/plugins/rampart/hooks.json",
+		"/home/user/.copilot/hooks/rampart.json",
+		"/home/user/.hermes/plugins/rampart/plugin.yaml",
+		"/home/user/.hermes/config.yaml",
+		"/home/user/.openclaw/extensions/rampart/index.js",
+		"/home/user/.openclaw/hooks/rampart/handler.js",
+		"/home/user/.openclaw/openclaw.json",
+		"/home/user/Documents/Cline/Hooks/PreToolUse",
+		"/home/user/.cline/hooks/PostToolUse",
+		"/workspace/.clinerules/hooks/PreToolUse",
+	}
+	for _, protectedPath := range paths {
+		t.Run(filepath.ToSlash(protectedPath), func(t *testing.T) {
+			readDecision := eng.Evaluate(ToolCall{
+				Agent:  "coding-agent",
+				Tool:   "read",
+				Params: map[string]any{"path": protectedPath},
+			})
+			if readDecision.Action == ActionDeny {
+				t.Fatalf("read-only inspection of %q was denied via %v", protectedPath, readDecision.MatchedPolicies)
+			}
+
+			writeDecision := eng.Evaluate(ToolCall{
+				Agent: "coding-agent",
+				Tool:  "write",
+				Params: map[string]any{
+					"path":    protectedPath,
+					"content": "disabled",
+				},
+			})
+			if writeDecision.Action != ActionDeny || !slices.Contains(writeDecision.MatchedPolicies, "block-sensitive-writes") {
+				t.Fatalf("write %q = %s via %v, want block-sensitive-writes deny", protectedPath, writeDecision.Action, writeDecision.MatchedPolicies)
+			}
+
+			execDecision := eng.Evaluate(ToolCall{
+				Agent:  "coding-agent",
+				Tool:   "exec",
+				Params: map[string]any{"command": "rm -f " + protectedPath},
+			})
+			if execDecision.Action != ActionDeny || !slices.Contains(execDecision.MatchedPolicies, "block-self-modification") {
+				t.Fatalf("remove %q = %s via %v, want block-self-modification deny", protectedPath, execDecision.Action, execDecision.MatchedPolicies)
+			}
+		})
+	}
+
+	windowsRemoval := eng.Evaluate(ToolCall{
+		Agent:  "coding-agent",
+		Tool:   "exec",
+		Params: map[string]any{"command": `del C:\Users\user\.codex\hooks.json`},
+	})
+	if windowsRemoval.Action != ActionDeny || !slices.Contains(windowsRemoval.MatchedPolicies, "block-self-modification") {
+		t.Fatalf("Windows integration removal = %s via %v, want self-modification deny", windowsRemoval.Action, windowsRemoval.MatchedPolicies)
+	}
+}
+
+func TestStandardPolicyBlocksPrivateKeyPathRegardlessOfReaderOrArguments(t *testing.T) {
+	path := filepath.Join("..", "..", "policies", "standard.yaml")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewFileStore(path), logger)
+	if err != nil {
+		t.Fatalf("load standard policy: %v", err)
+	}
+
+	commands := []string{
+		"cat ~/.ssh/id_rsa > /tmp/out",
+		"cat .ssh/id_rsa",
+		"awk '{print}' ~/.ssh/id_ed25519",
+		"sed -n 1p /home/user/.ssh/id_rsa",
+		"cp /home/user/.ssh/id_rsa /tmp/out",
+	}
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			decision := eng.Evaluate(ToolCall{Agent: "coding-agent", Tool: "exec", Params: map[string]any{"command": command}})
+			if decision.Action != ActionDeny || !slices.Contains(decision.MatchedPolicies, "block-credential-commands") {
+				t.Fatalf("command %q = %s via %v, want credential-command deny", command, decision.Action, decision.MatchedPolicies)
+			}
+		})
+	}
+}
+
+func TestOpenClawPolicyProtectsItsEnforcementFiles(t *testing.T) {
+	path := filepath.Join("..", "..", "policies", "openclaw.yaml")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := New(NewFileStore(path), logger)
+	if err != nil {
+		t.Fatalf("load OpenClaw policy: %v", err)
+	}
+
+	for _, protectedPath := range []string{
+		"/home/user/.openclaw/extensions/rampart/index.js",
+		"/home/user/.openclaw/hooks/rampart/handler.js",
+		"/home/user/.openclaw/openclaw.json",
+	} {
+		t.Run(filepath.Base(protectedPath), func(t *testing.T) {
+			decision := eng.Evaluate(ToolCall{Agent: "openclaw", Tool: "write", Params: map[string]any{"path": protectedPath}})
+			if decision.Action != ActionDeny || !slices.Contains(decision.MatchedPolicies, "openclaw-protect-enforcement-files") {
+				t.Fatalf("write %q = %s via %v, want OpenClaw enforcement-file deny", protectedPath, decision.Action, decision.MatchedPolicies)
+			}
+		})
 	}
 }

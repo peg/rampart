@@ -386,7 +386,7 @@ authorized:
 	resolved, _ := s.approvals.Get(id)
 	s.broadcastSSE(map[string]any{"type": "approvals"})
 	if resolutionAudit != nil {
-		s.broadcastSSE(map[string]any{"type": "audit", "event": *resolutionAudit})
+		s.broadcastAuditEvent(*resolutionAudit)
 	}
 	s.logger.Info("proxy: approval resolved",
 		"id", id,
@@ -404,7 +404,7 @@ authorized:
 				persistenceAuditOK = false
 				s.logger.Error("proxy: audit write for durable approval authorization failed; policy not installed", "error", writeErr)
 			} else {
-				s.broadcastSSE(map[string]any{"type": "audit", "event": event})
+				s.broadcastAuditEvent(event)
 			}
 		}
 		if !persistenceAuditOK {
@@ -691,7 +691,7 @@ func (s *Server) handleResolveHostedApproval(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, "failed to write hosted approval audit event")
 		return
 	}
-	s.broadcastSSE(map[string]any{"type": "audit", "event": event})
+	s.broadcastAuditEvent(event)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"audit_id":    auditID,

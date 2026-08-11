@@ -46,6 +46,36 @@ policies:
             - ">> $HOME/.rampart/"
             - "| tee $HOME/.rampart/"
         message: "Writing to Rampart config directory via shell redirect blocked"
+      - action: deny
+        when:
+          command_contains:
+            - ".codex/hooks.json"
+            - '.codex\hooks.json'
+            - ".gemini/settings.json"
+            - '.gemini\settings.json'
+            - ".gemini/config/plugins/rampart"
+            - '.gemini\config\plugins\rampart'
+            - ".copilot/hooks/rampart.json"
+            - '.copilot\hooks\rampart.json'
+            - ".hermes/plugins/rampart"
+            - '.hermes\plugins\rampart'
+            - ".hermes/config.yaml"
+            - '.hermes\config.yaml'
+            - ".openclaw/extensions/rampart"
+            - '.openclaw\extensions\rampart'
+            - ".openclaw/hooks/rampart"
+            - '.openclaw\hooks\rampart'
+            - ".openclaw/openclaw.json"
+            - '.openclaw\openclaw.json'
+            - "Documents/Cline/Hooks/PreToolUse"
+            - 'Documents\Cline\Hooks\PreToolUse'
+            - "Documents/Cline/Hooks/PostToolUse"
+            - 'Documents\Cline\Hooks\PostToolUse'
+            - ".cline/hooks/"
+            - '.cline\hooks\'
+            - ".clinerules/hooks/"
+            - '.clinerules\hooks\'
+        message: "Rampart integration files may only be changed by a human"
       # Glob patterns for direct invocations (kept for compatibility and explicitness)
       - action: deny
         when:
@@ -424,50 +454,12 @@ policies:
     match:
       tool: ["exec"]
     rules:
-      # Block SSH private key access (allow .pub files)
       - action: deny
         when:
-          command_matches:
-            - "cat **/.ssh/id_*"
-            - "head **/.ssh/id_*"
-            - "tail **/.ssh/id_*"
-            - "less **/.ssh/id_*"
-            - "more **/.ssh/id_*"
-            - "base64 **/.ssh/id_*"
-            - "cp **/.ssh/id_*"
-            - "*mv*/.ssh/id_*"
-            - "xxd **/.ssh/id_*"
-            - "hexdump **/.ssh/id_*"
-            - "od **/.ssh/id_*"
-            - "strings **/.ssh/id_*"
-          command_not_matches:
-            - "cat **/.ssh/*.pub"
-            - "head **/.ssh/*.pub"
-            - "tail **/.ssh/*.pub"
-            - "less **/.ssh/*.pub"
-            - "more **/.ssh/*.pub"
-            - "base64 **/.ssh/*.pub"
-            - "cp **/.ssh/*.pub"
-            - "*mv*/.ssh/*.pub"
-            - "xxd **/.ssh/*.pub"
-            - "hexdump **/.ssh/*.pub"
-            - "od **/.ssh/*.pub"
-            - "strings **/.ssh/*.pub"
+          command_contains:
+            - ".ssh/id_"
+            - '.ssh\id_'
         message: "SSH private key access blocked"
-      # Block scp/rsync/sftp exfil of SSH keys
-      # Note: -i flag exclusion removed — it's bypassable via dual-key attacks
-      # (scp -i auth_key exfil_key remote:). Users needing -i can use ssh-agent
-      # or add a local policy override.
-      - action: deny
-        when:
-          command_matches:
-            - "*scp*/.ssh/id_*"
-            - "*rsync*/.ssh/id_*"
-            - "*sftp*/.ssh/id_*"
-          command_not_matches:
-            - "*.pub *"
-            - "*.pub"
-        message: "SSH key transfer blocked"
       - action: deny
         when:
           command_matches:
@@ -818,6 +810,21 @@ policies:
             - "**/.gnupg/**"
             # Rampart self-modification via write/edit tool
             - "**/.rampart/**"
+            - "**/.codex/hooks.json"
+            - "**/.gemini/settings.json"
+            - "**/.gemini/config/plugins/rampart/**"
+            - "**/.copilot/hooks/rampart.json"
+            - "**/.hermes/plugins/rampart/**"
+            - "**/.hermes/config.yaml"
+            - "**/.openclaw/extensions/rampart/**"
+            - "**/.openclaw/hooks/rampart/**"
+            - "**/.openclaw/openclaw.json"
+            - "**/Documents/Cline/Hooks/PreToolUse"
+            - "**/Documents/Cline/Hooks/PreToolUse.ps1"
+            - "**/Documents/Cline/Hooks/PostToolUse"
+            - "**/Documents/Cline/Hooks/PostToolUse.ps1"
+            - "**/.cline/hooks/**"
+            - "**/.clinerules/hooks/**"
             # Shell configs (often contain secrets or PATH manipulation)
             - "**/.bashrc"
             - "**/.bash_profile"

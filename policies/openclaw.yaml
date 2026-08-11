@@ -98,6 +98,31 @@ policies:
             - ">> .rampart/"
             - ">> ~/.rampart/"
         message: "Direct writes to .rampart/ directory blocked"
+      # Shell references fail closed because redirection and wrapper syntax can
+      # disguise a write. The read tool remains available for inspection.
+      - action: deny
+        when:
+          command_contains:
+            - ".openclaw/extensions/rampart"
+            - '.openclaw\extensions\rampart'
+            - ".openclaw/hooks/rampart"
+            - '.openclaw\hooks\rampart'
+            - ".openclaw/openclaw.json"
+            - '.openclaw\openclaw.json'
+        message: "Rampart's OpenClaw integration may only be changed by a human"
+
+  - name: openclaw-protect-enforcement-files
+    description: "Prevent write and edit tools from disabling Rampart's OpenClaw integration"
+    match:
+      tool: ["write", "edit"]
+    rules:
+      - action: deny
+        when:
+          path_matches:
+            - "**/.openclaw/extensions/rampart/**"
+            - "**/.openclaw/hooks/rampart/**"
+            - "**/.openclaw/openclaw.json"
+        message: "Rampart's OpenClaw integration may only be changed by a human"
 
   # ── Safe workspace reads ───────────────────────────────────────────────
   # Allow reading workspace files and common project files.
@@ -184,6 +209,8 @@ policies:
             - "**/SOUL.md"
             - "**/IDENTITY.md"
             - "**/.openclaw/openclaw.json"
+            - "**/.openclaw/extensions/rampart/**"
+            - "**/.openclaw/hooks/rampart/**"
         message: "Workspace file write allowed"
 
   # ── Safe exec commands ─────────────────────────────────────────────────
