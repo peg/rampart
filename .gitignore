@@ -18,6 +18,10 @@ __pycache__/
 *.swp
 *~
 
+# Local maintainer workspace
+/AGENTS.md
+/_tmp/
+
 # OS
 .DS_Store
 Thumbs.db
