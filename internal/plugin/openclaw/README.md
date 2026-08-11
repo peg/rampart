@@ -55,7 +55,5 @@ Arguments:
 
 This is a deterministic harness for the highest-leverage plugin regression: approval-path behavior without depending on model tool selection.
 
-These local checks do **not** prove that an installed OpenClaw + Codex
-app-server runtime fires the hook for native shell calls. The single canonical
-procedure and pass criteria for that credentialed proof live in the
-[OpenClaw release acceptance checklist](../../../docs/design/openclaw-approval-acceptance-checklist.md).
+These checks do not invoke a model. Use `rampart verify openclaw` on an
+installation to exercise the live plugin boundary with non-executing canaries.

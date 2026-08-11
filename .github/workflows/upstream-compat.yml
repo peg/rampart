@@ -137,7 +137,7 @@ jobs:
 
       - name: Validate zero-configuration protection with latest stable package
         run: |
-          scripts/lab/openclaw-container-acceptance.sh \
+          scripts/compat-openclaw-container.sh \
             --rampart "$RUNNER_TEMP/rampart-openclaw-candidate" \
             --artifact-dir "$RUNNER_TEMP/openclaw-container-acceptance"
 

@@ -57,7 +57,7 @@ When a policy action is `ask`, behavior varies by integration:
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI, IDE, desktop](codex-cli.md) | Native hooks | `rampart setup codex` | All |
 | [Gemini CLI](gemini-cli.md) | Experimental enterprise/API-key native hooks | `rampart setup gemini` | Linux, macOS |
-| [Antigravity CLI / IDE](antigravity.md) | Shared plugin; CLI host-verified, IDE contract-tested | `rampart setup antigravity` | All |
+| [Antigravity CLI / IDE](antigravity.md) | Shared plugin with installed-plugin and adapter checks | `rampart setup antigravity` | All |
 | [GitHub Copilot CLI / VS Code](github-copilot.md) | CLI adapter-tested; shared VS Code Preview contract | `rampart setup copilot` | All |
 | [OpenClaw](openclaw.md) | Managed native guard | `rampart protect openclaw` | Linux, macOS |
 | [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | Linux, macOS |
