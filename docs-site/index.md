@@ -238,10 +238,10 @@ verify -> outcomes.approval
 
 ## Current release
 
-Rampart v1.6.0 adds one-command behavioral verification across configured
-boundaries, current OpenClaw approval ownership and stable-package gating,
-safer service lifecycle identity, seamless policy and historical-audit
-upgrades, and isolated Hermes 0.20 host evidence. See the
+Rampart v1.6.2 hardens audit secrecy, compound-command and self-protection
+enforcement, and MCP/HTTP protocol boundaries. It also corrects plugin
+freshness and Hermes status reporting while grounding public support claims in
+reproducible, credential-free evidence. See the
 [release notes](https://github.com/peg/rampart/releases/latest) for the concise
 upgrade summary or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.

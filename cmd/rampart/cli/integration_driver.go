@@ -20,21 +20,24 @@ import (
 // deliberately contains only lifecycle operations shared by the CLI. Tool
 // payload normalization remains in the adapter that owns the host protocol.
 type integrationDriver struct {
-	ID              string
-	Aliases         []string
-	DisplayName     string
-	Boundary        string
-	VerifyTarget    string
-	ProofLevel      assuranceLevel
-	Executables     []string
-	Installed       func(home string) bool
-	SetupCommand    func(opts *rootOptions) *cobra.Command
-	VerifyChecks    func(ctx context.Context, timeout time.Duration) []verificationCheck
-	OpenClaw        bool
-	AutoProtect     bool
-	ServiceRequired bool
-	Platforms       []string
-	Configured      func(home string) bool
+	ID           string
+	Aliases      []string
+	DisplayName  string
+	Boundary     string
+	VerifyTarget string
+	// VerificationCommand names the non-behavioral proof command for drivers
+	// that cannot safely participate in `rampart verify --all`.
+	VerificationCommand string
+	ProofLevel          assuranceLevel
+	Executables         []string
+	Installed           func(home string) bool
+	SetupCommand        func(opts *rootOptions) *cobra.Command
+	VerifyChecks        func(ctx context.Context, timeout time.Duration) []verificationCheck
+	OpenClaw            bool
+	AutoProtect         bool
+	ServiceRequired     bool
+	Platforms           []string
+	Configured          func(home string) bool
 }
 
 func supportedIntegrationDrivers() []integrationDriver {
@@ -73,6 +76,24 @@ func supportedIntegrationDrivers() []integrationDriver {
 			Configured:   codexHooksConfiguredForHome,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyCodexHooksInstalled(), verifyCodexHookAdapter(ctx)}
+			},
+		},
+		{
+			ID: "hermes", DisplayName: "Hermes Agent", Boundary: "experimental native plugin",
+			VerificationCommand: "rampart doctor", Executables: []string{"hermes"},
+			AutoProtect: false, ServiceRequired: true, Platforms: []string{"linux", "darwin"},
+			Installed: func(home string) bool {
+				state := detectHermesPluginStateForHome(home)
+				if state.Installed {
+					return true
+				}
+				_, err := execLookPath("hermes")
+				return err == nil
+			},
+			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupHermesCmd() },
+			Configured: func(home string) bool {
+				state := detectHermesPluginStateForHome(home)
+				return state.Installed && state.Enabled && state.ManifestValid && state.HookDeclared
 			},
 		},
 		{
@@ -170,6 +191,16 @@ func integrationDriverSupportsPlatform(driver integrationDriver, goos string) bo
 		}
 	}
 	return false
+}
+
+func integrationDriverVerificationCommand(driver integrationDriver) string {
+	if command := strings.TrimSpace(driver.VerificationCommand); command != "" {
+		return command
+	}
+	if target := strings.TrimSpace(driver.VerifyTarget); target != "" && driver.VerifyChecks != nil {
+		return "rampart verify " + target
+	}
+	return ""
 }
 
 func detectInstalledIntegrationDrivers() ([]integrationDriver, error) {

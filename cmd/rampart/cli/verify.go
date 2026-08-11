@@ -177,6 +177,13 @@ implementation.`,
 				if !ok {
 					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, antigravity, copilot, policy)", target)
 				}
+				if strings.TrimSpace(driver.VerifyTarget) == "" || driver.VerifyChecks == nil {
+					command := integrationDriverVerificationCommand(driver)
+					if command == "" {
+						command = "rampart doctor"
+					}
+					return fmt.Errorf("verify: %s has static verification only; run `%s`", driver.DisplayName, command)
+				}
 				target = driver.VerifyTarget
 			}
 
@@ -217,13 +224,11 @@ func configuredVerificationTargets(home string) []string {
 	targets := []string{"policy"}
 	seen := map[string]struct{}{"policy": {}}
 	for _, driver := range supportedIntegrationDrivers() {
-		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) || driver.Configured == nil || !driver.Configured(home) {
+		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) || driver.Configured == nil || !driver.Configured(home) ||
+			strings.TrimSpace(driver.VerifyTarget) == "" || driver.VerifyChecks == nil {
 			continue
 		}
 		target := strings.TrimSpace(driver.VerifyTarget)
-		if target == "" {
-			target = driver.ID
-		}
 		if _, exists := seen[target]; exists {
 			continue
 		}

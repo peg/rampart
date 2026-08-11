@@ -667,6 +667,44 @@ func TestMatchCondition_CommandContains(t *testing.T) {
 	}
 }
 
+func TestRestrictiveCommandExclusionsAreComponentScoped(t *testing.T) {
+	cond := Condition{
+		CommandMatches: []string{
+			"rm -rf /",
+			"rm -rf /var/**",
+			"mkfs /dev/**",
+		},
+		CommandNotMatches: []string{
+			"rm -rf /tmp/**",
+			"rm -rf /var/log/**",
+		},
+	}
+
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "direct safe exclusion", command: "rm -rf /var/log/archive", want: false},
+		{name: "safe exclusion with unrelated sibling", command: "echo ok && rm -rf /var/log/archive", want: false},
+		{name: "safe then destructive and", command: "rm -rf /var/log/archive && rm -rf /", want: true},
+		{name: "safe then destructive semicolon", command: "rm -rf /var/log/archive; rm -rf /", want: true},
+		{name: "safe then destructive or", command: "rm -rf /tmp/cache || rm -rf /", want: true},
+		{name: "safe then format", command: "rm -rf /tmp/cache; mkfs /dev/sda", want: true},
+		{name: "destructive then safe", command: "rm -rf / && rm -rf /tmp/cache", want: true},
+		{name: "nested wrapper", command: "bash -c 'rm -rf /tmp/cache && rm -rf /'", want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+			if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
+				t.Fatalf("matchConditionForAction(command=%q) = %v, want %v", test.command, got, test.want)
+			}
+		})
+	}
+}
+
 func TestEmptyCommandContainsCannotGrantExecution(t *testing.T) {
 	cond := Condition{CommandContains: []string{""}}
 	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "anything at all"}}
@@ -863,6 +901,65 @@ func TestMatchCondition_AdversarialExecReleaseMatrix(t *testing.T) {
 			got := matchCondition(tt.cond, call, nil)
 			if got != tt.want {
 				t.Fatalf("matchCondition(%+v, command=%q) = %v, want %v", tt.cond, tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRestrictiveCommandSemanticAliases(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"rm -rf /", "rm -rf /etc", "rm -rf /etc/**"}}
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "absolute executable", command: "/bin/rm -rf /", want: true},
+		{name: "combined reversed flags", command: "rm -fr /", want: true},
+		{name: "separate flags", command: "rm -r -f /", want: true},
+		{name: "long flags", command: "rm --recursive --force /", want: true},
+		{name: "extra flags and option terminator", command: "rm -vfr -- /", want: true},
+		{name: "busybox applet", command: "busybox rm -rf /", want: true},
+		{name: "toybox applet", command: "toybox rm -rf /etc", want: true},
+		{name: "find delete", command: "find / -delete", want: true},
+		{name: "shell here string", command: "bash <<< 'rm -rf /'", want: true},
+		{name: "shell stdin here string", command: "bash -s <<< 'rm -rf /etc'", want: true},
+		{name: "alias after safe component", command: "true && /bin/rm -fr /", want: true},
+		{name: "busybox after pipeline", command: "echo ok | busybox rm -rf /", want: true},
+		{name: "find after safe component", command: "true && find / -delete", want: true},
+		{name: "here string after safe component", command: "true && bash <<< 'rm -rf /'", want: true},
+		{name: "subshell grouping", command: "(rm -rf /)", want: true},
+		{name: "brace grouping", command: "{ rm -rf /; }", want: true},
+		{name: "if body", command: "if true; then rm -rf /; fi", want: true},
+		{name: "if condition", command: "if rm -rf /; then true; fi", want: true},
+		{name: "while body", command: "while true; do rm -rf /; done", want: true},
+		{name: "while condition", command: "while rm -rf /; do true; done", want: true},
+		{name: "until body", command: "until true; do rm -rf /; done", want: true},
+		{name: "case body", command: "case x in x) rm -rf /;; esac", want: true},
+		{name: "multiple operands dangerous last", command: "rm -rf /tmp /", want: true},
+		{name: "multiple operands dangerous first", command: "rm -rf / /tmp", want: true},
+		{name: "double slash root", command: "rm -rf //", want: true},
+		{name: "dot root", command: "rm -rf /./", want: true},
+		{name: "parent traversal root", command: "rm -rf /tmp/../", want: true},
+		{name: "comment after root", command: "rm -rf / # comment", want: true},
+		{name: "quoted hash operand before root", command: "rm -rf '#' /", want: true},
+		{name: "redirection after root", command: "rm -rf / 2>/dev/null", want: true},
+		{name: "find multiple targets", command: "find /tmp / -delete", want: true},
+		{name: "find double slash root", command: "find // -delete", want: true},
+		{name: "find parent traversal root", command: "find /tmp/.. -delete", want: true},
+		{name: "force without recursive", command: "rm -f /", want: false},
+		{name: "safe find delete", command: "find /tmp/cache -delete", want: false},
+		{name: "safe multiple rm targets", command: "rm -rf /tmp/cache /var/cache/app", want: false},
+		{name: "safe multiple find targets", command: "find /tmp/cache /var/cache/app -delete", want: false},
+		{name: "commented root is not executed", command: "rm -rf /tmp # /", want: false},
+		{name: "quoted grouping prose", command: "echo '(rm -rf /)'", want: false},
+		{name: "quoted control prose", command: "printf '%s' 'then rm -rf /'", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+			if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
+				t.Fatalf("matchConditionForAction(command=%q) = %v, want %v; aliases=%q", test.command, got, test.want, restrictiveCommandAliases(test.command))
 			}
 		})
 	}

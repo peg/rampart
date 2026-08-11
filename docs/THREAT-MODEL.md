@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-08-07 | Applies to: v1.6.0+
+> Last reviewed: 2026-08-11 | Applies to: v1.6.2+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -86,6 +86,12 @@ without rewriting the existing records. Forks, missing references,
 disconnected events, and overlapping epochs fail verification.
 
 Audit records are capped at 2 MiB. If JSON escaping or decision guidance would exceed that limit, Rampart replaces large fields with their original encoded size and SHA-256 digest, then computes the event hash over the compacted record. This preserves a bounded, correlatable decision record instead of silently dropping the audit event.
+
+Rampart redacts common credential patterns, sensitive-key values, and encoded
+command copies before audit events reach local JSONL, syslog, or CEF sinks.
+Redaction is defense in depth rather than a data-classification guarantee:
+unusual secret formats or sensitive source text can still appear in request
+content, so operators must continue to protect audit storage and exports.
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](https://docs.rampart.sh/deployment/user-separation/) so the agent can't access audit files

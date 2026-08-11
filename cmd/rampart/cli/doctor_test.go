@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/build"
+	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
+	openclawplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
 )
 
@@ -722,8 +724,7 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		t.Setenv("RAMPART_OPENCLAW_BIN", openclawBin)
 		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw", "extensions", "rampart"), 0o755))
 		pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
-		requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "openclaw.plugin.json"), []byte(`{"version":"1.0.0","activation":{"onStartup":true}}`), 0o600))
-		requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "index.js"), []byte(`export const version = "1.0.0";`), 0o600))
+		requireNoErr(t, openclawplugin.Extract(pluginDir))
 		return home
 	}
 
@@ -745,6 +746,19 @@ func TestDoctorOpenClawPlugin(t *testing.T) {
 		warnings, results := run(t)
 		if warnings != 0 || len(results) != 1 || results[0].Status != "ok" {
 			t.Fatalf("expected ok, got warnings=%d results=%+v", warnings, results)
+		}
+	})
+
+	t.Run("warns when same-version plugin payload differs", func(t *testing.T) {
+		home := setup(t)
+		requireNoErr(t, os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755))
+		requireNoErr(t, os.WriteFile(filepath.Join(home, ".openclaw", "openclaw.json"), []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}}}`), 0o600))
+		hookPath := filepath.Join(home, ".openclaw", "extensions", "rampart", "hooks", "rampart", "index.js")
+		requireNoErr(t, os.WriteFile(hookPath, []byte("// same-version drift\n"), 0o600))
+
+		warnings, results := run(t)
+		if warnings != 1 || len(results) != 1 || !strings.Contains(results[0].Message, "do not match the plugin bundled") {
+			t.Fatalf("expected bundled-payload warning, got warnings=%d results=%+v", warnings, results)
 		}
 	})
 
@@ -995,6 +1009,23 @@ func TestDoctorHermesIntegrationReportsReadyExperimentalGate(t *testing.T) {
 	}
 }
 
+func TestDoctorHermesIntegrationDetectsSameVersionPayloadDrift(t *testing.T) {
+	home, hermesHome := setupHermesDoctorFixture(t, `plugins:
+  enabled:
+    - rampart
+`)
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+	requireNoErr(t, os.WriteFile(filepath.Join(hermesHome, "plugins", "rampart", "__init__.py"), []byte("# same-version drift\n"), 0o644))
+
+	var results []checkResult
+	warnings := doctorHermesIntegration(func(name, status, msg string) {
+		results = append(results, checkResult{Name: name, Status: status, Message: msg})
+	}, "http://127.0.0.1:9090", "test-token")
+	if warnings != 2 || !strings.Contains(doctorResultText(results), "do not match the plugin bundled") {
+		t.Fatalf("expected missing-binary plus bundled-payload warnings, got warnings=%d results=%+v", warnings, results)
+	}
+}
+
 func TestDoctorHermesIntegrationWarnsOnToolModeAndRiskyFailOpen(t *testing.T) {
 	home, _ := setupHermesDoctorFixture(t, `plugins:
   enabled:
@@ -1032,13 +1063,7 @@ func setupHermesDoctorFixture(t *testing.T, config string) (home string, hermesH
 	hermesHome = filepath.Join(home, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 	pluginDir := filepath.Join(hermesHome, "plugins", "rampart")
-	requireNoErr(t, os.MkdirAll(pluginDir, 0o755))
-	requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte(`name: rampart
-version: 1.2.0
-provides_hooks:
-  - pre_tool_call
-`), 0o644))
-	requireNoErr(t, os.WriteFile(filepath.Join(pluginDir, "__init__.py"), []byte("def register(ctx):\n    pass\n"), 0o644))
+	requireNoErr(t, hermesplugin.Extract(pluginDir))
 	requireNoErr(t, os.WriteFile(filepath.Join(hermesHome, "config.yaml"), []byte(config), 0o644))
 	return home, hermesHome
 }
@@ -1077,32 +1102,6 @@ func TestNormalizedReleaseVersionAcceptance(t *testing.T) {
 		_, got := normalizedReleaseVersion(tt.version)
 		if got != tt.want {
 			t.Fatalf("normalizedReleaseVersion(%q) accepted = %v, want %v", tt.version, got, tt.want)
-		}
-	}
-}
-
-func TestPluginVersionMatchesBuildVersion(t *testing.T) {
-	tests := []struct {
-		manifest string
-		build    string
-		want     bool
-	}{
-		{"0.9.22", "v0.9.22", true},
-		{"0.9.22", "0.9.22", true},
-		{"0.9.22", "v0.9.23", false},
-		{"1.0.0-rc.1", "v1.0.0-rc.1", true},
-		{"1.0.0-rc.2", "v1.0.0-rc.3", false},
-		{"1.0.0-rc.2", "v1.0.0", false},
-		{"1.0.0", "v1.0.0-rc.2", false},
-		{"0.9.22", "v1.0.0-rc.1", false},
-		{"0.9.22", "v0.9.22-staging-47fa0cf", true},
-		{"0.9.22", "v0.9.22-33-g47fa0cf", true},
-		{"0.9.22", "v0.9.22-0.20260503052103-a72c3452fe38", true},
-		{"0.9.22", "dev", true},
-	}
-	for _, tt := range tests {
-		if got := pluginVersionMatchesBuildVersion(tt.manifest, tt.build); got != tt.want {
-			t.Fatalf("pluginVersionMatchesBuildVersion(%q, %q) = %v, want %v", tt.manifest, tt.build, got, tt.want)
 		}
 	}
 }

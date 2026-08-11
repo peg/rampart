@@ -200,20 +200,16 @@ Use `rampart doctor` for the broader installation health report. Expected output
 ✓ Approval path: native OpenClaw UI active
 ```
 
-For end-to-end confidence, validate one case in each state:
-- learned allow, for example `sudo true`
-- fresh ask, for example `sudo id`
-- hard deny, for example `rm -rf /tmp`
-
-Maintainers can reproduce the current stable-package and credentialed native
-runtime proofs with the single canonical
-[OpenClaw release acceptance checklist](https://github.com/peg/rampart/blob/main/docs/design/openclaw-approval-acceptance-checklist.md).
+For safe end-to-end confidence, run `rampart verify openclaw`. It checks the
+installed plugin and exercises allow, ask, and deny behavior without executing
+the represented actions or invoking a model.
 
 Or check plugin status directly:
 
 ```bash
 openclaw plugins list
-# rampart  v1.6.0  active
+# The rampart plugin should be active. Its component version can differ from
+# the Rampart CLI patch version when the embedded plugin did not change.
 ```
 
 ## Troubleshooting

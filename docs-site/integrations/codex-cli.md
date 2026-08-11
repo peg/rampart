@@ -44,19 +44,8 @@ queue and require `rampart serve`; if it is unavailable, Rampart denies.
 rampart verify codex
 ```
 
-For an opt-in real-host compatibility check against a candidate build:
-
-```bash
-scripts/compat-codex-host.sh --yes --rampart-bin ./rampart
-```
-
-The host test uses harmless canaries and a disposable Codex home containing
-only a temporary copy of `auth.json`. It does not load user configuration,
-memories, rules, or persistent sessions.
-
 `rampart verify codex` proves installed configuration and adapter behavior; it
-does not itself launch a real Codex model/tool loop. The opt-in harness is the
-separate host-boundary check. See
+does not launch a real Codex model/tool loop. See
 [Security Assurance](../getting-started/security-assurance.md) for the evidence
 levels and current platform gaps.
 

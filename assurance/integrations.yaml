@@ -1,13 +1,13 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.6.0
-reviewed_at: "2026-08-07"
+baseline_release: v1.6.2
+reviewed_at: "2026-08-11"
 
 # Version 2 uses the canonical Rampart command target as each integration id
 # and requires an explicit declaration of bare `rampart protect` eligibility.
 # This manifest records the guarantees Rampart can support with evidence today.
 # "tested" means the Rampart adapter or mapping is exercised in isolation.
-# "verified" means a completed live host-boundary run is recorded as evidence,
-# or the installed integration exposes an active safe host-boundary verifier.
+# "verified" means the installed integration exposes an active, safe verifier
+# for the claimed host boundary.
 integrations:
   - id: openclaw
     display_name: OpenClaw
@@ -23,11 +23,11 @@ integrations:
       file_read: verified
       file_write: verified
       network: partial
-      mcp: unknown
+      mcp: not_covered
       subagents: partial
     degraded:
       policy_unavailable: deny
-      adapter_error: unknown
+      adapter_error: host_defined
       timeout: deny
     approval: native
     verification:
@@ -48,8 +48,8 @@ integrations:
       - path: scripts/compat-openclaw-latest.mjs
         kind: upstream_latest
         proves: The bundled plugin contract is checked against the latest published OpenClaw.
-      - path: scripts/lab/openclaw-container-acceptance.sh
-        kind: live_harness
+      - path: scripts/compat-openclaw-container.sh
+        kind: upstream_latest
         proves: A disposable OpenClaw installation resolves the stable npm release and exercises the real plugin boundary.
     limitations:
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
@@ -70,11 +70,11 @@ integrations:
     service_required: false
     upstream_ci: none
     coverage:
-      shell: verified
+      shell: tested
       file_read: tested
       file_write: tested
       network: tested
-      mcp: unknown
+      mcp: tested
       subagents: partial
     degraded:
       policy_unavailable: local
@@ -83,30 +83,26 @@ integrations:
     approval: native
     verification:
       level: active
-      command: scripts/compat-claude-host.sh --yes --rampart-bin ./rampart
+      command: rampart verify claude-code
       safe_canaries: true
-      host_boundary: true
+      host_boundary: false
     evidence:
       - path: cmd/rampart/cli/hook_test.go
         kind: unit
         proves: Claude hook payloads map to structured allow, ask, and deny responses.
+      - path: cmd/rampart/cli/hook_mcp_test.go
+        kind: unit
+        proves: Claude MCP tool names pass through the shared native-hook classifier, including conservative destructive-tool classification.
       - path: cmd/rampart/cli/hook_ask_test.go
         kind: integration
         proves: Invalid policy and malformed input fail closed through the hook protocol.
       - path: cmd/rampart/cli/setup_test.go
         kind: unit
         proves: Setup preserves existing settings while installing required hook events.
-      - path: scripts/compat-claude-host.sh
-        kind: live_harness
-        proves: An opt-in state-isolated harness can prove deny, execution, and pre/post correlation through a real Claude Code process.
-      - path: assurance/evidence/claude-host-2026-07-25.json
-        kind: live
-        proves: A completed macOS host run records blocked deny execution, successful allow execution, pre/post tool-call correlation, and isolated source-state use on Claude Code 2.1.220.
     limitations:
       - No rolling latest-Claude compatibility job currently exercises the installed host.
-      - rampart verify policy proves policy behavior but does not prove Claude loaded or invoked the hook.
-      - Re-running the opt-in host proof requires an authenticated Claude Code installation; on macOS its disposable home needs an ephemeral CLAUDE_CODE_OAUTH_TOKEN because it cannot use the source home's Keychain login directly.
-      - Claude Code 2.1.220 is the latest version reviewed; its documented hook-visible tools are mapped, and in enforce mode future unknown PreToolUse tools deny until Rampart is updated.
+      - rampart verify claude-code proves installed configuration and adapter behavior but does not prove Claude loaded or invoked the hook.
+      - Documented hook-visible tools are mapped, and in enforce mode future unknown PreToolUse tools deny until Rampart is updated.
       - Host-owned or server-side actions that do not emit lifecycle hooks are outside this boundary; Claude's EndConversation tool is a documented benign example.
       - Subagent, hook-crash, and host-timeout behavior need live conformance tests.
 
@@ -167,7 +163,7 @@ integrations:
     service_required: false
     upstream_ci: none
     coverage:
-      shell: verified
+      shell: tested
       file_read: tested
       file_write: tested
       network: tested
@@ -193,18 +189,12 @@ integrations:
       - path: cmd/rampart/cli/verify_test.go
         kind: integration
         proves: Active verification checks installed hook configuration and directly invokes the adapter with a destructive canary that must deny.
-      - path: scripts/compat-codex-host.sh
-        kind: live_harness
-        proves: An opt-in credential-isolated harness proves deny and allow behavior through a real ephemeral Codex process.
-      - path: assurance/evidence/codex-host-2026-07-25.json
-        kind: live
-        proves: A completed macOS host run records blocked deny execution, successful allow execution, pre/post tool-call correlation, and isolated source-state use on Codex CLI 0.145.0.
     limitations:
-      - The ordinary verification command exercises installed configuration and the adapter; the real Codex host check is a separate opt-in model invocation and is not run in regular CI.
+      - The verification command exercises installed configuration and the adapter; it does not invoke a model or prove host hook ingestion.
       - Codex hosted tools and specialized local tool paths that opt out of lifecycle hooks are not covered.
       - Approval actions require rampart serve because Codex PreToolUse does not currently accept an ask decision.
       - Codex controls hook timeout behavior; a host timeout cannot be claimed fail-closed.
-      - The opt-in host harness is exercised on macOS/Linux; a physical Windows Codex host run is still pending.
+      - Physical Windows host ingestion remains unverified.
 
   - id: hermes
     display_name: Hermes Agent
@@ -216,12 +206,12 @@ integrations:
     service_required: true
     upstream_ci: rolling_latest
     coverage:
-      shell: verified
+      shell: tested
       file_read: tested
       file_write: tested
       network: tested
-      mcp: unknown
-      subagents: unknown
+      mcp: not_covered
+      subagents: not_covered
     degraded:
       policy_unavailable: deny
       adapter_error: deny
@@ -238,25 +228,13 @@ integrations:
         proves: Tool normalization, redaction, allow, deny, ask, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
       - path: scripts/compat-hermes-latest.py
         kind: upstream_latest
-        proves: Latest Hermes discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
-      - path: scripts/compat-hermes-host.sh
-        kind: live_harness
-        proves: An opt-in auth-minimized harness proves deny and allowed execution through a real isolated Hermes model/tool loop.
-      - path: assurance/evidence/hermes-host-2026-07-24.json
-        kind: live
-        proves: A completed Linux host run records blocked deny execution, successful allow execution, pre-tool audit correlation, and isolated source-state use on Hermes Agent 0.19.0.
-      - path: assurance/evidence/hermes-gateway-2026-07-27.json
-        kind: live
-        proves: A completed Linux run sends deny and allow turns through an isolated localhost Hermes API gateway, records correlated audits, and loads no source memories, sessions, rules, workspaces, MCP servers, or messaging gateways.
-      - path: assurance/evidence/hermes-gateway-2026-08-07.json
-        kind: live
-        proves: A completed Linux Hermes Agent 0.20.0 gateway run repeats deny, allow, and correlated pre-tool audit proof from the exact merged staging baseline while loading only isolated model, provider, toolset, and authentication state.
+        proves: Hermes' official latest stable GitHub release is resolved independently of PyPI, then discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Hermes approval observer hooks cannot answer or resume an approval.
       - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
-      - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
-      - Delegated-agent and approved-execution E2E are not yet present.
+      - Hermes tools outside the plugin's typed map, including MCP and delegated-agent tools, fail closed but are not claimed as covered policy surfaces.
+      - Delegated-agent and approved-execution E2E are not present.
 
   - id: gemini
     display_name: Gemini CLI
@@ -315,11 +293,11 @@ integrations:
     service_required: false
     upstream_ci: none
     coverage:
-      shell: verified
+      shell: tested
       file_read: tested
-      file_write: verified
+      file_write: tested
       network: tested
-      mcp: unknown
+      mcp: tested
       subagents: tested
     degraded:
       policy_unavailable: local
@@ -334,20 +312,17 @@ integrations:
     evidence:
       - path: cmd/rampart/cli/hook_antigravity_test.go
         kind: unit
-        proves: The documented tool surface maps to Rampart policy classes, unknown future tools deny, and approval decisions use Antigravity force_ask.
+        proves: The documented tool and MCP surfaces map to Rampart policy classes, destructive MCP operations are classified conservatively, unknown future tools deny, and approval decisions use Antigravity force_ask.
       - path: cmd/rampart/cli/setup_antigravity_test.go
         kind: unit
         proves: Setup creates the documented shared CLI/IDE plugin idempotently, validates ownership structurally, removes only Rampart-owned state, and refuses foreign plugin replacement by default.
       - path: cmd/rampart/cli/verify_test.go
         kind: integration
         proves: Active verification requires an installed managed plugin plus a structured destructive-command denial with conversation-correlated audit output.
-      - path: assurance/evidence/antigravity-host-2026-07-27.json
-        kind: live
-        proves: Antigravity CLI 1.1.7 loaded the generated global plugin; an allowed command was audited and a disposable sensitive-path write was denied before modification.
     limitations:
       - Antigravity's current PostToolUse payload does not include the completed tool call or result, so this integration does not provide post-result secret scanning.
       - Rampart-handled parse and policy failures deny in enforce mode, but unexpected hook-process crashes and host timeouts follow Antigravity behavior and are not claimed fail-closed.
-      - The ordinary verifier exercises plugin installation and the live Rampart adapter without invoking a model; authenticated host proof is a maintainer-only opt-in check.
+      - The ordinary verifier exercises plugin installation and the live Rampart adapter without invoking a model; it does not prove authenticated host ingestion.
       - A rolling-latest Antigravity compatibility job and physical Windows host proof are still pending.
 
   - id: copilot

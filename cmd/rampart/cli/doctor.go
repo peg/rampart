@@ -32,6 +32,7 @@ import (
 	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/internal/engine"
 	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
+	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -1614,9 +1615,9 @@ func doctorOpenClawPlugin(emit emitFn) (warnings int) {
 				"Add \"rampart\" to plugins.allow or rerun: rampart setup openclaw")
 		return 1
 	}
-	if state.ManifestVersion != "" && !pluginVersionMatchesBuildVersion(state.ManifestVersion, build.Version) {
+	if !openClawPluginCurrent(state) {
 		emit("OpenClaw plugin", "warn",
-			fmt.Sprintf("installed manifest version %s does not match rampart binary %s", state.ManifestVersion, build.Version)+hintSep+
+			"installed plugin files do not match the plugin bundled with this Rampart binary"+hintSep+
 				"Rerun `rampart setup openclaw` using the same OpenClaw profile/state dir, then restart OpenClaw")
 		return 1
 	}
@@ -1676,18 +1677,6 @@ func doctorOpenClawProviderDiscovery(emit emitFn) (warnings int) {
 		"plugins.allow is restrictive, but bundled provider discovery is still in compatibility mode"+hintSep+
 			"After confirming plugins.allow includes every bundled provider you intend to keep, run: openclaw config set plugins.bundledDiscovery allowlist")
 	return 1
-}
-
-func pluginVersionMatchesBuildVersion(manifestVersion, buildVersion string) bool {
-	buildRelease, ok := normalizedReleaseVersion(buildVersion)
-	if !ok {
-		return true
-	}
-	manifestRelease, ok := normalizedReleaseVersion(manifestVersion)
-	if !ok {
-		manifestRelease = strings.TrimPrefix(strings.TrimSpace(manifestVersion), "v")
-	}
-	return manifestRelease == buildRelease
 }
 
 func normalizedReleaseVersion(version string) (string, bool) {
@@ -2063,8 +2052,8 @@ func doctorHermesIntegration(emit emitFn, serveURL, token string) (warnings int)
 				"Reinstall the plugin from a current Rampart build: rampart setup hermes")
 			warnings++
 		}
-		if manifest.Version != "" && !pluginVersionMatchesBuildVersion(manifest.Version, build.Version) {
-			emit("Hermes plugin", "warn", fmt.Sprintf("installed manifest version %s does not match rampart binary %s", manifest.Version, build.Version)+hintSep+
+		if !hermesplugin.Current(pluginDir) {
+			emit("Hermes plugin", "warn", "installed plugin files do not match the plugin bundled with this Rampart binary"+hintSep+
 				"Rerun `rampart setup hermes` from the same Rampart build, then restart long-running Hermes gateways")
 			warnings++
 		} else {

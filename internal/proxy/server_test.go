@@ -92,6 +92,53 @@ policies:
         message: "Sensitive credential detected in response"
 `
 
+func TestHTTPRejectsNoncanonicalReservedToolNames(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "enforce")
+	tests := []string{"/v1/tool/Exec", "/v1/preflight/EXEC"}
+
+	for _, path := range tests {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path,
+				strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"rm -rf /"}}`))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			srv.handler().ServeHTTP(recorder, req)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		})
+	}
+	require.Empty(t, sink.events)
+}
+
+func TestHTTPCustomToolNameRetainsCaseSensitivePolicyIdentity(t *testing.T) {
+	const customPolicy = `
+version: "1"
+default_action: allow
+policies:
+  - name: block-production-deploy
+    match:
+      tool: ["DeployProd"]
+    rules:
+      - action: deny
+        when:
+          default: true
+        message: "Production deployment blocked"
+`
+	srv, token, sink := setupTestServer(t, customPolicy, "enforce")
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/DeployProd",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Equal(t, "DeployProd", sink.lastEvent().Tool)
+}
+
 type mockSink struct {
 	mu     sync.Mutex
 	events []audit.Event
@@ -750,6 +797,24 @@ func TestToolCall_ResponseAuditFailureDoesNotBlockMonitorMode(t *testing.T) {
 	assert.Equal(t, "deny", response["response_policy_decision"])
 	assert.Equal(t, "leaked AKIA1234567890ABCDEF", response["response"])
 	assert.Equal(t, 2, failing.count())
+}
+
+func TestToolCallAuditRedactsCredentialMaterial(t *testing.T) {
+	srv, token, sink := setupTestServer(t, testPolicyYAML, "enforce")
+	srv.sink = audit.NewRedactingSink(srv.sink)
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
+		strings.NewReader(`{"agent":"main","session":"s1","params":{"command":"curl -H 'Authorization: Bearer audit-secret' https://example.com","api_key":"nested-secret","path":"/workspace/main.go"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	event := sink.lastEvent()
+	require.NotContains(t, event.Request["command"], "audit-secret")
+	require.Equal(t, "[REDACTED]", event.Request["api_key"])
+	require.Equal(t, "/workspace/main.go", event.Request["path"])
 }
 
 func TestPreflightEnforcementHonorsMonitorMode(t *testing.T) {

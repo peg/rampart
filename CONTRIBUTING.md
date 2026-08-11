@@ -277,9 +277,9 @@ policies/            Built-in policy presets
 
 We track these so contributors know where improvement is welcome:
 
-- `internal/proxy/server.go` is 1,600+ lines — approval handlers and webhook logic should be extracted into separate files
-- `cmd/rampart/cli/hook.go` mixes CLI wiring with business logic
-- `internal/engine/matcher.go` is approaching 700 lines
+- `cmd/rampart/cli` still owns too much integration lifecycle and presentation logic
+- `cmd/rampart/cli/hook.go` mixes CLI wiring with host-adapter business logic
+- `internal/engine/matcher.go` combines enforcement matching with explanation tracing
 - Some cobra RunE functions exceed 200 lines of wiring
 
 If you want to tackle any of these, open an issue first to discuss the approach.

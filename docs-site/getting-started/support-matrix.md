@@ -11,7 +11,7 @@ Rampart is policy, approval, audit, and proof infrastructure for agents that nee
 
 Support tiers are tied to Rampart's public
 [integration assurance manifest](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml)
-and completed evidence from the exact candidate build.
+and portable evidence from the exact candidate build.
 
 ## Verify configured boundaries safely
 
@@ -23,12 +23,11 @@ This runs the policy canaries plus every configured integration on the current
 platform that has an active behavioral verifier. It does not invoke a model or
 execute the represented actions. A target is not promoted merely because its
 configuration exists: OpenClaw's live plugin can earn `host_verified`, while
-ordinary native-hook checks earn `adapter_verified` unless a separate real-host
-run is recorded.
+ordinary native-hook checks earn `adapter_verified`.
 
 Static-only integrations are excluded from the aggregate rather than reported
 as passing. In particular, use `rampart doctor` for Hermes installation status
-and the isolated Hermes harness for runtime evidence.
+and the isolated latest-Hermes compatibility check for runtime evidence.
 
 ## At a glance
 
@@ -50,7 +49,7 @@ and the isolated Hermes harness for runtime evidence.
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
       <td data-label="Approval UX">Claude native approval prompt</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>2.1.220 mapping review + isolated shell host proof</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>installed-hook and adapter verification</td>
     </tr>
     <tr class="tier-supported" data-integration="codex">
       <td data-label="Surface"><strong>Codex CLI, IDE, desktop</strong></td>
@@ -58,7 +57,7 @@ and the isolated Hermes harness for runtime evidence.
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local allow/deny;<br>required for approval queue</td>
       <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>opt-in host proof available</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>installed-hook and adapter verification</td>
     </tr>
     <tr class="tier-supported" data-integration="cline">
       <td data-label="Surface"><strong>Cline</strong></td>
@@ -82,7 +81,7 @@ and the isolated Hermes harness for runtime evidence.
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
       <td data-label="Approval UX">Native <code>force_ask</code> prompt</td>
-      <td data-label="Support tier"><strong>Supported</strong><br>CLI 1.1.7 host-verified; IDE contract-tested, physical IDE proof pending</td>
+      <td data-label="Support tier"><strong>Supported</strong><br>installed-plugin and adapter verification</td>
     </tr>
     <tr class="tier-supported" data-integration="copilot">
       <td data-label="Surface"><strong>GitHub Copilot CLI / VS Code</strong></td>
@@ -106,7 +105,7 @@ and the isolated Hermes harness for runtime evidence.
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
-      <td data-label="Support tier"><strong>Experimental</strong><br>0.20.0 gateway deny/allow host proof; native approval/resume pending</td>
+      <td data-label="Support tier"><strong>Experimental</strong><br>latest-runtime compatibility; native approval/resume pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
@@ -154,13 +153,12 @@ and the isolated Hermes harness for runtime evidence.
 ### Best default choices
 
 - **Claude Code** → current documented hook-visible tools are mapped and, in
-  enforce mode, unknown future pre-call tools deny; an isolated Claude Code
-  2.1.220 shell deny/allow host run is recorded
+  enforce mode, unknown future pre-call tools deny; installed configuration and
+  adapter behavior have safe verification
 - **Codex CLI, IDE, desktop** → native lifecycle hooks cover host-exposed shell, file, MCP, web, and delegated-agent calls
 - **Antigravity CLI / IDE** → one shared native plugin gates documented tool
-  calls before execution and uses `force_ask` for approvals. The CLI 1.1.7 path
-  has a completed host proof; the IDE shares the reviewed plugin contract but
-  does not yet have a separate physical host proof. Current `PostToolUse` does
+  calls before execution and uses `force_ask` for approvals. Both hosts share
+  the reviewed plugin contract and adapter. Current `PostToolUse` does
   not expose results, so response scanning is not claimed
 - **GitHub Copilot CLI / VS Code** → one shared user hook covers both hosts;
   latest-package startup and the adapter are tested separately, but authenticated
@@ -184,9 +182,9 @@ and the isolated Hermes harness for runtime evidence.
   `BeforeTool`/`AfterTool` hooks cover documented shell, file, network, MCP,
   memory, and delegated-agent calls; a real authenticated host proof is still
   pending, and this does not cover Antigravity
-- **Hermes Agent** → experimental plugin path with a completed isolated
-  Hermes 0.20.0 gateway deny/allow host run; `ask` decisions block rather than
-  resume until Hermes exposes a first-class plugin approval flow. Its built-in
+- **Hermes Agent** → experimental plugin path with isolated latest-runtime
+  discovery, dispatch, deny/allow, and degraded-mode checks; `ask` decisions
+  block rather than resume until Hermes exposes a first-class plugin approval flow. Its built-in
   status check remains static, so it is not included in `rampart verify --all`
 
 ## Degraded behavior notes

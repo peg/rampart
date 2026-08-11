@@ -319,6 +319,10 @@ func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) er
 			p.logger.Warn("mcp: rejecting ambiguous JSON-RPC envelope", "error", err)
 			return p.writeErrorToClient(json.RawMessage("null"), jsonRPCDenyCode, "Rampart: invalid JSON-RPC request envelope")
 		}
+		if _, err := decodeCanonicalJSONObject(trimmed, "jsonrpc", "id", "method", "params"); err != nil {
+			p.logger.Warn("mcp: rejecting case-shadowed JSON-RPC envelope", "error", err)
+			return p.writeErrorToClient(json.RawMessage("null"), jsonRPCDenyCode, "Rampart: invalid JSON-RPC request envelope")
+		}
 	}
 
 	var req Request
@@ -360,6 +364,11 @@ func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) er
 }
 
 func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte) error {
+	if p.mode == "enforce" {
+		if _, err := decodeCanonicalJSONObject(req.Params, "name", "arguments"); err != nil {
+			return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: invalid tools/call params")
+		}
+	}
 	var params ToolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		if p.mode == "enforce" && HasID(req.ID) {
@@ -617,9 +626,16 @@ func (p *Proxy) evictStalePendingCalls() {
 
 func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 	trimmed := bytes.TrimSpace(line)
+	var responseFields map[string]json.RawMessage
 	if p.mode == "enforce" {
 		if err := validateUniqueJSONKeys(trimmed); err != nil {
 			p.logger.Warn("mcp: rejecting invalid or ambiguous child JSON-RPC envelope", "error", err)
+			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
+		}
+		var err error
+		responseFields, err = decodeCanonicalJSONObject(trimmed, "jsonrpc", "id", "result", "error")
+		if err != nil {
+			p.logger.Warn("mcp: rejecting case-shadowed child JSON-RPC envelope", "error", err)
 			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
 		}
 	}
@@ -631,6 +647,15 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 		}
 		p.logger.Debug("mcp: child line is not JSON-RPC response; pass through", "error", err)
 		return p.writeToClient(parentOut, line)
+	}
+	if responseFields == nil {
+		responseFields, _ = decodeCanonicalJSONObject(trimmed, "jsonrpc", "id", "result", "error")
+	}
+
+	if p.mode == "enforce" && HasID(resp.ID) && p.hasPendingResponse(resp.ID) {
+		if err := validateCorrelatedResponse(resp, responseFields); err != nil {
+			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
+		}
 	}
 
 	if p.filterTools && HasID(resp.ID) {
@@ -657,7 +682,13 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 		return p.writeToClient(parentOut, line)
 	}
 
-	responseBody := extractResponseBody(resp)
+	responseBody, responseErr := extractResponseBody(responseFields)
+	if responseErr != nil {
+		if p.mode == "enforce" {
+			return p.writeErrorToClient(resp.ID, jsonRPCResponseDenyCode, "Rampart: invalid tool response; refusing output")
+		}
+		p.logger.Debug("mcp: response canonicalization failed in monitor mode", "error", responseErr)
+	}
 	if responseBody != "" {
 		result := p.engine.EvaluateResponse(pending.call, responseBody)
 		responseRequest := cloneMap(pending.request)
@@ -679,6 +710,27 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 	}
 
 	return p.writeToClient(parentOut, line)
+}
+
+func (p *Proxy) hasPendingResponse(id json.RawMessage) bool {
+	normalized := NormalizedID(id)
+	p.pendingMu.Lock()
+	defer p.pendingMu.Unlock()
+	_, toolCall := p.pendingCalls[normalized]
+	_, toolList := p.pendingToolList[normalized]
+	return toolCall || toolList
+}
+
+func validateCorrelatedResponse(resp Response, fields map[string]json.RawMessage) error {
+	if resp.JSONRPC != "2.0" {
+		return fmt.Errorf("correlated response must use jsonrpc 2.0")
+	}
+	_, hasResult := fields["result"]
+	_, hasError := fields["error"]
+	if hasResult == hasError {
+		return fmt.Errorf("correlated response must contain exactly one of result or error")
+	}
+	return nil
 }
 
 func (p *Proxy) maybeFilterToolsList(resp Response) ([]byte, bool, error) {
@@ -797,15 +849,38 @@ func firstString(arguments map[string]any, keys ...string) (string, bool) {
 	return "", false
 }
 
-func extractResponseBody(resp Response) string {
-	if len(bytes.TrimSpace(resp.Result)) > 0 {
-		return string(resp.Result)
+func extractResponseBody(fields map[string]json.RawMessage) (string, error) {
+	var raw json.RawMessage
+	if result, ok := fields["result"]; ok {
+		raw = result
+	} else if responseError, ok := fields["error"]; ok {
+		raw = responseError
+	} else {
+		return "", nil
 	}
-	if resp.Error != nil {
-		encoded, _ := json.Marshal(resp.Error)
-		return string(encoded)
+
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return "", err
 	}
-	return ""
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return "", fmt.Errorf("multiple response JSON values")
+		}
+		return "", err
+	}
+	var canonical bytes.Buffer
+	encoder := json.NewEncoder(&canonical)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(decoded); err != nil {
+		return "", err
+	}
+	// Scan both representations. The decoded form exposes Unicode and escaped
+	// delimiters; the raw form retains any policy patterns intentionally written
+	// against serialized JSON.
+	return string(raw) + "\n" + strings.TrimSpace(canonical.String()), nil
 }
 
 func (p *Proxy) writeAudit(call engine.ToolCall, decision engine.Decision, request map[string]any, response *audit.ToolResponse) error {

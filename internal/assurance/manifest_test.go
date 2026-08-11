@@ -5,7 +5,6 @@ package assurance
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,77 +33,17 @@ func TestRepositoryManifest(t *testing.T) {
 	}
 }
 
-func TestCommittedLiveEvidenceSummaries(t *testing.T) {
+func TestManifestRejectsAmbiguousAssuranceStates(t *testing.T) {
 	root := repositoryRoot(t)
 	manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	commitPattern := regexp.MustCompile(`^[0-9a-f]{40}$`)
-	datePattern := regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
-	for _, integration := range manifest.Integrations {
-		for _, evidence := range integration.Evidence {
-			if evidence.Kind != "live" {
-				continue
-			}
-			t.Run(integration.ID, func(t *testing.T) {
-				data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(evidence.Path)))
-				if err != nil {
-					t.Fatal(err)
-				}
-				var summary struct {
-					SchemaVersion   string          `json:"schema_version"`
-					Result          string          `json:"result"`
-					RecordedAt      string          `json:"recorded_at"`
-					CandidateCommit string          `json:"candidate_commit"`
-					Platform        string          `json:"platform"`
-					Checks          map[string]bool `json:"checks"`
-				}
-				if err := json.Unmarshal(data, &summary); err != nil {
-					t.Fatalf("decode %s: %v", evidence.Path, err)
-				}
-				if !strings.HasPrefix(summary.SchemaVersion, "rampart.") || !strings.HasSuffix(summary.SchemaVersion, ".v1") {
-					t.Errorf("schema_version = %q, want rampart.*.v1", summary.SchemaVersion)
-				}
-				if summary.Result != "pass" {
-					t.Errorf("result = %q, want pass", summary.Result)
-				}
-				if !datePattern.MatchString(summary.RecordedAt) {
-					t.Errorf("recorded_at = %q, want YYYY-MM-DD", summary.RecordedAt)
-				}
-				if !commitPattern.MatchString(summary.CandidateCommit) {
-					t.Errorf("candidate_commit = %q, want a full lowercase commit SHA", summary.CandidateCommit)
-				}
-				if !strings.Contains(summary.Platform, "/") {
-					t.Errorf("platform = %q, want os/arch", summary.Platform)
-				}
-				if len(summary.Checks) == 0 {
-					t.Error("checks must not be empty")
-				}
-				for name, passed := range summary.Checks {
-					if !passed {
-						t.Errorf("check %q is not passing", name)
-					}
-				}
-			})
-		}
-	}
-}
-
-func TestCompletedLiveEvidenceMustBeJSON(t *testing.T) {
-	root := repositoryRoot(t)
-	manifest, err := LoadManifest(filepath.Join(root, "assurance", "integrations.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.Integrations[0].Evidence = append(manifest.Integrations[0].Evidence, Evidence{
-		Path:   "scripts/lab/openclaw-container-acceptance.sh",
-		Kind:   "live",
-		Proves: "An available harness is not a completed result.",
-	})
+	manifest.Integrations[0].Coverage["mcp"] = "unknown"
+	manifest.Integrations[0].Degraded["adapter_error"] = "unknown"
 	err = manifest.Validate(root)
-	if err == nil || !strings.Contains(err.Error(), "completed live evidence must be a JSON summary") {
-		t.Fatalf("expected live-summary validation failure, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "invalid coverage.mcp unknown") || !strings.Contains(err.Error(), "invalid degraded.adapter_error unknown") {
+		t.Fatalf("expected ambiguous assurance states to be rejected, got %v", err)
 	}
 }
 
@@ -162,16 +101,10 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 	version := string(matches[1])
 
 	expectations := map[string][]string{
-		"assurance/integrations.yaml":                   {"baseline_release: v" + version},
-		"internal/plugin/openclaw/package.json":         {`"version": "` + version + `"`},
-		"internal/plugin/openclaw/openclaw.plugin.json": {`"version": "` + version + `"`},
-		"internal/plugin/openclaw/index.js":             {`export const version = "` + version + `";`},
-		"internal/plugin/hermes/plugin.yaml":            {"version: " + version},
-		"internal/plugin/hermes/__init__.py":            {`VERSION = "` + version + `"`},
-		"policies/openclaw.yaml":                        {"# rampart-policy-version: " + version},
-		"docs-site/index.html":                          {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
-		"docs/index.html":                               {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
-		"docs/THREAT-MODEL.md":                          {"Applies to: v" + version},
+		"assurance/integrations.yaml": {"baseline_release: v" + version},
+		"docs-site/index.html":        {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
+		"docs/index.html":             {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
+		"docs/THREAT-MODEL.md":        {"Applies to: v" + version},
 	}
 	for name, required := range expectations {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
@@ -184,6 +117,40 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 				t.Errorf("%s does not identify current release %s with %q", name, version, marker)
 			}
 		}
+	}
+}
+
+func TestBundledIntegrationVersionsAreInternallySynchronized(t *testing.T) {
+	root := repositoryRoot(t)
+	read := func(name string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(data)
+	}
+	openClawPackage := read("internal/plugin/openclaw/package.json")
+	openClawVersion := regexp.MustCompile(`"version"\s*:\s*"([^"]+)"`).FindStringSubmatch(openClawPackage)
+	if len(openClawVersion) != 2 {
+		t.Fatal("OpenClaw package.json must declare a version")
+	}
+	for name, marker := range map[string]string{
+		"internal/plugin/openclaw/openclaw.plugin.json": `"version": "` + openClawVersion[1] + `"`,
+		"internal/plugin/openclaw/index.js":             `export const version = "` + openClawVersion[1] + `";`,
+	} {
+		if !strings.Contains(read(name), marker) {
+			t.Errorf("%s does not match bundled OpenClaw component version %s", name, openClawVersion[1])
+		}
+	}
+
+	hermesManifest := read("internal/plugin/hermes/plugin.yaml")
+	hermesVersion := regexp.MustCompile(`(?m)^version:\s*([^\s]+)\s*$`).FindStringSubmatch(hermesManifest)
+	if len(hermesVersion) != 2 {
+		t.Fatal("Hermes plugin.yaml must declare a version")
+	}
+	if marker := `VERSION = "` + hermesVersion[1] + `"`; !strings.Contains(read("internal/plugin/hermes/__init__.py"), marker) {
+		t.Errorf("Hermes runtime does not match bundled component version %s", hermesVersion[1])
 	}
 }
 
@@ -309,8 +276,8 @@ func TestVerifiedTierCannotUsePolicyOnlyEvidence(t *testing.T) {
 			UpstreamCI:   "none",
 			Approval:     "native",
 			Coverage: map[string]string{
-				"shell": "tested", "file_read": "unknown", "file_write": "unknown",
-				"network": "unknown", "mcp": "unknown", "subagents": "unknown",
+				"shell": "tested", "file_read": "not_covered", "file_write": "not_covered",
+				"network": "not_covered", "mcp": "not_covered", "subagents": "not_covered",
 			},
 			Degraded: map[string]string{
 				"policy_unavailable": "deny", "adapter_error": "deny", "timeout": "deny",

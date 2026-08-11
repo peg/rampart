@@ -149,10 +149,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sh scripts/check-api-reference.sh
 
-      - name: Linux lab runner contract
-        if: runner.os == 'Linux'
-        run: make lab-runner-test
-
       - name: OpenClaw plugin regression tests
         if: runner.os != 'Windows'
         run: |

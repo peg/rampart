@@ -695,6 +695,48 @@ func TestHandleChildLine_DeniedResponse(t *testing.T) {
 	}
 }
 
+func TestHandleChildLine_DecodesEscapedResponseBeforePolicy(t *testing.T) {
+	eng := buildResponseDenyEngine(t)
+	parentOut := &bytes.Buffer{}
+	p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+		WithMode("enforce"), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+	p.pendingCalls["1"] = pendingCall{
+		call:    engine.ToolCall{ID: "escaped", Tool: "read_file"},
+		request: map[string]any{"mcp_method": "tools/call", "mcp_tool": "read_file"},
+	}
+
+	line := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":"\u0053\u0045\u0043\u0052\u0045\u0054\u005f\u0054\u004f\u004b\u0045\u004e"}}` + "\n")
+	if err := p.handleChildLine(line, parentOut); err != nil {
+		t.Fatal(err)
+	}
+	var response Response
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(parentOut.Bytes()), &response))
+	require.NotNil(t, response.Error)
+	assert.Equal(t, jsonRPCResponseDenyCode, response.Error.Code)
+}
+
+func TestHandleChildLine_RejectsAmbiguousCorrelatedResponse(t *testing.T) {
+	eng := buildResponseDenyEngine(t)
+	for _, line := range []string{
+		`{"jsonrpc":"2.0","id":1,"result":{"content":"safe"},"error":{"code":-1,"message":"SECRET_TOKEN"}}`,
+		`{"jsonrpc":"2.0","id":1}`,
+		`{"jsonrpc":"1.0","id":1,"result":{"content":"safe"}}`,
+	} {
+		p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+			WithMode("enforce"), WithLogger(silentLogger()))
+		p.pendingCalls["1"] = pendingCall{call: engine.ToolCall{ID: "ambiguous", Tool: "read_file"}}
+		parentOut := &bytes.Buffer{}
+		err := p.handleChildLine([]byte(line+"\n"), parentOut)
+		if err == nil || !strings.Contains(err.Error(), "reject child JSON-RPC response") {
+			t.Fatalf("response %s error = %v, want fail-closed rejection", line, err)
+		}
+		if parentOut.Len() != 0 {
+			t.Fatalf("ambiguous response reached parent: %s", parentOut.String())
+		}
+	}
+}
+
 func TestHandleChildLine_NoPendingCall_PassesThrough(t *testing.T) {
 	eng := buildAllowAllEngine(t)
 	parentOut := &bytes.Buffer{}
@@ -967,6 +1009,24 @@ func TestHandleClientLine_EnforceRejectsDuplicateJSONMembers(t *testing.T) {
 	}
 }
 
+func TestHandleClientLine_EnforceRejectsCaseShadowedProtocolMembers(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	for _, line := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"initialize","params":{"name":"execute_command","arguments":{"command":"echo bypass"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_command","Name":"read_file","arguments":{"command":"echo bypass"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_command","arguments":{"command":"echo bypass"},"Arguments":{}}}`,
+	} {
+		childIn := &bytes.Buffer{}
+		parentOut := &bytes.Buffer{}
+		p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+			WithMode("enforce"), WithLogger(silentLogger()))
+		p.parentOut = parentOut
+		require.NoError(t, p.handleClientLine([]byte(line+"\n")))
+		assert.Zero(t, childIn.Len(), "case-shadowed request reached child")
+		assert.Contains(t, parentOut.String(), "invalid")
+	}
+}
+
 func TestHandleClientLine_MonitorPreservesDuplicateJSONMembers(t *testing.T) {
 	eng := buildAllowAllEngine(t)
 	childIn := &bytes.Buffer{}
@@ -1147,6 +1207,24 @@ func TestHandleChildLine_DuplicateResponseKeysFailClosed(t *testing.T) {
 				t.Fatalf("ambiguous response reached parent: %q", parentOut.String())
 			}
 		})
+	}
+}
+
+func TestHandleChildLine_CaseShadowedResponseKeysFailClosed(t *testing.T) {
+	eng := buildAllowAllEngine(t)
+	for _, line := range []string{
+		`{"jsonrpc":"2.0","id":1,"ID":999,"result":{"content":"safe"}}`,
+		`{"jsonrpc":"2.0","id":1,"result":{"content":"safe"},"Result":{"content":"bypass"}}`,
+	} {
+		parentOut := &bytes.Buffer{}
+		p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
+			WithMode("enforce"), WithLogger(silentLogger()))
+		p.pendingCalls["1"] = pendingCall{call: engine.ToolCall{ID: "case-shadow", Tool: "read_file"}}
+		err := p.handleChildLine([]byte(line+"\n"), parentOut)
+		if err == nil || !strings.Contains(err.Error(), "noncanonical object member") {
+			t.Fatalf("case-shadowed response error = %v", err)
+		}
+		assert.Zero(t, parentOut.Len())
 	}
 }
 
@@ -1582,29 +1660,32 @@ func TestBuildRequestData_URLOverridesCallerDerivedMetadata(t *testing.T) {
 func TestExtractResponseBody(t *testing.T) {
 	tests := []struct {
 		name   string
-		resp   Response
+		fields map[string]json.RawMessage
 		expect string
 	}{
 		{
 			name:   "with result",
-			resp:   Response{Result: json.RawMessage(`{"content":"hello"}`)},
-			expect: `{"content":"hello"}`,
+			fields: map[string]json.RawMessage{"result": json.RawMessage(`{"content":"hello"}`)},
+			expect: `{"content":"hello"}` + "\n" + `{"content":"hello"}`,
 		},
 		{
 			name:   "with error",
-			resp:   Response{Error: &ErrorObject{Code: -1, Message: "fail"}},
-			expect: `{"code":-1,"message":"fail"}`,
+			fields: map[string]json.RawMessage{"error": json.RawMessage(`{"code":-1,"message":"fail","data":"detail"}`)},
+			expect: `{"code":-1,"message":"fail","data":"detail"}` + "\n" + `{"code":-1,"data":"detail","message":"fail"}`,
 		},
 		{
 			name:   "empty",
-			resp:   Response{},
+			fields: map[string]json.RawMessage{},
 			expect: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractResponseBody(tt.resp)
+			got, err := extractResponseBody(tt.fields)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if got != tt.expect {
 				t.Errorf("expected %q, got %q", tt.expect, got)
 			}

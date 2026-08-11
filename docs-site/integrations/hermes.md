@@ -126,28 +126,11 @@ python scripts/compat-hermes-latest.py
 ```
 
 The harness creates a temporary Hermes state, installs the Rampart plugin there, exercises Hermes plugin discovery plus `pre_tool_call` dispatch, and verifies deny, allow, `ask` blocking, and fail-closed behavior without restarting any long-running Hermes gateway.
-
-Maintainers can also run the opt-in real-host harness:
-
-```bash
-scripts/compat-hermes-host.sh --yes --rampart-bin ./rampart
-```
-
-Add `--gateway` to route both turns through an isolated localhost
-OpenAI-compatible Hermes API gateway. Gateway mode refuses `--copy-env`, so it
-cannot accidentally load source messaging-platform credentials:
-
-```bash
-scripts/compat-hermes-host.sh --yes --gateway --rampart-bin ./rampart
-```
-
-A completed isolated Hermes 0.20.0 Linux gateway run, plus earlier 0.19.0
-direct and gateway runs, proved those properties. The current gateway run
-loaded only isolated model, provider, toolset, and authentication state; it did
-not load normal memories, sessions, rules, workspaces, messaging gateways, or
-MCP configuration. See
-[Security Assurance](../getting-started/security-assurance.md) for the evidence
-contract and remaining gaps.
+By default it resolves Hermes' official latest stable GitHub release and uses
+an isolated editable checkout of that exact tag, the development install path
+Hermes permits. `--package` is an explicit maintainer override; it is not the
+definition of the latest supported Hermes release. The check does not use
+provider credentials or invoke a model.
 
 !!! warning "Why this remains experimental"
     Rampart converts ordinary adapter exceptions into explicit blocks, but
@@ -157,6 +140,16 @@ contract and remaining gaps.
     can conservatively block an `ask` decision, but it cannot honestly promise
     a first-class pause and resume flow or fail-closed behavior after every
     host-level plugin failure.
+
+## Provider authentication errors
+
+If Hermes reports `Provider authentication failed`, the failure happened before
+Hermes attempted a tool call, so it is outside Rampart's policy boundary. From
+a terminal on the Hermes host, use `hermes auth status <provider>` to inspect the
+selected provider without printing credential values. Run `hermes model` to
+renew OAuth or replace an API key, then restart the long-running gateway so it
+loads the updated provider state. Do not paste raw gateway logs into a public
+issue; they can contain provider details.
 
 For manual verification, use a deny rule for a harmless command and confirm Hermes blocks it before execution:
 

@@ -73,7 +73,7 @@ policies:
     rules:
       - action: deny
         when:
-          command_contains:
+          domain_matches:
             - "ngrok.io"
             - "webhook.site"
             - "pipedream.net"
@@ -81,6 +81,36 @@ policies:
         message: "Request to known exfil endpoint blocked"
       - action: ask
         message: "MCP agent wants to make a network request — approve?"
+
+  - name: mcp-block-destructive-tools
+    priority: 5
+    match:
+      tool: ["mcp-destructive"]
+    rules:
+      - action: deny
+        when:
+          default: true
+        message: "Destructive MCP tool blocked"
+
+  - name: mcp-approve-dangerous-tools
+    priority: 6
+    match:
+      tool: ["mcp-dangerous"]
+    rules:
+      - action: ask
+        when:
+          default: true
+        message: "Dangerous MCP tool requires approval"
+
+  - name: mcp-approve-unclassified-tools
+    priority: 7
+    match:
+      tool: ["mcp"]
+    rules:
+      - action: ask
+        when:
+          default: true
+        message: "Unclassified MCP tool requires approval"
 
 tests:
   - name: "blocks shell execution"
@@ -107,3 +137,15 @@ tests:
     tool: fetch
     params: {url: "https://webhook.site/abc123"}
     expect: deny
+  - name: "blocks destructive MCP tools"
+    tool: mcp-destructive
+    params: {}
+    expect: deny
+  - name: "asks for dangerous MCP tools"
+    tool: mcp-dangerous
+    params: {}
+    expect: ask
+  - name: "asks for unclassified MCP tools"
+    tool: mcp
+    params: {}
+    expect: ask
