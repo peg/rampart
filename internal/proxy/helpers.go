@@ -21,12 +21,26 @@ import (
 
 const maxToolNameLength = 128
 
+var canonicalPolicyToolNames = map[string]struct{}{
+	"browser":         {},
+	"edit":            {},
+	"exec":            {},
+	"fetch":           {},
+	"http":            {},
+	"mcp":             {},
+	"mcp-dangerous":   {},
+	"mcp-destructive": {},
+	"read":            {},
+	"web_fetch":       {},
+	"write":           {},
+}
+
 // canonicalToolName normalizes the policy tool class at the HTTP trust
-// boundary. Policy scopes are case-sensitive, while several security-field
-// extractors intentionally recognize canonical tool classes case-insensitively;
-// using one representation prevents those two views from disagreeing.
+// boundary. Reserved Rampart policy classes must use their canonical lowercase
+// spelling. Custom tool names retain their exact spelling because policy tool
+// matching is intentionally case-sensitive.
 func canonicalToolName(raw string) (string, error) {
-	name := strings.ToLower(strings.TrimSpace(raw))
+	name := strings.TrimSpace(raw)
 	if name == "" {
 		return "", fmt.Errorf("tool name is required")
 	}
@@ -34,7 +48,7 @@ func canonicalToolName(raw string) (string, error) {
 		return "", fmt.Errorf("tool name exceeds %d bytes", maxToolNameLength)
 	}
 	for _, char := range name {
-		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
 			continue
 		}
 		switch char {
@@ -43,6 +57,10 @@ func canonicalToolName(raw string) (string, error) {
 		default:
 			return "", fmt.Errorf("tool name contains unsupported character %q", char)
 		}
+	}
+	lower := strings.ToLower(name)
+	if _, reserved := canonicalPolicyToolNames[lower]; reserved && name != lower {
+		return "", fmt.Errorf("reserved tool name %q must use canonical spelling %q", name, lower)
 	}
 	return name, nil
 }

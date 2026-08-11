@@ -17,8 +17,9 @@ func TestCanonicalToolName(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "canonical exec", raw: "exec", want: "exec"},
-		{name: "mixed case and whitespace", raw: "  Exec  ", want: "exec"},
-		{name: "structured custom name", raw: "MCP.Custom-Tool:V1", want: "mcp.custom-tool:v1"},
+		{name: "trim canonical exec", raw: "  exec  ", want: "exec"},
+		{name: "mixed case reserved", raw: "Exec", wantErr: true},
+		{name: "structured custom name", raw: "MCP.Custom-Tool:V1", want: "MCP.Custom-Tool:V1"},
 		{name: "empty", raw: "  ", wantErr: true},
 		{name: "path separator", raw: "custom/tool", wantErr: true},
 		{name: "embedded whitespace", raw: "web fetch", wantErr: true},
