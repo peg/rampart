@@ -4,8 +4,11 @@
 package proxy
 
 import (
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/peg/rampart/internal/audit"
 )
 
 func TestSSEHubClose_NoDoubleClosePanic(t *testing.T) {
@@ -101,4 +104,28 @@ func TestSSEHubConcurrentSubscribeAndClose(t *testing.T) {
 	}()
 
 	wg.Wait()
+}
+
+func TestBroadcastAuditEventRedactsCredentials(t *testing.T) {
+	srv := &Server{sse: newSSEHub()}
+	ch, unsubscribe := srv.sse.subscribe()
+	defer unsubscribe()
+
+	srv.broadcastAuditEvent(audit.Event{
+		Request: map[string]any{
+			"command":        "curl -H 'Authorization: Bearer live-secret' https://example.test",
+			"command_b64":    "encoded-secret",
+			"custom_api_key": "short-secret",
+		},
+	})
+
+	payload := string(<-ch)
+	for _, secret := range []string{"live-secret", "encoded-secret", "short-secret"} {
+		if strings.Contains(payload, secret) {
+			t.Fatalf("SSE audit payload leaked %q: %s", secret, payload)
+		}
+	}
+	if !strings.Contains(payload, "[REDACTED]") {
+		t.Fatalf("SSE audit payload did not contain a redaction marker: %s", payload)
+	}
 }

@@ -19,6 +19,52 @@ import (
 	"github.com/peg/rampart/internal/engine"
 )
 
+const maxToolNameLength = 128
+
+var canonicalPolicyToolNames = map[string]struct{}{
+	"browser":         {},
+	"edit":            {},
+	"exec":            {},
+	"fetch":           {},
+	"http":            {},
+	"mcp":             {},
+	"mcp-dangerous":   {},
+	"mcp-destructive": {},
+	"read":            {},
+	"web_fetch":       {},
+	"write":           {},
+}
+
+// canonicalToolName normalizes the policy tool class at the HTTP trust
+// boundary. Reserved Rampart policy classes must use their canonical lowercase
+// spelling. Custom tool names retain their exact spelling because policy tool
+// matching is intentionally case-sensitive.
+func canonicalToolName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("tool name is required")
+	}
+	if len(name) > maxToolNameLength {
+		return "", fmt.Errorf("tool name exceeds %d bytes", maxToolNameLength)
+	}
+	for _, char := range name {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		switch char {
+		case '_', '-', '.', ':':
+			continue
+		default:
+			return "", fmt.Errorf("tool name contains unsupported character %q", char)
+		}
+	}
+	lower := strings.ToLower(name)
+	if _, reserved := canonicalPolicyToolNames[lower]; reserved && name != lower {
+		return "", fmt.Errorf("reserved tool name %q must use canonical spelling %q", name, lower)
+	}
+	return name, nil
+}
+
 // decodeJSONBody accepts exactly one JSON value plus optional trailing
 // whitespace. Keeping this check in one place prevents request smuggling by
 // concatenating a second object that individual handlers would otherwise

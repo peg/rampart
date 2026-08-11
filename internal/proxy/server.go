@@ -227,7 +227,7 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 			if err := s.sink.Write(ev); err != nil {
 				s.logger.Error("proxy: audit write for approval expiry failed", "error", err)
 			}
-			s.broadcastSSE(map[string]any{"type": "audit", "event": ev})
+			s.broadcastAuditEvent(ev)
 		}
 	}))
 	s.approvals = approval.NewStore(storeOpts...)
