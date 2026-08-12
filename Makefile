@@ -6,7 +6,7 @@ LDFLAGS  = -s -w \
 	-X github.com/peg/rampart/internal/build.Commit=$(COMMIT) \
 	-X github.com/peg/rampart/internal/build.Date=$(DATE)
 
-.PHONY: build test vet clean linux security-assurance
+.PHONY: build test vet clean linux toolchain-check security-assurance
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o rampart ./cmd/rampart
@@ -23,5 +23,8 @@ vet:
 clean:
 	rm -f rampart rampart-linux
 
-security-assurance:
+toolchain-check:
+	scripts/check-toolchain-sync.sh
+
+security-assurance: toolchain-check
 	scripts/security-assurance.sh
