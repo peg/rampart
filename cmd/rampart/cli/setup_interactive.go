@@ -15,6 +15,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -241,25 +242,12 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 		}
 	}
 
-	// Run setup for each selected agent via subcommands
-	for _, a := range selectedAgents {
-		subCmd, _, err := cmd.Find([]string{a.SetupCmd})
-		if err != nil {
-			return fmt.Errorf("setup: find subcommand %s: %w", a.SetupCmd, err)
-		}
-		// Set --force so subcommands don't prompt
-		if f := subCmd.Flags().Lookup("force"); f != nil {
-			_ = f.Value.Set("true")
-		}
-		// Set --patch-tools if user opted in
-		if a.SetupCmd == "openclaw" && patchFileTools {
-			if f := subCmd.Flags().Lookup("patch-tools"); f != nil {
-				_ = f.Value.Set("true")
-			}
-		}
-		if err := subCmd.RunE(subCmd, nil); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %s setup failed: %v\n", a.Name, err)
-		}
+	// Run every selected setup so one broken integration does not hide the
+	// state of the others, then refuse to report success if any failed.
+	if err := runInteractiveAgentSetups(cmd, selectedAgents, patchFileTools); err != nil {
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "❌ Setup incomplete — one or more integrations failed.")
+		return err
 	}
 
 	// 7. Shell completions
@@ -289,6 +277,37 @@ func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Need help? https://docs.rampart.sh")
 
+	return nil
+}
+
+func runInteractiveAgentSetups(cmd *cobra.Command, selectedAgents []agentInfo, patchFileTools bool) error {
+	var failures []error
+	for _, a := range selectedAgents {
+		subCmd, _, err := cmd.Find([]string{a.SetupCmd})
+		if err != nil {
+			failure := fmt.Errorf("%s: find setup command: %w", a.Name, err)
+			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %s setup failed: %v\n", a.Name, err)
+			failures = append(failures, failure)
+			continue
+		}
+		// Set --force so subcommands don't prompt
+		if f := subCmd.Flags().Lookup("force"); f != nil {
+			_ = f.Value.Set("true")
+		}
+		// Set --patch-tools if user opted in
+		if a.SetupCmd == "openclaw" && patchFileTools {
+			if f := subCmd.Flags().Lookup("patch-tools"); f != nil {
+				_ = f.Value.Set("true")
+			}
+		}
+		if err := subCmd.RunE(subCmd, nil); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ %s setup failed: %v\n", a.Name, err)
+			failures = append(failures, fmt.Errorf("%s: %w", a.Name, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("setup: integration setup failed: %w", errors.Join(failures...))
+	}
 	return nil
 }
 
