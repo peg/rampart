@@ -44,7 +44,7 @@ const (
 	Prefix = "rampart_"
 
 	// ScopeEval allows tool-call evaluation and enforcement through the
-	// /v1/preflight/{tool} endpoint.
+	// /v1/tool/{tool} and /v1/preflight/{tool} endpoints.
 	// Audit reads, status checks, approvals, and rule management require ScopeAdmin.
 	ScopeEval = "eval"
 

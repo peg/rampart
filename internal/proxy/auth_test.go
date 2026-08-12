@@ -76,6 +76,57 @@ func TestMetricsRequireAdminScope(t *testing.T) {
 	}
 }
 
+func TestEvaluationEndpointsRequireEvalScope(t *testing.T) {
+	store, err := token.NewStore(filepath.Join(t.TempDir(), "tokens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	evalToken, _, err := store.Create("eval-agent", "", "", []string{token.ScopeEval}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminOnlyToken, _, err := store.Create("admin-agent", "", "", []string{token.ScopeAdmin}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	combinedToken, _, err := store.Create("combined-agent", "", "", []string{token.ScopeEval, token.ScopeAdmin}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(nil, nil, WithToken("admin-token"), WithTokenStore(store), WithMode("disabled"))
+	t.Cleanup(srv.approvals.Close)
+	handler := srv.handler()
+
+	for _, endpoint := range []string{"/v1/tool/exec", "/v1/preflight/exec"} {
+		for _, test := range []struct {
+			name   string
+			bearer string
+			status int
+		}{
+			{name: "eval token", bearer: evalToken, status: http.StatusOK},
+			{name: "local admin", bearer: "admin-token", status: http.StatusOK},
+			{name: "admin-only agent token", bearer: adminOnlyToken, status: http.StatusForbidden},
+			{name: "combined token", bearer: combinedToken, status: http.StatusOK},
+			{name: "invalid token", bearer: "invalid-token", status: http.StatusUnauthorized},
+			{name: "missing token", status: http.StatusUnauthorized},
+		} {
+			t.Run(endpoint+"/"+test.name, func(t *testing.T) {
+				body := `{"agent":"untrusted","session":"scope-test","params":{"command":"true"}}`
+				req := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+				if test.bearer != "" {
+					req.Header.Set("Authorization", "Bearer "+test.bearer)
+				}
+				rr := httptest.NewRecorder()
+				handler.ServeHTTP(rr, req)
+				if rr.Code != test.status {
+					t.Fatalf("status = %d, want %d; body = %s", rr.Code, test.status, rr.Body.String())
+				}
+			})
+		}
+	}
+}
+
 func TestDecodeJSONBodyRejectsAdditionalValues(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
