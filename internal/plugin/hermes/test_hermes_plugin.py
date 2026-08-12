@@ -8,6 +8,7 @@ import io
 import json
 import os
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -36,6 +37,63 @@ class HermesPluginTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.env_patch.stop()
+
+    def test_native_approval_requires_exact_rule_key_contract(self) -> None:
+        hermes_package = types.ModuleType("hermes_cli")
+        hermes_package.__path__ = []
+        hermes_plugins = types.ModuleType("hermes_cli.plugins")
+        hermes_plugins.get_pre_tool_call_directive = lambda *_: None
+
+        def details_getter(*_):
+            return None
+
+        def resolve_pre_tool_block(*_):
+            return None
+
+        hermes_plugins._get_pre_tool_call_directive_details = details_getter
+        hermes_plugins.resolve_pre_tool_block = resolve_pre_tool_block
+        directive_type = type(
+            "_PreToolCallDirective",
+            (),
+            {"__dataclass_fields__": {"rule_key": object()}},
+        )
+        hermes_plugins._PreToolCallDirective = directive_type
+        hermes_package.plugins = hermes_plugins
+        modules = {
+            "hermes_cli": hermes_package,
+            "hermes_cli.plugins": hermes_plugins,
+        }
+        sources = {
+            details_getter: """
+                def _get_pre_tool_call_directive_details():
+                    rule_key = result.get("rule_key") if action == "approve" else None
+                    return _PreToolCallDirective(action=action, rule_key=rule_key)
+            """,
+            resolve_pre_tool_block: """
+                def resolve_pre_tool_block(tool_name, args):
+                    details = _get_pre_tool_call_directive_details(tool_name, args)
+                    return request_tool_approval(
+                        tool_name, details.message or "",
+                        rule_key=details.rule_key or tool_name,
+                    )
+            """,
+        }
+
+        with (
+            mock.patch.dict(sys.modules, modules),
+            mock.patch.object(
+                plugin.inspect,
+                "getsource",
+                side_effect=lambda function: sources[function],
+            ),
+        ):
+            self.assertTrue(plugin._hermes_supports_native_approval())
+            sources[resolve_pre_tool_block] = """
+                def resolve_pre_tool_block(tool_name, args):
+                    details = _get_pre_tool_call_directive_details(tool_name, args)
+                    return request_tool_approval(tool_name, details.message, rule_key=tool_name)
+            """
+            self.assertFalse(plugin._hermes_supports_native_approval())
 
     def test_terminal_maps_to_exec_with_command_metadata(self) -> None:
         rampart_tool, params = plugin.normalize_tool_call(
@@ -241,7 +299,7 @@ class HermesPluginTests(unittest.TestCase):
         self.assertIn("danger", result["message"])
         self.assertIn("audit-deny-1", result["message"])
 
-    def test_ask_decision_blocks_without_hidden_approval(self) -> None:
+    def test_ask_decision_uses_native_approval_with_exact_call_key(self) -> None:
         def requester(config, rampart_tool, payload):
             self.assertEqual(config.endpoint_mode, "preflight")
             self.assertIs(payload["enforce"], True)
@@ -256,18 +314,264 @@ class HermesPluginTests(unittest.TestCase):
                 "audit_id": "audit-ask-1",
             }
 
-        result = plugin.evaluate_pre_tool_call(
-            "terminal",
-            {"command": "kubectl apply -f prod.yaml"},
-            tool_call_id="call-ask-1",
-            requester=requester,
-        )
+        args = {"command": "kubectl apply -f prod.yaml", "workdir": "/workspace"}
+        with (
+            mock.patch.object(plugin, "_hermes_supports_native_approval", return_value=True),
+            mock.patch.object(plugin, "_load_token", return_value="unit-test-token"),
+        ):
+            result = plugin.evaluate_pre_tool_call(
+                "terminal",
+                args,
+                tool_call_id="call-ask-1",
+                requester=requester,
+            )
 
-        self.assertEqual(result["action"], "block")
+        self.assertEqual(result["action"], "approve")
         self.assertIn("approval required", result["message"])
-        self.assertIn("does not yet resume", result["message"])
         self.assertIn("prod-change", result["message"])
         self.assertIn("audit-ask-1", result["message"])
+        self.assertIn("kubectl apply -f prod.yaml", result["message"])
+        config = plugin.load_config()
+        params = plugin.normalize_tool_call("terminal", args)[1]
+        with mock.patch.object(plugin, "_load_token", return_value="unit-test-token"):
+            expected = plugin._approval_rule_key(config, "terminal", args, params, "")
+            different = plugin._approval_rule_key(
+                config,
+                "terminal",
+                {"command": "kubectl apply -f other.yaml", "workdir": "/workspace"},
+                plugin.normalize_tool_call(
+                    "terminal",
+                    {"command": "kubectl apply -f other.yaml", "workdir": "/workspace"},
+                )[1],
+                "",
+            )
+        self.assertEqual(result["rule_key"], expected)
+        self.assertNotEqual(result["rule_key"], different)
+
+    def test_browser_approval_shows_redacted_target(self) -> None:
+        target = "https://user:browser-password@example.com/batches/current?token=query-secret#private"
+        with (
+            mock.patch.object(plugin, "_hermes_supports_native_approval", return_value=True),
+            mock.patch.object(plugin, "_load_token", return_value="unit-test-token"),
+        ):
+            result = plugin.evaluate_pre_tool_call(
+                "browser_navigate",
+                {"url": target},
+                task_id="task-browser",
+                requester=lambda *_: {
+                    "decision": "ask",
+                    "allowed": False,
+                    "message": "unclassified navigation",
+                },
+            )
+
+        self.assertEqual(result["action"], "approve")
+        self.assertEqual(plugin._safe_url_display(target), "https://example.com")
+        self.assertIn(
+            "browser navigate: https://example.com.",
+            result["message"],
+        )
+        self.assertNotIn("browser-password", result["message"])
+        self.assertNotIn("query-secret", result["message"])
+        self.assertNotIn("private", result["message"])
+
+    def test_approval_display_redacts_credentials_urls_and_format_controls(self) -> None:
+        summary = plugin._redact_approval_text(
+            "AWS_SECRET_ACCESS_KEY=aws-secret OPENAI_API_KEY=openai-secret "
+            "GITHUB_TOKEN=github-secret curl -ualice:curl-secret "
+            "-H 'Authorization: Bearer header-secret' "
+            "https://user:url-secret@example.com/private/object?token=query-secret#fragment "
+            "ssh://alice:ssh-secret@internal.example/private-key "
+            'json={"api_key":"json-secret","password":"json-password",'
+            '"Authorization":"Bearer json-auth-secret"} '
+            "access_token: yaml-secret ssh alice:ssh-cli-secret@internal.example "
+            "mailto:person+mail-secret@example.com "
+            "\x1b[31mshown\u202e",
+            600,
+        )
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        for secret in (
+            "aws-secret",
+            "openai-secret",
+            "github-secret",
+            "curl-secret",
+            "header-secret",
+            "url-secret",
+            "query-secret",
+            "fragment",
+            "ssh-secret",
+            "ssh-cli-secret",
+            "private-key",
+            "mail-secret",
+            "json-secret",
+            "json-password",
+            "json-auth-secret",
+            "yaml-secret",
+        ):
+            self.assertNotIn(secret, summary)
+        self.assertIn("AWS_SECRET_ACCESS_KEY=[REDACTED]", summary)
+        self.assertIn("OPENAI_API_KEY=[REDACTED]", summary)
+        self.assertIn("GITHUB_TOKEN=[REDACTED]", summary)
+        self.assertIn("curl -u [REDACTED]", summary)
+        self.assertIn("Authorization: Bearer [REDACTED]", summary)
+        self.assertIn("https://example.com", summary)
+        self.assertIn("<non-HTTP URL (ssh) redacted>", summary)
+        self.assertIn("<non-HTTP URL (mailto) redacted>", summary)
+        self.assertIn('"api_key":[REDACTED]', summary)
+        self.assertIn('"password":[REDACTED]', summary)
+        self.assertIn('"Authorization":[REDACTED]', summary)
+        self.assertIn("access_token: [REDACTED]", summary)
+        self.assertIn("ssh [REDACTED]@internal.example", summary)
+        self.assertNotIn("\x1b", summary)
+        self.assertNotIn("[31m", summary)
+        self.assertNotIn("\u202e", summary)
+
+    def test_approval_key_binds_resolved_path_and_does_not_expose_arguments(self) -> None:
+        config = plugin.load_config()
+        args = {"path": "notes.txt", "content": "API_TOKEN=super-secret"}
+        with mock.patch.object(plugin, "_load_token", return_value="unit-test-token"):
+            safe_key = plugin._approval_rule_key(
+                config, "write_file", args, {"path": "/safe/notes.txt"}, "task-safe"
+            )
+            protected_key = plugin._approval_rule_key(
+                config, "write_file", args, {"path": "/protected/notes.txt"}, "task-safe"
+            )
+            other_task_key = plugin._approval_rule_key(
+                config, "write_file", args, {"path": "/safe/notes.txt"}, "task-other"
+            )
+
+        self.assertIsNotNone(safe_key)
+        self.assertNotEqual(safe_key, protected_key)
+        self.assertNotEqual(safe_key, other_task_key)
+        self.assertNotIn("super-secret", safe_key)
+
+    def test_terminal_approval_key_binds_effective_cwd_and_refuses_ambiguity(self) -> None:
+        config = plugin.load_config()
+        args = {"command": "printf safe"}
+        params = plugin.normalize_tool_call("terminal", args)[1]
+        with (
+            mock.patch.object(plugin, "_load_token", return_value="unit-test-token"),
+            mock.patch.object(plugin, "_effective_terminal_cwd", return_value="/safe"),
+        ):
+            safe_key = plugin._approval_rule_key(config, "terminal", args, params, "task")
+        with (
+            mock.patch.object(plugin, "_load_token", return_value="unit-test-token"),
+            mock.patch.object(plugin, "_effective_terminal_cwd", return_value="/other"),
+        ):
+            other_key = plugin._approval_rule_key(config, "terminal", args, params, "task")
+        with (
+            mock.patch.object(plugin, "_load_token", return_value="unit-test-token"),
+            mock.patch.object(plugin, "_effective_terminal_cwd", return_value=None),
+        ):
+            ambiguous_key = plugin._approval_rule_key(
+                config, "terminal", args, params, "task"
+            )
+
+        self.assertIsNotNone(safe_key)
+        self.assertNotEqual(safe_key, other_key)
+        self.assertIsNone(ambiguous_key)
+
+    def test_terminal_approval_key_requires_absolute_explicit_workdir(self) -> None:
+        config = plugin.load_config()
+
+        def key_for(workdir):
+            args = {"command": "printf safe", "workdir": workdir}
+            params = plugin.normalize_tool_call("terminal", args)[1]
+            return plugin._approval_rule_key(
+                config, "terminal", args, params, "task"
+            )
+
+        with mock.patch.object(plugin, "_load_token", return_value="unit-test-token"):
+            absolute_key = key_for(os.path.abspath("workspace"))
+            dot_key = key_for(".")
+            named_key = key_for("project")
+            windows_key = key_for(r"C:\workspace")
+
+        self.assertIsNotNone(absolute_key)
+        self.assertIsNone(dot_key)
+        self.assertIsNone(named_key)
+        if os.name == "nt":
+            self.assertIsNotNone(windows_key)
+        else:
+            self.assertIsNone(windows_key)
+
+    def test_approval_key_refuses_unbounded_or_non_json_identity(self) -> None:
+        config = plugin.load_config()
+        recursive = {}
+        recursive["self"] = recursive
+        with mock.patch.object(plugin, "_load_token", return_value="unit-test-token"):
+            oversized = plugin._approval_rule_key(
+                config,
+                "write_file",
+                {"path": "/tmp/notes.txt", "content": "x" * plugin.MAX_APPROVAL_IDENTITY_BYTES},
+                {"path": "/tmp/notes.txt"},
+                "task",
+            )
+            non_json = plugin._approval_rule_key(
+                config,
+                "terminal",
+                {"command": object(), "workdir": "/tmp"},
+                {"command": "safe"},
+                "task",
+            )
+            recursive["workdir"] = "/tmp"
+            recursive_key = plugin._approval_rule_key(
+                config,
+                "terminal",
+                recursive,
+                {"command": "safe"},
+                "task",
+            )
+            huge_integer_key = plugin._approval_rule_key(
+                config,
+                "terminal",
+                {
+                    "timeout": 1 << (plugin.MAX_APPROVAL_IDENTITY_BYTES * 8),
+                    "workdir": "/tmp",
+                },
+                {"command": "safe"},
+                "task",
+            )
+
+        self.assertIsNone(oversized)
+        self.assertIsNone(non_json)
+        self.assertIsNone(recursive_key)
+        self.assertIsNone(huge_integer_key)
+
+    def test_ask_blocks_without_a_token_for_opaque_approval_identity(self) -> None:
+        with (
+            mock.patch.object(plugin, "_hermes_supports_native_approval", return_value=True),
+            mock.patch.object(plugin, "_load_token", return_value=None),
+        ):
+            result = plugin.evaluate_pre_tool_call(
+                "browser_navigate",
+                {"url": "https://example.com"},
+                requester=lambda *_: {
+                    "decision": "ask",
+                    "allowed": False,
+                    "message": "navigation requires approval",
+                },
+            )
+
+        self.assertEqual(result["action"], "block")
+        self.assertIn("non-secret approval key", result["message"])
+
+    def test_ask_decision_blocks_on_older_hermes(self) -> None:
+        with mock.patch.object(plugin, "_hermes_supports_native_approval", return_value=False):
+            result = plugin.evaluate_pre_tool_call(
+                "browser_navigate",
+                {"url": "https://example.com"},
+                requester=lambda *_: {
+                    "decision": "ask",
+                    "allowed": False,
+                    "message": "navigation requires approval",
+                },
+            )
+
+        self.assertEqual(result["action"], "block")
+        self.assertIn("does not support plugin-owned approval/resume", result["message"])
 
     def test_unavailable_blocks_mutating_tool(self) -> None:
         def requester(config, rampart_tool, payload):

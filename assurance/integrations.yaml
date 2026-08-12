@@ -216,7 +216,7 @@ integrations:
       policy_unavailable: deny
       adapter_error: deny
       timeout: deny
-    approval: block_and_retry
+    approval: native
     verification:
       level: static
       command: rampart doctor
@@ -225,16 +225,16 @@ integrations:
     evidence:
       - path: internal/plugin/hermes/test_hermes_plugin.py
         kind: unit
-        proves: Tool normalization, redaction, allow, deny, ask, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
+        proves: Tool normalization, redaction, allow, deny, native ask approval identity, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
       - path: scripts/compat-hermes-latest.py
         kind: upstream_latest
-        proves: Hermes' official latest stable GitHub release is resolved independently of PyPI, then discovery, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
+        proves: Hermes' official latest stable GitHub release is resolved independently of PyPI, then discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
-      - Hermes approval observer hooks cannot answer or resume an approval.
+      - Native approval/resume requires a Hermes release that exposes the plugin approval directive; older releases block `ask` decisions with an upgrade message.
       - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
       - Hermes tools outside the plugin's typed map, including MCP and delegated-agent tools, fail closed but are not claimed as covered policy surfaces.
-      - Delegated-agent and approved-execution E2E are not present.
+      - Delegated-agent and authenticated live-host E2E are not present.
 
   - id: gemini
     display_name: Gemini CLI

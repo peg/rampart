@@ -170,6 +170,7 @@ class RampartStub(BaseHTTPRequestHandler):
             "path": self.path,
             "agent": payload.get("agent") if isinstance(payload, dict) else None,
             "session": payload.get("session") if isinstance(payload, dict) else None,
+            "tool_call_id": payload.get("tool_call_id") if isinstance(payload, dict) else None,
             "tool_call_id_present": bool(payload.get("tool_call_id")) if isinstance(payload, dict) else False,
             "enforce": payload.get("enforce") if isinstance(payload, dict) else None,
             "command_marker": _marker_from_command(command),
@@ -202,6 +203,14 @@ class RampartStub(BaseHTTPRequestHandler):
                 "message": "requires compatibility harness approval",
                 "matched_policies": ["compat-ask"],
                 "audit_id": "compat-audit-ask",
+            }
+        elif "rampart-ask-browser" in str(params.get("url") or ""):
+            body = {
+                "decision": "ask",
+                "allowed": False,
+                "message": "browser navigation requires compatibility approval",
+                "matched_policies": ["compat-browser-ask"],
+                "audit_id": "compat-audit-browser-ask",
             }
         elif "rampart-auth-error-marker" in command:
             status = 401
@@ -373,7 +382,13 @@ def child_probe_code(unused_port: int) -> str:
         f"""
         import json
         import os
-        from hermes_cli.plugins import discover_plugins, get_plugin_manager, get_pre_tool_call_block_message
+        from unittest import mock
+        from hermes_cli.plugins import (
+            discover_plugins,
+            get_plugin_manager,
+            get_pre_tool_call_directive,
+            resolve_pre_tool_block,
+        )
 
         discover_plugins(force=True)
         manager = get_plugin_manager()
@@ -386,8 +401,8 @@ def child_probe_code(unused_port: int) -> str:
         if not hooks:
             raise SystemExit('rampart plugin did not register a pre_tool_call hook')
 
-        def block(tool, args, call_id):
-            return get_pre_tool_call_block_message(
+        def directive(tool, args, call_id):
+            return get_pre_tool_call_directive(
                 tool,
                 args,
                 task_id='compat-task',
@@ -395,23 +410,75 @@ def child_probe_code(unused_port: int) -> str:
                 tool_call_id=call_id,
             )
 
-        deny = block('terminal', {{'command': 'printf rampart-deny-marker'}}, 'compat-deny-call')
-        if not deny or 'blocked by compatibility harness' not in deny or 'compat-audit-deny' not in deny:
-            raise SystemExit(f'deny did not block as expected: {{deny!r}}')
+        deny_action, deny = directive('terminal', {{'command': 'printf rampart-deny-marker'}}, 'compat-deny-call')
+        if deny_action != 'block' or not deny or 'blocked by compatibility harness' not in deny or 'compat-audit-deny' not in deny:
+            raise SystemExit(f'deny did not block as expected: {{(deny_action, deny)!r}}')
 
-        ask = block('terminal', {{'command': 'printf rampart-ask-marker'}}, 'compat-ask-call')
-        if not ask or 'approval required' not in ask or 'does not yet resume' not in ask or 'compat-audit-ask' not in ask:
-            raise SystemExit(f'ask did not block with no-resume message: {{ask!r}}')
+        ask_args = {{'command': 'printf rampart-ask-marker'}}
+        ask_action, ask = directive('terminal', ask_args, 'compat-ask-call')
+        if ask_action != 'approve' or not ask or 'approval required' not in ask or 'compat-audit-ask' not in ask:
+            raise SystemExit(f'ask did not request Hermes native approval: {{(ask_action, ask)!r}}')
 
-        allow = block('terminal', {{'command': 'printf rampart-allow-marker'}}, 'compat-allow-call')
-        if allow is not None:
-            raise SystemExit(f'allow should continue without a block message: {{allow!r}}')
+        with mock.patch('tools.approval.request_tool_approval', return_value={{'approved': True, 'message': 'approved'}}):
+            resumed = resolve_pre_tool_block(
+                'terminal', ask_args, task_id='compat-task',
+                session_id='compat-session', tool_call_id='compat-ask-resume-call',
+            )
+        if resumed is not None:
+            raise SystemExit(f'approved Hermes native call did not resume: {{resumed!r}}')
 
-        auth_error = block('terminal', {{'command': 'printf rampart-auth-error-marker'}}, 'compat-auth-error-call')
-        if not auth_error or 'invalid authorization token' not in auth_error:
-            raise SystemExit(f'auth error did not fail closed: {{auth_error!r}}')
+        with mock.patch('tools.approval.request_tool_approval', return_value={{'approved': False, 'message': 'operator denied'}}):
+            approval_denied = resolve_pre_tool_block(
+                'terminal', ask_args, task_id='compat-task',
+                session_id='compat-session', tool_call_id='compat-ask-deny-call',
+            )
+        if approval_denied != 'operator denied':
+            raise SystemExit(f'denied Hermes native approval did not block: {{approval_denied!r}}')
 
-        patch = block(
+        browser_targets = [
+            'https://compat-user:compat-browser-password@example.com/rampart-ask-browser/compat-secret-path/one?token=compat-query-secret#compat-fragment-secret',
+            'https://example.com/rampart-ask-browser/two',
+        ]
+        browser_action, browser_message = directive(
+            'browser_navigate', {{'url': browser_targets[0]}}, 'compat-browser-directive-call',
+        )
+        if browser_action != 'approve' or not browser_message or 'browser navigate: https://example.com.' not in browser_message:
+            raise SystemExit(f'browser approval did not show its safe origin: {{(browser_action, browser_message)!r}}')
+        for forbidden in (
+            browser_targets[0], 'compat-user', 'compat-browser-password',
+            'compat-secret-path', 'compat-query-secret', 'compat-fragment-secret',
+        ):
+            if forbidden in browser_message:
+                raise SystemExit(f'browser approval exposed secret URL material: {{forbidden!r}} in {{browser_message!r}}')
+
+        approval_calls = []
+        def approve_and_capture(*call_args, **call_kwargs):
+            approval_calls.append((call_args, call_kwargs))
+            return {{'approved': True, 'message': 'approved'}}
+
+        with mock.patch('tools.approval.request_tool_approval', side_effect=approve_and_capture):
+            for index, target in enumerate(browser_targets):
+                resumed = resolve_pre_tool_block(
+                    'browser_navigate', {{'url': target}}, task_id='compat-task',
+                    session_id='compat-session', tool_call_id=f'compat-browser-resume-{{index}}',
+                )
+                if resumed is not None:
+                    raise SystemExit(f'approved browser call did not resume: {{resumed!r}}')
+        rule_keys = [kwargs.get('rule_key') for _, kwargs in approval_calls]
+        if len(rule_keys) != 2 or not all(isinstance(key, str) and key.startswith('rampart:') for key in rule_keys):
+            raise SystemExit(f'Hermes did not receive Rampart approval rule keys: {{rule_keys!r}}')
+        if rule_keys[0] == rule_keys[1]:
+            raise SystemExit('distinct browser targets received the same approval rule key')
+
+        allow_action, allow = directive('terminal', {{'command': 'printf rampart-allow-marker'}}, 'compat-allow-call')
+        if allow_action is not None or allow is not None:
+            raise SystemExit(f'allow should continue without a directive: {{(allow_action, allow)!r}}')
+
+        auth_action, auth_error = directive('terminal', {{'command': 'printf rampart-auth-error-marker'}}, 'compat-auth-error-call')
+        if auth_action != 'block' or not auth_error or 'invalid authorization token' not in auth_error:
+            raise SystemExit(f'auth error did not fail closed: {{(auth_action, auth_error)!r}}')
+
+        patch_action, patch = directive(
             'patch',
             {{
                 'mode': 'patch',
@@ -426,18 +493,18 @@ def child_probe_code(unused_port: int) -> str:
             }},
             'compat-patch-call',
         )
-        if not patch or 'protected compatibility path' not in patch or 'compat-audit-path-deny' not in patch:
-            raise SystemExit(f'multi-path patch did not block protected second target: {{patch!r}}')
+        if patch_action != 'block' or not patch or 'protected compatibility path' not in patch or 'compat-audit-path-deny' not in patch:
+            raise SystemExit(f'multi-path patch did not block protected second target: {{(patch_action, patch)!r}}')
 
         os.environ['RAMPART_HERMES_URL'] = 'http://127.0.0.1:{unused_port}'
         os.environ['RAMPART_HERMES_TIMEOUT_MS'] = '250'
-        fail_closed = block('terminal', {{'command': 'printf rampart-fail-closed-marker'}}, 'compat-fail-closed-call')
-        if not fail_closed or 'unavailable' not in fail_closed:
-            raise SystemExit(f'mutating terminal did not fail closed: {{fail_closed!r}}')
+        fail_closed_action, fail_closed = directive('terminal', {{'command': 'printf rampart-fail-closed-marker'}}, 'compat-fail-closed-call')
+        if fail_closed_action != 'block' or not fail_closed or 'unavailable' not in fail_closed:
+            raise SystemExit(f'mutating terminal did not fail closed: {{(fail_closed_action, fail_closed)!r}}')
 
-        fail_open = block('read_file', {{'path': '/tmp/rampart-compat-read.txt'}}, 'compat-fail-open-call')
-        if fail_open is not None:
-            raise SystemExit(f'configured read_file fail-open should continue: {{fail_open!r}}')
+        fail_open_action, fail_open = directive('read_file', {{'path': '/tmp/rampart-compat-read.txt'}}, 'compat-fail-open-call')
+        if fail_open_action is not None or fail_open is not None:
+            raise SystemExit(f'configured read_file fail-open should continue: {{(fail_open_action, fail_open)!r}}')
 
         print(json.dumps({{
             'ok': True,
@@ -445,7 +512,8 @@ def child_probe_code(unused_port: int) -> str:
             'hooks_registered': loaded.hooks_registered,
             'pre_tool_call_hooks': len(hooks),
             'deny_blocked': True,
-            'ask_blocked_without_resume': True,
+            'ask_native_approval_resumed': True,
+            'ask_native_approval_denied': True,
             'allow_continued': True,
             'auth_error_fail_closed': True,
             'multi_path_patch_deny_wins': True,
@@ -553,6 +621,21 @@ def main() -> int:
             expected = {"rampart-deny-marker", "rampart-ask-marker", "rampart-allow-marker", "rampart-auth-error-marker"}
             if not expected.issubset(markers):
                 raise RuntimeError(f"expected request markers {sorted(expected)}, saw {sorted(markers)}")
+            ask_call_ids = [
+                entry["tool_call_id"]
+                for entry in RampartStub.requests_seen
+                if entry["command_marker"] == "rampart-ask-marker"
+            ]
+            expected_ask_call_ids = {
+                "compat-ask-call",
+                "compat-ask-resume-call",
+                "compat-ask-deny-call",
+            }
+            if set(ask_call_ids) != expected_ask_call_ids:
+                raise RuntimeError(
+                    "native approval did not preserve each Hermes tool-call identity: "
+                    f"saw {ask_call_ids}"
+                )
             patch_paths = [
                 entry["policy_path"]
                 for entry in RampartStub.requests_seen

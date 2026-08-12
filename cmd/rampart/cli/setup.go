@@ -153,9 +153,11 @@ $HERMES_HOME/plugins/rampart (normally ~/.hermes/plugins/rampart) without
 patching Hermes itself.
 
 The plugin uses Hermes' pre_tool_call hook, calls Rampart's policy API before
-sensitive tool calls execute, defaults to /v1/preflight/{tool}, blocks ask
-responses instead of creating hidden approvals, and fails closed for every tool
-when Rampart serve is unavailable unless an operator explicitly opts a tool out.
+sensitive tool calls execute, defaults to /v1/preflight/{tool}, routes ask
+responses through current Hermes releases' native approval/resume flow instead
+of creating hidden approvals, and fails closed for every tool when Rampart serve
+is unavailable unless an operator explicitly opts a tool out. Older Hermes
+releases that lack the required approval contract block ask decisions.
 
 By default this command installs the plugin files only. Use --enable to run
 "hermes plugins enable rampart" after installation. Restart long-running Hermes
