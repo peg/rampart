@@ -16,6 +16,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,6 +205,82 @@ policies:
 	output := out.String()
 	if !strings.Contains(output, "DENY") {
 		t.Errorf("expected DENY in output, got: %s", output)
+	}
+}
+
+func TestDiagnosticCommandsUseCanonicalToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	dangerousPath := filepath.ToSlash(filepath.Join(dir, "private", "credentials.key"))
+	dangerousURL := "https://webhook.site/danger/collect.yaml"
+	policyFile := filepath.Join(dir, "rampart.yaml")
+	policy := fmt.Sprintf(`
+version: "1"
+default_action: allow
+policies:
+  - {name: block-command, match: {tool: exec}, rules: [{action: deny, when: {command_matches: ["rm -rf *"]}}]}
+  - {name: block-path, match: {tool: [read, write, edit]}, rules: [{action: deny, when: {path_matches: [%q]}}]}
+  - {name: block-url, match: {tool: [fetch, web_fetch, http]}, rules: [{action: deny, when: {url_matches: [%q], domain_matches: [webhook.site], path_matches: [/danger/collect.yaml]}}]}
+  - {name: block-browser-param, match: {tool: browser}, rules: [{action: deny, when: {tool_param_matches: {url: "https://webhook.site/*"}}}]}
+`, dangerousPath, dangerousURL)
+	if err := os.WriteFile(policyFile, []byte(policy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	call, err := newDiagnosticToolCall("fetch", dangerousURL, "diagnostic-agent", "diagnostic-session", now)
+	if err != nil || call.Agent != "diagnostic-agent" || call.Session != "diagnostic-session" || !call.Timestamp.Equal(now) ||
+		call.URL() != dangerousURL || call.Domain() != "webhook.site" ||
+		call.Param("scheme") != "https" || call.Param("path") != "/danger/collect.yaml" || call.Input["url"] != dangerousURL {
+		t.Fatalf("canonical URL call not preserved and enriched: call=%#v err=%v", call, err)
+	}
+	tests := []struct {
+		tool       string
+		argument   string
+		wantPolicy string
+	}{
+		{tool: "exec", argument: "rm -rf /"},
+		{tool: "read", argument: dangerousPath},
+		{tool: "write", argument: dangerousPath},
+		{tool: "edit", argument: dangerousPath},
+		{tool: "fetch", argument: dangerousURL},
+		{tool: "web_fetch", argument: dangerousURL},
+		{tool: "http", argument: dangerousURL},
+		{tool: "browser", argument: dangerousURL, wantPolicy: "block-browser-param"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.tool, func(t *testing.T) {
+			testCmd := newTestCmd(&rootOptions{configPath: policyFile})
+			var testOut, testErr bytes.Buffer
+			testCmd.SetOut(&testOut)
+			testCmd.SetErr(&testErr)
+			testCmd.SetArgs([]string{tc.argument, "--tool", tc.tool, "--no-color"})
+			runErr := testCmd.Execute()
+			if runErr == nil || !strings.Contains(testOut.String(), "DENY") {
+				t.Fatalf("test diagnostic did not deny: err=%v output=%s", runErr, testOut.String())
+			}
+			if tc.wantPolicy != "" && !strings.Contains(testOut.String(), tc.wantPolicy) {
+				t.Fatalf("test diagnostic did not match %s: %s", tc.wantPolicy, testOut.String())
+			}
+
+			explain := newPolicyExplainCmd(&rootOptions{configPath: policyFile})
+			var explainOut strings.Builder
+			explain.SetOut(&explainOut)
+			explain.SetArgs([]string{tc.argument, "--tool", tc.tool})
+			if err := explain.Execute(); err != nil {
+				t.Fatalf("explain diagnostic: %v", err)
+			}
+			if !strings.Contains(explainOut.String(), "Final decision: DENY") {
+				t.Fatalf("explain diagnostic did not deny: %s", explainOut.String())
+			}
+			if tc.wantPolicy != "" && !strings.Contains(explainOut.String(), tc.wantPolicy) {
+				t.Fatalf("explain diagnostic did not match %s: %s", tc.wantPolicy, explainOut.String())
+			}
+		})
+	}
+
+	if _, err := newDiagnosticToolCall("mcp", "danger", "", "", now); err == nil {
+		t.Fatal("expected unsupported MCP tool to be rejected")
 	}
 }
 

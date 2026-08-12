@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -96,11 +95,21 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 	var session string
 
 	cmd := &cobra.Command{
-		Use:   "explain <command>",
-		Short: "Explain how policy evaluates a command",
+		Use:   "explain <command-or-path-or-url>",
+		Short: "Explain how policy evaluates a tool call",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			command := args[0]
+			call, err := newDiagnosticToolCall(
+				tool,
+				command,
+				normalizeAgent(agent),
+				normalizeSession(session),
+				time.Now().UTC(),
+			)
+			if err != nil {
+				return fmt.Errorf("policy: explain: %w", err)
+			}
 
 			policyPath, err := resolveExplainPolicyPath(cmd, opts.configPath)
 			if err != nil {
@@ -116,24 +125,6 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("policy: create engine: %w", err)
 			}
 
-			params := map[string]any{"command": command}
-			// For URL-based tools, parse the argument as a URL and enrich params
-			// so domain_matches and url_matches policies evaluate correctly.
-			if tool == "web_fetch" || tool == "fetch" || tool == "http" || tool == "browser" {
-				params = map[string]any{"url": command}
-				if parsed, err := url.Parse(command); err == nil && parsed.Host != "" {
-					params["domain"] = parsed.Hostname()
-					params["scheme"] = parsed.Scheme
-					params["path"] = parsed.Path
-				}
-			}
-			call := engine.ToolCall{
-				Agent:     normalizeAgent(agent),
-				Session:   normalizeSession(session),
-				Tool:      tool,
-				Params:    params,
-				Timestamp: time.Now().UTC(),
-			}
 			decision := eng.Evaluate(call)
 			explanations := collectExplanations(cfg, call)
 
@@ -226,7 +217,7 @@ func newPolicyExplainCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&tool, "tool", "exec", "Tool type to evaluate")
+	cmd.Flags().StringVar(&tool, "tool", "exec", diagnosticToolFlagHelp)
 	cmd.Flags().StringVar(&agent, "agent", "*", "Agent identity to evaluate")
 	cmd.Flags().StringVar(&session, "session", "*", "Session identity to evaluate")
 

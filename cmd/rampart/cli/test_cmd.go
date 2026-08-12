@@ -38,12 +38,13 @@ func newTestCmd(opts *rootOptions) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "test [command-or-path | test-file.yaml]",
-		Short: "Test how policies evaluate commands or run a test suite",
+		Use:   "test [command-or-path-or-url | test-file.yaml]",
+		Short: "Test how policies evaluate tool calls or run a test suite",
 		Long: `Dry-run a tool call through the policy engine and display the result.
 
-By default, the argument is treated as an exec command. Use --tool to
-change the tool type (read, write) in which case the argument is a path.
+By default, the argument is treated as an exec command. For read, write, and
+edit tools the argument is a path. For fetch, web_fetch, http, and browser
+tools the argument is a URL.
 
 If the argument is a YAML file, it is loaded as a test suite containing
 multiple test cases. A policy file with an inline "tests:" key can also
@@ -56,6 +57,7 @@ Examples:
   rampart test "rm -rf /"
   rampart test "git status"
   rampart test --tool read "/etc/shadow"
+  rampart test --tool fetch "https://example.com/path"
   rampart test tests.yaml
   rampart test --verbose tests.yaml
   rampart test --run "blocks*" tests.yaml
@@ -75,14 +77,14 @@ Examples:
 				arg = args[0]
 			}
 
-			if isYAMLFile(arg) {
+			if isYAMLFile(arg) && (len(args) == 0 || !cmd.Flags().Changed("tool")) {
 				return runTestSuite(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, noColor, verbose, run, jsonOut)
 			}
 			return runTest(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, arg, toolName, noColor, jsonOut)
 		},
 	}
 
-	cmd.Flags().StringVar(&toolName, "tool", "exec", "Tool type: exec, read, write")
+	cmd.Flags().StringVar(&toolName, "tool", "exec", diagnosticToolFlagHelp)
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show match details for each test case")
 	cmd.Flags().StringVar(&run, "run", "", "Run only tests matching this glob pattern")
@@ -282,6 +284,11 @@ type bareCmdJSONResult struct {
 }
 
 func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor, jsonOut bool) error {
+	call, err := newDiagnosticToolCall(toolName, arg, "", "", time.Now())
+	if err != nil {
+		return fmt.Errorf("test: %w", err)
+	}
+
 	policyPath, cleanup, err := resolveTestPolicyPath(opts.configPath)
 	if err != nil {
 		return err
@@ -295,19 +302,6 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 	eng, err := engine.New(store, nil)
 	if err != nil {
 		return fmt.Errorf("test: create engine: %w", err)
-	}
-
-	call := engine.ToolCall{
-		Tool:      toolName,
-		Params:    make(map[string]any),
-		Timestamp: time.Now(),
-	}
-
-	switch toolName {
-	case "read", "write":
-		call.Params["path"] = arg
-	default:
-		call.Params["command"] = arg
 	}
 
 	decision := eng.Evaluate(call)
