@@ -10,7 +10,10 @@ This is the shared local policy service. It loads your policies, evaluates tool 
 rampart serve
 ```
 
-You don't usually run this directly. `rampart quickstart` and the service-backed setup flows handle it for you by installing a system service (systemd on Linux, launchd on macOS).
+You don't usually run this directly. `rampart protect` and the service-backed
+setup flows start or verify it for you. They install a system service through
+systemd on Linux or launchd on macOS; Windows uses a login-scoped background
+process.
 
 **What happens if it's not running?** Behavior depends on the integration:
 
@@ -35,8 +38,8 @@ enforcement path before execution. Some paths call into `rampart serve`;
 Claude/Cline/Codex native hooks can also evaluate allow/deny policy locally.
 
 ```
-rampart setup claude-code   # one-time, survives agent updates
-rampart setup codex         # native lifecycle hooks; no wrapper replacement
+rampart protect claude-code # managed native hooks + active verification
+rampart protect codex       # native lifecycle hooks; no wrapper replacement
 rampart protect openclaw    # managed fail-closed guard + behavioral verification
 ```
 
@@ -103,10 +106,15 @@ Ask   → native agent prompt or external approval flow, depending on integratio
 ## Common questions
 
 **Do I need to run `rampart serve` manually?**
-Not usually. `rampart quickstart` installs it as a system service when the chosen integration needs it. Direct Claude Code and Cline hook protection can still work locally without it.
+Not usually. `rampart protect` installs a persistent service on Linux and macOS;
+Windows uses a login-scoped background process. Direct Claude Code and Cline
+hook protection can still evaluate ordinary allow/deny policy locally if the
+service later becomes unavailable.
 
 **What if I installed with `nohup rampart serve &`?**
-That works but won't survive reboots. Run `rampart serve install` to create a persistent service, or use `rampart quickstart` which handles this.
+That works but won't survive reboots. On Linux or macOS, run
+`rampart serve install` or `rampart protect` to create a persistent service.
+On Windows, Rampart currently uses a login-scoped background process.
 
 **Can I run on a different port?**
 Yes: `rampart serve --port 19090`. Set `RAMPART_URL=http://localhost:19090` so other commands find it.

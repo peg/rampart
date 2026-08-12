@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
@@ -31,6 +32,20 @@ func TestProtectKeepsExperimentalGeminiExplicit(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "remains experimental") || !strings.Contains(err.Error(), "rampart setup gemini") {
 		t.Fatalf("error = %v, want experimental setup guidance", err)
+	}
+}
+
+func TestProtectionPlanRejectsCustomConfigUntilServiceLifecycleOwnsIt(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	custom := filepath.Join(home, "custom.yaml")
+	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	_, err := runProtectionPlan(cmd, &rootOptions{configPath: custom}, nil, protectionPlanOptions{})
+	if err == nil || !strings.Contains(err.Error(), "custom --config is not supported") {
+		t.Fatalf("error = %v, want fail-closed custom config rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".rampart", "policies", "guard.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("custom config rejection mutated Guard policy: %v", statErr)
 	}
 }
 
@@ -272,6 +287,67 @@ func TestEnsureServeRunningDoesNotReplaceUnreachableExplicitEndpoint(t *testing.
 	err := ensureServeRunningForURL(&bytes.Buffer{}, &bytes.Buffer{}, "http://127.0.0.1:1")
 	if err == nil || !strings.Contains(err.Error(), "configured Rampart policy service") {
 		t.Fatalf("error = %v, want explicit-endpoint failure", err)
+	}
+}
+
+func TestProtectionPlanConfiguresVerifiesAndRecordsCodex(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("RAMPART_TOKEN", "verification-token")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"service": "rampart", "status": "ok", "mode": "enforce",
+				"version": "test", "uptime_seconds": 1,
+			})
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer verification-token" {
+			http.Error(w, "missing test authorization", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Params map[string]any `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid test request", http.StatusBadRequest)
+			return
+		}
+		decision := "deny"
+		if body.Params["command"] == "pwd" {
+			decision = "allow"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"allowed": decision == "allow", "decision": decision,
+		})
+	}))
+	defer server.Close()
+
+	driver, ok := findIntegrationDriver("codex")
+	if !ok {
+		t.Fatal("Codex integration driver is missing")
+	}
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &out, &errOut)
+	summary, err := runProtectionPlan(cmd, &rootOptions{}, []integrationDriver{driver}, protectionPlanOptions{
+		ServeURL: server.URL,
+		Timeout:  time.Second,
+	})
+	if err != nil {
+		t.Fatalf("runProtectionPlan: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+	if summary.Attempted != 1 || summary.Succeeded != 1 {
+		t.Fatalf("summary = %#v, want one successful integration", summary)
+	}
+	if !codexHooksConfiguredForHome(home) {
+		t.Fatal("canonical protection plan did not install current Codex hooks")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".rampart", "policies", "guard.yaml")); err != nil {
+		t.Fatalf("canonical protection plan did not install the managed Guard policy: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".rampart", "verification", "codex.json")); err != nil {
+		t.Fatalf("canonical protection plan did not record verification: %v", err)
 	}
 }
 

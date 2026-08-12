@@ -1116,7 +1116,7 @@
         <div>
             <div class="eyebrow"><span class="eyebrow-dot"></span>v1.6.2 · verified agent boundaries</div>
             <h1>Your agent has root.<br><span class="accent">That’s the problem.</span></h1>
-            <p class="hero-sub">Rampart sits in the execution path. Run <code>rampart protect openclaw</code> for a managed, fail-closed OpenClaw guard that verifies itself, or use <code>rampart quickstart</code> for other supported agents.</p>
+            <p class="hero-sub">Rampart sits in the execution path. Run <code>rampart protect</code> to detect supported agents, install their strongest managed boundary, and verify the result.</p>
             <div class="install-cluster">
                 <div class="install-inline" onclick="copyCode(this)" title="Click to copy">
                     <span class="prompt">$</span>
@@ -1128,7 +1128,7 @@
                     <span>Claude Code · Codex · Antigravity · Copilot · Cline · OpenClaw · Hermes preview · MCP</span>
                 </div>
                 <div class="hero-actions">
-                    <a href="#install" class="btn btn-primary">Quickstart</a>
+                    <a href="#install" class="btn btn-primary">Get protected</a>
                     <a href="https://docs.rampart.sh/getting-started/support-matrix/" class="btn btn-ghost">Support matrix</a>
                 </div>
             </div>
@@ -1259,11 +1259,11 @@
         <p class="section-desc">Use the native path where Rampart knows the agent. Use preload, wrapping, MCP proxy, or the HTTP API everywhere else. For exact support tiers, approval UX, and whether <code>rampart serve</code> is required, check the support matrix.</p>
         <div class="integrations-grid">
             <div class="integration-row header"><span>Agent</span><span>Setup</span><span>Enforcement path</span><span>Status</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Claude Code</span><span class="integration-code">rampart setup claude-code</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Codex CLI, IDE, desktop</span><span class="integration-code">rampart setup codex</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">GitHub Copilot CLI, VS Code</span><span class="integration-code">rampart setup copilot</span><span class="integration-path">shared native hooks</span><span class="integration-status">CLI adapter-tested · VS Code Preview</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Antigravity CLI, IDE</span><span class="integration-code">rampart setup antigravity</span><span class="integration-path">shared policy plugin</span><span class="integration-status">installed-plugin + adapter tested</span></div>
-            <div class="integration-row interactive"><span class="integration-agent">Cline</span><span class="integration-code">rampart setup cline</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Claude Code</span><span class="integration-code">rampart protect claude-code</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Codex CLI, IDE, desktop</span><span class="integration-code">rampart protect codex</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">GitHub Copilot CLI, VS Code</span><span class="integration-code">rampart protect copilot</span><span class="integration-path">shared native hooks</span><span class="integration-status">CLI adapter-tested · VS Code Preview</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Antigravity CLI, IDE</span><span class="integration-code">rampart protect antigravity</span><span class="integration-path">shared policy plugin</span><span class="integration-status">installed-plugin + adapter tested</span></div>
+            <div class="integration-row interactive"><span class="integration-agent">Cline</span><span class="integration-code">rampart protect cline</span><span class="integration-path">native hooks</span><span class="integration-status">native</span></div>
             <div class="integration-row interactive"><span class="integration-agent">OpenClaw</span><span class="integration-code">rampart protect openclaw</span><span class="integration-path">managed native guard</span><span class="integration-status">verified</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Hermes Agent</span><span class="integration-code">rampart setup hermes</span><span class="integration-path">user plugin</span><span class="integration-status">experimental</span></div>
             <div class="integration-row interactive"><span class="integration-agent">Gemini CLI (enterprise/API key)</span><span class="integration-code">rampart setup gemini</span><span class="integration-path">native hooks</span><span class="integration-status">experimental · no host proof</span></div>
@@ -1328,9 +1328,9 @@
 
 <section class="section install-section" id="install">
     <div class="container reveal">
-        <div class="section-label">Quickstart</div>
-        <h2 class="section-title">Install, then run <code>rampart quickstart</code>.</h2>
-        <p class="section-desc" style="margin:0 auto;">That is the default path now. It detects your agent, installs what it needs, wires the right integration path, and verifies the setup without making you memorize the matrix first.</p>
+        <div class="section-label">Protect</div>
+        <h2 class="section-title">Install, then run <code>rampart protect</code>.</h2>
+        <p class="section-desc" style="margin:0 auto;">One command detects supported agents, installs the managed Guard policy, wires each strongest native integration path, and verifies the setup.</p>
 
         <div class="install-tabs">
             <button id="tab-unix" class="install-tab active" onclick="switchTab('unix')">macOS / Linux</button>
@@ -1370,10 +1370,10 @@
 
         <div class="setup-box panel">
             <p style="color:var(--heading);font-weight:700;margin-bottom:12px;text-align:center;">Then do the part that actually wires protection:</p>
-            <pre><span style="color:var(--accent)">$</span> rampart quickstart     <span style="color:var(--text-dim)"># detect agent, install service, wire integration, verify setup</span>
-<span style="color:var(--accent)">$</span> rampart verify --all   <span style="color:var(--text-dim)"># safe aggregate check; no model calls</span>
+            <pre><span style="color:var(--accent)">$</span> rampart protect        <span style="color:var(--text-dim)"># detect, configure, and verify supported agents</span>
+<span style="color:var(--accent)">$</span> rampart verify --all   <span style="color:var(--text-dim)"># optional safe aggregate re-check; no model calls</span>
 
-<span style="color:var(--accent)">$</span> rampart protect openclaw <span style="color:var(--text-dim)"># managed fail-closed guard + verification</span>
+<span style="color:var(--accent)">$</span> rampart protect openclaw <span style="color:var(--text-dim)"># target one integration explicitly</span>
 
 <span style="color:var(--text-dim)"># Want the manual path instead?</span>
 <span style="color:var(--accent)">$</span> rampart setup claude-code

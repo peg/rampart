@@ -89,20 +89,15 @@ context. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
 # Install
 brew install peg/tap/rampart
 
-# Claude Code
-rampart setup claude-code
-
-# OpenClaw
-rampart protect openclaw
-
-# Codex CLI, IDE, and desktop
-rampart setup codex
+# Detect, configure, and verify supported installed agents
+rampart protect
 
 # Re-check policy and every configured active-verifier integration
 rampart verify --all
 ```
 
-That's it. Pick the integration that matches your agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
+That's it. Rampart selects the strongest supported native boundary for each
+detected agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
 
 ## Frequently Asked Questions
 
