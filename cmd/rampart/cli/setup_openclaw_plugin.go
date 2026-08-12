@@ -1497,16 +1497,6 @@ func modernOpenClawVersion() (string, bool) {
 	return version, err == nil && ok
 }
 
-// ensureServeRunning checks whether rampart serve is reachable, and if not,
-// installs and starts it as a systemd/launchd service via `rampart serve install`.
-func ensureServeRunning(w io.Writer, errW io.Writer) error {
-	serveURL, err := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
-	if err != nil {
-		return fmt.Errorf("resolve Rampart policy service URL: %w", err)
-	}
-	return ensureServeRunningForURL(w, errW, serveURL)
-}
-
 func ensureServeRunningForURL(w io.Writer, errW io.Writer, serveURL string) error {
 	serveURL = strings.TrimRight(strings.TrimSpace(serveURL), "/")
 	if serveURL == "" {
