@@ -52,7 +52,8 @@
             --sans: "Manrope", "Helvetica Neue", Arial, sans-serif;
             --display: "Newsreader", Georgia, serif;
             --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-            --page: min(100% - 56px, 1480px);
+            --gutter: clamp(18px, 2.6vw, 40px);
+            --page: min(calc(100% - (var(--gutter) + var(--gutter))), 1480px);
         }
 
         * { box-sizing: border-box; }
@@ -74,6 +75,20 @@
         }
 
         a { color: inherit; }
+
+        button { font: inherit; }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
 
         a:focus-visible,
         button:focus-visible {
@@ -102,9 +117,23 @@
             inset: 0 0 auto;
             z-index: 20;
             padding-top: 24px;
+            isolation: isolate;
+        }
+
+        .site-header::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto;
+            z-index: 0;
+            height: 92px;
+            border-bottom: 1px solid var(--line-quiet);
+            background: var(--obsidian);
+            pointer-events: none;
         }
 
         .nav {
+            position: relative;
+            z-index: 1;
             width: var(--page);
             margin: 0 auto;
             display: grid;
@@ -117,6 +146,7 @@
             display: inline-flex;
             align-items: center;
             justify-self: start;
+            min-height: 44px;
             gap: 12px;
             font-size: 0.9rem;
             font-weight: 600;
@@ -139,6 +169,10 @@
 
         .nav-links a,
         .github-link {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            min-height: 44px;
             color: #c3bdb8;
             font-size: 0.74rem;
             font-weight: 500;
@@ -147,15 +181,42 @@
             transition: color 160ms ease;
         }
 
+        .nav-links a::after,
+        .github-link::after {
+            content: "";
+            position: absolute;
+            right: 0;
+            bottom: 5px;
+            left: 0;
+            height: 1px;
+            color: var(--pink);
+            background: currentColor;
+            opacity: 0.8;
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 160ms ease;
+        }
+
         .nav-links a:hover,
         .github-link:hover { color: var(--bone); }
 
+        .nav-links a:hover::after,
+        .nav-links a:focus-visible::after,
+        .github-link:hover::after,
+        .github-link:focus-visible::after {
+            color: var(--pink);
+            transform: scaleX(1);
+        }
+
         .nav-actions { justify-self: end; }
+
+        .nav-toggle,
+        .mobile-nav { display: none; }
 
         .nav-install {
             display: inline-flex;
             align-items: center;
-            min-height: 40px;
+            min-height: 44px;
             padding: 0 17px;
             border: 1px solid var(--bone);
             background: var(--bone);
@@ -175,7 +236,8 @@
 
         .hero {
             position: relative;
-            min-height: clamp(720px, 92svh, 860px);
+            min-height: 680px;
+            min-height: clamp(680px, 88svh, 800px);
             isolation: isolate;
             border-bottom: 1px solid var(--line-quiet);
         }
@@ -186,7 +248,7 @@
             inset: 0;
             z-index: -3;
             background:
-                linear-gradient(104deg, #100e0e 0 51%, #090909 51% 100%),
+                linear-gradient(104deg, #100e0e 0 50%, #090909 50% 100%),
                 var(--obsidian);
         }
 
@@ -203,10 +265,11 @@
 
         .hero-grid {
             width: var(--page);
-            min-height: clamp(720px, 92svh, 860px);
+            min-height: 680px;
+            min-height: clamp(680px, 88svh, 800px);
             margin: 0 auto;
             display: grid;
-            grid-template-columns: minmax(0, 1.02fr) minmax(430px, 0.98fr);
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             align-items: stretch;
         }
 
@@ -216,7 +279,7 @@
             display: flex;
             flex-direction: column;
             justify-content: center;
-            padding: 152px clamp(48px, 6vw, 104px) 76px 0;
+            padding: 140px clamp(36px, 4.8vw, 76px) 62px 0;
         }
 
         .eyebrow {
@@ -237,7 +300,7 @@
             max-width: 760px;
             margin-bottom: 30px;
             font-family: var(--display);
-            font-size: clamp(4.5rem, 7.1vw, 7.4rem);
+            font-size: clamp(3.7rem, 5.9vw, 6.65rem);
             font-weight: 300;
             letter-spacing: -0.055em;
             line-height: 0.86;
@@ -298,21 +361,49 @@
             font-weight: 500;
         }
 
+        .secondary-action { min-height: 44px; }
+
         .secondary-action::after,
         .text-action::after {
-            content: "↘";
-            color: var(--pink);
-            font-size: 0.95rem;
-            transform: translateY(-1px);
+            content: "";
+            width: 22px;
+            height: 1px;
+            background: var(--pink);
+            transition: width 160ms ease;
         }
 
-        .hero-fact {
-            margin: 56px 0 0;
-            color: #817b77;
+        .secondary-action:hover::after,
+        .secondary-action:focus-visible::after,
+        .text-action:hover::after,
+        .text-action:focus-visible::after {
+            width: 32px;
+        }
+
+        .hero-facts {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            max-width: 610px;
+            margin: 48px 0 0;
+            padding: 15px 0;
+            border-top: 1px solid var(--line);
+            border-bottom: 1px solid var(--line-quiet);
+            list-style: none;
+            color: #9b9490;
             font-family: var(--mono);
-            font-size: 0.63rem;
+            font-size: 0.64rem;
+            line-height: 1.45;
             letter-spacing: 0.08em;
             text-transform: uppercase;
+        }
+
+        .hero-facts li {
+            padding: 0 14px;
+            border-left: 1px solid var(--line-quiet);
+        }
+
+        .hero-facts li:first-child {
+            padding-left: 0;
+            border-left: 0;
         }
 
         .threshold {
@@ -329,7 +420,7 @@
             left: 0;
             width: 1px;
             background: var(--pink);
-            box-shadow: 0 0 24px rgba(255,79,154,0.22);
+            box-shadow: 0 0 16px rgba(255,79,154,0.1);
         }
 
         .threshold::after {
@@ -338,15 +429,15 @@
             inset: 0 -18vw 0 1px;
             z-index: -1;
             background:
-                linear-gradient(90deg, rgba(255,79,154,0.025), transparent 12%),
-                repeating-linear-gradient(0deg, transparent 0 71px, rgba(255,255,255,0.03) 71px 72px),
-                repeating-linear-gradient(90deg, transparent 0 71px, rgba(255,255,255,0.026) 71px 72px);
-            mask-image: linear-gradient(90deg, #000, transparent 82%);
+                linear-gradient(114deg, rgba(255,255,255,0.022) 0 38%, transparent 38.15%),
+                linear-gradient(90deg, rgba(255,79,154,0.024), transparent 15%);
+            -webkit-mask-image: linear-gradient(90deg, #000, rgba(0,0,0,0.7) 68%, transparent 100%);
+            mask-image: linear-gradient(90deg, #000, rgba(0,0,0,0.7) 68%, transparent 100%);
         }
 
         .threshold-figure {
             position: absolute;
-            inset: 17% -10% 7% 7%;
+            inset: 13% 0 0 3%;
             margin: 0;
         }
 
@@ -354,63 +445,46 @@
             width: 100%;
             height: 100%;
             color: rgba(241,237,231,0.2);
-            overflow: visible;
+            overflow: hidden;
+            shape-rendering: geometricPrecision;
         }
 
         .architecture .mass {
-            fill: rgba(255,255,255,0.017);
-            stroke: rgba(241,237,231,0.11);
+            fill: rgba(255,255,255,0.036);
+            stroke: rgba(241,237,231,0.18);
             vector-effect: non-scaling-stroke;
         }
+
+        .architecture .plane-top { fill: rgba(255,255,255,0.085); }
+        .architecture .plane-side { fill: rgba(255,255,255,0.018); }
 
         .architecture .cut {
-            fill: rgba(9,9,9,0.72);
-            stroke: rgba(241,237,231,0.2);
+            fill: #090909;
+            stroke: rgba(241,237,231,0.3);
             vector-effect: non-scaling-stroke;
         }
 
-        .architecture .depth {
+        .architecture .reveal,
+        .architecture .datum,
+        .architecture .route-in,
+        .architecture .route-out {
             fill: none;
-            stroke: rgba(241,237,231,0.07);
+            stroke-linecap: square;
+            stroke-linejoin: miter;
             vector-effect: non-scaling-stroke;
         }
 
-        .architecture .decision {
+        .architecture .reveal,
+        .architecture .datum { stroke: rgba(241,237,231,0.1); }
+
+        .architecture .route-in { stroke: rgba(241,237,231,0.23); }
+        .architecture .route-out { stroke: rgba(241,237,231,0.5); }
+
+        .architecture .decision-gate {
             fill: none;
             stroke: var(--pink);
-            stroke-width: 1.35;
+            stroke-width: 1.25;
             vector-effect: non-scaling-stroke;
-        }
-
-        .architecture .path-free,
-        .architecture .path-bounded {
-            fill: none;
-            vector-effect: non-scaling-stroke;
-        }
-
-        .architecture .path-free {
-            stroke: rgba(241,237,231,0.3);
-            stroke-dasharray: 2 7;
-        }
-
-        .architecture .path-bounded { stroke: rgba(241,237,231,0.54); }
-
-        .mark-seal {
-            position: absolute;
-            right: 5%;
-            bottom: 1.5%;
-            display: grid;
-            place-items: center;
-            width: 92px;
-            aspect-ratio: 1;
-            border: 1px solid var(--line);
-            color: var(--pink);
-            background: rgba(10,9,9,0.8);
-        }
-
-        .mark-seal svg {
-            width: 40px;
-            height: 46px;
         }
 
         .boundary-note {
@@ -421,7 +495,7 @@
             margin: 0;
             color: #938c87;
             font-family: var(--mono);
-            font-size: 0.58rem;
+            font-size: 0.63rem;
             line-height: 1.55;
             letter-spacing: 0.1em;
             text-transform: uppercase;
@@ -444,47 +518,55 @@
         .premise::before {
             content: "";
             position: absolute;
-            top: 0;
-            left: calc(50% + 1px);
+            top: -1px;
+            left: 50%;
             width: 1px;
-            height: 104px;
+            height: 112px;
             background: var(--pink);
         }
 
         .premise-inner {
             width: var(--page);
-            min-height: 640px;
+            min-height: 600px;
             margin: 0 auto;
-            padding: 132px 0 118px;
+            padding: 112px 0 88px;
             display: grid;
-            grid-template-columns: repeat(12, 1fr);
-            gap: 20px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-rows: auto 1fr auto;
+            column-gap: 0;
         }
 
         .premise-index {
-            grid-column: 1 / 3;
-            color: #847e79;
+            grid-column: 1;
+            grid-row: 1;
+            margin: 0 0 56px;
+            color: #938c87;
             font-family: var(--mono);
-            font-size: 0.62rem;
+            font-size: 0.66rem;
             line-height: 1.5;
             letter-spacing: 0.12em;
             text-transform: uppercase;
         }
 
         .premise-title {
-            grid-column: 3 / 9;
-            margin: -10px 0 0;
+            grid-column: 1;
+            grid-row: 2;
+            min-width: 0;
+            margin: 0;
+            padding-right: clamp(42px, 5vw, 80px);
             font-family: var(--display);
-            font-size: clamp(4.2rem, 7.4vw, 8rem);
+            font-size: clamp(4rem, 6.6vw, 6.8rem);
             font-weight: 300;
             letter-spacing: -0.055em;
-            line-height: 0.88;
+            line-height: 0.9;
         }
 
         .premise-copy {
-            grid-column: 9 / 13;
-            align-self: end;
-            padding: 0 20px 6px 0;
+            grid-column: 2;
+            grid-row: 2;
+            min-width: 0;
+            align-self: start;
+            padding: 4px 0 0 clamp(42px, 5vw, 80px);
         }
 
         .premise-copy p {
@@ -507,11 +589,15 @@
         }
 
         .scope-note {
-            grid-column: 3 / 8;
+            grid-column: 2;
+            grid-row: 3;
             align-self: end;
-            margin-top: 86px;
-            color: #8c8580;
-            font-size: 0.78rem;
+            max-width: 440px;
+            margin: 62px 0 0 clamp(42px, 5vw, 80px);
+            padding: 22px 0 0;
+            border-top: 1px solid var(--line);
+            color: #9d9691;
+            font-size: 0.84rem;
             line-height: 1.7;
         }
 
@@ -520,33 +606,147 @@
             font-weight: 500;
         }
 
-        @media (max-width: 1120px) {
-            :root { --page: min(100% - 40px, 1040px); }
-
-            .nav { grid-template-columns: 1fr auto; }
-            .nav-links { display: none; }
-            .hero-grid { grid-template-columns: minmax(0, 1.08fr) minmax(350px, 0.92fr); }
-            .hero-copy { padding-right: 42px; }
-            h1 { font-size: clamp(4.35rem, 8vw, 6.2rem); }
-            .premise-title { grid-column: 3 / 10; }
-            .premise-copy { grid-column: 9 / 13; }
+        .scope-note .text-action {
+            width: max-content;
+            min-height: 44px;
+            margin-top: 10px;
         }
 
-        @media (max-width: 840px) {
-            :root { --page: min(100% - 36px, 680px); }
+        .outcome-rail {
+            grid-column: 1 / -1;
+            grid-row: 4;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            margin-top: 76px;
+            border-top: 1px solid var(--line);
+            border-bottom: 1px solid var(--line-quiet);
+        }
 
+        .outcome {
+            position: relative;
+            min-width: 0;
+            padding: 19px 24px 22px;
+            border-left: 1px solid var(--line-quiet);
+        }
+
+        .outcome:first-child {
+            padding-left: 0;
+            border-left: 0;
+        }
+
+        .outcome:nth-child(2)::before {
+            content: "";
+            position: absolute;
+            top: -1px;
+            left: 24px;
+            width: 28px;
+            height: 1px;
+            background: var(--pink);
+        }
+
+        .outcome-name {
+            margin: 0 0 8px;
+            color: var(--bone);
+            font-family: var(--mono);
+            font-size: 0.67rem;
+            letter-spacing: 0.13em;
+        }
+
+        .outcome-copy {
+            margin: 0;
+            color: #938c87;
+            font-size: 0.78rem;
+            line-height: 1.55;
+        }
+
+        @media (max-width: 1120px) {
+            .nav { gap: 20px; }
+            .nav-links { gap: 18px; }
+            .nav-links a,
+            .github-link { font-size: 0.69rem; }
+            .hero-copy { padding-right: 36px; }
+        }
+
+        @media (max-width: 959px) {
             .site-header { padding-top: 18px; }
-            .nav { gap: 18px; }
-            .github-link { display: none; }
+            .site-header::before { height: 74px; }
+            .nav { grid-template-columns: 1fr 44px auto; gap: 10px; }
+            .nav-links { display: none; }
             .nav-actions { gap: 12px; }
-            .nav-install { min-height: 36px; padding: 0 13px; }
+            .nav-actions .github-link { display: none; }
+            .nav-install { padding: 0 13px; }
+
+            .nav-toggle {
+                position: relative;
+                display: grid;
+                place-items: center;
+                width: 44px;
+                height: 44px;
+                padding: 0;
+                border: 1px solid var(--line);
+                background: transparent;
+                color: var(--bone);
+                cursor: pointer;
+            }
+
+            .nav-toggle-lines,
+            .nav-toggle-lines::before {
+                display: block;
+                width: 16px;
+                height: 1px;
+                background: currentColor;
+                transition: transform 160ms ease;
+            }
+
+            .nav-toggle-lines::before {
+                content: "";
+                transform: translateY(-5px);
+            }
+
+            .nav-toggle[aria-expanded="true"] .nav-toggle-lines { transform: rotate(45deg); }
+            .nav-toggle[aria-expanded="true"] .nav-toggle-lines::before { transform: rotate(-90deg); }
+
+            .mobile-nav:not([hidden]) {
+                position: absolute;
+                z-index: 1;
+                top: 74px;
+                left: 50%;
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                width: var(--page);
+                padding: 10px 0;
+                border-top: 1px solid var(--pink);
+                border-bottom: 1px solid var(--line);
+                background: var(--obsidian);
+                box-shadow: 0 24px 54px rgba(0,0,0,0.35);
+                transform: translateX(-50%);
+            }
+
+            .mobile-nav a {
+                display: flex;
+                align-items: center;
+                min-height: 48px;
+                padding: 0 16px;
+                border-left: 1px solid var(--line-quiet);
+                color: #d3cdc7;
+                font-size: 0.75rem;
+                text-decoration: none;
+                transition: background 160ms ease, color 160ms ease;
+            }
+
+            .mobile-nav a:hover,
+            .mobile-nav a:focus-visible {
+                background: rgba(255,79,154,0.06);
+                color: var(--bone);
+            }
+
+            .mobile-nav a:nth-child(odd) { border-left: 0; }
+            .mobile-nav a:last-child { grid-column: 1 / -1; border-top: 1px solid var(--line-quiet); }
 
             .hero,
             .hero-grid { min-height: auto; }
 
-            .hero::before {
-                background: linear-gradient(168deg, #100e0e 0 58%, #090909 58% 100%);
-            }
+            .hero::before { background: #090909; }
 
             .hero-grid {
                 display: flex;
@@ -554,9 +754,18 @@
             }
 
             .hero-copy {
-                min-height: 690px;
+                min-height: 650px;
                 justify-content: flex-start;
-                padding: 136px 0 76px;
+                padding: 128px 0 64px;
+            }
+
+            .hero-copy::before {
+                content: "";
+                position: absolute;
+                inset: 0 calc(50% - 50vw);
+                z-index: -1;
+                background: linear-gradient(168deg, #100e0e 0 84%, #0d0c0c 84% 100%);
+                pointer-events: none;
             }
 
             .eyebrow { margin-bottom: 26px; }
@@ -564,7 +773,7 @@
             h1 {
                 max-width: 530px;
                 margin-bottom: 28px;
-                font-size: clamp(3.55rem, 16vw, 5.8rem);
+                font-size: clamp(3.55rem, 10.5vw, 5rem);
                 line-height: 0.89;
             }
 
@@ -578,52 +787,141 @@
             }
 
             .hero-actions { gap: 18px; }
-            .hero-fact { margin-top: 42px; }
+            .hero-facts { margin-top: 42px; }
 
             .threshold {
-                min-height: 430px;
-                margin-left: 18px;
+                min-height: clamp(310px, 55vw, 420px);
+                overflow: hidden;
             }
 
             .threshold::before { left: 0; }
-            .threshold::after { inset: 0 -18px 0 1px; }
-            .threshold-figure { inset: 4% -8% 5% 4%; }
-            .mark-seal { right: 3%; bottom: 8%; width: 74px; }
-            .mark-seal svg { width: 32px; height: 37px; }
+            .threshold::after { inset: 0 calc(0px - var(--gutter)) 0 1px; }
+            .threshold-figure { inset: 0; }
+            .architecture { transform: scale(1.1); transform-origin: center bottom; }
             .boundary-note { bottom: 26px; left: 18px; }
 
             .premise::before {
-                left: 36px;
+                left: var(--gutter);
                 height: 74px;
             }
 
             .premise-inner {
                 min-height: auto;
-                padding: 100px 0 92px;
+                padding: 94px 0 82px;
                 display: block;
             }
 
-            .premise-index { margin: 0 0 52px 18px; }
+            .premise-index { margin: 0 0 46px; }
             .premise-title {
                 max-width: 610px;
-                margin: 0 0 68px;
-                font-size: clamp(4rem, 18vw, 6.7rem);
+                margin: 0 0 56px;
+                padding: 0;
+                font-size: clamp(3.7rem, 12vw, 5.4rem);
             }
             .premise-copy { max-width: 540px; padding: 0; }
-            .scope-note { max-width: 520px; margin: 68px 0 0; }
+            .scope-note {
+                max-width: 540px;
+                margin: 60px 0 0;
+                padding: 22px 0 0;
+            }
+
+            .outcome-rail { margin-top: 60px; }
         }
 
         @media (max-width: 460px) {
             .brand { gap: 9px; font-size: 0.84rem; }
             .brand-mark { width: 18px; height: 21px; }
-            .hero-copy { min-height: 620px; }
+            .hero-copy { min-height: 0; padding-bottom: 54px; }
+            h1 { font-size: clamp(3rem, 15vw, 3.75rem); }
             .hero-actions { align-items: flex-start; flex-direction: column; }
             .primary-action { width: 100%; justify-content: center; }
-            .threshold { min-height: 340px; }
-            .architecture { transform: translateX(-8%); width: 112%; }
-            .boundary-note { max-width: 135px; font-size: 0.54rem; }
-            .premise-title { font-size: 4rem; }
-            .premise-copy p { font-size: 0.96rem; }
+            .hero-facts {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                font-size: 0.62rem;
+            }
+            .hero-facts li { min-height: 34px; padding: 0 10px; }
+            .hero-facts li:nth-child(3) {
+                grid-column: 1 / -1;
+                min-height: 40px;
+                margin-top: 10px;
+                padding: 10px 0 0;
+                border-top: 1px solid var(--line-quiet);
+                border-left: 0;
+            }
+            .boundary-note { max-width: 150px; font-size: 0.61rem; }
+            .premise-title {
+                margin-bottom: 44px;
+                font-size: clamp(2.9rem, 14vw, 3.5rem);
+                line-height: 0.94;
+            }
+            .premise-copy p { font-size: 1rem; }
+            .scope-note { font-size: 0.86rem; }
+            .outcome-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .outcome { padding: 18px 14px 20px; }
+            .outcome:nth-child(odd) { padding-left: 0; border-left: 0; }
+            .outcome:nth-child(n + 3) { border-top: 1px solid var(--line-quiet); }
+            .outcome:nth-child(2)::before { left: 14px; }
+        }
+
+        @media (max-width: 959px) and (max-height: 600px) and (orientation: landscape) {
+            .hero,
+            .hero-grid { min-height: 520px; }
+
+            .hero-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .hero-copy {
+                min-height: 520px;
+                padding: 92px 28px 34px 0;
+            }
+
+            h1 {
+                margin-bottom: 18px;
+                font-size: clamp(2.8rem, 6vw, 3.4rem);
+            }
+
+            .hero-intro {
+                margin-bottom: 18px;
+                font-size: 0.88rem;
+                line-height: 1.5;
+            }
+
+            .eyebrow { line-height: 1.5; }
+            .hero-actions { flex-flow: row wrap; gap: 14px; }
+            .primary-action { width: auto; }
+            .hero-facts { display: none; }
+            .threshold { min-height: 520px; }
+            .boundary-note { top: 310px; bottom: auto; }
+
+            .premise::before { left: 50%; height: 90px; }
+            .premise-inner {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-rows: auto auto auto auto;
+                padding: 90px 0 60px;
+            }
+            .premise-index { grid-column: 1; grid-row: 1; margin: 0 0 34px; }
+            .premise-title {
+                grid-column: 1;
+                grid-row: 2;
+                margin: 0;
+                padding-right: 32px;
+                font-size: clamp(3.1rem, 6vw, 4rem);
+            }
+            .premise-copy {
+                grid-column: 2;
+                grid-row: 2;
+                max-width: none;
+                padding: 0 0 0 32px;
+            }
+            .scope-note {
+                grid-column: 2;
+                grid-row: 3;
+                margin: 40px 0 0 32px;
+            }
+            .outcome-rail { grid-column: 1 / -1; grid-row: 4; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -645,17 +943,29 @@
         </a>
 
         <div class="nav-links">
-            <a href="#premise">Why Rampart</a>
-            <a href="https://docs.rampart.sh/getting-started/how-it-works/">How it works</a>
-            <a href="https://docs.rampart.sh/getting-started/support-matrix/">Integrations</a>
-            <a href="https://docs.rampart.sh/reference/threat-model/">Security</a>
-            <a href="https://docs.rampart.sh">Docs</a>
+            <a href="#premise">Product</a>
+            <a class="external-link" href="https://docs.rampart.sh/getting-started/support-matrix/" target="_blank" rel="noopener noreferrer" aria-label="Integrations (opens in a new tab)">Integrations</a>
+            <a class="external-link" href="https://docs.rampart.sh/reference/threat-model/" target="_blank" rel="noopener noreferrer" aria-label="Security (opens in a new tab)">Security</a>
+            <a class="external-link" href="https://docs.rampart.sh" target="_blank" rel="noopener noreferrer" aria-label="Documentation (opens in a new tab)">Documentation</a>
         </div>
 
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu">
+            <span class="sr-only">Open menu</span>
+            <span class="nav-toggle-lines" aria-hidden="true"></span>
+        </button>
+
         <div class="nav-actions">
-            <a class="github-link" href="https://github.com/peg/rampart">GitHub</a>
-            <a class="nav-install" href="https://docs.rampart.sh/getting-started/installation/">Install</a>
+            <a class="github-link external-link" href="https://github.com/peg/rampart" target="_blank" rel="noopener noreferrer" aria-label="GitHub (opens in a new tab)">GitHub</a>
+            <a class="nav-install external-link" href="https://docs.rampart.sh/getting-started/installation/" target="_blank" rel="noopener noreferrer" aria-label="Install (opens in a new tab)">Install</a>
         </div>
+    </nav>
+
+    <nav class="mobile-nav" id="mobile-menu" aria-label="Mobile navigation" hidden>
+        <a href="#premise">Product</a>
+        <a class="external-link" href="https://docs.rampart.sh/getting-started/support-matrix/" target="_blank" rel="noopener noreferrer" aria-label="Integrations (opens in a new tab)">Integrations</a>
+        <a class="external-link" href="https://docs.rampart.sh/reference/threat-model/" target="_blank" rel="noopener noreferrer" aria-label="Security (opens in a new tab)">Security</a>
+        <a class="external-link" href="https://docs.rampart.sh" target="_blank" rel="noopener noreferrer" aria-label="Documentation (opens in a new tab)">Documentation</a>
+        <a class="external-link" href="https://github.com/peg/rampart" target="_blank" rel="noopener noreferrer" aria-label="GitHub (opens in a new tab)">GitHub</a>
     </nav>
 </header>
 
@@ -670,33 +980,30 @@
                 </h1>
                 <p class="hero-intro">Rampart places a policy and approval boundary between AI agents and the tools they use. Routine work continues. Dangerous actions stop. Consequential decisions come back to you.</p>
                 <div class="hero-actions">
-                    <a class="primary-action" href="https://docs.rampart.sh/getting-started/installation/">Install Rampart</a>
-                    <a class="secondary-action" href="https://docs.rampart.sh/getting-started/how-it-works/">See how it works</a>
+                    <a class="primary-action external-link" href="https://docs.rampart.sh/getting-started/installation/" target="_blank" rel="noopener noreferrer" aria-label="Install Rampart (opens in a new tab)">Install Rampart</a>
+                    <a class="secondary-action" href="https://docs.rampart.sh/getting-started/how-it-works/" target="_blank" rel="noopener noreferrer" aria-label="See how it works (opens in a new tab)">See how it works</a>
                 </div>
-                <p class="hero-fact">Local-first / open source / built for real agent workflows</p>
+                <ul class="hero-facts" aria-label="Rampart facts">
+                    <li>Local-first</li>
+                    <li>Open source</li>
+                    <li>Built for real agent workflows</li>
+                </ul>
             </div>
 
-            <div class="threshold" role="img" aria-label="A controlled threshold between an agent request and its permitted destination">
-                <figure class="threshold-figure">
+            <div class="threshold">
+                <div class="threshold-figure" aria-hidden="true">
                     <svg class="architecture" aria-hidden="true" focusable="false" viewBox="0 0 720 720" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-                        <path class="mass" d="M83 62h146v69h72V62h143v69h73V62h138v230h-88V179H153v113H83z"/>
-                        <path class="mass" d="M83 292h572v366H83z"/>
-                        <path class="cut" d="M270 658V381c0-54 39-96 90-96s90 42 90 96v277z"/>
-                        <path class="depth" d="M302 658V389c0-35 26-64 58-64s58 29 58 64v269M83 337h187M450 337h205M112 658V322M608 658V322"/>
-                        <path class="decision" d="M270 381v277"/>
-                        <path class="path-free" d="M-80 472c90-86 178-94 350-91"/>
-                        <path class="path-free" d="M-110 505c117-53 230-62 380-62"/>
-                        <path class="path-free" d="M-96 548c109-16 210-22 366-22"/>
-                        <path class="path-bounded" d="M450 443h188M450 475h127M450 507h210M450 539h158"/>
-                        <circle cx="270" cy="443" r="3" fill="#ff4f9a"/>
-                        <circle cx="270" cy="507" r="3" fill="#ff4f9a"/>
+                        <path class="mass" d="M72 720V180H648V720Z"/>
+                        <path class="mass plane-top" d="M72 180L132 132H696L648 180Z"/>
+                        <path class="mass plane-side" d="M648 180L696 132V672L648 720Z"/>
+                        <path class="datum" d="M72 238H648M144 238V720M576 238V720"/>
+                        <path class="route-in" d="M0 446H270M0 500H270M0 554H270"/>
+                        <path class="cut" d="M270 720V362L312 318H408L450 362V720Z"/>
+                        <path class="reveal" d="M312 720V386L336 362H384L408 386V720"/>
+                        <path class="decision-gate" d="M270 362V720"/>
+                        <path class="route-out" d="M450 446H696M450 500H624M450 554H672"/>
                     </svg>
-                    <figcaption class="mark-seal" aria-label="Rampart mark">
-                        <svg aria-hidden="true" focusable="false" viewBox="680 620 700 800" xmlns="http://www.w3.org/2000/svg">
-                            <path fill="currentColor" d="M936.934 691.761c27.634-9.355 59.156-19.322 86.136-29.814l.11 200.274c-47.91 13.166-95.716 30.313-143.604 46.503-32.885 11.125-70.598 16.777-70.598 45.627 0 53.955-4.62 101.318 10.892 136.699 11.902 41.17 35.409 67.34 69.427 90.39l.546 118.42c-32.823-26.4-72.476-58.06-105.064-90.46-51.87-51.57-67.646-102.14-67.646-197.69l-.068-243.499 117.847-41.209.073 95.915 102.098-34.637-.149-96.519zm86.136-29.814c29.23 9.91 58.02 20.292 87.45 29.978l.39 96.329 101.9 34.643.07-95.904 118.79 40.784.14 170.156c-.05 79.137 1.08 133.987-7 165.577-9.31 37.66-28.58 72.11-55.79 99.76-32.2 33.37-76.45 62.71-106.7 92.87-29.22 25.54-62.14 50.8-93.79 80.09l.35-203.28c31.09-24.77 61.35-49.67 89.14-74.7l.3-99.422c-38.89-13.828-96.06-32.741-135.06-46.099-39 13.358-96.17 32.271-135.06 46.099l.3 299.322-89.03-74.93.91-213.89c.11-28.2 1.51-50.84 24.88-60.55 49.43-20.54 98.92-34.45 148.92-51.55l.11-200.274z"/>
-                        </svg>
-                    </figcaption>
-                </figure>
+                </div>
                 <p class="boundary-note">The boundary evaluates what the integration exposes</p>
             </div>
         </div>
@@ -711,11 +1018,61 @@
                 <p>Rampart gives that access a boundary.</p>
                 <p class="supporting">Not another permission prompt. A policy layer built for the decisions that matter.</p>
             </div>
-            <p class="scope-note"><strong>Precisely scoped.</strong> Rampart evaluates actions delivered through configured hooks, plugins, proxies, APIs, and process boundaries. It is a control layer, not a sandbox or a claim of universal interception. <a class="text-action" href="https://docs.rampart.sh/reference/threat-model/">Read the threat model</a></p>
+            <p class="scope-note"><strong>Precisely scoped.</strong> Rampart evaluates actions delivered through configured hooks, plugins, proxies, APIs, and process boundaries. It is a control layer, not a sandbox or a claim of universal interception. <a class="text-action" href="https://docs.rampart.sh/reference/threat-model/" target="_blank" rel="noopener noreferrer" aria-label="Read the threat model (opens in a new tab)">Read the threat model</a></p>
+            <div class="outcome-rail" role="list" aria-label="Rampart policy outcomes">
+                <div class="outcome" role="listitem">
+                    <p class="outcome-name">ALLOW</p>
+                    <p class="outcome-copy">Routine work moves through.</p>
+                </div>
+                <div class="outcome" role="listitem">
+                    <p class="outcome-name">ASK</p>
+                    <p class="outcome-copy">Consequential actions return to a human.</p>
+                </div>
+                <div class="outcome" role="listitem">
+                    <p class="outcome-name">DENY</p>
+                    <p class="outcome-copy">Known dangerous actions stop before execution.</p>
+                </div>
+                <div class="outcome" role="listitem">
+                    <p class="outcome-name">WATCH</p>
+                    <p class="outcome-copy">Activity stays visible without interruption.</p>
+                </div>
+            </div>
         </div>
     </section>
 </main>
 
+<script>
+    (() => {
+        const menuToggle = document.querySelector('.nav-toggle');
+        const mobileMenu = document.querySelector('#mobile-menu');
+
+        const setMenuOpen = (open, moveFocus = false) => {
+            menuToggle.setAttribute('aria-expanded', String(open));
+            menuToggle.querySelector('.sr-only').textContent = open ? 'Close menu' : 'Open menu';
+            mobileMenu.hidden = !open;
+            if (open && moveFocus) requestAnimationFrame(() => mobileMenu.querySelector('a').focus());
+        };
+
+        menuToggle.addEventListener('click', () => {
+            setMenuOpen(menuToggle.getAttribute('aria-expanded') !== 'true', true);
+        });
+
+        mobileMenu.addEventListener('click', (event) => {
+            if (event.target.closest('a')) setMenuOpen(false);
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && menuToggle.getAttribute('aria-expanded') === 'true') {
+                setMenuOpen(false);
+                menuToggle.focus();
+            }
+        });
+
+        window.matchMedia('(min-width: 960px)').addEventListener('change', (event) => {
+            if (event.matches) setMenuOpen(false);
+        });
+    })();
+</script>
 <script data-goatcounter="https://rampart.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 </body>
 </html>
