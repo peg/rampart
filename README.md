@@ -429,10 +429,10 @@ In your MCP config (Claude Desktop, etc.):
 }
 ```
 
-Auto-generate policies from an MCP server's tool list:
+Start with the bundled static MCP policy, then review it for your server:
 
 ```bash
-rampart mcp scan -- npx @modelcontextprotocol/server-filesystem .
+rampart init --profile mcp-server
 ```
 
 ---
@@ -734,7 +734,7 @@ rampart setup <agent> --remove               # Clean uninstall
 rampart wrap -- <command>                    # Wrap any agent via $SHELL
 rampart preload -- <command>                 # Optional compatible libc exec/spawn interposition
 rampart mcp -- <mcp-server-command>          # Proxy MCP with policy enforcement
-rampart mcp scan -- <server>                 # Auto-generate policies from MCP tools
+rampart mcp scan -- <server>                 # Disabled; points to static MCP policy setup
 
 # Serve
 rampart serve [--port 9090]                  # Start approval + dashboard server

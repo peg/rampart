@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -289,81 +288,6 @@ func TestListPending(t *testing.T) {
 		}
 	})
 }
-
-// --- initializeMCPConnection / getToolsList (mcp_scan.go) ---
-
-func TestInitializeMCPConnection(t *testing.T) {
-	// Create a pipe pair simulating a child process
-	pr, pw := io.Pipe()
-	stdinR, stdinW := io.Pipe()
-
-	// Mock server: read request, write response
-	go func() {
-		buf := make([]byte, 4096)
-		n, _ := stdinR.Read(buf)
-		_ = n // consume the initialize request
-
-		// Write initialize response
-		resp := `{"jsonrpc":"2.0","id":"1","result":{"protocolVersion":"2024-11-05"}}` + "\n"
-		pw.Write([]byte(resp))
-	}()
-
-	err := initializeMCPConnection(stdinW, pr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestGetToolsList(t *testing.T) {
-	pr, pw := io.Pipe()
-	stdinR, stdinW := io.Pipe()
-
-	go func() {
-		buf := make([]byte, 4096)
-		stdinR.Read(buf)
-
-		resp := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      "2",
-			"result": map[string]any{
-				"tools": []map[string]any{
-					{"name": "read_file", "description": "Read a file"},
-					{"name": "write_file", "description": "Write a file"},
-				},
-			},
-		}
-		data, _ := json.Marshal(resp)
-		pw.Write(append(data, '\n'))
-	}()
-
-	tools, err := getToolsList(stdinW, pr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(tools) != 2 {
-		t.Fatalf("expected 2 tools, got %d", len(tools))
-	}
-	if tools[0].Name != "read_file" {
-		t.Errorf("expected read_file, got %s", tools[0].Name)
-	}
-}
-
-func TestGetToolsList_NoResponse(t *testing.T) {
-	// Use a bytes.Reader that returns EOF immediately
-	emptyReader := bytes.NewReader(nil)
-
-	// stdinW that discards writes
-	stdinW := &nopWriteCloser{io.Discard}
-
-	_, err := getToolsList(stdinW, emptyReader)
-	if err == nil {
-		t.Fatal("expected error for no response")
-	}
-}
-
-type nopWriteCloser struct{ io.Writer }
-
-func (n *nopWriteCloser) Close() error { return nil }
 
 // --- loadLogEvents (log.go) ---
 
