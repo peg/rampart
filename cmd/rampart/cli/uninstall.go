@@ -296,14 +296,21 @@ func managedLaunchdServiceFile(path, label string) (bool, error) {
 	if err != nil || !exists {
 		return false, err
 	}
-	actualLabel, args, err := launchdServiceIdentity(data)
-	if err != nil {
-		return false, fmt.Errorf("parse LaunchAgent %q: %w", path, err)
-	}
-	if actualLabel != label || !isRampartServeArguments(args) {
-		return false, fmt.Errorf("refusing to remove unrecognized LaunchAgent at %q", path)
+	if err := validateManagedLaunchdService(data, path, label); err != nil {
+		return false, err
 	}
 	return true, nil
+}
+
+func validateManagedLaunchdService(data []byte, path, label string) error {
+	actualLabel, args, err := launchdServiceIdentity(data)
+	if err != nil {
+		return fmt.Errorf("parse LaunchAgent %q: %w", path, err)
+	}
+	if actualLabel != label || !isRampartServeArguments(args) {
+		return fmt.Errorf("refusing to manage unrecognized LaunchAgent at %q", path)
+	}
+	return nil
 }
 
 func launchdServiceIdentity(data []byte) (label string, programArguments []string, err error) {
@@ -381,6 +388,13 @@ func managedSystemdServiceFile(path string) (bool, error) {
 	if err != nil || !exists {
 		return false, err
 	}
+	if err := validateManagedSystemdService(data, path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func validateManagedSystemdService(data []byte, path string) error {
 	var execStarts []string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -389,13 +403,13 @@ func managedSystemdServiceFile(path string) (bool, error) {
 		}
 	}
 	if len(execStarts) != 1 {
-		return false, fmt.Errorf("refusing to remove systemd service with %d ExecStart directives at %q", len(execStarts), path)
+		return fmt.Errorf("refusing to manage systemd service with %d ExecStart directives at %q", len(execStarts), path)
 	}
 	binary, args, ok := splitServiceCommand(execStarts[0])
 	if !ok || !isRampartServeArguments(append([]string{binary}, args...)) {
-		return false, fmt.Errorf("refusing to remove unrecognized systemd service at %q", path)
+		return fmt.Errorf("refusing to manage unrecognized systemd service at %q", path)
 	}
-	return true, nil
+	return nil
 }
 
 func splitServiceCommand(command string) (binary string, args []string, ok bool) {
@@ -449,7 +463,7 @@ func readRegularServiceFile(path string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("inspect service file %q: %w", path, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("refusing to remove non-regular service file at %q", path)
+		return nil, false, fmt.Errorf("refusing to manage non-regular or symlinked service file at %q", path)
 	}
 	if info.Size() > maxServiceStateFileBytes {
 		return nil, false, fmt.Errorf("refusing to read service file larger than %d bytes at %q", maxServiceStateFileBytes, path)
@@ -459,6 +473,20 @@ func readRegularServiceFile(path string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("read service file %q: %w", path, err)
 	}
 	return data, true, nil
+}
+
+func requireUnchangedServiceFile(path string, existed bool, before []byte) error {
+	current, exists, err := readRegularServiceFile(path)
+	if err != nil {
+		return err
+	}
+	if exists != existed {
+		return fmt.Errorf("service definition existence changed")
+	}
+	if exists && !bytes.Equal(current, before) {
+		return fmt.Errorf("service definition changed")
+	}
+	return nil
 }
 
 // removeFromWindowsPath removes ~/.rampart/bin from the user PATH on Windows.
