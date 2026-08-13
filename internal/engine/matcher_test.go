@@ -731,7 +731,9 @@ func TestRestrictiveCanonicalOperands(t *testing.T) {
 		{"fixed point multicall wrapper", `busybox env /bin/rm -rf /var/log/archive /`, true},
 		{"find fixed point wrapper", `find /tmp -exec busybox env /bin/rm -rf {} / +`, true},
 		{"relative parent traversal", `rm -rf work/../../*`, true},
-		{"case-folded rm", `RM -rf /var/log/archive /`, platformUsesCaseInsensitiveNames(runtime.GOOS)},
+		// Restrictive normalization may conservatively recognize an uppercase
+		// executable even when the local shell would not. That can only deny.
+		{"case-folded rm", `RM -rf /var/log/archive /`, true},
 		{"case-folded find", `FIND / -delete`, platformUsesCaseInsensitiveNames(runtime.GOOS)},
 		{"safe find", `find /tmp -exec /bin/rm -rf {} +`, false},
 	}
