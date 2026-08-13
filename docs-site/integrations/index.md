@@ -42,7 +42,7 @@ When a policy action is `ask`, behavior varies by integration:
 | **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
 | **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
 | **OpenClaw** | OpenClaw owns the visible approval UI; Rampart plugin supplies policy decisions |
-| **Hermes Agent** | Experimental plugin blocks `ask` with an approval-required message until Hermes owns a plugin approval/resume flow |
+| **Hermes Agent** | Current Hermes releases own the native approval prompt and resume the same call; older releases block with upgrade guidance |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
 | **LD_PRELOAD** | Library blocks exec call, process appears "hung" |
 | **HTTP API** | Returns `"decision":"ask"` with approval metadata when interactive review is required |
