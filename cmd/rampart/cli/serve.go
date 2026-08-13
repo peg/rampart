@@ -566,7 +566,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 			// Auto-start OpenClaw bridge if gateway is discoverable.
 			var openclawBridge *bridge.OpenClawBridge
-			if !noOpenClawBridge {
+			if !noOpenClawBridge && mode != "disabled" {
 				gwURL, gwToken, autoResolveAllowDecisions, discoverErr := bridge.DiscoverGatewayConfigForBridge()
 				if discoverErr == nil {
 					openclawBridge = bridge.NewOpenClawBridge(eng, bridge.Config{
@@ -575,6 +575,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 						Logger:                    logger,
 						AuditSink:                 sink,
 						AutoResolveAllowDecisions: &autoResolveAllowDecisions,
+						Mode:                      mode,
 					})
 					bridgeCtx, bridgeCancel := context.WithCancel(cmd.Context())
 					defer bridgeCancel()
