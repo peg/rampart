@@ -40,6 +40,9 @@ make security-assurance
 Documentation work additionally uses the Python packages in
 [`docs-requirements.txt`](docs-requirements.txt). Some integration checks need
 Node.js or Python; install those only when working on the affected integration.
+The documentation build also requires the D2 version and checksum pinned in
+[`.github/workflows/docs.yml`](.github/workflows/docs.yml) when regenerating its
+architecture diagram.
 
 ## Repository workflow
 
