@@ -366,77 +366,47 @@ func buildStatusBox(
 }
 
 func detectProtectedAgents() []string {
-	var agents []string
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
-
-	// Claude Code hooks
-	if claudeHooksConfiguredForHome(home) {
-		claudeAssessment := claudeHookLoadAssessmentForHome(home)
-		if !claudeAssessment.Blocked && !claudeAssessment.Unverified {
-			agents = append(agents, "Claude Code (hooks)")
+	agents := make([]string, 0, len(supportedIntegrationDrivers()))
+	for _, driver := range supportedIntegrationDrivers() {
+		if label := integrationProtectionState(driver, home); label != "" {
+			agents = append(agents, label)
 		}
 	}
+	return agents
+}
 
-	// Cline hooks: require the complete owned, platform-native pair. Merely
-	// finding an unrelated file in Cline's hook directory is not protection.
-	if clineHooksConfiguredForHome(home) {
-		agents = append(agents, "Cline (hooks)")
-	}
-
-	// OpenClaw: prefer the native plugin only when it's actually configured to load.
+func openClawProtectionState(home string) string {
 	openclawDropIn := filepath.Join(home, ".config", "systemd", "user", "openclaw-gateway.service.d", "rampart.conf")
 	openclawShim := filepath.Join(home, ".local", "bin", "rampart-shim")
 	openclawConfig := filepath.Join(home, ".openclaw", "openclaw.json")
 	if isOpenClawPluginConfigured() {
-		agents = append(agents, "OpenClaw (plugin)")
-	} else if _, err := os.Stat(openclawDropIn); err == nil {
-		agents = append(agents, "OpenClaw (preload+bridge)")
-	} else if _, err := os.Stat(openclawShim); err == nil {
-		agents = append(agents, "OpenClaw (shim+bridge)")
-	} else if data, err := os.ReadFile(openclawConfig); err == nil {
-		if hasLegacyOpenClawBridgeConfig(data) {
-			agents = append(agents, "OpenClaw (bridge)")
-		}
+		return "OpenClaw (plugin)"
 	}
+	if _, err := os.Stat(openclawDropIn); err == nil {
+		return "OpenClaw (preload+bridge)"
+	}
+	if _, err := os.Stat(openclawShim); err == nil {
+		return "OpenClaw (shim+bridge)"
+	}
+	if data, err := os.ReadFile(openclawConfig); err == nil && hasLegacyOpenClawBridgeConfig(data) {
+		return "OpenClaw (bridge)"
+	}
+	return ""
+}
 
-	// Codex native hooks installed by `rampart setup codex`. Keep recognizing
-	// the former wrapper so upgrades can surface that legacy state.
+func codexProtectionState(home string) string {
 	if codexHooksConfiguredForHome(home) {
-		agents = append(agents, "Codex (hooks)")
-	} else {
-		codexWrapper := filepath.Join(home, ".local", "bin", "codex")
-		if data, err := os.ReadFile(codexWrapper); err == nil && containsRampartPreload(string(data)) {
-			agents = append(agents, "Codex (legacy wrapper)")
-		}
+		return "Codex (hooks)"
 	}
-
-	// Gemini CLI native hooks installed by `rampart setup gemini`.
-	if geminiHooksConfiguredForHome(home) {
-		agents = append(agents, "Gemini CLI (hooks)")
+	codexWrapper := filepath.Join(home, ".local", "bin", "codex")
+	if data, err := os.ReadFile(codexWrapper); err == nil && containsRampartPreload(string(data)) {
+		return "Codex (legacy wrapper)"
 	}
-
-	// Global plugin loaded by Antigravity CLI and IDE.
-	if antigravityPluginConfiguredForHome(home) {
-		agents = append(agents, "Antigravity CLI / IDE (plugin)")
-	}
-
-	// Shared user hooks loaded by Copilot CLI and VS Code's agent host.
-	if copilotHooksConfiguredForHome(home) {
-		workingDir, _ := os.Getwd()
-		if _, disabled := copilotCLIUserHooksDisabled(home, workingDir); !disabled {
-			agents = append(agents, "GitHub Copilot CLI / VS Code (hooks)")
-		}
-	}
-
-	// Hermes Agent user plugin installed by `rampart setup hermes`.
-	if state := detectHermesPluginStateForHome(home); state.Installed && state.Enabled && state.ManifestValid && state.HookDeclared {
-		agents = append(agents, "Hermes Agent (plugin)")
-	}
-
-	return agents
+	return ""
 }
 
 type hermesPluginState struct {
