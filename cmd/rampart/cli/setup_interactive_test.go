@@ -14,9 +14,14 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
@@ -94,6 +99,42 @@ func TestIsTerminal_PipeIsNotTerminal(t *testing.T) {
 
 	if isTerminal(r) {
 		t.Error("pipe should not be detected as terminal")
+	}
+}
+
+func TestRunInteractiveAgentSetupsAggregatesFailures(t *testing.T) {
+	setup := &cobra.Command{Use: "setup"}
+	var stderr bytes.Buffer
+	setup.SetErr(&stderr)
+
+	var succeeded bool
+	good := &cobra.Command{Use: "good", RunE: func(*cobra.Command, []string) error {
+		succeeded = true
+		return nil
+	}}
+	badOne := &cobra.Command{Use: "bad-one", RunE: func(*cobra.Command, []string) error {
+		return errors.New("first failure")
+	}}
+	badTwo := &cobra.Command{Use: "bad-two", RunE: func(*cobra.Command, []string) error {
+		return errors.New("second failure")
+	}}
+	setup.AddCommand(good, badOne, badTwo)
+
+	err := runInteractiveAgentSetups(setup, []agentInfo{
+		{Name: "First", SetupCmd: "bad-one"},
+		{Name: "Working", SetupCmd: "good"},
+		{Name: "Second", SetupCmd: "bad-two"},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "First: first failure") ||
+		!strings.Contains(err.Error(), "Second: second failure") {
+		t.Fatalf("aggregated error = %v", err)
+	}
+	if !succeeded {
+		t.Fatal("later setup was not attempted after an earlier failure")
+	}
+	if got := stderr.String(); !strings.Contains(got, "First setup failed") ||
+		!strings.Contains(got, "Second setup failed") {
+		t.Fatalf("failure output = %q", got)
 	}
 }
 
