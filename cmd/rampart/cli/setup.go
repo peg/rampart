@@ -91,14 +91,13 @@ func claudeSettingsPath(home string) string {
 }
 
 func newSetupCmd(opts *rootOptions) *cobra.Command {
-	var force bool
-
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Set up Rampart integrations with AI agents",
 		Long: `Set up Rampart integrations with supported AI agents.
 
-Run without a subcommand to launch the interactive setup wizard.
+Use "rampart protect" for managed onboarding and verification. The setup
+subcommands remain available for advanced integration-specific operations.
 
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
@@ -110,6 +109,9 @@ Supported AI Agents:
   • Antigravity               - CLI and IDE native policy plugin
   • GitHub Copilot            - Copilot CLI and VS Code native hooks`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Name() == "setup" {
+				return nil
+			}
 			if flag := cmd.Flags().Lookup("remove"); flag != nil {
 				remove, err := cmd.Flags().GetBool("remove")
 				if err == nil && remove {
@@ -121,12 +123,13 @@ Supported AI Agents:
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInteractiveSetup(cmd, opts)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), "Use `rampart protect` for managed onboarding and verification.")
+			return cmd.Help()
 		},
 	}
-
-	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmations during interactive setup")
+	cmd.Flags().Bool("force", false, "Deprecated compatibility flag")
+	_ = cmd.Flags().MarkHidden("force")
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
 	cmd.AddCommand(newSetupHermesCmd())
