@@ -5,6 +5,7 @@ on:
     branches: [main, staging]
   pull_request:
     branches: [main, staging]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_call:
 
 permissions:
@@ -15,8 +16,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  draft:
+    name: Draft CI
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Go toolchain pins are synchronized
+        run: scripts/check-toolchain-sync.sh
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Module files are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Go files are formatted
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
   test:
     name: test (${{ matrix.os }})
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -187,6 +224,7 @@ jobs:
 
   docker-smoke:
     name: docker smoke (amd64 runtime + arm64 build)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -226,6 +264,7 @@ jobs:
 
   release-dry-run:
     name: goreleaser snapshot (cross-platform build check)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -253,6 +292,7 @@ jobs:
 
   python-sdk:
     name: Python SDK (Python ${{ matrix.python-version }})
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -302,7 +342,7 @@ jobs:
 
   ci-gate:
     name: CI gate
-    if: always()
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [test, docker-smoke, release-dry-run, python-sdk]
