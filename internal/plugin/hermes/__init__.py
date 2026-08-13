@@ -4,25 +4,34 @@
 
 The plugin is intentionally conservative:
 
-* It uses Hermes' ``pre_tool_call`` hook and only returns a block directive.
-* It defaults to ``/v1/preflight/{tool}`` so Rampart does not create a hidden
-  approval queue while Hermes lacks a plugin-owned approval/resume primitive.
+* It uses Hermes' ``pre_tool_call`` hook and returns only host control
+  directives: block, native approval, or no directive.
+* It defaults to ``/v1/preflight/{tool}`` so Rampart does not create a second,
+  hidden approval queue alongside Hermes' native approval UI.
 * It passes Hermes' native ``tool_call_id`` as top-level Rampart metadata so
   Rampart audit IDs can be correlated with the exact Hermes tool call.
-* ``ask`` / ``require_approval`` decisions block with a clear message instead
-  of polling or creating a second approval surface, and include Rampart's
-  ``audit_id`` when available.
+* On current Hermes releases, ``ask`` / ``require_approval`` decisions return
+  Hermes' native ``approve`` directive so the host pauses and resumes the exact
+  tool call. Older hosts that lack that directive fail closed with an upgrade
+  message instead of silently executing the call.
 * If Rampart serve is unavailable, every tool fails closed by default. Advanced
   operators may explicitly opt selected tools into degraded fail-open behavior.
 """
 
 from __future__ import annotations
 
+import ast
+import hashlib
+import hmac
 import ipaddress
+import inspect
 import json
 import logging
 import os
+import re
 import socket
+import textwrap
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -30,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 DEFAULT_SERVE_URL = "http://127.0.0.1:9090"
 DEFAULT_TIMEOUT_MS = 3000
@@ -38,6 +47,11 @@ DEFAULT_ENDPOINT_MODE = "preflight"
 DEFAULT_AGENT_NAME = "hermes"
 MAX_PATCH_PATHS = 100
 MAX_RESPONSE_BYTES = 1024 * 1024
+# Native approval keys are persisted by Hermes for session and "always"
+# choices. Refuse unusually large, unrepresentable calls rather than doing
+# unbounded serialization on the execution boundary.
+MAX_APPROVAL_IDENTITY_BYTES = 64 * 1024
+MAX_APPROVAL_IDENTITY_DEPTH = 32
 
 # The default integration is an enforcement boundary, so service outages deny
 # every tool. Advanced operators may explicitly opt selected read-only tools
@@ -92,6 +106,83 @@ SENSITIVE_KEY_MARKERS = (
     "apikey",
     "private_key",
 )
+
+_APPROVAL_REDACTIONS = (
+    # Quoted JSON/YAML keys need their own rule: the quote between the key and
+    # colon prevents the generic assignment rules below from seeing them.
+    # Keep this display-only and deliberately conservative; the exact original
+    # arguments remain available to policy evaluation and the HMAC identity.
+    (
+        re.compile(
+            r'''(?ix)
+            (
+              ["']
+              [a-z0-9_.-]*
+              (?:api[-_]?key|apikey|authorization|auth(?:orization)?[-_]?token|access[-_]?token|
+                 access[-_]?key|token|secret|password|passwd|credentials?|private[-_]?key)
+              [a-z0-9_.-]*
+              ["']\s*:\s*
+            )
+            (?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)
+            '''
+        ),
+        r"\1[REDACTED]",
+    ),
+    # Shell environment assignments, including AWS_SECRET_ACCESS_KEY,
+    # OPENAI_API_KEY, and GITHUB_TOKEN. At this display edge, a value that
+    # merely looks secret is treated exactly like a credential.
+    (
+        re.compile(
+            r"(?i)(\b[A-Z][A-Z0-9_]*(?:API_KEY|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|ACCESS_KEY|CREDENTIALS?)\s*=\s*)(?:\"[^\"]*\"|'[^']*'|[^\s;|&]+)"
+        ),
+        r"\1[REDACTED]",
+    ),
+    # Common secret-bearing flags and HTTP header forms. Header values may be
+    # quoted as curl arguments, so stop before either quote as well as space.
+    (
+        re.compile(
+            r"(?i)(--(?:api[-_]?key|auth(?:orization)?[-_]?token|access[-_]?token|password|token|secret|user)(?:=|\s+))(?:\"[^\"]*\"|'[^']*'|[^\s]+)"
+        ),
+        r"\1[REDACTED]",
+    ),
+    (
+        re.compile(
+            r"(?i)((?:proxy[-_])?authorization\s*[:=]\s*(?:(?:bearer|basic|token)\s+)?)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+        ),
+        r"\1[REDACTED]",
+    ),
+    (
+        re.compile(
+            r"(?i)((?:x[-_])?(?:api[-_]?key|auth[-_]?token|access[-_]?token)\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+        ),
+        r"\1[REDACTED]",
+    ),
+    (
+        re.compile(
+            r"(?i)(\b(?:api[-_]?key|auth(?:orization)?[-_]?token|access[-_]?token|password|token|secret)\b\s*[=:]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s&]+)"
+        ),
+        r"\1[REDACTED]",
+    ),
+    # curl's short form has no key name to trigger the assignment rules, and
+    # curl accepts both "-u user:pass" and the attached "-uuser:pass" form.
+    (
+        re.compile(r"(?i)((?:^|\s)-u)(?:\s+|(?=[^\s]))(?:\"[^\"]*\"|'[^']*'|[^\s]+)"),
+        r"\1 [REDACTED]",
+    ),
+    # Shell tools also accept URL-like credential userinfo without a scheme,
+    # for example ``ssh user:password@host``. It is not found by urlsplit or
+    # the ``//userinfo@`` rule, so hide the entire userinfo component here.
+    (
+        re.compile(r"(?i)(?<![a-z0-9])[^\s/:@]+:[^\s/@]+@(?=[a-z0-9.\[\]-])"),
+        "[REDACTED]@",
+    ),
+    (re.compile(r"(?i)(//)[^/\s@]+@"), r"\1[REDACTED]@"),
+    (re.compile(r"\b(?:gh[opurs]_[A-Za-z0-9]+|xox[aboprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})\b"), "[REDACTED]"),
+)
+_URL_REFERENCE = re.compile(
+    r"(?i)\b(?:[a-z][a-z0-9+.-]*://|(?:mailto|data|urn):)[^\s<>'\"]+"
+)
+_ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?)?")
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +337,110 @@ def _preview(value: Any, max_chars: int = 240) -> str | None:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 1].rstrip() + "…"
+
+
+def _clean_approval_display(value: Any) -> str | None:
+    """Remove formatting characters that could change prompt interpretation."""
+
+    if value is None:
+        return None
+    # Approval messages are rendered by Hermes. Remove ANSI, C0/C1 control,
+    # and Unicode format characters (including bidi overrides) before any
+    # human-facing truncation or redaction so a policy response cannot spoof
+    # another action or conceal a credential in the prompt.
+    text = _ANSI_ESCAPE.sub("�", str(value))
+    text = "".join(
+        " " if char in "\r\n\t" else "�"
+        if unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+        else char
+        for char in text
+    )
+    return " ".join(text.split()) or None
+
+
+def _redact_approval_text(value: Any, max_chars: int = 240) -> str | None:
+    """Return a one-line human summary without common credential material."""
+
+    text = _clean_approval_display(value)
+    if text is None:
+        return None
+    if len(text) > max_chars * 4:
+        text = text[: max_chars * 4]
+    text = _URL_REFERENCE.sub(_redact_url_reference, text)
+    for pattern, replacement in _APPROVAL_REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return _preview(text, max_chars)
+
+
+def _redact_url_reference(match: re.Match[str]) -> str:
+    """Replace an embedded URL with the same conservative approval display."""
+
+    return _safe_url_display(match.group(0))
+
+
+def _safe_url_display(value: Any) -> str:
+    """Render only an HTTP(S) origin for approval UI."""
+
+    if not isinstance(value, str) or not value.strip():
+        return "<missing URL>"
+    # Apply character handling before urlsplit; it otherwise accepts some
+    # leading controls and can render a different-looking target than Hermes.
+    cleaned = _clean_approval_display(value)
+    if cleaned is None:
+        return "<missing URL>"
+    try:
+        parsed = urlsplit(cleaned)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return "<invalid URL>"
+    if parsed.scheme in {"http", "https"} and hostname:
+        display_host = f"[{hostname}]" if ":" in hostname else hostname
+        origin = f"{parsed.scheme}://{display_host}"
+        if port is not None:
+            origin += f":{port}"
+        # Paths, queries, and fragments commonly contain signed object names,
+        # reset tokens, and private resource IDs. The exact URL stays in the
+        # HMAC-bound identity; no part beyond the origin reaches the prompt.
+        return origin
+    if parsed.scheme:
+        return f"<non-HTTP URL ({parsed.scheme.lower()}) redacted>"
+    return "<invalid URL>"
+
+
+def _approval_action_summary(
+    tool_name: str,
+    rampart_tool: str,
+    args: Mapping[str, Any] | None,
+    resolved_params: Mapping[str, Any],
+) -> str:
+    """Describe the represented action without exposing content-bearing fields."""
+
+    raw_args = args if isinstance(args, Mapping) else {}
+    if tool_name == "terminal":
+        command = _redact_approval_text(raw_args.get("command"), 240)
+        return f"terminal command: {command or '<missing command>'}"
+    if tool_name.startswith("browser_"):
+        action = tool_name.removeprefix("browser_") or "action"
+        if "url" in raw_args:
+            return f"browser {action}: {_safe_url_display(raw_args.get('url'))}"
+        ref = _redact_approval_text(raw_args.get("ref"), 80)
+        return f"browser {action}" + (f" target {ref}" if ref else "")
+    if rampart_tool in {"read", "write", "edit"}:
+        paths = resolved_params.get("touched_paths")
+        if isinstance(paths, list) and paths:
+            shown = [(_redact_approval_text(path, 100) or "<invalid path>") for path in paths[:3]]
+            suffix = f" (+{len(paths) - 3} more)" if len(paths) > 3 else ""
+            return f"{rampart_tool} paths: {', '.join(shown)}{suffix}"
+        path = _redact_approval_text(resolved_params.get("path"), 180)
+        return f"{rampart_tool} path: {path or '<missing path>'}"
+    if rampart_tool in {"fetch", "web_fetch"}:
+        return f"{rampart_tool}: {_safe_url_display(raw_args.get('url'))}"
+    if rampart_tool == "message":
+        target = _redact_approval_text(raw_args.get("target"), 120)
+        return f"message target: {target or '<unspecified>'}"
+    action = _redact_approval_text(resolved_params.get("action"), 80)
+    return f"{tool_name}" + (f" action: {action}" if action else "")
 
 
 def _byte_len(value: Any) -> int:
@@ -594,6 +789,291 @@ def _block(message: str) -> dict[str, str]:
     return {"action": "block", "message": message}
 
 
+def _hermes_supports_native_approval() -> bool:
+    """Return whether this Hermes runtime owns plugin approval/resume.
+
+    Older Hermes releases understand only ``action=block``. Returning a newer
+    directive to one of those hosts could be ignored and fail open, so feature
+    detection is a security boundary rather than a convenience check.
+    """
+
+    try:
+        import hermes_cli.plugins as hermes_plugins  # type: ignore
+    except (ImportError, AttributeError):
+        return False
+
+    directive_type = getattr(hermes_plugins, "_PreToolCallDirective", None)
+    directive_fields = getattr(directive_type, "__dataclass_fields__", {})
+    public_getter = getattr(hermes_plugins, "get_pre_tool_call_directive", None)
+    details_getter = getattr(
+        hermes_plugins, "_get_pre_tool_call_directive_details", None
+    )
+    resolver = getattr(hermes_plugins, "resolve_pre_tool_block", None)
+    if not (
+        callable(public_getter)
+        and callable(details_getter)
+        and callable(resolver)
+        and "rule_key" in directive_fields
+    ):
+        return False
+
+    # A field on the directive alone is not a capability guarantee. Prove the
+    # two released-v2026.8.3 data-flow legs from installed source: the private
+    # dispatcher copies the hook's ``result["rule_key"]`` into the directive,
+    # and the resolver supplies ``details.rule_key`` to the approval gate. If
+    # source is unavailable or a future host delegates this differently, fail
+    # closed until that contract is reviewed instead of guessing from names.
+    try:
+        details_tree = ast.parse(textwrap.dedent(inspect.getsource(details_getter)))
+        resolver_tree = ast.parse(textwrap.dedent(inspect.getsource(resolver)))
+    except (OSError, TypeError, SyntaxError, IndentationError):
+        return False
+
+    def call_name(node: ast.Call) -> str:
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr
+        return ""
+
+    result_rule_key_is_captured = any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "rule_key"
+            for target in node.targets
+        )
+        and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "get"
+            and child.args
+            and isinstance(child.args[0], ast.Constant)
+            and child.args[0].value == "rule_key"
+            for child in ast.walk(node.value)
+        )
+        for node in ast.walk(details_tree)
+    )
+    captured_rule_key_reaches_directive = any(
+        isinstance(node, ast.Call)
+        and call_name(node) == "_PreToolCallDirective"
+        and any(
+            keyword.arg == "rule_key"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "rule_key"
+            for keyword in node.keywords
+        )
+        for node in ast.walk(details_tree)
+    )
+    resolver_loads_same_details = any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "details"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Call)
+        and call_name(node.value) == "_get_pre_tool_call_directive_details"
+        for node in ast.walk(resolver_tree)
+    )
+    details_rule_key_reaches_gate = any(
+        isinstance(node, ast.Call)
+        and call_name(node) == "request_tool_approval"
+        and any(
+            keyword.arg == "rule_key"
+            and any(
+                isinstance(child, ast.Attribute)
+                and isinstance(child.value, ast.Name)
+                and child.value.id == "details"
+                and child.attr == "rule_key"
+                for child in ast.walk(keyword.value)
+            )
+            for keyword in node.keywords
+        )
+        for node in ast.walk(resolver_tree)
+    )
+    return (
+        result_rule_key_is_captured
+        and captured_rule_key_reaches_directive
+        and resolver_loads_same_details
+        and details_rule_key_reaches_gate
+    )
+
+
+def _effective_terminal_cwd(task_id: str) -> str | None:
+    """Mirror Hermes' no-workdir CWD resolution for approval identity."""
+
+    try:
+        import tools.terminal_tool as hermes_terminal  # type: ignore
+        from tools.approval import get_current_session_key  # type: ignore
+
+        get_config = getattr(hermes_terminal, "_get_env_config")
+        resolve_overrides = getattr(hermes_terminal, "resolve_task_overrides")
+        get_session_cwd = getattr(hermes_terminal, "get_session_cwd")
+        resolve_cwd = getattr(hermes_terminal, "_resolve_command_cwd")
+        container_backends = getattr(hermes_terminal, "_CONTAINER_BACKENDS")
+        unusable_container_cwd = getattr(
+            hermes_terminal, "_is_unusable_container_cwd"
+        )
+        if not all(
+            callable(item)
+            for item in (
+                get_config,
+                resolve_overrides,
+                get_session_cwd,
+                resolve_cwd,
+                unusable_container_cwd,
+                get_current_session_key,
+            )
+        ):
+            return None
+
+        config = get_config()
+        overrides = resolve_overrides(task_id)
+        if not isinstance(config, Mapping) or not isinstance(overrides, Mapping):
+            return None
+        env_type = config.get("env_type")
+        cwd = overrides.get("cwd") or get_session_cwd(task_id) or config.get("cwd")
+        if not isinstance(env_type, str) or not isinstance(cwd, str) or not cwd:
+            return None
+        if env_type in container_backends and unusable_container_cwd(cwd):
+            cwd = config.get("cwd")
+            if not isinstance(cwd, str) or not cwd:
+                return None
+        session_key = get_current_session_key(default="") or (task_id or "")
+        effective_cwd = resolve_cwd(
+            workdir=None,
+            default_cwd=cwd,
+            session_key=session_key,
+        )
+    except (ImportError, AttributeError, KeyError, OSError, TypeError, ValueError):
+        return None
+    return effective_cwd if isinstance(effective_cwd, str) and effective_cwd else None
+
+
+def _approval_rule_key(
+    config: PluginConfig,
+    tool_name: str,
+    args: Mapping[str, Any] | None,
+    resolved_params: Mapping[str, Any],
+    task_id: str,
+) -> str | None:
+    """Bind Hermes session/always approval to one exact represented call.
+
+    Hermes uses ``rule_key`` as the persistence grain for native approval.
+    Bind both the original arguments and Rampart's resolved policy identity so
+    an approval for a relative file path cannot follow the same spelling into a
+    different task directory. HMAC makes the persisted key opaque: raw command
+    arguments and file contents are never written to Hermes configuration.
+
+    A token is required for this persistent identity. A local policy service
+    without one can still allow or deny, but an ``ask`` fails closed rather than
+    storing a plain, dictionary-attackable digest of sensitive arguments.
+    """
+
+    token = _load_token(config)
+    if not token:
+        return None
+    token_bytes = token.encode("utf-8")
+    if len(token_bytes) > 4096:
+        return None
+    identity = {
+        "tool": tool_name,
+        "args": args or {},
+        "resolved_params": resolved_params,
+        # Relative terminal/file semantics depend on the task workspace. A
+        # session or persistent approval must not silently cross that boundary.
+        "task_id": task_id,
+    }
+    if tool_name == "terminal":
+        raw_args = args if isinstance(args, Mapping) else {}
+        workdir = raw_args.get("workdir")
+        if workdir:
+            # Hermes passes an explicit relative workdir through to the
+            # execution backend, where its meaning depends on mutable ambient
+            # state. Native persistent approval cannot safely key that call by
+            # spelling alone. Accept only an absolute path on this platform.
+            if not isinstance(workdir, str) or not os.path.isabs(workdir):
+                return None
+            terminal_cwd = workdir
+        else:
+            # Hermes treats a missing/empty workdir as the mutable session CWD.
+            # Bind the same effective value its terminal dispatcher will use.
+            # If host internals cannot resolve it exactly, do not mint a key
+            # that Hermes could persist across a different directory.
+            if workdir is not None and workdir != "":
+                return None
+            terminal_cwd = _effective_terminal_cwd(task_id)
+            if terminal_cwd is None:
+                return None
+        identity["effective_terminal_cwd"] = terminal_cwd
+    if not _approval_identity_within_bounds(identity):
+        return None
+    try:
+        encoded = json.dumps(
+            identity,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    if len(encoded) > MAX_APPROVAL_IDENTITY_BYTES:
+        return None
+    digest = hmac.new(token_bytes, encoded, hashlib.sha256).hexdigest()
+    return f"rampart:{tool_name}:{digest}"
+
+
+def _approval_identity_within_bounds(value: Any) -> bool:
+    """Bound approval-key work before JSON serialization copies tool input."""
+
+    remaining = MAX_APPROVAL_IDENTITY_BYTES
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    seen: set[int] = set()
+    while stack:
+        current, depth = stack.pop()
+        if depth > MAX_APPROVAL_IDENTITY_DEPTH:
+            return False
+        if current is None or isinstance(current, (bool, float)):
+            remaining -= len(str(current))
+        elif isinstance(current, int):
+            # Avoid converting an attacker-controlled arbitrary-precision
+            # integer to a potentially enormous decimal string just to reject
+            # it. The bit bound is conservative relative to the byte budget.
+            if current.bit_length() > max(remaining, 0) * 4:
+                return False
+            try:
+                remaining -= len(str(current))
+            except ValueError:
+                return False
+        elif isinstance(current, str):
+            if len(current) > remaining:
+                return False
+            remaining -= len(current.encode("utf-8"))
+        elif isinstance(current, Mapping):
+            identity = id(current)
+            if identity in seen:
+                return False
+            seen.add(identity)
+            remaining -= len(current) * 2
+            for key, item in current.items():
+                if not isinstance(key, str):
+                    return False
+                stack.append((key, depth + 1))
+                stack.append((item, depth + 1))
+        elif isinstance(current, (list, tuple)):
+            identity = id(current)
+            if identity in seen:
+                return False
+            seen.add(identity)
+            remaining -= len(current)
+            stack.extend((item, depth + 1) for item in current)
+        else:
+            return False
+        if remaining < 0:
+            return False
+    return True
+
+
 def _decision_from_result(result: Mapping[str, Any]) -> str:
     decision = result.get("decision")
     if result.get("error"):
@@ -638,9 +1118,9 @@ def _policy_param_variants(rampart_tool: str, params: Mapping[str, Any]) -> list
 
 
 def _audit_suffix(result: Mapping[str, Any]) -> str:
-    audit_id = result.get("audit_id")
-    if isinstance(audit_id, str) and audit_id.strip():
-        return f" [audit_id: {audit_id.strip()}]"
+    audit_id = _redact_approval_text(result.get("audit_id"), 120)
+    if audit_id:
+        return f" [audit_id: {audit_id}]"
     return ""
 
 
@@ -654,7 +1134,7 @@ def evaluate_pre_tool_call(
     config_overrides: Mapping[str, Any] | None = None,
     requester: Callable[[PluginConfig, str, Mapping[str, Any]], Mapping[str, Any]] | None = None,
 ) -> dict[str, str] | None:
-    """Evaluate a Hermes tool call and return a Hermes block directive or None."""
+    """Evaluate a Hermes tool call and return a Hermes control directive or None."""
 
     if not isinstance(tool_name, str) or tool_name not in SUPPORTED_HERMES_TOOLS:
         display_name = tool_name if isinstance(tool_name, str) and tool_name else "unknown"
@@ -707,22 +1187,38 @@ def evaluate_pre_tool_call(
     if decision in {"allow", "watch", "log"}:
         return None
 
-    reason = str(result.get("message") or result.get("reason") or "policy violation")
+    reason = _redact_approval_text(
+        result.get("message") or result.get("reason") or "policy violation",
+        240,
+    ) or "policy violation"
     policy = result.get("policy") or result.get("matched_policies")
     audit_suffix = _audit_suffix(result)
     policy_suffix = ""
     if isinstance(policy, str) and policy:
-        policy_suffix = f" [policy: {policy}]"
+        policy_suffix = f" [policy: {_redact_approval_text(policy, 120) or '<redacted>'}]"
     elif isinstance(policy, list) and policy:
-        policy_suffix = f" [policy: {policy[0]}]"
+        policy_suffix = f" [policy: {_redact_approval_text(policy[0], 120) or '<redacted>'}]"
 
     if decision in {"ask", "require_approval"}:
-        return _block(
+        action_summary = _approval_action_summary(tool_name, rampart_tool, args, params)
+        message = (
             "rampart: approval required"
             f" for {tool_name}→{rampart_tool}{policy_suffix}{audit_suffix} — {reason}. "
-            "Hermes Rampart integration is experimental and does not yet resume plugin-driven approvals; "
-            "adjust policy or use a first-class Hermes approval flow before retrying."
+            f"Action: {action_summary}."
         )
+        if not _hermes_supports_native_approval():
+            return _block(
+                message
+                + " This Hermes version does not support plugin-owned approval/resume; "
+                "upgrade Hermes before retrying."
+            )
+        rule_key = _approval_rule_key(config, tool_name, args, params, task_id)
+        if rule_key is None:
+            return _block(
+                message
+                + " Rampart could not derive a non-secret approval key for the exact tool call."
+            )
+        return {"action": "approve", "message": message, "rule_key": rule_key}
 
     return _block(f"rampart: {reason}{policy_suffix}{audit_suffix}")
 

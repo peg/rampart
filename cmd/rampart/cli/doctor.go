@@ -2105,7 +2105,7 @@ func doctorHermesIntegration(emit emitFn, serveURL, token string) (warnings int)
 			"Set endpoint_mode: preflight")
 		warnings++
 	} else {
-		emit("Hermes policy mode", "ok", "preflight mode; ask decisions block until Hermes exposes plugin approval/resume")
+		emit("Hermes policy mode", "ok", "preflight mode; current Hermes releases use native approval for ask decisions, while older releases fail closed")
 	}
 
 	failOpenTools := hermesFailOpenTools(pluginConfig)
@@ -2135,7 +2135,7 @@ func doctorHermesIntegration(emit emitFn, serveURL, token string) (warnings int)
 		}
 	}
 
-	emit("Hermes support tier", "info", "experimental policy gate; full approval/resume support requires Hermes-owned approval APIs and E2E validation")
+	emit("Hermes support tier", "info", "experimental policy gate; native approval requires a current Hermes release, and authenticated live-host E2E remains unverified")
 	return warnings
 }
 
