@@ -30,6 +30,8 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9090/v1/status
 Notes:
 
 - `GET /healthz` does not require authentication.
+- `POST /v1/tool/*` and `POST /v1/preflight/*` require either the local admin
+  token or a per-agent token carrying `eval` scope.
 - `GET /v1/events/stream` accepts either bearer auth or `?token=<token>` query parameter.
 - `POST /v1/approvals/{id}/resolve` may also be authorized by signed URL query params (`sig`, `exp`) when server-side signing is enabled.
 
@@ -298,6 +300,7 @@ Same schema as `POST /v1/tool/{toolName}`. Optional `enforce` defaults to
 - `200 OK`
 - `400 Bad Request`
 - `401 Unauthorized`
+- `403 Forbidden` authenticated per-agent token lacks `eval` scope
 
 ### curl
 ```bash

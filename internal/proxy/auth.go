@@ -121,6 +121,21 @@ func (s *Server) checkAuthIdentity(w http.ResponseWriter, r *http.Request) *auth
 	return id
 }
 
+// checkEvalAuth validates auth and positively requires evaluation authority.
+// The local admin token remains universal; per-agent tokens must explicitly
+// carry eval scope.
+func (s *Server) checkEvalAuth(w http.ResponseWriter, r *http.Request) *authIdentity {
+	id := s.checkAuthIdentity(w, r)
+	if id == nil {
+		return nil
+	}
+	if !id.HasScope(token.ScopeEval) {
+		writeError(w, http.StatusForbidden, "this endpoint requires eval scope")
+		return nil
+	}
+	return id
+}
+
 // checkAdminAuth validates auth and requires admin scope. Writes 401/403 on failure.
 func (s *Server) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
 	id, errMsg := s.identify(r)

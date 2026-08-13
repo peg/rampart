@@ -14,7 +14,7 @@ import (
 )
 
 func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
-	identity := s.checkAuthIdentity(w, r)
+	identity := s.checkEvalAuth(w, r)
 	if identity == nil {
 		return
 	}
@@ -554,7 +554,7 @@ func notificationActionMatches(configured, actual string) bool {
 // Returns the decision that would be made — agents use this to plan around
 // policy restrictions before attempting blocked actions.
 func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
-	identity := s.checkAuthIdentity(w, r)
+	identity := s.checkEvalAuth(w, r)
 	if identity == nil {
 		return
 	}
