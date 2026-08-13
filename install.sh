@@ -533,12 +533,12 @@ printf "\n%s\n" "$VALIDATION_OUTPUT"
 
 case ":${PATH}:" in
 *":${INSTALL_DIR}:"*)
-    printf "\n${GREEN}${BOLD}Ready!${RESET} Run ${BOLD}rampart quickstart${RESET} to get started.\n"
+    printf "\n${GREEN}${BOLD}Ready!${RESET} Run ${BOLD}rampart protect${RESET} to get started.\n"
     ;;
 *)
     printf "\n${YELLOW}Note:${RESET} ${INSTALL_DIR} may not be in your PATH.\n"
     printf "Add it: ${BOLD}export PATH=\"${INSTALL_DIR}:\$PATH\"${RESET}\n"
-    printf "Then run: ${BOLD}rampart quickstart${RESET}\n"
+    printf "Then run: ${BOLD}rampart protect${RESET}\n"
     ;;
 esac
 

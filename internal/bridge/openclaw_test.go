@@ -207,6 +207,24 @@ policies:
             - "rm -rf /"
             - "rm -rf ~"
         message: "Destructive command blocked"
+  - name: approve-production-change
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "kubectl apply*"
+        message: "Production change requires approval"
+  - name: observe-safe-command
+    match:
+      tool: exec
+    rules:
+      - action: watch
+        when:
+          command_matches:
+            - "echo watched"
+        message: "Safe command observed"
 `
 	path := filepath.Join(dir, "policy.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(policy), 0o644))
@@ -782,6 +800,59 @@ policies:
 	}
 }
 
+func TestBridgeMonitorModeDoesNotCorrelateOrPersistAllowAlways(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
+
+	mg := newMockGateway(t)
+	defer mg.close()
+
+	observed := make(chan struct{}, 1)
+	b := NewOpenClawBridge(newTestEngine(t, writeTestPolicy(t, tmpDir)), Config{
+		GatewayURL:        mg.url(),
+		GatewayToken:      "test-token",
+		ReconnectInterval: 100 * time.Millisecond,
+		AuditSink: &testAuditSink{writeFn: func(audit.Event) error {
+			observed <- struct{}{}
+			return nil
+		}},
+		Mode: bridgeModeMonitor,
+	})
+	defer b.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { b.Start(ctx) }() //nolint:errcheck
+
+	const approvalID = "monitor-allow-always-001"
+	mg.sendApprovalRequest(approvalID, "kubectl apply -f prod.yaml", "test-agent")
+	select {
+	case <-observed:
+	case <-ctx.Done():
+		t.Fatal("monitor request was not observed")
+	}
+
+	b.pendingMu.Lock()
+	_, correlated := b.pendingCommands[approvalID]
+	b.pendingMu.Unlock()
+	assert.False(t, correlated, "monitor request must not create allow-always correlation")
+
+	mg.sendApprovalResolved(approvalID, "allow-always")
+	overridesPath := filepath.Join(tmpDir, ".rampart", "policies", "user-overrides.yaml")
+	require.Never(t, func() bool {
+		_, err := os.Stat(overridesPath)
+		return err == nil
+	}, 300*time.Millisecond, 20*time.Millisecond, "monitor resolution must not write a user override")
+
+	b.pendingMu.Lock()
+	assert.Empty(t, b.pendingCommands, "monitor mode must retain no pending-command correlation")
+	b.pendingMu.Unlock()
+	if resp, ok := mg.readResponseWithin(200 * time.Millisecond); ok {
+		t.Fatalf("monitor mode unexpectedly resolved approval: %#v", resp)
+	}
+}
+
 // TestBridgeAuditSinkWrite verifies that bridge-evaluated approvals are written
 // to the audit sink, fixing the empty-params audit trail bug.
 func TestBridgeAuditSinkWrite(t *testing.T) {
@@ -850,6 +921,124 @@ func TestBridgeAuditSinkWrite(t *testing.T) {
 	}
 
 	cancel()
+}
+
+func TestBridgeAuditFailureRespectsMode(t *testing.T) {
+	tests := []struct {
+		name         string
+		command      string
+		mode         string
+		wantDecision string
+		wantPending  bool
+	}{
+		{name: "enforce allow remains pending", command: "git status", mode: "enforce", wantPending: true},
+		{name: "enforce watch remains pending", command: "echo watched", mode: "enforce", wantPending: true},
+		{name: "enforce deny remains denied", command: "rm -rf /", mode: "enforce", wantDecision: "deny"},
+		{name: "enforce ask remains pending", command: "kubectl apply -f prod.yaml", mode: "enforce", wantPending: true},
+		{name: "monitor remains observational", command: "rm -rf /", mode: "monitor", wantPending: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mg := newMockGateway(t)
+			defer mg.close()
+
+			policyPath := writeTestPolicy(t, t.TempDir())
+			bridge := NewOpenClawBridge(newTestEngine(t, policyPath), Config{
+				GatewayURL:        mg.url(),
+				GatewayToken:      "test-token",
+				ReconnectInterval: 100 * time.Millisecond,
+				AuditSink: &testAuditSink{writeFn: func(audit.Event) error {
+					return errors.New("audit storage unavailable")
+				}},
+				Mode: test.mode,
+			})
+			defer bridge.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			go func() { bridge.Start(ctx) }() //nolint:errcheck
+
+			approvalID := "audit-failure-" + strings.ReplaceAll(test.name, " ", "-")
+			mg.sendApprovalRequest(approvalID, test.command, "test-agent")
+			if test.wantDecision == "" {
+				if resp, ok := mg.readResponseWithin(300 * time.Millisecond); ok {
+					t.Fatalf("audit failure unexpectedly resolved approval: %#v", resp)
+				}
+			} else {
+				resp := mg.readResponse()
+				params, ok := resp["params"].(map[string]any)
+				require.True(t, ok, "expected params in response")
+				assert.Equal(t, approvalID, params["id"])
+				assert.Equal(t, test.wantDecision, params["decision"])
+			}
+
+			bridge.pendingMu.Lock()
+			_, pending := bridge.pendingCommands[approvalID]
+			bridge.pendingMu.Unlock()
+			assert.Equal(t, test.wantPending, pending)
+		})
+	}
+}
+
+func TestBridgeDisabledModeDoesNotConnect(t *testing.T) {
+	bridge := NewOpenClawBridge(newTestEngine(t, writeTestPolicy(t, t.TempDir())), Config{
+		GatewayURL:   "ws://127.0.0.1:1",
+		GatewayToken: "test-token",
+		Mode:         "disabled",
+	})
+	defer bridge.Close()
+
+	if err := bridge.Start(context.Background()); err != nil {
+		t.Fatalf("disabled bridge Start() error = %v", err)
+	}
+}
+
+func TestOpenClawBridgeModeNormalizationFailsClosed(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "", want: bridgeModeEnforce},
+		{input: " MONITOR ", want: bridgeModeMonitor},
+		{input: "disabled", want: bridgeModeDisabled},
+		{input: "typo", want: bridgeModeEnforce},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			if got := normalizeOpenClawBridgeMode(test.input); got != test.want {
+				t.Fatalf("normalizeOpenClawBridgeMode(%q) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+}
+
+func TestBridgeMonitorModeDoesNotConsumeEnforcementState(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	policy := `version: "1"
+default_action: allow
+policies:
+  - name: exec-limit
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          call_count:
+            gte: 2
+            window: 1h
+`
+	require.NoError(t, os.WriteFile(policyPath, []byte(policy), 0o644))
+	eng := newTestEngine(t, policyPath)
+	bridge := NewOpenClawBridge(eng, Config{Mode: "monitor"})
+
+	var req approvalRequestParams
+	req.Request.Command = "git status"
+	bridge.handleApprovalRequested(context.Background(), nil, req)
+
+	decision := eng.Enforce(engine.ToolCall{Tool: "exec", Params: map[string]any{"command": "git status"}}, engine.EvalOptions{})
+	if decision.Action != engine.ActionAllow {
+		t.Fatalf("first enforced command after monitor evaluation = %s, want allow", decision.Action)
+	}
 }
 
 func TestPendingCommandCorrelationIsBounded(t *testing.T) {

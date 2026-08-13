@@ -125,7 +125,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	tokenCmd := newTokenShowCmd()
 	testCmd := newTestCmd(opts)
 	benchCmd := newBenchCmd(opts)
-	quickstartCmd := newQuickstartCmd()
+	quickstartCmd := newQuickstartCmd(opts)
 	protectCmd := newProtectCmd(opts)
 	verifyCmd := newVerifyCmd()
 	upgradeCmd := newUpgradeCmd(opts)

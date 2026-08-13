@@ -714,7 +714,7 @@ rampart protect                             # Detect, configure, and verify supp
 rampart verify --all                        # Safely verify policy + configured active-verifier integrations
 rampart protect openclaw                    # Zero-config guard + live behavioral verification
 rampart verify openclaw                     # Re-run safe canaries through the live plugin
-rampart quickstart                           # Auto-detect, install, configure, health check
+rampart quickstart                           # Deprecated compatibility flow; prefer protect
 rampart setup claude-code                    # Claude Code native hooks
 rampart setup cline                          # Cline native hooks
 rampart setup openclaw                       # Advanced/manual OpenClaw integration management

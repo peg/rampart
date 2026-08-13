@@ -56,6 +56,9 @@ const (
 	maxOpenClawFrameBytes      = 4 << 20
 	maxPendingBridgeCommands   = 1000
 	maxPendingBridgeCommandLen = 256 << 10
+	bridgeModeEnforce          = "enforce"
+	bridgeModeMonitor          = "monitor"
+	bridgeModeDisabled         = "disabled"
 )
 
 // OpenClawBridge connects to the OpenClaw gateway and handles exec approval
@@ -67,6 +70,7 @@ type OpenClawBridge struct {
 	sink                      audit.AuditSink
 	logger                    *slog.Logger
 	autoResolveAllowDecisions bool
+	mode                      string
 
 	reconnectInterval time.Duration
 
@@ -105,6 +109,13 @@ type Config struct {
 	// OpenClaw's own/manual approval layer and must stay human-owned unless
 	// Rampart explicitly denies it.
 	AutoResolveAllowDecisions *bool
+
+	// Mode controls the bridge's decision authority. "enforce" (the default)
+	// may resolve OpenClaw approvals. "monitor" records observational policy
+	// evaluations without resolving or consuming enforcement state. "disabled"
+	// prevents the bridge from connecting. Unknown values fail closed as
+	// "enforce".
+	Mode string
 }
 
 // NewOpenClawBridge creates a new bridge.
@@ -127,8 +138,22 @@ func NewOpenClawBridge(eng *engine.Engine, cfg Config) *OpenClawBridge {
 		sink:                      cfg.AuditSink,
 		logger:                    cfg.Logger,
 		autoResolveAllowDecisions: autoResolveAllowDecisions,
+		mode:                      normalizeOpenClawBridgeMode(cfg.Mode),
 		reconnectInterval:         cfg.ReconnectInterval,
 		pendingCommands:           make(map[string]string),
+	}
+}
+
+func normalizeOpenClawBridgeMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case bridgeModeMonitor:
+		return bridgeModeMonitor
+	case bridgeModeDisabled:
+		return bridgeModeDisabled
+	case "", bridgeModeEnforce:
+		return bridgeModeEnforce
+	default:
+		return bridgeModeEnforce
 	}
 }
 
@@ -146,6 +171,11 @@ func (b *OpenClawBridge) Close() {
 // Start connects to the gateway and processes approval events until the context
 // is cancelled. It automatically reconnects on disconnect with backoff.
 func (b *OpenClawBridge) Start(ctx context.Context) error {
+	if b.mode == bridgeModeDisabled {
+		b.logger.Info("bridge: OpenClaw bridge disabled")
+		return nil
+	}
+
 	backoff := b.reconnectInterval
 	for {
 		err := b.connectAndListen(ctx)
@@ -344,14 +374,17 @@ func (b *OpenClawBridge) handleEvent(ctx context.Context, conn *websocket.Conn, 
 			b.logger.Error("bridge: failed to parse approval request", "error", err)
 			return
 		}
-		// Store the command immediately so allow-always writeback works
-		// regardless of who ultimately resolves the approval (Rampart or OpenClaw native flow).
-		if req.ID != "" && req.command() != "" && !b.rememberPendingCommand(req.ID, req.command()) {
+		// In enforce mode, store the command immediately so allow-always writeback
+		// works regardless of who resolves the approval (Rampart or OpenClaw).
+		if b.mode == bridgeModeEnforce && req.ID != "" && req.command() != "" && !b.rememberPendingCommand(req.ID, req.command()) {
 			b.logger.Warn("bridge: pending command correlation limit reached; allow-always writeback unavailable", "id", req.ID)
 		}
 		b.handleApprovalRequested(ctx, conn, req)
 
 	case "exec.approval.resolved":
+		if b.mode != bridgeModeEnforce {
+			return
+		}
 		// Another client resolved this approval — cancel any pending escalation.
 		// If decision is "allow-always", write a user override rule.
 		var resolved struct {
@@ -398,7 +431,14 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	}
 
 	start := time.Now()
-	decision := b.engine.Enforce(call, engine.EvalOptions{})
+	var decision engine.Decision
+	if b.mode == bridgeModeMonitor {
+		// Monitor mode is observational: it must not consume one-time allows or
+		// increment call-count enforcement state for an approval it does not own.
+		decision = b.engine.Evaluate(call)
+	} else {
+		decision = b.engine.Enforce(call, engine.EvalOptions{})
+	}
 	evalDuration := time.Since(start)
 
 	b.logger.Info("bridge: evaluated approval request",
@@ -410,6 +450,9 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	)
 
 	// Write audit event so bridge-evaluated commands appear in the JSONL trail.
+	// A configured sink is part of the enforcement boundary: Rampart must not
+	// auto-authorize execution when it cannot persist the decision it owns.
+	var auditErr error
 	if b.sink != nil {
 		ev := audit.Event{
 			ID:        audit.NewEventID(),
@@ -426,12 +469,23 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 			},
 		}
 		if err := b.sink.Write(ev); err != nil {
+			auditErr = err
 			b.logger.Warn("bridge: failed to write audit event", "error", err)
 		}
+	}
+	if b.mode == bridgeModeMonitor {
+		// The host owns every approval in monitor mode, including when audit
+		// persistence is unavailable. Keep the approval pending and only log it.
+		return
 	}
 
 	switch decision.Action {
 	case engine.ActionAllow, engine.ActionWatch:
+		if auditErr != nil {
+			b.logger.Warn("bridge: audit persistence failed; leaving approval pending (fail-closed)",
+				"id", req.ID, "action", decision.Action.String())
+			return
+		}
 		if !b.autoResolveAllowDecisions {
 			b.leavePendingForOpenClawReview(req, decision)
 			return

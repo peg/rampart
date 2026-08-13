@@ -14,18 +14,16 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/peg/rampart/internal/detect"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 type quickstartAgent struct {
@@ -58,7 +56,7 @@ func quickstartAgents() []quickstartAgent {
 	)
 }
 
-func newQuickstartCmd() *cobra.Command {
+func newQuickstartCmd(rootOpts *rootOptions) *cobra.Command {
 	var agentsFlag string
 	var profile string
 	var skipDoctor bool
@@ -66,17 +64,18 @@ func newQuickstartCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "quickstart",
-		Short: "One-shot setup: install service, configure agent hooks, verify",
+		Short: "Compatibility onboarding flow (use rampart protect)",
 		Long: `quickstart scans your environment, installs Rampart service, wires up detected
 AI agents, installs a policy profile, and runs a health summary.
 
-Supported setup agents are sourced from Rampart's native integration registry.
-Detected unsupported agents receive wrap guidance.
+Native integrations use the same managed protection lifecycle as rampart
+protect. Detected unsupported agents receive wrap guidance.
 
 Quickstart is non-interactive. --yes remains accepted for compatibility with
 existing CI, scripts, and agent-driven installs.`,
+		Deprecated: "use `rampart protect`; quickstart remains as a compatibility workflow",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuickstart(cmd, agentsFlag, profile, skipDoctor, yes)
+			return runQuickstart(cmd, rootOpts, agentsFlag, profile, skipDoctor, yes)
 		},
 	}
 
@@ -87,10 +86,15 @@ existing CI, scripts, and agent-driven installs.`,
 	return cmd
 }
 
-func runQuickstart(cmd *cobra.Command, agentsFlag, profile string, skipDoctor, yes bool) error {
+func runQuickstart(cmd *cobra.Command, rootOpts *rootOptions, agentsFlag, profile string, skipDoctor, yes bool) error {
 	w := cmd.OutOrStdout()
+	_ = yes // Retained as a no-op compatibility flag for existing scripts.
+	if err := prepareManagedProtection(rootOpts); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(w, "◆ Rampart quickstart")
+	fmt.Fprintln(w, "  Compatibility mode: new installations should use `rampart protect`.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  Scanning environment...")
 	fmt.Fprintln(w)
@@ -109,50 +113,10 @@ func runQuickstart(cmd *cobra.Command, agentsFlag, profile string, skipDoctor, y
 	if err != nil {
 		return err
 	}
-
-	// Install the fail-closed managed baseline before starting a fresh service,
-	// so quickstart never creates an unprotected policy window.
-	guardPath, err := installManagedGuardPolicy()
+	drivers, unsupported, err := quickstartProtectionTargets(selectedAgents)
 	if err != nil {
-		return fmt.Errorf("install managed Guard policy: %w", err)
+		return err
 	}
-	fmt.Fprintf(w, "  ✓ Managed Guard policy installed at %s\n", guardPath)
-
-	fmt.Fprintln(w, "  Starting Rampart service...")
-	if err := ensureServeRunning(w, cmd.ErrOrStderr()); err != nil {
-		return fmt.Errorf("start Rampart service: %w", err)
-	}
-	fmt.Fprintln(w)
-
-	fmt.Fprintln(w, "  Configuring hooks...")
-	hooksConfigured := 0
-	var setupFailures []string
-	for _, agent := range selectedAgents {
-		if agent.HasSetup {
-			hooksAlreadyConfigured := quickstartHooksConfigured(agent.SetupCmd)
-			setupArgs := []string{"setup", agent.SetupCmd}
-			if err := runSubcmd(setupArgs...); err != nil {
-				fmt.Fprintf(w, "  ⚠ %s: setup failed (%v)\n", agent.Name, err)
-				fmt.Fprintf(w, "    → Retry with: rampart setup %s\n", agent.SetupCmd)
-				setupFailures = append(setupFailures, agent.Name)
-				continue
-			}
-			hooksConfigured++
-			if hooksAlreadyConfigured {
-				fmt.Fprintf(w, "  ✓ %s: hooks already configured\n", agent.Name)
-			} else {
-				fmt.Fprintf(w, "  ✓ %s: hooks installed\n", agent.Name)
-			}
-			continue
-		}
-
-		fmt.Fprintf(w, "  ⚠ %s detected but setup not yet supported\n", agent.Name)
-		fmt.Fprintf(w, "    → Use: %s\n", agent.WrapCmd)
-	}
-	if len(selectedAgents) == 0 {
-		fmt.Fprintln(w, "  ⚠ No agents selected for setup")
-	}
-	fmt.Fprintln(w)
 
 	selectedProfile := strings.TrimSpace(profile)
 	if selectedProfile == "" {
@@ -172,7 +136,7 @@ func runQuickstart(cmd *cobra.Command, agentsFlag, profile string, skipDoctor, y
 
 	fmt.Fprintln(w, "  Installing policies...")
 	if !hasInstalledPolicy() || strings.TrimSpace(profile) != "" {
-		if err := runSubcmd("init", "--profile", selectedProfile); err != nil {
+		if err := runQuickstartInitProfile(cmd, rootOpts, selectedProfile); err != nil {
 			return fmt.Errorf("policy init failed for profile %q: %w", selectedProfile, err)
 		}
 		fmt.Fprintf(w, "  ✓ %s profile installed\n", selectedProfile)
@@ -187,93 +151,71 @@ func runQuickstart(cmd *cobra.Command, agentsFlag, profile string, skipDoctor, y
 	}
 	fmt.Fprintln(w)
 
-	fmt.Fprintln(w, "  Verifying configured boundaries...")
-	verifiedAgents := 0
-	var verificationFailures []string
-	for _, agent := range selectedAgents {
-		if !agent.HasSetup || !quickstartHooksConfigured(agent.SetupCmd) {
-			continue
-		}
-		driver, ok := findIntegrationDriver(agent.SetupCmd)
-		if !ok {
-			verificationFailures = append(verificationFailures, agent.Name)
-			fmt.Fprintf(w, "  ⚠ %s: no verification driver registered\n", agent.Name)
-			continue
-		}
-		report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, quickstartServiceURL(), 5*time.Second)
-		if report.Summary.Failed > 0 || report.Summary.Unverified > 0 {
-			verificationFailures = append(verificationFailures, agent.Name)
-			fmt.Fprintf(w, "  ⚠ %s: behavioral verification incomplete\n", agent.Name)
-			printVerificationReport(w, report)
-			continue
-		}
-		verifiedAgents++
-		fmt.Fprintf(w, "  ✓ %s: %d behavioral checks passed\n", agent.Name, report.Summary.Passed)
+	for _, agent := range unsupported {
+		fmt.Fprintf(w, "  ⚠ %s detected but native setup is not yet supported\n", agent.Name)
+		fmt.Fprintf(w, "    → Cooperative fallback: %s\n", agent.WrapCmd)
 	}
-	if hooksConfigured == 0 {
-		fmt.Fprintln(w, "  ⚠ No native agent boundary was configured or verified")
+	if len(selectedAgents) == 0 {
+		fmt.Fprintln(w, "  ⚠ No agents selected; configuring policy and service only")
 	}
+
+	summary, err := runProtectionPlan(cmd, rootOpts, drivers, protectionPlanOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		return fmt.Errorf("quickstart did not protect every selected native integration: %w", err)
+	}
+
 	fmt.Fprintln(w)
-
-	if !skipDoctor {
-		fmt.Fprintln(w, "  Running health check...")
-		if quickstartServeRunning() {
-			fmt.Fprintln(w, "  ✓ Service reachable")
-		} else {
-			fmt.Fprintln(w, "  ⚠ Service unreachable (try: rampart serve)")
-		}
-
-		if hooksConfigured == 0 {
-			fmt.Fprintln(w, "  ⚠ Hooks configured for 0 agents")
-		} else {
-			fmt.Fprintf(w, "  ✓ Hooks configured for %d agents\n", hooksConfigured)
-		}
-
-		profiles, rules := installedPolicyStats()
-		if profiles == 0 {
-			fmt.Fprintln(w, "  ⚠ No active policy profiles found")
-		} else {
-			noun := "profiles"
-			if profiles == 1 {
-				noun = "profile"
-			}
-			fmt.Fprintf(w, "  ✓ %d policy %s active (%d rules)\n", profiles, noun, rules)
-		}
-		fmt.Fprintln(w)
-	}
-
-	if len(setupFailures) > 0 || len(verificationFailures) > 0 {
-		failed := append(append([]string(nil), setupFailures...), verificationFailures...)
-		return fmt.Errorf("quickstart did not verify every selected native integration: %s", strings.Join(failed, ", "))
-	}
-	if verifiedAgents > 0 {
-		fmt.Fprintf(w, "◆ Rampart protection verified for %d agent(s).\n", verifiedAgents)
+	if summary.Succeeded > 0 {
+		fmt.Fprintf(w, "◆ Rampart protection verified for %d agent(s).\n", summary.Succeeded)
 	} else {
-		fmt.Fprintln(w, "◆ Rampart setup complete; no native agent boundary was selected for verification.")
+		fmt.Fprintln(w, "◆ Rampart policy and service setup complete; no native agent boundary was selected.")
 	}
-	fmt.Fprintln(w)
-
-	svcURL := quickstartServiceURL()
-	dashURL := strings.TrimSuffix(svcURL, "/") + "/dashboard/"
-	fmt.Fprintf(w, "  Dashboard:  %s\n", dashURL)
-
-	if tok, err := readPersistedToken(); err == nil && tok != "" {
-		masked := tok
-		if len(tok) > 8 {
-			masked = tok[:8] + "..."
+	if !skipDoctor {
+		fmt.Fprintln(w, "\nCurrent protection status:")
+		if err := runStatus(w, false); err != nil {
+			return fmt.Errorf("quickstart status: %w", err)
 		}
-		fmt.Fprintf(w, "  Token:      %s  (full token in ~/.rampart/token)\n", masked)
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  Next steps:")
-	if verifiedAgents > 0 {
-		fmt.Fprintln(w, "    • Restart or reload configured agents if their setup output requested it")
-	}
+
+	fmt.Fprintln(w, "\n  Next steps:")
+	fmt.Fprintln(w, "    • rampart status       — see protection and assurance state")
 	fmt.Fprintln(w, "    • rampart watch        — see decisions in real time")
-	fmt.Fprintln(w, "    • rampart policy list  — browse available policies")
 	fmt.Fprintln(w, "    • Docs: https://docs.rampart.sh")
 
 	return nil
+}
+
+func runQuickstartInitProfile(parent *cobra.Command, rootOpts *rootOptions, profile string) error {
+	initCmd := newInitCmd(rootOpts)
+	initCmd.SetContext(parent.Context())
+	initCmd.SetIn(parent.InOrStdin())
+	initCmd.SetOut(parent.OutOrStdout())
+	initCmd.SetErr(parent.ErrOrStderr())
+	if err := initCmd.Flags().Set("profile", profile); err != nil {
+		return err
+	}
+	if initCmd.RunE == nil {
+		return fmt.Errorf("init command has no implementation")
+	}
+	return initCmd.RunE(initCmd, nil)
+}
+
+func quickstartProtectionTargets(selected []quickstartAgent) (drivers []integrationDriver, unsupported []quickstartAgent, err error) {
+	for _, agent := range selected {
+		if !agent.HasSetup {
+			unsupported = append(unsupported, agent)
+			continue
+		}
+		driver, ok := findIntegrationDriver(agent.SetupCmd)
+		if !ok || !driver.AutoProtect {
+			return nil, unsupported, fmt.Errorf("quickstart: no managed protection driver registered for %s", agent.Name)
+		}
+		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) {
+			return nil, unsupported, fmt.Errorf("quickstart: %s is not supported on %s", driver.DisplayName, runtime.GOOS)
+		}
+		drivers = append(drivers, driver)
+	}
+	return drivers, unsupported, nil
 }
 
 func selectQuickstartAgents(result *detect.DetectResult, agentsFlag string) ([]quickstartAgent, error) {
@@ -461,77 +403,6 @@ func installedPolicyNames() map[string]bool {
 	return names
 }
 
-func installedPolicyStats() (int, int) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return 0, 0
-	}
-	policyDir := filepath.Join(home, ".rampart", "policies")
-	entries, err := os.ReadDir(policyDir)
-	if err != nil {
-		return 0, 0
-	}
-
-	profiles := 0
-	totalRules := 0
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := strings.ToLower(e.Name())
-		if name == "custom.yaml" || (!strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml")) {
-			continue
-		}
-		profiles++
-
-		data, err := os.ReadFile(filepath.Join(policyDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var parsed struct {
-			Policies []struct {
-				Rules []any `yaml:"rules"`
-			} `yaml:"policies"`
-			Rules []any `yaml:"rules"`
-		}
-		if err := yaml.Unmarshal(data, &parsed); err != nil {
-			continue
-		}
-		totalRules += len(parsed.Rules)
-		for _, p := range parsed.Policies {
-			totalRules += len(p.Rules)
-		}
-	}
-	return profiles, totalRules
-}
-
-// quickstartServiceURL returns the base URL for the Rampart service.
-func quickstartServiceURL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d", defaultServePort)
-}
-
-// quickstartServeRunning checks whether the Rampart service is reachable.
-func quickstartServeRunning() bool {
-	client := newRampartHTTPClient(2 * time.Second)
-	url := quickstartServiceURL() + "/healthz"
-	return isRampartHealthReady(context.Background(), client, url)
-}
-
-// runSubcmd runs a rampart subcommand as a subprocess, inheriting
-// stdout/stderr/stdin. This avoids mutating global cobra state and keeps
-// each step independently observable.
-func runSubcmd(args ...string) error {
-	self, err := os.Executable()
-	if err != nil {
-		self = "rampart"
-	}
-	c := exec.Command(self, args...)
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	c.Stdin = os.Stdin
-	return c.Run()
-}
-
 func hasInstalledPolicy() bool {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -547,10 +418,10 @@ func hasInstalledPolicy() bool {
 			continue
 		}
 		name := strings.ToLower(e.Name())
-		// custom.yaml is an auto-managed placeholder — it is always present and
-		// contains no policies by default. Exclude it so a fresh install with only
-		// custom.yaml still triggers standard policy auto-init.
-		if name == "custom.yaml" {
+		// custom.yaml is an empty managed placeholder. guard.yaml is a supplemental
+		// layer with no default_action. Neither is a complete base profile, so a
+		// home containing only these files still needs standard/openclaw auto-init.
+		if name == "custom.yaml" || name == "guard.yaml" {
 			continue
 		}
 		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
@@ -558,16 +429,4 @@ func hasInstalledPolicy() bool {
 		}
 	}
 	return false
-}
-
-func quickstartHooksConfigured(env string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return false
-	}
-	driver, ok := findIntegrationDriver(env)
-	if !ok || driver.Configured == nil {
-		return false
-	}
-	return driver.Configured(home)
 }
