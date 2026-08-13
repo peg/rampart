@@ -51,8 +51,11 @@ architecture diagram.
 3. Add or update only the tests and documentation needed for that behavior.
 4. Run checks proportional to the change, followed by the full source checks
    before requesting review.
-5. Open the pull request against `staging` and explain the user-visible result,
-   security impact, limitations, and validation performed.
+5. Open the pull request against `staging` as a draft while iterating. Drafts
+   receive a fast Linux source check; marking the pull request ready starts the
+   complete cross-platform, packaging, container, and SDK matrix.
+6. Explain the user-visible result, security impact, limitations, and
+   validation performed before requesting review.
 
 The `main` branch represents published releases. Release merges and tags are
 maintainer-managed.
