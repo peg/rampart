@@ -18,7 +18,7 @@ concurrency:
 jobs:
   draft:
     name: Draft CI
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'staging' && github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -53,7 +53,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -224,7 +224,7 @@ jobs:
 
   docker-smoke:
     name: docker smoke (amd64 runtime + arm64 build)
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -264,7 +264,7 @@ jobs:
 
   release-dry-run:
     name: goreleaser snapshot (cross-platform build check)
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -292,7 +292,7 @@ jobs:
 
   python-sdk:
     name: Python SDK (Python ${{ matrix.python-version }})
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -342,7 +342,7 @@ jobs:
 
   ci-gate:
     name: CI gate
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [test, docker-smoke, release-dry-run, python-sdk]
