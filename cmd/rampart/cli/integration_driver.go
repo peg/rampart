@@ -38,6 +38,9 @@ type integrationDriver struct {
 	ServiceRequired     bool
 	Platforms           []string
 	Configured          func(home string) bool
+	AssuranceConfigured func(home string) bool
+	ProtectionLabel     string
+	ProtectionState     func(home string) string
 }
 
 func supportedIntegrationDrivers() []integrationDriver {
@@ -46,8 +49,9 @@ func supportedIntegrationDrivers() []integrationDriver {
 			ID: "openclaw", DisplayName: "OpenClaw", Boundary: "native plugin", VerifyTarget: "openclaw", OpenClaw: true,
 			ProofLevel: assuranceHostVerified, Executables: []string{"openclaw"},
 			AutoProtect: true, ServiceRequired: true, Platforms: []string{"linux", "darwin"},
-			Installed:  func(_ string) bool { return isOpenClawInstalled() },
-			Configured: func(_ string) bool { return isOpenClawPluginConfigured() },
+			Installed:       func(_ string) bool { return isOpenClawInstalled() },
+			Configured:      func(_ string) bool { return isOpenClawPluginConfigured() },
+			ProtectionState: openClawProtectionState,
 			VerifyChecks: func(ctx context.Context, timeout time.Duration) []verificationCheck {
 				return []verificationCheck{verifyOpenClawPluginLive(ctx, timeout)}
 			},
@@ -61,6 +65,11 @@ func supportedIntegrationDrivers() []integrationDriver {
 			},
 			SetupCommand: func(opts *rootOptions) *cobra.Command { return newSetupClaudeCodeCmd(opts) },
 			Configured:   claudeHooksConfiguredForHome,
+			AssuranceConfigured: func(home string) bool {
+				assessment := claudeHookLoadAssessmentForHome(home)
+				return !assessment.Blocked && !assessment.Unverified
+			},
+			ProtectionLabel: "Claude Code (hooks)",
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyClaudeHooksInstalled(), verifyNativeHookAdapter(ctx, "claude-code")}
 			},
@@ -72,8 +81,9 @@ func supportedIntegrationDrivers() []integrationDriver {
 			Installed: func(home string) bool {
 				return integrationBinaryOrPathInstalled("codex", codexHomeDir(home))
 			},
-			SetupCommand: func(opts *rootOptions) *cobra.Command { return newSetupCodexCmd(opts) },
-			Configured:   codexHooksConfiguredForHome,
+			SetupCommand:    func(opts *rootOptions) *cobra.Command { return newSetupCodexCmd(opts) },
+			Configured:      codexHooksConfiguredForHome,
+			ProtectionState: codexProtectionState,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyCodexHooksInstalled(), verifyCodexHookAdapter(ctx)}
 			},
@@ -90,7 +100,8 @@ func supportedIntegrationDrivers() []integrationDriver {
 				_, err := execLookPath("hermes")
 				return err == nil
 			},
-			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupHermesCmd() },
+			SetupCommand:    func(_ *rootOptions) *cobra.Command { return newSetupHermesCmd() },
+			ProtectionLabel: "Hermes Agent (plugin)",
 			Configured: func(home string) bool {
 				state := detectHermesPluginStateForHome(home)
 				return state.Installed && state.Enabled && state.ManifestValid && state.HookDeclared
@@ -104,8 +115,9 @@ func supportedIntegrationDrivers() []integrationDriver {
 				_, err := execLookPath("gemini")
 				return err == nil
 			},
-			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupGeminiCmd() },
-			Configured:   geminiHooksConfiguredForHome,
+			SetupCommand:    func(_ *rootOptions) *cobra.Command { return newSetupGeminiCmd() },
+			Configured:      geminiHooksConfiguredForHome,
+			ProtectionLabel: "Gemini CLI (hooks)",
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyGeminiHooksInstalled(), verifyGeminiHookAdapter(ctx)}
 			},
@@ -120,8 +132,9 @@ func supportedIntegrationDrivers() []integrationDriver {
 					filepath.Join(home, ".gemini", "antigravity-cli"),
 				)
 			},
-			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupAntigravityCmd() },
-			Configured:   antigravityPluginConfiguredForHome,
+			SetupCommand:    func(_ *rootOptions) *cobra.Command { return newSetupAntigravityCmd() },
+			Configured:      antigravityPluginConfiguredForHome,
+			ProtectionLabel: "Antigravity CLI / IDE (plugin)",
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyAntigravityPluginInstalled(), verifyAntigravityHookAdapter(ctx)}
 			},
@@ -133,6 +146,12 @@ func supportedIntegrationDrivers() []integrationDriver {
 			Installed:    func(home string) bool { return copilotInstalledForHome(home) },
 			SetupCommand: func(_ *rootOptions) *cobra.Command { return newSetupCopilotCmd() },
 			Configured:   copilotHooksConfiguredForHome,
+			AssuranceConfigured: func(home string) bool {
+				workingDir, _ := os.Getwd()
+				_, disabled := copilotCLIUserHooksDisabled(home, workingDir)
+				return !disabled
+			},
+			ProtectionLabel: "GitHub Copilot CLI / VS Code (hooks)",
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyCopilotHooksInstalled(), verifyCopilotHookAdapter(ctx)}
 			},
@@ -145,13 +164,35 @@ func supportedIntegrationDrivers() []integrationDriver {
 				return integrationBinaryOrPathInstalled("cline", filepath.Join(home, "Documents", "Cline"), filepath.Join(home, ".cline")) ||
 					detect.ClineExtensionInstalled(home)
 			},
-			SetupCommand: func(opts *rootOptions) *cobra.Command { return newSetupClineCmd(opts) },
-			Configured:   clineHooksConfiguredForHome,
+			SetupCommand:    func(opts *rootOptions) *cobra.Command { return newSetupClineCmd(opts) },
+			Configured:      clineHooksConfiguredForHome,
+			ProtectionLabel: "Cline (hooks)",
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
 				return []verificationCheck{verifyClineHooksInstalled(), verifyNativeHookAdapter(ctx, "cline")}
 			},
 		},
 	}
+}
+
+func integrationDriverConfigured(driver integrationDriver, home string) bool {
+	return driver.Configured != nil && driver.Configured(home)
+}
+
+func integrationConfiguredForAssurance(driver integrationDriver, home string) bool {
+	if !integrationDriverConfigured(driver, home) {
+		return false
+	}
+	return driver.AssuranceConfigured == nil || driver.AssuranceConfigured(home)
+}
+
+func integrationProtectionState(driver integrationDriver, home string) string {
+	if driver.ProtectionState != nil {
+		return driver.ProtectionState(home)
+	}
+	if integrationConfiguredForAssurance(driver, home) {
+		return driver.ProtectionLabel
+	}
+	return ""
 }
 
 func integrationBinaryOrPathInstalled(binary string, paths ...string) bool {
