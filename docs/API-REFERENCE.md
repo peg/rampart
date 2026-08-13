@@ -482,6 +482,8 @@ Approving a `/v1/tool/*` request that supplied both `run_id` and
 `tool_call_id` creates a short-lived, one-shot grant for the exact original
 request. Requests without both stable identifiers retain the existing polling
 flow and are not given a reusable command-level grant.
+Per-agent requests must retry with the same `eval` token; another token for the
+same agent cannot inherit either the pending approval or its one-shot grant.
 
 `persist: true` stores an exact rule for `exec`, `read`, `write`, or `edit`.
 Unsupported tool types return `400` and leave the approval pending so the
