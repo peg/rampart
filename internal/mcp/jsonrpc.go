@@ -18,7 +18,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Request is the minimal JSON-RPC 2.0 request/notification envelope used by MCP.
@@ -49,14 +52,166 @@ type ToolsCallParams struct {
 	Arguments map[string]any `json:"arguments"`
 }
 
-// NormalizedID returns a stable key for request/response ID tracking.
+// NormalizedID returns a stable key for request/response ID tracking. It
+// distinguishes JSON strings from JSON numbers and normalizes equivalent JSON
+// spellings to the same value. Invalid IDs return the empty string.
 func NormalizedID(id json.RawMessage) string {
-	return string(bytes.TrimSpace(id))
+	key, err := normalizedID(id)
+	if err != nil {
+		return ""
+	}
+	return key
 }
 
 // HasID reports whether the JSON-RPC message has a non-empty id field.
 func HasID(id json.RawMessage) bool {
 	return len(bytes.TrimSpace(id)) > 0
+}
+
+// maxRequestIDBytes bounds exact ID normalization work. MCP request IDs are
+// opaque correlation tokens, not payload carriers; UUID-sized IDs are typical.
+// Without a separate bound, a child can force expensive big-integer parsing up
+// to the four-megabyte JSON-RPC line limit.
+const maxRequestIDBytes = 1024
+
+// normalizedID decodes an MCP request ID before deriving its correlation key.
+// The raw JSON spelling is not an identity: for example, "a" and "\\u0061"
+// are the same JSON string. Numeric identities stay exact by using big.Rat,
+// rather than float64, and only integral values are accepted for MCP IDs.
+func normalizedID(id json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(id)
+	if len(trimmed) == 0 {
+		return "", fmt.Errorf("missing id")
+	}
+	if len(trimmed) > maxRequestIDBytes {
+		return "", fmt.Errorf("id exceeds %d-byte limit", maxRequestIDBytes)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", fmt.Errorf("decode id: %w", err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return "", err
+	}
+
+	switch value := value.(type) {
+	case string:
+		if err := validateJSONStringEncoding(trimmed); err != nil {
+			return "", err
+		}
+		canonical, err := json.Marshal(value)
+		if err != nil {
+			return "", fmt.Errorf("encode string id: %w", err)
+		}
+		if len(canonical) > maxRequestIDBytes {
+			return "", fmt.Errorf("normalized id exceeds %d-byte limit", maxRequestIDBytes)
+		}
+		// Keep the JSON type in the key. Without this prefix, the string ID
+		// "1" would collide with the numeric ID 1 after numeric
+		// canonicalization.
+		return "s:" + string(canonical), nil
+	case json.Number:
+		canonical, err := canonicalIntegerID(value.String())
+		if err != nil {
+			return "", err
+		}
+		return "n:" + canonical, nil
+	default:
+		return "", fmt.Errorf("id must be a string or integer")
+	}
+}
+
+// validateJSONStringEncoding rejects encodings that encoding/json repairs by
+// substitution. In particular, JavaScript preserves lone UTF-16 surrogates
+// while Go converts them to U+FFFD; accepting both would make distinct peer IDs
+// share a correlation key.
+func validateJSONStringEncoding(raw []byte) error {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' || !utf8.Valid(raw) {
+		return fmt.Errorf("id must be a valid UTF-8 JSON string")
+	}
+	for index := 1; index < len(raw)-1; index++ {
+		if raw[index] != '\\' {
+			continue
+		}
+		index++
+		if index >= len(raw)-1 {
+			return fmt.Errorf("invalid string escape in id")
+		}
+		if raw[index] != 'u' {
+			continue
+		}
+		unit, ok := decodeJSONHexUnit(raw, index+1)
+		if !ok {
+			return fmt.Errorf("invalid unicode escape in id")
+		}
+		index += 4
+		switch {
+		case unit >= 0xd800 && unit <= 0xdbff:
+			if index+6 >= len(raw) || raw[index+1] != '\\' || raw[index+2] != 'u' {
+				return fmt.Errorf("unpaired high surrogate in id")
+			}
+			low, validLow := decodeJSONHexUnit(raw, index+3)
+			if !validLow || low < 0xdc00 || low > 0xdfff {
+				return fmt.Errorf("unpaired high surrogate in id")
+			}
+			index += 6
+		case unit >= 0xdc00 && unit <= 0xdfff:
+			return fmt.Errorf("unpaired low surrogate in id")
+		}
+	}
+	return nil
+}
+
+func decodeJSONHexUnit(raw []byte, start int) (uint16, bool) {
+	if start < 0 || start+4 > len(raw) {
+		return 0, false
+	}
+	var value uint16
+	for _, char := range raw[start : start+4] {
+		value <<= 4
+		switch {
+		case char >= '0' && char <= '9':
+			value |= uint16(char - '0')
+		case char >= 'a' && char <= 'f':
+			value |= uint16(char-'a') + 10
+		case char >= 'A' && char <= 'F':
+			value |= uint16(char-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return value, true
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func canonicalIntegerID(raw string) (string, error) {
+	if exponentAt := strings.IndexAny(raw, "eE"); exponentAt >= 0 {
+		exponent, err := strconv.Atoi(raw[exponentAt+1:])
+		if err != nil || exponent > maxRequestIDBytes || exponent < -maxRequestIDBytes {
+			return "", fmt.Errorf("id exponent exceeds normalization limit")
+		}
+	}
+	rational, ok := new(big.Rat).SetString(raw)
+	if !ok || !rational.IsInt() {
+		return "", fmt.Errorf("id must be an integer")
+	}
+	canonical := rational.Num().String()
+	if len(canonical) > maxRequestIDBytes {
+		return "", fmt.Errorf("normalized id exceeds %d-byte limit", maxRequestIDBytes)
+	}
+	return canonical, nil
 }
 
 // MarshalErrorResponse builds a JSON-RPC error response for a given id.
@@ -102,13 +257,14 @@ func decodeCanonicalJSONObject(data []byte, canonicalKeys ...string) (map[string
 	if object == nil {
 		return nil, fmt.Errorf("expected JSON object")
 	}
-	canonical := make(map[string]string, len(canonicalKeys))
-	for _, key := range canonicalKeys {
-		canonical[strings.ToLower(key)] = key
-	}
 	for key := range object {
-		if expected, protected := canonical[strings.ToLower(key)]; protected && key != expected {
-			return nil, fmt.Errorf("noncanonical object member %q; use %q", key, expected)
+		for _, expected := range canonicalKeys {
+			// encoding/json matches struct fields with Unicode simple folding,
+			// not strings.ToLower. EqualFold mirrors that behavior and catches
+			// spellings such as the long-s variant of "scheme" or "result".
+			if key != expected && strings.EqualFold(key, expected) {
+				return nil, fmt.Errorf("noncanonical object member %q; use %q", key, expected)
+			}
 		}
 	}
 	return object, nil

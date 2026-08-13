@@ -145,13 +145,49 @@ type Proxy struct {
 	stopOnce sync.Once
 
 	pendingMu       sync.Mutex
+	pendingCond     *sync.Cond
+	pendingOwner    uint64
 	pendingCalls    map[string]pendingCall
-	pendingToolList map[string]time.Time
+	pendingToolList map[string]struct{}
+	pendingGeneric  map[string]struct{}
 }
 
+type pendingCallState uint8
+
+const (
+	pendingCallReserved pendingCallState = iota + 1
+	pendingCallWriting
+	pendingCallResponseActive
+	pendingCallRejected
+)
+
 type pendingCall struct {
+	state   pendingCallState
+	owner   uint64
 	call    engine.ToolCall
 	request map[string]any
+}
+
+type pendingCallReservation struct {
+	key   string
+	owner uint64
+}
+
+func (r pendingCallReservation) valid() bool {
+	return r.key != "" && r.owner != 0
+}
+
+type pendingResponseKind uint8
+
+const (
+	pendingResponseGeneric pendingResponseKind = iota + 1
+	pendingResponseToolList
+	pendingResponseToolCall
+)
+
+type pendingResponse struct {
+	kind     pendingResponseKind
+	toolCall pendingCall
 }
 
 // NewProxy creates a new MCP stdio proxy.
@@ -165,8 +201,10 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 		childOut:        childOut,
 		stopCh:          make(chan struct{}),
 		pendingCalls:    make(map[string]pendingCall),
-		pendingToolList: make(map[string]time.Time),
+		pendingToolList: make(map[string]struct{}),
+		pendingGeneric:  make(map[string]struct{}),
 	}
+	p.pendingCond = sync.NewCond(&p.pendingMu)
 	for _, opt := range opts {
 		if opt != nil {
 			opt(p)
@@ -354,19 +392,48 @@ func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) er
 		return p.handleToolsCall(ctx, req, line)
 	}
 
+	pendingToolListID := ""
+	pendingGenericID := ""
 	if p.filterTools && req.Method == "tools/list" && HasID(req.ID) {
-		if err := p.trackPendingToolList(req.ID); err != nil {
-			return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: "+err.Error())
+		var err error
+		pendingToolListID, err = p.trackPendingToolList(req.ID)
+		if err != nil {
+			if p.mode == "enforce" {
+				return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: "+err.Error())
+			}
+			p.logger.Debug("mcp: untrackable tools/list id in monitor mode; passing through", "error", err)
+			pendingToolListID = ""
+		}
+	} else if req.Method != "" && HasID(req.ID) {
+		var err error
+		pendingGenericID, err = p.reservePendingGeneric(req.ID)
+		if err != nil {
+			if p.mode == "enforce" {
+				return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: "+err.Error())
+			}
+			p.logger.Debug("mcp: untrackable request id in monitor mode; passing through", "method", req.Method, "error", err)
+			pendingGenericID = ""
 		}
 	}
 
-	return p.writeToChild(line)
+	if err := p.writeToChild(line); err != nil {
+		p.releasePendingToolList(pendingToolListID)
+		p.releasePendingGeneric(pendingGenericID)
+		return err
+	}
+	return nil
 }
 
 func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte) error {
 	if p.mode == "enforce" {
-		if _, err := decodeCanonicalJSONObject(req.Params, "name", "arguments"); err != nil {
+		paramsFields, err := decodeCanonicalJSONObject(req.Params, "name", "arguments")
+		if err != nil {
 			return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: invalid tools/call params")
+		}
+		if arguments, ok := paramsFields["arguments"]; ok && !bytes.Equal(bytes.TrimSpace(arguments), []byte("null")) {
+			if _, err := decodeCanonicalJSONObject(arguments, securitySensitiveArgumentKeys...); err != nil {
+				return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: invalid tools/call arguments")
+			}
 		}
 	}
 	var params ToolsCallParams
@@ -391,20 +458,17 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		params.Arguments = map[string]any{}
 	}
 
-	pendingID := ""
-	reservationActive := false
+	var reservation pendingCallReservation
 	if HasID(req.ID) {
 		var reserveErr error
-		pendingID, reserveErr = p.reservePendingCall(req.ID)
+		reservation, reserveErr = p.reservePendingCall(req.ID)
 		if reserveErr != nil {
-			return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: "+reserveErr.Error())
-		}
-		reservationActive = true
-		defer func() {
-			if reservationActive {
-				p.releasePendingCall(pendingID)
+			if p.mode == "enforce" {
+				return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: "+reserveErr.Error())
 			}
-		}()
+			p.logger.Debug("mcp: untrackable tools/call id in monitor mode; passing through", "error", reserveErr)
+		}
+		defer p.releasePendingCall(reservation)
 	}
 
 	requestData := buildRequestData(req.Method, params.Name, params.Arguments)
@@ -515,17 +579,20 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		// Webhook allowed — fall through to forward the call.
 	}
 
-	if pendingID != "" {
-		p.pendingMu.Lock()
-		p.pendingCalls[pendingID] = pendingCall{call: call, request: requestData}
-		p.pendingMu.Unlock()
+	if reservation.valid() {
+		forwarded, err := p.forwardReservedCall(reservation, pendingCall{call: call, request: requestData}, rawLine)
+		if err != nil {
+			return err
+		}
+		if forwarded {
+			return nil
+		}
+		if p.mode == "enforce" {
+			return p.writeErrorToClient(responseID(req.ID), jsonRPCDenyCode, "Rampart: tools/call correlation was invalidated before forwarding")
+		}
+		p.logger.Debug("mcp: tools/call correlation invalidated in monitor mode; passing through untracked")
 	}
-
-	if err := p.writeToChild(rawLine); err != nil {
-		return err
-	}
-	reservationActive = false
-	return nil
+	return p.writeToChild(rawLine)
 }
 
 func responseID(id json.RawMessage) json.RawMessage {
@@ -539,89 +606,152 @@ func responseID(id json.RawMessage) json.RawMessage {
 // JSON-RPC discourages fractional numeric IDs, and MCP requires a request ID to
 // be a string or integer that is not null.
 func validRequestID(id json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(id)
-	if len(trimmed) == 0 {
-		return false
-	}
-	if trimmed[0] == '"' {
-		var value string
-		return json.Unmarshal(trimmed, &value) == nil
-	}
-	for index, char := range trimmed {
-		if index == 0 && char == '-' {
-			if len(trimmed) == 1 {
-				return false
-			}
-			continue
-		}
-		if char < '0' || char > '9' {
-			return false
-		}
-	}
-	return true
+	_, err := normalizedID(id)
+	return err == nil
 }
 
-func (p *Proxy) reservePendingCall(id json.RawMessage) (string, error) {
-	key := NormalizedID(id)
+func (p *Proxy) reservePendingCall(id json.RawMessage) (pendingCallReservation, error) {
+	key, err := normalizedID(id)
+	if err != nil {
+		return pendingCallReservation{}, fmt.Errorf("invalid request id: %w", err)
+	}
 	p.pendingMu.Lock()
 	defer p.pendingMu.Unlock()
-	p.evictStalePendingCalls()
-	if _, exists := p.pendingCalls[key]; exists {
+	if p.pendingIDExistsLocked(key) {
+		return pendingCallReservation{}, fmt.Errorf("request id %s is already pending", key)
+	}
+	if p.pendingCountLocked() >= maxPendingRequests {
+		return pendingCallReservation{}, fmt.Errorf("pending tools/call capacity reached")
+	}
+	p.pendingOwner++
+	if p.pendingOwner == 0 {
+		p.pendingOwner++
+	}
+	reservation := pendingCallReservation{key: key, owner: p.pendingOwner}
+	// Reservation blocks duplicate IDs during evaluation and approval, but is
+	// deliberately not eligible to correlate a child response.
+	p.pendingCalls[key] = pendingCall{state: pendingCallReserved, owner: reservation.owner}
+	return reservation, nil
+}
+
+func (p *Proxy) releasePendingCall(reservation pendingCallReservation) {
+	if !reservation.valid() {
+		return
+	}
+	p.pendingMu.Lock()
+	if pending, ok := p.pendingCalls[reservation.key]; ok && pending.owner == reservation.owner {
+		delete(p.pendingCalls, reservation.key)
+	}
+	p.pendingMu.Unlock()
+}
+
+// forwardReservedCall moves an owned reservation through a non-correlatable
+// writing state and makes it response-active only after the child write
+// succeeds. Responses that arrive while the write is in progress wait for the
+// outcome, so an immediate legitimate response cannot outrun activation.
+func (p *Proxy) forwardReservedCall(reservation pendingCallReservation, call pendingCall, line []byte) (bool, error) {
+	p.pendingMu.Lock()
+	pending, owned := p.pendingCalls[reservation.key]
+	if !owned || pending.owner != reservation.owner || pending.state != pendingCallReserved {
+		p.pendingMu.Unlock()
+		return false, nil
+	}
+	call.state = pendingCallWriting
+	call.owner = reservation.owner
+	p.pendingCalls[reservation.key] = call
+	p.pendingMu.Unlock()
+
+	writeErr := p.writeToChild(line)
+
+	p.pendingMu.Lock()
+	pending, owned = p.pendingCalls[reservation.key]
+	owned = owned && pending.owner == reservation.owner && pending.state == pendingCallWriting
+	if owned {
+		if writeErr != nil {
+			delete(p.pendingCalls, reservation.key)
+		} else {
+			pending.state = pendingCallResponseActive
+			pending.owner = 0
+			p.pendingCalls[reservation.key] = pending
+		}
+	}
+	p.pendingCond.Broadcast()
+	p.pendingMu.Unlock()
+
+	if writeErr != nil {
+		return false, writeErr
+	}
+	if !owned {
+		return false, fmt.Errorf("mcp: tools/call correlation lost while forwarding")
+	}
+	return true, nil
+}
+
+func (p *Proxy) trackPendingToolList(id json.RawMessage) (string, error) {
+	key, err := normalizedID(id)
+	if err != nil {
+		return "", fmt.Errorf("invalid request id: %w", err)
+	}
+	p.pendingMu.Lock()
+	defer p.pendingMu.Unlock()
+	if p.pendingIDExistsLocked(key) {
 		return "", fmt.Errorf("request id %s is already pending", key)
 	}
-	if _, exists := p.pendingToolList[key]; exists {
-		return "", fmt.Errorf("request id %s is already pending", key)
+	if p.pendingCountLocked() >= maxPendingRequests {
+		return "", fmt.Errorf("pending tools/list capacity reached")
 	}
-	if len(p.pendingCalls) >= maxPendingRequests {
-		return "", fmt.Errorf("pending tools/call capacity reached")
-	}
-	// Reserve before evaluating so concurrent requests cannot race past the
-	// duplicate-ID check. The child cannot answer before writeToChild, which only
-	// happens after this placeholder is replaced with the complete pending call.
-	p.pendingCalls[key] = pendingCall{}
+	p.pendingToolList[key] = struct{}{}
 	return key, nil
 }
 
-func (p *Proxy) releasePendingCall(key string) {
+func (p *Proxy) releasePendingToolList(key string) {
 	if key == "" {
 		return
 	}
 	p.pendingMu.Lock()
-	delete(p.pendingCalls, key)
+	delete(p.pendingToolList, key)
 	p.pendingMu.Unlock()
 }
 
-func (p *Proxy) trackPendingToolList(id json.RawMessage) error {
-	key := NormalizedID(id)
+func (p *Proxy) reservePendingGeneric(id json.RawMessage) (string, error) {
+	key, err := normalizedID(id)
+	if err != nil {
+		return "", fmt.Errorf("invalid request id: %w", err)
+	}
 	p.pendingMu.Lock()
 	defer p.pendingMu.Unlock()
-	p.evictStalePendingCalls()
-	if _, exists := p.pendingCalls[key]; exists {
-		return fmt.Errorf("request id %s is already pending", key)
+	if p.pendingIDExistsLocked(key) {
+		return "", fmt.Errorf("request id %s is already pending", key)
 	}
-	if _, exists := p.pendingToolList[key]; exists {
-		return fmt.Errorf("request id %s is already pending", key)
+	if p.pendingCountLocked() >= maxPendingRequests {
+		return "", fmt.Errorf("pending request capacity reached")
 	}
-	if len(p.pendingToolList) >= maxPendingRequests {
-		return fmt.Errorf("pending tools/list capacity reached")
-	}
-	p.pendingToolList[key] = time.Now()
-	return nil
+	p.pendingGeneric[key] = struct{}{}
+	return key, nil
 }
 
-// evictStalePendingCalls removes stale tool-list correlation only. Tool-call
-// correlation is bounded by maxPendingRequests but is intentionally never
-// discarded by age: a slow child response must still pass response policy and
-// audit enforcement. Must be called with pendingMu held.
-func (p *Proxy) evictStalePendingCalls() {
-	const maxAge = 5 * time.Minute
-	now := time.Now()
-	// Evict stale pendingToolList entries using the same TTL.
-	for id, insertedAt := range p.pendingToolList {
-		if now.Sub(insertedAt) > maxAge {
-			delete(p.pendingToolList, id)
-		}
+func (p *Proxy) releasePendingGeneric(key string) {
+	if key == "" {
+		return
 	}
+	p.pendingMu.Lock()
+	delete(p.pendingGeneric, key)
+	p.pendingMu.Unlock()
+}
+
+func (p *Proxy) pendingIDExistsLocked(key string) bool {
+	if _, exists := p.pendingCalls[key]; exists {
+		return true
+	}
+	if _, exists := p.pendingToolList[key]; exists {
+		return true
+	}
+	_, exists := p.pendingGeneric[key]
+	return exists
+}
+
+func (p *Proxy) pendingCountLocked() int {
+	return len(p.pendingCalls) + len(p.pendingToolList) + len(p.pendingGeneric)
 }
 
 func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
@@ -633,7 +763,7 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
 		}
 		var err error
-		responseFields, err = decodeCanonicalJSONObject(trimmed, "jsonrpc", "id", "result", "error")
+		responseFields, err = decodeCanonicalJSONObject(trimmed, "jsonrpc", "id", "method", "params", "result", "error")
 		if err != nil {
 			p.logger.Warn("mcp: rejecting case-shadowed child JSON-RPC envelope", "error", err)
 			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
@@ -649,36 +779,67 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 		return p.writeToClient(parentOut, line)
 	}
 	if responseFields == nil {
-		responseFields, _ = decodeCanonicalJSONObject(trimmed, "jsonrpc", "id", "result", "error")
+		responseFields, _ = decodeCanonicalJSONObject(trimmed, "jsonrpc", "id", "method", "params", "result", "error")
 	}
 
-	if p.mode == "enforce" && HasID(resp.ID) && p.hasPendingResponse(resp.ID) {
+	var responseIDKey string
+	if HasID(resp.ID) {
+		var err error
+		responseIDKey, err = normalizedID(resp.ID)
+		if err != nil {
+			if p.mode == "enforce" {
+				return fmt.Errorf("mcp: reject child JSON-RPC response: invalid response id: %w", err)
+			}
+			return p.writeToClient(parentOut, line)
+		}
+	}
+
+	_, hasMethod := responseFields["method"]
+	_, hasResult := responseFields["result"]
+	_, hasError := responseFields["error"]
+	if hasMethod {
+		if p.mode == "enforce" && (hasResult || hasError) {
+			return fmt.Errorf("mcp: reject ambiguous child JSON-RPC request/response envelope")
+		}
+		// MCP is bidirectional: a child server request or notification is not a
+		// response to a client request, even when their ID values happen to match.
+		return p.writeToClient(parentOut, line)
+	}
+
+	if responseIDKey == "" {
+		if p.mode == "enforce" {
+			return fmt.Errorf("mcp: reject child JSON-RPC response: uncorrelated response")
+		}
+		return p.writeToClient(parentOut, line)
+	}
+
+	if !p.preparePendingResponse(responseIDKey) {
+		if p.mode == "enforce" {
+			return fmt.Errorf("mcp: reject child JSON-RPC response: uncorrelated response")
+		}
+		return p.writeToClient(parentOut, line)
+	}
+	if p.mode == "enforce" {
 		if err := validateCorrelatedResponse(resp, responseFields); err != nil {
 			return fmt.Errorf("mcp: reject child JSON-RPC response: %w", err)
 		}
 	}
 
-	if p.filterTools && HasID(resp.ID) {
-		if filtered, handled, err := p.maybeFilterToolsList(resp); err != nil {
-			return err
-		} else if handled {
-			return p.writeToClient(parentOut, filtered)
+	pending, correlated := p.consumePendingResponse(responseIDKey)
+	if !correlated {
+		if p.mode == "enforce" {
+			return fmt.Errorf("mcp: reject child JSON-RPC response: uncorrelated response")
 		}
-	}
-
-	if !HasID(resp.ID) {
 		return p.writeToClient(parentOut, line)
 	}
-
-	id := NormalizedID(resp.ID)
-	p.pendingMu.Lock()
-	pending, ok := p.pendingCalls[id]
-	if ok {
-		delete(p.pendingCalls, id)
+	if pending.kind == pendingResponseToolList && p.filterTools {
+		filtered, err := p.filterToolsListResponse(resp)
+		if err != nil {
+			return err
+		}
+		return p.writeToClient(parentOut, filtered)
 	}
-	p.pendingMu.Unlock()
-
-	if !ok {
+	if pending.kind != pendingResponseToolCall {
 		return p.writeToClient(parentOut, line)
 	}
 
@@ -690,10 +851,10 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 		p.logger.Debug("mcp: response canonicalization failed in monitor mode", "error", responseErr)
 	}
 	if responseBody != "" {
-		result := p.engine.EvaluateResponse(pending.call, responseBody)
-		responseRequest := cloneMap(pending.request)
+		result := p.engine.EvaluateResponse(pending.toolCall.call, responseBody)
+		responseRequest := cloneMap(pending.toolCall.request)
 		responseRequest["mcp_phase"] = "response"
-		if err := p.writeAudit(pending.call, result, responseRequest, &audit.ToolResponse{DurationMS: result.EvalDuration.Milliseconds()}); err != nil {
+		if err := p.writeAudit(pending.toolCall.call, result, responseRequest, &audit.ToolResponse{DurationMS: result.EvalDuration.Milliseconds()}); err != nil {
 			p.logger.Error("mcp: response audit write failed", "error", err)
 			if p.mode == "enforce" {
 				return p.writeErrorToClient(resp.ID, jsonRPCResponseDenyCode, "Rampart: audit storage is unavailable; refusing tool response")
@@ -712,13 +873,56 @@ func (p *Proxy) handleChildLine(line []byte, parentOut io.Writer) error {
 	return p.writeToClient(parentOut, line)
 }
 
-func (p *Proxy) hasPendingResponse(id json.RawMessage) bool {
-	normalized := NormalizedID(id)
+// preparePendingResponse waits for an in-progress child write to commit before
+// allowing correlation. A response that arrives while a tools/call is merely
+// reserved invalidates that reservation; it must never consume empty metadata
+// or allow the request to be forwarded later.
+func (p *Proxy) preparePendingResponse(normalized string) bool {
 	p.pendingMu.Lock()
 	defer p.pendingMu.Unlock()
-	_, toolCall := p.pendingCalls[normalized]
-	_, toolList := p.pendingToolList[normalized]
-	return toolCall || toolList
+	for {
+		if call, ok := p.pendingCalls[normalized]; ok {
+			switch call.state {
+			case pendingCallReserved:
+				call.state = pendingCallRejected
+				p.pendingCalls[normalized] = call
+				return false
+			case pendingCallWriting:
+				p.pendingCond.Wait()
+				continue
+			case pendingCallResponseActive:
+				return true
+			default:
+				return false
+			}
+		}
+		if _, ok := p.pendingToolList[normalized]; ok {
+			return true
+		}
+		_, ok := p.pendingGeneric[normalized]
+		return ok
+	}
+}
+
+func (p *Proxy) consumePendingResponse(normalized string) (pendingResponse, bool) {
+	p.pendingMu.Lock()
+	defer p.pendingMu.Unlock()
+	if call, ok := p.pendingCalls[normalized]; ok {
+		if call.state != pendingCallResponseActive {
+			return pendingResponse{}, false
+		}
+		delete(p.pendingCalls, normalized)
+		return pendingResponse{kind: pendingResponseToolCall, toolCall: call}, true
+	}
+	if _, ok := p.pendingToolList[normalized]; ok {
+		delete(p.pendingToolList, normalized)
+		return pendingResponse{kind: pendingResponseToolList}, true
+	}
+	if _, ok := p.pendingGeneric[normalized]; ok {
+		delete(p.pendingGeneric, normalized)
+		return pendingResponse{kind: pendingResponseGeneric}, true
+	}
+	return pendingResponse{}, false
 }
 
 func validateCorrelatedResponse(resp Response, fields map[string]json.RawMessage) error {
@@ -733,27 +937,16 @@ func validateCorrelatedResponse(resp Response, fields map[string]json.RawMessage
 	return nil
 }
 
-func (p *Proxy) maybeFilterToolsList(resp Response) ([]byte, bool, error) {
-	id := NormalizedID(resp.ID)
-	p.pendingMu.Lock()
-	_, requested := p.pendingToolList[id]
-	if requested {
-		delete(p.pendingToolList, id)
-	}
-	p.pendingMu.Unlock()
-	if !requested {
-		return nil, false, nil
-	}
-
+func (p *Proxy) filterToolsListResponse(resp Response) ([]byte, error) {
 	var result map[string]any
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		p.logger.Debug("mcp: tools/list result parse failed; skipping filter", "error", err)
-		return ensureTrailingNewline(mustJSONMarshal(resp)), true, nil
+		return ensureTrailingNewline(mustJSONMarshal(resp)), nil
 	}
 
 	toolsAny, ok := result["tools"].([]any)
 	if !ok {
-		return ensureTrailingNewline(mustJSONMarshal(resp)), true, nil
+		return ensureTrailingNewline(mustJSONMarshal(resp)), nil
 	}
 
 	filtered := make([]any, 0, len(toolsAny))
@@ -795,7 +988,15 @@ func (p *Proxy) maybeFilterToolsList(resp Response) ([]byte, bool, error) {
 
 	result["tools"] = filtered
 	resp.Result = mustJSONMarshal(result)
-	return ensureTrailingNewline(mustJSONMarshal(resp)), true, nil
+	return ensureTrailingNewline(mustJSONMarshal(resp)), nil
+}
+
+var securitySensitiveArgumentKeys = []string{
+	"command", "cmd", "input",
+	"path", "file_path", "file", "filepath", "target",
+	"url", "uri", "href",
+	"workdir", "cwd",
+	"domain", "scheme",
 }
 
 func buildRequestData(method, toolName string, arguments map[string]any) map[string]any {
