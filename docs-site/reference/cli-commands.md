@@ -301,7 +301,7 @@ Proxy MCP servers with policy enforcement.
 ```bash
 rampart mcp -- npx @mcp/server-fs .             # Enforce mode
 rampart mcp --mode monitor -- server            # Audit only
-rampart mcp scan -- npx @mcp/server-fs .        # Auto-generate policies
+rampart mcp scan -- <server>                     # Disabled; exits 1 with migration guidance
 ```
 
 ### `rampart init`
@@ -312,6 +312,7 @@ Initialize a policy file.
 rampart init                          # Standard profile
 rampart init --profile paranoid       # Paranoid profile
 rampart init --profile yolo           # Yolo profile
+rampart init --profile mcp-server     # Static MCP starter policy
 rampart init --detect                 # Auto-detect environment
 ```
 
