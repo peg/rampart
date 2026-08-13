@@ -1215,6 +1215,10 @@ func tokenize(cmd string) []string {
 			i++
 			for i < len(cmd) && cmd[i] != '"' {
 				if cmd[i] == '\\' && i+1 < len(cmd) {
+					if cmd[i+1] == '\n' {
+						i += 2
+						continue
+					}
 					i++
 					cur.WriteByte(cmd[i])
 					i++
@@ -1231,6 +1235,10 @@ func tokenize(cmd string) []string {
 
 		// Backslash escape outside quotes.
 		if ch == '\\' && i+1 < len(cmd) {
+			if cmd[i+1] == '\n' {
+				i += 2
+				continue
+			}
 			i++
 			cur.WriteByte(cmd[i])
 			i++

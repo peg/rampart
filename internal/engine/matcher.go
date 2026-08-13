@@ -567,6 +567,17 @@ func matchRestrictiveCommandCandidateFirst(patterns []string, command string, ac
 	if matched := matchCommandFirstForAction(patterns, command, action); matched != "" {
 		return matched
 	}
+	canonical := ""
+	overflow := visitCanonicalCommandAliases(command, func(alias string) bool {
+		canonical = matchCommandFirstForAction(patterns, alias, action)
+		return canonical == ""
+	})
+	if canonical != "" {
+		return canonical
+	}
+	if overflow && len(patterns) > 0 {
+		return patterns[0]
+	}
 	if normalized := NormalizeCommand(command); normalized != command {
 		if matched := matchCommandFirstForAction(patterns, normalized, action); matched != "" {
 			return matched
@@ -790,16 +801,6 @@ func restrictiveCommandAliases(command string) []string {
 		tokens[0] = base
 		appendAlias(tokens)
 
-		if base == "rm" {
-			for _, canonical := range canonicalRestrictiveRM(tokens) {
-				appendAlias(canonical)
-			}
-		}
-		if base == "find" {
-			for _, canonical := range canonicalRestrictiveFindDelete(tokens) {
-				appendAlias(canonical)
-			}
-		}
 		if base == "bash" || base == "sh" || base == "zsh" || base == "dash" {
 			for i, token := range tokens {
 				if token != "<<<" || i+1 >= len(tokens) {
@@ -812,7 +813,7 @@ func restrictiveCommandAliases(command string) []string {
 	return aliases
 }
 
-func canonicalRestrictiveRM(tokens []string) [][]string {
+func restrictiveRMOperands(tokens []string) []string {
 	recursive := false
 	force := false
 	operands := make([]string, 0, len(tokens))
@@ -861,11 +862,7 @@ func canonicalRestrictiveRM(tokens []string) [][]string {
 	if !recursive || !force {
 		return nil
 	}
-	aliases := make([][]string, 0, len(operands))
-	for _, operand := range operands {
-		aliases = append(aliases, []string{"rm", "-rf", cleanRestrictivePOSIXPath(operand)})
-	}
-	return aliases
+	return operands
 }
 
 func stripUnquotedShellComment(value string) string {
@@ -896,49 +893,168 @@ func stripUnquotedShellComment(value string) string {
 	return value
 }
 
-func canonicalRestrictiveFindDelete(tokens []string) [][]string {
-	hasDelete := false
-	targets := make([]string, 0, 2)
-	expressionStarted := false
-	for index := 1; index < len(tokens); index++ {
-		token := tokens[index]
-		if token == "-delete" {
-			hasDelete = true
-			expressionStarted = true
-			continue
+const maxCanonicalCommandAliases = 256
+
+func containsFold(value, substring string) bool {
+	for len(value) >= len(substring) {
+		if strings.EqualFold(value[:len(substring)], substring) {
+			return true
 		}
-		if expressionStarted {
-			continue
-		}
-		if token == "--" || token == "-H" || token == "-L" || token == "-P" {
-			continue
-		}
-		if token == "-D" && index+1 < len(tokens) {
-			index++
-			continue
-		}
-		if strings.HasPrefix(token, "-O") {
-			continue
-		}
-		if strings.HasPrefix(token, "-") || token == "!" || token == "(" {
-			expressionStarted = true
-			continue
-		}
-		targets = append(targets, token)
+		value = value[1:]
 	}
-	if !hasDelete || len(targets) == 0 {
-		return nil
+	return false
+}
+
+func mayNeedCanonicalCommandAliases(command string) bool {
+	if strings.Contains(command, "rm") || strings.Contains(command, "find") || strings.ContainsAny(command, "'\"\\") {
+		return true
 	}
-	aliases := make([][]string, 0, len(targets))
-	for _, target := range targets {
-		aliases = append(aliases, []string{"rm", "-rf", cleanRestrictivePOSIXPath(target)})
+	return platformUsesCaseInsensitiveNames(runtime.GOOS) && strings.IndexFunc(command, unicode.IsUpper) >= 0 &&
+		(containsFold(command, "rm") || containsFold(command, "find"))
+}
+
+func unwrapRestrictiveExecutor(tokens []string) []string {
+	for {
+		next := stripPOSIXTransparentExecutorOnce(tokens)
+		if len(next) > 1 && (shellWrapperBasename(next[0]) == "busybox" || shellWrapperBasename(next[0]) == "toybox") {
+			next = next[1:]
+		}
+		if strSlicesEqual(next, tokens) {
+			return next
+		}
+		tokens = next
 	}
-	return aliases
+}
+
+func visitCanonicalCommandAliases(command string, visit func(string) bool) bool {
+	if !mayNeedCanonicalCommandAliases(command) {
+		return false
+	}
+	emitted, overflow := 0, false
+	emit := func(operand string) bool {
+		if emitted == maxCanonicalCommandAliases {
+			overflow = true
+			return false
+		}
+		emitted++
+		return visit("rm -rf " + cleanRestrictivePOSIXPath(operand))
+	}
+	visitRM := func(tokens, targets []string) bool {
+		for _, operand := range restrictiveRMOperands(tokens) {
+			if len(targets) > 0 && strings.Contains(operand, "{}") {
+				for _, target := range targets {
+					if !emit(pathpkg.Clean(strings.ReplaceAll(operand, "{}", target))) {
+						return false
+					}
+				}
+			} else if !emit(operand) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, segment := range SplitCompoundCommand(stripUnquotedShellComment(command)) {
+		tokens := unwrapRestrictiveExecutor(tokenizeForOS(maskLiteralRedirects(segment), "posix"))
+		if len(tokens) == 0 {
+			continue
+		}
+		base := shellWrapperBasename(tokens[0])
+		if base == "rm" {
+			if !visitRM(tokens, nil) {
+				return overflow
+			}
+			continue
+		}
+		if base != "find" {
+			continue
+		}
+		targets, expression := make([]string, 0, 2), len(tokens)
+		for index := 1; index < len(tokens); index++ {
+			token := tokens[index]
+			if token == "-D" && index+1 < len(tokens) {
+				index++
+				continue
+			}
+			if token == "--" || token == "-H" || token == "-L" || token == "-P" || strings.HasPrefix(token, "-O") {
+				continue
+			}
+			if strings.HasPrefix(token, "-") || token == "!" || token == "(" {
+				expression = index
+				break
+			}
+			targets = append(targets, token)
+		}
+		if len(targets) == 0 {
+			targets = append(targets, ".")
+		}
+		for index := expression; len(targets) > 0 && index < len(tokens); index++ {
+			if tokens[index] == "-delete" {
+				for _, target := range targets {
+					if !emit(target) {
+						return overflow
+					}
+				}
+				continue
+			}
+			if tokens[index] != "-exec" && tokens[index] != "-execdir" {
+				continue
+			}
+			end := index + 1
+			for end < len(tokens) && tokens[end] != ";" && tokens[end] != "+" {
+				end++
+			}
+			if end == len(tokens) {
+				continue
+			}
+			action := unwrapRestrictiveExecutor(tokens[index+1 : end])
+			if len(action) > 0 && shellWrapperBasename(action[0]) == "rm" && !visitRM(action, targets) {
+				return overflow
+			}
+			index = end
+		}
+	}
+	return overflow
+}
+
+func maskLiteralRedirects(command string) string {
+	if !strings.ContainsAny(command, "<>") {
+		return command
+	}
+	masked := []byte(command)
+	var quote byte
+	escaped := false
+	for index, char := range masked {
+		if escaped {
+			if char == '<' || char == '>' {
+				masked[index] = '='
+			}
+			escaped = false
+			continue
+		}
+		if char == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if (char == '\'' && quote != '"') || (char == '"' && quote != '\'') {
+			if quote == char {
+				quote = 0
+			} else if quote == 0 {
+				quote = char
+			}
+		}
+		if quote != 0 && (char == '<' || char == '>') {
+			masked[index] = '='
+		}
+	}
+	return string(masked)
 }
 
 func cleanRestrictivePOSIXPath(value string) string {
-	if strings.HasPrefix(value, "/") {
-		return pathpkg.Clean(value)
+	cleaned := pathpkg.Clean(value)
+	// Keep ordinary relative spellings intact: collapsing them could broaden a
+	// policy exclusion across a symlink. Parent/current traversal is restrictive.
+	if strings.HasPrefix(value, "/") || cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return cleaned
 	}
 	return value
 }
@@ -1068,16 +1184,62 @@ func analyzeGrantCommand(command string) grantCommandAnalysis {
 // command component satisfies the positive command fields of a restrictive
 // rule. Components are evaluated separately so a safe command exclusion cannot
 // consume a shell operator and suppress a dangerous sibling.
-func matchRestrictiveCommandComponent(cond Condition, component string, action Action) (bool, string) {
-	if matched := matchRestrictiveCommandFirst(cond.CommandMatches, component, action); matched != "" {
-		return true, fmt.Sprintf("command_matches [%q] (restrictive command interpretation)", matched)
+func matchRestrictiveCommandComponent(cond Condition, component string, action Action) (bool, bool, string) {
+	positive := false
+	if matched, substring := matchRestrictiveCommandContains(cond.CommandContains, component); matched {
+		positive = true
+		if len(cond.CommandMatches) > 0 || !restrictiveCommandComponentExcluded(cond.CommandNotMatches, component) {
+			return true, true, fmt.Sprintf("command_contains [%q]", substring)
+		}
 	}
-	for _, substring := range cond.CommandContains {
-		if strings.Contains(strings.ToLower(component), strings.ToLower(substring)) {
-			return true, fmt.Sprintf("command_contains [%q]", substring)
+	canonicalPositive, canonicalDetail := false, ""
+	overflow := visitCanonicalCommandAliases(component, func(alias string) bool {
+		pattern := matchCommandFirstForAction(cond.CommandMatches, alias, action)
+		if pattern == "" {
+			return true
+		}
+		canonicalPositive = true
+		if !matchCommandAnyForAction(cond.CommandNotMatches, alias, ActionAllow) {
+			canonicalDetail = fmt.Sprintf("command_matches [%q] (canonical operand)", pattern)
+			return false
+		}
+		return true
+	})
+	if canonicalDetail != "" {
+		return true, true, canonicalDetail
+	}
+	if canonicalPositive || overflow && len(cond.CommandMatches) > 0 {
+		return overflow, true, ""
+	}
+	if matched := matchRestrictiveCommandFirst(cond.CommandMatches, component, action); matched != "" {
+		positive = true
+		if !restrictiveCommandComponentExcluded(cond.CommandNotMatches, component) {
+			return true, true, fmt.Sprintf("command_matches [%q] (restrictive command interpretation)", matched)
+		}
+	}
+	return false, positive, ""
+}
+
+func matchCommandContainsFold(substrings []string, command string) (bool, string) {
+	lowerCommand := strings.ToLower(command)
+	for _, substring := range substrings {
+		if strings.Contains(lowerCommand, strings.ToLower(substring)) {
+			return true, substring
 		}
 	}
 	return false, ""
+}
+
+func matchRestrictiveCommandContains(substrings []string, command string) (bool, string) {
+	matched, substring := matchCommandContainsFold(substrings, command)
+	if matched || len(substrings) == 0 || !strings.ContainsAny(command, "'\"\\") {
+		return matched, substring
+	}
+	normalized := NormalizeCommand(command)
+	if normalized == command {
+		return false, ""
+	}
+	return matchCommandContainsFold(substrings, normalized)
 }
 
 func restrictiveCommandComponentExcluded(patterns []string, component string) bool {
@@ -1091,11 +1253,6 @@ func restrictiveCommandComponentExcluded(patterns []string, component string) bo
 		if normalized := NormalizeCommand(candidate); normalized != candidate &&
 			matchCommandAnyForAction(patterns, normalized, ActionAllow) {
 			return true
-		}
-		for _, alias := range restrictiveCommandAliases(candidate) {
-			if matchCommandAnyForAction(patterns, alias, ActionAllow) {
-				return true
-			}
 		}
 	}
 	return false
@@ -1114,24 +1271,21 @@ func restrictiveCommandMatchAfterExclusions(
 ) (bool, string) {
 	analysis := analyzeGrantCommand(command)
 	if !analysis.composite {
-		matched, detail := matchRestrictiveCommandComponent(cond, command, action)
-		if !matched {
+		matched, positive, detail := matchRestrictiveCommandComponent(cond, command, action)
+		if !positive {
 			return wholeCommandMatched, ""
 		}
-		if restrictiveCommandComponentExcluded(cond.CommandNotMatches, command) {
-			return false, ""
-		}
-		return true, detail
+		return matched, detail
 	}
 
 	matchedComponent := false
 	for _, component := range analysis.components {
-		matched, detail := matchRestrictiveCommandComponent(cond, component, action)
-		if !matched {
+		matched, positive, detail := matchRestrictiveCommandComponent(cond, component, action)
+		if !positive {
 			continue
 		}
 		matchedComponent = true
-		if !restrictiveCommandComponentExcluded(cond.CommandNotMatches, component) {
+		if matched {
 			return true, detail + " (unexcluded executed component)"
 		}
 	}
@@ -1369,27 +1523,15 @@ func ExplainConditionForAction(cond Condition, call ToolCall, action Action) (bo
 			return true, detail
 		}
 
-		// command_matches (glob) — enforcement has already confirmed the whole
-		// condition; reuse the same restrictive candidate pipeline for detail.
+		if matched, detail := restrictiveCommandMatchAfterExclusions(cond, cmd, action, true); matched && detail != "" {
+			return true, detail
+		}
+		if matched, sub := matchRestrictiveCommandContains(cond.CommandContains, cmd); matched {
+			return true, fmt.Sprintf("command_contains [%q]", sub)
+		}
 		if len(cond.CommandMatches) > 0 {
 			if matched := matchRestrictiveCommandFirst(cond.CommandMatches, cmd, action); matched != "" {
 				return true, fmt.Sprintf("command_matches [%q] (restrictive command interpretation)", matched)
-			}
-		}
-
-		// command_contains (case-insensitive substring) — catches patterns glob can't
-		// express, e.g. bash <(curl URL) where the URL's / breaks glob * matching.
-		// Case-insensitive so BASH <(CURL URL) doesn't bypass.
-		for _, sub := range cond.CommandContains {
-			contains := sub != "" && strings.Contains(cmd, sub)
-			if actionRestrictsExecution(action) {
-				// Config validation rejects empty values. Keep direct/programmatic
-				// restrictive conditions fail-closed: an empty literal therefore
-				// retains strings.Contains semantics and matches every command.
-				contains = strings.Contains(strings.ToLower(cmd), strings.ToLower(sub))
-			}
-			if contains {
-				return true, fmt.Sprintf("command_contains [%q]", sub)
 			}
 		}
 		return false, ""
@@ -1778,16 +1920,7 @@ func matchConditionForAction(cond Condition, call ToolCall, counter CallCounter,
 		// Useful for patterns that globs can't express (e.g. bash <(curl URL)
 		// where the URL's / prevents glob * from matching across separators).
 		if !cmdMatch && actionRestrictsExecution(action) {
-			for _, sub := range cond.CommandContains {
-				// Loaded policies cannot contain an empty value. If an internal
-				// caller constructs one anyway, matching it is the fail-closed
-				// behavior for deny/ask actions.
-				contains := strings.Contains(strings.ToLower(cmd), strings.ToLower(sub))
-				if contains {
-					cmdMatch = true
-					break
-				}
-			}
+			cmdMatch, _ = matchRestrictiveCommandContains(cond.CommandContains, cmd)
 		}
 
 		if !cmdMatch {

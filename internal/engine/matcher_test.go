@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -700,6 +701,135 @@ func TestRestrictiveCommandExclusionsAreComponentScoped(t *testing.T) {
 			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
 			if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
 				t.Fatalf("matchConditionForAction(command=%q) = %v, want %v", test.command, got, test.want)
+			}
+		})
+	}
+}
+
+func TestRestrictiveCanonicalOperands(t *testing.T) {
+	cond := Condition{
+		CommandMatches:    []string{"rm -rf /", "rm -rf .", "rm -rf /etc", "rm -rf /var/**", "rm -rf ../*"},
+		CommandNotMatches: []string{"rm -rf /tmp/**", "rm -rf /var/log/**"},
+	}
+	tests := []struct {
+		name, command string
+		want          bool
+	}{
+		{"quoted redirect keeps later root", `rm -rf '>' /`, true},
+		{"option terminator keeps later root", `rm -rf -- '>' /`, true},
+		{"escaped redirect keeps later root", `rm -rf \> /`, true},
+		{"unquoted redirect target is not operand", `rm -rf > /`, false},
+		{"same rm has restricted operand", `rm -rf /var/log/archive /var/lib/app`, true},
+		{"excluded rm plus unrelated operand", `rm -rf /var/log/archive /opt/build`, false},
+		{"find exec root", `find / -exec /bin/rm -rf {} \;`, true},
+		{"find transparent wrapper", `find /tmp -exec env rm -rf {} / +`, true},
+		{"find placeholder parent", `find /tmp -exec rm -rf {}/.. \;`, true},
+		{"find expands before clean", `find / -exec rm -rf /tmp/{}/../etc +`, true},
+		{"find trailing delete", `find / -exec true {} \; -delete`, true},
+		{"find implicit current delete", `find -delete`, true},
+		{"find implicit current exec", `find -exec rm -rf {} \;`, true},
+		{"fixed point multicall wrapper", `busybox env /bin/rm -rf /var/log/archive /`, true},
+		{"find fixed point wrapper", `find /tmp -exec busybox env /bin/rm -rf {} / +`, true},
+		{"relative parent traversal", `rm -rf work/../../*`, true},
+		{"case-folded rm", `RM -rf /var/log/archive /`, platformUsesCaseInsensitiveNames(runtime.GOOS)},
+		{"case-folded find", `FIND / -delete`, platformUsesCaseInsensitiveNames(runtime.GOOS)},
+		{"safe find", `find /tmp -exec /bin/rm -rf {} +`, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+			if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
+				t.Fatalf("matchConditionForAction(%q) = %v, want %v", test.command, got, test.want)
+			}
+		})
+	}
+	ordinary := ToolCall{Tool: "exec", Params: map[string]any{"command": "rm -rf work/../cache"}}
+	if matchConditionForAction(Condition{CommandMatches: []string{"rm -rf cache"}}, ordinary, nil, ActionDeny) {
+		t.Fatal("relative cleaning broadened an ordinary destination")
+	}
+	targets, operands := make([]string, 20), make([]string, 20)
+	for index := range targets {
+		targets[index], operands[index] = fmt.Sprintf("/tmp/t%d", index), fmt.Sprintf("{}/o%d", index)
+	}
+	command := "find " + strings.Join(targets, " ") + " -exec rm -rf " + strings.Join(operands, " ") + ` \;`
+	call := ToolCall{Tool: "exec", Params: map[string]any{"command": command}}
+	if !matchConditionForAction(Condition{CommandMatches: []string{"rm -rf /never"}}, call, nil, ActionDeny) {
+		t.Fatal("canonical expansion limit did not fail closed")
+	}
+	explainCond := Condition{
+		CommandMatches:    []string{"rm -rf /var/**", "rm -rf /"},
+		CommandNotMatches: []string{"rm -rf /var/log/**"},
+	}
+	explainCall := ToolCall{Tool: "exec", Params: map[string]any{"command": "rm -rf /var/log/archive /"}}
+	wantDetail := `command_matches ["rm -rf /"] (canonical operand)`
+	if matched, detail := ExplainConditionForAction(explainCond, explainCall, ActionDeny); !matched || detail != wantDetail {
+		t.Fatalf("canonical explanation = (%v, %q), want (true, %q)", matched, detail, wantDetail)
+	}
+}
+
+func TestRestrictiveCommandContainsNormalization(t *testing.T) {
+	cond := Condition{CommandContains: []string{".ssh/id_"}}
+	for _, test := range []struct {
+		command string
+		want    bool
+	}{
+		{`cat ~/.ssh/id'_rsa'`, true},
+		{"cat ~/.ssh/id\\\n_rsa", true},
+		{`printf %s ~/.ssh/id _rsa`, false},
+	} {
+		call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+		if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
+			t.Fatalf("matchConditionForAction(%q) = %v, want %v", test.command, got, test.want)
+		}
+	}
+	combined := Condition{
+		CommandMatches:    []string{"rm -rf /var/**"},
+		CommandContains:   []string{"protected-marker"},
+		CommandNotMatches: []string{"rm -rf /var/log/**"},
+	}
+	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "rm -rf /var/log/archive protected-marker"}}
+	if !matchConditionForAction(combined, call, nil, ActionDeny) {
+		t.Fatal("canonical command exclusion suppressed independent command_contains match")
+	}
+	if matched, detail := ExplainConditionForAction(combined, call, ActionDeny); !matched || !strings.Contains(detail, "command_contains") {
+		t.Fatalf("explanation lost independent command_contains match: matched=%v detail=%q", matched, detail)
+	}
+}
+
+func BenchmarkRestrictiveFindExpansionBound(b *testing.B) {
+	cond := Condition{CommandMatches: []string{"rm -rf /never"}}
+	for _, count := range []int{10, 300} {
+		targets, operands := make([]string, count), make([]string, count)
+		for index := range count {
+			targets[index] = fmt.Sprintf("/tmp/t%d", index)
+			operands[index] = fmt.Sprintf("{}/o%d", index)
+		}
+		command := "find " + strings.Join(targets, " ") + " -exec rm -rf " + strings.Join(operands, " ") + ` \;`
+		call := ToolCall{Tool: "exec", Params: map[string]any{"command": command}}
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = matchConditionForAction(cond, call, nil, ActionDeny)
+			}
+		})
+	}
+}
+
+func BenchmarkRestrictiveCommandMiss(b *testing.B) {
+	for _, test := range []struct {
+		name, command string
+		cond          Condition
+	}{
+		{"contains ordinary", "git status --short", Condition{CommandContains: []string{".ssh/id_"}}},
+		{"contains uppercase", "printf %s $PATH", Condition{CommandContains: []string{".ssh/id_"}}},
+		{"matches ordinary", "git status --short", Condition{CommandMatches: []string{"rm -rf /"}}},
+		{"matches uppercase miss", "GIT status --short", Condition{CommandMatches: []string{"rm -rf /"}}},
+	} {
+		call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+		b.Run(test.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = matchConditionForAction(test.cond, call, nil, ActionDeny)
 			}
 		})
 	}
