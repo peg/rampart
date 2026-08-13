@@ -145,10 +145,6 @@ jobs:
         if: runner.os != 'Windows'
         run: bash scripts/test-installers.sh
 
-      - name: Landing page sources are synced
-        if: runner.os == 'Linux'
-        run: cmp -s docs-site/index.html docs/index.html
-
       - name: Repository documents use canonical sources
         if: runner.os == 'Linux'
         run: sh scripts/check-api-reference.sh

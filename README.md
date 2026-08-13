@@ -871,7 +871,10 @@ Snare plants canary tokens in your AI agent's environment - API keys, cloud cred
 
 ## Contributing
 
-Contributions welcome. Open an issue first for anything beyond small fixes. All work goes through the `staging` branch. PRs to `main` require one approving review.
+Contributions are welcome—from focused bug fixes and documentation improvements
+to integration compatibility and security hardening. Start with the
+[contributor guide](CONTRIBUTING.md); report suspected vulnerabilities privately
+through [SECURITY.md](SECURITY.md).
 
 ---
 
