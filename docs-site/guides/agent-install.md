@@ -45,18 +45,26 @@ Expected output: `rampart vX.Y.Z`
 
 ---
 
-## Step 2: Run quickstart (non-interactive)
+## Step 2: Protect detected agents (non-interactive)
 
-This single command auto-detects the running AI environment, installs the background policy service, wires up hooks, and runs a health check:
+This single command auto-detects supported AI tools, starts or verifies the
+local policy service, wires up their native boundaries, and runs safe active
+verification:
 
 ```bash
-rampart quickstart --yes
+rampart protect
 ```
 
-Quickstart is non-interactive. The `--yes` flag remains accepted for
-compatibility with existing CI, remote-shell, and agent-driven install scripts.
+`rampart protect` is non-interactive. It installs the managed Guard policy,
+starts or verifies the local policy service, configures every detected supported
+native integration, and runs safe active verification without invoking a model.
+On Windows, the service helper uses a login-scoped background process rather
+than a persistent system service. The deprecated `rampart quickstart --yes`
+spelling remains available for existing scripts.
 
-**OpenClaw note:** protection applies to future tool calls, not the current session. Restart the OpenClaw gateway after this step for hooks to take effect.
+**OpenClaw note:** protection applies to future tool calls, not the current
+session. `rampart protect` restarts the OpenClaw gateway automatically; restart
+it manually only if you explicitly use `--no-restart`.
 
 **Serve note:** direct Claude Code and Cline native hooks can evaluate policy locally without `rampart serve`, but dashboard views, approval APIs, and OpenClaw plugin evaluation rely on the local service.
 
@@ -181,9 +189,10 @@ policies:
 Re-run protection or setup for your specific agent:
 
 ```bash
-rampart protect openclaw   # OpenClaw managed guard + behavioral verification
-rampart setup claude-code  # Claude Code native hooks
-rampart setup cline        # Cline native hooks
+rampart protect             # Detect and repair supported integrations
+rampart protect openclaw    # OpenClaw managed guard + behavioral verification
+rampart protect claude-code # Claude Code native hooks + verification
+rampart protect cline       # Cline native hooks + verification
 ```
 
 **Service not running**
@@ -209,7 +218,8 @@ Then add an allow rule for your specific use case. See [Securing Claude Code](ht
 
 | Command | What it does |
 |---------|--------------|
-| `rampart quickstart --yes` | Full non-interactive setup |
+| `rampart protect` | Detect, configure, and verify supported integrations |
+| `rampart quickstart --yes` | Deprecated compatibility workflow |
 | `rampart doctor` | Health check — hooks, service, permissions |
 | `rampart status` | Show configured agents, assurance evidence, mode, and today's counts |
 | `rampart watch` | Live feed of tool decisions observed by Rampart |

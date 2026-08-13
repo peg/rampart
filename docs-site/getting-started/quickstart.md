@@ -38,15 +38,23 @@ Before you dive in, skim the [integration support matrix](support-matrix.md) if 
 ## One-Command Setup
 
 ```bash
-rampart quickstart
-rampart verify --all
+rampart protect
 ```
 
 This discovers integrations in Rampart's current auto-protect registry, installs
-the service when the selected path needs it, wires up the appropriate boundary,
-and verifies the result. The second command gives you one aggregate re-check of
-the policy engine and every configured integration with an active behavioral
-verifier.
+the managed Guard policy, starts or verifies the local service, wires up the
+appropriate boundary, and verifies the result. No agent name or policy authoring
+is required.
+
+`rampart quickstart` remains as a deprecated compatibility workflow for scripts
+that rely on its `--profile`, `--agents none`, or wrap-only agent guidance. Its
+supported native integrations now use the same managed protection path.
+
+For a later aggregate re-check, run:
+
+```bash
+rampart verify --all
+```
 
 `rampart verify --all` uses fixed safe canaries. It does not invoke a model,
 execute commands, read files, send messages, or contact external hosts. Static-only
@@ -70,14 +78,13 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
 === "Claude Code"
 
     ```bash
-    rampart setup claude-code
+    rampart protect claude-code
     ```
 
 === "Cline"
 
     ```bash
-    rampart setup cline
-    rampart verify cline
+    rampart protect cline
     ```
 
     Keep both hooks enabled in Cline. Legacy Cline CLI `--yolo` disables
@@ -86,8 +93,7 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
 === "Codex"
 
     ```bash
-    rampart setup codex
-    rampart verify codex
+    rampart protect codex
     ```
 
 === "Gemini CLI (experimental)"
@@ -105,8 +111,7 @@ See [Configuration](configuration.md) for the full `url` / `serve_url` / `api` s
 
     ```bash
     # CLI adapter; also installs the shared VS Code Preview hook contract
-    rampart setup copilot
-    rampart verify copilot
+    rampart protect copilot
     ```
 
 === "Any CLI Agent"

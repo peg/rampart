@@ -44,23 +44,18 @@ Without an agent argument, Rampart detects installed supported agents and
 protects each one through its strongest available native boundary.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureDefaultRampartDirAccessible(); err != nil {
-				return fmt.Errorf("protect: prepare Rampart data directory: %w", err)
+			if err := prepareManagedProtection(rootOpts); err != nil {
+				return err
 			}
 			target := ""
 			if len(args) == 1 {
 				target = strings.ToLower(strings.TrimSpace(args[0]))
 			}
-			var drivers []integrationDriver
+			drivers, err := resolveProtectionTargets(target)
+			if err != nil {
+				return err
+			}
 			if target == "" {
-				detected, err := detectInstalledIntegrationDrivers()
-				if err != nil {
-					return fmt.Errorf("protect: detect installed agents: %w", err)
-				}
-				if len(detected) == 0 {
-					return fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Antigravity, GitHub Copilot, Cline; Gemini CLI and Hermes remain experimental)")
-				}
-				drivers = detected
 				fmt.Fprintf(cmd.OutOrStdout(), "Detected %d supported agent(s): ", len(drivers))
 				for i, driver := range drivers {
 					if i > 0 {
@@ -70,42 +65,20 @@ protects each one through its strongest available native boundary.`,
 				}
 				fmt.Fprintln(cmd.OutOrStdout())
 			} else {
-				driver, ok := findIntegrationDriver(target)
-				if !ok {
-					return fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, antigravity, copilot, cline; Gemini CLI and Hermes remain experimental)", target)
-				}
-				if !driver.AutoProtect {
-					return fmt.Errorf("protect: %s remains experimental; use `rampart setup %s` and `rampart verify %s` for explicit testing", driver.DisplayName, driver.ID, driver.VerifyTarget)
-				}
-				if !integrationDriverSupportsPlatform(driver, runtime.GOOS) {
-					return fmt.Errorf("protect: %s is not supported on %s", driver.DisplayName, runtime.GOOS)
-				}
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return fmt.Errorf("protect: resolve home: %w", err)
-				}
-				if driver.Installed == nil || !driver.Installed(home) {
-					return fmt.Errorf("protect: %s was not found; install it first, then rerun `rampart protect %s`", driver.DisplayName, driver.ID)
-				}
-				drivers = []integrationDriver{driver}
+				driver := drivers[0]
 				if !driver.OpenClaw && (cmd.Flags().Changed("no-restart") || cmd.Flags().Changed("reinstall")) {
 					return fmt.Errorf("protect: --no-restart and --reinstall apply only to OpenClaw")
 				}
 			}
 
-			var protectErrors []error
-			for _, driver := range drivers {
-				if driver.OpenClaw {
-					if err := runProtectOpenClaw(cmd, protectOpenClawOptions{NoRestart: noRestart, NoVerify: noVerify, Reinstall: reinstall, ServeURL: serveURL, Timeout: timeout}); err != nil {
-						protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
-					}
-					continue
-				}
-				if err := runProtectHookDriver(cmd, rootOpts, driver, protectHookOptions{NoVerify: noVerify, ServeURL: serveURL, Timeout: timeout}); err != nil {
-					protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
-				}
-			}
-			return errors.Join(protectErrors...)
+			_, err = runProtectionPlan(cmd, rootOpts, drivers, protectionPlanOptions{
+				NoRestart: noRestart,
+				NoVerify:  noVerify,
+				Reinstall: reinstall,
+				ServeURL:  serveURL,
+				Timeout:   timeout,
+			})
+			return err
 		},
 	}
 
@@ -117,6 +90,157 @@ protects each one through its strongest available native boundary.`,
 	return cmd
 }
 
+func resolveProtectionTargets(target string) ([]integrationDriver, error) {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		drivers, err := detectInstalledIntegrationDrivers()
+		if err != nil {
+			return nil, fmt.Errorf("protect: detect installed agents: %w", err)
+		}
+		if len(drivers) == 0 {
+			return nil, fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Antigravity, GitHub Copilot, Cline; Gemini CLI and Hermes remain experimental)")
+		}
+		return drivers, nil
+	}
+
+	driver, ok := findIntegrationDriver(target)
+	if !ok {
+		return nil, fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, antigravity, copilot, cline; Gemini CLI and Hermes remain experimental)", target)
+	}
+	if !driver.AutoProtect {
+		verification := integrationDriverVerificationCommand(driver)
+		if verification == "" {
+			verification = "rampart doctor"
+		}
+		return nil, fmt.Errorf("protect: %s remains experimental; use `rampart setup %s` and `%s` for explicit testing", driver.DisplayName, driver.ID, verification)
+	}
+	if !integrationDriverSupportsPlatform(driver, runtime.GOOS) {
+		return nil, fmt.Errorf("protect: %s is not supported on %s", driver.DisplayName, runtime.GOOS)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("protect: resolve home: %w", err)
+	}
+	if driver.Installed == nil || !driver.Installed(home) {
+		return nil, fmt.Errorf("protect: %s was not found; install it first, then rerun `rampart protect %s`", driver.DisplayName, driver.ID)
+	}
+	return []integrationDriver{driver}, nil
+}
+
+type protectionPlanOptions struct {
+	NoRestart bool
+	NoVerify  bool
+	Reinstall bool
+	ServeURL  string
+	Timeout   time.Duration
+}
+
+type protectionPlanSummary struct {
+	Attempted int
+	Succeeded int
+}
+
+// runProtectionPlan is the single managed setup-and-verification path used by
+// protect and compatibility onboarding commands. Global Guard installation is
+// performed once, while each integration retains ownership of its host-specific
+// transaction and verification semantics.
+func runProtectionPlan(cmd *cobra.Command, rootOpts *rootOptions, drivers []integrationDriver, opts protectionPlanOptions) (protectionPlanSummary, error) {
+	summary := protectionPlanSummary{Attempted: len(drivers)}
+	if err := prepareManagedProtection(rootOpts); err != nil {
+		return summary, err
+	}
+	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return summary, fmt.Errorf("protect: resolve serve URL: %w", err)
+	}
+	guardPath, err := installManagedGuardPolicy()
+	if err != nil {
+		return summary, fmt.Errorf("protect: install managed Guard policy: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Managed Guard policy installed at %s\n", guardPath)
+
+	ordered := make([]integrationDriver, 0, len(drivers))
+	for _, driver := range drivers {
+		if driver.OpenClaw {
+			ordered = append(ordered, driver)
+		}
+	}
+	for _, driver := range drivers {
+		if !driver.OpenClaw {
+			ordered = append(ordered, driver)
+		}
+	}
+
+	serviceReady := false
+	var protectErrors []error
+	for _, driver := range ordered {
+		if driver.OpenClaw {
+			err := runProtectOpenClaw(cmd, protectOpenClawOptions{
+				NoRestart: opts.NoRestart,
+				NoVerify:  opts.NoVerify,
+				Reinstall: opts.Reinstall,
+				ServeURL:  resolvedURL,
+				Timeout:   opts.Timeout,
+			})
+			if err != nil {
+				protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
+				continue
+			}
+			serviceReady = true
+			summary.Succeeded++
+			continue
+		}
+
+		if !serviceReady {
+			if err := ensureServeRunningForURL(cmd.OutOrStdout(), cmd.ErrOrStderr(), resolvedURL); err != nil {
+				protectErrors = append(protectErrors, fmt.Errorf("start Rampart policy service: %w", err))
+				break
+			}
+			serviceReady = true
+		}
+		if err := runProtectHookDriver(cmd, rootOpts, driver, protectHookOptions{
+			NoVerify: opts.NoVerify,
+			ServeURL: resolvedURL,
+			Timeout:  opts.Timeout,
+		}); err != nil {
+			protectErrors = append(protectErrors, fmt.Errorf("%s: %w", driver.DisplayName, err))
+			continue
+		}
+		summary.Succeeded++
+	}
+
+	// quickstart historically supports a policy-and-service-only mode through
+	// --agents none. Preserve that compatibility without inventing a second
+	// service startup path.
+	if len(ordered) == 0 {
+		if err := ensureServeRunningForURL(cmd.OutOrStdout(), cmd.ErrOrStderr(), resolvedURL); err != nil {
+			protectErrors = append(protectErrors, fmt.Errorf("start Rampart policy service: %w", err))
+		}
+	}
+	return summary, errors.Join(protectErrors...)
+}
+
+func validateManagedProtectionConfig(rootOpts *rootOptions) error {
+	if rootOpts == nil {
+		return nil
+	}
+	configPath := strings.TrimSpace(rootOpts.configPath)
+	if configPath == "" || configPath == "rampart.yaml" {
+		return nil
+	}
+	return fmt.Errorf("protect: custom --config is not supported by managed protection yet; use the default configuration or manage the service explicitly with `rampart serve install`")
+}
+
+func prepareManagedProtection(rootOpts *rootOptions) error {
+	if err := validateManagedProtectionConfig(rootOpts); err != nil {
+		return err
+	}
+	if err := ensureDefaultRampartDirAccessible(); err != nil {
+		return fmt.Errorf("protect: prepare Rampart data directory: %w", err)
+	}
+	return nil
+}
+
 type protectHookOptions struct {
 	NoVerify bool
 	ServeURL string
@@ -125,20 +249,7 @@ type protectHookOptions struct {
 
 func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver integrationDriver, opts protectHookOptions) error {
 	w := cmd.OutOrStdout()
-	errW := cmd.ErrOrStderr()
 	fmt.Fprintf(w, "\nProtecting %s through %s...\n", driver.DisplayName, driver.Boundary)
-	resolvedURL, err := resolveServeURLStrict(opts.ServeURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
-	if err != nil {
-		return fmt.Errorf("protect %s: resolve serve URL: %w", driver.ID, err)
-	}
-	guardPath, err := installManagedGuardPolicy()
-	if err != nil {
-		return fmt.Errorf("protect %s: install managed Guard policy: %w", driver.ID, err)
-	}
-	fmt.Fprintf(w, "✓ Managed Guard policy installed at %s\n", guardPath)
-	if err := ensureServeRunningForURL(w, errW, resolvedURL); err != nil {
-		return fmt.Errorf("protect %s: start Rampart policy service: %w", driver.ID, err)
-	}
 	if err := runIntegrationSetup(cmd, rootOpts, driver); err != nil {
 		return fmt.Errorf("protect %s: configure native integration: %w", driver.ID, err)
 	}
@@ -148,7 +259,7 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 		return nil
 	}
 	time.Sleep(150 * time.Millisecond)
-	report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, resolvedURL, opts.Timeout)
+	report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, opts.ServeURL, opts.Timeout)
 	receiptErr := writeVerificationReceipt(report)
 	fmt.Fprintln(w)
 	printVerificationReport(w, report)
@@ -185,12 +296,6 @@ func runProtectOpenClaw(cmd *cobra.Command, opts protectOpenClawOptions) error {
 		return fmt.Errorf("protect: invalid OpenClaw policy service URL: %w", err)
 	}
 	fmt.Fprintln(w, "Protecting OpenClaw with Rampart managed defaults...")
-
-	guardPath, err := installManagedGuardPolicy()
-	if err != nil {
-		return fmt.Errorf("protect: install managed Guard policy: %w", err)
-	}
-	fmt.Fprintf(w, "✓ Managed Guard policy installed at %s\n", guardPath)
 	// Install every managed policy before setup starts rampart serve. A fresh
 	// protect run must never briefly start with only the Guard layer loaded.
 	if err := installOpenClawPolicy(w, errW); err != nil {

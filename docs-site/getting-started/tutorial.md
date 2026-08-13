@@ -57,26 +57,19 @@ rampart version
 ## Step 2: One Command to Get Protected
 
 ```bash
-rampart quickstart
+rampart protect
 ```
 
 That's it. This single command:
 
 1. Detects your AI agent (Claude Code, Codex, Cline, etc.)
 2. Installs the right Rampart integration for that agent
-3. Starts or verifies `rampart serve` when that integration needs the local service
-4. Runs `rampart doctor` to verify everything is healthy
+3. Starts or verifies the local `rampart serve` policy service
+4. Runs active safe verification and records the resulting assurance evidence
 
-```
-✓ Detected Claude Code
-✓ Rampart service installed and running
-✓ Hooks registered in ~/.claude/settings.json
-✓ Hook binary path verified
-✓ Token auth working
-✓ 1 policy loaded
-
-🛡️  Rampart is active. Use Claude Code normally.
-```
+The command exits unsuccessfully if a selected native integration cannot be
+configured or its active safe verification is incomplete. Its final report
+shows the checks that passed and gives a specific repair hint for any failure.
 
 Now start Claude Code:
 
@@ -91,7 +84,7 @@ observe work performed inside an already allowed process.
 
 !!! note "Different agents use different integration paths"
     Claude Code, Cline, and Codex use native hooks; Gemini CLI has an experimental native-hook path. OpenClaw uses a native
-    plugin. The exact setup varies by agent, but `rampart quickstart` picks the
+    plugin. The exact setup varies by agent, but `rampart protect` picks the
     right path automatically. See the [support matrix](support-matrix.md).
 
 ---
