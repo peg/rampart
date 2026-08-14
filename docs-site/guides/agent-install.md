@@ -159,8 +159,9 @@ rampart policy explain '<command>'
 For common durable exceptions or blocks, use `rampart allow` and
 `rampart block`; these write user-owned overrides separately from Rampart's
 maintained standard policy. For a custom approval rule, edit
-`~/.rampart/policies/custom.yaml`, which setup creates as an upgrade-safe
-starter file. Do not customize `standard.yaml`, because Rampart manages that
+`~/.rampart/policies/custom.yaml`. The deprecated bare `rampart setup` wizard
+creates this upgrade-safe starter file; otherwise create it when you need custom
+rules. Do not customize `standard.yaml`, because Rampart manages that
 profile during updates. See [Customizing Policy](customizing-policy.md) and the
 [Policy Schema](../reference/policy-schema.md) for details.
 

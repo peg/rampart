@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The bare interactive setup wizard is deprecated** — It remains functional
+  throughout Rampart 1.x for compatibility, including `--force`, but managed
+  onboarding now leads with `rampart protect`. Integration-specific
+  `rampart setup <agent>` commands remain supported for advanced operations;
+  removal of the bare wizard is planned for 2.0.
+
 ## [1.6.2] - 2026-08-11
 
 ### Security

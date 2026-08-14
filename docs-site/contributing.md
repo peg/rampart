@@ -15,7 +15,7 @@ cd rampart
 go test ./...
 ```
 
-Requires Go 1.25.12+.
+Requires Go 1.25.13+.
 
 ## Workflow
 

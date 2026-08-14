@@ -57,15 +57,6 @@ func detectAgents() []agentInfo {
 	return agents
 }
 
-// isTerminal returns true if the given file descriptor is a terminal.
-func isTerminal(fd *os.File) bool {
-	fi, err := fd.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
-}
-
 // runInteractiveSetup launches the interactive setup wizard.
 func runInteractiveSetup(cmd *cobra.Command, opts *rootOptions) error {
 	if !isTerminal(os.Stdin) {

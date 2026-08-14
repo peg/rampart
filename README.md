@@ -4,7 +4,7 @@
 
 **A firewall for AI coding agents.**
 
-[![Go](https://img.shields.io/badge/Go-1.25.12+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.25.13+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/peg/rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/peg/rampart/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/peg/rampart?style=flat)](https://github.com/peg/rampart/releases)
@@ -33,7 +33,7 @@ brew install peg/tap/rampart
 # One-line install (no sudo required)
 curl -fsSL https://rampart.sh/install | bash
 
-# Go install (requires Go 1.25.12+)
+# Go install (requires Go 1.25.13+)
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
@@ -441,7 +441,11 @@ rampart init --profile mcp-server
 
 Policies are YAML. Glob matching, hot-reload on file change.
 
-> `rampart setup` creates `~/.rampart/policies/custom.yaml` as a starter template. It's never overwritten by upgrades.
+> The deprecated bare `rampart setup` wizard creates
+> `~/.rampart/policies/custom.yaml` as a starter template. It remains available
+> throughout Rampart 1.x for compatibility, but new onboarding should use
+> `rampart protect`. Integration-specific `rampart setup <agent>` commands remain
+> supported for advanced operations.
 
 ```yaml
 version: "1"
@@ -823,7 +827,7 @@ go build -o rampart ./cmd/rampart
 go test ./...
 ```
 
-Requires Go 1.25.12+.
+Requires Go 1.25.13+.
 
 ---
 

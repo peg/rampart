@@ -59,14 +59,24 @@ func uninstallDarwin(cmd *cobra.Command, runner commandRunner) error {
 		return err
 	}
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	definition, exists, err := readRegularServiceFile(path)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Service is not installed.")
 		return nil
+	}
+	if err := validateManagedLaunchdService(definition, path, plistLabel); err != nil {
+		return err
 	}
 
 	// Best-effort unload; ignore errors (service may not be running).
 	_ = runner("launchctl", "unload", path).Run()
 
+	if err := requireUnchangedServiceFile(path, true, definition); err != nil {
+		return fmt.Errorf("service definition changed before removal: %w", err)
+	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove plist: %w", err)
 	}
@@ -81,14 +91,24 @@ func uninstallLinux(cmd *cobra.Command, runner commandRunner) error {
 		return err
 	}
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	definition, exists, err := readRegularServiceFile(path)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Service is not installed.")
 		return nil
+	}
+	if err := validateManagedSystemdService(definition, path); err != nil {
+		return err
 	}
 
 	// Best-effort stop+disable.
 	_ = runner("systemctl", "--user", "disable", "--now", "rampart-serve.service").Run()
 
+	if err := requireUnchangedServiceFile(path, true, definition); err != nil {
+		return fmt.Errorf("service definition changed before removal: %w", err)
+	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove unit: %w", err)
 	}
