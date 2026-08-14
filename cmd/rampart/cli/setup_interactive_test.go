@@ -1,0 +1,141 @@
+// Copyright 2026 The Rampart Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package cli
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+)
+
+func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
+	agents := detectAgents()
+	wantNames := []string{"Claude Code", "Cline", "OpenClaw", "Codex", "GitHub Copilot CLI / VS Code", "Antigravity CLI / IDE", "Aider", "Cursor", "Windsurf"}
+	if len(agents) != len(wantNames) {
+		t.Fatalf("expected %d agents, got %d", len(wantNames), len(agents))
+	}
+
+	names := map[string]bool{}
+	for _, a := range agents {
+		names[a.Name] = true
+	}
+
+	for _, want := range wantNames {
+		if !names[want] {
+			t.Errorf("missing agent %q", want)
+		}
+	}
+}
+
+func TestDetectAgents_ClaudeCodeDetectedByDir(t *testing.T) {
+	// Create a temp home with .claude dir
+	tmpHome := t.TempDir()
+	testSetHome(t, tmpHome)
+
+	claudeDir := filepath.Join(tmpHome, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// detect.Environment() checks for settings.json, not just the directory.
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agents := detectAgents()
+	for _, a := range agents {
+		if a.Name == "Claude Code" {
+			if !a.Detected {
+				t.Error("expected Claude Code to be detected via ~/.claude/ dir")
+			}
+			return
+		}
+	}
+	t.Error("Claude Code agent not found in results")
+}
+
+func TestDetectAgents_ClineDetectedByVSCodeExtension(t *testing.T) {
+	tmpHome := t.TempDir()
+	testSetHome(t, tmpHome)
+
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".vscode", "extensions", "cline-1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	agents := detectAgents()
+	for _, a := range agents {
+		if a.Name == "Cline" {
+			if !a.Detected {
+				t.Error("expected Cline to be detected via ~/Documents/Cline/ dir")
+			}
+			return
+		}
+	}
+	t.Error("Cline agent not found in results")
+}
+
+func TestIsTerminal_PipeIsNotTerminal(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	if isTerminal(r) {
+		t.Error("pipe should not be detected as terminal")
+	}
+}
+
+func TestRunInteractiveAgentSetupsAggregatesFailures(t *testing.T) {
+	setup := &cobra.Command{Use: "setup"}
+	var stderr bytes.Buffer
+	setup.SetErr(&stderr)
+
+	var succeeded bool
+	good := &cobra.Command{Use: "good", RunE: func(*cobra.Command, []string) error {
+		succeeded = true
+		return nil
+	}}
+	badOne := &cobra.Command{Use: "bad-one", RunE: func(*cobra.Command, []string) error {
+		return errors.New("first failure")
+	}}
+	badTwo := &cobra.Command{Use: "bad-two", RunE: func(*cobra.Command, []string) error {
+		return errors.New("second failure")
+	}}
+	setup.AddCommand(good, badOne, badTwo)
+
+	err := runInteractiveAgentSetups(setup, []agentInfo{
+		{Name: "First", SetupCmd: "bad-one"},
+		{Name: "Working", SetupCmd: "good"},
+		{Name: "Second", SetupCmd: "bad-two"},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "First: first failure") ||
+		!strings.Contains(err.Error(), "Second: second failure") {
+		t.Fatalf("aggregated error = %v", err)
+	}
+	if !succeeded {
+		t.Fatal("later setup was not attempted after an earlier failure")
+	}
+	if got := stderr.String(); !strings.Contains(got, "First setup failed") ||
+		!strings.Contains(got, "Second setup failed") {
+		t.Fatalf("failure output = %q", got)
+	}
+}
+
+// TestNonInteractive pipe detection is covered by TestIsTerminal_Pipe above.

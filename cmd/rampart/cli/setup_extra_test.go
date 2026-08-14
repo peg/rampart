@@ -1,8 +1,8 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -497,26 +497,80 @@ func TestSetupClaudeCodeInstallAndRemoveRefuseSymlinkedSettings(t *testing.T) {
 	}
 }
 
-func TestBareSetupDirectsToProtectWithoutCreatingState(t *testing.T) {
-	for _, args := range [][]string{{"setup"}, {"setup", "--force"}} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			home := t.TempDir()
-			testSetHome(t, home)
-			var out bytes.Buffer
-			var errOut bytes.Buffer
-			cmd := NewRootCmd(context.Background(), &out, &errOut)
-			cmd.SetArgs(args)
+func TestReadLine(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("hello\nworld\n"))
+	if got := readLine(scanner); got != "hello" {
+		t.Errorf("first line = %q", got)
+	}
+	if got := readLine(scanner); got != "world" {
+		t.Errorf("second line = %q", got)
+	}
+	// EOF
+	if got := readLine(scanner); got != "\x00" {
+		t.Errorf("EOF = %q", got)
+	}
+}
 
-			if err := cmd.Execute(); err != nil {
-				t.Fatalf("setup: %v", err)
+func TestReadLine_Empty(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader(""))
+	if got := readLine(scanner); got != "\x00" {
+		t.Errorf("empty = %q", got)
+	}
+}
+
+func TestDetectAgents(t *testing.T) {
+	agents := detectAgents()
+	wantNames := []string{"Claude Code", "Cline", "OpenClaw", "Codex", "GitHub Copilot CLI / VS Code", "Antigravity CLI / IDE", "Aider", "Cursor", "Windsurf"}
+	if len(agents) != len(wantNames) {
+		t.Errorf("expected %d agents, got %d", len(wantNames), len(agents))
+	}
+	// Verify names
+	names := make([]string, len(agents))
+	for i, a := range agents {
+		names[i] = a.Name
+	}
+	for _, want := range wantNames {
+		found := false
+		for _, n := range names {
+			if n == want {
+				found = true
+				break
 			}
-			if !strings.Contains(out.String(), "rampart protect") {
-				t.Fatalf("setup output = %q, want protect guidance", out.String())
-			}
-			if _, err := os.Stat(filepath.Join(home, ".rampart")); !os.IsNotExist(err) {
-				t.Fatalf("bare setup mutated Rampart state: %v", err)
-			}
-		})
+		}
+		if !found {
+			t.Errorf("missing agent %q", want)
+		}
+	}
+}
+
+func TestInstallPolicy(t *testing.T) {
+	dir := t.TempDir()
+	var buf bytes.Buffer
+
+	if err := installPolicy(&buf, dir, "standard"); err != nil {
+		t.Fatal(err)
+	}
+
+	policyPath := filepath.Join(dir, ".rampart", "policies", "standard.yaml")
+	content, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal("policy file not created")
+	}
+	if !strings.HasPrefix(string(content), "# rampart-policy-version: ") {
+		snippet := string(content)
+		if len(snippet) > 40 {
+			snippet = snippet[:40]
+		}
+		t.Fatalf("expected installed policy to be version stamped, got: %q", snippet)
+	}
+
+	// Run again - should say already exists
+	buf.Reset()
+	if err := installPolicy(&buf, dir, "standard"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "already exists") {
+		t.Errorf("expected already exists, got: %s", buf.String())
 	}
 }
 
