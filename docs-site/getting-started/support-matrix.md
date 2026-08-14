@@ -183,9 +183,10 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
   memory, and delegated-agent calls; a real authenticated host proof is still
   pending, and this does not cover Antigravity
 - **Hermes Agent** → experimental plugin path with isolated latest-runtime
-  discovery, dispatch, deny/allow, and degraded-mode checks; `ask` decisions
-  block rather than resume until Hermes exposes a first-class plugin approval flow. Its built-in
-  status check remains static, so it is not included in `rampart verify --all`
+  discovery, dispatch, deny/allow, native approval/resume, and degraded-mode
+  checks. Older Hermes releases block `ask` with upgrade guidance. Its built-in
+  status check remains static, so it is not included in `rampart verify --all`,
+  and authenticated live-host proof remains pending
 
 ## Degraded behavior notes
 
