@@ -54,7 +54,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	// Check run-scoped authorization and enqueue atomically. A bulk cache
 	// publication can never slip between a stale check and Create, leaving an
 	// orphan pending request for a call that should have been auto-approved.
-	pending, autoApproved, err := s.approvals.CreateOrAutoApproved(call, decision)
+	pending, autoApproved, err := s.approvals.CreateOrAutoApproved(call, decision, "")
 	if err != nil {
 		s.logger.Error("proxy: approval store full", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -526,22 +526,32 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 	// if publication wins, the creator observes auto-approved state atomically.
 	if approved && resolveErr == nil && len(matching) > 0 {
 		scopeCall := engine.ToolCall{Agent: req.Agent, Session: req.Session, RunID: req.RunID}
-		for resolveErr == nil {
-			select {
-			case <-r.Context().Done():
-				resolveErr = fmt.Errorf("bulk approval request cancelled before cache publication: %w", r.Context().Err())
-				continue
-			default:
+		owners := make([]*approval.Request, 0, len(matching))
+		seenOwners := make(map[string]struct{}, len(matching))
+		for _, ap := range matching {
+			if _, seen := seenOwners[ap.OwnerScopeID()]; !seen {
+				seenOwners[ap.OwnerScopeID()] = struct{}{}
+				owners = append(owners, ap)
 			}
-			raced, installed := s.approvals.AutoApproveRunIfNoPending(scopeCall, autoApproveTTL)
-			if installed {
-				break
+		}
+		for _, owner := range owners {
+			for resolveErr == nil {
+				select {
+				case <-r.Context().Done():
+					resolveErr = fmt.Errorf("bulk approval request cancelled before cache publication: %w", r.Context().Err())
+					continue
+				default:
+				}
+				raced, installed := s.approvals.AutoApproveRunIfNoPendingForRequest(scopeCall, owner, autoApproveTTL)
+				if installed {
+					break
+				}
+				if len(raced) == 0 {
+					resolveErr = fmt.Errorf("bulk approval scope could not be installed")
+					break
+				}
+				resolveBatch(raced)
 			}
-			if len(raced) == 0 {
-				resolveErr = fmt.Errorf("bulk approval scope could not be installed")
-				break
-			}
-			resolveBatch(raced)
 		}
 		if resolveErr != nil {
 			s.logger.Error("proxy: bulk-resolve could not install auto-approval scope",

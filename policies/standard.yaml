@@ -257,6 +257,10 @@ policies:
             - "rm -rf ../*"
             - "rm -rf ~"
             - "rm -rf ~/**"
+            - "rm -rf $HOME"
+            - "rm -rf $HOME/**"
+            - "rm -rf ${HOME}"
+            - "rm -rf ${HOME}/**"
             - "rm -rf /home"
             - "rm -rf /home/**"
             - "rm -rf /root"
@@ -614,7 +618,9 @@ policies:
           command_contains:
             - ".ssh/id_"
             - '.ssh\id_'
-        message: "SSH private key access blocked"
+            - ".rampart/token"
+            - '.rampart\token'
+        message: "Sensitive credential file access blocked"
       - action: deny
         when:
           command_matches:

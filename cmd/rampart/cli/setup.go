@@ -90,6 +90,8 @@ func claudeSettingsPath(home string) string {
 	return filepath.Join(claudeConfigDir(home), "settings.json")
 }
 
+const setupWizardDeprecation = "Deprecated: bare `rampart setup` will be removed in 2.0; use `rampart protect` for managed onboarding and verification."
+
 func newSetupCmd(opts *rootOptions) *cobra.Command {
 	var force bool
 
@@ -98,7 +100,9 @@ func newSetupCmd(opts *rootOptions) *cobra.Command {
 		Short: "Set up Rampart integrations with AI agents",
 		Long: `Set up Rampart integrations with supported AI agents.
 
-Run without a subcommand to launch the interactive setup wizard.
+The bare interactive wizard is deprecated and will be removed in Rampart 2.0.
+Use "rampart protect" for managed onboarding and verification. Integration-
+specific setup subcommands remain supported for advanced operations.
 
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
@@ -122,11 +126,12 @@ Supported AI Agents:
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.ErrOrStderr(), setupWizardDeprecation)
 			return runInteractiveSetup(cmd, opts)
 		},
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmations during interactive setup")
+	cmd.Flags().BoolVar(&force, "force", false, "Deprecated: skip confirmations during interactive setup")
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
 	cmd.AddCommand(newSetupHermesCmd())
@@ -153,9 +158,11 @@ $HERMES_HOME/plugins/rampart (normally ~/.hermes/plugins/rampart) without
 patching Hermes itself.
 
 The plugin uses Hermes' pre_tool_call hook, calls Rampart's policy API before
-sensitive tool calls execute, defaults to /v1/preflight/{tool}, blocks ask
-responses instead of creating hidden approvals, and fails closed for every tool
-when Rampart serve is unavailable unless an operator explicitly opts a tool out.
+sensitive tool calls execute, defaults to /v1/preflight/{tool}, routes ask
+responses through compatible Hermes installations' native approval/resume flow instead
+of creating hidden approvals, and fails closed for every tool when Rampart serve
+is unavailable unless an operator explicitly opts a tool out. Older Hermes
+releases that lack the required approval contract block ask decisions.
 
 By default this command installs the plugin files only. Use --enable to run
 "hermes plugins enable rampart" after installation. Restart long-running Hermes

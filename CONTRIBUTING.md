@@ -1,285 +1,208 @@
 # Contributing to Rampart
 
-Rampart is a security product. Code quality isn't optional — it's the product. Every PR is reviewed with the assumption that adversaries will read the source looking for weaknesses.
+Thanks for helping make AI tools safer. Contributions do not need to be large:
+clear bug reports, documentation fixes, platform compatibility improvements,
+and focused regression tests are all valuable.
 
-## Contributor License Agreement
+Rampart is a security boundary, so changes are reviewed carefully. The goal is
+not ceremony or maximum test count; it is code and documentation that are easy
+to understand, verify, and maintain.
 
-By submitting a contribution, you agree that your work is licensed under Apache 2.0 and you grant the project maintainers the right to relicense your contributions.
+## Before you start
 
-## Philosophy
+- Report suspected vulnerabilities privately using [SECURITY.md](SECURITY.md).
+  Do not open a public issue for an unpatched bypass or credential exposure.
+- Small, self-contained fixes can go directly to a pull request.
+- For a new integration, major behavior change, or architectural rewrite, open
+  an issue first so we can agree on the boundary and avoid wasted work.
+- Search existing issues and pull requests before starting.
 
-Rampart code is tight, purposeful, and readable. Every line earns its place.
+Useful contribution areas include:
 
-### The Golden Rules
+- reproducing and fixing cross-platform bugs;
+- keeping supported integrations compatible with current upstream releases;
+- simplifying integration lifecycle and CLI code;
+- improving user documentation and error messages;
+- adding a focused regression for a demonstrated security boundary; and
+- measuring and improving real tool-call latency or allocations.
 
-1. **Stdlib first.** If the standard library can do it, use the standard library.
-2. **No magic.** A reader should understand any function without scrolling.
-3. **Errors are values.** Handle them explicitly. Never swallow them.
-4. **Comments explain WHY, not WHAT.** The code says what. Comments say why.
-5. **Extract business logic.** CLI commands wire things together. Logic belongs in `internal/` packages where it can be tested independently.
+## Development setup
 
-## Code Style
+Rampart requires the Go version declared in [`go.mod`](go.mod). Clone the
+repository, then run:
 
-### Functions
-
-Keep functions focused. A function that does one thing is easy to test, easy to review, and easy to trust.
-
-**Business logic functions** (engine evaluation, audit writing, policy parsing): aim for **50 lines or fewer**. If you're over 50, you're probably mixing concerns. Extract.
-
-**CLI command handlers** (cobra RunE functions): these are inherently longer because they wire flags, validation, setup, and execution. That's fine — but the *logic they call* should be extracted into testable functions. A 200-line RunE that calls 10 well-tested functions is better than a 50-line RunE that does too little.
-
-**Test functions**: no length limit. Readability matters more than brevity in tests.
-
-### Files
-
-Organize by responsibility, not by arbitrary line counts. A 600-line file that owns one coherent responsibility is better than three 200-line files that force readers to jump around.
-
-Signs a file should be split:
-- It has multiple unrelated type definitions
-- You need to scroll past code you don't care about to find what you need
-- Different contributors would work on different sections simultaneously
-- The file mixes concerns (HTTP handlers + business logic + data access)
-
-### Examples
-
-**Good:**
-
-```go
-// matchGlob reports whether name matches the glob pattern.
-// Extends filepath.Match with "git *" matching "git push origin main",
-// which filepath.Match can't express with its segment-based wildcards.
-func matchGlob(pattern, name string) bool {
-    if pattern == "" {
-        return false
-    }
-    if pattern == "*" {
-        return true
-    }
-
-    // Trailing wildcard: "git *" should match any git subcommand.
-    if strings.HasSuffix(pattern, " *") {
-        prefix := strings.TrimSuffix(pattern, " *")
-        return name == prefix || strings.HasPrefix(name, prefix+" ")
-    }
-
-    matched, err := filepath.Match(pattern, name)
-    if err != nil {
-        return false
-    }
-    return matched
-}
+```bash
+go test ./...
+go vet ./...
+make security-assurance
 ```
 
-- Godoc says what and why.
-- Early returns for simple cases.
-- One comment in the body explains the non-obvious behavior.
-- Handles errors without panicking.
+Documentation work additionally uses the Python packages in
+[`docs-requirements.txt`](docs-requirements.txt). Some integration checks need
+Node.js or Python; install those only when working on the affected integration.
+The documentation build also requires the D2 version and checksum pinned in
+[`.github/workflows/docs.yml`](.github/workflows/docs.yml) when regenerating its
+architecture diagram.
 
-**Bad:**
+## Repository workflow
 
-```go
-func processToolCall(call ToolCall, config *Config, logger *slog.Logger, sink AuditSink) (any, error) {
-    // validate
-    if call.Tool == "" {
-        return nil, errors.New("tool is empty")
-    }
-    // ... 150 lines mixing evaluation, audit logging, and approval flow
-}
+1. Create a focused branch from current `staging`.
+2. Make the smallest coherent change that solves the problem.
+3. Add or update only the tests and documentation needed for that behavior.
+4. Run checks proportional to the change, followed by the full source checks
+   before requesting review.
+5. Open the pull request against `staging` as a draft while iterating. Drafts
+   receive a fast Linux source check; marking the pull request ready starts the
+   complete cross-platform, packaging, container, and SDK matrix.
+6. Explain the user-visible result, security impact, limitations, and
+   validation performed before requesting review.
+
+The `main` branch represents published releases. Release merges and tags are
+maintainer-managed.
+
+## Design principles
+
+- Prefer the standard library and existing shared helpers.
+- Keep CLI commands focused on parsing and orchestration; reusable behavior
+  belongs in an appropriate `internal/` package.
+- Preserve command, path, tool, and request identity across enforcement,
+  approval, and audit paths.
+- Evaluate every target in compound actions and let the most restrictive
+  decision win.
+- Fail closed when Rampart owns a decision and cannot safely classify, parse,
+  validate, or persist it.
+- Preserve unrelated user configuration and refuse ambiguous ownership when
+  installing, repairing, or removing integrations.
+- Avoid broad refactors in security fixes. Prefer readable, bounded patches.
+- Every production file, test, fixture, script, and document should protect a
+  distinct behavior or serve a durable public purpose.
+
+Comments should explain why a constraint exists rather than restating the code.
+Return and wrap errors instead of swallowing them or matching their text. Do not
+panic in library code.
+
+## Testing and performance
+
+Behavior changes should have focused regression coverage. Security-sensitive
+changes should include adversarial and failure-path cases. Do not add tests for
+trivial wiring or duplicate the same assertion across several layers.
+
+At minimum, substantive changes should pass:
+
+```bash
+go test ./...
+go vet ./...
+make security-assurance
+git diff --check
 ```
 
-- Does three things (evaluate + audit + approve).
-- Comment restates the code.
-- Too many parameters — if you need config, logger, and sink, it's a method on a struct.
+Also run the affected script, documentation build, package build, race test, or
+integration adapter when relevant. CI supplies Linux, macOS, Windows, packaging,
+container, documentation, and policy checks.
 
-### Naming
+Rampart runs in the tool-call path. For matcher, parser, proxy, hook, or audit
+hot-path changes, measure a representative before/after benchmark with
+allocations. A synthetic microbenchmark is useful only when it represents the
+shipped policy and actual path being changed.
 
-```go
-package engine              // ✓ lowercase, single word
-package policyEngine        // ✗
+## Security review questions
 
-type Engine struct{}         // ✓ exported, descriptive, noun
-type PE struct{}             // ✗
+For security-relevant work, describe the answers in the pull request:
 
-func (e *Engine) Evaluate(call ToolCall) Decision  // ✓ verb-noun
-func (p Policy) IsEnabled() bool                   // ✓ predicate
-func (p Policy) GetEnabled() bool                  // ✗ Java-style getter
-```
+- Can alternate casing, quoting, wrappers, symlinks, hard links, or path forms
+  change what Rampart evaluates?
+- Can a compound or multi-target action hide a more dangerous component?
+- Does an error, timeout, malformed message, or persistence failure fail safely?
+- Is the exact approved identity the identity that will execute?
+- Could secrets or terminal controls reach logs, audit storage, APIs, SSE,
+  dashboards, notifications, or errors?
+- Does an upgrade preserve user state and repair only Rampart-owned state?
 
-### Error Handling
+Never include credentials, personal host details, provider output, agent
+memories, sessions, workspaces, or private test-lab evidence in a pull request.
 
-```go
-// Wrap with component prefix so errors are traceable through the call stack.
-cfg, err := store.Load()
-if err != nil {
-    return fmt.Errorf("engine: reload: %w", err)
-}
+## Integration contributions
 
-// Use errors.Is/As, not string matching.
-if errors.Is(err, os.ErrNotExist) { ... }
+Integration support must be described conservatively. Use current primary
+upstream documentation or source, preserve unrelated host configuration, and
+document host-owned timeout or crash behavior.
 
-// Never panic in library code. Return errors.
-// Panics are only for unrecoverable startup failures in main().
-```
+An adapter or generated configuration proves that Rampart's side works; it does
+not prove that an authenticated host loaded the integration. Keep
+[`assurance/integrations.yaml`](assurance/integrations.yaml), the support matrix,
+integration guide, and verifier behavior synchronized.
+
+Do not add credential-aware host runners or private environment details to this
+repository. Public compatibility checks must be credential-free and
+reproducible.
 
 ## Documentation sites
 
-This repository owns the source for both public sites, but they deploy through
-different GitHub Pages projects:
+This repository owns two public sites:
 
-- `rampart.sh` is served directly from `docs/` on the `main` branch of
-  `peg/rampart`. Its standalone landing page is `docs/index.html`.
-- `docs.rampart.sh` is built by MkDocs from `docs-site/`. On changes to `main`,
-  `.github/workflows/docs.yml` publishes the generated `site/` output to the
-  `gh-pages` branch of `peg/rampart-docs`.
+- `rampart.sh` is served from `docs/` on `main`. Its landing page has one
+  canonical source: [`docs/index.html`](docs/index.html).
+- `docs.rampart.sh` is built by MkDocs from `docs-site/` and deployed by
+  [`.github/workflows/docs.yml`](.github/workflows/docs.yml).
 
-`docs-site/index.html` is the editable landing-page source retained beside the
-MkDocs content, while `docs/index.html` is the copy GitHub Pages actually serves
-at `rampart.sh`. Keep those two files byte-for-byte identical; CI enforces this.
-`docs-site/index.md` is a different file: it is the MkDocs homepage served at
-`docs.rampart.sh`.
+The MkDocs homepage is [`docs-site/index.md`](docs-site/index.md); it is not a
+copy of the standalone landing page. User guides live in `docs-site/`. Small
+files under `docs/guides/` and `docs/migration/` preserve old public URLs and
+should remain redirects rather than duplicate guides.
 
-User guides live only in `docs-site/`. Files under `docs/guides/`, plus the old
-community-policy and migration URLs, are compatibility redirects for existing
-`rampart.sh` links and must not become second copies. Repository specifications
-such as the threat model, architecture, and release-lab procedures remain under
-`docs/` and may be linked from the user site.
+The API reference, architecture, and threat model are canonical under `docs/`;
+their MkDocs pages include those sources rather than copying them.
 
-## Testing
+To build the documentation locally:
 
-### Requirements
-
-- **All new code must have tests.** No exceptions.
-- **Critical paths must have benchmarks.** The engine's <10µs eval time is a product guarantee, not a nice-to-have. If your change touches the eval hot path, add or update a benchmark.
-- **Table-driven tests** for anything with multiple input/output cases.
-- **`testify/assert`** for assertions, **`testify/require`** for fatal preconditions.
-
-### Test naming
-
-```go
-func TestEvaluate_DenyWinsOverAllow(t *testing.T)     // ✓ Unit_Behavior
-func TestInitFromAudit_EmptyFile(t *testing.T)         // ✓ Feature_EdgeCase
-func BenchmarkEvaluate(b *testing.B)                   // ✓ always benchmark hot paths
+```bash
+python -m pip install -r docs-requirements.txt
+mkdocs build --strict
 ```
-
-### What to test
-
-- **Always test:** edge cases, error paths, security-relevant logic, anything in `internal/engine/`
-- **Always benchmark:** anything in the eval hot path, anything that runs per-tool-call
-- **Skip:** trivial getters, cobra flag wiring, string formatting
-
-## Performance
-
-Rampart sits in the critical path of every agent tool call. Performance isn't a feature — it's a constraint.
-
-- **Policy evaluation: <10µs per call.** This is tested by `BenchmarkEvaluate`. Any PR that regresses this will be rejected.
-- **No allocations in the hot path** unless unavoidable. Check with `go test -benchmem`.
-- **No network calls during evaluation.** Webhooks and notifications happen asynchronously, after the allow/deny decision.
-
-## Security
-
-This is a security product. Every PR should be reviewed through an adversarial lens.
-
-### Checklist for security-relevant changes
-
-- [ ] Input validation: can a malicious agent craft a tool call that bypasses policy?
-- [ ] Path traversal: does the change handle `../` and symlinks correctly?
-- [ ] Glob safety: can a pattern be crafted to match unintended commands/paths?
-- [ ] Timing: does the change introduce timing side-channels in auth or matching?
-- [ ] Audit integrity: does the change preserve the hash chain?
-- [ ] Fail closed: on error, does the system deny (not allow)?
-
-### Secrets
-
-- Never log secrets, tokens, or credentials — even at debug level.
-- API tokens are compared with `crypto/subtle.ConstantTimeCompare`.
-- Key material uses 0600 file permissions (skip on Windows).
 
 ## Dependencies
 
-### Allowed (direct)
+Prefer the standard library. A new direct dependency needs maintainer agreement
+and a pull-request explanation covering necessity, maintenance health, license,
+binary impact, and security surface. Do not add a framework when a focused
+existing package or standard-library solution is sufficient.
 
-| Dependency | Purpose |
-|-----------|---------|
-| `gopkg.in/yaml.v3` | YAML parsing |
-| `github.com/spf13/cobra` | CLI framework |
-| `github.com/fsnotify/fsnotify` | File watching |
-| `github.com/stretchr/testify` | Test assertions |
-| `github.com/oklog/ulid/v2` | Time-ordered event IDs |
-| `github.com/charmbracelet/bubbletea` | TUI (watch command) |
-| `github.com/charmbracelet/huh` | Interactive prompts |
-| `github.com/charmbracelet/lipgloss` | Terminal styling |
-| `github.com/gorilla/websocket` | Legacy OpenClaw gateway compatibility bridge |
-| `github.com/prometheus/client_golang` | Metrics endpoint |
+## Commit and pull-request guidance
 
-### Not allowed
+Use a conventional prefix such as `feat:`, `fix:`, `docs:`, `test:`,
+`refactor:`, `security:`, `ci:`, or `chore:`. Keep each commit and pull request
+to one reviewable purpose.
 
-- **HTTP frameworks** (gin, echo, chi) — use `net/http`
-- **ORMs** (gorm, ent) — no database
-- **Config libraries** (viper) — use `gopkg.in/yaml.v3`
-- **Logging frameworks** (logrus, zap) — use `log/slog`
+A useful pull-request description answers:
 
-Adding a new dependency requires maintainer approval and a justification in the PR description.
+- What changes for users?
+- Why is this the smallest durable solution?
+- What security or compatibility boundary is affected?
+- What remains intentionally unsupported?
+- Which exact checks were run?
+- Did latency, allocations, binary size, or repository footprint change?
 
-## Git Conventions
+## Project layout
 
-### Commits
-
-```
-feat: add temporal allows (--for, --once)
-fix: handle empty command in exec interceptor
-test: add benchmark for policy evaluation hot path
-docs: update architecture with behavioral vision
-refactor: extract approval handlers from server.go
-ci: add Docker image build on version tags
-chore: update Go to 1.24
-```
-
-- **Conventional commit prefixes:** `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `ci:`, `chore:`
-- One logical change per commit.
-- All tests must pass before committing (`go test ./... && go vet ./...`).
-- No WIP commits in the final history. Squash or rebase before merging.
-
-### Branches
-
-- Feature branches off `staging`: `feat/short-name`, `fix/short-name`
-- PRs target `staging`
-- `staging` → `main` merges are maintainer-only
-
-### PR checklist
-
-- [ ] `go test ./...` passes
-- [ ] `go vet ./...` is clean
-- [ ] New code has tests
-- [ ] Hot path changes include benchmarks
-- [ ] Security-relevant changes include the security checklist above
-- [ ] Commit messages follow conventional format
-- [ ] No new dependencies without justification
-
-## Architecture
-
-```
-cmd/rampart/cli/     CLI command handlers (cobra wiring + flags)
-internal/engine/     Policy evaluation core (HOT PATH — <10µs)
-internal/proxy/      HTTP server, SSE hub, approval flow
-internal/audit/      Hash-chained JSONL audit trail
-internal/approval/   Human approval queue
-internal/mcp/        MCP JSON-RPC proxy
-internal/bridge/     Legacy OpenClaw compatibility bridge
-internal/tlsutil/    TLS certificate management
-internal/policy/     Custom policy file management
-pkg/sdk/             Public Go SDK
-policies/            Built-in policy presets
+```text
+cmd/rampart/cli/   CLI commands and integration orchestration
+internal/engine/   Policy evaluation and matching
+internal/proxy/    HTTP service, approvals, and API boundaries
+internal/audit/    Hash-chained audit storage and exporters
+internal/approval/ Approval state and replay handling
+internal/mcp/      MCP JSON-RPC proxy
+internal/bridge/   Host compatibility bridges
+internal/plugin/   Embedded native integration plugins
+pkg/sdk/           Public Go SDK
+policies/          Shipped policy profiles
+docs-site/         User documentation
+assurance/         Public claim and regression manifests
 ```
 
-**The deny-wins rule:** Any deny from any policy = denied. No exceptions. This is the core invariant of the engine and must never be violated.
+The deny-wins rule is a core invariant: if any applicable policy denies an
+action, the final decision is deny.
 
-## Known Tech Debt
+## License
 
-We track these so contributors know where improvement is welcome:
-
-- `cmd/rampart/cli` still owns too much integration lifecycle and presentation logic
-- `cmd/rampart/cli/hook.go` mixes CLI wiring with host-adapter business logic
-- `internal/engine/matcher.go` combines enforcement matching with explanation tracing
-- Some cobra RunE functions exceed 200 lines of wiring
-
-If you want to tackle any of these, open an issue first to discuss the approach.
+By contributing, you agree that your contribution is provided under the
+project's [Apache 2.0 license](LICENSE).

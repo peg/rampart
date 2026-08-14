@@ -89,20 +89,15 @@ context. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
 # Install
 brew install peg/tap/rampart
 
-# Claude Code
-rampart setup claude-code
-
-# OpenClaw
-rampart protect openclaw
-
-# Codex CLI, IDE, and desktop
-rampart setup codex
+# Detect, configure, and verify supported installed agents
+rampart protect
 
 # Re-check policy and every configured active-verifier integration
 rampart verify --all
 ```
 
-That's it. Pick the integration that matches your agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
+That's it. Rampart selects the strongest supported native boundary for each
+detected agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
 
 ## Frequently Asked Questions
 
@@ -238,10 +233,10 @@ verify -> outcomes.approval
 
 ## Current release
 
-Rampart v1.6.2 hardens audit secrecy, compound-command and self-protection
-enforcement, and MCP/HTTP protocol boundaries. It also corrects plugin
-freshness and Hermes status reporting while grounding public support claims in
-reproducible, credential-free evidence. See the
+Rampart v1.7.0 binds approvals to their requesting identity, hardens MCP and
+compound-command enforcement, unifies managed protection, and adds native
+Hermes approval support for compatible installations. It also reduces the
+repository and CI maintenance footprint while refreshing the public site. See the
 [release notes](https://github.com/peg/rampart/releases/latest) for the concise
 upgrade summary or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.

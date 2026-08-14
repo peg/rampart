@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-08-11 | Applies to: v1.6.2+
+> Last reviewed: 2026-08-14 | Applies to: v1.7.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 

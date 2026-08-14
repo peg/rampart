@@ -14,9 +14,14 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestDetectAgents_ReturnsAllKnownAgents(t *testing.T) {
@@ -84,16 +89,60 @@ func TestDetectAgents_ClineDetectedByVSCodeExtension(t *testing.T) {
 	t.Error("Cline agent not found in results")
 }
 
-func TestIsTerminal_PipeIsNotTerminal(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	defer w.Close()
+func TestBareSetupWarnsWhilePreservingForceCompatibility(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	cmd := newSetupCmd(&rootOptions{})
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"--force"})
 
-	if isTerminal(r) {
-		t.Error("pipe should not be detected as terminal")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("setup --force: %v", err)
+	}
+	if !strings.Contains(errOut.String(), setupWizardDeprecation) {
+		t.Fatalf("stderr = %q, want deprecation warning", errOut.String())
+	}
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil || !force {
+		t.Fatalf("force = %v, err = %v; compatibility flag was not preserved", force, err)
+	}
+}
+
+func TestRunInteractiveAgentSetupsAggregatesFailures(t *testing.T) {
+	setup := &cobra.Command{Use: "setup"}
+	var stderr bytes.Buffer
+	setup.SetErr(&stderr)
+
+	var succeeded bool
+	good := &cobra.Command{Use: "good", RunE: func(*cobra.Command, []string) error {
+		succeeded = true
+		return nil
+	}}
+	badOne := &cobra.Command{Use: "bad-one", RunE: func(*cobra.Command, []string) error {
+		return errors.New("first failure")
+	}}
+	badTwo := &cobra.Command{Use: "bad-two", RunE: func(*cobra.Command, []string) error {
+		return errors.New("second failure")
+	}}
+	setup.AddCommand(good, badOne, badTwo)
+
+	err := runInteractiveAgentSetups(setup, []agentInfo{
+		{Name: "First", SetupCmd: "bad-one"},
+		{Name: "Working", SetupCmd: "good"},
+		{Name: "Second", SetupCmd: "bad-two"},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "First: first failure") ||
+		!strings.Contains(err.Error(), "Second: second failure") {
+		t.Fatalf("aggregated error = %v", err)
+	}
+	if !succeeded {
+		t.Fatal("later setup was not attempted after an earlier failure")
+	}
+	if got := stderr.String(); !strings.Contains(got, "First setup failed") ||
+		!strings.Contains(got, "Second setup failed") {
+		t.Fatalf("failure output = %q", got)
 	}
 }
 

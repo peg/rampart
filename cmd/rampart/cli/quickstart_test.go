@@ -14,10 +14,15 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/peg/rampart/internal/detect"
@@ -166,7 +171,7 @@ func TestQuickstartUnsupportedAgentWrapSuggestion(t *testing.T) {
 }
 
 func TestQuickstartCmd_Flags(t *testing.T) {
-	cmd := newQuickstartCmd()
+	cmd := newQuickstartCmd(&rootOptions{})
 
 	agentsFlag := cmd.Flags().Lookup("agents")
 	if agentsFlag == nil {
@@ -180,6 +185,25 @@ func TestQuickstartCmd_Flags(t *testing.T) {
 	profileFlag := cmd.Flags().Lookup("profile")
 	if profileFlag == nil {
 		t.Fatal("--profile flag not registered")
+	}
+}
+
+func TestQuickstartProtectionTargetsUseManagedOpenClawPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("OpenClaw managed protection is not supported on Windows")
+	}
+	drivers, unsupported, err := quickstartProtectionTargets([]quickstartAgent{
+		{Key: "openclaw", Name: "OpenClaw", HasSetup: true, SetupCmd: "openclaw"},
+		{Key: "cursor", Name: "Cursor", WrapCmd: "rampart wrap -- cursor"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drivers) != 1 || drivers[0].ID != "openclaw" || !drivers[0].OpenClaw {
+		t.Fatalf("managed drivers = %#v, want OpenClaw protect driver", drivers)
+	}
+	if len(unsupported) != 1 || unsupported[0].Key != "cursor" {
+		t.Fatalf("unsupported = %#v, want Cursor wrap guidance", unsupported)
 	}
 }
 
@@ -215,6 +239,14 @@ func TestHasInstalledPolicy(t *testing.T) {
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{"custom.yaml", "guard.yaml"} {
+		if err := os.WriteFile(filepath.Join(policyDir, name), []byte("version: \"1\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hasInstalledPolicy() {
+		t.Fatal("supplemental custom and Guard files must not suppress base profile initialization")
+	}
 	if err := os.WriteFile(filepath.Join(policyDir, "standard.yaml"), []byte("version: \"1\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -223,128 +255,48 @@ func TestHasInstalledPolicy(t *testing.T) {
 	}
 }
 
-func TestQuickstartHooksConfigured_OpenClaw(t *testing.T) {
+func TestQuickstartFreshHomeInstallsSelectedProfileBeforeGuard(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	testSetOpenClawBinary(t, home)
+	t.Chdir(t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"service": "rampart", "status": "ok", "mode": "enforce",
+			"version": "test", "uptime_seconds": 1,
+		})
+	}))
+	defer server.Close()
+	t.Setenv("RAMPART_URL", server.URL)
 
-	if quickstartHooksConfigured("openclaw") {
-		t.Fatal("expected openclaw hooks to be false without plugin or legacy bridge")
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd(context.Background(), &out, &errOut)
+	if err := runQuickstart(cmd, &rootOptions{configPath: "rampart.yaml"}, "none", "", true, false); err != nil {
+		t.Fatalf("runQuickstart: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
 	}
-
-	pluginDir := filepath.Join(home, ".openclaw", "extensions", "rampart")
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
-	if err := os.WriteFile(configPath, []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if !quickstartHooksConfigured("openclaw") {
-		t.Fatal("expected openclaw hooks to be true with native plugin")
-	}
-	if err := os.WriteFile(configPath, []byte(`{"plugins":{"allow":[]}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if quickstartHooksConfigured("openclaw") {
-		t.Fatal("expected openclaw hooks to be false when plugin is not allowed to load")
-	}
-
-	if err := os.RemoveAll(filepath.Join(home, ".openclaw")); err != nil {
-		t.Fatal(err)
-	}
-
-	shimPath := filepath.Join(home, ".local", "bin", "rampart-shim")
-	if err := os.MkdirAll(filepath.Dir(shimPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(shimPath, []byte("#!/bin/sh\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	if quickstartHooksConfigured("openclaw") {
-		t.Fatal("legacy OpenClaw shim must not be reported as the current native plugin boundary")
+	for _, name := range []string{"standard.yaml", "guard.yaml"} {
+		if _, err := os.Stat(filepath.Join(home, ".rampart", "policies", name)); err != nil {
+			t.Fatalf("fresh quickstart did not install %s: %v", name, err)
+		}
 	}
 }
 
-func TestQuickstartHooksConfigured_ClaudeCode(t *testing.T) {
+func TestQuickstartRejectsCustomConfigBeforeMutation(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
-	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
-		t.Fatal(err)
+	custom := filepath.Join(home, "custom.yaml")
+	cmd := NewRootCmd(context.Background(), &bytes.Buffer{}, &bytes.Buffer{})
+	err := runQuickstart(cmd, &rootOptions{configPath: custom}, "none", "", true, false)
+	if err == nil || !strings.Contains(err.Error(), "custom --config is not supported") {
+		t.Fatalf("error = %v, want fail-closed custom config rejection", err)
 	}
-	hookCommand := currentClaudeHookCommand()
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"PreToolUse": []any{
-				map[string]any{
-					"matcher": ".*",
-					"hooks":   []any{map[string]any{"type": "command", "command": hookCommand}},
-				},
-			},
-			"PostToolUse": []any{
-				map[string]any{
-					"matcher": ".*",
-					"hooks":   []any{map[string]any{"type": "command", "command": hookCommand}},
-				},
-			},
-			"PostToolUseFailure": []any{
-				map[string]any{
-					"matcher": ".*",
-					"hooks":   []any{map[string]any{"type": "command", "command": hookCommand}},
-				},
-			},
-		},
-	}
-	data, err := json.Marshal(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if !quickstartHooksConfigured("claude-code") {
-		t.Fatal("expected claude-code hooks to be detected")
-	}
-}
-
-func TestQuickstartHooksConfigured_Codex(t *testing.T) {
-	home := t.TempDir()
-	testSetHome(t, home)
-
-	hooksPath := filepath.Join(home, ".codex", "hooks.json")
-	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	command, commandWindows := currentCodexHookCommands()
-	if err := installCodexHooks(hooksPath, command, commandWindows, false); err != nil {
-		t.Fatal(err)
-	}
-
-	if !quickstartHooksConfigured("codex") {
-		t.Fatal("expected Codex lifecycle hooks to be detected")
-	}
-}
-
-func TestQuickstartHooksConfigured_Cline(t *testing.T) {
-	home := t.TempDir()
-	testSetHome(t, home)
-
-	hookDir := filepath.Join(home, "Documents", "Cline", "Hooks")
-	if _, _, err := installClineHooks(hookDir, resolveRampartHookBinary(), runtime.GOOS, false); err != nil {
-		t.Fatal(err)
-	}
-
-	if !quickstartHooksConfigured("cline") {
-		t.Fatal("expected cline hooks to be detected")
-	}
-	if err := os.WriteFile(clineHookPath(hookDir, "PreToolUse", runtime.GOOS), []byte("user hook"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if quickstartHooksConfigured("cline") {
-		t.Fatal("non-Rampart Cline hook must not be reported as protection")
+	for _, path := range []string{custom, filepath.Join(home, ".rampart")} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("custom config rejection mutated %s: %v", path, statErr)
+		}
 	}
 }
 

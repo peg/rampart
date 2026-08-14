@@ -169,6 +169,7 @@ func (s *createAutoRaceSink) Write(audit.Event) error {
 			request, autoApproved, err := s.store.CreateOrAutoApproved(
 				s.call,
 				engine.Decision{Action: engine.ActionRequireApproval, Message: "raced bulk publication"},
+				"",
 			)
 			s.result <- createAutoRaceResult{request: request, autoApproved: autoApproved, err: err}
 		}()
@@ -709,6 +710,82 @@ policies:
 	assert.Equal(t, "pending", secondResult["approval_status"])
 	assert.NotEqual(t, approvalID, secondResult["approval_id"], "the consumed grant must not authorize another replay")
 	require.Len(t, srv.approvals.List(), 1)
+}
+
+func TestToolCall_ExactReplayIsBoundToEvalToken(t *testing.T) {
+	srv, adminToken, _ := setupTestServer(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: approve-deploy
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches: ["deploy prod"]
+`, "enforce")
+	tokenStore, err := token.NewStore(filepath.Join(t.TempDir(), "tokens.json"))
+	require.NoError(t, err)
+	owner, _, err := tokenStore.Create("codex", "", "", []string{token.ScopeEval}, nil)
+	require.NoError(t, err)
+	sibling, _, err := tokenStore.Create("codex", "", "", []string{token.ScopeEval}, nil)
+	require.NoError(t, err)
+	third, _, err := tokenStore.Create("codex", "", "", []string{token.ScopeEval}, nil)
+	require.NoError(t, err)
+	srv.tokenStore = tokenStore
+	handler := srv.handler()
+	body := `{"agent":"spoofed","session":"s1","run_id":"run-owner","tool_call_id":"call-owner","params":{"command":"deploy prod"}}`
+	post := func(bearer string) (int, map[string]any) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		result := map[string]any{}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+		return recorder.Code, result
+	}
+	status, ownerPending := post(owner)
+	require.Equal(t, http.StatusAccepted, status)
+	status, siblingPending := post(sibling)
+	require.Equal(t, http.StatusAccepted, status)
+	ownerID := ownerPending["approval_id"].(string)
+	siblingID := siblingPending["approval_id"].(string)
+	require.NotEqual(t, ownerID, siblingID)
+
+	resolveReq := httptest.NewRequest(http.MethodPost, "/v1/approvals/"+ownerID+"/resolve",
+		strings.NewReader(`{"approved":true,"resolved_by":"operator"}`))
+	resolveReq.Header.Set("Authorization", "Bearer "+adminToken)
+	resolveReq.Header.Set("Content-Type", "application/json")
+	resolveRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(resolveRecorder, resolveReq)
+	require.Equal(t, http.StatusOK, resolveRecorder.Code)
+
+	status, siblingRetry := post(sibling)
+	require.Equal(t, http.StatusAccepted, status)
+	assert.Equal(t, siblingID, siblingRetry["approval_id"])
+	status, ownerResult := post(owner)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, true, ownerResult["allowed"])
+	assert.Equal(t, ownerID, ownerResult["approval_id"])
+
+	bulkReq := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(`{"agent":"codex","session":"s1","run_id":"run-owner","action":"approve"}`))
+	bulkReq.Header.Set("Authorization", "Bearer "+adminToken)
+	bulkReq.Header.Set("Content-Type", "application/json")
+	bulkRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(bulkRecorder, bulkReq)
+	require.Equal(t, http.StatusOK, bulkRecorder.Code)
+
+	body = `{"agent":"spoofed","session":"s1","run_id":"run-owner","tool_call_id":"call-next","params":{"command":"deploy prod"}}`
+	status, thirdResult := post(third)
+	require.Equal(t, http.StatusAccepted, status, "a sibling token must not inherit the bulk run grant")
+	assert.Equal(t, "pending", thirdResult["approval_status"])
+	status, siblingResult := post(sibling)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, true, siblingResult["allowed"])
+	assert.Equal(t, "auto-approved", siblingResult["policy"])
 }
 
 func TestToolCall_ResponseDeniedAndRedacted(t *testing.T) {

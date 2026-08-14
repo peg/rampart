@@ -45,15 +45,17 @@ service-backed exact-call approval owner is configured.
 
 Denied tool calls never reach the MCP server. Cursor handles the error gracefully.
 
-## Auto-Generate Policies
+## Choose a Static Policy
 
-Don't write policies from scratch — scan an MCP server's tool list:
+Create the bundled MCP starter policy from the directory where Cursor's proxy
+command will load `rampart.yaml`:
 
 ```bash
-rampart mcp scan -- npx @modelcontextprotocol/server-filesystem .
+rampart init --profile mcp-server
 ```
 
-This generates a deny-by-default policy with an explicit rule for each tool. Review, customize, and deploy.
+Review and customize the resulting static policy. It is not tailored to the
+server's advertised tools.
 
 ## Monitor Mode
 

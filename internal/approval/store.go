@@ -40,9 +40,6 @@ import (
 	"github.com/peg/rampart/internal/securefile"
 )
 
-// dedupWindow is the time window for deduplicating identical approval requests.
-const dedupWindow = 60 * time.Second
-
 // approvedReplayWindow is intentionally short: an allow-once approval is only
 // useful for the host's immediate retry of the exact tool call.
 const approvedReplayWindow = 60 * time.Second
@@ -120,6 +117,9 @@ type Request struct {
 	// dedupKey scopes retries to one host-provided tool-call identity.
 	dedupKey string
 
+	// ownerScope is a one-way digest binding token-originated approvals.
+	ownerScope string
+
 	// done is closed when the approval is resolved.
 	done chan struct{}
 }
@@ -147,9 +147,10 @@ type replayGrant struct {
 // identity. Host-provided run IDs are not globally unique and must never be an
 // authorization capability by themselves.
 type autoApproveScope struct {
-	Agent   string
-	Session string
-	RunID   string
+	Agent      string
+	Session    string
+	RunID      string
+	OwnerScope string
 }
 
 // persistRecord is the on-disk representation of an approval request.
@@ -174,13 +175,16 @@ type persistRecord struct {
 	ResolvedBy      string         `json:"resolved_by,omitempty"`
 	Status          string         `json:"status"`
 	Persisted       bool           `json:"persisted,omitempty"`
+	OwnerScope      string         `json:"owner_scope,omitempty"`
 }
+
+const scopedPendingStatus = "pending-v2"
 
 // Store manages pending approval requests.
 type Store struct {
 	mu              sync.Mutex
 	pending         map[string]*Request
-	approvedOnce    map[string]replayGrant // exact call fingerprint -> one-shot grant
+	approvedOnce    map[string]replayGrant // exact call/owner key -> one-shot grant
 	autoApproveRuns map[autoApproveScope]time.Time
 	timeout         time.Duration
 	onExpire        func(*Request)
@@ -343,48 +347,73 @@ func replayKey(call engine.ToolCall) string {
 	return dedupKey(call)
 }
 
+func ownerScopeDigest(scope string) string {
+	if strings.TrimSpace(scope) == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("approval-owner-v1\x00" + scope))
+	return hex.EncodeToString(sum[:])
+}
+
+// ownerBoundKey domain-separates token-owned state from v1 action-only replay
+// paths. Older binaries therefore cannot consume a scoped grant unscoped.
+func ownerBoundKey(key, ownerScope string) string {
+	if key == "" || ownerScope == "" {
+		return key
+	}
+	sum := sha256.Sum256([]byte("approval-replay-v2\x00" + key + "\x00" + ownerScope))
+	return "v2-" + hex.EncodeToString(sum[:])
+}
+
+func replayGrantVersion(key string) int {
+	if strings.HasPrefix(key, "v2-") {
+		return 2
+	}
+	return 1
+}
+
 // Create adds a new pending approval and returns it.
 // The caller should wait on request.Done() for resolution.
 // Returns nil and an error if the pending approval limit has been reached.
 //
-// If the same host-identified tool call was submitted by the same agent,
-// session, and run within the last 60 seconds, the existing approval is
-// returned. Calls without a stable host-provided tool-call ID are never
-// deduplicated.
+// A still-pending request with the same stable host identity is returned.
+// Calls without a stable host-provided tool-call ID are never deduplicated.
 func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.createLocked(call, decision)
+	return s.createLocked(call, decision, "")
 }
 
 // CreateOrAutoApproved atomically checks the run-scoped auto-approval cache
 // and, only when no live entry exists, enqueues a pending approval. Keeping
 // both operations under one lock prevents a bulk-approval publication from
 // racing a stale IsAutoApproved check and leaving an orphan pending request.
-func (s *Store) CreateOrAutoApproved(call engine.ToolCall, decision engine.Decision) (*Request, bool, error) {
+// A non-empty owner scope binds pending and replay state to that caller.
+func (s *Store) CreateOrAutoApproved(call engine.ToolCall, decision engine.Decision, ownerScope string) (*Request, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.isAutoApprovedLocked(call) {
+	ownerScope = ownerScopeDigest(ownerScope)
+	if s.isAutoApprovedLocked(call, ownerScope) {
 		return nil, true, nil
 	}
-	req, err := s.createLocked(call, decision)
+	req, err := s.createLocked(call, decision, ownerScope)
 	return req, false, err
 }
 
 // createLocked enqueues one request. The caller must hold s.mu.
-func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision) (*Request, error) {
+func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, ownerScope string) (*Request, error) {
 	if s.closed {
 		return nil, ErrStoreClosed
 	}
 
 	now := time.Now()
-	key := dedupKey(call)
+	key := ownerBoundKey(dedupKey(call), ownerScope)
 
-	// Check for an existing identical pending approval within the dedup window.
+	// Stable invocation identity remains singular for its full pending lifetime.
 	if key != "" {
 		for _, req := range s.pending {
-			if req.Status == StatusPending && req.dedupKey == key && now.Sub(req.CreatedAt) < dedupWindow {
+			if req.Status == StatusPending && req.dedupKey == key && now.Before(req.ExpiresAt) {
 				return req, nil
 			}
 		}
@@ -401,14 +430,15 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision) (*R
 		return nil, ErrTooManyPending
 	}
 	req := &Request{
-		ID:        ulid.Make().String(),
-		Call:      call,
-		Decision:  decision,
-		Status:    StatusPending,
-		CreatedAt: now,
-		ExpiresAt: now.Add(s.timeout),
-		dedupKey:  key,
-		done:      make(chan struct{}),
+		ID:         ulid.Make().String(),
+		Call:       call,
+		Decision:   decision,
+		Status:     StatusPending,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(s.timeout),
+		dedupKey:   key,
+		ownerScope: ownerScope,
+		done:       make(chan struct{}),
 	}
 
 	s.pending[req.ID] = req
@@ -507,10 +537,10 @@ func (s *Store) ResolveBeforePublish(
 	var grant replayGrant
 	grantKey := ""
 	if approved {
-		grantKey = replayKey(req.Call)
+		grantKey = ownerBoundKey(replayKey(req.Call), req.ownerScope)
 		if grantKey != "" {
 			grant = replayGrant{
-				Version:     1,
+				Version:     replayGrantVersion(grantKey),
 				ApprovalID:  req.ID,
 				Fingerprint: grantKey,
 				ResolvedBy:  resolvedBy,
@@ -576,7 +606,12 @@ func (s *Store) MarkPersisted(id string) error {
 // marker is intentionally retained after consumption: failure to clean up
 // must fail closed, never recreate authorization.
 func (s *Store) ConsumeApproved(call engine.ToolCall) (*ConsumedApproval, bool, error) {
-	key := replayKey(call)
+	return s.ConsumeApprovedFor(call, "")
+}
+
+// ConsumeApprovedFor binds exact replay to an opaque caller-owned scope.
+func (s *Store) ConsumeApprovedFor(call engine.ToolCall, ownerScope string) (*ConsumedApproval, bool, error) {
+	key := ownerBoundKey(replayKey(call), ownerScopeDigest(ownerScope))
 	if key == "" {
 		return nil, false, nil
 	}
@@ -644,6 +679,12 @@ func (r *Request) Done() <-chan struct{} {
 	return r.done
 }
 
+// OwnerScopeID is an opaque store-owned identifier used only to keep bulk
+// authorization within the caller boundary that created this request.
+func (r *Request) OwnerScopeID() string {
+	return r.ownerScope
+}
+
 // Cleanup removes resolved/expired requests older than the given duration
 // and evicts expired auto-approve cache entries.
 func (s *Store) Cleanup(olderThan time.Duration) int {
@@ -684,11 +725,12 @@ func (s *Store) Cleanup(olderThan time.Duration) int {
 // present. Missing identity fails closed: the approval still resolves the
 // pending requests selected by the operator, but it cannot authorize future
 // calls through the bulk-approval cache.
-func autoApproveScopeFor(call engine.ToolCall) (autoApproveScope, bool) {
+func autoApproveScopeFor(call engine.ToolCall, ownerScope string) (autoApproveScope, bool) {
 	scope := autoApproveScope{
-		Agent:   strings.TrimSpace(call.Agent),
-		Session: strings.TrimSpace(call.Session),
-		RunID:   strings.TrimSpace(call.RunID),
+		Agent:      strings.TrimSpace(call.Agent),
+		Session:    strings.TrimSpace(call.Session),
+		RunID:      strings.TrimSpace(call.RunID),
+		OwnerScope: ownerScope,
 	}
 	return scope, scope.Agent != "" && scope.Session != "" && scope.RunID != ""
 }
@@ -711,7 +753,20 @@ func (s *Store) AutoApproveRun(call engine.ToolCall, ttl time.Duration) bool {
 // check/create race: either creation wins and must be resolved first, or cache
 // publication wins and the creator observes auto-approved state.
 func (s *Store) AutoApproveRunIfNoPending(call engine.ToolCall, ttl time.Duration) ([]*Request, bool) {
-	scope, ok := autoApproveScopeFor(call)
+	return s.autoApproveRunIfNoPending(call, "", ttl)
+}
+
+// AutoApproveRunIfNoPendingForRequest installs only the owner scope carried by
+// a request the operator explicitly selected for bulk resolution.
+func (s *Store) AutoApproveRunIfNoPendingForRequest(call engine.ToolCall, source *Request, ttl time.Duration) ([]*Request, bool) {
+	if source == nil {
+		return nil, false
+	}
+	return s.autoApproveRunIfNoPending(call, source.ownerScope, ttl)
+}
+
+func (s *Store) autoApproveRunIfNoPending(call engine.ToolCall, ownerScope string, ttl time.Duration) ([]*Request, bool) {
+	scope, ok := autoApproveScopeFor(call, ownerScope)
 	if !ok || ttl <= 0 {
 		return nil, false
 	}
@@ -721,7 +776,7 @@ func (s *Store) AutoApproveRunIfNoPending(call engine.ToolCall, ttl time.Duratio
 
 	pending := make([]*Request, 0)
 	for _, req := range s.pending {
-		requestScope, valid := autoApproveScopeFor(req.Call)
+		requestScope, valid := autoApproveScopeFor(req.Call, req.ownerScope)
 		if req.Status != StatusPending || !valid || requestScope != scope {
 			continue
 		}
@@ -747,12 +802,12 @@ func (s *Store) AutoApproveRunIfNoPending(call engine.ToolCall, ttl time.Duratio
 func (s *Store) IsAutoApproved(call engine.ToolCall) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.isAutoApprovedLocked(call)
+	return s.isAutoApprovedLocked(call, "")
 }
 
 // isAutoApprovedLocked checks one call. The caller must hold s.mu.
-func (s *Store) isAutoApprovedLocked(call engine.ToolCall) bool {
-	scope, ok := autoApproveScopeFor(call)
+func (s *Store) isAutoApprovedLocked(call engine.ToolCall, ownerScope string) bool {
+	scope, ok := autoApproveScopeFor(call, ownerScope)
 	if !ok {
 		return false
 	}
@@ -876,7 +931,7 @@ func (s *Store) consumePersistedReplayGrant(key string) (replayGrant, bool, erro
 	if err := json.Unmarshal(encoded, &grant); err != nil {
 		return replayGrant{}, false, fmt.Errorf("decode claimed replay grant: %w", err)
 	}
-	if grant.Version != 1 || grant.Fingerprint != key || grant.ApprovalID == "" {
+	if grant.Version != replayGrantVersion(key) || grant.Fingerprint != key || grant.ApprovalID == "" {
 		return replayGrant{}, false, fmt.Errorf("claimed replay grant failed integrity validation")
 	}
 
@@ -950,7 +1005,7 @@ func (s *Store) cleanupPersistedReplayState(olderThan time.Duration) {
 				return nil
 			}
 			var grant replayGrant
-			if json.Unmarshal(encoded, &grant) != nil || grant.Version != 1 || grant.Fingerprint == "" {
+			if json.Unmarshal(encoded, &grant) != nil || grant.Fingerprint == "" || grant.Version != replayGrantVersion(grant.Fingerprint) {
 				return nil
 			}
 			if now.After(grant.ExpiresAt) {
@@ -1075,6 +1130,10 @@ func readBoundedApprovalFile(path string, maxBytes int64) ([]byte, error) {
 
 // toRecord converts a Request to its on-disk representation.
 func toRecord(req *Request) persistRecord {
+	status := req.Status.String()
+	if status == "pending" && req.ownerScope != "" {
+		status = scopedPendingStatus
+	}
 	return persistRecord{
 		ID:              req.ID,
 		Tool:            req.Call.Tool,
@@ -1093,20 +1152,16 @@ func toRecord(req *Request) persistRecord {
 		ExpiresAt:       req.ExpiresAt,
 		ResolvedAt:      req.ResolvedAt,
 		ResolvedBy:      req.ResolvedBy,
-		Status:          req.Status.String(),
+		Status:          status,
 		Persisted:       req.Persisted,
+		OwnerScope:      req.ownerScope,
 	}
 }
 
 // fromRecord reconstructs an in-memory Request from a persist record.
 // Returns (nil, false) if the record should be discarded (expired or non-pending).
 func fromRecord(rec persistRecord) (*Request, bool) {
-	// Only restore truly pending approvals.
-	if rec.Status != "pending" {
-		return nil, false
-	}
-	// Discard expired approvals.
-	if time.Now().After(rec.ExpiresAt) {
+	if !pendingRecordLive(rec, time.Now()) {
 		return nil, false
 	}
 
@@ -1131,16 +1186,29 @@ func fromRecord(rec persistRecord) (*Request, bool) {
 	}
 
 	req := &Request{
-		ID:        rec.ID,
-		Call:      call,
-		Decision:  decision,
-		Status:    StatusPending,
-		CreatedAt: rec.CreatedAt,
-		ExpiresAt: rec.ExpiresAt,
-		dedupKey:  dedupKey(call),
-		done:      make(chan struct{}),
+		ID:         rec.ID,
+		Call:       call,
+		Decision:   decision,
+		Status:     StatusPending,
+		CreatedAt:  rec.CreatedAt,
+		ExpiresAt:  rec.ExpiresAt,
+		dedupKey:   ownerBoundKey(dedupKey(call), rec.OwnerScope),
+		ownerScope: rec.OwnerScope,
+		done:       make(chan struct{}),
 	}
 	return req, true
+}
+
+func pendingRecordLive(rec persistRecord, now time.Time) bool {
+	switch rec.Status {
+	case "pending":
+		return rec.OwnerScope == "" && now.Before(rec.ExpiresAt)
+	case scopedPendingStatus:
+		_, err := hex.DecodeString(rec.OwnerScope)
+		return len(rec.OwnerScope) == sha256.Size*2 && err == nil && now.Before(rec.ExpiresAt)
+	default:
+		return false
+	}
 }
 
 // readLatestRecordsLocked replays the JSONL journal into its latest record per
@@ -1195,7 +1263,7 @@ func (s *Store) readLatestRecordsLocked() (map[string]persistRecord, error) {
 			s.logger.Warn("approval: skipping persistence record without an id")
 			continue
 		}
-		if rec.Status != "pending" || !now.Before(rec.ExpiresAt) {
+		if !pendingRecordLive(rec, now) {
 			activeBytes -= recordSizes[rec.ID]
 			delete(recordSizes, rec.ID)
 			delete(records, rec.ID)
@@ -1253,7 +1321,7 @@ func (s *Store) loadFromDisk() {
 		// but before the pending JSONL is rewritten. Treat either the ready
 		// marker or its consumed tombstone as authoritative so the resolved
 		// request is never resurrected after restart.
-		if key := replayKey(req.Call); key != "" {
+		if key := ownerBoundKey(replayKey(req.Call), req.ownerScope); key != "" {
 			_, readyPath, consumedPath := s.replayGrantPaths(key)
 			settled := false
 			for _, path := range []string{readyPath, consumedPath} {
@@ -1356,7 +1424,7 @@ func (s *Store) rewriteDisk() error {
 		pending := make([]persistRecord, 0, len(records))
 		now := time.Now()
 		for _, rec := range records {
-			if rec.Status == "pending" && now.Before(rec.ExpiresAt) {
+			if pendingRecordLive(rec, now) {
 				pending = append(pending, rec)
 			}
 		}

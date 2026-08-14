@@ -104,8 +104,8 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX"><code>ask</code> blocks until plugin approval/resume support exists</td>
-      <td data-label="Support tier"><strong>Experimental</strong><br>latest-runtime compatibility; native approval/resume pending</td>
+      <td data-label="Approval UX">Compatible Hermes native approval; older or incomplete installs block <code>ask</code></td>
+      <td data-label="Support tier"><strong>Experimental</strong><br>credential-free package/runtime gate; authenticated live-host proof pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
@@ -183,9 +183,10 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
   memory, and delegated-agent calls; a real authenticated host proof is still
   pending, and this does not cover Antigravity
 - **Hermes Agent** → experimental plugin path with isolated latest-runtime
-  discovery, dispatch, deny/allow, and degraded-mode checks; `ask` decisions
-  block rather than resume until Hermes exposes a first-class plugin approval flow. Its built-in
-  status check remains static, so it is not included in `rampart verify --all`
+  discovery, dispatch, deny/allow, native approval/resume, and degraded-mode
+  checks. Older Hermes releases block `ask` with upgrade guidance. Its built-in
+  status check remains static, so it is not included in `rampart verify --all`,
+  and authenticated live-host proof remains pending
 
 ## Degraded behavior notes
 

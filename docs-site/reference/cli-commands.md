@@ -9,19 +9,6 @@ Complete reference for all `rampart` commands.
 
 ## Agent Setup
 
-### `rampart quickstart`
-
-Auto-detects your environment, installs `rampart serve`, configures integration hooks, and runs a health check.
-
-```bash
-rampart quickstart                  # Detect, configure, and verify non-interactively
-rampart quickstart --yes            # Compatibility spelling for existing scripts
-rampart quickstart -y               # Short compatibility spelling
-```
-
-Quickstart currently has no confirmation prompts. `--yes` / `-y` remains
-accepted so existing CI, scripts, and agent-driven installs continue to work.
-
 ### `rampart protect`
 
 Detect installed supported agents, install their strongest native Rampart
@@ -45,6 +32,26 @@ An explicit `--serve-url` is authoritative for startup checks, host
 configuration, and verification. OpenClaw's native plugin accepts only a
 loopback HTTP(S) service. A non-default explicit endpoint must already be
 reachable; Rampart does not silently start or verify against the default port.
+Managed protection currently rejects the global `--config` override because it
+cannot yet prove that an already-running or installed service uses the same
+file. Advanced custom-config deployments should use `rampart serve install`,
+the appropriate `rampart setup <agent>` command, and explicit verification.
+
+### `rampart quickstart` (deprecated compatibility)
+
+Preserves the older profile-selection and wrap-guidance workflow while routing
+supported native integrations through the same managed protection path as
+`rampart protect`. New installations should use `rampart protect`.
+
+```bash
+rampart quickstart                  # Legacy compatibility workflow
+rampart quickstart --yes            # Compatibility spelling for existing scripts
+rampart quickstart -y               # Short compatibility spelling
+```
+
+Quickstart remains non-interactive. `--yes` / `-y`, `--profile`, and wrap-only
+agent guidance remain available so existing scripts continue to work, but new
+onboarding and repair flows should use `rampart protect`.
 
 ### `rampart verify`
 
@@ -187,13 +194,17 @@ managed VS Code deployment requires the user hook plus VS Code enterprise/MDM
 controls. Copilot CLI hook timeouts are upstream fail-open, including policy
 hooks.
 
-### `rampart setup` (interactive)
+### `rampart setup` (deprecated interactive wizard)
 
-Auto-detects installed agents and guides you through setup.
+Auto-detects installed agents and guides you through setup. The bare wizard
+remains available throughout Rampart 1.x for compatibility, but is deprecated
+and planned for removal in 2.0. Use `rampart protect` for managed onboarding,
+service startup, and verification. Integration-specific `setup` subcommands
+remain supported for advanced operations.
 
 ```bash
-rampart setup                # Interactive wizard
-rampart setup --force        # Skip confirmations
+rampart setup                # Deprecated compatibility wizard
+rampart setup --force        # Deprecated unattended compatibility path
 ```
 
 ### `rampart upgrade`
@@ -294,7 +305,7 @@ Proxy MCP servers with policy enforcement.
 ```bash
 rampart mcp -- npx @mcp/server-fs .             # Enforce mode
 rampart mcp --mode monitor -- server            # Audit only
-rampart mcp scan -- npx @mcp/server-fs .        # Auto-generate policies
+rampart mcp scan -- <server>                     # Disabled; exits 1 with migration guidance
 ```
 
 ### `rampart init`
@@ -305,6 +316,7 @@ Initialize a policy file.
 rampart init                          # Standard profile
 rampart init --profile paranoid       # Paranoid profile
 rampart init --profile yolo           # Yolo profile
+rampart init --profile mcp-server     # Static MCP starter policy
 rampart init --detect                 # Auto-detect environment
 ```
 

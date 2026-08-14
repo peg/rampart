@@ -361,7 +361,8 @@ func TestCleanup_EmptyDir(t *testing.T) {
 }
 
 func TestCleanup_NonExistentDir(t *testing.T) {
-	m := NewManager("/tmp/rampart-test-nonexistent-cleanup-dir-xyz", "", slog.Default())
+	dir := filepath.Join(t.TempDir(), "missing")
+	m := NewManager(dir, "", slog.Default())
 	// Should not return error — directory just doesn't exist yet.
 	if err := m.Cleanup(24 * time.Hour); err != nil {
 		t.Fatalf("Cleanup on nonexistent dir: %v", err)

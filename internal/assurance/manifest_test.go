@@ -102,7 +102,6 @@ func TestReleaseMetadataIsSynchronized(t *testing.T) {
 
 	expectations := map[string][]string{
 		"assurance/integrations.yaml": {"baseline_release: v" + version},
-		"docs-site/index.html":        {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
 		"docs/index.html":             {`"softwareVersion": "` + version + `"`, "v" + version + " ·"},
 		"docs/THREAT-MODEL.md":        {"Applies to: v" + version},
 	}

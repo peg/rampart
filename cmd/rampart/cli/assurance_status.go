@@ -349,23 +349,6 @@ func integrationEnvironmentFingerprintAt(driver integrationDriver, home, policyE
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func integrationConfiguredForAssurance(driver integrationDriver, home string) bool {
-	if driver.Configured == nil || !driver.Configured(home) {
-		return false
-	}
-	switch driver.ID {
-	case "claude-code":
-		assessment := claudeHookLoadAssessmentForHome(home)
-		return !assessment.Blocked && !assessment.Unverified
-	case "copilot":
-		workingDir, _ := os.Getwd()
-		_, disabled := copilotCLIUserHooksDisabled(home, workingDir)
-		return !disabled
-	default:
-		return true
-	}
-}
-
 func collectIntegrationAssuranceStatuses(now time.Time, serverRunning bool) []integrationAssuranceStatus {
 	home, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(home) == "" {

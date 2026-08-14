@@ -76,19 +76,23 @@ blocks the call. Request, webhook-result, and response events share a generated
 `tool_call_id` for correlation. Monitor mode logs storage errors but remains
 non-blocking.
 
-## Auto-Generate Policies
+## Start with a Static Policy
 
-Scan an MCP server's tool list and generate a deny-by-default policy:
+Create the bundled MCP starter policy, then review and customize it for the
+server you intend to proxy:
 
 ```bash
-rampart mcp scan -- npx @modelcontextprotocol/server-filesystem .
+rampart init --profile mcp-server
 ```
 
-This creates a policy with an explicit rule for each tool. Review, customize, and deploy.
+`rampart mcp scan` remains as a disabled compatibility command. It does not
+start the supplied server or create a policy.
 
-## MCP Tool Auto-Categorization
+## MCP Tool Runtime Classification
 
-Rampart automatically categorizes MCP tools based on keywords in their names:
+During intercepted calls, Rampart maps MCP tool names to policy categories.
+This runtime matching does not discover server tool definitions or write a
+policy:
 
 | Category | Keywords | Default Action |
 |----------|----------|---------------|
@@ -139,20 +143,15 @@ brew install peg/tap/rampart
 
 ### 2. Create a Policy
 
-Create `~/.config/rampart/policies/mcp.yaml` (or copy from the [example template](https://github.com/peg/rampart/blob/main/configs/examples/mcp-server.yaml)):
+Run this from the directory where the proxy will load `rampart.yaml`:
 
-```yaml
-version: "1"
-default_action: allow
-
-policies:
-  - name: block-destructive
-    match:
-      tool: ["mcp-destructive"]
-    rules:
-      - action: deny
-        message: "Destructive MCP tool blocked"
+```bash
+rampart init --profile mcp-server
 ```
+
+Review the resulting static policy before use. The bundled profile is a
+starting point, not a policy tailored to a server's advertised tools. You can
+also copy the [example template](https://github.com/peg/rampart/blob/main/configs/examples/mcp-server.yaml).
 
 ### 3. Update Your MCP Config
 

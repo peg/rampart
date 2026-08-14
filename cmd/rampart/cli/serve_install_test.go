@@ -354,6 +354,31 @@ func mockRunner(calls *[]string) commandRunner {
 	}
 }
 
+func managedSystemdFixture(t *testing.T, token string) string {
+	t.Helper()
+	content, err := generateSystemdUnit(serviceConfig{
+		Binary: "/usr/local/bin/rampart",
+		Token:  token,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return content
+}
+
+func managedLaunchdFixture(t *testing.T, token string) string {
+	t.Helper()
+	content, err := generatePlist(serviceConfig{
+		Binary:  "/usr/local/bin/rampart",
+		Token:   token,
+		LogPath: filepath.Join(t.TempDir(), "serve.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return content
+}
+
 func TestInstallLinuxRotatesTokenBetweenStopAndStart(t *testing.T) {
 	skipOnWindows(t, "Unix service runner")
 	home := t.TempDir()
@@ -368,7 +393,7 @@ func TestInstallLinuxRotatesTokenBetweenStopAndStart(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(unitPath, []byte("old unit"), 0o600); err != nil {
+	if err := os.WriteFile(unitPath, []byte(managedSystemdFixture(t, "old-token")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -411,7 +436,7 @@ func TestInstallLinuxRestoresDefinitionTokenAndServiceOnStartFailure(t *testing.
 	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const oldUnit = "old unit\n"
+	oldUnit := managedSystemdFixture(t, "old-token")
 	if err := os.WriteFile(unitPath, []byte(oldUnit), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +499,7 @@ func TestInstallLinuxRollbackPreservesInactiveDisabledState(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(unitPath, []byte("old unit\n"), 0o600); err != nil {
+	if err := os.WriteFile(unitPath, []byte(managedSystemdFixture(t, "old-token")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -560,7 +585,7 @@ func TestInstallDarwinRotatesTokenBetweenUnloadAndLoad(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("old plist"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(managedLaunchdFixture(t, "old-token")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -625,7 +650,7 @@ func TestInstallDarwinAllowsExistingUnloadedService(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("old plist"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(managedLaunchdFixture(t, "old-token")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -675,7 +700,7 @@ func TestInstallDarwinRefusesTokenRotationOnUnknownListFailure(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("old plist"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(managedLaunchdFixture(t, "old-token")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -702,6 +727,193 @@ func TestInstallDarwinRefusesTokenRotationOnUnknownListFailure(t *testing.T) {
 	}
 	if token != "old-token" {
 		t.Fatalf("persisted token = %q, want old-token", token)
+	}
+}
+
+func TestServeLifecycleRefusesUnownedDefinition(t *testing.T) {
+	skipOnWindows(t, "Unix service file semantics")
+	cases := []struct {
+		name      string
+		path      func() (string, error)
+		content   string
+		wantError string
+		install   func(*cobra.Command, serviceConfig, bool, bool, int, commandRunner) error
+		uninstall func(*cobra.Command, commandRunner) error
+	}{
+		{
+			name:      "systemd",
+			path:      systemdUnitPath,
+			content:   "[Service]\nExecStart=/usr/bin/unrelated serve\n",
+			wantError: "unrecognized systemd service",
+			install:   installLinux,
+			uninstall: uninstallLinux,
+		},
+		{
+			name: "launchd",
+			path: plistPath,
+			content: `<?xml version="1.0"?><plist><dict>
+<key>Label</key><string>sh.rampart.serve</string>
+<key>ProgramArguments</key><array><string>/usr/bin/unrelated</string><string>serve</string></array>
+			</dict></plist>`,
+			wantError: "unrecognized LaunchAgent",
+			install:   installDarwin,
+			uninstall: uninstallDarwin,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			testSetHome(t, home)
+			path, err := tc.path()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			beforeInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var calls []string
+			runner := mockRunner(&calls)
+			cfg := serviceConfig{Binary: "/usr/local/bin/rampart", Token: "replacement-token", LogPath: filepath.Join(home, ".rampart", "serve.log")}
+			if err := tc.install(&cobra.Command{}, cfg, true, false, defaultServePort, runner); err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("install error = %v, want ownership refusal", err)
+			}
+			if err := tc.uninstall(&cobra.Command{}, runner); err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("uninstall error = %v, want ownership refusal", err)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("unowned service triggered lifecycle commands: %v", calls)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != tc.content {
+				t.Fatalf("unowned service changed: data=%q err=%v", data, err)
+			}
+			afterInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if afterInfo.Mode().Perm() != beforeInfo.Mode().Perm() {
+				t.Fatalf("unowned service mode changed: before=%v after=%v", beforeInfo.Mode().Perm(), afterInfo.Mode().Perm())
+			}
+		})
+	}
+}
+
+func TestInstallRepairsManagedServiceAndTokenPermissionsBeforeEarlyReturn(t *testing.T) {
+	skipOnWindows(t, "Unix service file permissions")
+	cases := []struct {
+		name    string
+		path    func() (string, error)
+		content func(*testing.T, string) string
+		install func(*cobra.Command, serviceConfig, bool, bool, int, commandRunner) error
+	}{
+		{name: "systemd", path: systemdUnitPath, content: managedSystemdFixture, install: installLinux},
+		{name: "launchd", path: plistPath, content: managedLaunchdFixture, install: installDarwin},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			testSetHome(t, home)
+			servicePath, err := tc.path()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(servicePath, []byte(tc.content(t, "old-token")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			tokenPath, err := tokenFilePath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(tokenPath, []byte("old-token"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			var calls []string
+			cfg := serviceConfig{Binary: "/usr/local/bin/rampart", Token: "replacement-token", LogPath: filepath.Join(home, ".rampart", "serve.log")}
+			if err := tc.install(&cobra.Command{}, cfg, false, false, defaultServePort, mockRunner(&calls)); err != nil {
+				t.Fatal(err)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("existing managed service triggered lifecycle commands: %v", calls)
+			}
+			for _, path := range []string{servicePath, tokenPath} {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != 0o600 {
+					t.Fatalf("%s permissions = %04o, want 0600", path, info.Mode().Perm())
+				}
+			}
+		})
+	}
+}
+
+func TestInstallExistingManagedServiceRejectsSymlinkedToken(t *testing.T) {
+	skipOnWindows(t, "Unix symlink semantics")
+	home := t.TempDir()
+	testSetHome(t, home)
+	servicePath, err := systemdUnitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servicePath, []byte(managedSystemdFixture(t, "old-token")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokenPath, err := tokenFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "shared-token")
+	if err := os.WriteFile(target, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, tokenPath); err != nil {
+		t.Fatal(err)
+	}
+
+	err = installLinux(&cobra.Command{}, serviceConfig{}, false, false, defaultServePort, mockRunner(&[]string{}))
+	if err == nil || !strings.Contains(err.Error(), "symlinked") {
+		t.Fatalf("installLinux error = %v, want token symlink refusal", err)
+	}
+	if data, readErr := os.ReadFile(target); readErr != nil || string(data) != "keep me" {
+		t.Fatalf("token target changed: data=%q err=%v", data, readErr)
+	}
+}
+
+func TestRequireUnchangedServiceFileRejectsCreatedOrModifiedDefinition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rampart-serve.service")
+	if err := os.WriteFile(path, []byte("created"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireUnchangedServiceFile(path, false, nil); err == nil {
+		t.Fatal("service created after an absent snapshot was accepted")
+	}
+	if err := requireUnchangedServiceFile(path, true, []byte("original")); err == nil {
+		t.Fatal("service modified after snapshot was accepted")
+	}
+	if err := requireUnchangedServiceFile(path, true, []byte("created")); err != nil {
+		t.Fatalf("unchanged service rejected: %v", err)
 	}
 }
 

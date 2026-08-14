@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -409,7 +410,7 @@ func TestCreateOrAutoApprovedDoesNotEnqueueAuthorizedCall(t *testing.T) {
 	call := testCall()
 	require.True(t, store.AutoApproveRun(call, time.Minute))
 
-	req, autoApproved, err := store.CreateOrAutoApproved(call, testDecision())
+	req, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), "")
 	require.NoError(t, err)
 	assert.True(t, autoApproved)
 	assert.Nil(t, req)
@@ -439,7 +440,7 @@ func TestAutoApprovePublicationAndCreateAreAtomic(t *testing.T) {
 
 		go func() {
 			<-start
-			req, autoApproved, err := store.CreateOrAutoApproved(call, testDecision())
+			req, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), "")
 			created <- createResult{req: req, autoApproved: autoApproved, err: err}
 		}()
 		go func() {
@@ -488,7 +489,7 @@ func TestAutoApproveRunIfNoPendingOnlyReturnsExactScope(t *testing.T) {
 	assert.False(t, store.IsAutoApproved(target))
 }
 
-func TestDeduplicateWithinWindow(t *testing.T) {
+func TestDeduplicateStablePendingCall(t *testing.T) {
 	store := NewStore()
 	call := testCall()
 	decision := testDecision()
@@ -496,11 +497,14 @@ func TestDeduplicateWithinWindow(t *testing.T) {
 	req1, err := store.Create(call, decision)
 	require.NoError(t, err)
 
-	// Same call within window should return the same approval.
+	// Same stable call stays singular for its full pending lifetime.
 	req2, err := store.Create(call, decision)
 	require.NoError(t, err)
-
-	assert.Equal(t, req1.ID, req2.ID, "duplicate call within window should return same approval")
+	assert.Equal(t, req1.ID, req2.ID)
+	req1.CreatedAt = time.Now().Add(-time.Hour)
+	req2, err = store.Create(call, decision)
+	require.NoError(t, err)
+	assert.Equal(t, req1.ID, req2.ID)
 
 	// Different call should get a new approval.
 	call2 := testCall()
@@ -509,6 +513,39 @@ func TestDeduplicateWithinWindow(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEqual(t, req1.ID, req3.ID, "different call should get different approval")
+}
+
+func TestOwnerScopedPendingDedupSurvivesRestart(t *testing.T) {
+	persistFile := filepath.Join(t.TempDir(), "approvals.jsonl")
+	ownerA, ownerB := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	store := NewStore(WithPersistenceFile(persistFile))
+	call := testCall()
+	first, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), ownerA)
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	store.Close()
+
+	journal, err := os.ReadFile(persistFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(journal), `"owner_scope"`)
+	assert.NotContains(t, string(journal), ownerA, "persist only a domain-separated owner digest")
+	var record persistRecord
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(journal), &record))
+	assert.Equal(t, scopedPendingStatus, record.Status)
+	assert.NotEqual(t, "pending", record.Status, "v1.6.2 must discard scoped pending state on rollback")
+
+	restarted := NewStore(WithPersistenceFile(persistFile))
+	defer restarted.Close()
+	retry, autoApproved, err := restarted.CreateOrAutoApproved(call, testDecision(), ownerA)
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	assert.Equal(t, first.ID, retry.ID, "a lost response retry must reuse the restored pending approval")
+
+	other, autoApproved, err := restarted.CreateOrAutoApproved(call, testDecision(), ownerB)
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	assert.NotEqual(t, first.ID, other.ID, "a sibling token must not inherit pending state")
+	assert.Len(t, restarted.List(), 2)
 }
 
 func TestDeduplicationIsBoundToExecutionContext(t *testing.T) {
@@ -696,20 +733,43 @@ func TestExpiredApprovedReplayCannotBeConsumed(t *testing.T) {
 	assert.Nil(t, consumedGrant)
 }
 
-func TestPersistentApprovedReplayIsCrossStoreAndOneShot(t *testing.T) {
+func TestOwnerScopedPersistentReplayIsCrossStoreAndOneShot(t *testing.T) {
 	persistFile := filepath.Join(t.TempDir(), "approvals.jsonl")
+	ownerA, ownerB := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	store1 := NewStore(WithPersistenceFile(persistFile))
 	defer store1.Close()
 
 	call := testCall()
-	req, err := store1.Create(call, testDecision())
+	req, autoApproved, err := store1.CreateOrAutoApproved(call, testDecision(), ownerA)
 	require.NoError(t, err)
+	require.False(t, autoApproved)
 	require.NoError(t, store1.Resolve(req.ID, true, "operator"))
+	legacyKey := replayKey(call)
+	scopedKey := ownerBoundKey(legacyKey, ownerScopeDigest(ownerA))
+	_, legacyReady, _ := store1.replayGrantPaths(legacyKey)
+	dataPath, scopedReady, _ := store1.replayGrantPaths(scopedKey)
+	_, err = os.Stat(legacyReady)
+	assert.True(t, os.IsNotExist(err), "v1.6.2 must not find a scoped replay grant at its legacy path")
+	require.FileExists(t, scopedReady)
+	encoded, err := os.ReadFile(dataPath)
+	require.NoError(t, err)
+	var persisted replayGrant
+	require.NoError(t, json.Unmarshal(encoded, &persisted))
+	assert.Equal(t, 2, persisted.Version)
+	assert.Equal(t, scopedKey, persisted.Fingerprint)
 
 	// A separate Store models a restarted or concurrently running process.
 	store2 := NewStore(WithPersistenceFile(persistFile))
 	defer store2.Close()
 	assert.Empty(t, store2.List(), "a durably approved request must not be resurrected as pending")
+	grant, consumed, err := store2.ConsumeApproved(call)
+	require.NoError(t, err)
+	assert.False(t, consumed, "legacy unscoped consumption must fail closed")
+	assert.Nil(t, grant)
+	grant, consumed, err = store2.ConsumeApprovedFor(call, ownerB)
+	require.NoError(t, err)
+	assert.False(t, consumed, "a sibling owner must not consume the grant")
+	assert.Nil(t, grant)
 
 	type result struct {
 		grant    *ConsumedApproval
@@ -721,7 +781,7 @@ func TestPersistentApprovedReplayIsCrossStoreAndOneShot(t *testing.T) {
 	for _, store := range []*Store{store1, store2} {
 		go func(candidate *Store) {
 			<-start
-			grant, consumed, err := candidate.ConsumeApproved(call)
+			grant, consumed, err := candidate.ConsumeApprovedFor(call, ownerA)
 			results <- result{grant: grant, consumed: consumed, err: err}
 		}(store)
 	}
@@ -741,10 +801,53 @@ func TestPersistentApprovedReplayIsCrossStoreAndOneShot(t *testing.T) {
 	}
 	assert.Equal(t, 1, winners, "the durable allow-once grant must have exactly one cross-process winner")
 
-	grant, consumed, err := store2.ConsumeApproved(call)
+	grant, consumed, err = store2.ConsumeApprovedFor(call, ownerA)
 	require.NoError(t, err)
 	assert.False(t, consumed)
 	assert.Nil(t, grant)
+}
+
+func TestLegacyReplayRemainsAdminOnly(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+	call := testCall()
+	req, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	require.NoError(t, store.Resolve(req.ID, true, "operator"))
+
+	grant, consumed, err := store.ConsumeApprovedFor(call, strings.Repeat("a", 64))
+	require.NoError(t, err)
+	assert.False(t, consumed, "ambiguous legacy state must not authorize an eval token")
+	assert.Nil(t, grant)
+	grant, consumed, err = store.ConsumeApproved(call)
+	require.NoError(t, err)
+	require.True(t, consumed, "deliberate unscoped admin/local behavior must remain available")
+	assert.Equal(t, req.ID, grant.ID)
+}
+
+func TestRunAutoApprovalIsBoundToResolvedOwner(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+	ownerA, ownerB := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	call := testCall()
+	request, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), ownerA)
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	require.NoError(t, store.Resolve(request.ID, true, "operator"))
+	_, installed := store.AutoApproveRunIfNoPendingForRequest(call, request, time.Minute)
+	require.True(t, installed)
+
+	next := call
+	next.ToolCallID = "next-call"
+	next.Params = map[string]any{"command": "different sensitive action"}
+	owned, autoApproved, err := store.CreateOrAutoApproved(next, testDecision(), ownerA)
+	require.NoError(t, err)
+	assert.True(t, autoApproved)
+	assert.Nil(t, owned)
+	sibling, autoApproved, err := store.CreateOrAutoApproved(next, testDecision(), ownerB)
+	require.NoError(t, err)
+	assert.False(t, autoApproved)
+	assert.NotNil(t, sibling)
 }
 
 func TestPersistentApprovalAuthorizationFilesAreOwnerOnly(t *testing.T) {

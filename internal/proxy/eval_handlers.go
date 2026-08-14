@@ -14,7 +14,7 @@ import (
 )
 
 func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
-	identity := s.checkAuthIdentity(w, r)
+	identity := s.checkEvalAuth(w, r)
 	if identity == nil {
 		return
 	}
@@ -179,6 +179,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk) {
+		ownerScope := ""
+		if identity.Token != nil {
+			ownerScope = identity.Token.Hash
+		}
 		if req.requestsHostedApproval() {
 			if identity.IsAdmin {
 				if err := req.validateTrustedHostedApproval(); err != nil {
@@ -217,7 +221,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		// the host retries the identical run_id/tool_call_id and payload. The
 		// approval store atomically consumes the fingerprint-bound grant before
 		// this request is reported as allowed.
-		approved, consumed, consumeErr := s.approvals.ConsumeApproved(call)
+		approved, consumed, consumeErr := s.approvals.ConsumeApprovedFor(call, ownerScope)
 		if consumeErr != nil {
 			s.logger.Error("proxy: exact approval replay unavailable", "tool", toolName, "run_id", call.RunID, "tool_call_id", call.ToolCallID, "error", consumeErr)
 			writeError(w, http.StatusServiceUnavailable, "approval state is unavailable; refusing tool call")
@@ -272,7 +276,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		// Check run-scoped authorization and enqueue atomically. This prevents a
 		// bulk cache publication from racing a stale check and leaving an orphan
 		// pending approval for a call that should have been auto-approved.
-		pending, autoApproved, createErr := s.approvals.CreateOrAutoApproved(call, decision)
+		pending, autoApproved, createErr := s.approvals.CreateOrAutoApproved(call, decision, ownerScope)
 		if createErr != nil {
 			s.logger.Error("proxy: approval store full", "error", createErr)
 			writeError(w, http.StatusServiceUnavailable, createErr.Error())
@@ -554,7 +558,7 @@ func notificationActionMatches(configured, actual string) bool {
 // Returns the decision that would be made — agents use this to plan around
 // policy restrictions before attempting blocked actions.
 func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
-	identity := s.checkAuthIdentity(w, r)
+	identity := s.checkEvalAuth(w, r)
 	if identity == nil {
 		return
 	}

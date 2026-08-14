@@ -224,7 +224,7 @@ func configuredVerificationTargets(home string) []string {
 	targets := []string{"policy"}
 	seen := map[string]struct{}{"policy": {}}
 	for _, driver := range supportedIntegrationDrivers() {
-		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) || driver.Configured == nil || !driver.Configured(home) ||
+		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) || !integrationDriverConfigured(driver, home) ||
 			strings.TrimSpace(driver.VerifyTarget) == "" || driver.VerifyChecks == nil {
 			continue
 		}
