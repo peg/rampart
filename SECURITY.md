@@ -2,11 +2,11 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-|---------|--------------------|
-| 1.6.x   | ✅ Current release |
-| 1.5.x   | ⚠️ Critical fixes only |
-| < 1.5   | ❌ No longer supported |
+| Version | Supported |
+| --- | --- |
+| 1.7.x | ✅ Current release |
+| 1.6.x | ⚠️ Critical fixes only |
+| < 1.6 | ❌ No longer supported |
 
 ## Reporting a Vulnerability
 
