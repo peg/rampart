@@ -303,20 +303,33 @@ func restorePrivateFile(path string, snapshot privateFileSnapshot) error {
 	return filetxn.SyncDir(dir)
 }
 
-func snapshotServiceFiles(configPath string) (privateFileSnapshot, string, privateFileSnapshot, error) {
-	config, err := snapshotPrivateFile(configPath)
+func snapshotServiceDefinition(configPath string) (privateFileSnapshot, error) {
+	configData, configExists, err := readRegularServiceFile(configPath)
 	if err != nil {
-		return privateFileSnapshot{}, "", privateFileSnapshot{}, fmt.Errorf("snapshot service definition: %w", err)
+		return privateFileSnapshot{}, fmt.Errorf("snapshot service definition: %w", err)
 	}
+	return privateFileSnapshot{exists: configExists, data: configData}, nil
+}
+
+func snapshotServiceToken() (string, privateFileSnapshot, error) {
 	tokenPath, err := tokenFilePath()
 	if err != nil {
-		return privateFileSnapshot{}, "", privateFileSnapshot{}, err
+		return "", privateFileSnapshot{}, err
 	}
 	token, err := snapshotPrivateFile(tokenPath)
 	if err != nil {
-		return privateFileSnapshot{}, "", privateFileSnapshot{}, fmt.Errorf("snapshot service token: %w", err)
+		return "", privateFileSnapshot{}, fmt.Errorf("snapshot service token: %w", err)
 	}
-	return config, tokenPath, token, nil
+	return tokenPath, token, nil
+}
+
+func secureManagedServiceState(configPath string, config privateFileSnapshot) (string, privateFileSnapshot, error) {
+	if config.exists {
+		if err := secureFilePermissions(configPath); err != nil {
+			return "", privateFileSnapshot{}, fmt.Errorf("secure service definition: %w", err)
+		}
+	}
+	return snapshotServiceToken()
 }
 
 func rollbackServiceFiles(configPath string, config privateFileSnapshot, tokenPath string, token privateFileSnapshot) error {
@@ -493,13 +506,24 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		return err
 	}
 
-	configBefore, tokenPath, tokenBefore, err := snapshotServiceFiles(path)
+	configBefore, err := snapshotServiceDefinition(path)
 	if err != nil {
 		return err
 	}
-	if configBefore.exists && !force {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
-		return nil
+	if configBefore.exists {
+		if err := validateManagedLaunchdService(configBefore.data, path, plistLabel); err != nil {
+			return fmt.Errorf("refusing to overwrite service definition: %w", err)
+		}
+	}
+	tokenPath, tokenBefore, err := secureManagedServiceState(path, configBefore)
+	if err != nil {
+		return err
+	}
+	if configBefore.exists {
+		if !force {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
+			return nil
+		}
 	}
 	serviceExists := configBefore.exists
 	serviceWasLoaded := false
@@ -526,6 +550,9 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 	// The definition contains the bearer token. Publish it atomically from an
 	// owner-only temporary file so readers never observe partial or permissive
 	// content on any supported platform.
+	if err := requireUnchangedServiceFile(path, configBefore.exists, configBefore.data); err != nil {
+		return fmt.Errorf("service definition changed before replacement: %w", err)
+	}
 	if err := atomicWritePrivateFile(path, []byte(content)); err != nil {
 		return fmt.Errorf("write plist: %w", err)
 	}
@@ -556,13 +583,24 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return err
 	}
 
-	configBefore, tokenPath, tokenBefore, err := snapshotServiceFiles(path)
+	configBefore, err := snapshotServiceDefinition(path)
 	if err != nil {
 		return err
 	}
-	if configBefore.exists && !force {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
-		return nil
+	if configBefore.exists {
+		if err := validateManagedSystemdService(configBefore.data, path); err != nil {
+			return fmt.Errorf("refusing to overwrite service definition: %w", err)
+		}
+	}
+	tokenPath, tokenBefore, err := secureManagedServiceState(path, configBefore)
+	if err != nil {
+		return err
+	}
+	if configBefore.exists {
+		if !force {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
+			return nil
+		}
 	}
 	serviceExists := configBefore.exists
 	priorState := systemdServiceState{}
@@ -582,6 +620,9 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		return err
 	}
 
+	if err := requireUnchangedServiceFile(path, configBefore.exists, configBefore.data); err != nil {
+		return fmt.Errorf("service definition changed before replacement: %w", err)
+	}
 	if err := atomicWritePrivateFile(path, []byte(content)); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
