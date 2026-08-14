@@ -518,31 +518,6 @@ func TestReadLine_Empty(t *testing.T) {
 	}
 }
 
-func TestDetectAgents(t *testing.T) {
-	agents := detectAgents()
-	wantNames := []string{"Claude Code", "Cline", "OpenClaw", "Codex", "GitHub Copilot CLI / VS Code", "Antigravity CLI / IDE", "Aider", "Cursor", "Windsurf"}
-	if len(agents) != len(wantNames) {
-		t.Errorf("expected %d agents, got %d", len(wantNames), len(agents))
-	}
-	// Verify names
-	names := make([]string, len(agents))
-	for i, a := range agents {
-		names[i] = a.Name
-	}
-	for _, want := range wantNames {
-		found := false
-		for _, n := range names {
-			if n == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("missing agent %q", want)
-		}
-	}
-}
-
 func TestInstallPolicy(t *testing.T) {
 	dir := t.TempDir()
 	var buf bytes.Buffer

@@ -441,7 +441,11 @@ rampart init --profile mcp-server
 
 Policies are YAML. Glob matching, hot-reload on file change.
 
-> `rampart setup` creates `~/.rampart/policies/custom.yaml` as a starter template. It's never overwritten by upgrades.
+> The deprecated bare `rampart setup` wizard creates
+> `~/.rampart/policies/custom.yaml` as a starter template. It remains available
+> throughout Rampart 1.x for compatibility, but new onboarding should use
+> `rampart protect`. Integration-specific `rampart setup <agent>` commands remain
+> supported for advanced operations.
 
 ```yaml
 version: "1"

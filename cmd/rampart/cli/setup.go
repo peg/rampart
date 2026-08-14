@@ -90,6 +90,8 @@ func claudeSettingsPath(home string) string {
 	return filepath.Join(claudeConfigDir(home), "settings.json")
 }
 
+const setupWizardDeprecation = "Deprecated: bare `rampart setup` will be removed in 2.0; use `rampart protect` for managed onboarding and verification."
+
 func newSetupCmd(opts *rootOptions) *cobra.Command {
 	var force bool
 
@@ -98,7 +100,9 @@ func newSetupCmd(opts *rootOptions) *cobra.Command {
 		Short: "Set up Rampart integrations with AI agents",
 		Long: `Set up Rampart integrations with supported AI agents.
 
-Run without a subcommand to launch the interactive setup wizard.
+The bare interactive wizard is deprecated and will be removed in Rampart 2.0.
+Use "rampart protect" for managed onboarding and verification. Integration-
+specific setup subcommands remain supported for advanced operations.
 
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
@@ -122,11 +126,12 @@ Supported AI Agents:
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.ErrOrStderr(), setupWizardDeprecation)
 			return runInteractiveSetup(cmd, opts)
 		},
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmations during interactive setup")
+	cmd.Flags().BoolVar(&force, "force", false, "Deprecated: skip confirmations during interactive setup")
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
 	cmd.AddCommand(newSetupHermesCmd())
