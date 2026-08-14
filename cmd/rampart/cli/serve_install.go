@@ -323,6 +323,15 @@ func snapshotServiceToken() (string, privateFileSnapshot, error) {
 	return tokenPath, token, nil
 }
 
+func secureManagedServiceState(configPath string, config privateFileSnapshot) (string, privateFileSnapshot, error) {
+	if config.exists {
+		if err := secureFilePermissions(configPath); err != nil {
+			return "", privateFileSnapshot{}, fmt.Errorf("secure service definition: %w", err)
+		}
+	}
+	return snapshotServiceToken()
+}
+
 func rollbackServiceFiles(configPath string, config privateFileSnapshot, tokenPath string, token privateFileSnapshot) error {
 	return errors.Join(
 		restorePrivateFile(configPath, config),
@@ -505,14 +514,16 @@ func installDarwin(cmd *cobra.Command, cfg serviceConfig, force, generated bool,
 		if err := validateManagedLaunchdService(configBefore.data, path, plistLabel); err != nil {
 			return fmt.Errorf("refusing to overwrite service definition: %w", err)
 		}
+	}
+	tokenPath, tokenBefore, err := secureManagedServiceState(path, configBefore)
+	if err != nil {
+		return err
+	}
+	if configBefore.exists {
 		if !force {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
 			return nil
 		}
-	}
-	tokenPath, tokenBefore, err := snapshotServiceToken()
-	if err != nil {
-		return err
 	}
 	serviceExists := configBefore.exists
 	serviceWasLoaded := false
@@ -580,14 +591,16 @@ func installLinux(cmd *cobra.Command, cfg serviceConfig, force, generated bool, 
 		if err := validateManagedSystemdService(configBefore.data, path); err != nil {
 			return fmt.Errorf("refusing to overwrite service definition: %w", err)
 		}
+	}
+	tokenPath, tokenBefore, err := secureManagedServiceState(path, configBefore)
+	if err != nil {
+		return err
+	}
+	if configBefore.exists {
 		if !force {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Service already installed at %s\nUse --force to overwrite.\n", path)
 			return nil
 		}
-	}
-	tokenPath, tokenBefore, err := snapshotServiceToken()
-	if err != nil {
-		return err
 	}
 	serviceExists := configBefore.exists
 	priorState := systemdServiceState{}
