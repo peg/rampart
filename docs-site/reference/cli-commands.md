@@ -194,13 +194,17 @@ managed VS Code deployment requires the user hook plus VS Code enterprise/MDM
 controls. Copilot CLI hook timeouts are upstream fail-open, including policy
 hooks.
 
-### `rampart setup` (interactive)
+### `rampart setup` (deprecated interactive wizard)
 
-Auto-detects installed agents and guides you through setup.
+Auto-detects installed agents and guides you through setup. The bare wizard
+remains available throughout Rampart 1.x for compatibility, but is deprecated
+and planned for removal in 2.0. Use `rampart protect` for managed onboarding,
+service startup, and verification. Integration-specific `setup` subcommands
+remain supported for advanced operations.
 
 ```bash
-rampart setup                # Interactive wizard
-rampart setup --force        # Skip confirmations
+rampart setup                # Deprecated compatibility wizard
+rampart setup --force        # Deprecated unattended compatibility path
 ```
 
 ### `rampart upgrade`

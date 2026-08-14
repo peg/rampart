@@ -89,16 +89,24 @@ func TestDetectAgents_ClineDetectedByVSCodeExtension(t *testing.T) {
 	t.Error("Cline agent not found in results")
 }
 
-func TestIsTerminal_PipeIsNotTerminal(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	defer w.Close()
+func TestBareSetupWarnsWhilePreservingForceCompatibility(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	cmd := newSetupCmd(&rootOptions{})
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"--force"})
 
-	if isTerminal(r) {
-		t.Error("pipe should not be detected as terminal")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("setup --force: %v", err)
+	}
+	if !strings.Contains(errOut.String(), setupWizardDeprecation) {
+		t.Fatalf("stderr = %q, want deprecation warning", errOut.String())
+	}
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil || !force {
+		t.Fatalf("force = %v, err = %v; compatibility flag was not preserved", force, err)
 	}
 }
 
