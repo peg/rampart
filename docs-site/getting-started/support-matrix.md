@@ -104,8 +104,8 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX">Current Hermes native approval; older releases block <code>ask</code></td>
-      <td data-label="Support tier"><strong>Experimental</strong><br>latest-runtime compatibility; authenticated live-host proof pending</td>
+      <td data-label="Approval UX">Compatible Hermes native approval; older or incomplete installs block <code>ask</code></td>
+      <td data-label="Support tier"><strong>Experimental</strong><br>credential-free package/runtime gate; authenticated live-host proof pending</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>

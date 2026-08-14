@@ -119,7 +119,7 @@ Experimental integrations are explicit opt-ins and stay outside bare
 `rampart protect` auto-detection:
 
 ```bash
-# Hermes Agent (experimental; native approval on current Hermes)
+# Hermes Agent (experimental; native approval on compatible Hermes)
 rampart setup hermes
 
 # Gemini CLI (experimental enterprise/API-key path; no authenticated host proof)
@@ -354,7 +354,7 @@ rampart setup hermes
 hermes plugins enable rampart
 ```
 
-The plugin registers a Hermes `pre_tool_call` hook and sends sanitized tool metadata to Rampart before execution. It defaults to `/v1/preflight/{tool}` with execution intent, so one-time grants and call counters are enforced without creating a second Rampart approval queue. On current Hermes releases, `ask` decisions use Hermes' native approval flow to pause and resume the same tool call. Older Hermes releases block with an upgrade message. Service outages deny every Hermes tool by default.
+The plugin registers a Hermes `pre_tool_call` hook and sends sanitized tool metadata to Rampart before execution. It defaults to `/v1/preflight/{tool}` with execution intent, so one-time grants and call counters are enforced without creating a second Rampart approval queue. When Hermes exposes its packaged plugin approval directive, `ask` decisions use Hermes' native approval flow to pause and resume the same tool call. Older or incomplete installations block with upgrade guidance. Service outages deny every Hermes tool by default.
 
 Hermes currently has a static installation check rather than a safe built-in
 host verifier. Use `rampart doctor` for local status, then the isolated Hermes
@@ -731,7 +731,7 @@ rampart verify copilot                       # Verify dual-host deny response + 
 # Experimental, explicit opt-in integrations
 rampart setup gemini                         # Enterprise/API-key Gemini CLI; no authenticated host proof
 rampart verify gemini                        # Verify generated hooks + adapter response
-rampart setup hermes                         # Experimental Hermes plugin; current Hermes uses native approval
+rampart setup hermes                         # Experimental Hermes plugin; compatible hosts use native approval
 rampart setup <agent> --remove               # Clean uninstall
 
 # Run
