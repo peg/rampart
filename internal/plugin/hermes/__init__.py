@@ -10,7 +10,7 @@ The plugin is intentionally conservative:
   hidden approval queue alongside Hermes' native approval UI.
 * It passes Hermes' native ``tool_call_id`` as top-level Rampart metadata so
   Rampart audit IDs can be correlated with the exact Hermes tool call.
-* On current Hermes releases, ``ask`` / ``require_approval`` decisions return
+* On compatible Hermes installations, ``ask`` / ``require_approval`` decisions return
   Hermes' native ``approve`` directive so the host pauses and resumes the exact
   tool call. Older hosts that lack that directive fail closed with an upgrade
   message instead of silently executing the call.

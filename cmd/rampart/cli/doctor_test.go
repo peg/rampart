@@ -1004,7 +1004,7 @@ func TestDoctorHermesIntegrationReportsReadyExperimentalGate(t *testing.T) {
 	if !strings.Contains(out, "experimental policy gate configured") {
 		t.Fatalf("expected Hermes readiness message, got: %s", out)
 	}
-	if !strings.Contains(out, "native approval requires a current Hermes release") {
+	if !strings.Contains(out, "native approval requires a compatible Hermes installation") {
 		t.Fatalf("expected support-tier boundary, got: %s", out)
 	}
 }

@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.6.2
-reviewed_at: "2026-08-11"
+baseline_release: v1.7.0
+reviewed_at: "2026-08-14"
 
 # Version 2 uses the canonical Rampart command target as each integration id
 # and requires an explicit declaration of bare `rampart protect` eligibility.
@@ -228,10 +228,11 @@ integrations:
         proves: Tool normalization, redaction, allow, deny, native ask approval identity, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
       - path: scripts/compat-hermes-latest.py
         kind: upstream_latest
-        proves: Hermes' official latest stable GitHub release is resolved independently of PyPI, then discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior are checked in isolation.
+        proves: Hermes' official latest stable GitHub release is resolved independently of PyPI and must pass packaged discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior in isolation.
     limitations:
       - Hermes documents that a crashing plugin callback is skipped and the agent continues.
       - Native approval/resume requires a Hermes release that exposes the plugin approval directive; older releases block `ask` decisions with an upgrade message.
+      - A release that cannot load Hermes' packaged plugin manager fails the rolling compatibility gate and is not inferred compatible from its source tree.
       - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
       - Hermes tools outside the plugin's typed map, including MCP and delegated-agent tools, fail closed but are not claimed as covered policy surfaces.
       - Delegated-agent and authenticated live-host E2E are not present.

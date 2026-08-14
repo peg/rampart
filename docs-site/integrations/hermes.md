@@ -8,7 +8,7 @@ description: "Experimental Rampart integration for Hermes Agent using a user plu
 Rampart can protect Hermes Agent through an **experimental user plugin**. The plugin registers a Hermes `pre_tool_call` hook, sends a sanitized policy check to Rampart before selected tools execute, passes Hermes' top-level `tool_call_id` for audit correlation, and blocks the tool call when policy denies it.
 
 !!! warning "Experimental integration"
-    This integration is intentionally conservative. It does not patch Hermes or create a hidden Rampart approval queue. Current Hermes releases own the `ask` prompt and resume the same tool call; older releases fail closed with an upgrade message. It remains experimental because authenticated live-host proof and full host-failure behavior are not yet established.
+    This integration is intentionally conservative. It does not patch Hermes or create a hidden Rampart approval queue. Compatible Hermes installations own the `ask` prompt and resume the same tool call; older or incomplete installations fail closed with upgrade guidance. It remains experimental because authenticated live-host proof and full host-failure behavior are not yet established.
 
 ## What it covers
 
@@ -91,10 +91,10 @@ plugins:
 | --- | --- |
 | `allow`, `watch`, `log` | Tool call continues. |
 | `deny` | Tool call is blocked with the policy reason. |
-| `ask` | Current Hermes releases show Hermes' native approval and resume the same tool call when approved. Older releases block with an upgrade message. No hidden Rampart approval is created. When Rampart returns an `audit_id`, the prompt message includes it for correlation. |
+| `ask` | Compatible Hermes installations show Hermes' native approval and resume the same tool call when approved. Older or incomplete installations block with upgrade guidance. No hidden Rampart approval is created. When Rampart returns an `audit_id`, the prompt message includes it for correlation. |
 | Rampart unavailable | Every tool fails closed by default. Advanced operators can explicitly configure selected tools to fail open. |
 
-The default endpoint mode is `preflight`, which calls `POST /v1/preflight/{tool}` with `enforce: true`. This consumes one-time grants and records call-count state at Hermes' actual pre-execution boundary without creating pending Rampart approvals. A current Hermes host owns the approval UI and resumes the same call after approval. Rampart records the evaluation audit ID, and the plugin sends Hermes' top-level `tool_call_id` when Hermes provides one.
+The default endpoint mode is `preflight`, which calls `POST /v1/preflight/{tool}` with `enforce: true`. This consumes one-time grants and records call-count state at Hermes' actual pre-execution boundary without creating pending Rampart approvals. A compatible Hermes host owns the approval UI and resumes the same call after approval. Rampart records the evaluation audit ID, and the plugin sends Hermes' top-level `tool_call_id` when Hermes provides one.
 
 For session or `always` choices, the plugin supplies Hermes an opaque, token-keyed
 identity of both the original call and its resolved policy paths. This prevents
@@ -137,8 +137,9 @@ The harness creates a temporary Hermes state, installs the Rampart plugin there,
 By default it resolves Hermes' official latest stable GitHub release and uses
 an isolated editable checkout of that exact tag, the development install path
 Hermes permits. `--package` is an explicit maintainer override; it is not the
-definition of the latest supported Hermes release. The check does not use
-provider credentials or invoke a model.
+definition of the latest supported Hermes release. Package discovery failures
+fail the gate rather than treating a source-tree import as compatibility. The
+check does not use provider credentials or invoke a model.
 
 !!! warning "Why this remains experimental"
     Hermes currently documents that a plugin callback which fails outside

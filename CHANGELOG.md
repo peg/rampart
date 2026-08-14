@@ -7,13 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-14
+
+### Security
+
+- **Approval authority is bound to the requesting credential** — Evaluation
+  routes require the `eval` scope, pending requests and replay grants retain
+  token ownership across restarts, and older Rampart releases cannot consume
+  the new scoped state after a rollback.
+- **MCP correlation fails closed without changing monitor transparency** —
+  Canonical JSON-RPC identities, case-shadowed security arguments, cross-kind
+  collisions, unsolicited responses, replays, and response-before-forward
+  races are handled explicitly while monitor mode preserves raw traffic.
+- **Destructive command matching is operand-aware and bounded** — Restrictive
+  `rm` and `find` rules retain quoting and redirection meaning, evaluate each
+  target independently, recognize supported wrappers and traversal forms, and
+  cap ambiguous expansion work.
+- **Managed services preserve ownership and private state** — Install and
+  removal refuse unowned service definitions while existing Rampart-managed
+  definitions and tokens have private permissions repaired safely.
+- **OpenClaw bridge modes keep their authority boundaries** — Monitor mode no
+  longer consumes approval state or persists allow-always rules, and enforce
+  mode leaves host approval pending when required audit delivery fails.
+
+### Added
+
+- **Hermes can use its native approval flow** — Compatible Hermes installations
+  pause and resume the same tool call for `ask` decisions using an opaque,
+  action-bound identity; older or incomplete runtimes fail closed. The
+  integration remains experimental pending authenticated live-host proof.
+- **Diagnostics use the same canonical action shapes as enforcement** —
+  `rampart test --tool` and `policy explain` now populate command, path, URL,
+  domain, and parameter fields consistently with live requests.
+
 ### Changed
 
+- **Managed onboarding shares one protection lifecycle** — `protect` and the
+  compatibility `quickstart` path now share policy, service, integration, and
+  verification orchestration instead of maintaining duplicate flows.
 - **The bare interactive setup wizard is deprecated** — It remains functional
   throughout Rampart 1.x for compatibility, including `--force`, but managed
   onboarding now leads with `rampart protect`. Integration-specific
   `rampart setup <agent>` commands remain supported for advanced operations;
   removal of the bare wizard is planned for 2.0.
+- **Unsafe MCP policy generation is retired** — `rampart mcp scan` remains as a
+  non-executing compatibility stub that directs users to the reviewable static
+  MCP profile instead of trusting server-supplied discovery output.
+- **Contributor and CI paths are leaner** — Draft pull requests receive a fast
+  feedback lane, protected branches retain the full platform matrix, source
+  builds use Go 1.25.13, and contributor guidance focuses on durable public
+  work rather than private maintenance ceremony.
+- **The public site presents Rampart's authority boundary directly** — The
+  landing page and supporting copy now lead with visible policy, approval, and
+  audit control without overstating sandbox or integration guarantees.
+
+### Fixed
+
+- **Integration state is inspected through one registry** — Status,
+  verification targeting, assurance reporting, and detection no longer rely on
+  separate hand-maintained integration lists.
+- **Interactive setup failures return failure** — The compatibility wizard no
+  longer reports success after an integration setup error.
 
 ## [1.6.2] - 2026-08-11
 
