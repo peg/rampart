@@ -259,7 +259,9 @@ After running, delete `~/.rampart/` manually and remove any `rampart`-related li
 
 ### `rampart hook`
 
-Hook handler called by Claude Code, Cline, Codex, experimental Gemini CLI, and GitHub Copilot CLI / VS Code. Reads a tool call from stdin and writes the host's native decision schema to stdout.
+Hook handler called by Claude Code, Cline, Codex, Cursor, experimental Gemini
+CLI, and GitHub Copilot CLI / VS Code. Reads a tool call from stdin and writes
+the host's native decision schema to stdout.
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook

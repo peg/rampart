@@ -99,9 +99,9 @@ api: "HTTP API / SDK\\nlocalhost:9090" {
 
 start -> q
 
-q -> hooks: "Claude Code, Cline, Codex, or Copilot\\n(native hooks, lowest overhead)"
+q -> hooks: "Claude Code, Cline, Codex, Cursor, or Copilot\\n(native hooks, lowest overhead)"
 q -> shim: "OpenClaw, Antigravity, or Hermes\\n(native plugin where supported)"
-q -> mcp: "Cursor, Claude Desktop\\nor any MCP-compatible client"
+q -> mcp: "Claude Desktop or any MCP-compatible client\\n(Cursor can use this as a second boundary)"
 q -> wrap: "Any CLI agent\\nwith \$SHELL support"
 q -> preload: "Any CLI agent\\nwithout \$SHELL or native hooks"
 q -> api: "Custom / Python agent\\nor CI pipeline"
