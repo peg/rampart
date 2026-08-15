@@ -23,6 +23,11 @@ func classifyNativeMCPTool(hostToolName string, params map[string]any) string {
 			candidates = append(candidates, parts[len(parts)-1])
 		}
 	}
+	if strings.HasPrefix(lower, "mcp:") {
+		if toolName := strings.TrimSpace(strings.TrimPrefix(lower, "mcp:")); toolName != "" {
+			candidates = append(candidates, toolName)
+		}
+	}
 	for _, key := range []string{"mcp_tool", "tool_name", "toolName"} {
 		if value, ok := params[key].(string); ok && strings.TrimSpace(value) != "" {
 			candidates = append(candidates, value)

@@ -98,14 +98,14 @@ func resolveProtectionTargets(target string) ([]integrationDriver, error) {
 			return nil, fmt.Errorf("protect: detect installed agents: %w", err)
 		}
 		if len(drivers) == 0 {
-			return nil, fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Antigravity, GitHub Copilot, Cline; Gemini CLI and Hermes remain experimental)")
+			return nil, fmt.Errorf("protect: no supported agent detected (supported: OpenClaw, Claude Code, Codex, Antigravity, GitHub Copilot, Cursor, Cline; Gemini CLI and Hermes remain experimental)")
 		}
 		return drivers, nil
 	}
 
 	driver, ok := findIntegrationDriver(target)
 	if !ok {
-		return nil, fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, antigravity, copilot, cline; Gemini CLI and Hermes remain experimental)", target)
+		return nil, fmt.Errorf("protect: unsupported target %q (supported: openclaw, claude-code, codex, antigravity, copilot, cursor, cline; Gemini CLI and Hermes remain experimental)", target)
 	}
 	if !driver.AutoProtect {
 		verification := integrationDriverVerificationCommand(driver)

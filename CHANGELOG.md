@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cursor has a native local Agent boundary** — `rampart protect cursor`
+  installs a fail-closed user `preToolUse` hook for local Agent and Cmd+K tool
+  calls, preserves Cursor's own permissions on allow, and keeps Cloud Agent,
+  Tab, project, team, and enterprise deployment claims separate.
+
 ## [1.7.0] - 2026-08-14
 
 ### Security

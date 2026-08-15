@@ -380,6 +380,7 @@ Supports multiple formats:
   --format gemini: Gemini CLI lifecycle hooks
   --format antigravity: Antigravity CLI and IDE PreToolUse hooks
   --format copilot: GitHub Copilot CLI and VS Code agent hooks
+  --format cursor: Cursor Agent and Cmd+K preToolUse hooks
 
 Claude Code setup (add to ~/.claude/settings.json):
 {
@@ -410,8 +411,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
-			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "antigravity" && format != "copilot" {
-				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, antigravity, or copilot)", format)
+			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "antigravity" && format != "copilot" && format != "cursor" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, antigravity, copilot, or cursor)", format)
 			}
 
 			// Read the protocol payload before any local setup which might fail. That
@@ -544,6 +545,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					parsed, err = parseAntigravityInput(inputReader)
 				case "copilot":
 					parsed, err = parseCopilotInput(inputReader)
+				case "cursor":
+					parsed, err = parseCursorInput(inputReader)
 				default:
 					// Should be unreachable — format is validated above.
 					return fmt.Errorf("hook: unhandled format %q", format)
@@ -920,7 +923,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 				return outputHookResult(cmd, format, hookDeny, false, reasonMsg, cmdStr, decision.Suggestions...)
 			case engine.ActionAsk:
-				if format == "codex" || format == "gemini" {
+				if format == "codex" || format == "gemini" || format == "cursor" {
 					return resolveExternalHookApproval(cmd, format, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
 				}
 				if decision.HeadlessOnly {
@@ -984,7 +987,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionRequireApproval:
-				if format == "codex" || format == "gemini" {
+				if format == "codex" || format == "gemini" || format == "cursor" {
 					return resolveExternalHookApproval(cmd, format, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
 				}
 				askAudit := true
@@ -1035,7 +1038,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
-	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini | antigravity | copilot")
+	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini | antigravity | copilot | cursor")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover via url/config/state; env: RAMPART_URL or RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
@@ -1896,6 +1899,8 @@ func outputHookResultWithResponse(
 		return outputAntigravityHookResult(cmd.OutOrStdout(), decision, reason)
 	case "copilot":
 		return outputCopilotHookResult(cmd.OutOrStdout(), decision, reason)
+	case "cursor":
+		return outputCursorHookResult(cmd.OutOrStdout(), decision, reason)
 	case "cline":
 		// Cline has no "ask" — cancel on deny, block, and ask.
 		cancel := decision == hookDeny || decision == hookAsk || decision == hookBlock
