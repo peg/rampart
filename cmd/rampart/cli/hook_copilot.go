@@ -96,7 +96,7 @@ func parseCopilotInput(reader io.Reader) (*hookParseResult, error) {
 		ToolUseID:     input.ToolUseID,
 	}
 	if tool == "write" {
-		result.PolicyPaths, err = collectCopilotPaths(params)
+		result.PolicyPaths, err = collectNativeHookPaths(params, "Copilot")
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +234,7 @@ func validateCopilotActionParams(toolName, tool string, params map[string]any) e
 	return nil
 }
 
-func collectCopilotPaths(params map[string]any) ([]string, error) {
+func collectNativeHookPaths(params map[string]any, host string) ([]string, error) {
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
 	add := func(value string) error {
@@ -246,7 +246,7 @@ func collectCopilotPaths(params map[string]any) ([]string, error) {
 			return nil
 		}
 		if len(paths) >= maxCodexPatchPaths {
-			return fmt.Errorf("hook: Copilot write touches more than %d paths; split it into smaller calls", maxCodexPatchPaths)
+			return fmt.Errorf("hook: %s write touches more than %d paths; split it into smaller calls", host, maxCodexPatchPaths)
 		}
 		seen[value] = struct{}{}
 		paths = append(paths, value)

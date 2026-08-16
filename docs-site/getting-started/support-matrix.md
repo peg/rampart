@@ -131,12 +131,20 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Approval UX">Legacy bridge/shim behavior</td>
       <td data-label="Support tier">Legacy compatibility</td>
     </tr>
+    <tr class="tier-supported" data-integration="cursor">
+      <td data-label="Surface"><strong>Cursor local Agent / Cmd+K</strong></td>
+      <td data-label="Best path">Native hook<br><code>rampart setup cursor</code></td>
+      <td data-label="Bare protect">Yes</td>
+      <td data-label="rampart serve">Required</td>
+      <td data-label="Approval UX">External Rampart queue; Cloud and Tab are separate</td>
+      <td data-label="Support tier">Supported</td>
+    </tr>
     <tr class="tier-supported">
-      <td data-label="Surface"><strong>Cursor / Claude Desktop</strong></td>
+      <td data-label="Surface"><strong>Claude Desktop / Cursor MCP server</strong></td>
       <td data-label="Best path">MCP proxy<br><code>rampart mcp --</code></td>
       <td data-label="Bare protect">No</td>
-      <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX">MCP error / proxy-mediated behavior</td>
+      <td data-label="rampart serve">No</td>
+      <td data-label="Approval UX">Fails closed when no resolver is available</td>
       <td data-label="Support tier">Supported</td>
     </tr>
     <tr class="tier-supported">
@@ -165,6 +173,10 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
   hook ingestion is still pending. Copilot CLI also supports a separate
   administrator-owned machine policy hook, while VS Code hooks remain an
   upstream Preview surface covered by contract and adapter tests
+- **Cursor local Agent / Cmd+K** → the managed user `preToolUse` hook is
+  fail-closed and leaves Cursor's own permission system intact on allow.
+  Cloud Agents and Tab use separate configuration and hook surfaces; current
+  verification proves configuration and adapter behavior, not host ingestion
 - **OpenClaw >= 2026.5.2** → `rampart protect openclaw` installs and verifies
   the managed native guard with fail-closed service behavior and native approval
   UI. An explicit `--serve-url` is used consistently for startup, plugin
@@ -190,12 +202,12 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline / Codex / Antigravity / GitHub Copilot native hooks or plugins**, plus the experimental Gemini CLI adapter: local allow/deny policy
+- **Claude Code / Cline / Codex / Antigravity / GitHub Copilot / Cursor native hooks or plugins**, plus the experimental Gemini CLI adapter: local allow/deny policy
   evaluation works when `rampart serve` is down. Rampart-handled parse and
   policy errors deny in enforce mode, but an unexpected hook crash or host
   timeout follows the host's behavior. Dashboard features and external
-  approvals need the service; Codex approval-required actions deny when its
-  queue is unavailable.
+  approvals need the service; Codex and Cursor approval-required actions deny
+  when their queue is unavailable.
 - **GitHub Copilot**: native `ask` does not require the Rampart service. Copilot
   CLI `PreToolUse` command errors deny, but CLI hook timeouts always fail open,
   even for administrator policy hooks. VS Code blocks exit code 2 but treats

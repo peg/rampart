@@ -195,6 +195,7 @@ agents.claude -> intercept.hooks
 agents.cline -> intercept.hooks
 agents.openclaw -> intercept.plugin
 agents.codex -> intercept.hooks
+agents.cursor -> intercept.hooks
 agents.other -> intercept.mcp
 
 intercept.hooks -> engine
@@ -224,7 +225,7 @@ verify -> outcomes.approval
 | **Gemini CLI (enterprise/API key)** | Experimental native hooks | `rampart setup gemini` |
 | **Antigravity CLI / IDE** | Shared native policy plugin | `rampart setup antigravity` |
 | **Hermes Agent** | Experimental native plugin | `rampart setup hermes` |
-| **Cursor** | MCP proxy | `rampart mcp --` |
+| **Cursor** | Native local Agent hook; optional MCP proxy | `rampart setup cursor` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
 | **Python agents** | HTTP API / SDK | `localhost:9090` |

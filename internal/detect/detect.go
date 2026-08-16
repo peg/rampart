@@ -129,6 +129,7 @@ func Environment() (*DetectResult, error) {
 	result.HasCodex = hasBinary("codex")
 	result.HasOpenClaw = result.HasOpenClaw || hasBinary("openclaw")
 	result.HasAider = hasBinary("aider")
+	result.HasCursor = result.HasCursor || hasBinary("cursor") || hasBinary("cursor-agent")
 	result.HasWindsurf = result.HasWindsurf || hasBinary("windsurf")
 	result.HasCopilot = result.HasCopilot || hasBinary("copilot") || hasBinary("github-copilot-cli") || hasBinary("gh-copilot")
 	result.HasAntigravity = hasBinary("agy")

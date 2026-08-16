@@ -236,6 +236,20 @@ func TestVerifyCopilotHooksAndAdapterBlockCanary(t *testing.T) {
 	}
 }
 
+func TestVerifyCursorHooksAndAdapterBlockCanary(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := installCursorHooks(cursorHooksPath(home), currentCursorHookCommand(), false); err != nil {
+		t.Fatal(err)
+	}
+	if check := verifyCursorHooksInstalled(); check.Status != verificationPass {
+		t.Fatalf("unexpected installation check: %#v", check)
+	}
+	if check := verifyCursorHookAdapter(context.Background()); check.Status != verificationPass {
+		t.Fatalf("unexpected adapter check: %#v", check)
+	}
+}
+
 func TestVerifyClaudeAndClineAdaptersBlockCanary(t *testing.T) {
 	testSetHome(t, t.TempDir())
 	for _, target := range []string{"claude-code", "cline"} {

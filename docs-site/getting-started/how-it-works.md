@@ -17,7 +17,7 @@ process.
 
 **What happens if it's not running?** Behavior depends on the integration:
 
-- **Claude Code / Cline / Codex / GitHub Copilot native hooks**, plus the experimental Gemini CLI adapter, can still evaluate policy locally for direct hook decisions.
+- **Claude Code / Cline / Codex / Cursor / GitHub Copilot native hooks**, plus the experimental Gemini CLI adapter, can still evaluate policy locally for direct hook decisions.
 - **OpenClaw native plugin** depends on `rampart serve`; sensitive tools such as `exec` and `write` block when the service is unavailable, while explicitly configured lower-risk `failOpenTools` can still proceed.
 - **Wrapper / preload / API integrations** typically need the service path and may fail open or fail closed depending on configuration.
 
@@ -30,12 +30,13 @@ This wires an agent to use the daemon. What it does depends on the agent:
 | **Claude Code** | Writes native hooks in `~/.claude/settings.json` |
 | **Codex** | Installs native lifecycle hooks in `$CODEX_HOME/hooks.json` for CLI, IDE, and desktop |
 | **Cline** | Installs direct platform-native hook files under `~/Documents/Cline/Hooks/` |
+| **Cursor** | Installs a user-level fail-closed `preToolUse` hook for local Agent and Cmd+K |
 | **OpenClaw** | `rampart protect openclaw` installs the native plugin, managed policies, fail-closed degraded behavior, and behavioral verification on current builds |
 | **MCP servers** | Use `rampart mcp --` prefix instead of setup |
 
 After setup, every tool call exposed by the host goes through the integration's
 enforcement path before execution. Some paths call into `rampart serve`;
-Claude/Cline/Codex native hooks can also evaluate allow/deny policy locally.
+Claude/Cline/Codex/Cursor native hooks can also evaluate allow/deny policy locally.
 
 ```
 rampart protect claude-code # managed native hooks + active verification

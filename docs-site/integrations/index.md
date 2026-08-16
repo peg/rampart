@@ -20,9 +20,9 @@ evidence.
 
 | Method | How It Works | Best For |
 |--------|-------------|----------|
-| **Native Hooks** | Uses the agent's built-in hook system | Claude Code, Cline, Codex, GitHub Copilot; Gemini CLI (experimental enterprise/API-key path) |
+| **Native Hooks** | Uses the agent's built-in hook system | Claude Code, Cline, Codex, Cursor, GitHub Copilot; Gemini CLI (experimental enterprise/API-key path) |
 | **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, OpenCode, Continue |
-| **MCP Proxy** | Transparent proxy for MCP tool calls | Claude Desktop, Cursor |
+| **MCP Proxy** | Transparent proxy for individual MCP servers | Claude Desktop, Cursor (optional second boundary) |
 | **LD_PRELOAD** | Interposes supported libc exec/spawn functions; native library is source-built | Optional defense in depth for compatible Unix processes |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
 | **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Antigravity, Hermes Agent (experimental) |
@@ -39,8 +39,9 @@ When a policy action is `ask`, behavior varies by integration:
 | **Gemini CLI (experimental)** | External Rampart queue blocks; unavailable queue denies |
 | **Antigravity CLI / IDE** | Native `force_ask` prompt, ignoring cached Always Allow permissions |
 | **GitHub Copilot CLI / VS Code** | Native Copilot approval prompt |
+| **Cursor** | External Rampart approval queue; Cursor's generic pre-tool `ask` is not enforced |
 | **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
-| **MCP (Claude Desktop/Cursor)** | Proxy blocks, returns JSON-RPC error on deny |
+| **Standalone MCP proxy** | Proxy blocks, returns JSON-RPC error on deny |
 | **OpenClaw** | OpenClaw owns the visible approval UI; Rampart plugin supplies policy decisions |
 | **Hermes Agent** | Compatible Hermes installations own the native approval prompt and resume the same call; older or incomplete installs block with upgrade guidance |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
@@ -53,7 +54,7 @@ When a policy action is `ask`, behavior varies by integration:
 |-------|--------|---------|-----------|
 | [Claude Code](claude-code.md) | Native hooks | `rampart setup claude-code` | All |
 | [Cline](cline.md) | Native hooks | `rampart setup cline` | Linux, macOS, Windows* |
-| [Cursor](cursor.md) | MCP proxy | `rampart mcp --` | All |
+| [Cursor](cursor.md) | Native local Agent hook; optional MCP proxy | `rampart setup cursor` | All |
 | [Claude Desktop](claude-desktop.md) | MCP proxy | `rampart mcp --` | All |
 | [Codex CLI, IDE, desktop](codex-cli.md) | Native hooks | `rampart setup codex` | All |
 | [Gemini CLI](gemini-cli.md) | Experimental enterprise/API-key native hooks | `rampart setup gemini` | Linux, macOS |
@@ -98,9 +99,9 @@ api: "HTTP API / SDK\\nlocalhost:9090" {
 
 start -> q
 
-q -> hooks: "Claude Code, Cline, Codex, or Copilot\\n(native hooks, lowest overhead)"
+q -> hooks: "Claude Code, Cline, Codex, Cursor, or Copilot\\n(native hooks, lowest overhead)"
 q -> shim: "OpenClaw, Antigravity, or Hermes\\n(native plugin where supported)"
-q -> mcp: "Cursor, Claude Desktop\\nor any MCP-compatible client"
+q -> mcp: "Claude Desktop or any MCP-compatible client\\n(Cursor can use this as a second boundary)"
 q -> wrap: "Any CLI agent\\nwith \$SHELL support"
 q -> preload: "Any CLI agent\\nwithout \$SHELL or native hooks"
 q -> api: "Custom / Python agent\\nor CI pipeline"

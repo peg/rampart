@@ -1,6 +1,6 @@
 ---
 title: Install Rampart via an AI Agent
-description: "Step-by-step instructions for an AI agent to install and configure Rampart. Works with OpenClaw, Claude Code, and Cline. One command, fully non-interactive."
+description: "Step-by-step instructions for an AI agent to install and configure Rampart. Works with supported native integrations, including OpenClaw, Claude Code, Cline, Codex, and Cursor."
 ---
 
 # Install Rampart via an AI Agent
@@ -66,7 +66,9 @@ spelling remains available for existing scripts.
 session. `rampart protect` restarts the OpenClaw gateway automatically; restart
 it manually only if you explicitly use `--no-restart`.
 
-**Serve note:** direct Claude Code and Cline native hooks can evaluate policy locally without `rampart serve`, but dashboard views, approval APIs, and OpenClaw plugin evaluation rely on the local service.
+**Serve note:** direct native hooks evaluate allow/deny policy locally, but
+dashboard views and external approvals rely on the local service. OpenClaw
+plugin evaluation and Cursor approval-required actions also require it.
 
 ---
 

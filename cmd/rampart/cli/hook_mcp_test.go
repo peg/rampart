@@ -13,6 +13,7 @@ func TestClassifyNativeMCPTool(t *testing.T) {
 		want     string
 	}{
 		{name: "Claude encoded destructive", hostTool: "mcp__filesystem__delete_file", want: "mcp-destructive"},
+		{name: "Cursor encoded destructive", hostTool: "MCP:filesystem_delete_file", want: "mcp-destructive"},
 		{name: "prefixed destructive", hostTool: "mcp_filesystem_delete_file", want: "mcp-destructive"},
 		{name: "wrapped destructive", hostTool: "use_mcp_tool", params: map[string]any{"tool_name": "delete_file"}, want: "mcp-destructive"},
 		{name: "wrapped command", hostTool: "use_mcp_tool", params: map[string]any{"toolName": "execute_command"}, want: "exec"},
@@ -43,5 +44,8 @@ func TestNativeHookMCPMappersUseCentralClassifier(t *testing.T) {
 	}
 	if got := mapCodexTool("mcp__filesystem__delete_file"); got != "mcp-destructive" {
 		t.Fatalf("Codex = %q", got)
+	}
+	if got := mapCursorTool("MCP:filesystem_delete_file", map[string]any{"path": "important.txt"}); got != "mcp-destructive" {
+		t.Fatalf("Cursor = %q", got)
 	}
 }

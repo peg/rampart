@@ -105,7 +105,7 @@ policy:
 | | Shell Hook (`setup claude-code`) | MCP Proxy (`mcp --`) |
 |---|---|---|
 | **What it intercepts** | Shell commands, file reads/writes | MCP `tools/call` JSON-RPC messages |
-| **Best for** | Agents with hook support (Claude Code, Cline) | Claude Desktop, Cursor, any MCP client |
+| **Best for** | Agents with hook support (Claude Code, Cline, Cursor) | Claude Desktop, Cursor MCP servers, any MCP client |
 | **Setup** | One-time `rampart setup` | Wrap each MCP server command |
 | **Granularity** | Command-level (`rm -rf *`) | Tool-level (`delete_file`, `create_issue`) |
 | **Works with** | Agents that support hooks or `$SHELL` | Any agent that uses MCP servers |
