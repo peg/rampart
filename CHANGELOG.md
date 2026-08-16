@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Bulk approval no longer grants hidden future authority** — Dashboard and
+  API pending-scope actions resolve only the exact approval IDs the operator
+  reviewed. API callers must name that scope explicitly. Future calls require
+  a separate, time-bounded run grant bound to one credential owner and the
+  disclosed agent/session/run identity (default: 2 minutes). Run grants require
+  every approval already pending for that owner at validation; calls arriving
+  after that snapshot are reported separately as race-covered IDs. A raced
+  denial, expiry, deletion, or external approval aborts future authority.
+- **Run-approval audit fields now separate intent from publication** — Audit
+  consumers should migrate from the deprecated `request.auto_approve` and
+  `request.auto_approve_ttl_seconds` aliases to `approval_scope`,
+  `future_calls_requested`, `run_approval_publication_authorized`, and
+  millisecond TTL/expiry fields. The aliases remain in `rampart.audit.v1` for
+  1.x compatibility. Only a successful API response reports
+  `future_calls_authorized: true`.
+- **Approval state has one live service owner** — A second `rampart serve`
+  process using the same Rampart data directory now fails at startup, even on
+  a different port. This prevents independent in-memory run grants from
+  disagreeing with shared durable approval state.
+
 ## [1.7.0] - 2026-08-14
 
 ### Security

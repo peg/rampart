@@ -850,6 +850,423 @@ func TestRunAutoApprovalIsBoundToResolvedOwner(t *testing.T) {
 	assert.NotNil(t, sibling)
 }
 
+func TestRunAutoApprovalRequiresPrePublicationStep(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+	call := testCall()
+	request, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	require.NoError(t, store.Resolve(request.ID, true, "operator"))
+
+	called := false
+	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRequest(
+		call,
+		request,
+		time.Minute,
+		func(expiry time.Time) error {
+			called = true
+			assert.WithinDuration(t, time.Now().Add(time.Minute), expiry, time.Second)
+			return fmt.Errorf("audit unavailable")
+		},
+	)
+	require.Error(t, err)
+	assert.True(t, called)
+	assert.Empty(t, pending)
+	assert.True(t, expiresAt.IsZero())
+	assert.False(t, installed)
+	assert.False(t, store.IsAutoApproved(call))
+
+	pending, expiresAt, installed, err = store.AutoApproveRunBeforePublishForRequest(
+		call,
+		request,
+		time.Minute,
+		func(time.Time) error { return nil },
+	)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	assert.False(t, expiresAt.IsZero())
+	assert.True(t, installed)
+	assert.True(t, store.IsAutoApproved(call))
+}
+
+func TestRunAutoApprovalRejectsGrantExpiredDuringPublication(t *testing.T) {
+	store := NewStore()
+	defer store.Close()
+	call := testCall()
+	request, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	require.NoError(t, store.Resolve(request.ID, true, "operator"))
+
+	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRequest(
+		call,
+		request,
+		time.Nanosecond,
+		func(time.Time) error {
+			time.Sleep(time.Millisecond)
+			return nil
+		},
+	)
+	require.ErrorContains(t, err, "expired before publication")
+	assert.Empty(t, pending)
+	assert.True(t, expiresAt.IsZero())
+	assert.False(t, installed)
+	assert.False(t, store.IsAutoApproved(call))
+}
+
+func TestRunScopeSnapshotRejectsPostSnapshotDenial(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	call := testCall()
+	initial, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{initial.ID}, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+
+	commit, err := store.ResolveBeforePublishForRunScopeSnapshot(snapshot, initial.ID, "operator", nil)
+	require.NoError(t, err)
+	assert.Equal(t, initial.ID, commit.ID)
+
+	racedCall := call
+	racedCall.ToolCallID = "post-snapshot-denied"
+	racedCall.Params = map[string]any{"command": "deploy denied"}
+	raced, autoApproved, err := store.CreateOrAutoApproved(racedCall, testDecision(), "")
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	require.NotNil(t, raced)
+	require.NoError(t, store.Resolve(raced.ID, false, "other-operator"))
+
+	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.ErrorContains(t, err, "was denied after the run-scope snapshot")
+	assert.Empty(t, pending)
+	assert.True(t, expiresAt.IsZero())
+	assert.False(t, installed)
+	assert.False(t, store.IsAutoApproved(call))
+
+	retry := racedCall
+	retryRequest, retryAutoApproved, err := store.CreateOrAutoApproved(retry, testDecision(), "")
+	require.NoError(t, err)
+	assert.False(t, retryAutoApproved, "a denied post-snapshot call gained future authority")
+	assert.NotNil(t, retryRequest)
+}
+
+func TestRunScopeSnapshotRejectsPostSnapshotExternalApprovalAndExpiry(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		timeout time.Duration
+		settle  func(*testing.T, *Store, *Request)
+		want    string
+	}{
+		{
+			name:    "external approval",
+			timeout: time.Minute,
+			settle: func(t *testing.T, store *Store, request *Request) {
+				require.NoError(t, store.Resolve(request.ID, true, "other-operator"))
+			},
+			want: "approved outside the active run-scope transaction",
+		},
+		{
+			name:    "expiry",
+			timeout: 100 * time.Millisecond,
+			settle: func(t *testing.T, _ *Store, request *Request) {
+				select {
+				case <-request.Done():
+				case <-time.After(2 * time.Second):
+					t.Fatal("post-snapshot approval did not expire")
+				}
+			},
+			want: "expired after the run-scope snapshot",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewStore(WithTimeout(test.timeout))
+			t.Cleanup(store.Close)
+			call := testCall()
+			initial, err := store.Create(call, testDecision())
+			require.NoError(t, err)
+			snapshot, err := store.BeginRunScopeSnapshot(call, []string{initial.ID}, time.Minute)
+			require.NoError(t, err)
+			t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+			_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, initial.ID, "operator", nil)
+			require.NoError(t, err)
+
+			racedCall := call
+			racedCall.ToolCallID = "post-snapshot-" + strings.ReplaceAll(test.name, " ", "-")
+			raced, autoApproved, err := store.CreateOrAutoApproved(racedCall, testDecision(), "")
+			require.NoError(t, err)
+			require.False(t, autoApproved)
+			require.NotNil(t, raced)
+			test.settle(t, store, raced)
+
+			_, _, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+			require.ErrorContains(t, err, test.want)
+			assert.False(t, installed)
+			assert.False(t, store.IsAutoApproved(call))
+		})
+	}
+}
+
+func TestRunScopeSnapshotUsesImmutableCreationScope(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	call := testCall()
+	request, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	request.Call.Agent = "mutated-agent"
+	request.Call.Session = "mutated-session"
+	request.Call.RunID = "mutated-run"
+
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{request.ID}, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, request.ID, "operator", nil)
+	require.NoError(t, err)
+	_, _, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.NoError(t, err)
+	assert.True(t, installed)
+	assert.True(t, store.IsAutoApproved(call))
+}
+
+func TestRunScopeSnapshotReturnsAndCommitsPendingRace(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	call := testCall()
+	initial, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{initial.ID}, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, initial.ID, "operator", nil)
+	require.NoError(t, err)
+
+	racedCall := call
+	racedCall.ToolCallID = "post-snapshot-pending"
+	racedCall.Params = map[string]any{"command": "deploy raced"}
+	raced, autoApproved, err := store.CreateOrAutoApproved(racedCall, testDecision(), "")
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	require.NotNil(t, raced)
+
+	pending, _, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.NoError(t, err)
+	require.False(t, installed)
+	require.Len(t, pending, 1)
+	assert.Equal(t, raced.ID, pending[0].ID)
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, raced.ID, "operator", nil)
+	require.NoError(t, err)
+	store.mu.Lock()
+	racedGrant, replayPublished := store.approvedOnce[ownerBoundKey(replayKey(racedCall), "")]
+	store.mu.Unlock()
+	require.True(t, replayPublished)
+	assert.False(t, racedGrant.ExpiresAt.After(snapshot.expiresAt), "exact replay grant outlived run-scope authorization window")
+
+	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	assert.False(t, expiresAt.IsZero())
+	assert.True(t, installed)
+	assert.True(t, store.IsAutoApproved(racedCall))
+
+	_, _, installed, err = store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.ErrorContains(t, err, "stale, consumed, or belongs to another store")
+	assert.False(t, installed)
+}
+
+func TestRunScopeSnapshotIgnoresUnrelatedScopeAndRejectsForeignStore(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	otherStore := NewStore()
+	t.Cleanup(otherStore.Close)
+	call := testCall()
+	initial, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{initial.ID}, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+
+	_, _, installed, err := otherStore.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.ErrorContains(t, err, "another store")
+	assert.False(t, installed)
+
+	otherCall := call
+	otherCall.RunID = "unrelated-run"
+	otherCall.ToolCallID = "unrelated-call"
+	other, err := store.Create(otherCall, testDecision())
+	require.NoError(t, err)
+	require.NoError(t, store.Resolve(other.ID, false, "other-operator"))
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, initial.ID, "operator", nil)
+	require.NoError(t, err)
+	_, _, installed, err = store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.NoError(t, err)
+	assert.True(t, installed)
+}
+
+func TestRunScopeSnapshotDeadlineCannotBeExtendedByRacedCalls(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	call := testCall()
+	initial, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{initial.ID}, 20*time.Millisecond)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, initial.ID, "operator", nil)
+	require.NoError(t, err)
+
+	var raced *Request
+	for index := 0; time.Now().Before(snapshot.expiresAt); index++ {
+		racedCall := call
+		racedCall.ToolCallID = fmt.Sprintf("deadline-race-%d", index)
+		racedCall.Params = map[string]any{"command": racedCall.ToolCallID}
+		var autoApproved bool
+		raced, autoApproved, err = store.CreateOrAutoApproved(racedCall, testDecision(), "")
+		require.NoError(t, err)
+		require.False(t, autoApproved)
+		time.Sleep(time.Millisecond)
+	}
+	require.NotNil(t, raced)
+
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, raced.ID, "operator", nil)
+	require.ErrorContains(t, err, "authorization window expired")
+	_, _, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.ErrorContains(t, err, "authorization window expired")
+	assert.False(t, installed)
+	assert.False(t, store.IsAutoApproved(call))
+}
+
+func TestRunScopeSnapshotDeadlineCannotPassDuringResolutionAudit(t *testing.T) {
+	store := NewStore(WithTimeout(time.Minute))
+	t.Cleanup(store.Close)
+	call := testCall()
+	initial, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{initial.ID}, 100*time.Millisecond)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, initial.ID, "operator", nil)
+	require.NoError(t, err)
+
+	racedCall := call
+	racedCall.ToolCallID = "resolution-audit-deadline-race"
+	racedCall.Params = map[string]any{"command": "echo deadline"}
+	raced, autoApproved, err := store.CreateOrAutoApproved(racedCall, testDecision(), "")
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+
+	callbackRan := false
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, raced.ID, "operator", func(*Request) error {
+		callbackRan = true
+		time.Sleep(time.Until(snapshot.expiresAt) + 10*time.Millisecond)
+		return nil
+	})
+	require.True(t, callbackRan)
+	require.ErrorContains(t, err, "authorization window expired")
+
+	current, ok := store.Get(raced.ID)
+	require.True(t, ok)
+	assert.Equal(t, StatusPending, current.Status)
+	select {
+	case <-raced.Done():
+		t.Fatal("raced approval waiter was published after the snapshot deadline")
+	default:
+	}
+	grant, consumed, consumeErr := store.ConsumeApproved(racedCall)
+	require.NoError(t, consumeErr)
+	assert.False(t, consumed)
+	assert.Nil(t, grant)
+	assert.False(t, store.IsAutoApproved(call))
+}
+
+func TestRunScopeSnapshotAuditPanicCannotPublishGrant(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	call := testCall()
+	request, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{request.ID}, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, request.ID, "operator", nil)
+	require.NoError(t, err)
+
+	func() {
+		defer func() {
+			assert.Equal(t, "audit panic", recover())
+		}()
+		_, _, _, _ = store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, func(time.Time) error {
+			panic("audit panic")
+		})
+	}()
+	assert.False(t, store.IsAutoApproved(call))
+}
+
+func TestRunGrantAuditPanicPreservesPreviousState(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	call := testCall()
+	request, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	require.NoError(t, store.Resolve(request.ID, true, "operator"))
+
+	func() {
+		defer func() {
+			assert.Equal(t, "audit panic", recover())
+		}()
+		_, _, _, _ = store.AutoApproveRunBeforePublishForRequest(call, request, time.Minute, func(time.Time) error {
+			panic("audit panic")
+		})
+	}()
+	assert.False(t, store.IsAutoApproved(call))
+}
+
+func TestResolveRejectsWallClockExpiredPendingRequest(t *testing.T) {
+	store := NewStore(WithTimeout(5 * time.Millisecond))
+	t.Cleanup(store.Close)
+	request, err := store.Create(testCall(), testDecision())
+	require.NoError(t, err)
+	time.Sleep(10 * time.Millisecond)
+
+	err = store.Resolve(request.ID, true, "operator")
+	require.Error(t, err)
+	current, ok := store.Get(request.ID)
+	require.True(t, ok)
+	assert.NotEqual(t, StatusApproved, current.Status)
+}
+
+func TestBeginRunScopeSnapshotPrunesExpiredAbandonedTokens(t *testing.T) {
+	store := NewStore()
+	t.Cleanup(store.Close)
+	snapshots := make([]*RunScopeSnapshot, 0, maxActiveRunScopeSnapshots)
+
+	for index := 0; index < maxActiveRunScopeSnapshots; index++ {
+		call := testCall()
+		call.RunID = fmt.Sprintf("abandoned-run-%d", index)
+		call.ToolCallID = fmt.Sprintf("abandoned-call-%d", index)
+		request, err := store.Create(call, testDecision())
+		require.NoError(t, err)
+		snapshot, err := store.BeginRunScopeSnapshot(call, []string{request.ID}, time.Minute)
+		require.NoError(t, err)
+		snapshots = append(snapshots, snapshot)
+	}
+	require.Len(t, store.activeRunScopes, maxActiveRunScopeSnapshots)
+	for _, snapshot := range snapshots {
+		snapshot.expiresAt = time.Now().Add(-time.Second)
+	}
+
+	call := testCall()
+	call.RunID = "replacement-run"
+	call.ToolCallID = "replacement-call"
+	request, err := store.Create(call, testDecision())
+	require.NoError(t, err)
+	replacement, err := store.BeginRunScopeSnapshot(call, []string{request.ID}, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(replacement) })
+	assert.Len(t, store.activeRunScopes, 1)
+	for _, snapshot := range snapshots {
+		assert.True(t, snapshot.consumed)
+	}
+}
+
 func TestPersistentApprovalAuthorizationFilesAreOwnerOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows DACL behavior is covered by internal/securefile tests")

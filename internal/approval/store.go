@@ -40,9 +40,16 @@ import (
 	"github.com/peg/rampart/internal/securefile"
 )
 
-// approvedReplayWindow is intentionally short: an allow-once approval is only
-// useful for the host's immediate retry of the exact tool call.
-const approvedReplayWindow = 60 * time.Second
+const (
+	// DefaultTimeout is how long a pending approval remains open when the
+	// server does not configure an explicit timeout. Explicit run grants use
+	// the same default so the displayed and enforced durations do not diverge.
+	DefaultTimeout = 2 * time.Minute
+
+	// approvedReplayWindow is intentionally short: an allow-once approval is
+	// only useful for the host's immediate retry of the exact tool call.
+	approvedReplayWindow = 60 * time.Second
+)
 
 // Approval requests originate from the 1 MiB HTTP API but may contain both
 // normalized params and structured input. Keep recovery bounded while leaving
@@ -120,6 +127,12 @@ type Request struct {
 	// ownerScope is a one-way digest binding token-originated approvals.
 	ownerScope string
 
+	// runScope is the immutable owner-bound run identity captured at creation.
+	// Never recompute authorization scope from the exported Call snapshot,
+	// which callers may retain after Create returns.
+	runScope    autoApproveScope
+	hasRunScope bool
+
 	// done is closed when the approval is resolved.
 	done chan struct{}
 }
@@ -151,6 +164,48 @@ type autoApproveScope struct {
 	Session    string
 	RunID      string
 	OwnerScope string
+}
+
+type runScopeMutationKind uint8
+
+const (
+	runScopeCreated runScopeMutationKind = iota + 1
+	runScopeApproved
+	runScopeDenied
+	runScopeExpired
+	runScopeDeleted
+)
+
+const (
+	maxRunScopeSnapshotMutations = maxPendingApprovals * 8
+	maxActiveRunScopeSnapshots   = 64
+)
+
+type runScopeMutation struct {
+	kind  runScopeMutationKind
+	id    string
+	actor *RunScopeSnapshot
+}
+
+// RunScopeSnapshot is a store-bound, single-use authorization transaction for
+// one immutable agent/session/run/credential-owner scope. Pending contains
+// copies safe for callers to inspect; all security state remains unexported.
+type RunScopeSnapshot struct {
+	Pending []*Request
+
+	store     *Store
+	scope     autoApproveScope
+	reviewed  map[string]struct{}
+	mutations []runScopeMutation
+	expiresAt time.Time
+	invalid   bool
+	consumed  bool
+}
+
+// RunApprovalCommit is proof that this snapshot, rather than another
+// resolver, committed one approval transition in the Store.
+type RunApprovalCommit struct {
+	ID string
 }
 
 // persistRecord is the on-disk representation of an approval request.
@@ -186,6 +241,7 @@ type Store struct {
 	pending         map[string]*Request
 	approvedOnce    map[string]replayGrant // exact call/owner key -> one-shot grant
 	autoApproveRuns map[autoApproveScope]time.Time
+	activeRunScopes map[autoApproveScope]*RunScopeSnapshot
 	timeout         time.Duration
 	onExpire        func(*Request)
 	stop            chan struct{}
@@ -236,7 +292,8 @@ func NewStore(opts ...Option) *Store {
 		pending:         make(map[string]*Request),
 		approvedOnce:    make(map[string]replayGrant),
 		autoApproveRuns: make(map[autoApproveScope]time.Time),
-		timeout:         2 * time.Minute,
+		activeRunScopes: make(map[autoApproveScope]*RunScopeSnapshot),
+		timeout:         DefaultTimeout,
 		stop:            make(chan struct{}),
 		logger:          slog.Default(),
 	}
@@ -390,15 +447,28 @@ func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request
 // racing a stale IsAutoApproved check and leaving an orphan pending request.
 // A non-empty owner scope binds pending and replay state to that caller.
 func (s *Store) CreateOrAutoApproved(call engine.ToolCall, decision engine.Decision, ownerScope string) (*Request, bool, error) {
+	req, _, autoApproved, err := s.CreateOrAutoApprovedWithExpiry(call, decision, ownerScope)
+	return req, autoApproved, err
+}
+
+// CreateOrAutoApprovedWithExpiry is CreateOrAutoApproved plus the exact expiry
+// of a run grant observed by this call. The expiry is zero when the request is
+// enqueued instead. Callers that disclose grant lifetime must use this value
+// rather than reconstructing a fresh timeout after the cache lookup.
+func (s *Store) CreateOrAutoApprovedWithExpiry(
+	call engine.ToolCall,
+	decision engine.Decision,
+	ownerScope string,
+) (*Request, time.Time, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	ownerScope = ownerScopeDigest(ownerScope)
-	if s.isAutoApprovedLocked(call, ownerScope) {
-		return nil, true, nil
+	if expiresAt, ok := s.autoApprovalExpiryLocked(call, ownerScope); ok {
+		return nil, expiresAt, true, nil
 	}
 	req, err := s.createLocked(call, decision, ownerScope)
-	return req, false, err
+	return req, time.Time{}, false, err
 }
 
 // createLocked enqueues one request. The caller must hold s.mu.
@@ -440,6 +510,10 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 		ownerScope: ownerScope,
 		done:       make(chan struct{}),
 	}
+	if scope, valid := autoApproveScopeFor(call, ownerScope); valid {
+		req.runScope = scope
+		req.hasRunScope = true
+	}
 
 	s.pending[req.ID] = req
 
@@ -450,6 +524,7 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 			return nil, fmt.Errorf("approval: persist new approval: %w", err)
 		}
 	}
+	s.recordRunScopeMutationLocked(req, runScopeCreated, nil)
 
 	// Start expiry timer.
 	s.startWorker(func() { s.watchExpiry(req) })
@@ -481,6 +556,50 @@ func (s *Store) ResolveBeforePublish(
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.resolveBeforePublishLocked(id, approved, resolvedBy, beforePublish, nil)
+}
+
+// ResolveBeforePublishForRunScopeSnapshot commits one approval through the
+// active store-bound run snapshot and returns a commit receipt for API/audit
+// reporting. Grant publication trusts the Store's internal actor-tagged
+// mutation log, never caller-supplied IDs.
+func (s *Store) ResolveBeforePublishForRunScopeSnapshot(
+	snapshot *RunScopeSnapshot,
+	id string,
+	resolvedBy string,
+	beforePublish func(*Request) error,
+) (*RunApprovalCommit, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.runScopeSnapshotActiveLocked(snapshot) {
+		return nil, fmt.Errorf("approval: run-scope snapshot is stale, consumed, or belongs to another store")
+	}
+	if !time.Now().Before(snapshot.expiresAt) {
+		return nil, fmt.Errorf("approval: run-scope snapshot authorization window expired")
+	}
+	req, ok := s.pending[id]
+	if !ok || !req.hasRunScope || req.runScope != snapshot.scope {
+		return nil, fmt.Errorf("approval: %q does not belong to the active run-scope snapshot", id)
+	}
+	if !time.Now().Before(req.ExpiresAt) {
+		return nil, fmt.Errorf("approval: %q expired before resolution publication", id)
+	}
+	if err := s.resolveBeforePublishLocked(id, true, resolvedBy, beforePublish, snapshot); err != nil {
+		return nil, err
+	}
+	return &RunApprovalCommit{ID: id}, nil
+}
+
+// resolveBeforePublishLocked implements the durable transition and observable
+// publication boundary. The caller must hold s.mu. actor is non-nil only for
+// an approval committed by the matching active run-scope transaction.
+func (s *Store) resolveBeforePublishLocked(
+	id string,
+	approved bool,
+	resolvedBy string,
+	beforePublish func(*Request) error,
+	actor *RunScopeSnapshot,
+) error {
 
 	req, ok := s.pending[id]
 	if !ok {
@@ -489,6 +608,9 @@ func (s *Store) ResolveBeforePublish(
 
 	if req.Status != StatusPending {
 		return fmt.Errorf("approval: %s is already %s", id, req.Status)
+	}
+	if !time.Now().Before(req.ExpiresAt) {
+		return fmt.Errorf("approval: %s expired before resolution publication", id)
 	}
 	if s.persistFile != "" {
 		if err := secureExistingApprovalFile(s.persistFile); err != nil {
@@ -533,6 +655,12 @@ func (s *Store) ResolveBeforePublish(
 			return rollbackPending(fmt.Errorf("approval: required pre-publication step: %w", err))
 		}
 	}
+	if actor != nil && !time.Now().Before(actor.expiresAt) {
+		return rollbackPending(fmt.Errorf("approval: run-scope snapshot authorization window expired before resolution publication"))
+	}
+	if !time.Now().Before(req.ExpiresAt) {
+		return rollbackPending(fmt.Errorf("approval: %s expired before resolution publication", id))
+	}
 
 	var grant replayGrant
 	grantKey := ""
@@ -546,6 +674,9 @@ func (s *Store) ResolveBeforePublish(
 				ResolvedBy:  resolvedBy,
 				ResolvedAt:  now,
 				ExpiresAt:   now.Add(approvedReplayWindow),
+			}
+			if actor != nil && actor.expiresAt.Before(grant.ExpiresAt) {
+				grant.ExpiresAt = actor.expiresAt
 			}
 			if s.persistFile != "" {
 				if err := s.publishReplayGrant(grant); err != nil {
@@ -563,6 +694,11 @@ func (s *Store) ResolveBeforePublish(
 	req.Persisted = resolved.Persisted
 	if grantKey != "" {
 		s.approvedOnce[grantKey] = grant
+	}
+	if approved {
+		s.recordRunScopeMutationLocked(req, runScopeApproved, actor)
+	} else {
+		s.recordRunScopeMutationLocked(req, runScopeDenied, actor)
 	}
 	close(req.done)
 
@@ -674,6 +810,138 @@ func (s *Store) List() []*Request {
 	return result
 }
 
+// BeginRunScopeSnapshot atomically validates and captures every currently
+// pending approval for one exact owner-bound run. Mutations committed after
+// this boundary are recorded on the returned store-bound token until it is
+// either published or aborted.
+func (s *Store) BeginRunScopeSnapshot(call engine.ToolCall, reviewedIDs []string, ttl time.Duration) (*RunScopeSnapshot, error) {
+	if len(reviewedIDs) == 0 {
+		return nil, fmt.Errorf("approval: run scope requires reviewed approval ids")
+	}
+	if ttl <= 0 {
+		return nil, fmt.Errorf("approval: run scope requires a positive authorization window")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	s.pruneExpiredRunScopeSnapshotsLocked(now)
+
+	reviewed := make(map[string]struct{}, len(reviewedIDs))
+	matching := make([]*Request, 0, len(reviewedIDs))
+	var scope autoApproveScope
+	for index, rawID := range reviewedIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			return nil, fmt.Errorf("approval: run scope contains an empty approval id")
+		}
+		if _, duplicate := reviewed[id]; duplicate {
+			return nil, fmt.Errorf("approval: run scope contains duplicate approval id %q", id)
+		}
+		reviewed[id] = struct{}{}
+
+		req, ok := s.pending[id]
+		if !ok || req.Status != StatusPending || !now.Before(req.ExpiresAt) {
+			return nil, fmt.Errorf("approval: %q is no longer pending", id)
+		}
+		if !req.hasRunScope {
+			return nil, fmt.Errorf("approval: %q has incomplete run identity", id)
+		}
+		if index == 0 {
+			scope = req.runScope
+			if scope.Agent != strings.TrimSpace(call.Agent) ||
+				scope.Session != strings.TrimSpace(call.Session) ||
+				scope.RunID != strings.TrimSpace(call.RunID) {
+				return nil, fmt.Errorf("approval: %q does not belong to the requested run identity", id)
+			}
+		} else if req.runScope != scope {
+			return nil, fmt.Errorf("approval: run scope ids span multiple identities or credential owners")
+		}
+		cp := *req
+		matching = append(matching, &cp)
+	}
+
+	for _, req := range s.pending {
+		if req.Status != StatusPending || !req.hasRunScope || req.runScope != scope {
+			continue
+		}
+		if !now.Before(req.ExpiresAt) {
+			return nil, fmt.Errorf("approval: run scope contains expired pending approval %q", req.ID)
+		}
+		if _, selected := reviewed[req.ID]; !selected {
+			return nil, fmt.Errorf("approval: run scope omitted pending approval %q", req.ID)
+		}
+	}
+	if active := s.activeRunScopes[scope]; active != nil {
+		return nil, fmt.Errorf("approval: another run-scope authorization is already in progress")
+	}
+	if expiry, exists := s.autoApproveRuns[scope]; exists {
+		if time.Now().Before(expiry) {
+			return nil, fmt.Errorf("approval: run scope already has active future-call authority")
+		}
+		delete(s.autoApproveRuns, scope)
+	}
+	if len(s.activeRunScopes) >= maxActiveRunScopeSnapshots {
+		return nil, fmt.Errorf("approval: too many run-scope authorizations are already in progress")
+	}
+
+	snapshot := &RunScopeSnapshot{
+		Pending:   matching,
+		store:     s,
+		scope:     scope,
+		reviewed:  reviewed,
+		expiresAt: now.Add(ttl),
+	}
+	s.activeRunScopes[scope] = snapshot
+	return snapshot, nil
+}
+
+// AbortRunScopeSnapshot releases an unpublished snapshot. It is idempotent;
+// successful publication consumes and releases the token first.
+func (s *Store) AbortRunScopeSnapshot(snapshot *RunScopeSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if snapshot.store != s || snapshot.consumed || s.activeRunScopes[snapshot.scope] != snapshot {
+		return
+	}
+	delete(s.activeRunScopes, snapshot.scope)
+	snapshot.consumed = true
+}
+
+func (s *Store) runScopeSnapshotActiveLocked(snapshot *RunScopeSnapshot) bool {
+	return snapshot != nil && snapshot.store == s && !snapshot.consumed && s.activeRunScopes[snapshot.scope] == snapshot
+}
+
+func (s *Store) pruneExpiredRunScopeSnapshotsLocked(now time.Time) {
+	for scope, snapshot := range s.activeRunScopes {
+		if snapshot != nil && !snapshot.consumed && now.Before(snapshot.expiresAt) {
+			continue
+		}
+		delete(s.activeRunScopes, scope)
+		if snapshot != nil {
+			snapshot.consumed = true
+		}
+	}
+}
+
+func (s *Store) recordRunScopeMutationLocked(req *Request, kind runScopeMutationKind, actor *RunScopeSnapshot) {
+	if req == nil || !req.hasRunScope {
+		return
+	}
+	snapshot := s.activeRunScopes[req.runScope]
+	if snapshot == nil || snapshot.invalid {
+		return
+	}
+	if len(snapshot.mutations) >= maxRunScopeSnapshotMutations {
+		snapshot.invalid = true
+		return
+	}
+	snapshot.mutations = append(snapshot.mutations, runScopeMutation{kind: kind, id: req.ID, actor: actor})
+}
+
 // Done returns a channel that's closed when the request is resolved.
 func (r *Request) Done() <-chan struct{} {
 	return r.done
@@ -696,6 +964,7 @@ func (s *Store) Cleanup(olderThan time.Duration) int {
 
 	for id, req := range s.pending {
 		if req.Status != StatusPending && req.ResolvedAt.Before(cutoff) {
+			s.recordRunScopeMutationLocked(req, runScopeDeleted, nil)
 			delete(s.pending, id)
 			removed++
 		}
@@ -759,25 +1028,144 @@ func (s *Store) AutoApproveRunIfNoPending(call engine.ToolCall, ttl time.Duratio
 // AutoApproveRunIfNoPendingForRequest installs only the owner scope carried by
 // a request the operator explicitly selected for bulk resolution.
 func (s *Store) AutoApproveRunIfNoPendingForRequest(call engine.ToolCall, source *Request, ttl time.Duration) ([]*Request, bool) {
-	if source == nil {
-		return nil, false
-	}
-	return s.autoApproveRunIfNoPending(call, source.ownerScope, ttl)
+	pending, _, installed, _ := s.AutoApproveRunBeforePublishForRequest(call, source, ttl, nil)
+	return pending, installed
 }
 
-func (s *Store) autoApproveRunIfNoPending(call engine.ToolCall, ownerScope string, ttl time.Duration) ([]*Request, bool) {
-	scope, ok := autoApproveScopeFor(call, ownerScope)
-	if !ok || ttl <= 0 {
-		return nil, false
+// AutoApproveRunBeforePublishForRunScopeSnapshot publishes future authority
+// only when every mutation since BeginRunScopeSnapshot is accounted for. New
+// pending requests are returned for caller review/audit; any denial, expiry,
+// deletion, or approval by another resolver invalidates publication.
+func (s *Store) AutoApproveRunBeforePublishForRunScopeSnapshot(
+	snapshot *RunScopeSnapshot,
+	beforePublish func(time.Time) error,
+) ([]*Request, time.Time, bool, error) {
+	if snapshot == nil {
+		return nil, time.Time{}, false, fmt.Errorf("approval: invalid run-scope publication request")
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.runScopeSnapshotActiveLocked(snapshot) {
+		return nil, time.Time{}, false, fmt.Errorf("approval: run-scope snapshot is stale, consumed, or belongs to another store")
+	}
+	if snapshot.invalid {
+		return nil, time.Time{}, false, fmt.Errorf("approval: run-scope mutation log exceeded its safety bound")
+	}
+	if !time.Now().Before(snapshot.expiresAt) {
+		return nil, time.Time{}, false, fmt.Errorf("approval: run-scope snapshot authorization window expired")
+	}
+
+	created := make(map[string]struct{})
+	committed := make(map[string]struct{})
+	for _, mutation := range snapshot.mutations {
+		switch mutation.kind {
+		case runScopeCreated:
+			created[mutation.id] = struct{}{}
+		case runScopeApproved:
+			if mutation.actor != snapshot {
+				return nil, time.Time{}, false, fmt.Errorf("approval: %q was approved outside the active run-scope transaction", mutation.id)
+			}
+			committed[mutation.id] = struct{}{}
+		case runScopeDenied:
+			return nil, time.Time{}, false, fmt.Errorf("approval: %q was denied after the run-scope snapshot", mutation.id)
+		case runScopeExpired:
+			return nil, time.Time{}, false, fmt.Errorf("approval: %q expired after the run-scope snapshot", mutation.id)
+		case runScopeDeleted:
+			return nil, time.Time{}, false, fmt.Errorf("approval: %q was deleted after the run-scope snapshot", mutation.id)
+		default:
+			return nil, time.Time{}, false, fmt.Errorf("approval: unknown run-scope mutation")
+		}
+	}
+	for id := range snapshot.reviewed {
+		if _, ok := committed[id]; !ok {
+			if req, exists := s.pending[id]; exists && req.Status == StatusPending && req.hasRunScope && req.runScope == snapshot.scope {
+				continue
+			}
+			return nil, time.Time{}, false, fmt.Errorf("approval: reviewed approval %q was not committed by the active run-scope transaction", id)
+		}
+	}
 
 	pending := make([]*Request, 0)
 	for _, req := range s.pending {
-		requestScope, valid := autoApproveScopeFor(req.Call, req.ownerScope)
-		if req.Status != StatusPending || !valid || requestScope != scope {
+		if req.Status != StatusPending || !req.hasRunScope || req.runScope != snapshot.scope {
+			continue
+		}
+		if _, reviewed := snapshot.reviewed[req.ID]; !reviewed {
+			if _, arrivedAfterSnapshot := created[req.ID]; !arrivedAfterSnapshot {
+				return nil, time.Time{}, false, fmt.Errorf("approval: unaccounted pending approval %q in run scope", req.ID)
+			}
+		}
+		cp := *req
+		pending = append(pending, &cp)
+	}
+	if len(pending) > 0 {
+		sort.Slice(pending, func(i, j int) bool {
+			if pending[i].CreatedAt.Equal(pending[j].CreatedAt) {
+				return pending[i].ID < pending[j].ID
+			}
+			return pending[i].CreatedAt.Before(pending[j].CreatedAt)
+		})
+		return pending, time.Time{}, false, nil
+	}
+
+	expiresAt := snapshot.expiresAt
+	if beforePublish != nil {
+		if err := beforePublish(expiresAt); err != nil {
+			return nil, time.Time{}, false, fmt.Errorf("approval: required run-grant pre-publication step: %w", err)
+		}
+	}
+	if !time.Now().Before(expiresAt) {
+		return nil, time.Time{}, false, fmt.Errorf("approval: run grant expired before publication")
+	}
+	s.autoApproveRuns[snapshot.scope] = expiresAt
+
+	delete(s.activeRunScopes, snapshot.scope)
+	snapshot.consumed = true
+	return nil, expiresAt, true, nil
+}
+
+// AutoApproveRunBeforePublishForRequest installs only the owner scope carried
+// by a request the operator explicitly selected. The callback runs under the
+// Store lock before the cache entry is installed, so callers can require a
+// durable audit record without opening a create/publication race.
+func (s *Store) AutoApproveRunBeforePublishForRequest(
+	call engine.ToolCall,
+	source *Request,
+	ttl time.Duration,
+	beforePublish func(time.Time) error,
+) ([]*Request, time.Time, bool, error) {
+	if source == nil {
+		return nil, time.Time{}, false, nil
+	}
+	return s.autoApproveRunBeforePublish(call, source.ownerScope, ttl, beforePublish)
+}
+
+func (s *Store) autoApproveRunIfNoPending(call engine.ToolCall, ownerScope string, ttl time.Duration) ([]*Request, bool) {
+	pending, _, installed, _ := s.autoApproveRunBeforePublish(call, ownerScope, ttl, nil)
+	return pending, installed
+}
+
+func (s *Store) autoApproveRunBeforePublish(
+	call engine.ToolCall,
+	ownerScope string,
+	ttl time.Duration,
+	beforePublish func(time.Time) error,
+) ([]*Request, time.Time, bool, error) {
+	scope, ok := autoApproveScopeFor(call, ownerScope)
+	if !ok || ttl <= 0 {
+		return nil, time.Time{}, false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeRunScopes[scope] != nil {
+		return nil, time.Time{}, false, fmt.Errorf("approval: run-scope authorization is already in progress")
+	}
+
+	pending := make([]*Request, 0)
+	for _, req := range s.pending {
+		if req.Status != StatusPending || !req.hasRunScope || req.runScope != scope {
 			continue
 		}
 		cp := *req
@@ -790,11 +1178,20 @@ func (s *Store) autoApproveRunIfNoPending(call engine.ToolCall, ownerScope strin
 			}
 			return pending[i].CreatedAt.Before(pending[j].CreatedAt)
 		})
-		return pending, false
+		return pending, time.Time{}, false, nil
 	}
 
-	s.autoApproveRuns[scope] = time.Now().Add(ttl)
-	return nil, true
+	expiresAt := time.Now().Add(ttl)
+	if beforePublish != nil {
+		if err := beforePublish(expiresAt); err != nil {
+			return nil, time.Time{}, false, fmt.Errorf("approval: required run-grant pre-publication step: %w", err)
+		}
+	}
+	if !time.Now().Before(expiresAt) {
+		return nil, time.Time{}, false, fmt.Errorf("approval: run grant expired before publication")
+	}
+	s.autoApproveRuns[scope] = expiresAt
+	return nil, expiresAt, true, nil
 }
 
 // IsAutoApproved reports whether this exact agent/session/run scope has been
@@ -807,12 +1204,24 @@ func (s *Store) IsAutoApproved(call engine.ToolCall) bool {
 
 // isAutoApprovedLocked checks one call. The caller must hold s.mu.
 func (s *Store) isAutoApprovedLocked(call engine.ToolCall, ownerScope string) bool {
+	_, ok := s.autoApprovalExpiryLocked(call, ownerScope)
+	return ok
+}
+
+func (s *Store) autoApprovalExpiryLocked(call engine.ToolCall, ownerScope string) (time.Time, bool) {
 	scope, ok := autoApproveScopeFor(call, ownerScope)
 	if !ok {
-		return false
+		return time.Time{}, false
 	}
 	expiry, exists := s.autoApproveRuns[scope]
-	return exists && time.Now().Before(expiry)
+	if !exists {
+		return time.Time{}, false
+	}
+	if !time.Now().Before(expiry) {
+		delete(s.autoApproveRuns, scope)
+		return time.Time{}, false
+	}
+	return expiry, true
 }
 
 // cleanAutoApproveCache removes expired run_id entries from the cache.
@@ -841,6 +1250,7 @@ func (s *Store) watchExpiry(req *Request) {
 			req.Status = StatusExpired
 			req.ResolvedAt = time.Now()
 			req.ResolvedBy = "timeout"
+			s.recordRunScopeMutationLocked(req, runScopeExpired, nil)
 			close(req.done)
 
 			if s.onExpire != nil {
@@ -1196,6 +1606,10 @@ func fromRecord(rec persistRecord) (*Request, bool) {
 		ownerScope: rec.OwnerScope,
 		done:       make(chan struct{}),
 	}
+	if scope, valid := autoApproveScopeFor(call, rec.OwnerScope); valid {
+		req.runScope = scope
+		req.hasRunScope = true
+	}
 	return req, true
 }
 
@@ -1339,6 +1753,7 @@ func (s *Store) loadFromDisk() {
 			}
 		}
 		s.pending[req.ID] = req
+		s.recordRunScopeMutationLocked(req, runScopeCreated, nil)
 		s.startWorker(func() { s.watchExpiry(req) })
 		restored++
 	}

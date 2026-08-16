@@ -31,19 +31,26 @@ serve: full token: <generated-64-character-token>
 
 Enter this token in the dashboard's token field. It's stored in your browser's `localStorage` — never sent to any external service.
 
-### Admin Token vs. Per-Agent Tokens
+### Admin Scope vs. Eval Scope
 
-Rampart has two distinct token types:
+Rampart credentials carry explicit scopes:
 
-- **Admin token** — generated at startup, printed to stdout, and stored in `~/.rampart/token`. Full access to all dashboard APIs.
-- **Per-agent tokens** — created with `rampart token create <name>`. Scoped to specific policy profiles; useful for restricting what a particular agent can approve or query.
+- **Bootstrap admin token** — generated at startup, printed to stdout, and
+  stored in `~/.rampart/token`. It carries admin scope and can access all
+  dashboard APIs.
+- **Named tokens** — created with `rampart token create <name>`. They can carry
+  eval scope, admin scope, or both, plus optional policy profiles.
 
-Both token types can authenticate to the dashboard and the `/v1/approvals` API. The difference is scope: per-agent tokens may be restricted to a subset of policies (e.g., a `codex` token that can only operate within the `standard` profile). Use per-agent tokens when running multiple agents with different trust levels.
+Only a credential carrying admin scope can read or resolve dashboard
+approvals. Eval-only credentials are rejected by the approval and other admin
+APIs; they cannot turn an agent's own request into operator authorization.
 
 ## Features
 
 - **Pending approvals**: See all approval-gated decisions waiting for human input
-- **Approve / Deny**: Click to resolve approvals directly from the browser
+- **Approve / Deny**: Resolve only the exact pending approvals shown in the confirmation
+- **Explicit run grants**: Separately authorize future calls for the exact
+  agent/session/run and credential-owner scope for the duration shown in the confirmation
 - **History**: View past decisions with timestamps, agents, commands, and who resolved them
 - **Auto-refresh**: Dashboard polls for new approvals automatically
 
@@ -52,8 +59,9 @@ Both token types can authenticate to the dashboard and the `/v1/approvals` API. 
 | Component | Auth Required? | Notes |
 |-----------|---------------|-------|
 | Dashboard HTML/CSS/JS | No | Static files, no embedded secrets |
-| `GET /v1/approvals` | Yes (Bearer token) | Lists pending and resolved approvals |
-| `POST /v1/approvals/{id}/resolve` | Yes (Bearer OR signed URL) | Resolves a pending approval |
+| `GET /v1/approvals` | Yes (admin-scoped Bearer) | Lists pending approvals and safe run groupings |
+| `POST /v1/approvals/{id}/resolve` | Yes (admin-scoped Bearer or signed URL) | Resolves one pending approval |
+| `POST /v1/approvals/bulk-resolve` | Yes (admin-scoped Bearer) | Requires exact reviewed IDs and an explicit scope; `scope: "run"` grants future-call authority |
 
 **Signed URLs**: When webhooks fire for approval-gated decisions, the notification includes a self-authenticating signed URL. Recipients can approve/deny by clicking the link without needing the Bearer token.
 

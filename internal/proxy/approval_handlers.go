@@ -54,7 +54,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	// Check run-scoped authorization and enqueue atomically. A bulk cache
 	// publication can never slip between a stale check and Create, leaving an
 	// orphan pending request for a call that should have been auto-approved.
-	pending, autoApproved, err := s.approvals.CreateOrAutoApproved(call, decision, "")
+	pending, grantExpiresAt, autoApproved, err := s.approvals.CreateOrAutoApprovedWithExpiry(call, decision, "")
 	if err != nil {
 		s.logger.Error("proxy: approval store full", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -62,15 +62,11 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	if autoApproved {
 		s.logger.Debug("proxy: run auto-approved (hook), bypassing approval queue", "tool", req.Tool, "run_id", call.RunID)
-		ttl := s.approvalTimeout
-		if ttl <= 0 {
-			ttl = time.Hour
-		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":         audit.NewEventID(),
 			"status":     "approved",
 			"message":    "auto-approved by bulk-resolve",
-			"expires_at": time.Now().Add(ttl).Format(time.RFC3339),
+			"expires_at": grantExpiresAt.UTC().Format(time.RFC3339Nano),
 		})
 		return
 	}
@@ -95,6 +91,17 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func approvalOwnerLabel(ownerScope string) string {
+	if ownerScope == "" {
+		return "server/admin"
+	}
+	const visiblePrefix = 12
+	if len(ownerScope) > visiblePrefix {
+		ownerScope = ownerScope[:visiblePrefix]
+	}
+	return "credential-" + ownerScope
+}
+
 func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
@@ -106,9 +113,10 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	// A run ID is caller-selected and not globally unique. Group approvals by
 	// the complete identity used by bulk authorization.
 	type runScope struct {
-		agent   string
-		session string
-		runID   string
+		agent      string
+		session    string
+		runID      string
+		ownerScope string
 	}
 	type runGroupEntry struct {
 		minCreatedAt time.Time
@@ -117,23 +125,26 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	runGroupMap := make(map[runScope]*runGroupEntry)
 
 	for _, req := range pending {
+		credentialOwner := approvalOwnerLabel(req.OwnerScopeID())
 		item := map[string]any{
-			"id":         req.ID,
-			"tool":       req.Call.Tool,
-			"command":    req.Call.Command(),
-			"agent":      req.Call.Agent,
-			"session":    req.Call.Session,
-			"message":    req.Decision.Message,
-			"status":     req.Status.String(),
-			"created_at": req.CreatedAt.Format(time.RFC3339),
-			"expires_at": req.ExpiresAt.Format(time.RFC3339),
+			"id":               req.ID,
+			"tool":             req.Call.Tool,
+			"command":          req.Call.Command(),
+			"agent":            req.Call.Agent,
+			"session":          req.Call.Session,
+			"credential_owner": credentialOwner,
+			"message":          req.Decision.Message,
+			"status":           req.Status.String(),
+			"created_at":       req.CreatedAt.Format(time.RFC3339),
+			"expires_at":       req.ExpiresAt.Format(time.RFC3339),
 		}
 		if req.Call.RunID != "" {
 			item["run_id"] = req.Call.RunID
 			scope := runScope{
-				agent:   strings.TrimSpace(req.Call.Agent),
-				session: strings.TrimSpace(req.Call.Session),
-				runID:   strings.TrimSpace(req.Call.RunID),
+				agent:      strings.TrimSpace(req.Call.Agent),
+				session:    strings.TrimSpace(req.Call.Session),
+				runID:      strings.TrimSpace(req.Call.RunID),
+				ownerScope: req.OwnerScopeID(),
 			}
 			// Incomplete identity cannot safely support a bulk authorization
 			// operation, so leave that approval in the flat/solo view.
@@ -180,6 +191,7 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"agent":               g.scope.agent,
 			"session":             g.scope.session,
 			"run_id":              g.scope.runID,
+			"credential_owner":    approvalOwnerLabel(g.scope.ownerScope),
 			"count":               len(g.items),
 			"earliest_created_at": g.minCreatedAt.Format(time.RFC3339),
 			"items":               g.items,
@@ -187,8 +199,9 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"approvals":  items,
-		"run_groups": runGroupsJSON,
+		"approvals":        items,
+		"run_groups":       runGroupsJSON,
+		"run_grant_ttl_ms": durationMilliseconds(s.effectiveApprovalTimeout()),
 	})
 }
 
@@ -434,9 +447,46 @@ authorized:
 	})
 }
 
-// handleBulkResolve resolves all pending approvals for an exact
-// agent/session/run scope. Incomplete scopes are rejected to prevent
-// inadvertent cross-agent authorization.
+func runApprovalAuthorizationEvent(
+	call engine.ToolCall,
+	owner *approval.Request,
+	resolvedApprovalIDs []string,
+	reviewedApprovalIDs []string,
+	raceCoveredApprovalIDs []string,
+	resolvedBy string,
+	ttl time.Duration,
+	expiresAt time.Time,
+) audit.Event {
+	return audit.Event{
+		ID:        audit.NewEventID(),
+		Timestamp: time.Now().UTC(),
+		Agent:     call.Agent,
+		Session:   call.Session,
+		RunID:     call.RunID,
+		Tool:      "approval",
+		Request: map[string]any{
+			"action":                 "run_approval_publication_authorized",
+			"approval_scope":         "run",
+			"approval_ids":           append([]string(nil), resolvedApprovalIDs...),
+			"reviewed_approval_ids":  append([]string(nil), reviewedApprovalIDs...),
+			"race_covered_ids":       append([]string(nil), raceCoveredApprovalIDs...),
+			"credential_owner":       approvalOwnerLabel(owner.OwnerScopeID()),
+			"future_calls_requested": true,
+			"publication_authorized": true,
+			"grant_ttl_ms":           durationMilliseconds(ttl),
+			"grant_expires_at":       expiresAt.UTC().Format(time.RFC3339Nano),
+			"resolved_by":            resolvedBy,
+		},
+		Decision: audit.EventDecision{
+			Action:  "authorized",
+			Message: fmt.Sprintf("future-call grant publication authorized by %s", resolvedBy),
+		},
+	}
+}
+
+// handleBulkResolve resolves an exact operator-reviewed approval set for one
+// agent/session/run identity. Incomplete identities, omitted authority scope,
+// and stale or mismatched approval IDs are rejected before any resolution.
 func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
@@ -463,41 +513,123 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	approved := action == "approve"
+	scope := strings.ToLower(strings.TrimSpace(req.Scope))
+	if scope == "" {
+		writeError(w, http.StatusBadRequest, "scope is required and must be \"pending\" or \"run\"")
+		return
+	}
+	if scope != "pending" && scope != "run" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("scope must be \"pending\" or \"run\", got %q", req.Scope))
+		return
+	}
+	if !approved && scope == "run" {
+		writeError(w, http.StatusBadRequest, "scope \"run\" is only valid when action is \"approve\"")
+		return
+	}
+	authorizeFutureCalls := approved && scope == "run"
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids must contain the exact pending approvals reviewed by the operator")
+		return
+	}
 
 	resolvedBy := req.ResolvedBy
 	if resolvedBy == "" {
 		resolvedBy = "api"
 	}
 
-	// Collect all pending approvals that belong to this run.
+	// Resolve only the IDs the operator reviewed. New same-run calls that arrive
+	// after the dashboard poll are not pulled into a pending-scope decision.
 	pending := s.approvals.List()
-	matching := make([]*approval.Request, 0)
+	pendingByID := make(map[string]*approval.Request, len(pending))
 	for _, ap := range pending {
-		if strings.TrimSpace(ap.Call.Agent) == req.Agent &&
-			strings.TrimSpace(ap.Call.Session) == req.Session &&
-			strings.TrimSpace(ap.Call.RunID) == req.RunID {
-			matching = append(matching, ap)
+		pendingByID[ap.ID] = ap
+	}
+	matching := make([]*approval.Request, 0, len(req.IDs))
+	reviewedIDs := make([]string, 0, len(req.IDs))
+	seenIDs := make(map[string]struct{}, len(req.IDs))
+	for _, rawID := range req.IDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			writeError(w, http.StatusBadRequest, "ids must not contain empty values")
+			return
 		}
+		if _, seen := seenIDs[id]; seen {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("duplicate approval id %q", id))
+			return
+		}
+		seenIDs[id] = struct{}{}
+		reviewedIDs = append(reviewedIDs, id)
+		ap, ok := pendingByID[id]
+		if !ok {
+			writeError(w, http.StatusConflict, fmt.Sprintf("approval %q is no longer pending; refresh and retry", id))
+			return
+		}
+		if strings.TrimSpace(ap.Call.Agent) != req.Agent ||
+			strings.TrimSpace(ap.Call.Session) != req.Session ||
+			strings.TrimSpace(ap.Call.RunID) != req.RunID {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("approval %q does not belong to the requested agent/session/run identity", id))
+			return
+		}
+		matching = append(matching, ap)
+	}
+
+	grantOwner := matching[0]
+	var runScopeSnapshot *approval.RunScopeSnapshot
+	scopeCall := engine.ToolCall{Agent: req.Agent, Session: req.Session, RunID: req.RunID}
+	autoApproveTTL := s.effectiveApprovalTimeout()
+	if authorizeFutureCalls {
+		for _, ap := range matching[1:] {
+			if ap.OwnerScopeID() != grantOwner.OwnerScopeID() {
+				writeError(w, http.StatusBadRequest, "scope \"run\" requires all approval ids to share one credential owner")
+				return
+			}
+		}
+		// Future authority covers the entire owner-bound run scope. Require the
+		// caller to review every request already pending in that scope at this
+		// server snapshot; only requests created after the snapshot may be
+		// reported as race-covered while the grant is published.
+		for _, ap := range pending {
+			if strings.TrimSpace(ap.Call.Agent) != req.Agent ||
+				strings.TrimSpace(ap.Call.Session) != req.Session ||
+				strings.TrimSpace(ap.Call.RunID) != req.RunID ||
+				ap.OwnerScopeID() != grantOwner.OwnerScopeID() {
+				continue
+			}
+			if _, reviewed := seenIDs[ap.ID]; !reviewed {
+				writeError(w, http.StatusConflict, fmt.Sprintf("scope \"run\" omitted pending approval %q for the selected credential owner; refresh and review the complete scope", ap.ID))
+				return
+			}
+		}
+		var beginErr error
+		runScopeSnapshot, beginErr = s.approvals.BeginRunScopeSnapshot(scopeCall, reviewedIDs, autoApproveTTL)
+		if beginErr != nil {
+			writeError(w, http.StatusConflict, fmt.Sprintf("run approval scope changed during validation; refresh and review again: %v", beginErr))
+			return
+		}
+		defer s.approvals.AbortRunScopeSnapshot(runScopeSnapshot)
+		matching = runScopeSnapshot.Pending
+		grantOwner = matching[0]
 	}
 
 	var resolved int
-	var ids []string
+	ids := make([]string, 0, len(matching))
+	raceCoveredIDs := make([]string, 0)
 	var resolveErr error
-	autoApproveTTL := s.approvalTimeout
-	if autoApproveTTL <= 0 {
-		autoApproveTTL = time.Hour
-	}
-
-	resolveBatch := func(batch []*approval.Request) {
+	resolveBatch := func(batch []*approval.Request, raceCovered bool) {
 		for _, ap := range batch {
-			err := s.approvals.ResolveBeforePublish(ap.ID, approved, resolvedBy, func(candidate *approval.Request) error {
+			beforeResolvePublish := func(candidate *approval.Request) error {
 				if s.sink == nil {
 					return nil
 				}
 				event := approvalResolutionEvent(candidate, approved, false, resolvedBy)
 				event.Request["bulk"] = true
-				event.Request["auto_approve"] = approved
-				if approved {
+				event.Request["approval_scope"] = scope
+				event.Request["future_calls_requested"] = authorizeFutureCalls
+				// Deprecated rampart.audit.v1 aliases retained for 1.x SIEM
+				// consumers. New integrations should use the explicit fields above.
+				event.Request["auto_approve"] = authorizeFutureCalls
+				if authorizeFutureCalls {
+					event.Request["grant_ttl_ms"] = durationMilliseconds(autoApproveTTL)
 					event.Request["auto_approve_ttl_seconds"] = int64(autoApproveTTL / time.Second)
 				}
 				event.Decision.Message = fmt.Sprintf("bulk %s by %s", event.Decision.Action, resolvedBy)
@@ -505,18 +637,37 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 					return fmt.Errorf("write bulk approval resolution audit: %w", writeErr)
 				}
 				return nil
-			})
+			}
+			committedID := ap.ID
+			var err error
+			if authorizeFutureCalls {
+				var commit *approval.RunApprovalCommit
+				commit, err = s.approvals.ResolveBeforePublishForRunScopeSnapshot(
+					runScopeSnapshot,
+					ap.ID,
+					resolvedBy,
+					beforeResolvePublish,
+				)
+				if commit != nil {
+					committedID = commit.ID
+				}
+			} else {
+				err = s.approvals.ResolveBeforePublish(ap.ID, approved, resolvedBy, beforeResolvePublish)
+			}
 			if err != nil {
 				resolveErr = err
 				s.logger.Warn("proxy: bulk-resolve stopped before publishing approval", "id", ap.ID, "error", err)
 				return
 			}
 			resolved++
-			ids = append(ids, ap.ID)
+			ids = append(ids, committedID)
+			if raceCovered {
+				raceCoveredIDs = append(raceCoveredIDs, committedID)
+			}
 			// Individual audit SSE events intentionally remain batched below.
 		}
 	}
-	resolveBatch(matching)
+	resolveBatch(matching, false)
 
 	// The run-scoped cache is authorization state in its own right. Install it
 	// only after every approval selected by this bulk request has a durable
@@ -524,34 +675,50 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 	// creation use the same Store lock. If creation wins their race, this loop
 	// receives and resolves that new request before trying publication again;
 	// if publication wins, the creator observes auto-approved state atomically.
-	if approved && resolveErr == nil && len(matching) > 0 {
-		scopeCall := engine.ToolCall{Agent: req.Agent, Session: req.Session, RunID: req.RunID}
-		owners := make([]*approval.Request, 0, len(matching))
-		seenOwners := make(map[string]struct{}, len(matching))
-		for _, ap := range matching {
-			if _, seen := seenOwners[ap.OwnerScopeID()]; !seen {
-				seenOwners[ap.OwnerScopeID()] = struct{}{}
-				owners = append(owners, ap)
+	futureCallsAuthorized := false
+	grantExpiresAt := time.Time{}
+	if authorizeFutureCalls && resolveErr == nil {
+		for resolveErr == nil {
+			if err := r.Context().Err(); err != nil {
+				resolveErr = fmt.Errorf("bulk approval request cancelled before cache publication: %w", err)
+				break
 			}
-		}
-		for _, owner := range owners {
-			for resolveErr == nil {
-				select {
-				case <-r.Context().Done():
-					resolveErr = fmt.Errorf("bulk approval request cancelled before cache publication: %w", r.Context().Err())
-					continue
-				default:
-				}
-				raced, installed := s.approvals.AutoApproveRunIfNoPendingForRequest(scopeCall, owner, autoApproveTTL)
-				if installed {
-					break
-				}
-				if len(raced) == 0 {
-					resolveErr = fmt.Errorf("bulk approval scope could not be installed")
-					break
-				}
-				resolveBatch(raced)
+			raced, expiresAt, installed, publishErr := s.approvals.AutoApproveRunBeforePublishForRunScopeSnapshot(
+				runScopeSnapshot,
+				func(candidateExpiry time.Time) error {
+					if s.sink == nil {
+						return nil
+					}
+					event := runApprovalAuthorizationEvent(
+						scopeCall,
+						grantOwner,
+						ids,
+						reviewedIDs,
+						raceCoveredIDs,
+						resolvedBy,
+						autoApproveTTL,
+						candidateExpiry,
+					)
+					if err := s.sink.Write(event); err != nil {
+						return fmt.Errorf("write run approval authorization audit: %w", err)
+					}
+					return nil
+				},
+			)
+			if publishErr != nil {
+				resolveErr = publishErr
+				break
 			}
+			if installed {
+				grantExpiresAt = expiresAt
+				futureCallsAuthorized = true
+				break
+			}
+			if len(raced) == 0 {
+				resolveErr = fmt.Errorf("bulk approval scope could not be installed")
+				break
+			}
+			resolveBatch(raced, true)
 		}
 		if resolveErr != nil {
 			s.logger.Error("proxy: bulk-resolve could not install auto-approval scope",
@@ -568,26 +735,58 @@ func (s *Server) handleBulkResolve(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	s.logger.Info("proxy: bulk-resolve completed",
+	logFields := []any{
 		"agent", req.Agent,
 		"session", req.Session,
 		"run_id", req.RunID,
 		"action", req.Action,
+		"scope", scope,
 		"resolved", resolved,
+		"future_calls_authorized", futureCallsAuthorized,
 		"resolved_by", resolvedBy,
-	)
+	}
+	if authorizeFutureCalls {
+		logFields = append(logFields, "credential_owner", approvalOwnerLabel(grantOwner.OwnerScopeID()))
+	}
+	s.logger.Info("proxy: bulk-resolve completed", logFields...)
 	if resolveErr != nil {
-		writeError(w, http.StatusServiceUnavailable, "bulk resolution stopped before unaudited authorization could be published")
+		resolvedSet := make(map[string]struct{}, len(ids))
+		for _, id := range ids {
+			resolvedSet[id] = struct{}{}
+		}
+		unresolvedReviewedIDs := make([]string, 0, len(reviewedIDs))
+		for _, id := range reviewedIDs {
+			if _, ok := resolvedSet[id]; !ok {
+				unresolvedReviewedIDs = append(unresolvedReviewedIDs, id)
+			}
+		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error":                   "bulk resolution stopped before every requested transition and grant could be published; refresh before retrying",
+			"resolved":                resolved,
+			"ids":                     ids,
+			"reviewed_ids":            reviewedIDs,
+			"unresolved_reviewed_ids": unresolvedReviewedIDs,
+			"race_covered_ids":        raceCoveredIDs,
+			"scope":                   scope,
+			"future_calls_authorized": false,
+			"refresh_required":        true,
+		})
 		return
 	}
 
-	if ids == nil {
-		ids = []string{}
+	response := map[string]any{
+		"resolved":                resolved,
+		"ids":                     ids,
+		"reviewed_ids":            reviewedIDs,
+		"race_covered_ids":        raceCoveredIDs,
+		"scope":                   scope,
+		"future_calls_authorized": futureCallsAuthorized,
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"resolved": resolved,
-		"ids":      ids,
-	})
+	if futureCallsAuthorized {
+		response["grant_ttl_ms"] = durationMilliseconds(autoApproveTTL)
+		response["grant_expires_at"] = grantExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleResolveHostedApproval(w http.ResponseWriter, r *http.Request) {

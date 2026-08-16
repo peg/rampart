@@ -240,6 +240,19 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			if listenAddr != "" && net.ParseIP(listenAddr) == nil {
 				return fmt.Errorf("serve: invalid --addr %q (must be a valid IP address, e.g. 127.0.0.1 or ::1)", listenAddr)
 			}
+			if port > 0 && rampartDir != "" {
+				if err := os.MkdirAll(rampartDir, 0o700); err != nil {
+					return fmt.Errorf("serve: create approval-state directory: %w", err)
+				}
+				instanceLock, lockErr := filetxn.AcquireLock(rampartDir)
+				if lockErr != nil {
+					if errors.Is(lockErr, filetxn.ErrLockHeld) {
+						return fmt.Errorf("serve: another Rampart serve process already owns approval state in %s", rampartDir)
+					}
+					return fmt.Errorf("serve: acquire approval-state ownership: %w", lockErr)
+				}
+				defer func() { _ = instanceLock.Close() }()
+			}
 
 			// Validate TLS flags.
 			if (tlsCert == "") != (tlsKey == "") {

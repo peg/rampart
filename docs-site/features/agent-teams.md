@@ -5,7 +5,11 @@ description: "Rampart groups sub-agent approvals by shared run ID so you can sup
 
 # Agent Team Oversight
 
-When you run Claude Code with multiple sub-agents — or any orchestrator spawning parallel workers — every agent in the session shares the same **run ID**. Rampart groups their pending approvals together so you can review and approve the whole team in one click.
+When you run Claude Code with multiple sub-agents — or any orchestrator spawning
+parallel workers — every agent in the session shares the same **run ID**.
+Rampart groups their pending approvals so you can decide the current calls
+together and separately choose whether later calls receive a time-bounded
+grant.
 
 !!! info "Available since v0.4.0"
 
@@ -23,48 +27,64 @@ You don't configure anything. If you already use Rampart, agent team grouping ju
 
 ## Dashboard View
 
-When 2 or more pending approvals share a run ID, the dashboard's **Active** tab groups them into a cluster card:
+When 2 or more pending approvals share the same agent, session, run ID, and
+credential owner, the dashboard's **Active** tab groups them into a cluster
+card:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Run: a1b2c3d4…  (3 pending)                ▼           │
+│  Run: a1b2c3d4…  credential-3fa87c…  (3 pending)    ▼   │
 ├─────────────────────────────────────────────────────────┤
 │  exec  kubectl apply -f deploy.yaml    claude-code      │
 │  exec  kubectl delete pod old-pod      claude-code      │
 │  exec  kubectl rollout restart app     claude-code      │
 ├─────────────────────────────────────────────────────────┤
-│              [✓ Approve All]  [✗ Deny All]              │
+│ [✓ Approve Pending] [Allow Future (2m)] [✗ Deny Pending]│
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Approve All** resolves every pending approval in the same agent/session/run
-scope and caches that exact scope for the remainder of the approval timeout
-(default: 1 hour). A different agent or session that happens to reuse the run
-ID remains isolated.
+**Approve Pending** resolves only the calls that are pending now. Later calls
+from the same run still require approval.
 
-**Deny All** blocks all pending requests. The agents get a denial response and can try a different approach.
+**Allow Future** is a separate, explicit grant. It approves the pending calls
+and authorizes later calls from the exact same agent/session/run and credential
+owner for the duration shown on the button (default: 2 minutes). Calls that
+are already pending for that owner must all appear in the reviewed request.
+The window begins at Rampart's validation snapshot; resolving raced calls does
+not restart or extend it.
+Calls that arrive after Rampart's validation snapshot while it closes the
+create-versus-grant race are covered by that future authority and reported
+separately from the reviewed IDs. If one of those calls is denied, expires, is
+deleted, or is approved by another resolver first, Rampart aborts the future
+grant and requires a refresh rather than overriding the intervening decision.
+
+**Deny Pending** blocks only the currently pending requests. The agents get a
+denial response and can try a different approach.
 
 Solo approvals (no run ID, or unique run ID) render exactly as before — no UI change for single-agent users.
 
 ---
 
-## Auto-Approve Cache
+## Explicit Run Grants
 
-After you click **Approve All**, Rampart caches the complete agent, session, and
-run identity. New tool calls in that exact scope are allowed immediately — the
-agent doesn't wait and no approval card is created.
+After you confirm **Allow Future**, Rampart caches the complete agent, session,
+run, and credential-owner identity. New tool calls in that exact scope are
+allowed immediately — the agent doesn't wait and no approval card is created.
 
-The cache expires after the configured `--approval-timeout` (default 1 hour). After expiry, the next call from that run will queue for approval again.
+The grant expires after the configured `--approval-timeout` (default: 2
+minutes). The confirmation names the exact scope and duration before authority
+is granted. This window begins when Rampart validates the reviewed snapshot,
+not when the last raced call settles. After expiry, the next call from that run
+queues for approval again.
 
-To disable the cache for a specific run, use the API directly:
+Run grants currently expire by timeout or when the server restarts; the bulk
+endpoint does not yet revoke a live grant early. A `deny` request affects
+pending calls only.
 
-```bash
-# Deny a run, preventing future auto-approvals
-curl -X POST http://localhost:9090/v1/approvals/bulk-resolve \
-  -H "Authorization: Bearer $RAMPART_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"agent":"YOUR_AGENT","session":"YOUR_SESSION","run_id":"YOUR_RUN_ID","action":"deny"}'
-```
+Only one live `rampart serve` process may own approval state in a Rampart data
+directory. A second process using the same directory fails at startup rather
+than creating an independent in-memory grant view. Use one service endpoint per
+data directory.
 
 ---
 
@@ -74,7 +94,7 @@ curl -X POST http://localhost:9090/v1/approvals/bulk-resolve \
 
 ```http
 POST /v1/approvals/bulk-resolve
-Authorization: Bearer <token>
+Authorization: Bearer <admin-scoped-token>
 Content-Type: application/json
 
 {
@@ -82,6 +102,8 @@ Content-Type: application/json
   "session": "repo/main",
   "run_id": "SESSION_ID_HERE",
   "action": "approve",
+  "scope": "pending",
+  "ids": ["01KHT3...", "01KHT4...", "01KHT5..."],
   "resolved_by": "dashboard"
 }
 ```
@@ -91,18 +113,35 @@ Response:
 ```json
 {
   "resolved": 3,
-  "ids": ["01KHT3...", "01KHT4...", "01KHT5..."]
+  "ids": ["01KHT3...", "01KHT4...", "01KHT5..."],
+  "reviewed_ids": ["01KHT3...", "01KHT4...", "01KHT5..."],
+  "race_covered_ids": [],
+  "scope": "pending",
+  "future_calls_authorized": false
 }
 ```
 
-`agent`, `session`, and `run_id` are required. Missing or empty scope fields
-return `400`; Rampart refuses to infer an authorization scope from a run ID.
+`agent`, `session`, and `run_id` are required. Missing or empty identity fields
+return `400`; Rampart refuses to infer an authorization identity from a run ID.
+`scope` and `ids` are also required. The IDs must be the exact pending
+approvals the operator reviewed. IDs already stale during initial validation
+return `409` before this request resolves a listed call. If another resolver or
+expiry races after validation, Rampart returns `503`; exact resolutions already
+committed are named in `ids`, unresolved reviewed calls are named in
+`unresolved_reviewed_ids`, and no future-call grant is published. A `503` also
+sets `refresh_required: true`; refresh and reconcile instead of replaying the
+same request blindly. Use `scope: "run"` only when you intend to grant future-call
+authority. All IDs in a run-scoped request must share one credential owner. A
+run-scoped request must also include every approval already pending for that
+owner at initial validation; omission returns `409` without resolving a listed
+call. A successful response then includes `future_calls_authorized: true`,
+`grant_ttl_ms`, and `grant_expires_at`.
 
 ### List approvals with run groups
 
 ```http
 GET /v1/approvals
-Authorization: Bearer <token>
+Authorization: Bearer <admin-scoped-token>
 ```
 
 Response includes both the flat `approvals` array and a `run_groups` array:
@@ -110,11 +149,13 @@ Response includes both the flat `approvals` array and a `run_groups` array:
 ```json
 {
   "approvals": [...],
+  "run_grant_ttl_ms": 120000,
   "run_groups": [
     {
       "agent": "claude-code",
       "session": "repo/main",
       "run_id": "abc123...",
+      "credential_owner": "credential-3fa87c921e10",
       "count": 3,
       "earliest_created_at": "2026-02-19T04:30:00Z",
       "items": [...]
@@ -124,7 +165,9 @@ Response includes both the flat `approvals` array and a `run_groups` array:
 ```
 
 `run_groups` only includes groups with 2+ pending items in the same exact
-agent/session/run scope, sorted by `earliest_created_at`.
+agent/session/run and credential-owner scope, sorted by
+`earliest_created_at`. The credential-owner value is an opaque, shortened
+store identifier; it is not a bearer credential.
 
 ---
 
@@ -159,6 +202,16 @@ Every audit event includes `run_id` when present:
   "decision": { "action": "approved" }
 }
 ```
+
+Each bulk-resolution audit event records `approval_scope`, the exact approval
+ID, and `future_calls_requested`. A separate
+`run_approval_publication_authorized` event is required immediately before a
+run grant can become observable and distinguishes reviewed IDs from any
+race-covered approvals, along with credential owner, millisecond TTL, and
+candidate expiry. It records authorization intent, not successful publication,
+so a sink failure cannot leave evidence that overclaims active authority. The
+API response's `future_calls_authorized` field confirms that Rampart published
+the future-call grant.
 
 This means you can trace the full activity of an agent team run across the entire audit log — filter by `run_id` to see everything that run touched.
 
