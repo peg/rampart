@@ -35,6 +35,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 #token-input::placeholder{color:#52525b}
 #connect-btn{background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:var(--radius);font-size:12px;font-weight:600;cursor:pointer}
 #connect-btn:hover{background:var(--accent-dim)}
+#token-show-btn{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;padding:0 4px}
 #theme-toggle{background:var(--surface);border:1px solid var(--border);color:var(--text-bright);padding:4px 8px;border-radius:var(--radius);font-size:14px;cursor:pointer;line-height:1}
 #theme-toggle:hover{border-color:var(--accent)}
 /* Connected state — replaces input+button after auth */
@@ -48,6 +49,28 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 /* Error banner */
 #error-banner{display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:8px 16px;border-radius:var(--radius);margin:8px 0;font-size:12px;align-items:center;gap:8px}
 #error-banner button{background:var(--red);color:#fff;border:none;padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px}
+
+/* Static states and utility presentation. Keep presentation out of element
+   attributes so the nonce-only CSP applies without unsafe-inline. */
+#auth-prompt{display:none;border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin:10px 0;font-size:12px;line-height:1.7}
+.auth-prompt-title{color:var(--text-bright);font-size:13px}
+.auth-prompt-help,.empty-secondary{color:#52525b;font-size:12px}
+.empty-secondary{margin-top:4px}
+#badge-active,#denials-badge,#decision-bar-wrap,#policy-heatmap,#hist-empty,#hist-loading,#policy-test-result{display:none}
+.recent-denials-divider{margin-top:24px}
+.view-all-btn{margin-left:auto;background:none;border:none;color:var(--text-dim);font-size:11px;cursor:pointer;text-decoration:underline}
+.hist-loading{text-align:center;padding:24px;color:var(--text-dim);font-size:12px}
+.hist-more-cell{text-align:center;padding:8px;color:#52525b;font-size:11px}
+.cell-time{font-size:11px;white-space:nowrap}
+.cell-session,.cell-created{font-size:11px}
+.cell-actions{text-align:right}
+.col-w-time,.col-w-agent{width:80px}
+.col-w-session{width:100px}
+.col-w-tool{width:60px}
+.col-w-outcome{width:110px}
+.col-w-rules-tool{width:70px}
+.col-w-created{width:150px}
+.col-w-actions{width:80px;text-align:right}
 
 /* Tabs */
 .tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-top:2px}
@@ -199,6 +222,9 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .heatmap-count{width:36px;text-align:right;color:var(--text-dim);font-size:11px;font-family:'JetBrains Mono',monospace}
 .decision-bar-legend{display:flex;gap:12px;margin-top:4px;font-size:11px;color:var(--text-secondary)}
 .decision-bar-legend .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:middle}
+.decision-bar-legend .swatch.allow{background:#34d399}
+.decision-bar-legend .swatch.pending{background:#fbbf24}
+.decision-bar-legend .swatch.deny{background:#f87171}
 
 /* Filter pills */
 .filter-pills{display:flex;gap:4px;padding:6px 0 10px;flex-wrap:wrap}
@@ -250,12 +276,15 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 
 /* Run cluster — grouped approvals sharing a run_id */
 .run-cluster{border:1px solid var(--border);border-radius:var(--radius);margin:8px 0;overflow:hidden}
-.run-cluster-header{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.run-cluster-header{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-bottom:1px solid var(--border);user-select:none}
+.run-cluster-toggle{display:flex;align-items:center;gap:10px;flex:1;min-width:0;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.run-cluster-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
 .run-cluster-chevron{font-size:10px;color:var(--text-dim);transition:transform .2s;flex-shrink:0}
 .run-cluster.collapsed .run-cluster-chevron{transform:rotate(-90deg)}
 .run-cluster-label{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--text-bright);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.run-cluster-owner{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-dim);flex-shrink:0}
 .run-cluster-count{font-size:10px;color:var(--text-dim);background:var(--surface-3);padding:1px 7px;border-radius:10px;flex-shrink:0}
-.run-cluster-actions{display:flex;gap:5px;flex-shrink:0}
+.run-cluster-actions{display:flex;gap:5px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
 .run-cluster-body{display:block}
 .run-cluster.collapsed .run-cluster-body{display:none}
 /* Items inside a cluster get a subtle left inset */
@@ -272,6 +301,10 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
   .tbl td.cmd-col{max-width:none;white-space:normal;word-break:break-all}
   #token-input{width:160px}
   .stat:nth-child(n+4){display:none}
+  .run-cluster-header{flex-wrap:wrap}
+  .run-cluster-toggle{flex:1 1 120px}
+  .run-cluster-owner{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .run-cluster-actions{flex:1 0 100%;justify-content:flex-start}
 }
 @media(max-width:480px){
   #auth-bar{gap:6px;padding:8px 0}
@@ -305,7 +338,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <button id="theme-toggle" title="Toggle theme">🌙</button>
     <!-- Pre-auth -->
     <input type="password" id="token-input" placeholder="API token" autocomplete="off">
-    <button id="token-show-btn" title="Show/hide token" onclick="toggleTokenVis()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;padding:0 4px">👁</button>
+    <button id="token-show-btn" title="Show/hide token">👁</button>
     <button id="connect-btn">Connect</button>
     <!-- Post-auth (shown after connect) -->
     <div id="auth-connected">
@@ -315,19 +348,19 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     </div>
   </div>
   <div id="auth-help">
-    <div id="auth-prompt" style="display:none;border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin:10px 0;font-size:12px;line-height:1.7">
-      <b style="color:var(--text-bright);font-size:13px">Connect to Rampart</b><br>
+    <div id="auth-prompt">
+      <b class="auth-prompt-title">Connect to Rampart</b><br>
       Paste the token from <code>rampart serve</code> output above, then click <b>Connect</b>.<br>
-      <span style="color:#52525b">Don't have it? Run <code>rampart serve install</code> and check the output, or run <code>rampart serve</code> directly to see the token printed on startup.</span>
+      <span class="auth-prompt-help">Don't have it? Run <code>rampart serve install</code> and check the output, or run <code>rampart serve</code> directly to see the token printed on startup.</span>
     </div>
   </div>
 
-  <div id="error-banner"><span id="error-msg"></span><button onclick="reconnect()">Retry</button></div>
+  <div id="error-banner"><span id="error-msg"></span><button id="reconnect-btn">Retry</button></div>
 
 <div id="main-content">
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab-btn active" data-tab="active">Active<span class="tab-badge" id="badge-active" style="display:none">0</span></button>
+    <button class="tab-btn active" data-tab="active">Active<span class="tab-badge" id="badge-active">0</span></button>
     <button class="tab-btn" data-tab="history">History</button>
     <button class="tab-btn" data-tab="policy">Policy</button>
   </div>
@@ -341,14 +374,14 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <div class="empty" id="pending-empty">
       <div class="icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L3 12l9 10 9-10L12 2z" fill="var(--accent)" opacity="0.15" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 7v6m0 2.5v.5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"/></svg></div>
       <div>All quiet — no pending approvals</div>
-      <div style="color:var(--text-dim);font-size:12px;margin-top:4px">Approvals appear here when agents request them</div>
+      <div class="empty-secondary">Approvals appear here when agents request them</div>
     </div>
 
     <!-- Recent Denials feed -->
-    <div class="section-divider" style="margin-top:24px">
+    <div class="section-divider recent-denials-divider">
       <span class="section-title">Recent Denials</span>
-      <span class="count-badge" id="denials-badge" style="display:none"></span>
-      <button onclick="switchTab('history')" style="margin-left:auto;background:none;border:none;color:var(--text-dim);font-size:11px;cursor:pointer;text-decoration:underline">View all →</button>
+      <span class="count-badge" id="denials-badge"></span>
+      <button id="view-history-btn" class="view-all-btn">View all →</button>
     </div>
     <div id="denials-feed"></div>
     <div class="empty" id="denials-empty">
@@ -365,11 +398,11 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
       <div class="stat"><span class="dot denied"></span> <b id="hs-denied">—</b> denied</div>
       <div class="stat"><span class="dot pending"></span> <b id="hs-blocked">—</b> blocked</div>
     </div>
-    <div class="decision-bar-wrap" id="decision-bar-wrap" style="display:none">
+    <div class="decision-bar-wrap" id="decision-bar-wrap">
       <div class="decision-bar" id="decision-bar"></div>
     </div>
 
-    <div class="policy-heatmap" id="policy-heatmap" style="display:none">
+    <div class="policy-heatmap" id="policy-heatmap">
       <div class="heatmap-title">Top Policies</div>
       <div class="heatmap-bars" id="heatmap-bars"></div>
     </div>
@@ -377,8 +410,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <div class="hist-controls">
       <input type="search" id="hist-search" placeholder="Filter by command…">
       <input type="date" id="hist-date">
-      <button onclick="loadHistoryTab(true)">Load</button>
-      <button onclick="exportHistoryAudit()">Export</button>
+      <button id="history-load-btn">Load</button>
+      <button id="history-export-btn">Export</button>
     </div>
 
     <div class="filter-pills" id="filter-pills">
@@ -392,23 +425,23 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <div class="tbl-scroll" id="hist-scroll-wrap">
       <table class="tbl" id="hist-table">
         <thead><tr>
-          <th style="width:80px">Time</th>
-          <th class="col-agent" style="width:80px">Agent</th>
-          <th style="width:100px">Session</th>
-          <th class="col-tool" style="width:60px">Tool</th>
+          <th class="col-w-time">Time</th>
+          <th class="col-agent col-w-agent">Agent</th>
+          <th class="col-w-session">Session</th>
+          <th class="col-tool col-w-tool">Tool</th>
           <th class="cmd-col">Command</th>
 
-          <th style="width:110px">Outcome</th>
+          <th class="col-w-outcome">Outcome</th>
         </tr></thead>
         <tbody id="hist-body"></tbody>
       </table>
-      <div class="empty" id="hist-empty" style="display:none">
+      <div class="empty" id="hist-empty">
         <div class="icon">📭</div>
         <div>No events for this date</div>
-        <div style="color:var(--text-dim);font-size:12px;margin-top:4px">Try selecting a different date</div>
+        <div class="empty-secondary">Try selecting a different date</div>
       </div>
-      <div id="hist-loading" style="display:none;text-align:center;padding:24px;color:var(--text-dim);font-size:12px">Loading history…</div>
-      <div id="hist-sentinel" style="height:4px"></div>
+      <div id="hist-loading" class="hist-loading">Loading history…</div>
+      <div id="hist-sentinel"></div>
     </div>
   </div>
 
@@ -427,7 +460,7 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
         </select>
         <button id="policy-test-btn" class="policy-test-btn">Test</button>
       </div>
-      <div id="policy-test-result" class="policy-test-result" style="display:none"></div>
+      <div id="policy-test-result" class="policy-test-result"></div>
     </div>
     <!-- Policy info card (reload button lives inside) -->
     <div class="policy-card" id="policy-card">
@@ -442,9 +475,9 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
     <table class="tbl" id="rules-table">
       <thead><tr>
         <th class="cmd-col">Command Pattern</th>
-        <th class="col-tool" style="width:70px">Tool</th>
-        <th style="width:150px">Created</th>
-        <th style="width:80px;text-align:right">Actions</th>
+        <th class="col-tool col-w-rules-tool">Tool</th>
+        <th class="col-w-created">Created</th>
+        <th class="col-w-actions">Actions</th>
       </tr></thead>
       <tbody id="rules-body"></tbody>
     </table>
@@ -459,8 +492,8 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 <!-- Bulk action bar -->
 <div id="bulk-bar">
   <span class="bulk-count" id="bulk-count">0 selected</span>
-  <button class="act-btn approve" onclick="bulkAction('approve')">✓ Approve All</button>
-  <button class="act-btn deny" onclick="bulkAction('deny')">✗ Deny All</button>
+  <button class="act-btn approve" data-bulk-action="approve">✓ Approve Selected</button>
+  <button class="act-btn deny" data-bulk-action="deny">✗ Deny Selected</button>
 </div>
 
 <script>
@@ -468,10 +501,11 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 const DANGEROUS=[/^rm\s/,/^chmod\s/,/^chown\s/,/^kill\s/,/^killall\s/,/^pkill\s/,/^dd\s/,/^mkfs/,/^fdisk/,/^reboot/,/^shutdown/,/^halt/,/^systemctl\s+(stop|disable|restart)/,/\bsudo\b/,/\brm\s+-rf\b/,/^ssh\b.*\breboot\b/,/^curl\b.*\|\s*(ba)?sh/];
 function isDangerous(cmd){return DANGEROUS.some(r=>r.test(cmd||''))}
 
-let token='',pollTimer=null,connected=false,expandedId=null,initialPoll=true,evtSource=null;
+let token='',pollTimer=null,connected=false,expandedId=null,initialPoll=true,evtSource=null,authEpoch=0,pollGeneration=0;
 const pendingMap=new Map();
 const selectedIds=new Set();
 let runGroupsData=[];
+let runGrantTTLMS=120000;
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 function initTheme(){
@@ -531,26 +565,16 @@ function initResizeHandles(){
   if(token){connect()}else{const p=document.getElementById('auth-prompt');if(p)p.style.display='block'}
 
   document.getElementById('theme-toggle').addEventListener('click',toggleTheme);
+  document.getElementById('token-show-btn').addEventListener('click',toggleTokenVis);
   document.getElementById('connect-btn').addEventListener('click',connect);
+  document.getElementById('reconnect-btn').addEventListener('click',reconnect);
   document.getElementById('token-input').addEventListener('keydown',e=>{if(e.key==='Enter')connect()});
   document.getElementById('disconnect-btn').addEventListener('click',()=>{
-    clearTimeout(pollTimer);clearTimeout(denialsTimer);
-    if(evtSource){evtSource.close();evtSource=null;}
-    connected=false;token='';_denialsStarted=false;
-    histEvents=[];histOffset=0;histFiltered=[];
-    pendingMap.clear();selectedIds.clear();
+    authEpoch++;
+    token='';
     localStorage.removeItem('rampart_token');
-    setConnected(false);hideError();
     document.getElementById('token-input').value='';
-    document.getElementById('main-content').classList.remove('visible');
-    document.getElementById('pending-body').innerHTML='';
-    document.getElementById('denials-feed').innerHTML='';
-    document.getElementById('hist-body').innerHTML='';
-    document.getElementById('badge-active').style.display='none';
-    document.getElementById('pending-empty').style.display='block';
-    document.getElementById('denials-empty').style.display='block';
-    const p=document.getElementById('auth-prompt');if(p)p.style.display='block';
-    document.getElementById('auth-help').style.display='';
+    resetProtectedState();hideError();
   });
 
   // Tab switching
@@ -561,6 +585,10 @@ function initResizeHandles(){
 
   // Pending table events (including run-cluster bulk buttons)
   document.getElementById('pending-body').addEventListener('click',handlePendingClick);
+  document.getElementById('bulk-bar').addEventListener('click',e=>{
+    const btn=e.target.closest('[data-bulk-action]');if(!btn)return;
+    bulkAction(btn.dataset.bulkAction);
+  });
 
   // Select-all
   document.getElementById('select-all').addEventListener('change',function(e){
@@ -583,6 +611,18 @@ function initResizeHandles(){
   // History: search
   document.getElementById('hist-search').addEventListener('input',function(){
     histSearch=this.value.trim().toLowerCase();applyHistFilters();
+  });
+  document.getElementById('view-history-btn').addEventListener('click',()=>switchTab('history'));
+  document.getElementById('history-load-btn').addEventListener('click',()=>loadHistoryTab(true));
+  document.getElementById('history-export-btn').addEventListener('click',exportHistoryAudit);
+
+  // Policy content is rendered dynamically, so its actions use delegation.
+  document.getElementById('policy-card').addEventListener('click',e=>{
+    if(e.target.closest('#reload-btn'))reloadPolicy();
+  });
+  document.getElementById('rules-body').addEventListener('click',e=>{
+    const btn=e.target.closest('[data-rule-name]');if(!btn)return;
+    revokeRule(btn.dataset.ruleName);
   });
 
   // History table: expand on click
@@ -627,11 +667,95 @@ function setDot(cls){
 function showError(msg){const b=document.getElementById('error-banner');b.style.display='flex';document.getElementById('error-msg').textContent=msg}
 function hideError(){document.getElementById('error-banner').style.display='none'}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000)}
+function resetProtectedState(){
+  pollGeneration++;
+  clearTimeout(pollTimer);clearTimeout(denialsTimer);clearTimeout(denialRefreshTimer);
+  pollTimer=null;denialsTimer=null;denialRefreshTimer=null;
+  if(evtSource){evtSource.close();evtSource=null;}
+  connected=false;_denialsStarted=false;initialPoll=true;expandedId=null;
+  pendingMap.clear();selectedIds.clear();runGroupsData=[];
+  histEvents=[];histFiltered=[];histOffset=0;histHasMore=false;histLoading=false;
+  histSeenIds=new Set();histTabLoaded=false;histActiveFilter='all';histSearch='';rulesCache=[];
+  if(histObserver){histObserver.disconnect();histObserver=null;}
+  switchTab('active');
+  setConnected(false);
+  document.getElementById('main-content').classList.remove('visible');
+  document.getElementById('pending-body').innerHTML='';
+  document.getElementById('denials-feed').innerHTML='';
+  document.getElementById('hist-body').innerHTML='';
+  document.getElementById('hist-loading').style.display='none';
+  document.getElementById('hist-empty').style.display='none';
+  document.getElementById('hist-search').value='';
+  document.getElementById('hist-date').value='';
+  document.querySelectorAll('#filter-pills .pill').forEach(p=>p.classList.toggle('active',p.dataset.filter==='all'));
+  for(const id of ['hs-total','hs-approved','hs-denied','hs-blocked'])document.getElementById(id).textContent='—';
+  document.getElementById('decision-bar').innerHTML='';
+  const decisionBarWrap=document.getElementById('decision-bar-wrap');
+  decisionBarWrap.style.display='none';
+  decisionBarWrap.querySelector('.decision-bar-legend')?.remove();
+  document.getElementById('heatmap-bars').innerHTML='';
+  document.getElementById('policy-heatmap').style.display='none';
+  document.getElementById('rules-body').innerHTML='';
+  document.getElementById('rules-empty').style.display='block';
+  document.getElementById('policy-card').innerHTML='<div class="policy-unavail">Loading policy info…</div>';
+  const reloadHint=document.getElementById('reload-hint');
+  reloadHint.textContent='';reloadHint.classList.remove('visible');
+  const policyTestResult=document.getElementById('policy-test-result');
+  policyTestResult.textContent='';policyTestResult.className='policy-test-result';policyTestResult.style.display='none';
+  const policyTestInput=document.getElementById('policy-test-input');
+  policyTestInput.value='';policyTestInput.placeholder=policyTestPlaceholders.exec;
+  document.getElementById('policy-test-tool').value='exec';
+  const policyTestButton=document.getElementById('policy-test-btn');
+  policyTestButton.disabled=false;policyTestButton.textContent='Test';
+  const activeBadge=document.getElementById('badge-active');activeBadge.textContent='0';activeBadge.style.display='none';
+  const denialsBadge=document.getElementById('denials-badge');denialsBadge.textContent='';denialsBadge.style.display='none';
+  document.getElementById('pending-empty').style.display='block';
+  document.getElementById('denials-empty').style.display='block';
+  document.getElementById('bulk-bar').style.display='none';
+  document.getElementById('bulk-count').textContent='0 selected';
+  document.getElementById('select-all').checked=false;
+  const prompt=document.getElementById('auth-prompt');if(prompt)prompt.style.display='block';
+  document.getElementById('auth-help').style.display='';
+}
+function handleAuthFailure(status){
+  if(status!==401&&status!==403)return false;
+  authEpoch++;
+  resetProtectedState();
+  showError(status===403
+    ?'Admin scope required — eval-only tokens cannot access dashboard controls.'
+    :'Invalid or expired token — paste a current admin-scoped token and click Connect.');
+  return true;
+}
+function handleAuthError(error){return handleAuthFailure(error&&error.status)}
+function supersededRequestError(){const e=new Error('Superseded authentication request');e.stale=true;return e}
+function assertAuthEpoch(epoch){if(epoch!==authEpoch)throw supersededRequestError()}
+function handleAPIControlError(error){return Boolean(error&&error.stale)||handleAuthError(error)}
 async function api(path,opts={}){
-  const r=await fetch(path,{...opts,headers:{'Authorization':'Bearer '+token,...(opts.headers||{})}});
-  if(r.status===401||r.status===403){throw new Error('__auth__')}
-  if(!r.ok)throw new Error(r.status+' '+r.statusText);
-  return r;
+  const requestEpoch=authEpoch;
+  let r;
+  try{
+    r=await fetch(path,{...opts,headers:{'Authorization':'Bearer '+token,...(opts.headers||{})}});
+  }catch(error){assertAuthEpoch(requestEpoch);throw error}
+  assertAuthEpoch(requestEpoch);
+  if(r.status===401){const e=new Error('Invalid or expired token');e.status=401;throw e}
+  if(r.status===403){const e=new Error('Admin scope required');e.status=403;throw e}
+  if(!r.ok){
+    let message=r.status+' '+r.statusText;
+    let details=null;
+    try{details=await r.clone().json();assertAuthEpoch(requestEpoch);if(details&&details.error)message=details.error}catch(error){if(error&&error.stale)throw error}
+    assertAuthEpoch(requestEpoch);
+    const e=new Error(message);e.status=r.status;e.details=details;throw e;
+  }
+  const guardedRead=async reader=>{
+    try{const value=await reader();assertAuthEpoch(requestEpoch);return value}
+    catch(error){assertAuthEpoch(requestEpoch);throw error}
+  };
+  return{
+    status:r.status,
+    assertCurrent:()=>assertAuthEpoch(requestEpoch),
+    json:()=>guardedRead(()=>r.json()),
+    blob:()=>guardedRead(()=>r.blob()),
+  };
 }
 
 // ── Tab switching ──────────────────────────────────────────────────────────
@@ -649,6 +773,8 @@ function switchTab(name){
 // ── Connection / Poll ──────────────────────────────────────────────────────
 function connect(){
   token=document.getElementById('token-input').value.trim();if(!token)return;
+  authEpoch++;
+  pollGeneration++;
   if(evtSource){evtSource.close();evtSource=null;}
   localStorage.setItem('rampart_token',token);
   const p=document.getElementById('auth-prompt');if(p)p.style.display='none';
@@ -663,18 +789,19 @@ function startSSE(){
   if(evtSource)evtSource.close();
   // EventSource can't expose HTTP status codes — probe first so auth errors
   // show a useful message instead of generic "Cannot reach Rampart".
+  const requestEpoch=authEpoch;
   fetch('/v1/events/stream',{headers:{'Authorization':'Bearer '+token},method:'HEAD'}).then(r=>{
-    if(r.status===401||r.status===403){
-      showError('Dashboard requires an admin token. Agent-scoped tokens cannot access the event stream.');
-      return;
-    }
+    if(requestEpoch!==authEpoch)return;
+    if(handleAuthFailure(r.status))return;
     _startSSEInner();
-  }).catch(()=>_startSSEInner());
+  }).catch(()=>{if(requestEpoch===authEpoch)_startSSEInner()});
 }
 function _startSSEInner(){
   if(evtSource)evtSource.close();
+  const streamEpoch=authEpoch;
   evtSource=new EventSource(`/v1/events/stream?token=${encodeURIComponent(token)}`);
   evtSource.onmessage=function(e){
+    if(streamEpoch!==authEpoch)return;
     try{
       const msg=JSON.parse(e.data);
       if(msg.type==="connected")return;
@@ -686,7 +813,8 @@ function _startSSEInner(){
         // Bulk-resolve produced multiple audit events — reload History rather
         // than flooding SSE with N individual events.
         histTabLoaded=false;
-        if(document.getElementById('tab-history').classList.contains('active')){
+        const historyTab=document.querySelector('.tab-btn[data-tab="history"]');
+        if(historyTab&&historyTab.classList.contains('active')){
           loadHistoryTab();
         }
       }
@@ -696,6 +824,7 @@ function _startSSEInner(){
     }catch(_){}
   };
   evtSource.onerror=function(){
+    if(streamEpoch!==authEpoch)return;
     setDot('wait');
     if(pollTimer)clearTimeout(pollTimer);
     pollTimer=setTimeout(poll,5000);
@@ -703,9 +832,11 @@ function _startSSEInner(){
 }
 
 async function poll(){
+  const generation=++pollGeneration;
   clearTimeout(pollTimer);
   try{
-    const r=await api('/v1/approvals');const data=await r.json();
+    const r=await api('/v1/approvals');const data=await r.json();r.assertCurrent();
+    if(generation!==pollGeneration)return;
     initialPoll=false;
     if(!connected){
       connected=true;setConnected(true);hideError();
@@ -713,21 +844,18 @@ async function poll(){
       startSSE();
       if(!_denialsStarted){_denialsStarted=true;loadRecentDenials()}
     }
+    if(Number.isFinite(data.run_grant_ttl_ms)&&data.run_grant_ttl_ms>0){
+      runGrantTTLMS=data.run_grant_ttl_ms;
+    }
     updatePending(data.approvals||[],data.run_groups||[]);
     const delay=15000;
-    if(!document.hidden)pollTimer=setTimeout(poll,delay);
+    if(generation===pollGeneration&&!document.hidden)pollTimer=setTimeout(poll,delay);
   }catch(e){
-    if(e.message==='__auth__'){
-      if(evtSource){evtSource.close();evtSource=null;}
-      connected=false;setConnected(false);
-      showError('Invalid token — paste the token from rampart serve output and click Connect.');
-      return; // don't retry on auth failure
-    }
+    if(generation!==pollGeneration)return;
+    if(handleAPIControlError(e))return; // don't retry stale or auth-failed requests
     if(initialPoll){initialPoll=false;pollTimer=setTimeout(poll,15000);return}
-    connected=false;_denialsStarted=false;
-    if(evtSource){evtSource.close();evtSource=null;}
-    setConnected(false);
-    document.getElementById('main-content').classList.remove('visible');
+    authEpoch++;
+    resetProtectedState();
     showError('Cannot reach Rampart — is rampart serve running on this machine?');
     pollTimer=setTimeout(poll,10000);
   }
@@ -834,19 +962,24 @@ function createRunCluster(g,groupItems,newIds){
 
   const header=document.createElement('div');
   header.className='run-cluster-header';
+  const grantTTL=formatDurationMS(runGrantTTLMS);
+  const reviewedIDs=JSON.stringify(groupItems.map(item=>item.id));
   header.innerHTML=`
-    <span class="run-cluster-chevron">▾</span>
-    <span class="run-cluster-label" title="${esc(g.run_id)}">Run: ${esc(shortId)}…</span>
+    <button type="button" class="run-cluster-toggle" aria-expanded="true" title="Expand or collapse this run">
+      <span class="run-cluster-chevron" aria-hidden="true">▾</span>
+      <span class="run-cluster-label" title="${esc(g.run_id)}">Run: ${esc(shortId)}…</span>
+    </button>
+    <span class="run-cluster-owner" title="Credential owner">${esc(g.credential_owner||'server/admin')}</span>
     <span class="run-cluster-count">${count} pending</span>
     <div class="run-cluster-actions">
-      <button class="act-btn approve run-approve-all" data-agent="${esc(g.agent)}" data-session="${esc(g.session)}" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Approve all pending calls from this agent session and run">✓ Approve All</button>
-      <button class="act-btn deny run-deny-all" data-agent="${esc(g.agent)}" data-session="${esc(g.session)}" data-run-id="${esc(g.run_id)}" data-count="${count}" title="Deny all pending calls from this agent session and run">✗ Deny All</button>
+      <button class="act-btn approve run-approve-pending" data-agent="${esc(g.agent)}" data-session="${esc(g.session)}" data-run-id="${esc(g.run_id)}" data-owner="${esc(g.credential_owner||'server/admin')}" data-ids="${esc(reviewedIDs)}" data-count="${count}" title="Approve only these reviewed pending calls">✓ Approve Pending</button>
+      <button class="act-btn always run-allow-future" data-agent="${esc(g.agent)}" data-session="${esc(g.session)}" data-run-id="${esc(g.run_id)}" data-owner="${esc(g.credential_owner||'server/admin')}" data-ids="${esc(reviewedIDs)}" data-count="${count}" title="Approve reviewed and future calls from this exact run and credential owner for ${grantTTL}">Allow Future (${grantTTL})</button>
+      <button class="act-btn deny run-deny-pending" data-agent="${esc(g.agent)}" data-session="${esc(g.session)}" data-run-id="${esc(g.run_id)}" data-owner="${esc(g.credential_owner||'server/admin')}" data-ids="${esc(reviewedIDs)}" data-count="${count}" title="Deny only these reviewed pending calls">✗ Deny Pending</button>
     </div>`;
-  // Toggle collapse on header click (but not button clicks)
-  header.addEventListener('click',e=>{
-    if(e.target.closest('button'))return;
+  const toggle=header.querySelector('.run-cluster-toggle');
+  toggle.addEventListener('click',()=>{
     cluster.classList.toggle('collapsed');
-    header.querySelector('.run-cluster-chevron').textContent=cluster.classList.contains('collapsed')?'▸':'▾';
+    toggle.setAttribute('aria-expanded',String(!cluster.classList.contains('collapsed')));
   });
   cluster.appendChild(header);
 
@@ -865,20 +998,53 @@ function createRunCluster(g,groupItems,newIds){
   return cluster;
 }
 
-async function bulkResolveRun(agent,session,runId,action,count){
-  const actionVerb=action==='approve'?'Approve':'Deny';
-  const pastTense=action==='approve'?'Approved':'Denied';
-  if(!confirm(`${actionVerb} all ${count} pending call${count===1?'':'s'} from this run?`))return;
+function formatDurationMS(totalMS){
+  let remaining=Math.max(0,Math.ceil(totalMS));
+  const h=Math.floor(remaining/3600000);remaining%=3600000;
+  const m=Math.floor(remaining/60000);remaining%=60000;
+  const s=Math.floor(remaining/1000),ms=remaining%1000;
+  return [h?h+'h':'',m?m+'m':'',s?s+'s':'',ms?ms+'ms':''].filter(Boolean).join(' ')||'0ms';
+}
+
+async function bulkResolveRun(agent,session,runId,owner,ids,action,scope,count){
+  let prompt;
+  if(scope==='run'){
+    prompt=`Allow these ${count} reviewed call${count===1?'':'s'}, plus future calls from this exact run and credential owner for ${formatDurationMS(runGrantTTLMS)}?\n\nAgent: ${agent}\nSession: ${session}\nRun: ${runId}\nCredential owner: ${owner}`;
+  }else if(action==='approve'){
+    prompt=`Approve only these ${count} reviewed pending call${count===1?'':'s'}?\n\nFuture calls will still require approval.`;
+  }else{
+    prompt=`Deny only these ${count} reviewed pending call${count===1?'':'s'}?`;
+  }
+  if(!confirm(prompt))return;
   try{
-    await api('/v1/approvals/bulk-resolve',{
+    const r=await api('/v1/approvals/bulk-resolve',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({agent,session,run_id:runId,action})
+      body:JSON.stringify({agent,session,run_id:runId,action,scope,ids,resolved_by:'dashboard'})
     });
-    toast(`${pastTense} run ${runId.slice(0,8)}…`);
+    const result=await r.json();r.assertCurrent();
+    if(result.future_calls_authorized){
+      toast(`Allowed future calls for ${formatDurationMS(result.grant_ttl_ms)} — ${runId.slice(0,8)}…`);
+    }else{
+      toast(`${action==='approve'?'Approved':'Denied'} ${result.resolved} pending call${result.resolved===1?'':'s'}`);
+    }
     // Re-poll immediately to update the dashboard
     clearTimeout(pollTimer);poll();
   }catch(e){
+    if(handleAPIControlError(e))return;
+    if(e.status===409){
+      toast('Approvals changed — refresh and review again.');
+      clearTimeout(pollTimer);poll();
+      return;
+    }
+    if(e.status===503&&e.details&&e.details.refresh_required){
+      const n=Number(e.details.resolved)||0;
+      toast(n>0
+        ?`${n} approval${n===1?' was':'s were'} committed — refreshed; review before retrying.`
+        :'Bulk action was not completed — refreshed; review before retrying.');
+      clearTimeout(pollTimer);poll();
+      return;
+    }
     toast('Error: '+e.message);
   }
 }
@@ -925,17 +1091,23 @@ function createPendingRow(a){
 }
 
 function handlePendingClick(e){
-  // Run cluster: Approve All / Deny All buttons
-  const runApprove=e.target.closest('.run-approve-all');
-  if(runApprove){
+  // Run cluster: pending-only decisions and explicit future authority.
+  const approvePending=e.target.closest('.run-approve-pending');
+  if(approvePending){
     e.stopPropagation();
-    bulkResolveRun(runApprove.dataset.agent,runApprove.dataset.session,runApprove.dataset.runId,'approve',parseInt(runApprove.dataset.count,10));
+    bulkResolveRun(approvePending.dataset.agent,approvePending.dataset.session,approvePending.dataset.runId,approvePending.dataset.owner,JSON.parse(approvePending.dataset.ids),'approve','pending',parseInt(approvePending.dataset.count,10));
     return;
   }
-  const runDeny=e.target.closest('.run-deny-all');
-  if(runDeny){
+  const allowFuture=e.target.closest('.run-allow-future');
+  if(allowFuture){
     e.stopPropagation();
-    bulkResolveRun(runDeny.dataset.agent,runDeny.dataset.session,runDeny.dataset.runId,'deny',parseInt(runDeny.dataset.count,10));
+    bulkResolveRun(allowFuture.dataset.agent,allowFuture.dataset.session,allowFuture.dataset.runId,allowFuture.dataset.owner,JSON.parse(allowFuture.dataset.ids),'approve','run',parseInt(allowFuture.dataset.count,10));
+    return;
+  }
+  const denyPending=e.target.closest('.run-deny-pending');
+  if(denyPending){
+    e.stopPropagation();
+    bulkResolveRun(denyPending.dataset.agent,denyPending.dataset.session,denyPending.dataset.runId,denyPending.dataset.owner,JSON.parse(denyPending.dataset.ids),'deny','pending',parseInt(denyPending.dataset.count,10));
     return;
   }
   if(e.target.classList.contains('row-chk')){
@@ -974,26 +1146,39 @@ function updateBulkBar(){
 
 async function bulkAction(action){
   const ids=[...selectedIds];if(!ids.length)return;
+  const operationEpoch=authEpoch;
   if(!confirm(`${action==='approve'?'Approve':'Deny'} ${ids.length} pending approval(s)?`))return;
-  for(const id of ids){try{await resolveApproval(id,action)}catch(e){}}
+  for(const id of ids){
+    if(operationEpoch!==authEpoch)return;
+    try{await resolveApproval(id,action)}catch(e){}
+    if(operationEpoch!==authEpoch)return;
+  }
   selectedIds.clear();updateBulkBar();
 }
 
 async function resolveApproval(id,action){
   const approved=action!=='deny';const persist=action==='always';
+  const requestEpoch=authEpoch;
   const row=document.getElementById('row-'+id);
   if(row)row.classList.add(approved?'flash-green':'flash-red');
   try{
-    await api('/v1/approvals/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved,resolved_by:'dashboard',persist})});
+    const response=await api('/v1/approvals/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved,resolved_by:'dashboard',persist})});
+    response.assertCurrent();
     setTimeout(()=>{
+      if(requestEpoch!==authEpoch)return;
       pendingMap.delete(id);selectedIds.delete(id);
       renderPending(new Set());
       updateBulkBar();
       // If denied, quietly refresh the denials feed after a short delay
-      if(!approved)setTimeout(loadRecentDenials,600);
+      if(!approved){
+        clearTimeout(denialRefreshTimer);
+        denialRefreshTimer=setTimeout(()=>{
+          if(connected&&requestEpoch===authEpoch)loadRecentDenials();
+        },600);
+      }
     },400);
     if(persist)toast('Rule saved — always allowed');
-  }catch(e){toast('Error: '+e.message)}
+  }catch(e){if(handleAPIControlError(e))return;toast('Error: '+e.message)}
 }
 
 // ── Timers ─────────────────────────────────────────────────────────────────
@@ -1011,7 +1196,7 @@ function updateTimerCell(a){
 }
 
 // ── Recent Denials ─────────────────────────────────────────────────────────
-let denialsTimer=null;
+let denialsTimer=null,denialRefreshTimer=null;
 
 async function loadRecentDenials(){
   clearTimeout(denialsTimer);
@@ -1021,7 +1206,12 @@ async function loadRecentDenials(){
       api('/v1/audit/events?action=deny&limit=10'),
     ]);
     const e1=r1.status==='fulfilled'?(await r1.value.json()).events||[]:[];
+    if(r1.status==='fulfilled')r1.value.assertCurrent();
     const e2=r2.status==='fulfilled'?(await r2.value.json()).events||[]:[];
+    if(r2.status==='fulfilled')r2.value.assertCurrent();
+    for(const result of [r1,r2]){
+      if(result.status==='rejected'&&handleAPIControlError(result.reason))return;
+    }
     const seen=new Set();
     const combined=[...e1,...e2].filter(ev=>{
       const k=ev.id||(ev.timestamp+extractCmd(ev));
@@ -1031,7 +1221,7 @@ async function loadRecentDenials(){
       return a==='denied'||a==='deny'||a==='blocked';
     }).sort((a,b)=>(b.timestamp||'').localeCompare(a.timestamp||'')).slice(0,10);
     renderDenials(combined);
-  }catch(e){/* silently ignore */}
+  }catch(e){if(handleAPIControlError(e))return/* silently ignore other failures */}
   denialsTimer=setTimeout(loadRecentDenials,30000);
 }
 
@@ -1078,6 +1268,7 @@ function onHistoryTabOpen(){
 
 async function loadHistoryTab(reset){
   if(histLoading)return;histLoading=true;
+  const operationEpoch=authEpoch;
   const loading=document.getElementById('hist-loading');
   if(loading)loading.style.display='block';
   if(reset){
@@ -1087,7 +1278,7 @@ async function loadHistoryTab(reset){
   const date=document.getElementById('hist-date').value||todayStr();
   try{
     const r=await api(`/v1/audit/events?date=${date}&limit=${HIST_PAGE}&offset=${histOffset}`);
-    const data=await r.json();
+    const data=await r.json();r.assertCurrent();
     const evs=data.events||[];
     // Deduplicate: SSE may have already added some events.
     const fresh=evs.filter(ev=>!histSeenIds.has(ev.id));
@@ -1101,17 +1292,19 @@ async function loadHistoryTab(reset){
     applyHistFilters();
     renderPolicyHeatmap();
     await loadHistStats(date);
-  }catch(e){toast('History error: '+e.message)}
+  }catch(e){if(handleAPIControlError(e))return;toast('History error: '+e.message)}
   finally{
-    if(loading)loading.style.display='none';
+    if(operationEpoch===authEpoch){
+      if(loading)loading.style.display='none';
+      histLoading=false;
+    }
   }
-  histLoading=false;
 }
 
 async function loadHistStats(date){
   try{
     const r=await api(`/v1/audit/stats?from=${date}&to=${date}`);
-    const s=await r.json();
+    const s=await r.json();r.assertCurrent();
     const ba=s.by_action||{};
     const approved=(ba.approved||0)+(ba.allow||0);
     const denied=(ba.denied||0);
@@ -1121,7 +1314,7 @@ async function loadHistStats(date){
     document.getElementById('hs-denied').textContent=denied;
     document.getElementById('hs-blocked').textContent=blocked;
     renderDecisionBar(approved,denied,blocked);
-  }catch(e){/* silently ignore if stats endpoint unavailable */}
+  }catch(e){if(handleAPIControlError(e))return/* silently ignore if stats endpoint unavailable */}
 }
 
 function renderDecisionBar(approved,denied,blocked){
@@ -1133,17 +1326,25 @@ function renderDecisionBar(approved,denied,blocked){
   const pA=((approved/total)*100).toFixed(1);
   const pD=((denied/total)*100).toFixed(1);
   const pB=((blocked/total)*100).toFixed(1);
-  bar.innerHTML=
-    (approved?`<div class="seg seg-allow" style="width:${pA}%" title="Allowed: ${approved} (${pA}%)"></div>`:'')+
-    (blocked?`<div class="seg seg-pending" style="width:${pB}%" title="Blocked (awaiting approval): ${blocked} (${pB}%)"></div>`:'')+
-    (denied?`<div class="seg seg-deny" style="width:${pD}%" title="Denied by policy: ${denied} (${pD}%)"></div>`:'');
+  bar.innerHTML='';
+  const addSegment=(count,cls,pct,label)=>{
+    if(!count)return;
+    const segment=document.createElement('div');
+    segment.className='seg '+cls;
+    segment.style.width=pct+'%';
+    segment.title=`${label}: ${count} (${pct}%)`;
+    bar.appendChild(segment);
+  };
+  addSegment(approved,'seg-allow',pA,'Allowed');
+  addSegment(blocked,'seg-pending',pB,'Blocked (awaiting approval)');
+  addSegment(denied,'seg-deny',pD,'Denied by policy');
   // Add or update legend below bar
   let legend=wrap.querySelector('.decision-bar-legend');
   if(!legend){legend=document.createElement('div');legend.className='decision-bar-legend';wrap.appendChild(legend)}
   legend.innerHTML=
-    `<span><span class="swatch" style="background:#34d399"></span>Allowed ${pA}%</span>`+
-    `<span><span class="swatch" style="background:#fbbf24"></span>Blocked ${pB}%</span>`+
-    `<span><span class="swatch" style="background:#f87171"></span>Denied ${pD}%</span>`;
+    `<span><span class="swatch allow"></span>Allowed ${pA}%</span>`+
+    `<span><span class="swatch pending"></span>Blocked ${pB}%</span>`+
+    `<span><span class="swatch deny"></span>Denied ${pD}%</span>`;
 }
 
 function renderPolicyHeatmap(){
@@ -1164,15 +1365,18 @@ function renderPolicyHeatmap(){
   if(!entries.length){wrap.style.display='none';return}
   wrap.style.display='block';
   const maxCount=entries[0][1].total;
-  container.innerHTML=entries.map(([name,c])=>{
+  container.innerHTML='';
+  entries.forEach(([name,c])=>{
     const pct=((c.total/maxCount)*100).toFixed(1);
     const cls=c.deny===0?'allow':c.allow===0?'deny':'mixed';
-    return `<div class="heatmap-row">
+    const row=document.createElement('div');row.className='heatmap-row';
+    row.innerHTML=`
       <span class="heatmap-label" title="${esc(name)}">${esc(name)}</span>
-      <div class="heatmap-bar-track"><div class="heatmap-bar-fill ${cls}" style="width:${pct}%"></div></div>
-      <span class="heatmap-count">${c.total}</span>
-    </div>`;
-  }).join('');
+      <div class="heatmap-bar-track"><div class="heatmap-bar-fill ${cls}"></div></div>
+      <span class="heatmap-count">${c.total}</span>`;
+    row.querySelector('.heatmap-bar-fill').style.width=pct+'%';
+    container.appendChild(row);
+  });
 }
 
 function applyHistFilters(){
@@ -1208,7 +1412,7 @@ function renderHistEvents(){
   // Sentinel for infinite scroll
   if(histHasMore){
     const sentinel=document.createElement('tr');sentinel.id='hist-sentinel-row';
-    sentinel.innerHTML='<td colspan="6" style="text-align:center;padding:8px;color:#52525b;font-size:11px">Loading more…</td>';
+    sentinel.innerHTML='<td colspan="6" class="hist-more-cell">Loading more…</td>';
     tbody.append(sentinel);
     if(histObserver)histObserver.disconnect();
     const wrapper=document.getElementById('hist-scroll-wrap');
@@ -1231,9 +1435,9 @@ function appendHistRow(ev,tbody){
   const normAction=action==='log'?'watch':action==='ask'?'require_approval':action==='blocked'?'deny':action==='denied'?'deny':action||'';
   const actionLabel=normAction==='deny'?'blocked':normAction==='allow'?'allow':normAction==='approved'?'approved':normAction==='watch'?'watch':normAction==='require_approval'?'pending':normAction||'—';
   const badgeCls=normAction==='allow'?'allow':normAction==='deny'?'deny':normAction==='approved'?'approved':normAction==='require_approval'?'require_approval':normAction==='watch'?'watch':'';
-  tr.innerHTML=`<td style="font-size:11px;white-space:nowrap">${esc(t)}</td>
+  tr.innerHTML=`<td class="cell-time">${esc(t)}</td>
     <td class="col-agent">${esc(ev.agent||'—')}</td>
-    <td style="font-size:11px">${esc(ev.session||'—')}</td>
+    <td class="cell-session">${esc(ev.session||'—')}</td>
     <td class="col-tool">${esc(ev.tool==='unknown'&&ev.request&&ev.request.raw_error?'parse-err':ev.tool||'—')}</td>
     <td class="cmd-col mono"><span class="cmd-text" title="${esc(cmd)}">${esc(cmd||ev.decision&&ev.decision.message||'—')}</span></td>
     <td><span class="badge ${badgeCls}" title="${esc(ev.decision&&ev.decision.message||'')}">${esc(actionLabel)}</span></td>`;
@@ -1279,9 +1483,9 @@ function prependAuditEvent(ev){
 async function exportHistoryAudit(){
   const date=document.getElementById('hist-date').value||todayStr();
   try{
-    const r=await api(`/v1/audit/export?date=${date}`);const blob=await r.blob();
+    const r=await api(`/v1/audit/export?date=${date}`);const blob=await r.blob();r.assertCurrent();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`audit-${date}.jsonl`;a.click();
-  }catch(e){toast('Export error: '+e.message)}
+  }catch(e){if(handleAPIControlError(e))return;toast('Export error: '+e.message)}
 }
 
 // ── Policy Tab ─────────────────────────────────────────────────────────────
@@ -1308,17 +1512,20 @@ async function runPolicyTest(){
   if(!cmd) return;
   const tool = document.getElementById('policy-test-tool').value;
   const btn = document.getElementById('policy-test-btn');
+  if(btn.disabled) return;
+  const operationEpoch = authEpoch;
   btn.disabled = true; btn.textContent = 'Testing...';
   const isPath = tool === 'write' || tool === 'read';
   const payload = isPath
     ? {command: cmd, tool: tool, path: cmd}
     : {command: cmd, tool: 'exec'};
   try {
-    const data = await (await api('/v1/test', {
+    const response = await api('/v1/test', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
-    })).json();
+    });
+    const data = await response.json();response.assertCurrent();
     const action = data.action || 'allow';
     const icons = {allow:'✓', deny:'✗', ask:'⏸', require_approval:'⏸', watch:'○'};
     const labels = {allow:'Allow', deny:'Deny', ask:'Ask', require_approval:'Require Approval', watch:'Watch'};
@@ -1331,11 +1538,15 @@ async function runPolicyTest(){
     result.textContent = text;
     result.style.display = 'block';
   } catch(e) {
+    if(handleAPIControlError(e)){
+      if(operationEpoch===authEpoch)result.style.display='none';
+      return;
+    }
     result.className = 'policy-test-result deny';
     result.textContent = 'Error: ' + e.message;
     result.style.display = 'block';
   } finally {
-    btn.disabled = false; btn.textContent = 'Test';
+    if(operationEpoch===authEpoch){btn.disabled = false; btn.textContent = 'Test';}
   }
 }
 
@@ -1348,12 +1559,12 @@ async function loadPolicyInfo(){
   const card=document.getElementById('policy-card');
   card.innerHTML='<div class="policy-unavail">Loading policy info…</div>';
   try{
-    const r=await api('/v1/policy');
+    const r=await api('/v1/status');
     if(r.status===404){throw new Error('not implemented')}
-    const p=await r.json();
+    const p=await r.json();r.assertCurrent();
     const path=p.config_path||'embedded:standard';
     card.innerHTML=`
-      <button class="policy-reload-btn" id="reload-btn" onclick="reloadPolicy()" title="Reload policy files">
+      <button class="policy-reload-btn" id="reload-btn" title="Reload policy files">
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 6A4 4 0 1 1 8.5 2.5"/><polyline points="10 1 10 4 7 4"/></svg>
         Reload
       </button>
@@ -1365,6 +1576,7 @@ async function loadPolicyInfo(){
         <div class="policy-kv"><span class="pk-label">Rules</span><span class="pk-value">${esc(String(p.rule_count??'—'))}</span></div>
       </div>`;
   }catch(e){
+    if(handleAPIControlError(e))return;
     card.innerHTML='<div class="policy-unavail">Policy info unavailable — endpoint not yet implemented.</div>';
   }
 }
@@ -1374,11 +1586,12 @@ async function reloadPolicy(){
   const btn=document.getElementById('reload-btn');
   if(btn)btn.classList.add('spinning');
   try{
-    await api('/v1/policy/reload',{method:'POST'});
+    const response=await api('/v1/policy/reload',{method:'POST'});response.assertCurrent();
     toast('Policy reloaded');
     if(hint){hint.textContent='';hint.classList.remove('visible')}
     loadPolicyInfo();
   }catch(e){
+    if(handleAPIControlError(e))return;
     if(hint){
       hint.textContent=e.message.includes('404')||e.message.includes('405')?'Restart serve to pick up changes':'Reload failed: '+e.message;
       hint.classList.add('visible');
@@ -1391,9 +1604,9 @@ async function reloadPolicy(){
 async function loadRules(){
   try{
     const r=await api('/v1/rules/auto-allowed');
-    const data=await r.json();
+    const data=await r.json();r.assertCurrent();
     rulesCache=data.rules||[];renderRules(rulesCache);
-  }catch(e){toast('Rules error: '+e.message)}
+  }catch(e){if(handleAPIControlError(e))return;toast('Rules error: '+e.message)}
 }
 
 function renderRules(rules){
@@ -1405,18 +1618,18 @@ function renderRules(rules){
     const created=r.created?new Date(r.created).toLocaleString():'—';
     tr.innerHTML=`<td class="cmd-col mono" title="${esc(pattern)}">${esc(pattern)}</td>
       <td class="col-tool">${esc(r.tool||'')}</td>
-      <td style="font-size:11px">${esc(created)}</td>
-      <td style="text-align:right"><button class="act-btn revoke" onclick="revokeRule(${parseInt(r.index,10)})">Revoke</button></td>`;
+      <td class="cell-created">${esc(created)}</td>
+      <td class="cell-actions"><button class="act-btn revoke" data-rule-name="${esc(r.name||'')}">Revoke</button></td>`;
     tbody.append(tr);
   });
 }
 
-async function revokeRule(index){
+async function revokeRule(ruleName){
   if(!confirm('Revoke this auto-allowed rule?'))return;
   try{
-    await api('/v1/rules/auto-allowed/'+index,{method:'DELETE'});
+    const response=await api('/v1/rules/auto-allowed/'+encodeURIComponent(ruleName),{method:'DELETE'});response.assertCurrent();
     toast('Rule revoked');loadRules();
-  }catch(e){toast('Revoke error: '+e.message)}
+  }catch(e){if(handleAPIControlError(e))return;toast('Revoke error: '+e.message)}
 }
 </script>
 </body>

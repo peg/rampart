@@ -144,7 +144,7 @@ func (s *Server) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if !id.HasScope(token.ScopeAdmin) {
-		writeError(w, http.StatusForbidden, "this endpoint requires admin scope — agent tokens cannot perform mutations")
+		writeError(w, http.StatusForbidden, "this endpoint requires admin scope")
 		return false
 	}
 	return true

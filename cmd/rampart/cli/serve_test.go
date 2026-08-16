@@ -15,6 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/policies"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNotifyRequiresSignedApprovalLinks(t *testing.T) {
@@ -70,6 +71,83 @@ policies: []
 	}
 	if !loaderCalled {
 		t.Fatal("serve did not attempt to load the approval signing key")
+	}
+}
+
+func TestServeRejectsSecondApprovalStateOwner(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	configPath := filepath.Join(home, "rampart.yaml")
+	content, err := policies.FS.ReadFile("standard.yaml")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, content, 0o600))
+
+	freePort := func() int {
+		listener, listenErr := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, listenErr)
+		port := listener.Addr().(*net.TCPAddr).Port
+		require.NoError(t, listener.Close())
+		return port
+	}
+	firstPort, secondPort := freePort(), freePort()
+	for secondPort == firstPort {
+		secondPort = freePort()
+	}
+
+	signalCh := make(chan os.Signal, 1)
+	deps := &serveDeps{
+		notifyContext: func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(parent)
+			go func() {
+				select {
+				case <-ctx.Done():
+				case <-signalCh:
+					cancel()
+				}
+			}()
+			return ctx, cancel
+		},
+	}
+
+	first := newServeCmd(&rootOptions{configPath: configPath}, deps)
+	first.SetOut(&bytes.Buffer{})
+	first.SetErr(&bytes.Buffer{})
+	first.SetContext(context.Background())
+	first.SetArgs([]string{"--addr", "127.0.0.1", "--port", fmt.Sprintf("%d", firstPort), "--audit-dir", filepath.Join(home, "audit")})
+	firstErr := make(chan error, 1)
+	go func() { firstErr <- first.Execute() }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", firstPort), 50*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		select {
+		case serveErr := <-firstErr:
+			t.Fatalf("first serve exited before readiness: %v", serveErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first serve did not become ready")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	second := newServeCmd(&rootOptions{configPath: configPath}, nil)
+	second.SetOut(&bytes.Buffer{})
+	second.SetErr(&bytes.Buffer{})
+	second.SetArgs([]string{"--addr", "127.0.0.1", "--port", fmt.Sprintf("%d", secondPort), "--audit-dir", filepath.Join(home, "audit")})
+	secondErr := second.Execute()
+	require.ErrorContains(t, secondErr, "another Rampart serve process already owns approval state")
+
+	signalCh <- os.Interrupt
+	select {
+	case serveErr := <-firstErr:
+		require.NoError(t, serveErr)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first serve did not shut down")
 	}
 }
 

@@ -771,7 +771,7 @@ policies:
 	assert.Equal(t, ownerID, ownerResult["approval_id"])
 
 	bulkReq := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
-		strings.NewReader(`{"agent":"codex","session":"s1","run_id":"run-owner","action":"approve"}`))
+		strings.NewReader(fmt.Sprintf(`{"agent":"codex","session":"s1","run_id":"run-owner","action":"approve","scope":"run","ids":[%q]}`, siblingID)))
 	bulkReq.Header.Set("Authorization", "Bearer "+adminToken)
 	bulkReq.Header.Set("Content-Type", "application/json")
 	bulkRecorder := httptest.NewRecorder()
@@ -1060,6 +1060,62 @@ policies:
 	})
 }
 
+func TestDurationMillisecondsRoundsPositiveFractionsUp(t *testing.T) {
+	assert.Equal(t, int64(0), durationMilliseconds(0))
+	assert.Equal(t, int64(0), durationMilliseconds(-time.Second))
+	assert.Equal(t, int64(1), durationMilliseconds(500*time.Microsecond))
+	assert.Equal(t, int64(1500), durationMilliseconds(1500*time.Millisecond))
+}
+
+func TestRunGrantDisclosesConfiguredMillisecondTTL(t *testing.T) {
+	const configuredTTL = 1500 * time.Millisecond
+	eng := buildApprovalEngine(t)
+	sink := &mockSink{}
+	srv := New(
+		eng,
+		sink,
+		WithToken("tok"),
+		WithMode("enforce"),
+		WithApprovalTimeout(configuredTTL),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))),
+	)
+	call := engine.ToolCall{
+		Tool: "exec", Params: map[string]any{"command": "deploy"},
+		Agent: "claude", Session: "s1", RunID: "run-millisecond-ttl", ToolCallID: "call-one",
+	}
+	pending, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	startedAt := time.Now()
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude","session":"s1","run_id":"run-millisecond-ttl","action":"approve","scope":"run","ids":[%q]}`,
+			pending.ID,
+		)))
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, float64(configuredTTL/time.Millisecond), response["grant_ttl_ms"])
+	expiresAt, err := time.Parse(time.RFC3339Nano, response["grant_expires_at"].(string))
+	require.NoError(t, err)
+	assert.WithinDuration(t, startedAt.Add(configuredTTL), expiresAt, 100*time.Millisecond)
+	assert.True(t, srv.approvals.IsAutoApproved(call))
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/approvals", nil)
+	listReq.Header.Set("Authorization", "Bearer tok")
+	listRecorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(listRecorder, listReq)
+	require.Equal(t, http.StatusOK, listRecorder.Code)
+	response = map[string]any{}
+	require.NoError(t, json.Unmarshal(listRecorder.Body.Bytes(), &response))
+	assert.Equal(t, float64(configuredTTL/time.Millisecond), response["run_grant_ttl_ms"])
+}
+
 func TestServerTimeouts(t *testing.T) {
 	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
 
@@ -1184,6 +1240,46 @@ func TestAutoAllowedRuleCreatedSupportsLegacyAndHashedNames(t *testing.T) {
 	assert.Equal(t, want, autoAllowedRuleCreated("auto-allow-git-push-20260728T123456Z"))
 	assert.Equal(t, want, autoAllowedRuleCreated("auto-allow-git-push-20260728T123456Z-0123456789abcdef01234567"))
 	assert.Empty(t, autoAllowedRuleCreated("auto-allow-git-push-no-time"))
+}
+
+func TestDeleteAutoAllowedRouteUsesExactRuleName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	policyPath := engine.DefaultAutoAllowedPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(policyPath), 0o755))
+	const ruleName = "auto allow exact & named rule"
+	require.NoError(t, os.WriteFile(policyPath, []byte(`version: "1"
+policies:
+  - name: "auto allow exact & named rule"
+    match:
+      tool: [exec]
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo safe"]
+`), 0o600))
+
+	srv, token, _ := setupTestServerWithHome(t, testPolicyYAML, "enforce", home)
+	handler := srv.handler()
+
+	// Array positions are display metadata, not revocation authority.
+	indexRequest := httptest.NewRequest(http.MethodDelete, "/v1/rules/auto-allowed/0", nil)
+	indexRequest.Header.Set("Authorization", "Bearer "+token)
+	indexResponse := httptest.NewRecorder()
+	handler.ServeHTTP(indexResponse, indexRequest)
+	require.Equal(t, http.StatusNotFound, indexResponse.Code)
+
+	request := httptest.NewRequest(http.MethodDelete,
+		"/v1/rules/auto-allowed/"+url.PathEscape(ruleName), nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.JSONEq(t, `{"deleted":true}`, response.Body.String())
+
+	_, err := os.Stat(policyPath)
+	assert.True(t, os.IsNotExist(err), "exactly named final rule should be removed")
 }
 
 func TestApprovalResolveURL_SignedWhenSignerConfigured(t *testing.T) {
@@ -1930,13 +2026,23 @@ func TestBulkResolve_AuditFailureDoesNotInstallAutoApproval(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
-		strings.NewReader(`{"agent":"claude","session":"s1","run_id":"run-bulk","action":"approve","resolved_by":"dashboard"}`))
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude","session":"s1","run_id":"run-bulk","action":"approve","scope":"run","ids":[%q,%q],"resolved_by":"dashboard"}`,
+			requests[0].ID, requests[1].ID,
+		)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	recorder := httptest.NewRecorder()
 	srv.handler().ServeHTTP(recorder, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, float64(1), response["resolved"])
+	assert.Equal(t, false, response["future_calls_authorized"])
+	assert.Equal(t, true, response["refresh_required"])
+	assert.Equal(t, []any{requests[0].ID}, response["ids"])
+	assert.Equal(t, []any{requests[1].ID}, response["unresolved_reviewed_ids"])
 	assert.Equal(t, 2, failing.count())
 	approvedCount := 0
 	pendingCount := 0
@@ -1955,6 +2061,43 @@ func TestBulkResolve_AuditFailureDoesNotInstallAutoApproval(t *testing.T) {
 	assert.False(t, srv.approvals.IsAutoApproved(calls[0]), "partial bulk resolution installed future authorization")
 }
 
+func TestBulkResolve_RunGrantAuditFailureDoesNotPublishAuthority(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	failing := &failOnWriteSink{failAt: 2}
+	srv := New(eng, failing, WithToken("tok"), WithMode("enforce"),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+	call := engine.ToolCall{
+		Tool: "exec", Params: map[string]any{"command": "deploy one"},
+		Agent: "claude", Session: "s1", RunID: "run-grant-audit", ToolCallID: "call-one",
+	}
+	pending, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude","session":"s1","run_id":"run-grant-audit","action":"approve","scope":"run","ids":[%q],"resolved_by":"dashboard"}`,
+			pending.ID,
+		)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, float64(1), response["resolved"])
+	assert.Equal(t, []any{pending.ID}, response["ids"])
+	assert.Empty(t, response["unresolved_reviewed_ids"])
+	assert.Equal(t, false, response["future_calls_authorized"])
+	assert.Equal(t, true, response["refresh_required"])
+	assert.Equal(t, 2, failing.count(), "resolution audit should pass before the required grant audit fails")
+	assert.False(t, srv.approvals.IsAutoApproved(call))
+	resolved, ok := srv.approvals.Get(pending.ID)
+	require.True(t, ok)
+	assert.Equal(t, approval.StatusApproved, resolved.Status, "the separately audited exact approval remains valid")
+}
+
 func TestBulkResolve_ConcurrentCreateCannotLeaveOrphanPending(t *testing.T) {
 	eng := buildApprovalEngine(t)
 	srv := New(eng, nil, WithToken("tok"), WithMode("enforce"),
@@ -1967,7 +2110,7 @@ func TestBulkResolve_ConcurrentCreateCannotLeaveOrphanPending(t *testing.T) {
 		RunID:      "run-create-race",
 		ToolCallID: "call-initial",
 	}
-	_, err := srv.approvals.Create(initial, engine.Decision{Action: engine.ActionRequireApproval})
+	initialRequest, err := srv.approvals.Create(initial, engine.Decision{Action: engine.ActionRequireApproval})
 	require.NoError(t, err)
 
 	racedCall := initial
@@ -1981,7 +2124,70 @@ func TestBulkResolve_ConcurrentCreateCannotLeaveOrphanPending(t *testing.T) {
 	srv.sink = tracingSink
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
-		strings.NewReader(`{"agent":"claude","session":"s1","run_id":"run-create-race","action":"approve","resolved_by":"dashboard"}`))
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude","session":"s1","run_id":"run-create-race","action":"approve","scope":"run","ids":[%q],"resolved_by":"dashboard"}`,
+			initialRequest.ID,
+		)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, []any{initialRequest.ID}, response["reviewed_ids"])
+	var raced createAutoRaceResult
+	select {
+	case raced = <-tracingSink.result:
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent create did not complete")
+	}
+	require.NoError(t, raced.err)
+	if raced.autoApproved {
+		assert.Nil(t, raced.request)
+		assert.Empty(t, response["race_covered_ids"])
+	} else {
+		require.NotNil(t, raced.request)
+		assert.Equal(t, []any{raced.request.ID}, response["race_covered_ids"])
+		resolved, ok := srv.approvals.Get(raced.request.ID)
+		require.True(t, ok)
+		assert.Equal(t, approval.StatusApproved, resolved.Status, "creation won the race but bulk publication did not catch it")
+	}
+	assert.Empty(t, srv.approvals.List(), "bulk publication left an orphan same-scope approval pending")
+	assert.True(t, srv.approvals.IsAutoApproved(racedCall))
+}
+
+func TestBulkResolve_ConcurrentCreateRemainsPendingAtExplicitPendingScope(t *testing.T) {
+	eng := buildApprovalEngine(t)
+	srv := New(eng, nil, WithToken("tok"), WithMode("enforce"),
+		WithLogger(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))))
+	initial := engine.ToolCall{
+		Tool:       "exec",
+		Params:     map[string]any{"command": "deploy initial"},
+		Agent:      "claude",
+		Session:    "s1",
+		RunID:      "run-pending-race",
+		ToolCallID: "call-initial",
+	}
+	initialRequest, err := srv.approvals.Create(initial, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	racedCall := initial
+	racedCall.Params = map[string]any{"command": "deploy raced"}
+	racedCall.ToolCallID = "call-raced"
+	tracingSink := &createAutoRaceSink{
+		store:  srv.approvals,
+		call:   racedCall,
+		result: make(chan createAutoRaceResult, 1),
+	}
+	srv.sink = tracingSink
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude","session":"s1","run_id":"run-pending-race","action":"approve","scope":"pending","ids":[%q],"resolved_by":"dashboard"}`,
+			initialRequest.ID,
+		)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	recorder := httptest.NewRecorder()
@@ -1995,16 +2201,12 @@ func TestBulkResolve_ConcurrentCreateCannotLeaveOrphanPending(t *testing.T) {
 		t.Fatal("concurrent create did not complete")
 	}
 	require.NoError(t, raced.err)
-	if raced.autoApproved {
-		assert.Nil(t, raced.request)
-	} else {
-		require.NotNil(t, raced.request)
-		resolved, ok := srv.approvals.Get(raced.request.ID)
-		require.True(t, ok)
-		assert.Equal(t, approval.StatusApproved, resolved.Status, "creation won the race but bulk publication did not catch it")
-	}
-	assert.Empty(t, srv.approvals.List(), "bulk publication left an orphan same-scope approval pending")
-	assert.True(t, srv.approvals.IsAutoApproved(racedCall))
+	require.False(t, raced.autoApproved)
+	require.NotNil(t, raced.request)
+	current, ok := srv.approvals.Get(raced.request.ID)
+	require.True(t, ok)
+	assert.Equal(t, approval.StatusPending, current.Status)
+	assert.False(t, srv.approvals.IsAutoApproved(racedCall))
 }
 
 // TestGetPolicy is removed — GET /v1/policy was removed in v0.9.9.
@@ -2183,7 +2385,7 @@ func TestHandleTest_HTTP(t *testing.T) {
 
 // ── W2: Bulk resolve + auto-approve cache ──────────────────────────────────
 
-func TestBulkResolve_ApprovesAllInRun(t *testing.T) {
+func TestBulkResolve_ApprovesOnlyReviewedIDs(t *testing.T) {
 	configYAML := `version: "1"
 default_action: allow
 policies: []`
@@ -2211,10 +2413,14 @@ policies: []`
 
 	id1 := createApproval("claude-code", "rm -rf /tmp/a")
 	id2 := createApproval("claude-code", "rm -rf /tmp/b")
+	unreviewedID := createApproval("claude-code", "rm -rf /tmp/unreviewed")
 	collidingID := createApproval("codex", "rm -rf /tmp/c")
 
-	// Bulk-resolve: approve the run.
-	bulkBody := fmt.Sprintf(`{"agent":"claude-code","session":"hook","run_id":%q,"action":"approve","resolved_by":"test"}`, runID)
+	// Pending scope resolves only the exact IDs the operator reviewed.
+	bulkBody := fmt.Sprintf(
+		`{"agent":"claude-code","session":"hook","run_id":%q,"action":"approve","scope":"pending","ids":[%q,%q],"resolved_by":"test"}`,
+		runID, id1, id2,
+	)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(bulkBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -2226,6 +2432,10 @@ policies: []`
 	var bulkResult map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&bulkResult))
 	assert.Equal(t, float64(2), bulkResult["resolved"])
+	assert.Equal(t, "pending", bulkResult["scope"])
+	assert.Equal(t, false, bulkResult["future_calls_authorized"])
+	assert.Equal(t, []any{id1, id2}, bulkResult["reviewed_ids"])
+	assert.Empty(t, bulkResult["race_covered_ids"])
 
 	ids, ok := bulkResult["ids"].([]any)
 	require.True(t, ok)
@@ -2250,13 +2460,19 @@ policies: []`
 	}
 	assert.Equal(t, "approved", getStatus(id1))
 	assert.Equal(t, "approved", getStatus(id2))
+	assert.Equal(t, "pending", getStatus(unreviewedID), "an unseen same-run call must not be resolved")
 	assert.Equal(t, "pending", getStatus(collidingID), "same run_id in another agent scope must remain pending")
+	subsequentID := createApproval("claude-code", "rm -rf /tmp/later")
+	assert.Equal(t, "pending", getStatus(subsequentID), "pending-only approval must not authorize later calls")
 	events := sink.snapshot()
 	require.Len(t, events, 2)
 	for _, event := range events {
 		assert.Equal(t, true, event.Request["bulk"])
-		assert.Equal(t, true, event.Request["auto_approve"])
-		assert.NotZero(t, event.Request["auto_approve_ttl_seconds"])
+		assert.Equal(t, "pending", event.Request["approval_scope"])
+		assert.Equal(t, false, event.Request["future_calls_requested"])
+		assert.Equal(t, false, event.Request["auto_approve"])
+		assert.NotContains(t, event.Request, "auto_approve_ttl_seconds")
+		assert.NotContains(t, event.Request, "grant_ttl_ms")
 		assert.Equal(t, runID, event.RunID)
 	}
 }
@@ -2273,11 +2489,58 @@ policies: []`
 	// Every identity field is required — never batch-resolve a caller-selected
 	// run ID across agents or sessions.
 	for _, body := range []string{
-		`{"agent":"","session":"hook","run_id":"run","action":"approve"}`,
-		`{"agent":"claude-code","session":"","run_id":"run","action":"approve"}`,
-		`{"agent":"claude-code","session":"hook","run_id":"","action":"approve"}`,
-		`{"agent":"claude-code","session":"hook","run_id":"   ","action":"approve"}`,
-		`{"action":"approve"}`,
+		`{"agent":"","session":"hook","run_id":"run","action":"approve","scope":"pending","ids":["id"]}`,
+		`{"agent":"claude-code","session":"","run_id":"run","action":"approve","scope":"pending","ids":["id"]}`,
+		`{"agent":"claude-code","session":"hook","run_id":"","action":"approve","scope":"pending","ids":["id"]}`,
+		`{"agent":"claude-code","session":"hook","run_id":"   ","action":"approve","scope":"pending","ids":["id"]}`,
+		`{"action":"approve","scope":"pending","ids":["id"]}`,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "body: %s", body)
+	}
+}
+
+func TestBulkResolve_InvalidScopeRejected(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	for _, body := range []string{
+		`{"agent":"claude-code","session":"hook","run_id":"run","action":"approve","scope":"session","ids":["id"]}`,
+		`{"agent":"claude-code","session":"hook","run_id":"run","action":"deny","scope":"run","ids":["id"]}`,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "body: %s", body)
+	}
+}
+
+func TestBulkResolve_ScopeAndIDsRequired(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	for _, body := range []string{
+		`{"agent":"claude-code","session":"hook","run_id":"run","action":"approve","ids":["id"]}`,
+		`{"agent":"claude-code","session":"hook","run_id":"run","action":"approve","scope":"pending"}`,
+		`{"agent":"claude-code","session":"hook","run_id":"run","action":"approve","scope":"pending","ids":[]}`,
 	} {
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -2307,7 +2570,7 @@ policies: []`
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
-func TestBulkResolve_ZeroResolved_WhenNoPendingForRun(t *testing.T) {
+func TestBulkResolve_StaleApprovalIDRejected(t *testing.T) {
 	configYAML := `version: "1"
 default_action: allow
 policies: []`
@@ -2316,8 +2579,7 @@ policies: []`
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
-	// Bulk-resolve a run that has no pending approvals.
-	body := `{"agent":"claude-code","session":"hook","run_id":"run-nonexistent","action":"approve"}`
+	body := `{"agent":"claude-code","session":"hook","run_id":"run-nonexistent","action":"approve","scope":"pending","ids":["missing"]}`
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -2325,14 +2587,110 @@ policies: []`
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	var result map[string]any
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
-	assert.Equal(t, float64(0), result["resolved"])
-	// ids should be an empty array, not null.
-	ids, ok := result["ids"].([]any)
-	assert.True(t, ok, "ids should be a JSON array")
-	assert.Empty(t, ids)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+}
+
+func TestBulkResolve_ValidatesEveryIDBeforeResolving(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	call := engine.ToolCall{
+		Tool: "exec", Params: map[string]any{"command": "deploy"},
+		Agent: "claude-code", Session: "hook", RunID: "run-validate-all", ToolCallID: "call-one",
+	}
+	pending, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude-code","session":"hook","run_id":"run-validate-all","action":"approve","scope":"pending","ids":[%q,"missing"]}`,
+			pending.ID,
+		)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	current, ok := srv.approvals.Get(pending.ID)
+	require.True(t, ok)
+	assert.Equal(t, approval.StatusPending, current.Status)
+}
+
+func TestBulkResolve_RunScopeRejectsMultipleCredentialOwners(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	call := engine.ToolCall{
+		Tool: "exec", Params: map[string]any{"command": "deploy"},
+		Agent: "claude-code", Session: "hook", RunID: "run-owner-split", ToolCallID: "call-a",
+	}
+	first, autoApproved, err := srv.approvals.CreateOrAutoApproved(call, engine.Decision{Action: engine.ActionRequireApproval}, strings.Repeat("a", 64))
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	call.ToolCallID = "call-b"
+	second, autoApproved, err := srv.approvals.CreateOrAutoApproved(call, engine.Decision{Action: engine.ActionRequireApproval}, strings.Repeat("b", 64))
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude-code","session":"hook","run_id":"run-owner-split","action":"approve","scope":"run","ids":[%q,%q]}`,
+			first.ID, second.ID,
+		)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	firstCurrent, ok := srv.approvals.Get(first.ID)
+	require.True(t, ok)
+	secondCurrent, ok := srv.approvals.Get(second.ID)
+	require.True(t, ok)
+	assert.Equal(t, approval.StatusPending, firstCurrent.Status)
+	assert.Equal(t, approval.StatusPending, secondCurrent.Status)
+}
+
+func TestBulkResolve_RunScopeRejectsOmittedPendingApprovalForOwner(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, sink := setupTestServer(t, configYAML, "enforce")
+	call := engine.ToolCall{
+		Tool: "exec", Params: map[string]any{"command": "deploy first"},
+		Agent: "claude-code", Session: "hook", RunID: "run-owner-complete", ToolCallID: "call-a",
+	}
+	first, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+	call.Params = map[string]any{"command": "deploy omitted"}
+	call.ToolCallID = "call-b"
+	omitted, err := srv.approvals.Create(call, engine.Decision{Action: engine.ActionRequireApproval})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/approvals/bulk-resolve",
+		strings.NewReader(fmt.Sprintf(
+			`{"agent":"claude-code","session":"hook","run_id":"run-owner-complete","action":"approve","scope":"run","ids":[%q]}`,
+			first.ID,
+		)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	for _, id := range []string{first.ID, omitted.ID} {
+		current, ok := srv.approvals.Get(id)
+		require.True(t, ok)
+		assert.Equal(t, approval.StatusPending, current.Status)
+	}
+	assert.Empty(t, sink.snapshot(), "rejected incomplete run scope must not publish audit transitions")
+	assert.False(t, srv.approvals.IsAutoApproved(call))
 }
 
 func TestAutoApproveCache_SubsequentCallsSkipQueue(t *testing.T) {
@@ -2340,28 +2698,59 @@ func TestAutoApproveCache_SubsequentCallsSkipQueue(t *testing.T) {
 default_action: allow
 policies: []`
 
-	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	srv, token, sink := setupTestServer(t, configYAML, "enforce")
 	ts := httptest.NewServer(srv.handler())
 	defer ts.Close()
 
 	runID := "run-auto-approve-test"
 
 	// Create and bulk-approve two approvals to seed the auto-approve cache.
+	createdIDs := make([]string, 0, 2)
 	for _, cmd := range []string{"rm /tmp/x", "rm /tmp/y"} {
 		body := fmt.Sprintf(`{"tool":"exec","command":%q,"agent":"claude-code","run_id":%q,"message":"needs approval"}`, cmd, runID)
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := http.DefaultClient.Do(req)
+		result := decodeBody(t, resp)
+		createdIDs = append(createdIDs, result["id"].(string))
 		resp.Body.Close()
 	}
 
-	bulkBody := fmt.Sprintf(`{"agent":"claude-code","session":"hook","run_id":%q,"action":"approve"}`, runID)
+	bulkBody := fmt.Sprintf(
+		`{"agent":"claude-code","session":"hook","run_id":%q,"action":"approve","scope":"run","ids":[%q,%q]}`,
+		runID, createdIDs[0], createdIDs[1],
+	)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/approvals/bulk-resolve", strings.NewReader(bulkBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	bulkResult := decodeBody(t, resp)
 	resp.Body.Close()
+	assert.Equal(t, "run", bulkResult["scope"])
+	assert.Equal(t, true, bulkResult["future_calls_authorized"])
+	assert.Equal(t, []any{createdIDs[0], createdIDs[1]}, bulkResult["reviewed_ids"])
+	assert.Empty(t, bulkResult["race_covered_ids"])
+	assert.Equal(t, float64(approval.DefaultTimeout/time.Millisecond), bulkResult["grant_ttl_ms"])
+	assert.NotEmpty(t, bulkResult["grant_expires_at"])
+	events := sink.snapshot()
+	require.Len(t, events, 3)
+	for _, event := range events[:2] {
+		assert.Equal(t, "run", event.Request["approval_scope"])
+		assert.Equal(t, true, event.Request["future_calls_requested"])
+		assert.Equal(t, true, event.Request["auto_approve"])
+		assert.Equal(t, int64(approval.DefaultTimeout/time.Second), event.Request["auto_approve_ttl_seconds"])
+		assert.Equal(t, int64(approval.DefaultTimeout/time.Millisecond), event.Request["grant_ttl_ms"])
+	}
+	grantEvent := events[2]
+	assert.Equal(t, "run_approval_publication_authorized", grantEvent.Request["action"])
+	assert.Equal(t, true, grantEvent.Request["future_calls_requested"])
+	assert.Equal(t, true, grantEvent.Request["publication_authorized"])
+	assert.NotContains(t, grantEvent.Request, "future_calls_authorized")
+	assert.Equal(t, int64(approval.DefaultTimeout/time.Millisecond), grantEvent.Request["grant_ttl_ms"])
+	assert.NotEmpty(t, grantEvent.Request["grant_expires_at"])
 
 	// Now a NEW approval from the same run should be auto-approved (status="approved", not "pending").
 	newBody := fmt.Sprintf(`{"tool":"exec","command":"rm /tmp/z","agent":"claude-code","run_id":%q,"message":"new call"}`, runID)
@@ -2376,6 +2765,7 @@ policies: []`
 	var result map[string]any
 	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&result))
 	assert.Equal(t, "approved", result["status"], "subsequent call from auto-approved run should be auto-approved")
+	assert.Equal(t, bulkResult["grant_expires_at"], result["expires_at"], "auto-approved responses must preserve the stored grant expiry")
 
 	// A run ID is caller-selected and may collide across agents. The cached
 	// approval must not authorize a different identity using the same value.
@@ -2431,6 +2821,7 @@ policies: []`
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var result map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, float64(approval.DefaultTimeout/time.Millisecond), result["run_grant_ttl_ms"])
 
 	// run_groups must be present.
 	runGroups, ok := result["run_groups"].([]any)
@@ -2466,6 +2857,51 @@ policies: []`
 	approvals, ok := result["approvals"].([]any)
 	require.True(t, ok)
 	assert.Len(t, approvals, 4)
+}
+
+func TestListApprovals_RunGroupsAreSplitByCredentialOwner(t *testing.T) {
+	configYAML := `version: "1"
+default_action: allow
+policies: []`
+
+	srv, token, _ := setupTestServer(t, configYAML, "enforce")
+	base := engine.ToolCall{
+		Tool: "exec", Params: map[string]any{"command": "deploy"},
+		Agent: "claude-code", Session: "hook", RunID: "run-owner-groups",
+	}
+	for ownerIndex, owner := range []string{strings.Repeat("a", 64), strings.Repeat("b", 64)} {
+		for callIndex := range 2 {
+			call := base
+			call.ToolCallID = fmt.Sprintf("call-%d-%d", ownerIndex, callIndex)
+			_, autoApproved, err := srv.approvals.CreateOrAutoApproved(
+				call, engine.Decision{Action: engine.ActionRequireApproval}, owner,
+			)
+			require.NoError(t, err)
+			require.False(t, autoApproved)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/approvals", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	srv.handler().ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+	runGroups, ok := result["run_groups"].([]any)
+	require.True(t, ok)
+	require.Len(t, runGroups, 2)
+	owners := map[string]bool{}
+	for _, rawGroup := range runGroups {
+		group := rawGroup.(map[string]any)
+		assert.Equal(t, float64(2), group["count"])
+		owner, ok := group["credential_owner"].(string)
+		require.True(t, ok)
+		assert.True(t, strings.HasPrefix(owner, "credential-"))
+		owners[owner] = true
+	}
+	assert.Len(t, owners, 2)
 }
 
 func TestListApprovals_RunGroupsSortedByEarliestCreatedAt(t *testing.T) {

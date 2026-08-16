@@ -32,7 +32,11 @@ Notes:
 - `GET /healthz` does not require authentication.
 - `POST /v1/tool/*` and `POST /v1/preflight/*` require either the local admin
   token or a per-agent token carrying `eval` scope.
-- `GET /v1/events/stream` accepts either bearer auth or `?token=<token>` query parameter.
+- Approval, rule, audit, policy/status/test, SSE, and metrics endpoints require
+  a credential carrying `admin` scope. A valid eval-only credential receives
+  `403 Forbidden`.
+- `GET /v1/events/stream` accepts an admin-scoped bearer credential either in
+  the header or as a `?token=<token>` query parameter.
 - `POST /v1/approvals/{id}/resolve` may also be authorized by signed URL query params (`sig`, `exp`) when server-side signing is enabled.
 
 ## API Conventions
@@ -254,7 +258,8 @@ result is returned as an effective allow with the observed result in
 `policy_decision`.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <token>` (admin or an evaluation-scoped agent token;
+  agent tokens without `eval` scope are rejected)
 - `Content-Type: application/json`
 
 ### Request Body Schema
@@ -314,7 +319,7 @@ curl -X POST "http://127.0.0.1:9090/v1/preflight/exec" \
 Creates an external/manual approval request.
 
 ### Request Headers
-- `Authorization: Bearer <admin-token>` (admin scope required; agent evaluation tokens are rejected)
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 - `Content-Type: application/json`
 
 ### Request Body Schema
@@ -349,7 +354,7 @@ Created (`201`):
 }
 ```
 
-Auto-approved (`200`, when run is bulk-approved):
+Auto-approved (`200`, when an explicit owner-bound run grant is active):
 
 ```json
 {
@@ -362,9 +367,11 @@ Auto-approved (`200`, when run is bulk-approved):
 
 ### Status Codes
 - `201 Created` approval created
-- `200 OK` auto-approved by the exact agent/session/run cache
+- `200 OK` auto-approved by an active grant for the exact
+  agent/session/run/credential-owner scope
 - `400 Bad Request` invalid JSON
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `503 Service Unavailable` approval queue full
 
 ### curl
@@ -377,18 +384,19 @@ curl -X POST "http://127.0.0.1:9090/v1/approvals" \
 
 ## GET /v1/approvals
 Lists pending approvals plus groups keyed by the complete
-`agent`/`session`/`run_id` scope. A caller-selected run ID is not assumed to be
-globally unique.
+`agent`/`session`/`run_id` and credential-owner scope. A caller-selected run ID
+is not assumed to be globally unique, and distinct credentials are never
+co-grouped for future authorization.
 
 ### Request Headers
-- `Authorization: Bearer <admin-token>` (admin scope required; agent evaluation tokens are rejected)
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response Body Schema
 
 ```json
 {
   "type": "object",
-  "required": ["approvals", "run_groups"],
+  "required": ["approvals", "run_groups", "run_grant_ttl_ms"],
   "properties": {
     "approvals": {
       "type": "array",
@@ -400,6 +408,7 @@ globally unique.
           "command": { "type": "string" },
           "agent": { "type": "string" },
           "session": { "type": "string" },
+          "credential_owner": { "type": "string" },
           "message": { "type": "string" },
           "status": { "type": "string" },
           "run_id": { "type": "string" },
@@ -416,11 +425,16 @@ globally unique.
           "agent": { "type": "string" },
           "session": { "type": "string" },
           "run_id": { "type": "string" },
+          "credential_owner": { "type": "string" },
           "count": { "type": "integer" },
           "earliest_created_at": { "type": "string", "format": "date-time" },
           "items": { "type": "array" }
         }
       }
+    },
+    "run_grant_ttl_ms": {
+      "type": "integer",
+      "description": "Configured lifetime in milliseconds for an explicit future-call run grant; positive sub-millisecond values round up"
     }
   }
 }
@@ -429,6 +443,7 @@ globally unique.
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 
 ### curl
 ```bash
@@ -440,7 +455,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 Returns one approval by ID.
 
 ### Request Headers
-- `Authorization: Bearer <admin-token>` (admin scope required; agent evaluation tokens are rejected)
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response Body Schema
 
@@ -467,6 +482,7 @@ Returns one approval by ID.
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `404 Not Found`
 
 ### curl
@@ -490,7 +506,7 @@ Unsupported tool types return `400` and leave the approval pending so the
 operator can approve once or author an explicit policy.
 
 ### Request Headers
-- `Authorization: Bearer <admin-token>` (admin scope required), or a valid
+- `Authorization: Bearer <admin-scoped-token>`, or a valid
   server-generated `sig` + `exp` query pair scoped to this approval ID
 - `Content-Type: application/json`
 
@@ -530,6 +546,7 @@ Signed URLs may approve or deny this one request, but cannot use
 - `200 OK`
 - `400 Bad Request` invalid JSON
 - `401 Unauthorized` invalid token/signature
+- `403 Forbidden` valid bearer credential without admin scope
 - `404 Not Found` unknown approval ID
 - `410 Gone` approval already resolved (replay attempt)
 - `503 Service Unavailable` durable exact-replay state could not be committed;
@@ -545,11 +562,27 @@ curl -X POST "http://127.0.0.1:9090/v1/approvals/01J.../resolve" \
 
 ## POST /v1/approvals/bulk-resolve
 Bulk approves or denies pending approvals for one exact
-`agent`/`session`/`run_id` scope. An approved scope is cached for subsequent
-calls in that same scope only.
+`agent`/`session`/`run_id` identity. The caller must supply both an explicit
+scope and the exact pending approval IDs the operator reviewed. `pending`
+scope resolves only those IDs. `run` scope is valid only with `approve`; it
+also authorizes future calls in that exact identity and one credential-owner
+scope until the configured approval timeout expires. That authorization window
+starts at the initial validation snapshot and is never restarted while raced
+calls are resolved. A run-scoped request must
+include every approval already pending for that owner-bound scope at Rampart's
+initial validation snapshot. Calls that arrive after that snapshot while
+Rampart closes the create-versus-publication race are covered by the explicit
+future-call authority and reported separately from reviewed IDs. If a
+post-snapshot call is denied, expires, is deleted, or is approved by another
+resolver before publication, Rampart aborts the future grant instead of
+overriding that transition.
+
+The contract changed in 1.8: omitted `scope` or `ids` now returns `400` instead
+of inferring authority. Existing clients must send `"scope":"pending"` with
+reviewed IDs, or opt in to `"scope":"run"` for future-call authority.
 
 ### Request Headers
-- `Authorization: Bearer <admin-token>` (admin scope required; agent evaluation tokens are rejected)
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 - `Content-Type: application/json`
 
 ### Request Body Schema
@@ -557,12 +590,19 @@ calls in that same scope only.
 ```json
 {
   "type": "object",
-  "required": ["agent", "session", "run_id", "action"],
+  "required": ["agent", "session", "run_id", "action", "scope", "ids"],
   "properties": {
     "agent": { "type": "string" },
     "session": { "type": "string" },
     "run_id": { "type": "string" },
     "action": { "type": "string", "enum": ["approve", "deny"] },
+    "scope": { "type": "string", "enum": ["pending", "run"] },
+    "ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "resolved_by": { "type": "string" }
   }
 }
@@ -573,32 +613,101 @@ calls in that same scope only.
 ```json
 {
   "type": "object",
-  "required": ["resolved", "ids"],
+  "required": ["resolved", "ids", "reviewed_ids", "race_covered_ids", "scope", "future_calls_authorized"],
   "properties": {
     "resolved": { "type": "integer" },
-    "ids": { "type": "array", "items": { "type": "string" } }
+    "ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Every approval this request committed, including any run-scope race-covered calls"
+    },
+    "reviewed_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Normalized exact IDs supplied by the caller"
+    },
+    "race_covered_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Run-scope calls that arrived after the initial validation snapshot while the future grant was being published; always empty for pending scope"
+    },
+    "scope": { "type": "string", "enum": ["pending", "run"] },
+    "future_calls_authorized": { "type": "boolean" },
+    "grant_ttl_ms": {
+      "type": "integer",
+      "description": "Configured authorization window beginning at the validation snapshot; present only when future_calls_authorized is true"
+    },
+    "grant_expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Present only when future_calls_authorized is true"
+    }
   }
 }
 ```
 
+A `503` response uses the same core fields and additionally includes
+`unresolved_reviewed_ids` and `refresh_required: true`. Its `ids` list is the
+authoritative set committed by this request before the failure. Do not replay
+the original body blindly: refresh, reconcile those IDs, and present any
+remaining calls for review again.
+
 ### Status Codes
 - `200 OK`
-- `400 Bad Request` missing/empty `agent`, `session`, or `run_id`, or invalid `action`
+- `400 Bad Request` missing/empty `agent`, `session`, or `run_id`; invalid
+  `action`, `scope`, or `ids`; mismatched or duplicate IDs; multiple credential
+  owners in run scope; or `scope:"run"` used with `deny`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
+- `409 Conflict` one or more reviewed IDs were already not pending during
+  initial validation, or run scope omitted an approval already pending for the
+  selected credential owner; this request has not resolved a listed approval
+- `503 Service Unavailable` a required resolution or run-grant audit could not
+  be committed; a listed approval changed concurrently; or the owner-bound run
+  recorded a denial, expiry, deletion, or approval by another resolver after
+  validation. Exact per-ID resolutions already committed remain valid, but no
+  unaudited or conflicting future-call grant is published. Refresh and
+  reconcile the returned approval list before retrying.
+
+### Audit field migration in 1.8
+
+SIEM consumers of bulk-approval events should migrate from the action-specific
+`request.auto_approve` and `request.auto_approve_ttl_seconds` fields. They
+remain as deprecated aliases in `rampart.audit.v1`: `auto_approve` mirrors
+`future_calls_requested`, and the seconds TTL remains present for run scope.
+Resolution events now use `approval_scope`, `future_calls_requested`, and
+`grant_ttl_ms` as the authoritative fields.
+A separate `run_approval_publication_authorized` event records reviewed and
+race-covered IDs plus the candidate expiry without claiming successful
+publication. Only the successful bulk API response sets
+`future_calls_authorized: true`.
 
 ### curl
 ```bash
 curl -X POST "http://127.0.0.1:9090/v1/approvals/bulk-resolve" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"agent":"claude-code","session":"repo/main","run_id":"run_01J...","action":"approve","resolved_by":"api"}'
+  -d '{"agent":"claude-code","session":"repo/main","run_id":"run_01J...","action":"approve","scope":"pending","ids":["01KHT3...","01KHT4..."],"resolved_by":"api"}'
 ```
+
+To approve current and future calls for the disclosed timeout, opt in to run
+scope explicitly:
+
+```bash
+curl -X POST "http://127.0.0.1:9090/v1/approvals/bulk-resolve" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agent":"claude-code","session":"repo/main","run_id":"run_01J...","action":"approve","scope":"run","ids":["01KHT3...","01KHT4..."],"resolved_by":"api"}'
+```
+
+Get the IDs and their `credential_owner` grouping from `GET /v1/approvals`
+immediately before presenting the decision to the operator.
 
 ## GET /v1/rules/auto-allowed
 Returns user auto-allow rules persisted in `~/.rampart/policies/auto-allowed.yaml`.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response Body Schema
 
@@ -628,6 +737,7 @@ Returns user auto-allow rules persisted in `~/.rampart/policies/auto-allowed.yam
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `500 Internal Server Error`
 
 ### curl
@@ -640,7 +750,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 Writes a permanent, exact allow rule to `~/.rampart/policies/user-overrides.yaml`. Used by the OpenClaw plugin for "Always Allow" writeback. Rampart preserves the full approved command or file path and escapes literal glob metacharacters rather than generalizing it. Automatic persistence supports `exec`, `read`, `write`, and `edit`; use an explicit policy for tools whose complete input cannot yet be represented exactly. Rate-limited to ~5 writes/sec.
 
 ### Request Headers
-- `Authorization: Bearer <token>` (admin scope required)
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 - `Content-Type: application/json`
 
 ### Request Body Schema
@@ -676,6 +786,7 @@ Writes a permanent, exact allow rule to `~/.rampart/policies/user-overrides.yaml
 - `409 Conflict` — rule already exists (returns existing pattern)
 - `400 Bad Request` — invalid request body or decision value
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `429 Too Many Requests` — rate limited
 
 ### curl
@@ -686,11 +797,12 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:9090/v1/rules/learn"
 ```
 
-## DELETE /v1/rules/auto-allowed/{index}
-Deletes one auto-allowed rule by index and reloads policy engine.
+## DELETE /v1/rules/auto-allowed/{name}
+Deletes one auto-allowed rule by its exact URL-encoded rule name and reloads
+the policy engine.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response Body Schema
 
@@ -706,22 +818,23 @@ Deletes one auto-allowed rule by index and reloads policy engine.
 
 ### Status Codes
 - `200 OK`
-- `400 Bad Request` invalid index
+- `400 Bad Request` empty rule name
 - `401 Unauthorized`
-- `404 Not Found` file missing or index out of range
+- `403 Forbidden` valid credential without admin scope
+- `404 Not Found` file missing or rule name not found
 - `500 Internal Server Error`
 
 ### curl
 ```bash
 curl -X DELETE -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:9090/v1/rules/auto-allowed/0"
+  "http://127.0.0.1:9090/v1/rules/auto-allowed/user-allow-a3f2b1c4"
 ```
 
 ## GET /v1/audit/events
 Queries audit events for a date, with filtering and pagination.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Query Parameters
 - `date` (`YYYY-MM-DD`, optional, default: current UTC date)
@@ -777,6 +890,7 @@ Queries audit events for a date, with filtering and pagination.
 - `200 OK`
 - `400 Bad Request` invalid date format
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `503 Service Unavailable` audit directory not configured
 
 ### curl
@@ -789,7 +903,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 Lists available audit dates.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response Body Schema
 
@@ -807,6 +921,7 @@ Lists available audit dates.
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `500 Internal Server Error`
 - `503 Service Unavailable` audit directory not configured
 
@@ -820,7 +935,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 Downloads a day of audit logs as JSONL.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Query Parameters
 - `date` (required, `YYYY-MM-DD`)
@@ -833,6 +948,7 @@ Downloads a day of audit logs as JSONL.
 - `200 OK`
 - `400 Bad Request` missing/invalid `date`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `404 Not Found` no log for requested date
 - `503 Service Unavailable` audit directory not configured
 
@@ -847,7 +963,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 Aggregated audit statistics for a date range.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Query Parameters
 - `from` (`YYYY-MM-DD`, optional, default current UTC date)
@@ -873,6 +989,7 @@ Aggregated audit statistics for a date range.
 - `200 OK`
 - `400 Bad Request` invalid dates or `to < from`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `503 Service Unavailable` audit directory not configured
 
 ### curl
@@ -888,8 +1005,8 @@ Note: the route is `/v1/events/stream` (not `/v1/events`).
 
 ### Authentication
 Either:
-- `Authorization: Bearer <token>` header, or
-- `?token=<token>` query parameter
+- `Authorization: Bearer <admin-scoped-token>` header, or
+- `?token=<admin-scoped-token>` query parameter
 
 ### Response Headers
 - `Content-Type: text/event-stream`
@@ -916,6 +1033,7 @@ Observed server-emitted event types:
 ### Status Codes
 - `200 OK` stream established
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `500 Internal Server Error` streaming unsupported by writer
 
 ### curl
@@ -930,11 +1048,11 @@ Query-token variant:
 curl -N "http://127.0.0.1:9090/v1/events/stream?token=$TOKEN"
 ```
 
-## GET /v1/policy
-Alias of `/v1/status`. Returns active runtime policy/config summary.
+## GET /v1/status
+Returns current runtime status and active policy/config counts.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response Body Schema
 
@@ -956,25 +1074,7 @@ Alias of `/v1/status`. Returns active runtime policy/config summary.
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
-
-### curl
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:9090/v1/policy"
-```
-
-## GET /v1/status
-Returns current runtime status and policy counts.
-
-### Request Headers
-- `Authorization: Bearer <token>`
-
-### Response
-Same schema as `GET /v1/policy`.
-
-### Status Codes
-- `200 OK`
-- `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 
 ### curl
 ```bash
@@ -986,7 +1086,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 Returns transparency-oriented rule summary.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response Body Schema
 
@@ -1015,6 +1115,7 @@ Returns transparency-oriented rule summary.
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 
 ### curl
 ```bash
@@ -1026,7 +1127,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 Forces immediate policy reload.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Request Body
 - No body required.
@@ -1059,6 +1160,7 @@ Failure (`500`):
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `429 Too Many Requests` rate-limited (<1s since previous reload)
 - `500 Internal Server Error` reload failed
 - `503 Service Unavailable` policy engine not initialized
@@ -1073,7 +1175,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 Policy REPL endpoint for evaluating a hypothetical command.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 - `Content-Type: application/json`
 
 ### Request Body Schema
@@ -1112,6 +1214,7 @@ Policy REPL endpoint for evaluating a hypothetical command.
 - `200 OK`
 - `400 Bad Request` invalid JSON or missing `command`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `503 Service Unavailable` policy engine not initialized
 
 ### curl
@@ -1155,7 +1258,7 @@ curl "http://127.0.0.1:9090/healthz"
 Prometheus metrics endpoint. Available only when server starts with metrics enabled.
 
 ### Request Headers
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
 
 ### Response
 - `Content-Type`: Prometheus text exposition format
@@ -1172,6 +1275,7 @@ Primary Rampart metrics:
 ### Status Codes
 - `200 OK`
 - `401 Unauthorized`
+- `403 Forbidden` valid credential without admin scope
 - `404 Not Found` when metrics endpoint is disabled
 
 ### curl
