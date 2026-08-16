@@ -144,8 +144,10 @@ Approve it → Claude continues. Deny it → Claude gets an explanation and trie
 
 !!! tip "Working with an agent team?"
     Pending approvals are grouped only when the calls report the same agent,
-    session, and run ID. One click can then **Approve All** for that exact team
-    run without authorizing a colliding run ID from another agent or session.
+    session, run ID, and credential owner. **Approve Pending** affects only the
+    calls shown; **Allow Future** separately grants time-bounded authority for
+    that exact team run without authorizing a colliding run ID or another
+    credential.
 
 ---
 

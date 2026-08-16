@@ -149,6 +149,27 @@ func WithApprovalTimeout(d time.Duration) Option {
 	}
 }
 
+// effectiveApprovalTimeout returns the timeout enforced by the approval
+// store, including its default when serve did not configure one explicitly.
+// Explicit run-scoped grants use this same duration.
+func (s *Server) effectiveApprovalTimeout() time.Duration {
+	if s.approvalTimeout > 0 {
+		return s.approvalTimeout
+	}
+	return approval.DefaultTimeout
+}
+
+func durationMilliseconds(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	milliseconds := d / time.Millisecond
+	if d%time.Millisecond != 0 {
+		milliseconds++
+	}
+	return int64(milliseconds)
+}
+
 // WithApprovalPersistenceFile sets the path for the JSONL file used to persist
 // pending approvals across server restarts. If empty, persistence is disabled.
 func WithApprovalPersistenceFile(path string) Option {
@@ -568,11 +589,13 @@ type hostedApprovalResolveRequest struct {
 
 // bulkResolveRequest is the JSON body for POST /v1/approvals/bulk-resolve.
 type bulkResolveRequest struct {
-	Agent      string `json:"agent"`
-	Session    string `json:"session"`
-	RunID      string `json:"run_id"`
-	Action     string `json:"action"`      // "approve" or "deny"
-	ResolvedBy string `json:"resolved_by"` // e.g. "api", "cli"
+	Agent      string   `json:"agent"`
+	Session    string   `json:"session"`
+	RunID      string   `json:"run_id"`
+	Action     string   `json:"action"`      // "approve" or "deny"
+	Scope      string   `json:"scope"`       // "pending" or "run"
+	IDs        []string `json:"ids"`         // exact approvals reviewed by the operator
+	ResolvedBy string   `json:"resolved_by"` // e.g. "api", "cli"
 }
 
 // Approvals returns the approval store for external CLI access.
