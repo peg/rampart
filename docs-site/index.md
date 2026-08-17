@@ -234,10 +234,10 @@ verify -> outcomes.approval
 
 ## Current release
 
-Rampart v1.7.0 binds approvals to their requesting identity, hardens MCP and
-compound-command enforcement, unifies managed protection, and adds native
-Hermes approval support for compatible installations. It also reduces the
-repository and CI maintenance footprint while refreshing the public site. See the
-[release notes](https://github.com/peg/rampart/releases/latest) for the concise
-upgrade summary or the repository
+Rampart v1.8.0 adds a fail-closed native hook for local Cursor Agent and Cmd+K
+tool calls, makes future run approval explicit and credential-bound, and keeps
+native approvals compatible with Hermes v0.20.2. Cursor Cloud Agent remains
+outside the local hook boundary. See the [release
+notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade
+summary or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-17
+
 ### Security
 
 - **Bulk approval no longer grants hidden future authority** — Dashboard and
