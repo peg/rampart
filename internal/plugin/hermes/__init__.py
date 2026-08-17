@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 DEFAULT_SERVE_URL = "http://127.0.0.1:9090"
 DEFAULT_TIMEOUT_MS = 3000
@@ -809,6 +809,7 @@ def _hermes_supports_native_approval() -> bool:
         hermes_plugins, "_get_pre_tool_call_directive_details", None
     )
     resolver = getattr(hermes_plugins, "resolve_pre_tool_block", None)
+    resolution_helper = getattr(hermes_plugins, "_resolve_block_from_details", None)
     if not (
         callable(public_getter)
         and callable(details_getter)
@@ -818,11 +819,14 @@ def _hermes_supports_native_approval() -> bool:
         return False
 
     # A field on the directive alone is not a capability guarantee. Prove the
-    # two released-v2026.8.3 data-flow legs from installed source: the private
+    # released data-flow legs from installed source: the private
     # dispatcher copies the hook's ``result["rule_key"]`` into the directive,
-    # and the resolver supplies ``details.rule_key`` to the approval gate. If
-    # source is unavailable or a future host delegates this differently, fail
-    # closed until that contract is reviewed instead of guessing from names.
+    # and the resolver supplies ``details.rule_key`` to the approval gate.
+    # Hermes v0.20.2 moved the gate into ``_resolve_block_from_details``; for
+    # that shape, also prove that the resolver passes the same directive into
+    # the helper. If source is unavailable or a future host delegates this
+    # differently, fail closed until that contract is reviewed instead of
+    # guessing from names.
     try:
         details_tree = ast.parse(textwrap.dedent(inspect.getsource(details_getter)))
         resolver_tree = ast.parse(textwrap.dedent(inspect.getsource(resolver)))
@@ -874,6 +878,22 @@ def _hermes_supports_native_approval() -> bool:
         and call_name(node.value) == "_get_pre_tool_call_directive_details"
         for node in ast.walk(resolver_tree)
     )
+    resolver_delegates_same_details = callable(resolution_helper) and any(
+        isinstance(node, ast.Call)
+        and call_name(node) == "_resolve_block_from_details"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "details"
+        for node in ast.walk(resolver_tree)
+    )
+    gate_tree = resolver_tree
+    if resolver_delegates_same_details:
+        try:
+            gate_tree = ast.parse(
+                textwrap.dedent(inspect.getsource(resolution_helper))
+            )
+        except (OSError, TypeError, SyntaxError, IndentationError):
+            return False
     details_rule_key_reaches_gate = any(
         isinstance(node, ast.Call)
         and call_name(node) == "request_tool_approval"
@@ -888,7 +908,7 @@ def _hermes_supports_native_approval() -> bool:
             )
             for keyword in node.keywords
         )
-        for node in ast.walk(resolver_tree)
+        for node in ast.walk(gate_tree)
     )
     return (
         result_rule_key_is_captured
