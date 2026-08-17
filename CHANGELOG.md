@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls, preserves Cursor's own permissions on allow, and keeps Cloud Agent,
   Tab, project, team, and enterprise deployment claims separate.
 
+### Fixed
+
+- **Hermes v0.20.2 native approvals remain action-bound** — Rampart recognizes
+  Hermes' reviewed shared approval-resolver path while retaining fail-closed
+  capability detection for unknown host implementations.
+
 ## [1.7.0] - 2026-08-14
 
 ### Security
