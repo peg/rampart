@@ -157,6 +157,18 @@ func supportedIntegrationDrivers() []integrationDriver {
 			},
 		},
 		{
+			ID: "cursor", DisplayName: "Cursor", Boundary: "native hook", VerifyTarget: "cursor",
+			ProofLevel: assuranceAdapterVerified, Executables: []string{"cursor", "cursor-agent"},
+			AutoProtect: true, ServiceRequired: true, Platforms: []string{"linux", "darwin", "windows"},
+			Installed:       cursorInstalledForHome,
+			SetupCommand:    func(opts *rootOptions) *cobra.Command { return newSetupCursorCmd(opts) },
+			Configured:      cursorHooksConfiguredForHome,
+			ProtectionLabel: "Cursor (Agent hook)",
+			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
+				return []verificationCheck{verifyCursorHooksInstalled(), verifyCursorHookAdapter(ctx)}
+			},
+		},
+		{
 			ID: "cline", DisplayName: "Cline", Boundary: "native hooks", VerifyTarget: "cline",
 			ProofLevel: assuranceAdapterVerified, Executables: []string{"cline"},
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},

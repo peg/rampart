@@ -154,7 +154,7 @@ func TestQuickstartSuggestedPolicies_SkipsInstalled(t *testing.T) {
 	}
 }
 
-func TestQuickstartUnsupportedAgentWrapSuggestion(t *testing.T) {
+func TestQuickstartCursorUsesNativeSetup(t *testing.T) {
 	selected, err := selectQuickstartAgents(&detect.DetectResult{HasCursor: true}, "")
 	if err != nil {
 		t.Fatalf("selectQuickstartAgents error = %v", err)
@@ -162,11 +162,11 @@ func TestQuickstartUnsupportedAgentWrapSuggestion(t *testing.T) {
 	if len(selected) != 1 {
 		t.Fatalf("expected one selected agent, got %d", len(selected))
 	}
-	if selected[0].HasSetup {
-		t.Fatal("cursor should be unsupported (HasSetup=false)")
+	if !selected[0].HasSetup {
+		t.Fatal("cursor should use native setup")
 	}
-	if selected[0].WrapCmd != "rampart wrap -- cursor" {
-		t.Fatalf("wrap cmd = %q, want cursor wrap command", selected[0].WrapCmd)
+	if selected[0].SetupCmd != "cursor" || selected[0].WrapCmd != "" {
+		t.Fatalf("cursor lifecycle = %#v", selected[0])
 	}
 }
 
@@ -194,16 +194,16 @@ func TestQuickstartProtectionTargetsUseManagedOpenClawPath(t *testing.T) {
 	}
 	drivers, unsupported, err := quickstartProtectionTargets([]quickstartAgent{
 		{Key: "openclaw", Name: "OpenClaw", HasSetup: true, SetupCmd: "openclaw"},
-		{Key: "cursor", Name: "Cursor", WrapCmd: "rampart wrap -- cursor"},
+		{Key: "cursor", Name: "Cursor", HasSetup: true, SetupCmd: "cursor"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(drivers) != 1 || drivers[0].ID != "openclaw" || !drivers[0].OpenClaw {
-		t.Fatalf("managed drivers = %#v, want OpenClaw protect driver", drivers)
+	if len(drivers) != 2 || drivers[0].ID != "openclaw" || !drivers[0].OpenClaw || drivers[1].ID != "cursor" {
+		t.Fatalf("managed drivers = %#v, want OpenClaw and Cursor protect drivers", drivers)
 	}
-	if len(unsupported) != 1 || unsupported[0].Key != "cursor" {
-		t.Fatalf("unsupported = %#v, want Cursor wrap guidance", unsupported)
+	if len(unsupported) != 0 {
+		t.Fatalf("unsupported = %#v, want none", unsupported)
 	}
 }
 
@@ -213,7 +213,7 @@ func TestQuickstartAgentsUseCurrentNativeRegistry(t *testing.T) {
 	for _, agent := range agents {
 		byKey[agent.Key] = agent
 	}
-	for _, key := range []string{"claude-code", "codex", "cline", "openclaw", "copilot", "antigravity"} {
+	for _, key := range []string{"claude-code", "codex", "cline", "openclaw", "copilot", "antigravity", "cursor"} {
 		agent, ok := byKey[key]
 		if !ok || !agent.HasSetup || agent.SetupCmd != key {
 			t.Errorf("native quickstart entry %q = %+v, present=%v", key, agent, ok)

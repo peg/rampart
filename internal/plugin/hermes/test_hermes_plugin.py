@@ -50,8 +50,12 @@ class HermesPluginTests(unittest.TestCase):
         def resolve_pre_tool_block(*_):
             return None
 
+        def resolve_block_from_details(*_):
+            return None
+
         hermes_plugins._get_pre_tool_call_directive_details = details_getter
         hermes_plugins.resolve_pre_tool_block = resolve_pre_tool_block
+        hermes_plugins._resolve_block_from_details = resolve_block_from_details
         directive_type = type(
             "_PreToolCallDirective",
             (),
@@ -77,6 +81,13 @@ class HermesPluginTests(unittest.TestCase):
                         rule_key=details.rule_key or tool_name,
                     )
             """,
+            resolve_block_from_details: """
+                def _resolve_block_from_details(details, tool_name):
+                    return request_tool_approval(
+                        tool_name, details.message or "",
+                        rule_key=details.rule_key or tool_name,
+                    )
+            """,
         }
 
         with (
@@ -92,6 +103,21 @@ class HermesPluginTests(unittest.TestCase):
                 def resolve_pre_tool_block(tool_name, args):
                     details = _get_pre_tool_call_directive_details(tool_name, args)
                     return request_tool_approval(tool_name, details.message, rule_key=tool_name)
+            """
+            self.assertFalse(plugin._hermes_supports_native_approval())
+
+            sources[resolve_pre_tool_block] = """
+                def resolve_pre_tool_block(tool_name, args):
+                    details = _get_pre_tool_call_directive_details(tool_name, args)
+                    return _resolve_block_from_details(details, tool_name)
+            """
+            self.assertTrue(plugin._hermes_supports_native_approval())
+
+            sources[resolve_block_from_details] = """
+                def _resolve_block_from_details(details, tool_name):
+                    return request_tool_approval(
+                        tool_name, details.message or "", rule_key=tool_name
+                    )
             """
             self.assertFalse(plugin._hermes_supports_native_approval())
 

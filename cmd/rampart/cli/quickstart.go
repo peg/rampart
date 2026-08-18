@@ -42,7 +42,7 @@ func quickstartAgents() []quickstartAgent {
 		}
 	}
 	agents := make([]quickstartAgent, 0, len(drivers)+3)
-	for _, id := range []string{"claude-code", "codex", "cline", "openclaw", "copilot", "antigravity"} {
+	for _, id := range []string{"claude-code", "codex", "cline", "openclaw", "copilot", "antigravity", "cursor"} {
 		if driver, ok := drivers[id]; ok {
 			agents = append(agents, quickstartAgent{
 				Key: id, Name: driver.DisplayName, HasSetup: true, SetupCmd: id,
@@ -50,7 +50,6 @@ func quickstartAgents() []quickstartAgent {
 		}
 	}
 	return append(agents,
-		quickstartAgent{Key: "cursor", Name: "Cursor", WrapCmd: "rampart wrap -- cursor"},
 		quickstartAgent{Key: "aider", Name: "Aider", WrapCmd: "rampart wrap -- aider"},
 		quickstartAgent{Key: "windsurf", Name: "Windsurf", WrapCmd: "rampart wrap -- windsurf"},
 	)

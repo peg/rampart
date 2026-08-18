@@ -194,6 +194,22 @@ managed VS Code deployment requires the user hook plus VS Code enterprise/MDM
 controls. Copilot CLI hook timeouts are upstream fail-open, including policy
 hooks.
 
+### `rampart setup cursor`
+
+Install Rampart's user-level native hook for local Cursor Agent and Cmd+K tool
+calls.
+
+```bash
+rampart setup cursor           # Install or repair the managed preToolUse entry
+rampart setup cursor --force   # Replace invalid hook structure
+rampart setup cursor --remove  # Remove only Rampart's entry
+```
+
+Rampart preserves unrelated entries in `~/.cursor/hooks.json` and installs its
+hook with `failClosed: true`. The setup command does not write Cursor's project,
+team, enterprise, or Cloud Agent configuration. Use `rampart protect cursor`
+for the managed service, Guard policy, setup, and verification journey.
+
 ### `rampart setup` (deprecated interactive wizard)
 
 Auto-detects installed agents and guides you through setup. The bare wizard
@@ -243,7 +259,9 @@ After running, delete `~/.rampart/` manually and remove any `rampart`-related li
 
 ### `rampart hook`
 
-Hook handler called by Claude Code, Cline, Codex, experimental Gemini CLI, and GitHub Copilot CLI / VS Code. Reads a tool call from stdin and writes the host's native decision schema to stdout.
+Hook handler called by Claude Code, Cline, Codex, Cursor, experimental Gemini
+CLI, and GitHub Copilot CLI / VS Code. Reads a tool call from stdin and writes
+the host's native decision schema to stdout.
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook

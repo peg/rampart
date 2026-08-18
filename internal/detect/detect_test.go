@@ -212,6 +212,7 @@ func TestEnvironmentDetectsAgentsAndToolsFromSignals(t *testing.T) {
 	binDir := t.TempDir()
 	writeExecutable(t, filepath.Join(binDir, "codex"))
 	writeExecutable(t, filepath.Join(binDir, "aider"))
+	writeExecutable(t, filepath.Join(binDir, "cursor"))
 	writeExecutable(t, filepath.Join(binDir, "kubectl"))
 	writeExecutable(t, filepath.Join(binDir, "docker"))
 	writeExecutable(t, filepath.Join(binDir, "node"))

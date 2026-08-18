@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: "Get Rampart protecting Claude Code, Codex, Copilot, Cline, or OpenClaw in minutes, with experimental integrations documented separately."
+description: "Get Rampart protecting Claude Code, Codex, Copilot, Cline, Cursor, or OpenClaw in minutes, with experimental integrations documented separately."
 ---
 
 # Quick Start
@@ -13,7 +13,10 @@ Get Rampart protecting your AI agent in one command.
 Before you dive in, skim the [integration support matrix](support-matrix.md) if you want the exact truth about serve requirements, approval UX, and support tiers for each surface.
 
 !!! tip "Zero risk to try"
-    Protection behavior depends on the integration. Claude Code and Cline native hooks can evaluate policy locally without `rampart serve`. `rampart serve` is still useful for dashboard views, audit APIs, and external approval workflows. OpenClaw's native plugin depends on `rampart serve` for policy evaluation.
+    Protection behavior depends on the integration. Claude Code, Cline, and
+    Cursor native hooks can evaluate allow/deny policy locally without
+    `rampart serve`. The service remains necessary for Cursor's external
+    approval queue and OpenClaw's native plugin.
 
 ## Install
 

@@ -138,6 +138,7 @@ func TestFindIntegrationDriverResolvesCanonicalIDsAndAliases(t *testing.T) {
 		"copilot":        "copilot",
 		"copilot-cli":    "copilot",
 		"github-copilot": "copilot",
+		"cursor":         "cursor",
 		"cline":          "cline",
 	} {
 		driver, ok := findIntegrationDriver(input)
@@ -201,7 +202,7 @@ func TestIntegrationDriverPlatformEligibility(t *testing.T) {
 	if integrationDriverSupportsPlatform(find("openclaw"), "windows") {
 		t.Fatal("OpenClaw must not be auto-protected on Windows")
 	}
-	for _, id := range []string{"claude-code", "codex", "antigravity", "copilot", "cline"} {
+	for _, id := range []string{"claude-code", "codex", "antigravity", "copilot", "cursor", "cline"} {
 		if !integrationDriverSupportsPlatform(find(id), "windows") {
 			t.Fatalf("%s should support Windows", id)
 		}

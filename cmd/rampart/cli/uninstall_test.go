@@ -343,6 +343,17 @@ func TestRemoveManagedAgentIntegrationsIsComprehensiveAndPreservesUserState(t *t
 		t.Fatal(err)
 	}
 
+	cursorPath := cursorHooksPath(home)
+	if err := os.MkdirAll(filepath.Dir(cursorPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cursorPath, []byte(`{"version":1,"owner":"keep-cursor","hooks":{"preToolUse":[{"command":"./operator-hook"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installCursorHooks(cursorPath, "rampart hook --format cursor", false); err != nil {
+		t.Fatal(err)
+	}
+
 	antigravityDir := antigravityPluginDir(home)
 	if err := installAntigravityPlugin(antigravityDir, "rampart hook --format antigravity", false); err != nil {
 		t.Fatal(err)
@@ -372,8 +383,8 @@ func TestRemoveManagedAgentIntegrationsIsComprehensiveAndPreservesUserState(t *t
 	if len(failed) != 0 {
 		t.Fatalf("unexpected removal failures: %v\nstderr: %s", failed, stderr.String())
 	}
-	if len(removed) != 6 {
-		t.Fatalf("removed %d integrations, want 6: %v\nstdout: %s", len(removed), removed, stdout.String())
+	if len(removed) != 7 {
+		t.Fatalf("removed %d integrations, want 7: %v\nstdout: %s", len(removed), removed, stdout.String())
 	}
 
 	for _, check := range []struct {
@@ -384,12 +395,14 @@ func TestRemoveManagedAgentIntegrationsIsComprehensiveAndPreservesUserState(t *t
 		{name: "Codex hooks removed", ok: !codexHooksConfiguredForHome(home)},
 		{name: "Gemini hooks removed", ok: !geminiHooksConfiguredForHome(home)},
 		{name: "Copilot hook removed", ok: !copilotHooksConfiguredForHome(home)},
+		{name: "Cursor hook removed", ok: !cursorRampartHooksPresent(home)},
 		{name: "Antigravity plugin removed", ok: !antigravityPluginConfiguredForHome(home)},
 		{name: "Cline hooks removed", ok: !clineManagedHooksPresentInDir(clineDir)},
 		{name: "Claude config preserved", ok: fileContains(claudePath, "keep-claude") && fileContains(claudePath, "custom-hook")},
 		{name: "Codex config preserved", ok: fileContains(codexPath, "keep-codex") && fileContains(codexPath, "custom")},
 		{name: "Gemini config preserved", ok: fileContains(geminiPath, "keep-gemini") && fileContains(geminiPath, "custom")},
 		{name: "Copilot sibling preserved", ok: fileContains(copilotSibling, "keep")},
+		{name: "Cursor config preserved", ok: fileContains(cursorPath, "keep-cursor") && fileContains(cursorPath, "operator-hook")},
 		{name: "Antigravity sibling preserved", ok: fileContains(antigravitySibling, "keep")},
 		{name: "Cline sibling preserved", ok: fileContains(clineSibling, "keep")},
 	} {

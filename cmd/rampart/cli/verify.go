@@ -123,7 +123,7 @@ func newVerifyCmd() *cobra.Command {
 	var timeout time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "verify [openclaw|claude-code|cline|codex|gemini|antigravity|copilot|policy]",
+		Use:   "verify [openclaw|claude-code|cline|codex|gemini|antigravity|copilot|cursor|policy]",
 		Short: "Actively verify that agent safety boundaries really block",
 		Long: `Run non-destructive behavioral canaries against the live Rampart policy path.
 
@@ -175,7 +175,7 @@ implementation.`,
 			if target != "policy" {
 				driver, ok := findIntegrationDriver(target)
 				if !ok {
-					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, antigravity, copilot, policy)", target)
+					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, antigravity, copilot, cursor, policy)", target)
 				}
 				if strings.TrimSpace(driver.VerifyTarget) == "" || driver.VerifyChecks == nil {
 					command := integrationDriverVerificationCommand(driver)
@@ -838,6 +838,89 @@ func verifyCopilotHookAdapter(ctx context.Context) verificationCheck {
 		ID: "copilot-native-deny", Name: "Copilot CLI / VS Code native deny response works",
 		Status: verificationPass, Expected: "CLI + VS Code deny and session-correlated audit", Actual: "dual deny + audit",
 		Message: "The live adapter blocked the destructive canary for both Copilot hook schemas and preserved session identity",
+	}
+}
+
+func verifyCursorHooksInstalled() verificationCheck {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return verificationCheck{
+			ID: "cursor-hook-installation", Name: "Cursor Agent hook is installed",
+			Status: verificationUnverified, Actual: "home unavailable",
+			Message: "Could not locate Cursor's user hook configuration",
+			Hint:    "Run `rampart setup cursor`, then rerun `rampart verify cursor`",
+		}
+	}
+	if !cursorHooksConfiguredForHome(home) {
+		return verificationCheck{
+			ID: "cursor-hook-installation", Name: "Cursor Agent hook is installed",
+			Status: verificationFail, Expected: "current fail-closed preToolUse hook", Actual: "missing, stale, or incomplete",
+			Message: "Cursor is not configured to invoke this Rampart binary before every local Agent tool call",
+			Hint:    "Run `rampart setup cursor`, then rerun `rampart verify cursor`",
+		}
+	}
+	return verificationCheck{
+		ID: "cursor-hook-installation", Name: "Cursor Agent hook is installed",
+		Status: verificationPass, Expected: "current fail-closed preToolUse hook", Actual: "configured",
+		Message: "Cursor's user-level preToolUse configuration contains the current Rampart hook",
+	}
+}
+
+func verifyCursorHookAdapter(ctx context.Context) verificationCheck {
+	auditDir, err := os.MkdirTemp("", "rampart-verify-cursor-*")
+	if err != nil {
+		return verificationCheck{
+			ID: "cursor-native-deny", Name: "Cursor native deny response works",
+			Status: verificationUnverified, Actual: "temporary directory unavailable", Message: err.Error(),
+		}
+	}
+	defer os.RemoveAll(auditDir)
+
+	payload := `{
+		"conversation_id":"rampart-verification",
+		"generation_id":"rampart-verification-generation",
+		"cwd":".",
+		"hook_event_name":"preToolUse",
+		"tool_name":"Shell",
+		"tool_use_id":"rampart-verification",
+		"tool_input":{"command":"rm -rf /"}
+	}`
+	var stdout, stderr bytes.Buffer
+	hookCmd := NewRootCmd(ctx, &stdout, &stderr)
+	hookCmd.SetIn(strings.NewReader(payload))
+	hookCmd.SetArgs([]string{"hook", "--format", "cursor", "--audit-dir", auditDir})
+	if err := hookCmd.Execute(); err != nil {
+		return verificationCheck{
+			ID: "cursor-native-deny", Name: "Cursor native deny response works",
+			Status: verificationFail, Expected: "structured deny", Actual: "hook error", Message: err.Error(),
+		}
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil || output["permission"] != "deny" {
+		return verificationCheck{
+			ID: "cursor-native-deny", Name: "Cursor native deny response works",
+			Status: verificationFail, Expected: "permission=deny", Actual: strings.TrimSpace(stdout.String()),
+			Message: "The live Rampart hook adapter did not return Cursor's deny schema",
+		}
+	}
+	auditRecord, err := latestAuditEvent(auditDir)
+	if err != nil {
+		return verificationCheck{
+			ID: "cursor-native-deny", Name: "Cursor native deny response works",
+			Status: verificationFail, Expected: "correlated deny audit", Actual: "audit unreadable", Message: err.Error(),
+		}
+	}
+	if auditRecord.Agent != "cursor" || auditRecord.RunID != "rampart-verification" || auditRecord.ToolCallID != "rampart-verification" {
+		return verificationCheck{
+			ID: "cursor-native-deny", Name: "Cursor native deny response works",
+			Status: verificationFail, Expected: "conversation and tool-call correlated deny audit", Actual: "correlation missing",
+			Message: "The Cursor hook audit did not preserve host call identity",
+		}
+	}
+	return verificationCheck{
+		ID: "cursor-native-deny", Name: "Cursor native deny response works",
+		Status: verificationPass, Expected: "Cursor deny and correlated audit", Actual: "deny + audit",
+		Message: "The live adapter blocked the destructive canary and preserved Cursor conversation and tool-call identity",
 	}
 }
 

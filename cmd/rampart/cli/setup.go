@@ -112,7 +112,8 @@ Supported AI Agents:
   • Codex                     - Native lifecycle hook integration
   • Gemini CLI                - Experimental enterprise/API-key hooks
   • Antigravity               - CLI and IDE native policy plugin
-  • GitHub Copilot            - Copilot CLI and VS Code native hooks`,
+  • GitHub Copilot            - Copilot CLI and VS Code native hooks
+  • Cursor                    - Agent and Cmd+K native pre-tool hook`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if flag := cmd.Flags().Lookup("remove"); flag != nil {
 				remove, err := cmd.Flags().GetBool("remove")
@@ -141,6 +142,7 @@ Supported AI Agents:
 	cmd.AddCommand(newSetupGeminiCmd())
 	cmd.AddCommand(newSetupAntigravityCmd())
 	cmd.AddCommand(newSetupCopilotCmd())
+	cmd.AddCommand(newSetupCursorCmd(opts))
 
 	return cmd
 }
@@ -2110,6 +2112,8 @@ func currentRampartHookCommands(format string) []string {
 	case "copilot":
 		bash, powershell := currentCopilotHookCommands()
 		return []string{bash, powershell}
+	case "cursor":
+		return []string{currentCursorHookCommand()}
 	default:
 		return nil
 	}

@@ -137,6 +137,7 @@ credentials, host output, or agent memory.
 | **Cline** | Editor and CLI hook files | Package startup, hook shape, and adapter tested; host limitations documented |
 | **Antigravity** | Shared CLI/IDE `PreToolUse` plugin | Installed plugin and adapter verification |
 | **GitHub Copilot** | CLI adapter and VS Code Preview hooks | Package/adapter and contract testing; authenticated ingestion pending |
+| **Cursor** | Local Agent and Cmd+K `preToolUse` hook | Installed fail-closed configuration and adapter verification; Cloud/Tab separate |
 | **Hermes Agent** | Experimental `pre_tool_call` user plugin | Compatible hosts can use native approval; no safe live host verifier yet |
 | **Gemini CLI** | Experimental `BeforeTool`/`AfterTool` hooks | Enterprise/API-key path; authenticated host proof pending |
 | **MCP servers** | JSON-RPC stdio proxy | Correlated request/response policy and identity enforcement |
@@ -149,6 +150,7 @@ rampart setup codex
 rampart setup cline
 rampart setup antigravity
 rampart setup copilot
+rampart setup cursor
 ```
 
 Experimental integrations are explicit opt-ins and stay outside bare

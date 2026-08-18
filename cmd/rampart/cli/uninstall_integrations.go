@@ -174,6 +174,11 @@ func removeManagedAgentIntegrations(cmd *cobra.Command, opts *rootOptions, home 
 			run: func() error { return runSetupRemove(cmd, newSetupCopilotCmd(), "policy") },
 		},
 		{
+			label:   "Cursor Agent hook",
+			present: func() bool { return cursorRampartHooksPresent(home) },
+			run:     func() error { return runSetupRemove(cmd, newSetupCursorCmd(opts)) },
+		},
+		{
 			label: "Antigravity plugin",
 			present: func() bool {
 				_, err := os.Stat(antigravityPluginDir(home))

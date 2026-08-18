@@ -507,10 +507,7 @@ func (s *Server) writeAuditRecord(
 }
 
 func (s *Server) hostedApprovalDescriptor(req toolRequest, decision engine.Decision) map[string]any {
-	timeout := s.approvalTimeout
-	if timeout <= 0 {
-		timeout = 2 * time.Minute
-	}
+	timeout := s.effectiveApprovalTimeout()
 	scopeOptions := []string{"once", "session"}
 	allowAlways := req.ApprovalOwner != nil && req.ApprovalOwner.SupportsAllowAlways
 	if allowAlways {

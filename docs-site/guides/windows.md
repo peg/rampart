@@ -1,13 +1,13 @@
 ---
 title: Windows Setup Guide
-description: Install Rampart on Windows and configure its tested Claude Code or Codex hook paths.
+description: Install Rampart on Windows and configure its tested native hook paths.
 ---
 
 # Windows Setup Guide
 
 Rampart builds and tests its policy engine plus Claude Code, Codex, Cline,
-Copilot, and Antigravity setup paths on Windows CI. A physical Windows host E2E
-is still pending, and Unix-specific integration modes remain unavailable.
+Cursor, Copilot, and Antigravity setup paths on Windows CI. Physical Windows
+host E2E is still pending, and Unix-specific integration modes remain unavailable.
 
 ## Quick Install
 
@@ -72,7 +72,7 @@ rampart test "rm -rf /"
 | Feature | Status |
 |---------|--------|
 | `rampart serve` | ✅ Foreground or `--background` |
-| `rampart setup` / `rampart protect` | ✅ Claude Code, Codex, Cline, Copilot, and Antigravity |
+| `rampart setup` / `rampart protect` | ✅ Claude Code, Codex, Cline, Cursor, Copilot, and Antigravity |
 | `rampart hook` | ✅ Works |
 | `rampart test` | ✅ Works |
 | `rampart watch` | ✅ Works |

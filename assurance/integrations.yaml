@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.7.0
-reviewed_at: "2026-08-14"
+baseline_release: v1.8.0
+reviewed_at: "2026-08-17"
 
 # Version 2 uses the canonical Rampart command target as each integration id
 # and requires an explicit declaration of bare `rampart protect` eligibility.
@@ -373,3 +373,48 @@ integrations:
       - User hooks can be modified by the user. Enterprise enforcement requires administrator-owned Copilot CLI policy hooks or OS/MDM controls around the VS Code hook file.
       - The ordinary verifier exercises installed configuration and the Rampart adapter, not an authenticated model/tool invocation through either host.
       - Copilot cloud agent does not load local user or administrator hook files; repository hooks require a separately deployed repository configuration.
+
+  - id: cursor
+    display_name: Cursor
+    support_tier: supported
+    setup_command: rampart setup cursor
+    boundary: native_hook
+    platforms: [linux, macos, windows]
+    auto_protect: true
+    service_required: true
+    upstream_ci: none
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: partial
+      mcp: tested
+      subagents: tested
+    degraded:
+      policy_unavailable: deny
+      adapter_error: deny
+      timeout: deny
+    approval: external
+    verification:
+      level: active
+      command: rampart verify cursor
+      safe_canaries: true
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_cursor_test.go
+        kind: unit
+        proves: Current preToolUse payloads normalize to policy surfaces, multi-file writes evaluate every path, unknown or ambiguous calls fail closed, and allow leaves Cursor's native permissions intact.
+      - path: cmd/rampart/cli/setup_cursor_test.go
+        kind: unit
+        proves: Setup preserves unrelated user hooks, repairs stale owned entries, installs failClosed behavior, and removes only Rampart-owned configuration.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Active verification checks the installed hook and invokes the real adapter with a destructive canary that must deny and preserve Cursor call identity.
+    limitations:
+      - The verifier proves installed user configuration and adapter behavior; it does not prove that an authenticated Cursor host loaded or invoked the hook.
+      - The user hook covers local Agent Chat and Cmd+K calls that emit preToolUse. Cursor Tab uses separate hooks and is not covered.
+      - Cursor Cloud Agents do not load user hooks. Project, team, or enterprise deployment is separate, and early read-only cloud turns currently run without hooks.
+      - Cursor Cloud Agents do not currently expose beforeMCPExecution or afterMCPExecution, although generic preToolUse is documented as available once hooks load.
+      - Cursor accepts ask in the preToolUse schema but does not enforce it, so approval actions require rampart serve and deny if the service cannot resolve them.
+      - Higher-priority enterprise, team, and project hooks remain part of Cursor's host-controlled merge boundary.
+      - Physical Windows command-hook ingestion remains unverified.
