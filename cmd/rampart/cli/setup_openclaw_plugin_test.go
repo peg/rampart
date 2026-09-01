@@ -819,6 +819,10 @@ func TestOpenClawHostLifecycleCommandsUseForceAndRuntimeInspection(t *testing.T)
 	argsPath := filepath.Join(dir, "args")
 	t.Setenv("RAMPART_TEST_OPENCLAW_ARGS", argsPath)
 	script := `#!/bin/sh
+if [ "$3" = "--help" ]; then
+  printf '%s\n' '  --force  Skip source confirmation' '  --accept-capabilities  Accept the plugin declared capabilities'
+  exit 0
+fi
 printf '%s\n' "$@" > "$RAMPART_TEST_OPENCLAW_ARGS"
 if [ "$2" = "inspect" ]; then
   printf '%s\n' 'OpenClaw migration notice' '{"plugin":{"id":"rampart"},"runtime":{"hooks":["before_tool_call"]}}'
@@ -838,7 +842,7 @@ fi
 	if err := runOpenClawPluginInstall(bin, "/staged/rampart", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(readArgs(), " "), "plugins install /staged/rampart --force"; got != want {
+	if got, want := strings.Join(readArgs(), " "), "plugins install /staged/rampart --force --accept-capabilities"; got != want {
 		t.Fatalf("install args = %q, want %q", got, want)
 	}
 	if err := runOpenClawPluginUninstall(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -852,6 +856,71 @@ fi
 	}
 	if got, want := strings.Join(readArgs(), " "), "plugins inspect rampart --runtime --json"; got != want {
 		t.Fatalf("runtime inspection args = %q, want %q", got, want)
+	}
+}
+
+func TestOpenClawPluginInstallUsesOnlySupportedCompatibilityFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell argument recorder is POSIX-only")
+	}
+	tests := []struct {
+		name string
+		help string
+		want string
+	}{
+		{
+			name: "force predates capability consent",
+			help: "  --force  Skip source confirmation",
+			want: "plugins install /staged/rampart --force",
+		},
+		{
+			name: "supported floor predates both flags",
+			help: "Usage: openclaw plugins install [options] <path>",
+			want: "plugins install /staged/rampart",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "openclaw")
+			argsPath := filepath.Join(dir, "args")
+			t.Setenv("RAMPART_TEST_OPENCLAW_ARGS", argsPath)
+			t.Setenv("RAMPART_TEST_OPENCLAW_HELP", tt.help)
+			script := `#!/bin/sh
+if [ "$3" = "--help" ]; then
+  printf '%s\n' "$RAMPART_TEST_OPENCLAW_HELP"
+  exit 0
+fi
+printf '%s\n' "$@" > "$RAMPART_TEST_OPENCLAW_ARGS"
+`
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := runOpenClawPluginInstall(bin, "/staged/rampart", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(strings.Fields(string(data)), " "); got != tt.want {
+				t.Fatalf("install args = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenClawPluginInstallRefusesWhenInstallOptionsProbeFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runOpenClawPluginInstall(bin, "/staged/rampart", &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "inspect OpenClaw plugin install options") {
+		t.Fatalf("probe error = %v, want fail-closed install options inspection error", err)
 	}
 }
 

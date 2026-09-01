@@ -47,7 +47,8 @@ const openclawMinVersion = "2026.3.28"
 // Steps:
 //  1. Locate the openclaw binary.
 //  2. Verify the OpenClaw version is >= openclawMinVersion (requires before_tool_call hook).
-//  3. Run: openclaw plugins install <plugin-path> --force.
+//  3. Run: openclaw plugins install <plugin-path> with the host-supported
+//     non-interactive source and capability-consent flags.
 //  4. Record ownership and set tools.exec.ask to "off" in the active config.
 //     Native OpenClaw approvals remain the visible approval owner while
 //     Rampart evaluates policy and persists allow-always behavior.
@@ -113,7 +114,7 @@ func runSetupOpenClawPluginForServeURL(w io.Writer, errW io.Writer, requestedSer
 	}
 	validate := func() error { return validateOpenClawPluginRuntime(openclawBin) }
 	if err := installOpenClawPluginSafely(stateDir, configPath, install, validate, errW); err != nil {
-		return fmt.Errorf("openclaw plugins install failed: %w\n  Try running manually: openclaw plugins install <extracted-plugin-path>", err)
+		return fmt.Errorf("openclaw plugins install failed: %w\n  After reviewing the bundled plugin, inspect the installed host's required consent flags: openclaw plugins install --help", err)
 	}
 	fmt.Fprintln(w, "✓ Rampart plugin installed into OpenClaw")
 	fmt.Fprintln(w, "  Note: OpenClaw may warn about suspicious code patterns — this is a false positive.")
@@ -296,12 +297,36 @@ func openClawHookManaged(hookDir string) bool {
 
 func runOpenClawPluginInstall(openclawBin, pluginDir string, w, errW io.Writer) error {
 	// OpenClaw owns the config/include, SQLite index, lifecycle lease, and
-	// staged filesystem rollback. --force selects its transactional update path
-	// and acknowledges this bundled local source for non-interactive installs.
-	cmd := osexec.Command(openclawBin, "plugins", "install", pluginDir, "--force")
+	// staged filesystem rollback. Current hosts use --force to acknowledge this
+	// bundled local source for non-interactive installs and separately require
+	// explicit acceptance of the manifest's declared capability surface.
+	// Feature-detect both flags because Rampart's supported OpenClaw floor
+	// predates them.
+	helpCmd := osexec.Command(openclawBin, "plugins", "install", "--help")
+	helpOutput, err := helpCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("inspect OpenClaw plugin install options: %w", err)
+	}
+	args := []string{"plugins", "install", pluginDir}
+	if commandHelpHasFlag(helpOutput, "--force") {
+		args = append(args, "--force")
+	}
+	if commandHelpHasFlag(helpOutput, "--accept-capabilities") {
+		args = append(args, "--accept-capabilities")
+	}
+	cmd := osexec.Command(openclawBin, args...)
 	cmd.Stdout = w
 	cmd.Stderr = errW
 	return cmd.Run()
+}
+
+func commandHelpHasFlag(output []byte, flag string) bool {
+	for _, field := range strings.Fields(string(output)) {
+		if field == flag {
+			return true
+		}
+	}
+	return false
 }
 
 func runOpenClawPluginUninstall(openclawBin string, w, errW io.Writer) error {

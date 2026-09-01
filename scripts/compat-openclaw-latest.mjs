@@ -108,10 +108,19 @@ function main() {
   const pluginDir = join(repoRoot, 'internal', 'plugin', 'openclaw');
 
   const version = runOpenClaw(['--version'], { env });
+  const installHelp = runOpenClaw(['plugins', 'install', '--help'], { env });
+  const installHelpOutput = commandOutput(installHelp);
+  const installArgs = ['plugins', 'install', pluginDir];
   // OpenClaw 2026.7.2 requires explicit confirmation for local, non-ClawHub
-  // plugin sources. --force is also supported by the current stable train, so
-  // use the same non-interactive installation path users receive from Rampart.
-  const install = runOpenClaw(['plugins', 'install', pluginDir, '--force'], { env });
+  // plugin sources. Current stable hosts separately require explicit consent
+  // for the manifest's declared capabilities. Exercise the same intentional,
+  // non-interactive enrollment path used by Rampart protect while preserving
+  // PATH-mode coverage for supported hosts that predate either flag.
+  if (installHelpOutput.split(/\s+/).includes('--force')) installArgs.push('--force');
+  if (installHelpOutput.split(/\s+/).includes('--accept-capabilities')) {
+    installArgs.push('--accept-capabilities');
+  }
+  const install = runOpenClaw(installArgs, { env });
   const validate = runOpenClaw(['config', 'validate'], { env });
   const configFile = runOpenClaw(['config', 'file'], { env });
   const configFilePath = reportedConfigPath(commandOutput(configFile));
@@ -145,7 +154,8 @@ function main() {
     openclaw_version: commandOutput(version).split('\n')[0],
     openclaw_source: useNpmLatest ? openclawPackage : 'PATH',
     plugin_install_checked: true,
-    plugin_install_force_checked: true,
+    plugin_install_force_checked: installArgs.includes('--force'),
+    plugin_install_capability_consent_checked: installArgs.includes('--accept-capabilities'),
     config_validate_checked: validate.status === 0,
     config_file_checked: configFileMatches,
     plugin_inspect_checked: inspect.status === 0,

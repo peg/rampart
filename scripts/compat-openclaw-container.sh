@@ -125,6 +125,10 @@ resolved_npm_version="$(python3 - "${artifact_dir}/npm-package.json" <<'PY'
 import json, re, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     metadata = json.load(handle)
+if isinstance(metadata, list):
+    if len(metadata) != 1 or not isinstance(metadata[0], dict):
+        raise SystemExit(f"ambiguous resolved OpenClaw npm metadata: {metadata!r}")
+    metadata = metadata[0]
 version = metadata.get("version") if isinstance(metadata, dict) else None
 if not isinstance(version, str) or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._+-]*", version):
     raise SystemExit(f"invalid resolved OpenClaw npm version: {version!r}")

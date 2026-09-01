@@ -35,6 +35,12 @@ That's it. Rampart:
 5. Configures every OpenClaw tool to fail closed if the local policy service is unavailable
 6. Restarts the gateway and runs safe behavioral canaries through the live plugin path
 
+On OpenClaw versions that require capability consent for external plugins,
+this explicit protect command accepts the exact capability surface OpenClaw
+reports for Rampart's bundled plugin. That surface includes the
+`before_tool_call` hook used for enforcement. Rampart does not accept
+capabilities for any other plugin.
+
 After setup, verify both services are healthy:
 
 ```bash

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **OpenClaw external-plugin enrollment follows the installed host contract** —
+  `rampart protect openclaw` now detects the host's supported noninteractive
+  install flags and explicitly accepts the bundled plugin's declared
+  capabilities when current OpenClaw releases require consent.
+
 ## [1.8.0] - 2026-08-17
 
 ### Security

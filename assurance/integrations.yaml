@@ -47,7 +47,7 @@ integrations:
         proves: The default plugin configuration denies every tool on service errors, malformed replies, and timeouts; explicitly opted-out tools fail open.
       - path: scripts/compat-openclaw-latest.mjs
         kind: upstream_latest
-        proves: The bundled plugin contract is checked against the latest published OpenClaw.
+        proves: The latest published OpenClaw accepts the bundled plugin through its current non-interactive install contract before the adapter regression suites run.
       - path: scripts/compat-openclaw-container.sh
         kind: upstream_latest
         proves: A disposable OpenClaw installation resolves the stable npm release and exercises the real plugin boundary.
