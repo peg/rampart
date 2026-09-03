@@ -88,7 +88,7 @@ function setupTempState() {
         },
         tools: {
           exec: {
-            ask: 'off',
+            mode: 'auto',
           },
         },
       },

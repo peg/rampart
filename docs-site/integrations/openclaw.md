@@ -41,6 +41,16 @@ reports for Rampart's bundled plugin. That surface includes the
 `before_tool_call` hook used for enforcement. Rampart does not accept
 capabilities for any other plugin.
 
+Current OpenClaw versions use `tools.exec.mode` as the canonical exec-policy
+setting. Rampart preserves a valid operator-selected mode because OpenClaw's
+exec policy remains an additional gate after the Rampart hook; stricter modes
+can add an OpenClaw-owned approval or block but cannot bypass Rampart. During
+an upgrade, Rampart removes retired `tools.exec.ask` and `tools.exec.security`
+siblings only when they are semantically equivalent to `mode`; conflicting or
+malformed mixed policies require explicit operator resolution rather than an
+automatic weakening. Older supported OpenClaw versions continue to use Rampart's
+ownership-tracked `tools.exec.ask = "off"` setting.
+
 After setup, verify both services are healthy:
 
 ```bash

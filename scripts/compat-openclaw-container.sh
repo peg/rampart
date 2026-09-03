@@ -159,9 +159,31 @@ docker exec "$container" openclaw config set gateway.port 19001
 docker exec "$container" openclaw config set gateway.auth.mode token
 docker exec "$container" openclaw config set gateway.auth.token rampart-container-fixture-token
 docker exec "$container" openclaw config set agents.defaults.workspace '"/tmp/openclaw-workspace"' --strict-json
+# Current OpenClaw uses mode as the canonical exec policy representation and
+# rejects Rampart's legacy ask field when both are present. Exercise protect
+# against that real upgrade shape instead of relying only on a fresh config.
+docker exec "$container" openclaw config set tools.exec.mode auto
+docker exec "$container" node -e '
+  const fs = require("node:fs");
+  const path = "/tmp/openclaw-state/openclaw.json";
+  const config = JSON.parse(fs.readFileSync(path, "utf8"));
+  config.tools.exec.security = "allowlist";
+  config.tools.exec.ask = "on-miss";
+  fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+'
 
 docker exec "$container" sh -lc 'env -u RAMPART_TOKEN rampart protect openclaw --no-restart --no-verify' \
   2>&1 | tee "${artifact_dir}/protect-first.log"
+
+docker exec "$container" node -e '
+  const fs = require("node:fs");
+  const config = JSON.parse(fs.readFileSync("/tmp/openclaw-state/openclaw.json", "utf8"));
+  const exec = config.tools?.exec;
+  if (exec?.mode !== "auto" || Object.hasOwn(exec, "ask") || Object.hasOwn(exec, "security")) {
+    throw new Error("protect did not preserve mode and remove equivalent retired siblings");
+  }
+'
+docker exec "$container" openclaw config validate
 
 docker exec -d "$container" sh -lc 'openclaw gateway --port 19001 >/tmp/openclaw-gateway.log 2>&1'
 healthy=0

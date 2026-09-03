@@ -109,6 +109,9 @@ func TestConfigureOpenClawGuardModeDelegatesIncludeSafePatchToHost(t *testing.T)
 	t.Setenv("RAMPART_TEST_ARGS", argsPath)
 	t.Setenv("RAMPART_TEST_STDIN", stdinPath)
 	script := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "tools.exec.mode" ]; then
+  exit 1
+fi
 if [ "$1" = "config" ] && [ "$2" = "set" ]; then
   printf '%s ' "$@" >> "$RAMPART_TEST_ARGS"
   printf '\n' >> "$RAMPART_TEST_ARGS"
@@ -162,6 +165,9 @@ func TestConfigureOpenClawGuardModeFallsBackToValidatedLegacyHostWrites(t *testi
 	argsPath := filepath.Join(dir, "args")
 	t.Setenv("RAMPART_TEST_ARGS", argsPath)
 	script := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "tools.exec.mode" ]; then
+  exit 1
+fi
 if [ "$1" = "config" ] && [ "$2" = "patch" ]; then
   exit 2
 fi
@@ -206,6 +212,9 @@ func TestConfigureOpenClawGuardModeDoesNotBypassSupportedHostRejection(t *testin
 	marker := filepath.Join(dir, "fallback-ran")
 	t.Setenv("RAMPART_TEST_MARKER", marker)
 	script := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "tools.exec.mode" ]; then
+  exit 1
+fi
 if [ "$1" = "config" ] && [ "$2" = "set" ] && [ "$3" = "plugins.entries.rampart.config.approvalTimeoutMs" ]; then
   exit 0
 fi

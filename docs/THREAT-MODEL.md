@@ -130,10 +130,10 @@ An agent could encode commands to bypass pattern matching:
 
 ### 5. OpenClaw Integration Boundaries
 
-OpenClaw has a native plugin path, which is the preferred integration. Rampart keeps global `tools.exec.ask` off by default, evaluates tool calls first, and returns OpenClaw's native `requireApproval` result only for calls that match a Rampart `ask` rule. That gives you native OpenClaw approval cards without prompting on every routine action.
+OpenClaw has a native plugin path, which is the preferred integration. On older supported hosts Rampart keeps global `tools.exec.ask` off; on current hosts it preserves the canonical `tools.exec.mode` policy, removes only equivalent retired `ask`/`security` siblings, and refuses conflicting mixed policies. Rampart evaluates tool calls first and returns OpenClaw's native `requireApproval` result for calls that match a Rampart `ask` rule. A stricter operator-selected OpenClaw exec mode can add another approval or block after Rampart, but cannot grant past the Rampart hook.
 
 **What this means in practice:**
-- **Allow** rules pass through normally, with no approval prompt
+- **Allow** rules pass through without a Rampart-originated approval prompt; a stricter OpenClaw exec mode may still gate them
 - **Deny** rules short-circuit before native approval
 - **Ask** rules surface OpenClaw's native approval UI only for the matched exec call
 

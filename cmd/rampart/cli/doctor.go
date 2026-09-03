@@ -1934,9 +1934,8 @@ func openclawApprovalHardeningHealthy() bool {
 	return state.Supported && state.FallbackSafe && state.CompletionAttributionSafe && state.ApprovalTimeoutAligned && state.PluginApprovalTimeoutAligned
 }
 
-// doctorOpenClawAskMode checks if the active OpenClaw config has ask set to
-// "on-miss" or "always", which is required for exec approval events to reach
-// Rampart's bridge. If the file doesn't exist, the check is skipped silently.
+// doctorOpenClawAskMode checks the current canonical mode or, on older hosts,
+// the legacy ask setting. If the file doesn't exist, the check is skipped.
 func doctorOpenClawAskMode(emit emitFn) (warnings int) {
 	bin, err := findOpenClawBinary()
 	if err != nil {
@@ -1951,15 +1950,37 @@ func doctorOpenClawAskMode(emit emitFn) (warnings int) {
 		// File doesn't exist — not everyone uses OpenClaw, skip silently.
 		return 0
 	}
+	doc, err := loadOpenClawToolsConfigDocument(configPath)
+	if err != nil {
+		emit("OpenClaw exec mode", "warn", fmt.Sprintf("failed to inspect %s: %v", configPath, err))
+		return 1
+	}
+	var execCfg map[string]any
+	if doc.tools != nil {
+		if value, present := doc.tools["exec"]; present {
+			var ok bool
+			execCfg, ok = value.(map[string]any)
+			if !ok {
+				emit("OpenClaw exec mode", "warn", "tools.exec must be a JSON object")
+				return 1
+			}
+		}
+	}
+	if modeValue, present := execCfg["mode"]; present {
+		mode, valid := validOpenClawExecMode(modeValue)
+		_, hasSecurity := execCfg["security"]
+		_, hasAsk := execCfg["ask"]
+		if !valid || hasSecurity || hasAsk {
+			emit("OpenClaw exec mode", "warn", "invalid or conflicting tools.exec.mode configuration"+hintSep+"Run rampart protect openclaw to repair equivalent legacy fields; resolve conflicting policy values explicitly")
+			return 1
+		}
+		emit("OpenClaw exec mode", "ok", fmt.Sprintf("%s (canonical host policy; Rampart preserves this additional gate)", mode))
+		return 0
+	}
 
 	// ask can be set at top-level OR at tools.exec.ask
 	var cfg struct {
-		Ask   string `json:"ask"`
-		Tools struct {
-			Exec struct {
-				Ask string `json:"ask"`
-			} `json:"exec"`
-		} `json:"tools"`
+		Ask string `json:"ask"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		emit("OpenClaw ask mode", "warn", fmt.Sprintf("failed to parse %s: %v", configPath, err))
@@ -1967,8 +1988,15 @@ func doctorOpenClawAskMode(emit emitFn) (warnings int) {
 	}
 
 	askVal := cfg.Ask
-	if askVal == "" {
-		askVal = cfg.Tools.Exec.Ask
+	if askVal == "" && execCfg != nil {
+		if value, present := execCfg["ask"]; present {
+			var ok bool
+			askVal, ok = value.(string)
+			if !ok {
+				emit("OpenClaw ask mode", "warn", "tools.exec.ask must be a string")
+				return 1
+			}
+		}
 	}
 
 	pluginInstalled := isOpenClawPluginInstalled()
