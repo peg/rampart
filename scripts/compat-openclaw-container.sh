@@ -135,8 +135,18 @@ if not isinstance(version, str) or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._+-]
 print(version)
 PY
 )"
+npm_major="$(docker exec --user root "$container" npm --version | cut -d. -f1)"
+npm_lifecycle_args=()
+if [[ "$npm_major" =~ ^[0-9]+$ ]] && (( npm_major >= 11 )); then
+  # npm 11+ blocks unreviewed global dependency lifecycle scripts by default.
+  # Keep this explicit list synchronized with the scripts declared by the
+  # resolved OpenClaw package graph; a newly introduced lifecycle dependency
+  # stays blocked so this gate fails for maintainer review.
+  npm_lifecycle_args+=(--allow-scripts=openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs)
+fi
 docker exec --user root "$container" npm install --global --force --no-audit --no-fund \
-  "openclaw@${resolved_npm_version}" 2>&1 | tee "${artifact_dir}/npm-install.log"
+  "${npm_lifecycle_args[@]}" "openclaw@${resolved_npm_version}" \
+  2>&1 | tee "${artifact_dir}/npm-install.log"
 # npm lifecycle code can initialize the configured OpenClaw state while it is
 # running as root. Return every disposable runtime directory to the image's
 # unprivileged user before invoking OpenClaw itself.
