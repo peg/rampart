@@ -39,7 +39,9 @@ On OpenClaw versions that require capability consent for external plugins,
 this explicit protect command accepts the exact capability surface OpenClaw
 reports for Rampart's bundled plugin. That surface includes the
 `before_tool_call` hook used for enforcement. Rampart does not accept
-capabilities for any other plugin.
+capabilities for any other plugin. Setup, forced reinstall, and `doctor --fix`
+also use OpenClaw's consent-aware enable command, so a previously disabled
+plugin is not mistaken for a repaired active boundary.
 
 Current OpenClaw versions use `tools.exec.mode` as the canonical exec-policy
 setting. Rampart preserves a valid operator-selected mode because OpenClaw's

@@ -223,6 +223,27 @@ if not report.get("safe_canaries"):
     raise SystemExit("verification did not assert safe canaries")
 PY
 
+# Current OpenClaw preserves an operator-authored disabled state across
+# reinstall and requires capability consent when the plugin is enabled again.
+# Prove Doctor repair uses the host-owned enable contract rather than assuming
+# that reinstall silently reactivated the boundary.
+docker exec "$container" openclaw plugins disable rampart
+docker exec "$container" sh -lc 'env -u RAMPART_TOKEN rampart doctor --fix' \
+  2>&1 | tee "${artifact_dir}/doctor-fix-disabled-plugin.log"
+docker exec "$container" node -e '
+  const fs = require("node:fs");
+  const config = JSON.parse(fs.readFileSync("/tmp/openclaw-state/openclaw.json", "utf8"));
+  if (config.plugins?.entries?.rampart?.enabled !== true) {
+    throw new Error("doctor repair did not re-enable the Rampart plugin");
+  }
+'
+
+# Rampart ships the plugin as a reviewed local artifact instead of an OpenClaw
+# registry package. A Rampart upgrade therefore uses forced reinstall; prove
+# that path renegotiates current host consent as well.
+docker exec "$container" rampart protect openclaw --reinstall --no-restart --no-verify \
+  2>&1 | tee "${artifact_dir}/protect-reinstall.log"
+
 # A second protect run proves managed policy replacement, plugin integrity
 # detection, service discovery, and verification are idempotent.
 docker exec "$container" rampart protect openclaw --no-restart \

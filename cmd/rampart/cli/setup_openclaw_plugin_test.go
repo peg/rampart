@@ -1341,6 +1341,12 @@ fi
 	if got, want := strings.Join(readArgs(), " "), "plugins install /staged/rampart --force --accept-capabilities"; got != want {
 		t.Fatalf("install args = %q, want %q", got, want)
 	}
+	if err := runOpenClawPluginEnable(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(readArgs(), " "), "plugins enable rampart --accept-capabilities"; got != want {
+		t.Fatalf("enable args = %q, want %q", got, want)
+	}
 	if err := runOpenClawPluginUninstall(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
@@ -1352,6 +1358,71 @@ fi
 	}
 	if got, want := strings.Join(readArgs(), " "), "plugins inspect rampart --runtime --json"; got != want {
 		t.Fatalf("runtime inspection args = %q, want %q", got, want)
+	}
+}
+
+func TestOpenClawPluginEnableUsesOnlySupportedCompatibilityFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell argument recorder is POSIX-only")
+	}
+	tests := []struct {
+		name string
+		help string
+		want string
+	}{
+		{
+			name: "current host requires capability consent",
+			help: "  --accept-capabilities  Accept the plugin declared capabilities",
+			want: "plugins enable rampart --accept-capabilities",
+		},
+		{
+			name: "supported floor predates capability consent",
+			help: "Usage: openclaw plugins enable [options] <id>",
+			want: "plugins enable rampart",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "openclaw")
+			argsPath := filepath.Join(dir, "args")
+			t.Setenv("RAMPART_TEST_OPENCLAW_ARGS", argsPath)
+			t.Setenv("RAMPART_TEST_OPENCLAW_HELP", tt.help)
+			script := `#!/bin/sh
+if [ "$3" = "--help" ]; then
+  printf '%s\n' "$RAMPART_TEST_OPENCLAW_HELP"
+  exit 0
+fi
+printf '%s\n' "$@" > "$RAMPART_TEST_OPENCLAW_ARGS"
+`
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := runOpenClawPluginEnable(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(strings.Fields(string(data)), " "); got != tt.want {
+				t.Fatalf("enable args = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenClawPluginEnableRefusesWhenOptionsProbeFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runOpenClawPluginEnable(bin, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "inspect OpenClaw plugin enable options") {
+		t.Fatalf("probe error = %v, want fail-closed enable options inspection error", err)
 	}
 }
 

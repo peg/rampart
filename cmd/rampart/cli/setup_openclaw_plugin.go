@@ -114,12 +114,18 @@ func runSetupOpenClawPluginForServeURL(w io.Writer, errW io.Writer, requestedSer
 
 	install := func() error {
 		return runWithOpenClawExecModeMigration(stateDir, configPath, func() error {
-			return runOpenClawPluginInstall(openclawBin, pluginDir, w, errW)
+			if err := runOpenClawPluginInstall(openclawBin, pluginDir, w, errW); err != nil {
+				return err
+			}
+			return runOpenClawPluginEnable(openclawBin, w, errW)
 		}, w)
 	}
 	validate := func() error { return validateOpenClawPluginRuntime(openclawBin) }
 	if err := installOpenClawPluginSafely(stateDir, configPath, install, validate, errW); err != nil {
-		return fmt.Errorf("openclaw plugins install failed: %w\n  After reviewing the bundled plugin, inspect the installed host's required consent flags: openclaw plugins install --help", err)
+		return fmt.Errorf("OpenClaw plugin install/enable failed: %w\n  After reviewing the bundled plugin, inspect the installed host's required consent flags: openclaw plugins install --help; openclaw plugins enable --help", err)
+	}
+	if state := getOpenClawPluginStateAt(stateDir, configPath); !openClawPluginCurrent(state) {
+		return fmt.Errorf("OpenClaw plugin install and enable completed, but the managed Rampart plugin is not active in the resolved host configuration")
 	}
 	fmt.Fprintln(w, "✓ Rampart plugin installed into OpenClaw")
 	fmt.Fprintln(w, "  Note: OpenClaw may warn about suspicious code patterns — this is a false positive.")
@@ -323,6 +329,30 @@ func runOpenClawPluginInstall(openclawBin, pluginDir string, w, errW io.Writer) 
 	cmd.Stdout = w
 	cmd.Stderr = errW
 	return cmd.Run()
+}
+
+func runOpenClawPluginEnable(openclawBin string, w, errW io.Writer) error {
+	// Current OpenClaw preserves an explicitly disabled plugin across reinstall.
+	// Use the host-owned enable command so capability consent is enforced and
+	// recorded by OpenClaw instead of bypassing it with a direct config write.
+	// Feature-detect the consent flag because Rampart's supported host floor
+	// predates that contract.
+	helpCmd := osexec.Command(openclawBin, "plugins", "enable", "--help")
+	helpOutput, err := helpCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("inspect OpenClaw plugin enable options: %w", err)
+	}
+	args := []string{"plugins", "enable", "rampart"}
+	if commandHelpHasFlag(helpOutput, "--accept-capabilities") {
+		args = append(args, "--accept-capabilities")
+	}
+	cmd := osexec.Command(openclawBin, args...)
+	cmd.Stdout = w
+	cmd.Stderr = errW
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("enable Rampart plugin through OpenClaw: %w", err)
+	}
+	return nil
 }
 
 func commandHelpHasFlag(output []byte, flag string) bool {

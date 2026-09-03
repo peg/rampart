@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenClaw external-plugin enrollment follows the installed host contract** —
   `rampart protect openclaw` now detects the host's supported noninteractive
   install flags and explicitly accepts the bundled plugin's declared
-  capabilities when current OpenClaw releases require consent. Protection and
-  verification also preserve canonical `tools.exec.mode` configurations,
+  capabilities when current OpenClaw releases require consent. Setup, forced
+  reinstall, and `doctor --fix` also reactivate a disabled plugin through
+  OpenClaw's consent-aware enable command. Protection and verification preserve
+  canonical `tools.exec.mode` configurations,
   remove only semantically equivalent retired `tools.exec.ask`/`security`
   siblings, and fail closed on conflicting mixed representations.
 
