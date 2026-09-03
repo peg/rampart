@@ -1215,11 +1215,6 @@ func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error 
 	return nil
 }
 
-func verifyOpenClawExecConfigAt(configPath string) error {
-	_, err := readVerifiedOpenClawExecConfigAt(configPath)
-	return err
-}
-
 func readVerifiedOpenClawExecConfigAt(configPath string) (map[string]any, error) {
 	doc, err := loadOpenClawToolsConfigDocument(configPath)
 	if err != nil {
