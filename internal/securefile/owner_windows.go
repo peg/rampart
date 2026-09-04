@@ -10,6 +10,7 @@ package securefile
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"golang.org/x/sys/windows"
 )
@@ -24,15 +25,53 @@ var (
 	}
 	aclFromEntries       = windows.ACLFromEntries
 	setNamedSecurityInfo = windows.SetNamedSecurityInfo
+	setSecurityInfo      = windows.SetSecurityInfo
+	reopenFile           = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReOpenFile")
 )
 
 // OwnerOnly replaces the file DACL with a protected current-user-only DACL.
 // The SID comes directly from the process token, avoiding account-name lookup
 // failures on domain and AzureAD machines.
 func OwnerOnly(path string) error {
+	acl, err := ownerOnlyACL()
+	if err != nil {
+		return err
+	}
+	if err := setNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		return fmt.Errorf("set owner-only DACL: %w", err)
+	}
+	return nil
+}
+
+// OwnerOnlyFile changes the already-open file without resolving its path again.
+func OwnerOnlyFile(file *os.File) error {
+	acl, err := ownerOnlyACL()
+	if err != nil {
+		return err
+	}
+	// Go's ordinary file handles do not request WRITE_DAC. Reopen the same
+	// object with that right; resolving file.Name() could select a replacement.
+	handle, _, reopenErr := reopenFile.Call(file.Fd(), windows.WRITE_DAC,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, 0)
+	runtime.KeepAlive(file)
+	if windows.Handle(handle) == windows.InvalidHandle {
+		return fmt.Errorf("reopen file for owner-only DACL: %w", reopenErr)
+	}
+	defer windows.CloseHandle(windows.Handle(handle))
+	if err := setSecurityInfo(windows.Handle(handle), windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		return fmt.Errorf("set owner-only file DACL: %w", err)
+	}
+	return nil
+}
+
+func ownerOnlyACL() (*windows.ACL, error) {
 	sid, err := currentProcessUserSID()
 	if err != nil {
-		return fmt.Errorf("get current process user SID: %w", err)
+		return nil, fmt.Errorf("get current process user SID: %w", err)
 	}
 
 	acl, err := aclFromEntries([]windows.EXPLICIT_ACCESS{
@@ -48,21 +87,9 @@ func OwnerOnly(path string) error {
 		},
 	}, nil)
 	if err != nil {
-		return fmt.Errorf("build owner-only DACL: %w", err)
+		return nil, fmt.Errorf("build owner-only DACL: %w", err)
 	}
-
-	if err := setNamedSecurityInfo(
-		path,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
-		nil,
-		acl,
-		nil,
-	); err != nil {
-		return fmt.Errorf("set owner-only DACL: %w", err)
-	}
-	return nil
+	return acl, nil
 }
 
 // SingleLink rejects shared file records before a private mutable file is changed.
