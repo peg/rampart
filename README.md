@@ -280,12 +280,12 @@ setuid, direct-syscall, and SIP-protected paths remain outside that boundary.
 [Any CLI agent →](https://docs.rampart.sh/integrations/any-cli-agent/) ·
 [Threat model →](docs/THREAT-MODEL.md)
 
-## What changed in 1.7
+## What changed in 1.8
 
-Rampart 1.7 binds approval state to the requesting credential, hardens MCP
-correlation and destructive-command matching, unifies managed onboarding,
-repairs owned service state safely, adds compatible Hermes native approval,
-and reduces duplicated repository and CI maintenance surface.
+Rampart 1.8 adds a native local Cursor hook, separates approval of reviewed
+pending calls from explicit grants for future calls, and binds those grants
+to the requesting credential and run. It also gives approval state one live
+service owner and keeps native approvals compatible with Hermes v0.20.2.
 
 Read the [changelog](CHANGELOG.md) for the full release notes.
 

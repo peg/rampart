@@ -1,15 +1,22 @@
 ---
 title: Audit Trail
-description: "Rampart logs every AI agent action to a hash-chained audit trail. Verify integrity, stream events live, and prove what commands were allowed or blocked."
+description: "Inspect Rampart policy decisions in a local hash-chained audit trail. Verify retained history, stream events, and understand the limits of local evidence."
 ---
 
 # Audit Trail
 
-Every tool call Rampart evaluates is logged to a hash-chained JSONL audit trail. Each entry includes a SHA-256 hash of the previous entry — tamper with any record and the chain breaks.
+Rampart records evaluated tool calls in a local hash-chained JSONL audit trail.
+Each entry includes a SHA-256 hash of the previous entry. The trail records
+decisions at the configured integration boundary; it does not prove that an
+allowed process executed exactly as intended or expose actions outside that
+boundary.
 
 ## Why Hash-Chained?
 
-In regulated environments, you need to prove what your AI agent did. A hash chain means no one can edit history without detection. Each record cryptographically depends on the one before it.
+A hash chain makes inconsistent event hashes and broken links detectable.
+An identity that can replace all local records and checkpoints can still
+construct a different valid history. Independent retention is needed to
+detect that rewrite; hashing alone does not make files immutable.
 
 ## Viewing the Audit Trail
 
@@ -84,7 +91,7 @@ redaction cannot be confused. These events set `request.rampart_phase` to
 - **Format:** JSONL (one JSON object per line)
 - **Rotation:** Daily files with chain continuity across files
 - **IDs:** ULID (time-ordered, sortable)
-- **Integrity:** External anchor every 100 events
+- **Integrity:** Local `audit-anchor.json` checkpoint every 100 events by default, stored beside the logs
 - **Durability:** long-running service writes use `fsync`; short-lived native hooks use the same cross-process chain lock and a validated tail checkpoint, then rely on normal OS flush behavior to avoid adding an `fsync` delay to every agent tool call
 
 ## HTML Reports
@@ -97,7 +104,10 @@ rampart report
 
 ## Tamper Detection
 
-The hash chain detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. A complete rewrite with a new valid chain is not detectable from the log alone.
+Verification checks retained event hashes, links, and local checkpoints. A
+complete rewrite with a new valid chain is not detectable from the local
+history alone. Neither is deletion of a valid suffix beyond the retained
+checkpoint. Verification also cannot establish that every action was logged.
 
 `rampart serve` verifies the complete chain when it starts. One-shot native
 hooks validate the current checkpoint, file size, and tail record before
@@ -108,5 +118,8 @@ integrity check.
 For stronger guarantees:
 
 - For centralized HTTP/SDK deployments, run `rampart serve` as a [separate user](../deployment/user-separation.md) so the agent cannot access service-owned audit files; native hooks need an external sink for an independent trust boundary
-- Enable [SIEM export](siem-integration.md) for an external trust anchor
-- Use [webhook notifications](webhooks.md) for real-time alerts to an external system
+- Configure [SIEM export](siem-integration.md) to a separately controlled
+  collector with suitable retention and access controls. Export is best effort;
+  the local verifier does not retrieve or validate remote evidence.
+- Use [webhook notifications](webhooks.md) for selected alerts to an external
+  system, rather than as a complete copy of the audit trail.
