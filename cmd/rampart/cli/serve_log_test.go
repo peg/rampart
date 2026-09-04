@@ -20,21 +20,27 @@ import (
 func TestServeLogRotationWithInheritedOutput(t *testing.T) {
 	const childEnv = "RAMPART_TEST_SERVE_LOG_CHILD"
 	if path := os.Getenv(childEnv); path != "" {
+		fail := func(err error) {
+			// The inherited output may refer to a backup already removed by
+			// rotation. Preserve a failing child's diagnostic for its parent.
+			_ = os.WriteFile(path+".child-error", []byte(err.Error()), 0o600)
+			t.Fatal(err)
+		}
 		// Keep the actual inherited stdout and stderr handles open throughout
 		// rotation, as the background serve child does.
 		fmt.Fprintln(os.Stdout, "inherited stdout")
 		fmt.Fprintln(os.Stderr, "inherited stderr")
 		w, err := openServeLog(path, 128, 3)
 		if err != nil {
-			t.Fatal(err)
+			fail(err)
 		}
 		for i := 0; i < 40; i++ {
 			if _, err := fmt.Fprintf(w, "managed record %02d\n", i); err != nil {
-				t.Fatal(err)
+				fail(err)
 			}
 		}
 		if err := w.Close(); err != nil {
-			t.Fatal(err)
+			fail(err)
 		}
 		return
 	}
@@ -51,7 +57,8 @@ func TestServeLogRotationWithInheritedOutput(t *testing.T) {
 	child.Env = append(os.Environ(), childEnv+"="+path)
 	child.Stdout, child.Stderr = startup.file, startup.file
 	if err := child.Run(); err != nil {
-		t.Fatalf("child with inherited log handles: %v", err)
+		detail, _ := os.ReadFile(path + ".child-error")
+		t.Fatalf("child with inherited log handles: %v (%s)", err, detail)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "managed record 39") {
