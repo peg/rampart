@@ -3,7 +3,7 @@
   const canvas = document.querySelector('.boundary-canvas');
   const scene = document.querySelector('.threshold-figure');
   const journey = document.querySelector('.hero');
-  if (!canvas || !scene || !journey) return;
+  if (!canvas || !scene || !journey || !window.ResizeObserver || !window.IntersectionObserver) return;
   const context = canvas.getContext('2d');
   if (!context) return;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
@@ -107,7 +107,9 @@
     visible = entries[0].isIntersecting;
     if (visible) schedule(); else { cancelAnimationFrame(frame); frame = 0; }
   }).observe(scene);
-  addEventListener('scroll', schedule, { passive: true });
+  addEventListener('scroll', () => {
+    if (!narrow.matches && !reduced.matches) schedule();
+  }, { passive: true });
   addEventListener('resize', schedule, { passive: true });
   document.addEventListener('visibilitychange', schedule);
   reduced.addEventListener('change', schedule);

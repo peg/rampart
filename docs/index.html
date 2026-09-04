@@ -37,899 +37,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap" rel="stylesheet">
-    <style>
-        :root {
-            color-scheme: dark;
-            --obsidian: #0b0a0a;
-            --charcoal: #141212;
-            --graphite: #1d1a1b;
-            --bone: #f1ede7;
-            --muted: #a49d98;
-            --quiet: #77716e;
-            --line: rgba(241, 237, 231, 0.14);
-            --line-quiet: rgba(241, 237, 231, 0.075);
-            --pink: #ff4f9a;
-            --pink-soft: #ff8dbb;
-            --sans: "Manrope", "Helvetica Neue", Arial, sans-serif;
-            --display: "Newsreader", Georgia, serif;
-            --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-            --gutter: clamp(18px, 2.6vw, 40px);
-            --page: min(calc(100% - (var(--gutter) + var(--gutter))), 1480px);
-        }
-
-        * { box-sizing: border-box; }
-
-        html {
-            background: var(--obsidian);
-            scroll-behavior: smooth;
-        }
-
-        body {
-            margin: 0;
-            background: var(--obsidian);
-            color: var(--bone);
-            font-family: var(--sans);
-            font-size: 16px;
-            line-height: 1.55;
-            -webkit-font-smoothing: antialiased;
-            text-rendering: optimizeLegibility;
-        }
-
-        a { color: inherit; }
-
-        button { font: inherit; }
-
-        .sr-only {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            padding: 0;
-            margin: -1px;
-            overflow: hidden;
-            clip: rect(0, 0, 0, 0);
-            white-space: nowrap;
-            border: 0;
-        }
-
-        a:focus-visible,
-        button:focus-visible {
-            outline: 2px solid var(--pink);
-            outline-offset: 5px;
-        }
-
-        .skip-link {
-            position: fixed;
-            top: 14px;
-            left: 14px;
-            z-index: 100;
-            padding: 10px 14px;
-            background: var(--bone);
-            color: var(--obsidian);
-            font-size: 0.78rem;
-            font-weight: 600;
-            text-decoration: none;
-            transform: translateY(-180%);
-        }
-
-        .skip-link:focus { transform: translateY(0); }
-
-        .site-header {
-            position: absolute;
-            inset: 0 0 auto;
-            z-index: 20;
-            padding-top: 24px;
-            isolation: isolate;
-        }
-
-        .site-header::before {
-            content: "";
-            position: absolute;
-            inset: 0 0 auto;
-            z-index: 0;
-            height: 92px;
-            border-bottom: 1px solid var(--line-quiet);
-            background: var(--obsidian);
-            pointer-events: none;
-        }
-
-        .nav {
-            position: relative;
-            z-index: 1;
-            width: var(--page);
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
-            align-items: center;
-            gap: 32px;
-        }
-
-        .brand {
-            display: inline-flex;
-            align-items: center;
-            justify-self: start;
-            min-height: 44px;
-            gap: 12px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            letter-spacing: -0.02em;
-            text-decoration: none;
-        }
-
-        .brand-mark {
-            width: 20px;
-            height: 23px;
-            color: var(--pink);
-        }
-
-        .nav-links,
-        .nav-actions {
-            display: flex;
-            align-items: center;
-            gap: 28px;
-        }
-
-        .nav-links a,
-        .github-link {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            min-height: 44px;
-            color: #c3bdb8;
-            font-size: 0.74rem;
-            font-weight: 500;
-            letter-spacing: 0.02em;
-            text-decoration: none;
-            transition: color 160ms ease;
-        }
-
-        .nav-links a::after,
-        .github-link::after {
-            content: "";
-            position: absolute;
-            right: 0;
-            bottom: 5px;
-            left: 0;
-            height: 1px;
-            color: var(--pink);
-            background: currentColor;
-            opacity: 0.8;
-            transform: scaleX(0);
-            transform-origin: left;
-            transition: transform 160ms ease;
-        }
-
-        .nav-links a:hover,
-        .github-link:hover { color: var(--bone); }
-
-        .nav-links a:hover::after,
-        .nav-links a:focus-visible::after,
-        .github-link:hover::after,
-        .github-link:focus-visible::after {
-            color: var(--pink);
-            transform: scaleX(1);
-        }
-
-        .nav-actions { justify-self: end; }
-
-        .nav-toggle,
-        .mobile-nav { display: none; }
-
-        .nav-install {
-            display: inline-flex;
-            align-items: center;
-            min-height: 44px;
-            padding: 0 17px;
-            border: 1px solid var(--bone);
-            background: var(--bone);
-            color: var(--obsidian);
-            font-size: 0.73rem;
-            font-weight: 600;
-            text-decoration: none;
-            transition: background 160ms ease, border-color 160ms ease;
-        }
-
-        .nav-install:hover {
-            border-color: var(--pink);
-            background: var(--pink);
-        }
-
-        main { overflow: clip; }
-
-        .hero {
-            position: relative;
-            min-height: 680px;
-            min-height: clamp(680px, 88svh, 800px);
-            isolation: isolate;
-            border-bottom: 1px solid var(--line-quiet);
-        }
-
-        .hero::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            z-index: -3;
-            background:
-                linear-gradient(104deg, #100e0e 0 50%, #090909 50% 100%),
-                var(--obsidian);
-        }
-
-        .hero::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            z-index: -2;
-            background:
-                radial-gradient(ellipse at 70% 48%, rgba(255,255,255,0.026), transparent 38%),
-                linear-gradient(180deg, rgba(255,255,255,0.018), transparent 22%);
-            pointer-events: none;
-        }
-
-        .hero-grid {
-            width: var(--page);
-            min-height: 680px;
-            min-height: clamp(680px, 88svh, 800px);
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            align-items: stretch;
-        }
-
-        .hero-copy {
-            position: relative;
-            z-index: 3;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            padding: 140px clamp(36px, 4.8vw, 76px) 62px 0;
-        }
-
-        .eyebrow {
-            margin: 0 0 28px;
-            color: #c4bdb8;
-            font-family: var(--mono);
-            font-size: 0.64rem;
-            line-height: 1;
-            letter-spacing: 0.16em;
-            text-transform: uppercase;
-        }
-
-        h1,
-        h2,
-        p { margin-top: 0; }
-
-        h1 {
-            max-width: 760px;
-            margin-bottom: 30px;
-            font-family: var(--display);
-            font-size: clamp(3.7rem, 5.9vw, 6.65rem);
-            font-weight: 300;
-            letter-spacing: -0.055em;
-            line-height: 0.86;
-        }
-
-        h1 .first-line,
-        h1 .final-line { display: block; }
-
-        h1 .first-line {
-            color: #a39c97;
-            font-size: 0.72em;
-            font-style: italic;
-            letter-spacing: -0.045em;
-            line-height: 1.05;
-        }
-
-        h1 .final-line { white-space: nowrap; }
-
-        .hero-intro {
-            max-width: 570px;
-            margin-bottom: 34px;
-            color: #bbb4af;
-            font-size: clamp(1rem, 1.25vw, 1.16rem);
-            line-height: 1.7;
-        }
-
-        .hero-actions {
-            display: flex;
-            align-items: center;
-            gap: 24px;
-        }
-
-        .primary-action,
-        .secondary-action,
-        .text-action {
-            display: inline-flex;
-            align-items: center;
-            text-decoration: none;
-        }
-
-        .primary-action {
-            min-height: 50px;
-            padding: 0 22px;
-            background: var(--bone);
-            color: var(--obsidian);
-            font-size: 0.76rem;
-            font-weight: 600;
-            transition: background 160ms ease;
-        }
-
-        .primary-action:hover { background: var(--pink); }
-
-        .secondary-action,
-        .text-action {
-            gap: 11px;
-            color: #d3cdc7;
-            font-size: 0.76rem;
-            font-weight: 500;
-        }
-
-        .secondary-action { min-height: 44px; }
-
-        .secondary-action::after,
-        .text-action::after {
-            content: "";
-            width: 22px;
-            height: 1px;
-            background: var(--pink);
-            transition: width 160ms ease;
-        }
-
-        .secondary-action:hover::after,
-        .secondary-action:focus-visible::after,
-        .text-action:hover::after,
-        .text-action:focus-visible::after {
-            width: 32px;
-        }
-
-        .hero-facts {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            max-width: 610px;
-            margin: 48px 0 0;
-            padding: 15px 0;
-            border-top: 1px solid var(--line);
-            border-bottom: 1px solid var(--line-quiet);
-            list-style: none;
-            color: #9b9490;
-            font-family: var(--mono);
-            font-size: 0.64rem;
-            line-height: 1.45;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-        }
-
-        .hero-facts li {
-            padding: 0 14px;
-            border-left: 1px solid var(--line-quiet);
-        }
-
-        .hero-facts li:first-child {
-            padding-left: 0;
-            border-left: 0;
-        }
-
-        .threshold {
-            position: relative;
-            min-height: 100%;
-            z-index: 2;
-        }
-
-        .threshold::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: 0;
-            width: 1px;
-            background: var(--pink);
-            box-shadow: 0 0 16px rgba(255,79,154,0.1);
-        }
-
-        .threshold::after {
-            content: "";
-            position: absolute;
-            inset: 0 -18vw 0 1px;
-            z-index: -1;
-            background:
-                linear-gradient(114deg, rgba(255,255,255,0.022) 0 38%, transparent 38.15%),
-                linear-gradient(90deg, rgba(255,79,154,0.024), transparent 15%);
-            -webkit-mask-image: linear-gradient(90deg, #000, rgba(0,0,0,0.7) 68%, transparent 100%);
-            mask-image: linear-gradient(90deg, #000, rgba(0,0,0,0.7) 68%, transparent 100%);
-        }
-
-        .threshold-figure {
-            position: absolute;
-            inset: 13% 0 0 3%;
-            margin: 0;
-        }
-
-        .architecture {
-            width: 100%;
-            height: 100%;
-            color: rgba(241,237,231,0.2);
-            overflow: hidden;
-            shape-rendering: geometricPrecision;
-        }
-
-        .architecture .mass {
-            fill: rgba(255,255,255,0.036);
-            stroke: rgba(241,237,231,0.18);
-            vector-effect: non-scaling-stroke;
-        }
-
-        .architecture .plane-top { fill: rgba(255,255,255,0.085); }
-        .architecture .plane-side { fill: rgba(255,255,255,0.018); }
-
-        .architecture .cut {
-            fill: #090909;
-            stroke: rgba(241,237,231,0.3);
-            vector-effect: non-scaling-stroke;
-        }
-
-        .architecture .reveal,
-        .architecture .datum,
-        .architecture .route-in,
-        .architecture .route-out {
-            fill: none;
-            stroke-linecap: square;
-            stroke-linejoin: miter;
-            vector-effect: non-scaling-stroke;
-        }
-
-        .architecture .reveal,
-        .architecture .datum { stroke: rgba(241,237,231,0.1); }
-
-        .architecture .route-in { stroke: rgba(241,237,231,0.23); }
-        .architecture .route-out { stroke: rgba(241,237,231,0.5); }
-
-        .architecture .decision-gate {
-            fill: none;
-            stroke: var(--pink);
-            stroke-width: 1.25;
-            vector-effect: non-scaling-stroke;
-        }
-
-        .boundary-note {
-            position: absolute;
-            left: 26px;
-            bottom: 40px;
-            max-width: 180px;
-            margin: 0;
-            color: #938c87;
-            font-family: var(--mono);
-            font-size: 0.63rem;
-            line-height: 1.55;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-        }
-
-        .boundary-note::before {
-            content: "";
-            display: block;
-            width: 22px;
-            height: 1px;
-            margin-bottom: 12px;
-            background: var(--pink);
-        }
-
-        .premise {
-            position: relative;
-            background: var(--charcoal);
-        }
-
-        .premise::before {
-            content: "";
-            position: absolute;
-            top: -1px;
-            left: 50%;
-            width: 1px;
-            height: 112px;
-            background: var(--pink);
-        }
-
-        .premise-inner {
-            width: var(--page);
-            min-height: 600px;
-            margin: 0 auto;
-            padding: 112px 0 88px;
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            grid-template-rows: auto 1fr auto;
-            column-gap: 0;
-        }
-
-        .premise-index {
-            grid-column: 1;
-            grid-row: 1;
-            margin: 0 0 56px;
-            color: #938c87;
-            font-family: var(--mono);
-            font-size: 0.66rem;
-            line-height: 1.5;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-        }
-
-        .premise-title {
-            grid-column: 1;
-            grid-row: 2;
-            min-width: 0;
-            margin: 0;
-            padding-right: clamp(42px, 5vw, 80px);
-            font-family: var(--display);
-            font-size: clamp(4rem, 6.6vw, 6.8rem);
-            font-weight: 300;
-            letter-spacing: -0.055em;
-            line-height: 0.9;
-        }
-
-        .premise-copy {
-            grid-column: 2;
-            grid-row: 2;
-            min-width: 0;
-            align-self: start;
-            padding: 4px 0 0 clamp(42px, 5vw, 80px);
-        }
-
-        .premise-copy p {
-            max-width: 440px;
-            margin-bottom: 22px;
-            color: #bbb4af;
-            font-size: 1.02rem;
-            line-height: 1.75;
-        }
-
-        .premise-copy .supporting {
-            margin: 35px 0 0;
-            padding-top: 22px;
-            border-top: 1px solid var(--line);
-            color: var(--bone);
-            font-family: var(--display);
-            font-size: 1.34rem;
-            font-style: italic;
-            line-height: 1.35;
-        }
-
-        .scope-note {
-            grid-column: 2;
-            grid-row: 3;
-            align-self: end;
-            max-width: 440px;
-            margin: 62px 0 0 clamp(42px, 5vw, 80px);
-            padding: 22px 0 0;
-            border-top: 1px solid var(--line);
-            color: #9d9691;
-            font-size: 0.84rem;
-            line-height: 1.7;
-        }
-
-        .scope-note strong {
-            color: #b9b1ac;
-            font-weight: 500;
-        }
-
-        .scope-note .text-action {
-            width: max-content;
-            min-height: 44px;
-            margin-top: 10px;
-        }
-
-        .outcome-rail {
-            grid-column: 1 / -1;
-            grid-row: 4;
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            margin-top: 76px;
-            border-top: 1px solid var(--line);
-            border-bottom: 1px solid var(--line-quiet);
-        }
-
-        .outcome {
-            position: relative;
-            min-width: 0;
-            padding: 19px 24px 22px;
-            border-left: 1px solid var(--line-quiet);
-        }
-
-        .outcome:first-child {
-            padding-left: 0;
-            border-left: 0;
-        }
-
-        .outcome:nth-child(2)::before {
-            content: "";
-            position: absolute;
-            top: -1px;
-            left: 24px;
-            width: 28px;
-            height: 1px;
-            background: var(--pink);
-        }
-
-        .outcome-name {
-            margin: 0 0 8px;
-            color: var(--bone);
-            font-family: var(--mono);
-            font-size: 0.67rem;
-            letter-spacing: 0.13em;
-        }
-
-        .outcome-copy {
-            margin: 0;
-            color: #938c87;
-            font-size: 0.78rem;
-            line-height: 1.55;
-        }
-
-        @media (max-width: 1120px) {
-            .nav { gap: 20px; }
-            .nav-links { gap: 18px; }
-            .nav-links a,
-            .github-link { font-size: 0.69rem; }
-            .hero-copy { padding-right: 36px; }
-        }
-
-        @media (max-width: 959px) {
-            .site-header { padding-top: 18px; }
-            .site-header::before { height: 74px; }
-            .nav { grid-template-columns: 1fr 44px auto; gap: 10px; }
-            .nav-links { display: none; }
-            .nav-actions { gap: 12px; }
-            .nav-actions .github-link { display: none; }
-            .nav-install { padding: 0 13px; }
-
-            .nav-toggle {
-                position: relative;
-                display: grid;
-                place-items: center;
-                width: 44px;
-                height: 44px;
-                padding: 0;
-                border: 1px solid var(--line);
-                background: transparent;
-                color: var(--bone);
-                cursor: pointer;
-            }
-
-            .nav-toggle-lines,
-            .nav-toggle-lines::before {
-                display: block;
-                width: 16px;
-                height: 1px;
-                background: currentColor;
-                transition: transform 160ms ease;
-            }
-
-            .nav-toggle-lines::before {
-                content: "";
-                transform: translateY(-5px);
-            }
-
-            .nav-toggle[aria-expanded="true"] .nav-toggle-lines { transform: rotate(45deg); }
-            .nav-toggle[aria-expanded="true"] .nav-toggle-lines::before { transform: rotate(-90deg); }
-
-            .mobile-nav:not([hidden]) {
-                position: absolute;
-                z-index: 1;
-                top: 74px;
-                left: 50%;
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                width: var(--page);
-                padding: 10px 0;
-                border-top: 1px solid var(--pink);
-                border-bottom: 1px solid var(--line);
-                background: var(--obsidian);
-                box-shadow: 0 24px 54px rgba(0,0,0,0.35);
-                transform: translateX(-50%);
-            }
-
-            .mobile-nav a {
-                display: flex;
-                align-items: center;
-                min-height: 48px;
-                padding: 0 16px;
-                border-left: 1px solid var(--line-quiet);
-                color: #d3cdc7;
-                font-size: 0.75rem;
-                text-decoration: none;
-                transition: background 160ms ease, color 160ms ease;
-            }
-
-            .mobile-nav a:hover,
-            .mobile-nav a:focus-visible {
-                background: rgba(255,79,154,0.06);
-                color: var(--bone);
-            }
-
-            .mobile-nav a:nth-child(odd) { border-left: 0; }
-            .mobile-nav a:last-child { grid-column: 1 / -1; border-top: 1px solid var(--line-quiet); }
-
-            .hero,
-            .hero-grid { min-height: auto; }
-
-            .hero::before { background: #090909; }
-
-            .hero-grid {
-                display: flex;
-                flex-direction: column;
-            }
-
-            .hero-copy {
-                min-height: 650px;
-                justify-content: flex-start;
-                padding: 128px 0 64px;
-            }
-
-            .hero-copy::before {
-                content: "";
-                position: absolute;
-                inset: 0 calc(50% - 50vw);
-                z-index: -1;
-                background: linear-gradient(168deg, #100e0e 0 84%, #0d0c0c 84% 100%);
-                pointer-events: none;
-            }
-
-            .eyebrow { margin-bottom: 26px; }
-
-            h1 {
-                max-width: 530px;
-                margin-bottom: 28px;
-                font-size: clamp(3.55rem, 10.5vw, 5rem);
-                line-height: 0.89;
-            }
-
-            h1 .first-line { font-size: 0.66em; }
-            h1 .final-line { white-space: normal; }
-
-            .hero-intro {
-                max-width: 500px;
-                font-size: 0.98rem;
-                line-height: 1.65;
-            }
-
-            .hero-actions { gap: 18px; }
-            .hero-facts { margin-top: 42px; }
-
-            .threshold {
-                min-height: clamp(310px, 55vw, 420px);
-                overflow: hidden;
-            }
-
-            .threshold::before { left: 0; }
-            .threshold::after { inset: 0 calc(0px - var(--gutter)) 0 1px; }
-            .threshold-figure { inset: 0; }
-            .architecture { transform: scale(1.1); transform-origin: center bottom; }
-            .boundary-note { bottom: 26px; left: 18px; }
-
-            .premise::before {
-                left: var(--gutter);
-                height: 74px;
-            }
-
-            .premise-inner {
-                min-height: auto;
-                padding: 94px 0 82px;
-                display: block;
-            }
-
-            .premise-index { margin: 0 0 46px; }
-            .premise-title {
-                max-width: 610px;
-                margin: 0 0 56px;
-                padding: 0;
-                font-size: clamp(3.7rem, 12vw, 5.4rem);
-            }
-            .premise-copy { max-width: 540px; padding: 0; }
-            .scope-note {
-                max-width: 540px;
-                margin: 60px 0 0;
-                padding: 22px 0 0;
-            }
-
-            .outcome-rail { margin-top: 60px; }
-        }
-
-        @media (max-width: 460px) {
-            .brand { gap: 9px; font-size: 0.84rem; }
-            .brand-mark { width: 18px; height: 21px; }
-            .hero-copy { min-height: 0; padding-bottom: 54px; }
-            h1 { font-size: clamp(3rem, 15vw, 3.75rem); }
-            .hero-actions { align-items: flex-start; flex-direction: column; }
-            .primary-action { width: 100%; justify-content: center; }
-            .hero-facts {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                font-size: 0.62rem;
-            }
-            .hero-facts li { min-height: 34px; padding: 0 10px; }
-            .hero-facts li:nth-child(3) {
-                grid-column: 1 / -1;
-                min-height: 40px;
-                margin-top: 10px;
-                padding: 10px 0 0;
-                border-top: 1px solid var(--line-quiet);
-                border-left: 0;
-            }
-            .boundary-note { max-width: 150px; font-size: 0.61rem; }
-            .premise-title {
-                margin-bottom: 44px;
-                font-size: clamp(2.9rem, 14vw, 3.5rem);
-                line-height: 0.94;
-            }
-            .premise-copy p { font-size: 1rem; }
-            .scope-note { font-size: 0.86rem; }
-            .outcome-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .outcome { padding: 18px 14px 20px; }
-            .outcome:nth-child(odd) { padding-left: 0; border-left: 0; }
-            .outcome:nth-child(n + 3) { border-top: 1px solid var(--line-quiet); }
-            .outcome:nth-child(2)::before { left: 14px; }
-        }
-
-        @media (max-width: 959px) and (max-height: 600px) and (orientation: landscape) {
-            .hero,
-            .hero-grid { min-height: 520px; }
-
-            .hero-grid {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-
-            .hero-copy {
-                min-height: 520px;
-                padding: 92px 28px 34px 0;
-            }
-
-            h1 {
-                margin-bottom: 18px;
-                font-size: clamp(2.8rem, 6vw, 3.4rem);
-            }
-
-            .hero-intro {
-                margin-bottom: 18px;
-                font-size: 0.88rem;
-                line-height: 1.5;
-            }
-
-            .eyebrow { line-height: 1.5; }
-            .hero-actions { flex-flow: row wrap; gap: 14px; }
-            .primary-action { width: auto; }
-            .hero-facts { display: none; }
-            .threshold { min-height: 520px; }
-            .boundary-note { top: 310px; bottom: auto; }
-
-            .premise::before { left: 50%; height: 90px; }
-            .premise-inner {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                grid-template-rows: auto auto auto auto;
-                padding: 90px 0 60px;
-            }
-            .premise-index { grid-column: 1; grid-row: 1; margin: 0 0 34px; }
-            .premise-title {
-                grid-column: 1;
-                grid-row: 2;
-                margin: 0;
-                padding-right: 32px;
-                font-size: clamp(3.1rem, 6vw, 4rem);
-            }
-            .premise-copy {
-                grid-column: 2;
-                grid-row: 2;
-                max-width: none;
-                padding: 0 0 0 32px;
-            }
-            .scope-note {
-                grid-column: 2;
-                grid-row: 3;
-                margin: 40px 0 0 32px;
-            }
-            .outcome-rail { grid-column: 1 / -1; grid-row: 4; }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-            html { scroll-behavior: auto; }
-            *, *::before, *::after { transition: none !important; }
-        }
-    </style>
     <link rel="stylesheet" href="assets/landing.css">
     <script src="assets/landing.js" defer></script>
 </head>
@@ -982,7 +89,7 @@
                     <span class="first-line">Let agents move fast.</span>
                     <span class="final-line">Keep the final say.</span>
                 </h1>
-                <p class="hero-intro">Rampart places a policy boundary between AI agents and the tools they use. Routine work continues. Dangerous actions stop. When an integration supports approval, consequential decisions come back to you.</p>
+                <p class="hero-intro">Rampart places a policy boundary between AI agents and the tools they use. Routine work continues. Your rules block prohibited actions. When an integration supports approval, consequential decisions come back to you.</p>
                 <div class="hero-actions">
                     <a class="primary-action external-link" href="https://docs.rampart.sh/getting-started/installation/" target="_blank" rel="noopener noreferrer" aria-label="Install Rampart (opens in a new tab)">Install Rampart</a>
                     <a class="secondary-action" href="https://docs.rampart.sh/getting-started/how-it-works/" target="_blank" rel="noopener noreferrer" aria-label="See how it works (opens in a new tab)">See how it works</a>
@@ -1040,12 +147,12 @@
 
     <section class="premise" id="premise" aria-labelledby="premise-title">
         <div class="premise-inner">
-            <p class="premise-index">01 / The premise</p>
+            <p class="premise-index">03 / The premise</p>
             <h2 class="premise-title" id="premise-title">Autonomy<br>needs an edge.</h2>
             <div class="premise-copy">
                 <p>Agents are useful because they can act. That same access can turn a bad instruction, poisoned context, or confident mistake into a real system change.</p>
                 <p>Rampart gives that access a boundary.</p>
-                <p class="supporting">Not another permission prompt. A policy layer built for the decisions that matter.</p>
+                <p class="supporting">Define what can proceed, what needs approval, and what must stop.</p>
             </div>
             <p class="scope-note"><strong>Precisely scoped.</strong> Rampart evaluates actions delivered through configured hooks, plugins, proxies, APIs, and process boundaries. It is a control layer, not a sandbox or a claim of universal interception. <a class="text-action" href="https://docs.rampart.sh/reference/threat-model/" target="_blank" rel="noopener noreferrer" aria-label="Read the threat model (opens in a new tab)">Read the threat model</a></p>
             <div class="outcome-rail" role="list" aria-label="Rampart policy outcomes">
@@ -1059,7 +166,7 @@
                 </div>
                 <div class="outcome" role="listitem">
                     <p class="outcome-name">DENY</p>
-                    <p class="outcome-copy">Known dangerous actions stop before execution.</p>
+                    <p class="outcome-copy">Rules deny prohibited requests at the configured boundary.</p>
                 </div>
                 <div class="outcome" role="listitem">
                     <p class="outcome-name">WATCH</p>
@@ -1068,10 +175,100 @@
             </div>
         </div>
     </section>
+
+    <section class="workflow" id="get-started" aria-labelledby="workflow-title">
+      <div class="section-shell">
+        <div class="section-heading">
+          <p class="chapter-index">04 / Put it to work</p>
+          <h2 id="workflow-title">From installed<br>to inspected.</h2>
+          <p>A working boundary starts with the integration you actually use. Install Rampart, configure protection, then check what that setup can prove.</p>
+        </div>
+        <ol class="workflow-steps">
+          <li>
+            <span class="step-number">01</span><h3>Install</h3>
+            <p>One binary. Policies you can read and change.</p>
+            <div class="command-block"><code id="install-command">brew install peg/tap/rampart</code><button class="copy-command" data-copy="install-command" type="button" aria-label="Copy Homebrew install command" hidden>Copy</button></div>
+            <a class="text-action" href="https://docs.rampart.sh/getting-started/installation/">Linux, macOS &amp; Windows installation</a>
+          </li>
+          <li>
+            <span class="step-number">02</span><h3>Protect</h3>
+            <p>Discover supported installed tools and configure their Rampart boundary.</p>
+            <div class="command-block"><code id="protect-command">rampart protect</code><button class="copy-command" data-copy="protect-command" type="button" aria-label="Copy protect command" hidden>Copy</button></div>
+            <a class="text-action" href="https://docs.rampart.sh/getting-started/quickstart/">Follow the quickstart</a>
+          </li>
+          <li>
+            <span class="step-number">03</span><h3>Verify</h3>
+            <p>Run safe canaries and read the evidence level for each configured integration.</p>
+            <div class="command-block"><code id="verify-command">rampart verify --all</code><button class="copy-command" data-copy="verify-command" type="button" aria-label="Copy verify command" hidden>Copy</button></div>
+            <a class="text-action" href="https://docs.rampart.sh/getting-started/support-matrix/">Understand verification coverage</a>
+          </li>
+        </ol>
+        <p class="workflow-note">Verification does not invoke a model or execute the represented actions. Host verification and adapter checks provide different evidence; the result tells you which boundary was checked.</p>
+        <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section class="integration-section section-shell" id="integrations" aria-labelledby="integration-title">
+      <div class="section-heading">
+        <p class="chapter-index">05 / Meet your tools where they act</p>
+        <h2 id="integration-title">One policy layer.<br>Specific boundaries.</h2>
+        <p>Use the integration's documented path. Protection, approval, and failure behavior depend on what the host exposes.</p>
+      </div>
+      <div class="integration-grid">
+        <article class="integration-card">
+          <p class="integration-kind">Managed native guard</p>
+          <h3>OpenClaw</h3>
+          <p>Connect the bundled plugin to Rampart's local policy service. A live plugin-boundary verifier checks the configured installation.</p>
+          <code>rampart protect openclaw</code>
+          <a class="text-action" href="https://docs.rampart.sh/integrations/openclaw/">OpenClaw setup and limits</a>
+        </article>
+        <article class="integration-card">
+          <p class="integration-kind">Native hooks</p>
+          <h3>Claude Code</h3>
+          <p>Apply local policy through the native hook interface. Verification checks installed configuration and adapter behavior; it does not prove host ingestion.</p>
+          <code>rampart setup claude-code</code>
+          <a class="text-action" href="https://docs.rampart.sh/integrations/claude-code/">Claude Code setup and limits</a>
+        </article>
+      </div>
+      <div class="integration-more"><p>Codex, Cline, Copilot, MCP, and more.<br><span>Support levels and approval paths vary. Experimental integrations stay clearly labeled.</span></p><a class="text-action" href="https://docs.rampart.sh/getting-started/support-matrix/">See the complete support matrix</a></div>
+    </section>
+
+    <section class="boundary-summary section-shell" aria-labelledby="boundary-summary-title">
+      <div><p class="chapter-index">06 / Know the boundary</p><h2 id="boundary-summary-title">Control you<br>can account for.</h2></div>
+      <div class="boundary-details">
+        <article><h3>Policy you own</h3><p>Readable rules decide which represented requests may proceed, need approval, or must be denied.</p><a class="text-action" href="https://docs.rampart.sh/reference/policy-schema/">Explore the policy schema</a></article>
+        <article><h3>A decision trail</h3><p>Hash-chained records connect actions and policy decisions. Detecting a complete local rewrite requires evidence retained independently.</p><a class="text-action" href="https://docs.rampart.sh/features/audit-trail/">Understand audit guarantees</a></article>
+        <article><h3>A precise scope</h3><p>Allowed programs can have effects beyond their represented request. Pair Rampart with appropriate credentials, resource permissions, sandboxing, and egress controls.</p><a class="text-action" href="https://docs.rampart.sh/reference/threat-model/">Read the architecture and threat model</a></article>
+      </div>
+    </section>
+
+    <section class="closing section-shell" aria-labelledby="closing-title">
+      <p class="chapter-index">Your tools. Your authority.</p>
+      <h2 id="closing-title">Build with room to move.</h2>
+      <div class="closing-actions"><a class="primary-action" href="https://docs.rampart.sh/getting-started/installation/">Install Rampart</a><a class="text-action" href="https://docs.rampart.sh/getting-started/upgrade/">Upgrade an existing installation</a></div>
+    </section>
 </main>
+<footer class="site-footer section-shell"><a class="footer-brand" href="/">Rampart<span>Open source · Apache 2.0</span></a><nav aria-label="Footer navigation"><a href="https://docs.rampart.sh/">Documentation</a><a href="https://github.com/peg/rampart/releases">Releases</a><a href="https://github.com/peg/rampart/blob/main/SECURITY.md">Report a vulnerability</a><a href="https://github.com/peg/rampart">GitHub</a></nav></footer>
 
 <script>
     (() => {
+        document.documentElement.classList.add('navigation-ready');
+        document.querySelectorAll('.copy-command').forEach(button => {
+            if (!navigator.clipboard) return;
+            button.hidden = false;
+            button.addEventListener('click', async () => {
+                const command = document.getElementById(button.dataset.copy).textContent;
+                const status = document.getElementById('copy-status');
+                try {
+                    await navigator.clipboard.writeText(command);
+                    status.textContent = 'Command copied.';
+                    button.textContent = 'Copied';
+                    setTimeout(() => { button.textContent = 'Copy'; }, 1800);
+                } catch {
+                    status.textContent = 'Copy unavailable. Select and copy the command text.';
+                }
+            });
+        });
         const menuToggle = document.querySelector('.nav-toggle');
         const mobileMenu = document.querySelector('#mobile-menu');
 
