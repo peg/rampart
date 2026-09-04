@@ -4,6 +4,7 @@
 package approval
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"github.com/peg/rampart/internal/audit"
@@ -45,24 +46,40 @@ func ReviewCall(call engine.ToolCall) ActionReview {
 	}
 }
 
-// redactedCall snapshots JSON input defensively before redaction. Maps passed
-// to Create must not remain a way to change the action an operator reviews.
-func redactedCall(call engine.ToolCall) (engine.ToolCall, bool, error) {
+// snapshotCall serializes caller-owned values once before deriving either
+// authorization or display. UseNumber preserves exact JSON numeric values.
+func snapshotCall(call engine.ToolCall) (engine.ToolCall, []byte, error) {
 	encoded, err := json.Marshal(call)
+	if err != nil {
+		return engine.ToolCall{}, nil, err
+	}
+	var snapshot engine.ToolCall
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&snapshot); err != nil {
+		return engine.ToolCall{}, nil, err
+	}
+	return snapshot, encoded, nil
+}
+
+func redactedCall(call engine.ToolCall) (engine.ToolCall, bool, error) {
+	snapshot, encoded, err := snapshotCall(call)
 	if err != nil {
 		return engine.ToolCall{}, false, err
 	}
-	var copy engine.ToolCall
-	if err := json.Unmarshal(encoded, &copy); err != nil {
-		return engine.ToolCall{}, false, err
-	}
-	review := ReviewCall(copy)
-	copy.Tool, copy.Agent = review.Tool, review.Agent
-	copy.Session, copy.RunID, copy.ToolCallID = review.Session, review.RunID, review.ToolCallID
-	copy.WorkDir = notify.SanitizeCommand(copy.WorkDir)
-	copy.Params, copy.Input = review.Params, review.Input
-	redacted, err := json.Marshal(copy)
-	return copy, string(encoded) != string(redacted), err
+	return redactCallSnapshot(snapshot, encoded)
+}
+
+// redactCallSnapshot only accepts the fixed snapshot captured above. It never
+// consults the caller's maps or invokes their JSON marshalers a second time.
+func redactCallSnapshot(snapshot engine.ToolCall, encoded []byte) (engine.ToolCall, bool, error) {
+	review := ReviewCall(snapshot)
+	snapshot.Tool, snapshot.Agent = review.Tool, review.Agent
+	snapshot.Session, snapshot.RunID, snapshot.ToolCallID = review.Session, review.RunID, review.ToolCallID
+	snapshot.WorkDir = notify.SanitizeCommand(snapshot.WorkDir)
+	snapshot.Params, snapshot.Input = review.Params, review.Input
+	redacted, err := json.Marshal(snapshot)
+	return snapshot, string(encoded) != string(redacted), err
 }
 
 // cloneReviewMap copies the already-redacted private snapshot. Creation and
@@ -92,4 +109,11 @@ func cloneReviewValue(value any) any {
 	default:
 		return value
 	}
+}
+
+// Run authority must never be reconstructed from a redaction marker. Keep
+// individually approved requests usable, but withhold future authority when
+// its displayed grouping identity differs from the original host identity.
+func runScopeChangedByRedaction(original, review engine.ToolCall) bool {
+	return original.Agent != review.Agent || original.Session != review.Session || original.RunID != review.RunID
 }

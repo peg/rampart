@@ -21,6 +21,7 @@ package approval
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -128,6 +129,7 @@ type Request struct {
 	// replayIdentity is captured from the original call, never its redacted review.
 	replayIdentity string
 	redacted       bool
+	scopeRedacted  bool
 	review         engine.ToolCall
 
 	// ownerScope is a one-way digest binding token-originated approvals.
@@ -221,6 +223,7 @@ type persistRecord struct {
 	Fingerprint     string         `json:"fingerprint,omitempty"`
 	Replay          bool           `json:"replay,omitempty"`
 	Redacted        bool           `json:"redacted,omitempty"`
+	ScopeRedacted   bool           `json:"run_scope_redacted,omitempty"`
 	ID              string         `json:"id"`
 	Tool            string         `json:"tool"`
 	Agent           string         `json:"agent"`
@@ -504,8 +507,12 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 		return nil, err
 	}
 	now := time.Now()
+	call, encoded, err := snapshotCall(call)
+	if err != nil {
+		return nil, fmt.Errorf("approval: cannot snapshot action: %w", err)
+	}
 	key := s.keyedIdentity(ownerBoundKey(dedupKey(call), ownerScope))
-	review, redacted, err := redactedCall(call)
+	review, redacted, err := redactCallSnapshot(call, encoded)
 	if err != nil {
 		return nil, fmt.Errorf("approval: cannot snapshot action: %w", err)
 	}
@@ -530,16 +537,17 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 		return nil, ErrTooManyPending
 	}
 	req := &Request{
-		ID:         ulid.Make().String(),
-		Call:       review,
-		Decision:   decision,
-		Status:     StatusPending,
-		CreatedAt:  now,
-		ExpiresAt:  now.Add(s.timeout),
-		dedupKey:   key,
-		redacted:   redacted,
-		ownerScope: ownerScope,
-		done:       make(chan struct{}),
+		ID:            ulid.Make().String(),
+		Call:          review,
+		Decision:      decision,
+		Status:        StatusPending,
+		CreatedAt:     now,
+		ExpiresAt:     now.Add(s.timeout),
+		dedupKey:      key,
+		redacted:      redacted,
+		scopeRedacted: runScopeChangedByRedaction(call, review),
+		ownerScope:    ownerScope,
+		done:          make(chan struct{}),
 	}
 	req.review = review
 	req.Call = req.reviewCopy()
@@ -551,7 +559,7 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 	for i := range req.Decision.MatchedPolicies {
 		req.Decision.MatchedPolicies[i] = notify.SanitizeCommand(req.Decision.MatchedPolicies[i])
 	}
-	if scope, valid := autoApproveScopeFor(call, ownerScope); valid {
+	if scope, valid := autoApproveScopeFor(call, ownerScope); valid && !req.scopeRedacted {
 		req.runScope = scope
 		req.hasRunScope = true
 	}
@@ -796,6 +804,10 @@ func (s *Store) ConsumeApprovedFor(call engine.ToolCall, ownerScope string) (*Co
 	if err := s.checkIdentityKey(); err != nil {
 		return nil, false, err
 	}
+	call, _, err := snapshotCall(call)
+	if err != nil {
+		return nil, false, fmt.Errorf("approval: cannot snapshot replay: %w", err)
+	}
 	key := s.keyedIdentity(ownerBoundKey(replayKey(call), ownerScopeDigest(ownerScope)))
 	if key == "" {
 		return nil, false, nil
@@ -834,6 +846,10 @@ func (r *Request) reviewCopy() engine.ToolCall {
 
 // HasRedactions reports whether a literal learned rule would differ from the original action.
 func (r *Request) HasRedactions() bool { return r.redacted }
+
+// CanAuthorizeRun reports whether the displayed run identity preserves the
+// original scope and can support explicit future-run authorization.
+func (r *Request) CanAuthorizeRun() bool { return r.hasRunScope }
 
 // Get returns a request by ID.
 func (s *Store) Get(id string) (*Request, bool) {
@@ -1199,7 +1215,7 @@ func (s *Store) AutoApproveRunBeforePublishForRequest(
 	ttl time.Duration,
 	beforePublish func(time.Time) error,
 ) ([]*Request, time.Time, bool, error) {
-	if source == nil {
+	if source == nil || !source.hasRunScope {
 		return nil, time.Time{}, false, nil
 	}
 	return s.autoApproveRunBeforePublish(call, source.ownerScope, ttl, beforePublish)
@@ -1615,6 +1631,7 @@ func toRecord(req *Request) persistRecord {
 		Fingerprint:     req.dedupKey,
 		Replay:          req.replayIdentity != "",
 		Redacted:        req.redacted,
+		ScopeRedacted:   req.scopeRedacted,
 		ID:              req.ID,
 		Tool:            call.Tool,
 		Agent:           call.Agent,
@@ -1681,13 +1698,14 @@ func fromRecord(rec persistRecord) (*Request, bool) {
 	if rec.Version == 3 {
 		req.dedupKey = rec.Fingerprint
 		req.redacted = rec.Redacted
+		req.scopeRedacted = rec.ScopeRedacted
 		if rec.Replay {
 			req.replayIdentity = rec.Fingerprint
 		}
 	} else if replayKey(call) != "" {
 		req.replayIdentity = req.dedupKey
 	}
-	if scope, valid := autoApproveScopeFor(call, rec.OwnerScope); valid {
+	if scope, valid := autoApproveScopeFor(call, rec.OwnerScope); valid && !req.scopeRedacted {
 		req.runScope = scope
 		req.hasRunScope = true
 	}
@@ -1759,8 +1777,14 @@ func (s *Store) readLatestRecordsLocked() (map[string]persistRecord, error) {
 			continue
 		}
 		var rec persistRecord
-		if err := json.Unmarshal(line, &rec); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(line))
+		decoder.UseNumber()
+		if err := decoder.Decode(&rec); err != nil {
 			s.logger.Warn("approval: skipping malformed persistence record", "error", err)
+			continue
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			s.logger.Warn("approval: skipping persistence record with trailing data")
 			continue
 		}
 		if strings.TrimSpace(rec.ID) == "" {
@@ -1791,6 +1815,7 @@ func (s *Store) readLatestRecordsLocked() (map[string]persistRecord, error) {
 			legacy.replayIdentity = s.keyedIdentity(legacy.replayIdentity)
 			var redactErr error
 			legacy.Call, legacy.redacted, redactErr = redactedCall(legacy.review)
+			legacy.scopeRedacted = runScopeChangedByRedaction(legacy.review, legacy.Call)
 			legacy.review = legacy.Call
 			if redactErr != nil {
 				return nil, redactErr

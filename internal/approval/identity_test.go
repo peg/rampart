@@ -6,6 +6,7 @@ package approval
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,7 @@ func TestPrivateApprovalRestartPreservesExactIdentity(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, key, restored.dedupKey)
 	require.True(t, restored.HasRedactions())
+	require.True(t, restored.CanAuthorizeRun(), "parameter redaction must not disable an unchanged run identity")
 	require.NoError(t, restarted.Resolve(req.ID, true, "operator"))
 	for name, mutate := range map[string]func(*engine.ToolCall){
 		"suffix": func(c *engine.ToolCall) {
@@ -192,4 +194,95 @@ func TestConcurrentApprovalStoresShareIdentityKey(t *testing.T) {
 		require.NoError(t, store.identityErr)
 		require.Equal(t, stores[0].identityKey, store.identityKey)
 	}
+}
+
+func TestRedactedRunScopeCannotGrantFutureAuthorityAfterRestart(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, field := range []string{"agent", "session", "run"} {
+			t.Run(fmt.Sprintf("legacy_%v_%s", legacy, field), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "pending.jsonl")
+				call := testCall()
+				switch field {
+				case "agent":
+					call.Agent = "scope --token=synthetic-identity"
+				case "session":
+					call.Session = "scope --token=synthetic-identity"
+				case "run":
+					call.RunID = "scope --token=synthetic-identity"
+				}
+				id := "legacy-redacted-scope"
+				if legacy {
+					data, err := json.Marshal(persistRecord{ID: id, Tool: call.Tool, Agent: call.Agent, Session: call.Session, RunID: call.RunID, ToolCallID: call.ToolCallID, Params: call.Params, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute), Status: "pending"})
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(path, append(data, '\n'), 0600))
+				} else {
+					before := NewStore(WithPersistenceFile(path))
+					req, err := before.Create(call, testDecision())
+					require.NoError(t, err)
+					id = req.ID
+					require.False(t, req.CanAuthorizeRun())
+					before.Close()
+				}
+				restarted := NewStore(WithPersistenceFile(path))
+				defer restarted.Close()
+				req, ok := restarted.Get(id)
+				require.True(t, ok)
+				snapshot, err := restarted.BeginRunScopeSnapshot(req.Call, []string{id}, time.Minute)
+				if err == nil {
+					restarted.AbortRunScopeSnapshot(snapshot)
+				}
+				require.Error(t, err, "redacted identity must not become authority for a literal redaction-marker scope")
+				require.NoError(t, restarted.Resolve(id, true, "operator"))
+				_, consumed, err := restarted.ConsumeApproved(call)
+				require.NoError(t, err)
+				require.True(t, consumed, "the individually reviewed original action must remain resumable")
+			})
+		}
+	}
+}
+
+type changingApprovalOperand struct{ calls int }
+
+func (value *changingApprovalOperand) MarshalJSON() ([]byte, error) {
+	value.calls++
+	if value.calls == 1 {
+		return []byte(`"first-target"`), nil
+	}
+	return []byte(`"different-target"`), nil
+}
+
+func TestApprovalSnapshotsCallerValuesOnceBeforeIdentityAndReview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pending.jsonl")
+	call := testCall()
+	operand := &changingApprovalOperand{}
+	call.Params["target"] = operand
+	call.Params["sequence"] = int64(9007199254740993)
+	before := NewStore(WithPersistenceFile(path))
+	req, err := before.Create(call, testDecision())
+	require.NoError(t, err)
+	require.Equal(t, 1, operand.calls, "raw caller-owned marshalers must run only during initial capture")
+	require.Equal(t, "first-target", req.Call.Params["target"])
+	require.Equal(t, json.Number("9007199254740993"), req.Call.Params["sequence"])
+	before.Close()
+
+	restarted := NewStore(WithPersistenceFile(path))
+	defer restarted.Close()
+	restored, ok := restarted.Get(req.ID)
+	require.True(t, ok)
+	require.Equal(t, "first-target", restored.Call.Params["target"])
+	require.Equal(t, json.Number("9007199254740993"), restored.Call.Params["sequence"], "journal restoration must preserve the displayed integer")
+	require.NoError(t, restarted.Resolve(req.ID, true, "operator"))
+	call.Params["target"] = "different-target"
+	_, consumed, err := restarted.ConsumeApproved(call)
+	require.NoError(t, err)
+	require.False(t, consumed)
+	call.Params["target"] = "first-target"
+	call.Params["sequence"] = int64(9007199254740992)
+	_, consumed, err = restarted.ConsumeApproved(call)
+	require.NoError(t, err)
+	require.False(t, consumed, "adjacent integers above float64 precision must not share authority")
+	call.Params["sequence"] = int64(9007199254740993)
+	_, consumed, err = restarted.ConsumeApproved(call)
+	require.NoError(t, err)
+	require.True(t, consumed)
 }

@@ -150,7 +150,7 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			}
 			// Incomplete identity cannot safely support a bulk authorization
 			// operation, so leave that approval in the flat/solo view.
-			if scope.agent == "" || scope.session == "" || scope.runID == "" {
+			if !req.CanAuthorizeRun() || scope.agent == "" || scope.session == "" || scope.runID == "" {
 				items = append(items, item)
 				continue
 			}

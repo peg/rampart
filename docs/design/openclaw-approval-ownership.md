@@ -46,7 +46,9 @@ lock, preserving their exact original identity while redacting stored content.
 Version 3 pending/replay formats cannot be consumed as older unscoped grants.
 Previously published legacy replay grants are not carried forward: retrying
 requires fresh approval. Redacted requests cannot become permanent literal
-command/path rules.
+command/path rules. If redaction changes the agent, session or run identity,
+the pending request cannot authorize future calls for that run; its original
+once-only fingerprint remains usable.
 
 Keep the identity key with its journal and replay directory when restoring
 state. Missing, malformed or linked keys refuse new authorization. A running store
