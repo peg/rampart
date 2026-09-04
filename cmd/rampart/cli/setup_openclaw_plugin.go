@@ -51,10 +51,10 @@ const openclawMinVersion = "2026.3.28"
 //  2. Verify the OpenClaw version is >= openclawMinVersion (requires before_tool_call hook).
 //  3. Run: openclaw plugins install <plugin-path> with the host-supported
 //     non-interactive source and capability-consent flags.
-//  4. Preserve the host's canonical tools.exec.mode when present; otherwise
-//     record ownership and set the legacy tools.exec.ask field to "off".
+//  4. Reconcile owned tools.exec settings with the installed host schema,
+//     preserving explicit operator mode and migrating only equivalent legacy fields.
 //     Native OpenClaw approvals remain the visible approval owner while
-//     Rampart evaluates policy and persists allow-always behavior.
+//     Rampart evaluates policy and supplies complete redacted action review.
 //  5. Copy the openclaw.yaml policy profile to ~/.rampart/policies/openclaw.yaml.
 //  6. Run rampart doctor for a health summary.
 //  7. Print success and next steps.

@@ -768,7 +768,16 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 ## POST /v1/rules/learn
-Writes a permanent, exact allow rule to `~/.rampart/policies/user-overrides.yaml`. Used by the OpenClaw plugin for "Always Allow" writeback. Rampart preserves the full approved command or file path and escapes literal glob metacharacters rather than generalizing it. Automatic persistence supports `exec`, `read`, `write`, and `edit`; use an explicit policy for tools whose complete input cannot yet be represented exactly. Rate-limited to ~5 writes/sec.
+Writes an administrator-requested permanent allow rule to
+`~/.rampart/policies/user-overrides.yaml`. The rule matches the literal command
+or file path, with glob metacharacters escaped; it does not bind every argument,
+requester, or execution context of a reviewed action. Supported tools are
+`exec`, `read`, `write`, and `edit`. Use explicit policy when a persistent
+allowance needs additional conditions. Rate-limited to ~5 writes/sec.
+
+The native OpenClaw plugin does not call this endpoint or offer "Always Allow";
+its approvals offer `allow-once` and `deny`. Arguments changed by Rampart's
+secret redaction are rejected by this endpoint.
 
 ### Request Headers
 - `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)

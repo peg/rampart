@@ -46,7 +46,7 @@ Arguments:
 - `ask` returns `requireApproval` only with a complete server-redacted action fitting the native 512-character description limit
 - `deny` returns `block: true`
 - native approvals offer `allow-once` and `deny`; unsupported `allow-always` callbacks never create broader command/path rules
-- `allow` returns nothing or param adjustment only when explicitly requested by Rampart
+- `allow` returns without rewriting executable tool parameters
 - there is no legacy `params.ask = "always"` mutation path
 - degraded mode blocks sensitive tools (`exec`, `write`) when serve is unreachable or returns 5xx
 - explicitly configured fail-open tools remain opt-in and test-covered; the deprecated coarse `failOpen: true` switch maps to `read`, `web_fetch`, `web_search`, and `image` for compatibility

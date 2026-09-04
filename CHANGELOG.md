@@ -19,8 +19,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remove only semantically equivalent retired `tools.exec.ask`/`security`
   siblings, and fail closed on conflicting mixed representations.
 
+### Security
+
+- **Approval review and retry identity remain connected across redaction** —
+  Pending approvals expose the complete redacted represented action through
+  the API, expanded dashboard, and `rampart pending --details`. Durable state
+  keeps an immutable keyed identity; preserve the journal's `.identity-key`
+  alongside its pending and replay data when restoring a backup. Live pending
+  requests migrate, while previously issued legacy one-time replay grants
+  require fresh approval. Redacted requests cannot create permanent literal
+  command/path rules, and redacted run identity cannot authorize future calls.
+
 ### Changed
 
+- **Native OpenClaw approvals offer allow once or deny** — Persistent
+  allowances require explicit operator policy. Approval cards contain the
+  complete redacted action within the host's 512-character limit after
+  escaping; oversized or unavailable review blocks before approval creation.
+  Upgrade the policy service and plugin together. Other parameter-rewriting
+  plugins and host-controlled resume remain part of the trusted host boundary.
 - **Source and release builds now use Go 1.26.8** — Rampart's module baseline,
   container build, and public source-build requirements now use the supported
   Go 1.26 line after Go 1.27 ended upstream support for Go 1.25.
