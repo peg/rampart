@@ -218,7 +218,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
   legacy CLI `--yolo` bypasses runtime hooks entirely. Current Cline CLI logs
   and continues after pre-hook errors/timeouts/invalid control output, and runs
   post-tool hooks asynchronously without consuming their control response.
-- **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed.
+- **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed. Native approvals allow once or deny and require complete redacted action review within the host description limit; oversized asks block. Other parameter-rewriting plugins remain part of the trusted host boundary.
 - **Hermes Agent plugin**: depends on `rampart serve`; all tools fail closed when unavailable by default. Operators may explicitly opt selected tools into degraded fail-open behavior.
 - **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.
 - **Wrapper / preload / API paths**: behavior depends on integration settings and fail-open/fail-closed configuration.

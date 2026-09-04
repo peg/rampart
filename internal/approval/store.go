@@ -37,6 +37,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/notify"
 	"github.com/peg/rampart/internal/securefile"
 )
 
@@ -123,6 +124,11 @@ type Request struct {
 
 	// dedupKey scopes retries to one host-provided tool-call identity.
 	dedupKey string
+
+	// replayIdentity is captured from the original call, never its redacted review.
+	replayIdentity string
+	redacted       bool
+	review         engine.ToolCall
 
 	// ownerScope is a one-way digest binding token-originated approvals.
 	ownerScope string
@@ -211,6 +217,10 @@ type RunApprovalCommit struct {
 // persistRecord is the on-disk representation of an approval request.
 // Uses flat string fields to avoid circular JSON dependencies on engine types.
 type persistRecord struct {
+	Version         int            `json:"version,omitempty"`
+	Fingerprint     string         `json:"fingerprint,omitempty"`
+	Replay          bool           `json:"replay,omitempty"`
+	Redacted        bool           `json:"redacted,omitempty"`
 	ID              string         `json:"id"`
 	Tool            string         `json:"tool"`
 	Agent           string         `json:"agent"`
@@ -237,6 +247,8 @@ const scopedPendingStatus = "pending-v2"
 
 // Store manages pending approval requests.
 type Store struct {
+	identityKey     [sha256.Size]byte
+	identityErr     error
 	mu              sync.Mutex
 	pending         map[string]*Request
 	approvedOnce    map[string]replayGrant // exact call/owner key -> one-shot grant
@@ -301,8 +313,13 @@ func NewStore(opts ...Option) *Store {
 		opt(s)
 	}
 
-	// Load persisted approvals from disk (if a file is configured).
-	if s.persistFile != "" {
+	s.identityErr = s.initializeIdentityKey()
+	if s.identityErr != nil {
+		s.logger.Error("approval: identity state unavailable; refusing authorization", "error", s.identityErr)
+	}
+
+	// Load persisted approvals only after establishing the keyed identity.
+	if s.persistFile != "" && s.identityErr == nil {
 		s.loadFromDisk()
 	}
 
@@ -423,6 +440,9 @@ func ownerBoundKey(key, ownerScope string) string {
 }
 
 func replayGrantVersion(key string) int {
+	if strings.HasPrefix(key, "v3-") {
+		return 3
+	}
 	if strings.HasPrefix(key, "v2-") {
 		return 2
 	}
@@ -463,6 +483,9 @@ func (s *Store) CreateOrAutoApprovedWithExpiry(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.checkIdentityKey(); err != nil {
+		return nil, time.Time{}, false, err
+	}
 	ownerScope = ownerScopeDigest(ownerScope)
 	if expiresAt, ok := s.autoApprovalExpiryLocked(call, ownerScope); ok {
 		return nil, expiresAt, true, nil
@@ -477,8 +500,15 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 		return nil, ErrStoreClosed
 	}
 
+	if err := s.checkIdentityKey(); err != nil {
+		return nil, err
+	}
 	now := time.Now()
-	key := ownerBoundKey(dedupKey(call), ownerScope)
+	key := s.keyedIdentity(ownerBoundKey(dedupKey(call), ownerScope))
+	review, redacted, err := redactedCall(call)
+	if err != nil {
+		return nil, fmt.Errorf("approval: cannot snapshot action: %w", err)
+	}
 
 	// Stable invocation identity remains singular for its full pending lifetime.
 	if key != "" {
@@ -501,14 +531,25 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 	}
 	req := &Request{
 		ID:         ulid.Make().String(),
-		Call:       call,
+		Call:       review,
 		Decision:   decision,
 		Status:     StatusPending,
 		CreatedAt:  now,
 		ExpiresAt:  now.Add(s.timeout),
 		dedupKey:   key,
+		redacted:   redacted,
 		ownerScope: ownerScope,
 		done:       make(chan struct{}),
+	}
+	req.review = review
+	req.Call = req.reviewCopy()
+	if replayKey(call) != "" {
+		req.replayIdentity = key
+	}
+	req.Decision.Message = notify.SanitizeCommand(decision.Message)
+	req.Decision.MatchedPolicies = append([]string(nil), decision.MatchedPolicies...)
+	for i := range req.Decision.MatchedPolicies {
+		req.Decision.MatchedPolicies[i] = notify.SanitizeCommand(req.Decision.MatchedPolicies[i])
 	}
 	if scope, valid := autoApproveScopeFor(call, ownerScope); valid {
 		req.runScope = scope
@@ -601,6 +642,9 @@ func (s *Store) resolveBeforePublishLocked(
 	actor *RunScopeSnapshot,
 ) error {
 
+	if err := s.checkIdentityKey(); err != nil {
+		return err
+	}
 	req, ok := s.pending[id]
 	if !ok {
 		return fmt.Errorf("approval: unknown id %q", id)
@@ -620,12 +664,14 @@ func (s *Store) resolveBeforePublishLocked(
 
 	now := time.Now()
 	resolved := *req
+	resolved.Call = req.reviewCopy()
 	if approved {
 		resolved.Status = StatusApproved
 	} else {
 		resolved.Status = StatusDenied
 	}
 	resolved.ResolvedAt = now
+	resolvedBy = notify.SanitizeCommand(resolvedBy)
 	resolved.ResolvedBy = resolvedBy
 	// Durable policy persistence is a separate audited transaction. The store
 	// records it only through MarkPersisted after that transaction commits.
@@ -665,7 +711,7 @@ func (s *Store) resolveBeforePublishLocked(
 	var grant replayGrant
 	grantKey := ""
 	if approved {
-		grantKey = ownerBoundKey(replayKey(req.Call), req.ownerScope)
+		grantKey = req.replayIdentity
 		if grantKey != "" {
 			grant = replayGrant{
 				Version:     replayGrantVersion(grantKey),
@@ -747,7 +793,10 @@ func (s *Store) ConsumeApproved(call engine.ToolCall) (*ConsumedApproval, bool, 
 
 // ConsumeApprovedFor binds exact replay to an opaque caller-owned scope.
 func (s *Store) ConsumeApprovedFor(call engine.ToolCall, ownerScope string) (*ConsumedApproval, bool, error) {
-	key := ownerBoundKey(replayKey(call), ownerScopeDigest(ownerScope))
+	if err := s.checkIdentityKey(); err != nil {
+		return nil, false, err
+	}
+	key := s.keyedIdentity(ownerBoundKey(replayKey(call), ownerScopeDigest(ownerScope)))
 	if key == "" {
 		return nil, false, nil
 	}
@@ -775,6 +824,17 @@ func (s *Store) ConsumeApprovedFor(call engine.ToolCall, ownerScope string) (*Co
 	return &ConsumedApproval{ID: grant.ApprovalID, ResolvedBy: grant.ResolvedBy}, true, nil
 }
 
+// reviewCopy returns a deep copy of the JSON-compatible snapshot established
+// at creation or journal decoding. No mutable exported map is authoritative.
+func (r *Request) reviewCopy() engine.ToolCall {
+	call := r.review
+	call.Params, call.Input = cloneReviewMap(call.Params), cloneReviewMap(call.Input)
+	return call
+}
+
+// HasRedactions reports whether a literal learned rule would differ from the original action.
+func (r *Request) HasRedactions() bool { return r.redacted }
+
 // Get returns a request by ID.
 func (s *Store) Get(id string) (*Request, bool) {
 	s.mu.Lock()
@@ -786,6 +846,7 @@ func (s *Store) Get(id string) (*Request, bool) {
 	}
 	// Return a snapshot so callers don't race with watchExpiry writes.
 	cp := *req
+	cp.Call = req.reviewCopy()
 	return &cp, true
 }
 
@@ -800,6 +861,7 @@ func (s *Store) List() []*Request {
 	for _, req := range s.pending {
 		if req.Status == StatusPending {
 			cp := *req
+			cp.Call = req.reviewCopy()
 			result = append(result, &cp)
 		}
 	}
@@ -858,6 +920,7 @@ func (s *Store) BeginRunScopeSnapshot(call engine.ToolCall, reviewedIDs []string
 			return nil, fmt.Errorf("approval: run scope ids span multiple identities or credential owners")
 		}
 		cp := *req
+		cp.Call = req.reviewCopy()
 		matching = append(matching, &cp)
 	}
 
@@ -1097,6 +1160,7 @@ func (s *Store) AutoApproveRunBeforePublishForRunScopeSnapshot(
 			}
 		}
 		cp := *req
+		cp.Call = req.reviewCopy()
 		pending = append(pending, &cp)
 	}
 	if len(pending) > 0 {
@@ -1169,6 +1233,7 @@ func (s *Store) autoApproveRunBeforePublish(
 			continue
 		}
 		cp := *req
+		cp.Call = req.reviewCopy()
 		pending = append(pending, &cp)
 	}
 	if len(pending) > 0 {
@@ -1540,22 +1605,27 @@ func readBoundedApprovalFile(path string, maxBytes int64) ([]byte, error) {
 
 // toRecord converts a Request to its on-disk representation.
 func toRecord(req *Request) persistRecord {
+	call := req.review
 	status := req.Status.String()
-	if status == "pending" && req.ownerScope != "" {
-		status = scopedPendingStatus
+	if status == "pending" {
+		status = privatePendingStatus
 	}
 	return persistRecord{
+		Version:         3,
+		Fingerprint:     req.dedupKey,
+		Replay:          req.replayIdentity != "",
+		Redacted:        req.redacted,
 		ID:              req.ID,
-		Tool:            req.Call.Tool,
-		Agent:           req.Call.Agent,
-		AgentDepth:      req.Call.AgentDepth,
-		Session:         req.Call.Session,
-		RunID:           req.Call.RunID,
-		ToolCallID:      req.Call.ToolCallID,
-		WorkDir:         req.Call.WorkDir,
-		Command:         req.Call.Command(),
-		Params:          req.Call.Params,
-		Input:           req.Call.Input,
+		Tool:            call.Tool,
+		Agent:           call.Agent,
+		AgentDepth:      call.AgentDepth,
+		Session:         call.Session,
+		RunID:           call.RunID,
+		ToolCallID:      call.ToolCallID,
+		WorkDir:         call.WorkDir,
+		Command:         call.Command(),
+		Params:          call.Params,
+		Input:           call.Input,
 		MatchedPolicies: req.Decision.MatchedPolicies,
 		Message:         req.Decision.Message,
 		CreatedAt:       req.CreatedAt,
@@ -1606,6 +1676,17 @@ func fromRecord(rec persistRecord) (*Request, bool) {
 		ownerScope: rec.OwnerScope,
 		done:       make(chan struct{}),
 	}
+	req.review = call
+	req.Call = req.reviewCopy()
+	if rec.Version == 3 {
+		req.dedupKey = rec.Fingerprint
+		req.redacted = rec.Redacted
+		if rec.Replay {
+			req.replayIdentity = rec.Fingerprint
+		}
+	} else if replayKey(call) != "" {
+		req.replayIdentity = req.dedupKey
+	}
 	if scope, valid := autoApproveScopeFor(call, rec.OwnerScope); valid {
 		req.runScope = scope
 		req.hasRunScope = true
@@ -1615,6 +1696,15 @@ func fromRecord(rec persistRecord) (*Request, bool) {
 
 func pendingRecordLive(rec persistRecord, now time.Time) bool {
 	switch rec.Status {
+	case privatePendingStatus:
+		if rec.Version != 3 || !now.Before(rec.ExpiresAt) {
+			return false
+		}
+		if rec.Fingerprint == "" {
+			return !rec.Replay
+		}
+		_, err := hex.DecodeString(strings.TrimPrefix(rec.Fingerprint, "v3-"))
+		return strings.HasPrefix(rec.Fingerprint, "v3-") && len(rec.Fingerprint) == 3+sha256.Size*2 && err == nil
 	case "pending":
 		return rec.OwnerScope == "" && now.Before(rec.ExpiresAt)
 	case scopedPendingStatus:
@@ -1692,6 +1782,25 @@ func (s *Store) readLatestRecordsLocked() (map[string]persistRecord, error) {
 		if nextActiveBytes > maxRestoredApprovalBytes {
 			return nil, fmt.Errorf("approval: live persistence state exceeds %d-byte restore limit", maxRestoredApprovalBytes)
 		}
+		if rec.Version != 3 {
+			legacy, ok := fromRecord(rec)
+			if !ok {
+				return nil, fmt.Errorf("approval: cannot migrate pending identity")
+			}
+			legacy.dedupKey = s.keyedIdentity(legacy.dedupKey)
+			legacy.replayIdentity = s.keyedIdentity(legacy.replayIdentity)
+			var redactErr error
+			legacy.Call, legacy.redacted, redactErr = redactedCall(legacy.review)
+			legacy.review = legacy.Call
+			if redactErr != nil {
+				return nil, redactErr
+			}
+			legacy.Decision.Message = notify.SanitizeCommand(legacy.Decision.Message)
+			for i := range legacy.Decision.MatchedPolicies {
+				legacy.Decision.MatchedPolicies[i] = notify.SanitizeCommand(legacy.Decision.MatchedPolicies[i])
+			}
+			rec = toRecord(legacy)
+		}
 		records[rec.ID] = rec
 		recordSizes[rec.ID] = nextSize
 		activeBytes = nextActiveBytes
@@ -1706,6 +1815,11 @@ func (s *Store) readLatestRecordsLocked() (map[string]persistRecord, error) {
 // (non-expired) approvals. Reads use the same cross-process lock as append and
 // compaction, so startup cannot observe a half-published replacement.
 func (s *Store) loadFromDisk() {
+	if err := s.rewriteDisk(); err != nil {
+		s.identityErr = fmt.Errorf("approval: pending migration failed: %w", err)
+		s.logger.Error("approval: refusing authorization after migration failure", "error", s.identityErr)
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(s.persistFile), 0o700); err != nil {
 		s.logger.Warn("approval: could not create persistence directory", "path", s.persistFile, "error", err)
 		return
@@ -1735,7 +1849,7 @@ func (s *Store) loadFromDisk() {
 		// but before the pending JSONL is rewritten. Treat either the ready
 		// marker or its consumed tombstone as authoritative so the resolved
 		// request is never resurrected after restart.
-		if key := ownerBoundKey(replayKey(req.Call), req.ownerScope); key != "" {
+		if key := req.replayIdentity; key != "" {
 			_, readyPath, consumedPath := s.replayGrantPaths(key)
 			settled := false
 			for _, path := range []string{readyPath, consumedPath} {

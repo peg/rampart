@@ -58,6 +58,8 @@ integrations:
       - OpenClaw currently gives modifying hooks the original event rather than an authoritative post-composition parameter view; other parameter-mutating plugins are part of the trusted host boundary.
       - OpenClaw before_tool_call does not expose host CWD; relative file enforcement depends on host-supplied paths and derivedPaths, so absolute or recursive policy patterns are recommended.
       - OpenClaw after_tool_call is observational, so the native plugin does not claim blocking response redaction.
+      - Native plugin asks require complete redacted review within the 512-character host description limit; oversized or unavailable review blocks before native approval creation.
+      - Native plugin approval allows one call or denies; onResolution cannot validate resumed parameters, and persistent allowances require explicit operator policy.
       - MCP and delegated-agent coverage need dedicated live canaries.
 
   - id: claude-code

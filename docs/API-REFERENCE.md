@@ -66,6 +66,22 @@ Common decision/action values across responses:
 
 ## Endpoints
 
+## Action review
+
+Ask responses from tool evaluation and preflight include `action`, a versioned,
+secret-redacted review of the complete represented input. Pending approval
+list/detail responses expose the same field. Version 1 contains `tool`, `params`,
+optional original `input`, and supplied `agent`, `agent_depth`, `session`,
+`run_id`, `tool_call_id` and `workdir` context. It is display data, not an
+authorization token or proof of a host filesystem object. Render all fields as
+untrusted text; a command preview alone is not the full approval scope.
+
+Pending responses also include `redacted`. When true, resolving with
+`persist: true` is rejected before changing the pending approval: a redacted
+literal cannot represent the original action in a permanent command/path rule.
+Once-only authorization retains its original private fingerprint across
+redaction and restart.
+
 ## POST /v1/tool/{toolName}
 Evaluates a tool call against active policy. In `enforce` mode, deny decisions are blocked; approval-required decisions are queued.
 
@@ -134,6 +150,7 @@ calling this endpoint; do not allow model output to choose or relabel the route.
     "policy_message": { "type": "string" },
     "response_policy_decision": { "type": "string" },
     "response_policy_message": { "type": "string" },
+    "action": { "type": "object", "description": "Versioned redacted action review on ask" },
     "approval_id": { "type": "string" },
     "approval_status": { "type": "string" },
     "approval_scope": { "type": "string" },
@@ -406,6 +423,8 @@ co-grouped for future authorization.
           "id": { "type": "string" },
           "tool": { "type": "string" },
           "command": { "type": "string" },
+          "action": { "type": "object" },
+          "redacted": { "type": "boolean" },
           "agent": { "type": "string" },
           "session": { "type": "string" },
           "credential_owner": { "type": "string" },
@@ -467,6 +486,8 @@ Returns one approval by ID.
     "id": { "type": "string" },
     "tool": { "type": "string" },
     "command": { "type": "string" },
+    "action": { "type": "object" },
+    "redacted": { "type": "boolean" },
     "agent": { "type": "string" },
     "session": { "type": "string" },
     "message": { "type": "string" },

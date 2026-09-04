@@ -5,7 +5,7 @@ description: "Protect OpenClaw in one command with Rampart-managed policy, fail-
 
 # OpenClaw
 
-Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. This is the primary supported path. OpenClaw owns the visible approval UX, while Rampart owns policy evaluation, audit logging, and durable allow-always writeback.
+Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. This is the primary supported path. OpenClaw owns the visible approval UX, while Rampart owns policy evaluation, audit logging, and complete redacted action review.
 
 When `rampart serve` is healthy, every supported tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
 
@@ -108,7 +108,7 @@ Agent wants to run a tool (exec, read, write, web_fetch, ...)
                  ├─ allow  → tool runs
                  ├─ deny   → tool blocked, agent gets error message
                  └─ ask    → OpenClaw owns the visible approval UI/state
-                              Rampart writes audit, evaluates policy, and persists allow-always rules
+                              Rampart writes audit, evaluates policy, and supplies complete action review
 ```
 
 ## Coverage
@@ -176,30 +176,29 @@ Install manually:
 rampart init --profile openclaw
 ```
 
-## Always Allow writeback
+## Complete action approval
 
-When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a durable rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
+The native plugin offers `allow-once` and `deny`. It shows the complete
+represented arguments, targets and available host context with secrets redacted.
+The approval belongs to OpenClaw; Rampart creates no second pending queue.
+Timeouts deny the call.
 
-The Rampart-owned approval card explicitly offers `allow-once`, `allow-always`,
-and `deny`, and denies on timeout. Only `allow-always` creates a durable rule.
-One-time approvals, denials, timeouts, and cancellations never change policy.
+OpenClaw's native hook description is limited to 512 characters and does not
+forward a complete-review attachment. If the complete rendered action exceeds
+that limit, Rampart blocks it before creating an approval. Split it into smaller
+independently reviewable actions or configure an explicit operator-reviewed
+policy. An older Rampart service without the complete review response also
+blocks asks until upgraded.
 
-Automatic approvals are exact by default. Rampart never inserts a wildcard or
-strips arguments, pipes, or redirects when persisting an approved command.
-Literal wildcard characters are escaped as policy literals. Exact automatic
-persistence supports exec commands and read/write/edit paths; other tool types
-require an explicit operator-authored policy.
+Native plugin approvals no longer offer permanent command/path writeback: such
+a rule would omit other reviewed parameters, requester and execution context.
+Use an explicit policy when you want a persistent allowance. Existing
+operator-authored policies are retained.
 
-For example, approving `sudo apt-get install nmap` always writes:
-```yaml
-- name: user-allow-<hash>
-  match:
-    tool: exec
-  rules:
-    - when:
-        command_matches: ["sudo apt-get install nmap"]
-      action: allow
-```
+Other plugins that return parameter rewrites are part of the trusted OpenClaw
+configuration. Although the first approval freezes selected parameters, Rampart
+receives the original event rather than preceding hooks' returned rewrites.
+Its resolution callback cannot inspect or veto the resumed action.
 
 ## Verify the integration
 

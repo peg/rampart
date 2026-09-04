@@ -130,6 +130,8 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 			"id":               req.ID,
 			"tool":             req.Call.Tool,
 			"command":          req.Call.Command(),
+			"action":           approval.ReviewCall(req.Call),
+			"redacted":         req.HasRedactions(),
 			"agent":            req.Call.Agent,
 			"session":          req.Call.Session,
 			"credential_owner": credentialOwner,
@@ -221,6 +223,8 @@ func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
 		"id":         req.ID,
 		"tool":       req.Call.Tool,
 		"command":    req.Call.Command(),
+		"action":     approval.ReviewCall(req.Call),
+		"redacted":   req.HasRedactions(),
 		"agent":      req.Call.Agent,
 		"session":    req.Call.Session,
 		"message":    req.Decision.Message,
@@ -356,6 +360,10 @@ authorized:
 		pending, ok := s.approvals.Get(id)
 		if !ok {
 			writeError(w, http.StatusNotFound, "approval not found")
+			return
+		}
+		if pending.HasRedactions() {
+			writeError(w, http.StatusBadRequest, "redacted actions cannot create permanent literal rules; use an explicit policy")
 			return
 		}
 		if _, persistErr := engine.GenerateAllowRule(pending.Call); persistErr != nil {
