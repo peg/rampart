@@ -52,8 +52,9 @@ func OwnerOnlyFile(file *os.File) error {
 		return err
 	}
 	// Go's ordinary file handles do not request WRITE_DAC. Reopen the same
-	// object with that right; resolving file.Name() could select a replacement.
-	handle, _, reopenErr := reopenFile.Call(file.Fd(), windows.WRITE_DAC,
+	// object for reading and replacing its protected security descriptor;
+	// resolving file.Name() could select a replacement.
+	handle, _, reopenErr := reopenFile.Call(file.Fd(), windows.READ_CONTROL|windows.WRITE_DAC,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, 0)
 	runtime.KeepAlive(file)
 	if windows.Handle(handle) == windows.InvalidHandle {
