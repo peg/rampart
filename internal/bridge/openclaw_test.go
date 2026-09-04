@@ -973,10 +973,14 @@ func TestBridgeAuditFailureRespectsMode(t *testing.T) {
 				assert.Equal(t, test.wantDecision, params["decision"])
 			}
 
-			bridge.pendingMu.Lock()
-			_, pending := bridge.pendingCommands[approvalID]
-			bridge.pendingMu.Unlock()
-			assert.Equal(t, test.wantPending, pending)
+			// The gateway can receive the decision before the bridge finishes
+			// its subsequent local cleanup. Wait for that observable state.
+			assert.Eventually(t, func() bool {
+				bridge.pendingMu.Lock()
+				defer bridge.pendingMu.Unlock()
+				_, pending := bridge.pendingCommands[approvalID]
+				return pending == test.wantPending
+			}, time.Second, 5*time.Millisecond)
 		})
 	}
 }
