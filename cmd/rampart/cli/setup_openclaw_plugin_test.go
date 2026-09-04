@@ -508,6 +508,132 @@ func TestNormalizeOpenClawExecModeConfigRefusesLinkedConfig(t *testing.T) {
 	}
 }
 
+func TestOpenClawIncludesRefuseEscapingParentSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on many Windows hosts")
+	}
+	for _, section := range []string{"tools", "plugins"} {
+		t.Run(section, func(t *testing.T) {
+			stateDir := t.TempDir()
+			outsideDir := t.TempDir()
+			before := []byte(`{"exec":{"mode":"full","ask":"off"},"entries":{"rampart":{"enabled":true}}}`)
+			outsidePath := filepath.Join(outsideDir, "included.json")
+			if err := os.WriteFile(outsidePath, before, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outsideDir, filepath.Join(stateDir, "linked")); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(stateDir, "openclaw.json")
+			config := fmt.Sprintf(`{%q:{"$include":"linked/included.json"}}`, section)
+			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if section == "tools" {
+				_, err = normalizeOpenClawExecModeConfigAt(configPath)
+			} else {
+				_, err = loadOpenClawPluginsConfig(configPath)
+			}
+			if err == nil || !strings.Contains(err.Error(), "outside the OpenClaw config directory") {
+				t.Fatalf("include error = %v, want containment refusal", err)
+			}
+			after, err := os.ReadFile(outsidePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatal("outside include target changed")
+			}
+		})
+	}
+}
+
+func TestOpenClawIncludeMigrationPinsInRootParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on many Windows hosts")
+	}
+	stateDir := t.TempDir()
+	insideDir := filepath.Join(stateDir, "inside")
+	if err := os.Mkdir(insideDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	includePath := filepath.Join(insideDir, "tools.json")
+	before := []byte(`{"exec":{"mode":"full","ask":"off"}}`)
+	if err := os.WriteFile(includePath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(stateDir, "linked")
+	if err := os.Symlink(insideDir, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"$include":"linked/tools.json"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrateOpenClawExecModeConfigAt(configPath)
+	if err != nil || !migration.changed() {
+		t.Fatalf("migration = (%v, %v), want changed", migration, err)
+	}
+	resolvedInside, err := filepath.EvalSymlinks(insideDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migration.configPath != filepath.Join(resolvedInside, "tools.json") {
+		t.Fatalf("migration retained directory alias: %s", migration.configPath)
+	}
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "tools.json")
+	if err := os.WriteFile(outsidePath, migration.after, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.rollbackIfUnchanged(); err != nil {
+		t.Fatal(err)
+	}
+	insideAfter, insideErr := os.ReadFile(includePath)
+	outsideAfter, outsideErr := os.ReadFile(outsidePath)
+	if insideErr != nil || outsideErr != nil {
+		t.Fatalf("read targets: inside=%v outside=%v", insideErr, outsideErr)
+	}
+	if !bytes.Equal(insideAfter, before) || !bytes.Equal(outsideAfter, migration.after) {
+		t.Fatal("rollback did not preserve the resolved include target")
+	}
+}
+
+func TestOpenClawIncludeMigrationPreservesOtherHardLink(t *testing.T) {
+	stateDir := t.TempDir()
+	outsidePath := filepath.Join(t.TempDir(), "tools.json")
+	before := []byte(`{"exec":{"mode":"full","ask":"off"}}`)
+	if err := os.WriteFile(outsidePath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	includePath := filepath.Join(stateDir, "tools.json")
+	if err := os.Link(outsidePath, includePath); err != nil {
+		t.Skipf("creating a hard link is unavailable: %v", err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"$include":"tools.json"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := normalizeOpenClawExecModeConfigAt(configPath)
+	if err != nil || !changed {
+		t.Fatalf("migration = (%v, %v), want changed", changed, err)
+	}
+	after, err := os.ReadFile(outsidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("migration changed the other hard link")
+	}
+}
+
 func TestRemoveOpenClawNativePluginPreservesUnrelatedStateAndIsIdempotent(t *testing.T) {
 	stateDir := t.TempDir()
 	pluginDir := filepath.Join(stateDir, openclawPluginDir)

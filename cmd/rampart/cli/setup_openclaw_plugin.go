@@ -453,25 +453,9 @@ func loadOpenClawPluginsConfig(configPath string) (map[string]any, error) {
 	if !ok || include == "" || strings.ContainsRune(include, 0) {
 		return nil, fmt.Errorf("plugins.$include must be a non-empty path string")
 	}
-	includePath := include
-	if !filepath.IsAbs(includePath) {
-		includePath = filepath.Join(filepath.Dir(configPath), includePath)
-	}
-	root, rootErr := filepath.Abs(filepath.Dir(configPath))
-	target, targetErr := filepath.Abs(includePath)
-	if rootErr != nil || targetErr != nil {
-		return nil, fmt.Errorf("resolve plugins.$include path")
-	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return nil, fmt.Errorf("plugins.$include resolves outside the OpenClaw config directory")
-	}
-	info, err := os.Lstat(target)
+	target, err := resolveOpenClawIncludePath(configPath, include, "plugins")
 	if err != nil {
 		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("plugins.$include must reference a regular, non-symlink file")
 	}
 	included, err := os.ReadFile(target)
 	if err != nil {
@@ -485,6 +469,48 @@ func loadOpenClawPluginsConfig(configPath string) (map[string]any, error) {
 		return nil, fmt.Errorf("nested plugins.$include is unsupported")
 	}
 	return includedPlugins, nil
+}
+
+// resolveOpenClawIncludePath checks both lexical and resolved containment.
+// Keep the resolved parent in the returned path so a later migration does not
+// follow the original directory alias. This does not lock the directory tree
+// against concurrent replacement.
+func resolveOpenClawIncludePath(configPath, include, section string) (string, error) {
+	root, err := filepath.Abs(filepath.Dir(configPath))
+	if err != nil {
+		return "", fmt.Errorf("resolve %s.$include root: %w", section, err)
+	}
+	target := include
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(root, target)
+	}
+	withinRoot := func(root, target string) bool {
+		rel, err := filepath.Rel(root, target)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	}
+	if !withinRoot(root, target) {
+		return "", fmt.Errorf("%s.$include resolves outside the OpenClaw config directory", section)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s.$include root: %w", section, err)
+	}
+	resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return "", fmt.Errorf("resolve %s.$include parent: %w", section, err)
+	}
+	target = filepath.Join(resolvedParent, filepath.Base(target))
+	if !withinRoot(resolvedRoot, target) {
+		return "", fmt.Errorf("%s.$include resolves outside the OpenClaw config directory", section)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		return "", fmt.Errorf("inspect %s.$include: %w", section, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s.$include must reference a regular, non-symlink file", section)
+	}
+	return target, nil
 }
 
 // installOpenClawPluginSafely refuses same-name collisions before delegating
@@ -1076,25 +1102,9 @@ func loadOpenClawToolsConfigDocument(configPath string) (*openClawToolsConfigDoc
 	if !ok || include == "" || strings.ContainsRune(include, 0) {
 		return nil, fmt.Errorf("tools.$include must be a non-empty path string")
 	}
-	targetPath := include
-	if !filepath.IsAbs(targetPath) {
-		targetPath = filepath.Join(filepath.Dir(configPath), targetPath)
-	}
-	root, rootErr := filepath.Abs(filepath.Dir(configPath))
-	target, targetErr := filepath.Abs(targetPath)
-	if rootErr != nil || targetErr != nil {
-		return nil, fmt.Errorf("resolve tools.$include path")
-	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return nil, fmt.Errorf("tools.$include resolves outside the OpenClaw config directory")
-	}
-	includeInfo, err := os.Lstat(target)
+	target, err := resolveOpenClawIncludePath(configPath, include, "tools")
 	if err != nil {
-		return nil, fmt.Errorf("inspect tools.$include: %w", err)
-	}
-	if includeInfo.Mode()&os.ModeSymlink != 0 || !includeInfo.Mode().IsRegular() {
-		return nil, fmt.Errorf("tools.$include must reference a regular, non-symlink file")
+		return nil, err
 	}
 	includedData, err := os.ReadFile(target)
 	if err != nil {
