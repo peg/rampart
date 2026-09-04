@@ -18,7 +18,7 @@ Let's set it up.
 ## Prerequisites
 
 - **macOS or Linux** (Windows WSL works too)
-- **Go 1.25.13+** (recommended) or the install script for a no-Go option
+- **Go 1.26.8+** (recommended) or the install script for a no-Go option
 - **Claude Code, Codex, or Cline** — this guide uses Claude Code, but Rampart works with [many agents](../integrations/index.md)
 
 ---
