@@ -92,8 +92,19 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 
 Calls denied by the working `PreToolUse` hook do not execute. If a response-side rule denies successful tool
 output, Rampart returns a shape-preserving `updatedToolOutput` with string
-content redacted and a block reason. The tool has already run, but the original
-content is not passed into Claude's next model turn.
+content redacted and a block reason. The tool has already run. Claude replaces
+what the model sees only if it accepts that output shape; this does not remove
+prior side effects or upstream telemetry. See Claude's
+[post-tool contract](https://code.claude.com/docs/en/hooks#posttooluse-decision-control).
+
+### Failure boundary
+
+Local policy evaluation and native `ask` do not require `rampart serve`.
+Rampart-handled malformed input and policy errors deny in enforce mode.
+Claude command-hook timeouts and launch failures supply no veto; normal host
+permissions apply. This differs from Claude Agent SDK callback hooks. See the
+[upstream failure contract](https://code.claude.com/docs/en/hooks#timeouts) and
+the [per-host failure table](../getting-started/support-matrix.md#degraded-behavior-notes).
 
 ## Usage
 
@@ -112,8 +123,9 @@ confirm which calls actually crossed the Rampart boundary.
 rampart verify claude-code
 ```
 
-This checks installed hook configuration and exercises the adapter with safe,
-non-executing canaries. It does not launch a model. See
+This checks installed hook configuration, readable hook-disabling settings,
+and the adapter with safe, non-executing canaries. It does not launch Claude or
+prove that a Claude process loaded and invoked the hook. See
 [Security Assurance](../getting-started/security-assurance.md) for the exact
 claim boundary.
 

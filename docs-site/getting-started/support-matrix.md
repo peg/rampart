@@ -25,6 +25,14 @@ execute the represented actions. A target is not promoted merely because its
 configuration exists: OpenClaw's live plugin can earn `host_verified`, while
 ordinary native-hook checks earn `adapter_verified`.
 
+These labels describe different probes. Native-hook verification inspects
+installed settings and invokes Rampart's adapter directly. OpenClaw verification
+calls `rampart.verify` on the running gateway plugin, which exercises the same
+policy mapping used by its pre-tool hook. Neither probe runs an authenticated
+agent turn or demonstrates a tool's execution or approval resume through the
+host dispatcher. Package startup and rolling compatibility tests are separate
+evidence, not a promotion of adapter checks to host ingestion.
+
 Static-only integrations are excluded from the aggregate rather than reported
 as passing. In particular, use `rampart doctor` for Hermes installation status
 and the isolated latest-Hermes compatibility check for runtime evidence.
@@ -202,26 +210,34 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
 
 ## Degraded behavior notes
 
-- **Claude Code / Cline / Codex / Antigravity / GitHub Copilot / Cursor native hooks or plugins**, plus the experimental Gemini CLI adapter: local allow/deny policy
-  evaluation works when `rampart serve` is down. Rampart-handled parse and
-  policy errors deny in enforce mode, but an unexpected hook crash or host
-  timeout follows the host's behavior. Dashboard features and external
-  approvals need the service; Codex and Cursor approval-required actions deny
-  when their queue is unavailable.
-- **GitHub Copilot**: native `ask` does not require the Rampart service. Copilot
-  CLI `PreToolUse` command errors deny, but CLI hook timeouts always fail open,
-  even for administrator policy hooks. VS Code blocks exit code 2 but treats
-  other hook errors as warnings; unexpected crashes are not claimed fail-closed.
-- **Cline**: Rampart enables POSIX files with executable permissions; Cline's
-  Hooks UI can disable them. Windows uses `.ps1` file presence and PowerShell.
-  Current Cline source keeps hooks outside `--data-dir`/`CLINE_DATA_DIR`, and
-  legacy CLI `--yolo` bypasses runtime hooks entirely. Current Cline CLI logs
-  and continues after pre-hook errors/timeouts/invalid control output, and runs
-  post-tool hooks asynchronously without consuming their control response.
-- **OpenClaw native plugin**: depends on `rampart serve`; sensitive tools block when the service is unavailable, while configured lower-risk fail-open tools may still proceed. Native approvals allow once or deny and require complete redacted action review within the host description limit; oversized asks block. Other parameter-rewriting plugins remain part of the trusted host boundary.
-- **Hermes Agent plugin**: depends on `rampart serve`; all tools fail closed when unavailable by default. Operators may explicitly opt selected tools into degraded fail-open behavior.
-- **Legacy OpenClaw patching**: compatibility-only path; requires re-patching after upgrades.
-- **Wrapper / preload / API paths**: behavior depends on integration settings and fail-open/fail-closed configuration.
+In enforce mode, Rampart returns a denial for malformed tool input, invalid
+policy, and other handled decision failures. A host that never starts the hook,
+cancels it, or ignores its response owns the resulting behavior. The table
+describes the managed integration; monitor mode and explicit fail-open settings
+weaken enforcement. A host continuing its permission flow does not mean it will
+necessarily execute the tool.
+
+| Integration | `rampart serve` unavailable | Host hook failure or timeout |
+| --- | --- | --- |
+| [Claude Code](../integrations/claude-code.md) | Local policy and native `ask` remain available. | Command-hook timeout or launch failure supplies no veto; normal Claude permissions apply. A valid denial or blocking exit still blocks. [Upstream contract](https://code.claude.com/docs/en/hooks#timeouts) |
+| [Cline](../integrations/cline.md) | Local policy remains available; `ask` cancels with context. | Current CLI continues after pre-hook launch, timeout, or control-parse errors. Post-tool file hooks are observational. |
+| [Codex](../integrations/codex-cli.md) | Local allow/deny remains available; external approvals deny when unavailable. | Host-controlled; unexpected crash and timeout behavior is not claimed fail-closed. |
+| [Gemini CLI](../integrations/gemini-cli.md) (experimental) | Local allow/deny remains available; external approvals deny when unavailable. | Host-controlled; unexpected crash and timeout behavior is not claimed fail-closed. |
+| [Antigravity](../integrations/antigravity.md) | Local policy and native `force_ask` remain available. | Host-controlled; unexpected crash and timeout behavior is not claimed fail-closed. |
+| [GitHub Copilot](../integrations/github-copilot.md) | Local policy and native `ask` remain available. | CLI command errors deny, but CLI timeouts continue, including policy hooks. VS Code blocks exit 2 and treats other errors as warnings. |
+| [Cursor local Agent](../integrations/cursor.md) | Local allow/deny remains available; external approvals deny when unavailable. | Managed `failClosed: true` requests blocking on crash, timeout, or invalid JSON. Installed configuration and adapter checks do not prove host ingestion. [Upstream contract](https://cursor.com/docs/hooks#per-script-configuration-options) |
+| [OpenClaw native plugin](../integrations/openclaw.md) | All tools deny by default, including routine tools. | Rampart catches adapter exceptions and denies on its service request deadline. Failure outside that handler remains host-controlled. |
+| [Hermes Agent](../integrations/hermes.md) (experimental) | All tools deny by default. | Rampart catches adapter exceptions and service timeouts; Hermes skips a callback that escapes with an exception. |
+
+OpenClaw and Hermes operators can explicitly opt tools into degraded fail-open
+behavior; `rampart protect openclaw` installs an empty opt-out list. OpenClaw's
+[native approval limits](../integrations/openclaw.md)
+and trusted-plugin composition boundary also apply.
+
+Disabled or undiscovered hooks provide no interception. See each integration's
+activation requirements, including Cline's legacy `--yolo` bypass. Legacy
+OpenClaw patching requires re-patching after upgrades. Wrapper, preload, and
+custom API paths depend on their own configuration and caller behavior.
 
 The machine-readable source for current integration guarantees and evidence is
 [`assurance/integrations.yaml`](https://github.com/peg/rampart/blob/main/assurance/integrations.yaml).
