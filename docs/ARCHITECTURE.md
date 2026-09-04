@@ -48,10 +48,13 @@ Policies hot-reload via fsnotify. Edit the YAML, Rampart picks it up.
 
 ### Audit Sink (`internal/audit/`)
 
-Append-only JSONL with hash chaining. Each event includes SHA-256 of the previous event's hash — tamper with any record and the chain breaks.
+JSONL records are written in append mode and linked by SHA-256 hashes.
+Verification detects inconsistent hashes and broken links in retained history;
+the local files remain writable by their owner.
 
 - ULID event IDs (time-ordered, sortable)
-- External anchor every 100 events for independent integrity checkpoints
+- Local `audit-anchor.json` checkpoint every 100 events by default; independent
+  evidence requires retention outside the agent's write authority
 - Validated local chain state avoids full-history scans in one-shot native hooks
 - fsync on long-running service writes; native hooks avoid per-call fsync latency
 - Log rotation with chain continuity across files
