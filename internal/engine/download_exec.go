@@ -146,33 +146,41 @@ func isUnsignedDigits(value string) bool {
 }
 
 type literalInvocation struct {
-	args   []string
-	stdin  string
-	stdout string
-	writes []string
+	args         []string
+	stdin        string
+	stdout       string
+	stdoutAppend bool
+	writes       []string
 }
 
 func parseLiteralInvocation(words []literalShellWord) (literalInvocation, bool) {
 	var result literalInvocation
+	literal := true
 	for i := 0; i < len(words); i++ {
 		word := words[i]
 		if !word.operator {
 			if !word.literal {
-				return literalInvocation{}, false
+				literal = false
 			}
 			result.args = append(result.args, word.value)
 			continue
 		}
-		if i+1 == len(words) || words[i+1].operator || !words[i+1].literal {
-			return literalInvocation{}, false
+		if i+1 == len(words) || words[i+1].operator {
+			return result, false
 		}
 		i++
+		if !words[i].literal {
+			literal = false
+			continue
+		}
 		switch word.value {
 		case ">", "1>", "&>":
 			result.writes = append(result.writes, words[i].value)
 			result.stdout = words[i].value
+			result.stdoutAppend = false
 		case ">>", "1>>", "&>>":
 			result.stdout = words[i].value
+			result.stdoutAppend = true
 		case "<", "0<":
 			result.stdin = words[i].value
 		case "2>":
@@ -182,10 +190,10 @@ func parseLiteralInvocation(words []literalShellWord) (literalInvocation, bool) 
 		default:
 			// Here documents, descriptor indirection and shell grammar need
 			// more than literal operands; do not infer a destination from them.
-			return literalInvocation{}, false
+			return result, false
 		}
 	}
-	return result, true
+	return result, literal
 }
 
 // unwrapLiteralExecutor uses the shared option-aware wrapper handling, but
@@ -218,6 +226,7 @@ type downloadedFile struct {
 	downloader string
 	url        string
 	path       string
+	stdout     bool
 }
 
 // visitDownloadExecutionAliases recognizes a literal downloaded file executed
@@ -228,7 +237,7 @@ func visitDownloadExecutionAliases(command string, visit func(string) bool) {
 	if len(command) > maxGlobInputLen || !strings.ContainsAny(command, ";&|\n") {
 		return
 	}
-	downloads := make(map[string]downloadedFile)
+	downloads := make(map[string][]downloadedFile)
 	var walk func(string, string, int) bool
 	walk = func(command, cwd string, depth int) bool {
 		if depth > 16 {
@@ -239,9 +248,11 @@ func visitDownloadExecutionAliases(command string, visit func(string) bool) {
 			return true
 		}
 		for _, word := range words {
-			if word.operator && (strings.Contains(word.value, "<<") || word.value == "|" || word.value == "&") {
+			if word.operator && (strings.Contains(word.value, "<<") || word.value == "|" || word.value == "&" ||
+				word.value == "(" || word.value == ")" || word.value == "{" || word.value == "}") {
 				// Here-document contents are data. Pipelines and background jobs
 				// have different process/cwd scopes from sequential commands.
+				// Grouping/function definitions require execution-scope analysis.
 				return true
 			}
 		}
@@ -252,6 +263,11 @@ func visitDownloadExecutionAliases(command string, visit func(string) bool) {
 			}
 			inv, ok := parseLiteralInvocation(words[start:end])
 			start = end + 1
+			// Shell redirections apply to the outer invocation, including
+			// wrappers and commands whose argument expansions are unknown.
+			for _, written := range inv.writes {
+				delete(downloads, literalOperandPath(written, cwd))
+			}
 			if !ok {
 				continue
 			}
@@ -260,6 +276,10 @@ func visitDownloadExecutionAliases(command string, visit func(string) bool) {
 				continue
 			}
 			base := shellWrapperBasename(args[0])
+			switch base {
+			case "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "select", "function":
+				return true // Do not interpret conditional/loop bodies as top-level commands.
+			}
 			if base == "cd" {
 				if len(args) == 2 && args[1] != "-" {
 					cwd = literalOperandPath(args[1], cwd)
@@ -275,20 +295,34 @@ func visitDownloadExecutionAliases(command string, visit func(string) bool) {
 				}
 				continue
 			}
-			for _, written := range inv.writes {
-				delete(downloads, literalOperandPath(written, cwd))
-			}
+			// One wget -O or a shared stdout stream can contain multiple
+			// responses. Preserve every source so a later benign URL cannot
+			// hide an earlier source from a restrictive domain-specific rule.
+			fresh := make(map[string][]downloadedFile)
 			for _, file := range invocationDownloads(args, inv.stdout) {
 				file.path = literalOperandPath(file.path, cwd)
-				downloads[file.path] = file
+				if file.downloader == "wget" || file.stdout {
+					fresh[file.path] = append(fresh[file.path], file)
+				} else {
+					fresh[file.path] = []downloadedFile{file} // explicit curl output replaces the file
+				}
+			}
+			for target, files := range fresh {
+				if inv.stdoutAppend && files[0].stdout {
+					downloads[target] = append(downloads[target], files...)
+				} else {
+					downloads[target] = files
+				}
 			}
 			operand := executedFileOperand(args, inv.stdin)
 			if operand == "" {
 				continue
 			}
 			path := literalOperandPath(operand, cwd)
-			if file, ok := downloads[path]; ok && !visit(file.downloader+" "+file.url+" | sh") {
-				return false
+			for _, file := range downloads[path] {
+				if !visit(file.downloader + " " + file.url + " | sh") {
+					return false
+				}
 			}
 		}
 		return true
@@ -396,7 +430,7 @@ func invocationDownloads(args []string, stdout string) []downloadedFile {
 		if base == "curl" && !globoff && strings.ContainsAny(url, "{}[]") {
 			continue // curl's URL/output templates need expansion, not equality
 		}
-		output := stdout
+		output, fromStdout := stdout, true
 		if base == "wget" {
 			// Wget concatenates responses to its last -O destination. Without
 			// -O, redirecting stdout does not redirect the downloaded file.
@@ -404,12 +438,15 @@ func invocationDownloads(args []string, stdout string) []downloadedFile {
 				continue
 			}
 			output = outputs[len(outputs)-1]
+			fromStdout = false
 		} else if i < len(outputs) {
 			// Curl pairs output options and URLs in their respective order.
 			output = outputs[i]
+			fromStdout = false
 		}
 		if output == "-" {
 			output = stdout
+			fromStdout = true
 		}
 		if output == "" || output == "-" {
 			continue
@@ -417,7 +454,7 @@ func invocationDownloads(args []string, stdout string) []downloadedFile {
 		if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
 			continue
 		}
-		result = append(result, downloadedFile{downloader: base, url: url, path: output})
+		result = append(result, downloadedFile{downloader: base, url: url, path: output, stdout: fromStdout})
 	}
 	return result
 }
