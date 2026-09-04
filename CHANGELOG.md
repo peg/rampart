@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Source and release builds now use Go 1.26.8** — Rampart's module baseline,
+  container build, and public source-build requirements now use the supported
+  Go 1.26 line after Go 1.27 ended upstream support for Go 1.25.
+
 ## [1.8.0] - 2026-08-17
 
 ### Security
