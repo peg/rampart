@@ -47,6 +47,10 @@ function nativeApprovalDescription(action) {
       (action.input !== undefined && (!action.input || typeof action.input !== "object" || Array.isArray(action.input)))) {
     return null;
   }
+  if (action.input && Object.hasOwn(action.input, "rampart_original_input")) {
+    const original = action.input.rampart_original_input;
+    if (!original || typeof original !== "object" || Array.isArray(original)) return null;
+  }
   // Render original host arguments once. Policy-derived fields are not
   // executable arguments; retain their tool class, all parsed targets and
   // host-derived requester/context separately instead of duplicating input.
@@ -59,7 +63,7 @@ function nativeApprovalDescription(action) {
   const presented = {
     tool: originalTool,
     ...(originalTool !== action.tool ? { policy_class: action.tool } : {}),
-    params: action.input ?? action.params,
+    params: action.input?.rampart_original_input ?? action.input ?? action.params,
     ...(Object.keys(context).length ? { context } : {}),
     ...(action.params.rampart_targets ? { targets: action.params.rampart_targets } : {}),
     ...(action.params.rampart_requester ? { requester: action.params.rampart_requester } : {}),
@@ -413,6 +417,12 @@ function addBrowserURLFacts(policyParams) {
 // never returned to OpenClaw as executable tool parameters.
 function policyParamsForTool(toolName, params, ctx, originalToolName = toolName) {
   const policyParams = { ...(params ?? {}) };
+  // These facts belong to the adapter. A missing host value must not leave an
+  // agent-supplied label looking like an authoritative requester or target.
+  for (const field of ["rampart_integration", "rampart_original_tool", "rampart_consequence",
+    "rampart_origin_channel", "rampart_requester", "rampart_targets", "rampart_original_input"]) {
+    delete policyParams[field];
+  }
 
   // Scope the managed Guard layer to calls that actually crossed the native
   // OpenClaw integration. Other Rampart integrations sharing the policy
@@ -727,7 +737,14 @@ export function register(api) {
     let selectedRank = -1;
     for (const candidateParams of policyVariants) {
       const candidate = await checkWithRampart(toolName, candidateParams, ctx, pluginConfig, {
-        ...options, input: event.params, toolCallId: event.toolCallId, runId: event.runId,
+        // tool_param_matches evaluates Input. Keep the normalized policy
+        // facts authoritative there while retaining every original argument
+        // for review and identity. Assign the reserved field after the spread
+        // so an argument cannot replace the original action being reviewed.
+        ...options,
+        input: { ...candidateParams, rampart_original_input: event.params },
+        toolCallId: event.toolCallId,
+        runId: event.runId,
       });
       const rank = policyDecisionRank(candidate);
       if (rank > selectedRank) {

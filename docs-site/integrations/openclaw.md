@@ -183,6 +183,12 @@ represented arguments, targets and available host context with secrets redacted.
 The approval belongs to OpenClaw; Rampart creates no second pending queue.
 Timeouts deny the call.
 
+The policy input retains adapter-derived facts used by the Guard rules. Its
+`rampart_original_input` field preserves the original tool arguments for review
+and action identity, including any caller-supplied names that overlap the
+adapter's reserved fields. Those names cannot replace derived policy facts or
+host context. Native approval displays this original payload after redaction.
+
 OpenClaw's native hook description is limited to 512 characters and does not
 forward a complete-review attachment. If the complete rendered action exceeds
 that limit, Rampart blocks it before creating an approval. Split it into smaller

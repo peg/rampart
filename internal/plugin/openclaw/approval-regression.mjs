@@ -133,6 +133,10 @@ const oversized = await runScenario({ name: 'oversized-review', params: { comman
 assert(oversized.result?.block && !oversized.result.requireApproval, 'oversized action created an approvable truncated description');
 const oldService = await runScenario({ name: 'missing-review-on-downgrade', includeAction: false, toolResult: { decision: 'ask', allowed: false } });
 assert(oldService.result?.block, 'older service without redacted review did not fail closed');
+for (const original of [null, 'command', []]) {
+  const malformed = await runScenario({ name: 'malformed-original-input', toolResult: { decision: 'ask', allowed: false, action: { version: 1, tool: 'exec', params: {}, input: { rampart_original_input: original } } } });
+  assert(malformed.result?.block && !malformed.result.requireApproval, 'malformed original action became approvable');
+}
 const redacted = await runScenario({ name: 'redacted-review', params: { command: 'echo --token=synthetic-private' }, toolResult: { decision: 'ask', allowed: false, action: { version: 1, tool: 'exec', params: { command: 'echo --token=[REDACTED]' } } } });
 assert(!JSON.stringify(redacted.result).includes('synthetic-private'), 'plugin displayed raw local params instead of server-redacted review');
 
