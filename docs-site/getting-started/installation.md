@@ -58,7 +58,7 @@ This installs the `rampart` binary.
 
 ## Go Install
 
-Requires Go 1.26.7+:
+Requires Go 1.26.8+:
 
 ```bash
 go install github.com/peg/rampart/cmd/rampart@latest
