@@ -189,7 +189,13 @@ For example, approving `sudo apt-get install nmap` always writes:
 rampart verify openclaw
 ```
 
-The verification command checks routine work, destructive actions, credential access, policy tampering, direct external network commands, publishing, cross-conversation messages, opaque interpreters, and package publishing. Its fixed canaries traverse policy evaluation and the live plugin's decision mapping without executing the represented actions.
+The verification command checks managed configuration and policy canaries,
+then calls `rampart.verify` on the running gateway. That plugin method feeds
+fixed, non-executing canaries through the same normalization and decision
+mapping as `before_tool_call`. It proves the current plugin is loaded and can
+reach Rampart; it does not invoke the agent's tool dispatcher or exercise a
+native approval's resume path. An authenticated agent turn is separate
+evidence and is not run by this command.
 
 Use `rampart doctor` for the broader installation health report. Expected output when fully configured includes:
 
@@ -200,9 +206,8 @@ Use `rampart doctor` for the broader installation health report. Expected output
 ✓ Approval path: native OpenClaw UI active
 ```
 
-For safe end-to-end confidence, run `rampart verify openclaw`. It checks the
-installed plugin and exercises allow, ask, and deny behavior without executing
-the represented actions or invoking a model.
+See the [support matrix](../getting-started/support-matrix.md#degraded-behavior-notes)
+for service failure defaults and the limits of each verification level.
 
 Or check plugin status directly:
 
