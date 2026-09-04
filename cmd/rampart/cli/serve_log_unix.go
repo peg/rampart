@@ -5,7 +5,15 @@
 
 package cli
 
-import "os"
+import (
+	"os"
+
+	"github.com/peg/rampart/internal/filetxn"
+)
+
+func replaceServeLog(source, destination string) error {
+	return filetxn.Replace(source, destination)
+}
 
 func serveLogNativePath(path string) string { return path }
 

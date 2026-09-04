@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/peg/rampart/internal/filetxn"
 	"github.com/peg/rampart/internal/notify"
 	"github.com/peg/rampart/internal/securefile"
 )
@@ -130,8 +129,8 @@ func (w *serveLog) rotate() error {
 		if i > 1 {
 			source = fmt.Sprintf("%s.%d", w.path, i-1)
 		}
-		if err := filetxn.Replace(source, fmt.Sprintf("%s.%d", w.path, i)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		if err := replaceServeLog(source, fmt.Sprintf("%s.%d", w.path, i)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("serve: rotate diagnostic backup %d: %w", i, err)
 		}
 	}
 	return w.open()
