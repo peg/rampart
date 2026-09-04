@@ -38,7 +38,7 @@ integrations:
     evidence:
       - path: cmd/rampart/cli/verify_test.go
         kind: integration
-        proves: Verification rejects incomplete or stale plugin canary results.
+        proves: Verification checks managed configuration and rejects incomplete or stale canary results from the loaded plugin's gateway method.
       - path: internal/plugin/openclaw/provider-surface-replay.mjs
         kind: integration
         proves: Current OpenClaw built-ins and provider aliases reach typed policy surfaces, action consequences remain conservative, unknown tools fail closed locally, and every apply_patch target is evaluated with deny-wins behavior.
@@ -52,6 +52,7 @@ integrations:
         kind: upstream_latest
         proves: A disposable OpenClaw installation resolves the stable npm release and exercises the real plugin boundary.
     limitations:
+      - rampart verify openclaw reaches the installed gateway plugin and its policy mapping; it does not run an authenticated agent turn or prove tool execution and approval resume through the host dispatcher.
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
       - Host behavior after an uncaught plugin exception is not yet independently proven fail-closed.
       - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
@@ -79,7 +80,8 @@ integrations:
     degraded:
       policy_unavailable: local
       adapter_error: host_defined
-      timeout: host_defined
+      # A command-hook timeout supplies no veto; Claude's own permissions still apply.
+      timeout: allow
     approval: native
     verification:
       level: active
@@ -99,12 +101,16 @@ integrations:
       - path: cmd/rampart/cli/setup_test.go
         kind: unit
         proves: Setup preserves existing settings while installing required hook events.
+      - path: cmd/rampart/cli/verify_test.go
+        kind: integration
+        proves: Verification checks installed hook configuration and directly invokes the adapter with a non-executing denial canary; it does not launch Claude.
     limitations:
       - No rolling latest-Claude compatibility job currently exercises the installed host.
       - rampart verify claude-code proves installed configuration and adapter behavior but does not prove Claude loaded or invoked the hook.
       - Documented hook-visible tools are mapped, and in enforce mode future unknown PreToolUse tools deny until Rampart is updated.
       - Host-owned or server-side actions that do not emit lifecycle hooks are outside this boundary; Claude's EndConversation tool is a documented benign example.
-      - Subagent, hook-crash, and host-timeout behavior need live conformance tests.
+      - Claude's documented command-hook timeout and launch-failure behavior does not block PreToolUse; adapter failures without a blocking exit or valid denial also permit normal host permission processing.
+      - Subagent and host-failure contracts have not been proven through authenticated live conformance tests.
 
   - id: cline
     display_name: Cline
