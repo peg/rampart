@@ -6,7 +6,7 @@
 
 <img src="docs/og-authority-visible.png" alt="Rampart — Let agents move fast. Keep the final say." width="100%">
 
-[![Go](https://img.shields.io/badge/Go-1.25.13+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26.8+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/peg/rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/peg/rampart/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/peg/rampart?style=flat)](https://github.com/peg/rampart/releases)
@@ -86,7 +86,7 @@ irm https://rampart.sh/install.ps1 | iex
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
-Source builds require Go 1.25.13 or newer. Windows upgrades use the PowerShell
+Source builds require Go 1.26.8 or newer. Windows upgrades use the PowerShell
 installer; binary self-upgrade is intentionally disabled there.
 
 </details>
@@ -280,12 +280,12 @@ setuid, direct-syscall, and SIP-protected paths remain outside that boundary.
 [Any CLI agent →](https://docs.rampart.sh/integrations/any-cli-agent/) ·
 [Threat model →](docs/THREAT-MODEL.md)
 
-## What changed in 1.7
+## What changed in 1.8
 
-Rampart 1.7 binds approval state to the requesting credential, hardens MCP
-correlation and destructive-command matching, unifies managed onboarding,
-repairs owned service state safely, adds compatible Hermes native approval,
-and reduces duplicated repository and CI maintenance surface.
+Rampart 1.8 adds a native local Cursor hook, separates approval of reviewed
+pending calls from explicit grants for future calls, and binds those grants
+to the requesting credential and run. It also gives approval state one live
+service owner and keeps native approvals compatible with Hermes v0.20.2.
 
 Read the [changelog](CHANGELOG.md) for the full release notes.
 
