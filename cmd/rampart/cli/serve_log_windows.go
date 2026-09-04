@@ -7,9 +7,24 @@ package cli
 
 import (
 	"os"
+	"strings"
 
 	"golang.org/x/sys/windows"
 )
+
+// The caller supplies a canonical absolute path. Keep the extended form on
+// the writer so both CreateFile and rotation's MoveFileEx support long paths,
+// including UNC shares, without depending on the machine's long-path setting.
+func serveLogNativePath(path string) string {
+	if len(path) < 248 || strings.HasPrefix(path, `\\?\`) ||
+		strings.HasPrefix(path, `\??\`) || strings.HasPrefix(path, `\\.\`) {
+		return path
+	}
+	if strings.HasPrefix(path, `\\`) {
+		return `\\?\UNC\` + path[2:]
+	}
+	return `\\?\` + path
+}
 
 func openServeLogAppend(path string, create bool) (*os.File, error) {
 	name, err := windows.UTF16PtrFromString(path)

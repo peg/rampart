@@ -7,6 +7,8 @@ package cli
 
 import "os"
 
+func serveLogNativePath(path string) string { return path }
+
 func openServeLogAppend(path string, create bool) (*os.File, error) {
 	flags := os.O_APPEND | os.O_WRONLY
 	if create {

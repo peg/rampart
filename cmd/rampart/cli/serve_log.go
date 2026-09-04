@@ -44,7 +44,7 @@ func openServeLog(path string, maxBytes int64, backups int) (*serveLog, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &serveLog{path: filepath.Join(parent, filepath.Base(path)), maxBytes: maxBytes, backups: backups}
+	w := &serveLog{path: serveLogNativePath(filepath.Join(parent, filepath.Base(path))), maxBytes: maxBytes, backups: backups}
 	if err := w.open(); err != nil {
 		return nil, err
 	}
