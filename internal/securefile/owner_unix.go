@@ -21,6 +21,11 @@ func OwnerOnly(path string) error {
 	return nil
 }
 
+// OwnerOnlyFile restricts the already-open file without resolving its path again.
+func OwnerOnlyFile(file *os.File) error {
+	return file.Chmod(0o600)
+}
+
 // SingleLink rejects shared inodes before a private mutable file is changed.
 func SingleLink(file *os.File) error {
 	info, err := file.Stat()
