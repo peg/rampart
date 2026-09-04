@@ -930,6 +930,8 @@
             *, *::before, *::after { transition: none !important; }
         }
     </style>
+    <link rel="stylesheet" href="assets/landing.css">
+    <script src="assets/landing.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -974,6 +976,7 @@
     <section class="hero" aria-labelledby="hero-title">
         <div class="hero-grid">
             <div class="hero-copy">
+              <div class="story-intro">
                 <p class="eyebrow">v1.8.0 · Open-source control for AI agents</p>
                 <h1 id="hero-title">
                     <span class="first-line">Let agents move fast.</span>
@@ -989,10 +992,34 @@
                     <li>Open source</li>
                     <li>Built for real agent workflows</li>
                 </ul>
+              </div>
+              <article class="story-chapter" id="boundary-scope">
+                <p class="chapter-index">01 / The boundary</p>
+                <h2>Give access<br>a precise edge.</h2>
+                <p>A tool request has a name, a target, and consequences. Rampart evaluates the action your integration exposes against your policies.</p>
+                <div class="request-example">
+                  <span>Example request</span>
+                  <code>read → ~/.ssh/id_ed25519</code>
+                  <p>Standard policy: <code>block-credential-access</code></p>
+                  <p>Matches <code>**/.ssh/id_*</code>; public keys ending in <code>.pub</code> are excluded.</p>
+                </div>
+              </article>
+              <article class="story-chapter" id="boundary-record">
+                <p class="chapter-index">02 / The decision</p>
+                <h2>Your rules.<br>A visible record.</h2>
+                <p>The matching policy denies the request. The decision enters the audit trail, with the rule and action connected for review.</p>
+                <div class="decision-example" aria-label="Illustrative policy decision">
+                  <span>Private-key read</span><span class="decision-deny">Denied</span>
+                  <span>Matching policy</span><code>block-credential-access</code>
+                  <span>Decision recorded</span><span>Audit trail</span>
+                </div>
+                <p class="story-scope">This example illustrates a configured boundary. An audit decision does not prove that an action executed.</p>
+              </article>
             </div>
 
             <div class="threshold">
                 <div class="threshold-figure" aria-hidden="true">
+                    <canvas class="boundary-canvas" aria-hidden="true"></canvas>
                     <svg class="architecture" aria-hidden="true" focusable="false" viewBox="0 0 720 720" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
                         <path class="mass" d="M72 720V180H648V720Z"/>
                         <path class="mass plane-top" d="M72 180L132 132H696L648 180Z"/>
@@ -1006,6 +1033,7 @@
                     </svg>
                 </div>
                 <p class="boundary-note">The boundary evaluates what the integration exposes</p>
+                <p class="scene-legend" aria-hidden="true">Action <span>→</span> Policy <span>→</span> Record</p>
             </div>
         </div>
     </section>

@@ -1,0 +1,71 @@
+/* The architectural scene follows native scroll. All narrative content remains
+   in document order when scripting or motion is unavailable. */
+.hero, .hero-grid { min-height: auto; }
+.hero-grid { align-items: start; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.hero-copy { display: contents; }
+.hero-copy::before { display: none; }
+.story-intro { grid-column: 1; grid-row: 1; min-height: 710px; padding: 150px 58px 60px 0; }
+.hero-intro { font-size: 1.05rem; }
+.hero-facts { font-size: .8rem; }
+.hero-facts li { padding-right: 15px; }
+.eyebrow { font-size: .78rem; }
+.hero-actions a { font-size: .9rem; }
+.threshold { grid-column: 2; grid-row: 1 / 4; position: sticky; top: 90px; height: min(720px, calc(100svh - 100px)); min-height: 450px; align-self: start; overflow: visible; }
+.threshold::before, .threshold::after { display: none; }
+.threshold-figure { inset: 0 -70px 0 -45px; overflow: visible; background: radial-gradient(ellipse at 50% 57%, #351b2a66, transparent 64%); }
+.boundary-canvas { display: none; width: 100%; height: 100%; }
+.scene-ready .boundary-canvas { display: block; }
+.scene-ready .architecture { display: none; }
+.boundary-note { left: 32px; bottom: 20px; max-width: 260px; font-size: .78rem; line-height: 1.6; color: #b9a9b1; }
+.story-chapter { grid-column: 1; padding: 62px 30px 78px 0; max-width: 490px; min-height: 430px; }
+#boundary-scope { grid-row: 2; }
+#boundary-record { grid-row: 3; }
+.chapter-index { color: var(--pink-soft); text-transform: uppercase; letter-spacing: .12em; font-family: var(--mono); font-size: .75rem; margin: 0 0 22px; }
+.story-chapter h2 { font: 400 clamp(2.6rem,4.5vw,4rem)/.97 var(--display); letter-spacing: -.04em; margin: 0 0 25px; }
+.story-chapter > p:not(.chapter-index) { color: #beb4ad; font-size: 1rem; line-height: 1.8; }
+.request-example { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 26px; }
+.request-example > span { font-size: .75rem; color: var(--muted); }
+.request-example code { display: block; color: var(--pink-soft); font: .875rem/1.8 var(--mono); overflow-wrap: anywhere; margin-top: 7px; }
+.request-example p code { display: inline; margin: 0; font-size: .8125rem; }
+.request-example p { font-size: .875rem; color: #a99c96; line-height: 1.6; }
+.decision-example { display: grid; grid-template-columns: 1fr auto; gap: 12px 18px; border-block: 1px solid var(--line); padding: 20px 0; margin-top: 26px; font-size: .875rem; }
+.decision-example span:nth-child(even) { text-align: right; color: #c6bbb5; }
+.decision-example span.decision-deny { color: var(--pink-soft); }
+.decision-example code { font: .75rem/1.6 var(--mono); overflow-wrap: anywhere; text-align: right; color: var(--pink-soft); }
+.scene-legend { display: none; }
+.story-chapter > p.story-scope { font-size: .8125rem; line-height: 1.7; margin-top: 18px; }
+.premise-copy p.supporting { color: #bfb4ad; }
+.outcome-name { font-size: .8125rem; }
+.outcome-copy { font-size: .875rem; color: #b1a59f; }
+@media (min-width: 960px) and (min-height: 760px) {
+  .story-intro { min-height: 77svh; }
+  .story-chapter { min-height: 58svh; }
+}
+@media (max-width: 1120px) and (min-width: 960px) {
+  .story-intro { padding-right: 34px; }
+  .threshold-figure { inset-inline: -25px -40px; }
+}
+@media (max-width: 959px) {
+  .hero-grid { display: grid; grid-template-columns: 1fr; }
+  .story-intro { min-height: 0; padding: 125px 0 38px; }
+  .story-chapter { min-height: 0; padding: 45px 0; max-width: 600px; }
+  .hero-copy::before { display: none; }
+  .threshold { position: relative; top: auto; height: 350px; min-height: 0; grid-column: 1; grid-row: 2; }
+  #boundary-scope { grid-row: 3; }
+  #boundary-record { grid-row: 4; }
+  .threshold-figure { inset: 0; }
+  .boundary-note { bottom: 10px; left: 0; max-width: 270px; font-size: .75rem; }
+  .scene-legend { display: flex; justify-content: center; gap: 12px; margin: 0; position: absolute; inset: 0 0 auto; font-size: .8125rem; color: #dbc4cf; }
+  .scene-legend span { color: var(--pink-soft); }
+  .story-chapter h2 { font-size: clamp(2.7rem,8vw,3.8rem); }
+}
+@media (max-width: 460px) {
+  .story-intro { padding-top: 115px; }
+  .hero-facts { font-size: .75rem; }
+  .hero-facts li { padding-inline: 8px; }
+  .hero-facts li:first-child { padding-left: 0; }
+  .threshold { height: 300px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .threshold { position: relative; top: 70px; }
+}
