@@ -106,6 +106,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var reloadInterval time.Duration
 	var approvalTimeout time.Duration
 	var background bool
+	var logFilePath string
 	var tlsCert string
 	var tlsKey string
 	var tlsAuto bool
@@ -133,7 +134,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
 			if background {
 				home, err := os.UserHomeDir()
 				if err != nil {
@@ -152,17 +153,14 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 					}
 
 					logPath := filepath.Join(rampartDir, "serve.log")
-					if info, statErr := os.Lstat(logPath); statErr == nil &&
-						(info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-						return fmt.Errorf("serve: refusing non-regular or symlinked background log: %s", logPath)
-					} else if statErr != nil && !os.IsNotExist(statErr) {
-						return fmt.Errorf("serve: inspect background log: %w", statErr)
+					if logFilePath != "" {
+						logPath = logFilePath
 					}
-					logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+					startupLog, err := openServeLog(logPath, serveLogMaxBytes, serveLogBackups)
 					if err != nil {
 						return fmt.Errorf("serve: open log file: %w", err)
 					}
-					defer logFile.Close()
+					defer startupLog.Close()
 
 					exePath, err := os.Executable()
 					if err != nil {
@@ -187,10 +185,13 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 						}
 						childArgs = append(childArgs, arg)
 					}
+					if logFilePath == "" {
+						childArgs = append(childArgs, "--log-file", startupLog.path)
+					}
 
 					child := exec.Command(exePath, childArgs...)
-					child.Stdout = logFile
-					child.Stderr = logFile
+					child.Stdout = startupLog.file
+					child.Stderr = startupLog.file
 					child.Env = setEnvValue(os.Environ(), backgroundReadyFileEnv, readyPath)
 					setDetachAttrs(child)
 
@@ -254,6 +255,26 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				defer func() { _ = instanceLock.Close() }()
 			}
 
+			logOutput := cmd.ErrOrStderr()
+			if logFilePath != "" {
+				diagnosticLog, err := openServeLog(logFilePath, serveLogMaxBytes, serveLogBackups)
+				if err != nil {
+					return err
+				}
+				previousOut, previousErr := cmd.OutOrStdout(), cmd.ErrOrStderr()
+				cmd.SetOut(diagnosticLog)
+				cmd.SetErr(diagnosticLog)
+				logOutput = diagnosticLog
+				defer func() {
+					if runErr != nil {
+						_, _ = fmt.Fprintln(diagnosticLog, runErr)
+					}
+					runErr = errors.Join(runErr, diagnosticLog.Close())
+					cmd.SetOut(previousOut)
+					cmd.SetErr(previousErr)
+				}()
+			}
+
 			// Validate TLS flags.
 			if (tlsCert == "") != (tlsKey == "") {
 				return fmt.Errorf("serve: --tls-cert and --tls-key must be used together")
@@ -283,7 +304,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			if opts.verbose {
 				level = slog.LevelDebug
 			}
-			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+			logger := slog.New(slog.NewTextHandler(logOutput, &slog.HandlerOptions{Level: level}))
 			if ip := net.ParseIP(listenAddr); ip != nil && !ip.IsLoopback() && tlsCfg == nil && port > 0 {
 				logger.Warn("serve: listening on a non-loopback interface without TLS; bearer tokens and approval traffic will cross the network in plaintext",
 					"addr", listenAddr,
@@ -543,7 +564,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				// Only print the full token to an interactive terminal, never to
 				// a log file or redirected stderr (background mode redirects stderr to serve.log).
-				interactiveStderr := isTerminal(os.Stderr)
+				interactiveStderr := logFilePath == "" && isTerminal(os.Stderr)
 				printServeToken(cmd.ErrOrStderr(), token, interactiveStderr)
 				scheme := "http"
 				if tlsCfg != nil {
@@ -697,6 +718,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
 	cmd.Flags().BoolVar(&metrics, "metrics", false, "Enable Prometheus metrics endpoint on /metrics")
 	cmd.Flags().BoolVarP(&background, "background", "b", false, "Run serve in background and write logs to ~/.rampart/serve.log")
+	cmd.Flags().StringVar(&logFilePath, "log-file", "", "Write redacted diagnostics to a rotating file (10 MiB, 3 backups)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
 	cmd.Flags().DurationVar(&reloadInterval, "reload-interval", 0, "How often to re-read policy files (0 = disabled; fsnotify handles hot-reload automatically)")
 	cmd.Flags().DurationVar(&approvalTimeout, "approval-timeout", 0, "How long approvals stay pending before expiring (default: 2m, matches OpenClaw)")
