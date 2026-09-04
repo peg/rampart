@@ -185,14 +185,17 @@ func (w *Witness) validateReceipt(receipt WitnessReceipt) error {
 
 func (w *Witness) retrieve(ctx context.Context) ([]WitnessReceipt, error) {
 	if w.config.FileDirectory != "" {
-		return w.retrieveFileHistory()
+		return w.retrieveFileHistory(ctx)
 	}
 	return w.retrieveHTTPS(ctx)
 }
 
 func (w *Witness) snapshot(ctx context.Context, dir string, receipts []WitnessReceipt) (recoveredChainState, error) {
-	snapshot, err := captureWitnessSnapshot(dir)
+	snapshot, err := captureWitnessSnapshot(ctx, dir)
 	if err != nil {
+		if ctx.Err() != nil {
+			return recoveredChainState{}, witnessFailure("verification_incomplete")
+		}
 		return recoveredChainState{}, witnessFailure("local_invalid")
 	}
 	checkpoints := make(map[int64]string, len(receipts))

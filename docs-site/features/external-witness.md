@@ -142,8 +142,9 @@ Publication is serialized, with no event queue. `--follow` waits at least one
 minute between cycles and coalesces changes to the next snapshot. Unavailable
 transport receives at most three attempts, with one- and two-second backoffs.
 Each attempt defaults to a 30-second deadline; `--timeout` accepts 1 second to
-10 minutes. Every HTTP request also has a 10-second limit. Local filesystem
-operations and acquisition of the existing advisory writer lock depend on OS
+10 minutes. Every HTTP request also has a 10-second limit. Waiting for the
+existing advisory writer lock uses cancelable, nonblocking acquisition, without
+leaving a background waiter behind. Filesystem system calls still depend on OS
 behavior and cannot be forcibly canceled by that deadline.
 
 The snapshot captures file identities and lengths under the shared writer lock;

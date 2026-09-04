@@ -23,10 +23,10 @@ type witnessSnapshot struct {
 	info  map[string]os.FileInfo
 }
 
-func captureWitnessSnapshot(dir string) (witnessSnapshot, error) {
+func captureWitnessSnapshot(ctx context.Context, dir string) (witnessSnapshot, error) {
 	snapshot := witnessSnapshot{dir: dir, info: make(map[string]os.FileInfo)}
 	sink := &JSONLSink{dir: dir}
-	err := sink.withDirectoryLock(func() error {
+	err := sink.withDirectoryLockContext(ctx, func() error {
 		directory, err := os.Open(dir)
 		if err != nil {
 			return err
@@ -40,6 +40,9 @@ func captureWitnessSnapshot(dir string) (witnessSnapshot, error) {
 			return fmt.Errorf("audit: witness snapshot exceeds %d directory entries", maxWitnessSnapshotFiles)
 		}
 		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !strings.HasSuffix(entry.Name(), ".jsonl") {
 				continue
 			}

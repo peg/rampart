@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peg/rampart/internal/filetxn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +52,7 @@ func TestWitnessFilePrefixRestartRotationAndMetadataLoss(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Verified)
 	require.Equal(t, "witnessed_head", result.Status)
-	accepted, err := w.retrieveFileHistory()
+	accepted, err := w.retrieveFileHistory(context.Background())
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
 		writeWitnessEvent(t, sink)
@@ -85,7 +86,7 @@ func TestWitnessFileDuplicateConflictAndStaleness(t *testing.T) {
 	writeWitnessEvent(t, sink)
 	_, err := w.Publish(context.Background(), dir)
 	require.NoError(t, err)
-	history, err := w.retrieveFileHistory()
+	history, err := w.retrieveFileHistory(context.Background())
 	require.NoError(t, err)
 	first := history[0]
 	duplicate := first.Checkpoint
@@ -103,7 +104,7 @@ func TestWitnessFileDuplicateConflictAndStaleness(t *testing.T) {
 	require.Equal(t, "delivered", result.Delivery, "stale evidence is not failed delivery")
 	// Ambiguous position spellings cannot hide a conflicting second record.
 	require.NoError(t, os.WriteFile(filepath.Join(w.config.FileDirectory, w.config.ChainID+".1.json"), []byte("{}"), 0o600))
-	_, err = w.retrieveFileHistory()
+	_, err = w.retrieveFileHistory(context.Background())
 	require.Equal(t, "conflict", WitnessCode(err))
 }
 
@@ -143,7 +144,7 @@ func TestWitnessDetectsRemovedAndRewrittenLocalHistory(t *testing.T) {
 func TestWitnessSnapshotAllowsAppendsAndRejectsReplacement(t *testing.T) {
 	_, sink, dir := witnessFixture(t)
 	writeWitnessEvent(t, sink)
-	snapshot, err := captureWitnessSnapshot(dir)
+	snapshot, err := captureWitnessSnapshot(context.Background(), dir)
 	require.NoError(t, err)
 	checkpoints := map[int64]string{1: sink.lastHash}
 	writeWitnessEvent(t, sink)
@@ -157,6 +158,37 @@ func TestWitnessSnapshotAllowsAppendsAndRejectsReplacement(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("replacement\n"), 0o600))
 	_, err = snapshot.recover(context.Background(), checkpoints)
 	require.Error(t, err)
+}
+
+func TestWitnessSnapshotDeadlineDoesNotLeaveLockWaiter(t *testing.T) {
+	w, sink, dir := witnessFixture(t)
+	writeWitnessEvent(t, sink)
+	_, err := w.Publish(context.Background(), dir)
+	require.NoError(t, err)
+	locked, release, released := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		released <- filetxn.WithLock(filepath.Join(dir, sharedStateFilename), func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	result, err := w.Verify(ctx, dir)
+	close(release)
+	require.NoError(t, <-released)
+	require.Equal(t, "verification_incomplete", WitnessCode(err))
+	require.False(t, result.Verified)
+	writeWitnessEvent(t, sink)
+	result, err = w.Verify(context.Background(), dir)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.Unwitnessed)
+	ctx, cancelFile := context.WithCancel(context.Background())
+	cancelFile()
+	_, err = w.retrieveFileHistory(ctx)
+	require.Equal(t, "verification_incomplete", WitnessCode(err))
 }
 
 func TestWitnessConcurrentWriters(t *testing.T) {
@@ -229,7 +261,7 @@ func TestWitnessRetainedHistoryRejectsForgedHigherHead(t *testing.T) {
 	require.False(t, result.Verified)
 	// The same attack must fail when an independent HTTPS witness signs the
 	// directly appended higher record and retains its earlier receipt.
-	history, err := w.retrieveFileHistory()
+	history, err := w.retrieveFileHistory(context.Background())
 	require.NoError(t, err)
 	_, public, private := signedTestReceipt(t)
 	for i := range history {
@@ -337,12 +369,12 @@ func BenchmarkWitnessSnapshot(b *testing.B) {
 			b.Run("capture", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					if _, err := captureWitnessSnapshot(dir); err != nil {
+					if _, err := captureWitnessSnapshot(context.Background(), dir); err != nil {
 						b.Fatal(err)
 					}
 				}
 			})
-			snapshot, err := captureWitnessSnapshot(dir)
+			snapshot, err := captureWitnessSnapshot(context.Background(), dir)
 			if err != nil {
 				b.Fatal(err)
 			}

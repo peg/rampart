@@ -110,7 +110,10 @@ func (w *Witness) fileReceipt(name string, count int64) (WitnessReceipt, error) 
 		WitnessID: w.config.WitnessID, Checkpoint: checkpoint}}, nil
 }
 
-func (w *Witness) retrieveFileHistory() ([]WitnessReceipt, error) {
+func (w *Witness) retrieveFileHistory(ctx context.Context) ([]WitnessReceipt, error) {
+	if ctx.Err() != nil {
+		return nil, witnessFailure("verification_incomplete")
+	}
 	if err := validateAuditDirectory(w.config.FileDirectory); err != nil {
 		return nil, witnessFailure("unavailable")
 	}
@@ -128,6 +131,9 @@ func (w *Witness) retrieveFileHistory() ([]WitnessReceipt, error) {
 	}
 	var positions []int64
 	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return nil, witnessFailure("verification_incomplete")
+		}
 		if !strings.HasPrefix(entry.Name(), w.config.ChainID+".") {
 			continue
 		}
@@ -147,6 +153,9 @@ func (w *Witness) retrieveFileHistory() ([]WitnessReceipt, error) {
 	sort.Slice(positions, func(i, j int) bool { return positions[i] < positions[j] })
 	receipts := make([]WitnessReceipt, 0, len(positions))
 	for _, count := range positions {
+		if ctx.Err() != nil {
+			return nil, witnessFailure("verification_incomplete")
+		}
 		receipt, err := w.fileReceipt(w.checkpointFilename(count), count)
 		if err != nil {
 			return nil, err

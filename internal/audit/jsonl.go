@@ -16,6 +16,7 @@ package audit
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -480,6 +481,16 @@ func (s *JSONLSink) filePath() string {
 }
 
 func (s *JSONLSink) withDirectoryLock(fn func() error) error {
+	return s.lockDirectory(filetxn.WithLock, fn)
+}
+
+func (s *JSONLSink) withDirectoryLockContext(ctx context.Context, fn func() error) error {
+	return s.lockDirectory(func(path string, fn func() error) error {
+		return filetxn.WithLockContext(ctx, path, fn)
+	}, fn)
+}
+
+func (s *JSONLSink) lockDirectory(lock func(string, func() error) error, fn func() error) error {
 	if err := validateAuditDirectory(s.dir); err != nil {
 		return err
 	}
@@ -488,7 +499,7 @@ func (s *JSONLSink) withDirectoryLock(fn func() error) error {
 	if _, _, err := inspectAuditRegularPath(lockPath); err != nil {
 		return fmt.Errorf("audit: unsafe directory lock: %w", err)
 	}
-	return filetxn.WithLock(statePath, func() error {
+	return lock(statePath, func() error {
 		if _, _, err := inspectAuditRegularPath(lockPath); err != nil {
 			return fmt.Errorf("audit: unsafe directory lock: %w", err)
 		}
