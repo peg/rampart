@@ -9,6 +9,7 @@ package securefile
 
 import (
 	"fmt"
+	"os"
 
 	"golang.org/x/sys/windows"
 )
@@ -60,6 +61,18 @@ func OwnerOnly(path string) error {
 		nil,
 	); err != nil {
 		return fmt.Errorf("set owner-only DACL: %w", err)
+	}
+	return nil
+}
+
+// SingleLink rejects shared file records before a private mutable file is changed.
+func SingleLink(file *os.File) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &info); err != nil {
+		return err
+	}
+	if info.NumberOfLinks != 1 {
+		return fmt.Errorf("private file must have exactly one hard link")
 	}
 	return nil
 }
