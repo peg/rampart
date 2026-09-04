@@ -218,7 +218,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 						return fmt.Errorf("serve: release background process handle: %w", err)
 					}
 
-					fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=~/.rampart/serve.log)\n", childPID)
+					fmt.Fprintf(cmd.OutOrStdout(), "rampart serve running in background (pid=%d, log=%s)\n", childPID, startupLog.path)
 					printNextStep(cmd.OutOrStdout(), "rampart status")
 					return nil
 				})

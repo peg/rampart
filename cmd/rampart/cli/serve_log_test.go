@@ -8,12 +8,66 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+func TestServeLogRotationWithInheritedOutput(t *testing.T) {
+	const childEnv = "RAMPART_TEST_SERVE_LOG_CHILD"
+	if path := os.Getenv(childEnv); path != "" {
+		// Keep the actual inherited stdout and stderr handles open throughout
+		// rotation, as the background serve child does.
+		fmt.Fprintln(os.Stdout, "inherited stdout")
+		fmt.Fprintln(os.Stderr, "inherited stderr")
+		w, err := openServeLog(path, 128, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 40; i++ {
+			if _, err := fmt.Fprintf(w, "managed record %02d\n", i); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	path := filepath.Join(t.TempDir(), "serve.log")
+	startup, err := openServeLog(path, 128, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer startup.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestServeLogRotationWithInheritedOutput$")
+	child.Env = append(os.Environ(), childEnv+"="+path)
+	child.Stdout, child.Stderr = startup.file, startup.file
+	if err := child.Run(); err != nil {
+		t.Fatalf("child with inherited log handles: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "managed record 39") {
+		t.Fatalf("latest record missing after child rotation: %q (%v)", data, err)
+	}
+	files, err := filepath.Glob(path + "*")
+	if err != nil || len(files) != 4 {
+		t.Fatalf("retained files=%v, error=%v; want active and three backups", files, err)
+	}
+	for _, name := range files {
+		info, err := os.Stat(name)
+		if err != nil || info.Size() > 128 {
+			t.Fatalf("invalid retained log %s: %v (%v)", name, info, err)
+		}
+	}
+}
 
 func TestServeLogRotationAndRedaction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "serve.log")

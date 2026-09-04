@@ -72,13 +72,11 @@ func inspectServeLog(path string) (os.FileInfo, error) {
 
 func (w *serveLog) open() error {
 	before, err := inspectServeLog(w.path)
-	flags := os.O_APPEND | os.O_WRONLY
-	if errors.Is(err, os.ErrNotExist) {
-		flags |= os.O_CREATE | os.O_EXCL
-	} else if err != nil {
+	create := errors.Is(err, os.ErrNotExist)
+	if err != nil && !create {
 		return err
 	}
-	file, err := os.OpenFile(w.path, flags, 0o600)
+	file, err := openServeLogAppend(w.path, create)
 	if err != nil {
 		return fmt.Errorf("serve: open diagnostic log: %w", err)
 	}
