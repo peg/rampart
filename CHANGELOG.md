@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Same-command download and execution checks retain literal destination identity** —
+  Supported downloader and interpreter forms now correlate their represented
+  operands. Unrelated files and quoted examples remain distinct. This does not
+  track files across calls or inspect the effects of arbitrary programs.
 - **Approval review and retry identity remain connected across redaction** —
   Pending approvals expose the complete redacted represented action through
   the API, expanded dashboard, and `rampart pending --details`. Durable state
