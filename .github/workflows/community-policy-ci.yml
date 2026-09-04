@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - 'policies/community/**'
+      - 'policies/production-guard.yaml'
       - 'registry/registry.json'
       - 'registry/embed.go'
       - 'cmd/rampart/cli/policy_registry.go'

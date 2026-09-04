@@ -1,0 +1,97 @@
+# @name: production-guard
+# @description: Opt-in approval for supported infrastructure, migration, and explicit production Kubernetes CLI mutations
+# @author: @rampart-team
+# @tags: production, iac, database, kubernetes
+# @min-rampart: 1.9.0
+#
+# Rampart built-in profile: production-guard
+# Opt-in CLI overlay; requires Rampart 1.9 or later for operand-aware aliases.
+# Intentionally no default_action: the base profile keeps unmatched behavior.
+# IaC/database destinations are opaque, so listed mutations ask in any environment.
+# Kubernetes targets are explicit literal context/namespace names. Customize the
+# exact names below for your deployment; no current-context/config lookup occurs.
+# This is not a general production detector, SQL parser or typed MCP policy.
+# See docs.rampart.sh/guides/production-guard/ for supported forms and limits.
+
+version: "1"
+
+policies:
+  - name: production-infrastructure
+    description: "Review infrastructure and state mutations; target may be hidden in configuration"
+    priority: 20
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "terraform apply"
+            - "terraform destroy"
+            - "terraform import"
+            - "terraform force-unlock"
+            - "terraform state mv"
+            - "terraform state rm"
+            - "terraform state push"
+            - "terraform state replace-provider"
+            - "tofu apply"
+            - "tofu destroy"
+            - "tofu import"
+            - "tofu force-unlock"
+            - "tofu state mv"
+            - "tofu state rm"
+            - "tofu state push"
+            - "tofu state replace-provider"
+            - "pulumi up"
+            - "pulumi destroy"
+            - "pulumi refresh"
+        message: "Infrastructure or state mutation requires approval; verify the target environment"
+
+  - name: production-database
+    description: "Review the listed Prisma and Alembic schema mutations"
+    priority: 20
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "prisma migrate deploy"
+            - "prisma db push"
+            - "alembic upgrade"
+            - "alembic downgrade"
+        message: "Database migration requires approval; verify the configured database and migration"
+
+  - name: production-kubernetes
+    description: "Review listed mutations of explicitly named production contexts or namespaces"
+    priority: 20
+    match:
+      tool: ["exec"]
+    rules:
+      - action: ask
+        when:
+          command_matches:
+            - "kubectl apply --context prod"
+            - "kubectl apply --context production"
+            - "kubectl apply --namespace prod"
+            - "kubectl apply --namespace production"
+            - "kubectl delete --context prod"
+            - "kubectl delete --context production"
+            - "kubectl delete --namespace prod"
+            - "kubectl delete --namespace production"
+            - "kubectl patch --context prod"
+            - "kubectl patch --context production"
+            - "kubectl patch --namespace prod"
+            - "kubectl patch --namespace production"
+            - "kubectl replace --context prod"
+            - "kubectl replace --context production"
+            - "kubectl replace --namespace prod"
+            - "kubectl replace --namespace production"
+            - "kubectl scale --context prod"
+            - "kubectl scale --context production"
+            - "kubectl scale --namespace prod"
+            - "kubectl scale --namespace production"
+            - "kubectl rollout restart --context prod"
+            - "kubectl rollout restart --context production"
+            - "kubectl rollout restart --namespace prod"
+            - "kubectl rollout restart --namespace production"
+        message: "Kubernetes mutation targets an explicitly named production context or namespace; approval required"

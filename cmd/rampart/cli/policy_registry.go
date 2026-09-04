@@ -48,6 +48,7 @@ var builtInProfileDescriptions = map[string]string{
 	"block-prompt-injection": "Blocks prompt injection attempts",
 	"research-agent":         "Tuned for research and browsing workflows",
 	"mcp-server":             "Policy for MCP server tool access",
+	"production-guard":       "Opt-in approval for supported infrastructure, migration, and explicit production Kubernetes CLI mutations",
 }
 
 const policyRegistryCacheFileName = "registry-cache.json"

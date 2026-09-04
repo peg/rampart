@@ -22,6 +22,7 @@ var builtInProfiles = map[string]bool{
 	"mcp-server.yaml":             true,
 	"openclaw.yaml":               true,
 	"guard.yaml":                  true,
+	"production-guard.yaml":       true,
 }
 
 type managedPolicyState struct {

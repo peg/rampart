@@ -127,6 +127,7 @@ nav:
     - Securing Claude Code: guides/securing-claude-code.md
     - Prompt Injection Protection: guides/prompt-injection.md
     - Customizing Policy: guides/customizing-policy.md
+    - Production Guard: guides/production-guard.md
     - Install via an AI Agent: guides/agent-install.md
     - Generate Policy from Behavior: guides/from-audit.md
     - Testing Policies: guides/testing-policies.md
