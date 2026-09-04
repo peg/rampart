@@ -188,9 +188,14 @@ func parseLiteralInvocation(words []literalShellWord) (literalInvocation, bool) 
 		case "2>>", "2>&":
 			// Stderr is not a downloaded response body.
 		default:
-			// Here documents, descriptor indirection and shell grammar need
-			// more than literal operands; do not infer a destination from them.
-			return result, false
+			// A literal N>file truncates file even when N is outside our
+			// stdin/stdout/stderr model. Descriptor routing stays opaque, but
+			// keep collecting later known writes instead of retaining stale
+			// download provenance after an unsupported redirect.
+			if operator := strings.TrimLeft(word.value, "0123456789"); operator == ">" && operator != word.value {
+				result.writes = append(result.writes, words[i].value)
+			}
+			literal = false
 		}
 	}
 	return result, literal
