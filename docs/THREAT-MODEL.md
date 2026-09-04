@@ -77,7 +77,11 @@ Rampart sees and evaluates `python3 script.py` — but cannot inspect what
 
 ### 2. Audit Log Rewrite
 
-The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
+The hash-chained audit trail detects inconsistent event hashes and broken
+links between retained records. It cannot prove that every action was logged.
+A complete rewrite with a new valid chain, or deletion of a valid suffix
+beyond the retained checkpoint, is not detectable from the remaining local
+history alone.
 
 Rampart v1.6 also validates older logs containing chronological chain epochs
 created by legacy service restarts. Recovery verifies every event hash,
@@ -95,11 +99,21 @@ content, so operators must continue to protect audit storage and exports.
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](https://docs.rampart.sh/deployment/user-separation/) so the agent can't access audit files
-- Enable SIEM export (`--syslog` or `--cef`) to send events to an external immutable system
-- Webhook notifications send real-time alerts to Discord/Slack — a separate record
-- External chain anchors every 100 events provide additional integrity checkpoints
+- Configure SIEM export (`--syslog` or `--cef`) and a separately controlled
+  collector to retain received events outside the agent's write authority.
+  Export is best effort; the transport and collector determine delivery and
+  retention guarantees.
+- Webhook notifications can retain selected alerts in a separate system;
+  they are not a complete audit trail.
+- `audit-anchor.json` is a local checkpoint beside the audit files, updated
+  every 100 events by default. Verification checks it against retained events,
+  but an identity that can replace both logs and checkpoint can rewrite them
+  consistently. Append-mode files are not immutable storage.
 
-**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](https://docs.rampart.sh/features/siem-integration/).
+For independently retained evidence, configure collection, access control,
+and retention outside the agent's authority. Rampart's local verifier does
+not retrieve or validate remote SIEM evidence. See the
+[SIEM integration guide](https://docs.rampart.sh/features/siem-integration/).
 
 ### 3. Token Exposure in Wrap Mode
 
