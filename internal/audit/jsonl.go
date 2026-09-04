@@ -34,14 +34,19 @@ import (
 )
 
 type recoveredChainState struct {
-	eventCount     int64
-	lastHash       string
-	lastFile       string
-	lastFileSize   int64
-	lastEventFile  string
-	lastEventStart int64
-	lastEventSize  int64
+	eventCount      int64
+	lastHash        string
+	lastFile        string
+	lastFileSize    int64
+	lastEventFile   string
+	lastEventStart  int64
+	lastEventSize   int64
+	rootCount       int
+	prefixHash      string
+	witnessMismatch bool
 }
+
+type chainFileOpener func(string) (io.ReadCloser, error)
 
 var errChainNeedsLinkRecovery = errors.New("audit chain is not in file order")
 
@@ -54,7 +59,13 @@ func recoverChainStateFromDir(dir string, logger *slog.Logger) (recoveredChainSt
 	if err != nil {
 		return recoveredChainState{}, err
 	}
-	state, err := recoverChainStateInFileOrder(dir, files)
+	return recoverChainState(dir, files, func(name string) (io.ReadCloser, error) {
+		return openAuditRegular(filepath.Join(dir, name), os.O_RDONLY)
+	}, nil, logger)
+}
+
+func recoverChainState(dir string, files []string, open chainFileOpener, checkpoints map[int64]string, logger *slog.Logger) (recoveredChainState, error) {
+	state, err := recoverChainStateInFileOrder(files, open, checkpoints)
 	if !errors.Is(err, errChainNeedsLinkRecovery) {
 		return state, err
 	}
@@ -66,15 +77,14 @@ func recoverChainStateFromDir(dir string, logger *slog.Logger) (recoveredChainSt
 	if logger != nil {
 		logger.Warn("audit: recovering legacy out-of-file-order hash chain")
 	}
-	return recoverChainStateByLinks(dir, files)
+	return recoverChainStateByLinks(files, open, checkpoints)
 }
 
-func recoverChainStateInFileOrder(dir string, files []string) (recoveredChainState, error) {
+func recoverChainStateInFileOrder(files []string, open chainFileOpener, checkpoints map[int64]string) (recoveredChainState, error) {
 	var state recoveredChainState
 	previousFile := ""
 	for _, name := range files {
-		path := filepath.Join(dir, name)
-		file, err := openAuditRegular(path, os.O_RDONLY)
+		file, err := open(name)
 		if err != nil {
 			return recoveredChainState{}, fmt.Errorf("open %s: %w", name, err)
 		}
@@ -150,6 +160,10 @@ func recoverChainStateInFileOrder(dir string, files []string) (recoveredChainSta
 			}
 
 			state.eventCount++
+			if event.PrevHash == "" {
+				state.rootCount++
+			}
+			state.observeWitness(state.eventCount, event.Hash, checkpoints)
 			state.lastHash = event.Hash
 			state.lastEventFile = name
 			state.lastEventStart = recordStart
@@ -164,6 +178,13 @@ func recoverChainStateInFileOrder(dir string, files []string) (recoveredChainSta
 		previousFile = name
 	}
 	return state, nil
+}
+
+func (s *recoveredChainState) observeWitness(count int64, hash string, checkpoints map[int64]string) {
+	if expected, retained := checkpoints[count]; retained {
+		s.prefixHash = hash
+		s.witnessMismatch = s.witnessMismatch || expected != hash
+	}
 }
 
 func managedAuditFiles(dir string) ([]string, error) {
