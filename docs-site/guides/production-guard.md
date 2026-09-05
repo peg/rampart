@@ -107,6 +107,10 @@ The parser does not classify SQL strings, arbitrary programs, chained activity
 across separate tool calls, or every CLI operation. This is a bounded approval
 profile, not a complete barrier around production credentials.
 
+Shared shell matching also conservatively inspects substitution-like text
+inside quoted strings. Literal examples containing `$()` or backticks can
+therefore require approval; use `rampart policy explain` to inspect the match.
+
 Native structured MCP database or infrastructure tools are outside this profile.
 An MCP shell tool already mapped to `exec` can use the CLI rules. Extending this
 to native tools needs exact tool identities and validated typed mutation and

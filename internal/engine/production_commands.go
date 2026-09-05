@@ -157,6 +157,9 @@ func scanCLIOptions(args []string, spec cliOptionSpec) ([]string, map[string]str
 		if key == "-n" && cliListed(spec.values, "--namespace") {
 			key = "--namespace"
 		}
+		if key == "-h" && cliListed(spec.switches, "--help") {
+			key = "--help"
+		}
 		opts[key] = value
 	}
 	return pos, opts, true
