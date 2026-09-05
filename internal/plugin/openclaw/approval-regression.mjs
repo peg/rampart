@@ -25,14 +25,14 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function runScenario({ name, toolResult, toolName = 'exec', params = { command: 'sudo true' }, resolution }) {
+async function runScenario({ name, toolResult, toolName = 'exec', params = { command: 'sudo true' }, resolution, includeAction = true }) {
   const { api, handlers, hookOpts, logs } = createApi();
   const fetchCalls = [];
   const originalFetch = global.fetch;
   global.fetch = async (url, opts = {}) => {
     fetchCalls.push({ url: String(url), opts });
     if (String(url).includes(`/v1/tool/${encodeURIComponent(toolName)}`)) {
-      return { ok: true, json: async () => toolResult };
+      return { ok: true, json: async () => ({ ...toolResult, ...(includeAction ? { action: toolResult.action ?? { version: 1, tool: toolName, params } } : {}) }) };
     }
     if (String(url).includes('/v1/rules/learn')) {
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
@@ -68,7 +68,7 @@ assert(!ask.result?.params?.ask, 'ask-exec: legacy ask param mutation still pres
 assert(ask.result.requireApproval.title.includes('exec approval required'), 'ask-exec: wrong title');
 assert(ask.result.requireApproval.pluginId === 'rampart', 'ask-exec: approval plugin ownership missing');
 assert(
-  JSON.stringify(ask.result.requireApproval.allowedDecisions) === JSON.stringify(['allow-once', 'allow-always', 'deny']),
+  JSON.stringify(ask.result.requireApproval.allowedDecisions) === JSON.stringify(['allow-once', 'deny']),
   'ask-exec: allowed approval decisions drifted',
 );
 assert(ask.result.requireApproval.timeoutReason.includes('denied'), 'ask-exec: explicit timeout reason missing');
@@ -104,17 +104,13 @@ assert(
   'allow-always: raw command leaked into plugin logs',
 );
 const learnCall = allowAlways.fetchCalls.find((call) => call.url.includes('/v1/rules/learn'));
-assert(learnCall, 'allow-always: learn endpoint not called');
+assert(!learnCall, 'unsupported allow-always resolution created a permanent rule');
 for (const scenario of [ask, deny, allowAlways, ...nonPersistentResolutions]) {
   assert(
     scenario.fetchCalls.every((call) => call.opts.redirect === 'error'),
     `${scenario.name}: control request allowed redirects`,
   );
 }
-const learnBody = JSON.parse(learnCall.opts.body);
-assert(learnBody.tool === 'exec', 'allow-always: wrong tool persisted');
-assert(learnBody.args === 'sudo true', 'allow-always: wrong args persisted');
-assert(learnBody.decision === 'allow', 'allow-always: wrong decision persisted');
 
 const markdown = await runScenario({
   name: 'approval-markdown-is-escaped',
@@ -127,16 +123,29 @@ const markdown = await runScenario({
   },
 });
 const markdownDescription = markdown.result.requireApproval.description;
-assert(markdownDescription.includes('``echo `code` **not bold**``'), 'command code span was not safely fenced');
-assert(markdownDescription.includes('**Policy:** ``policy`name``'), 'policy code span was not safely fenced');
-assert(markdownDescription.includes('\\*\\*urgent\\*\\*'), 'risk markdown was not escaped');
+assert(markdownDescription.includes('\\u0060code\\u0060'), 'command backticks were not JSON escaped');
+assert(markdownDescription.includes('**not bold**'), 'command text was silently discarded');
+assert(!markdownDescription.includes('[click]'), 'untrusted policy message entered native Markdown');
+
+const suffix = await runScenario({ name: 'complete-suffix', params: { command: 'echo ' + 'x'.repeat(160) + ' ; echo last-target' }, toolResult: { decision: 'ask', allowed: false } });
+assert(suffix.result?.requireApproval?.description.includes('last-target'), 'meaningful suffix missing from native review');
+const oversized = await runScenario({ name: 'oversized-review', params: { command: 'echo ' + 'x'.repeat(600) }, toolResult: { decision: 'ask', allowed: false }, resolution: 'allow-always' });
+assert(oversized.result?.block && !oversized.result.requireApproval, 'oversized action created an approvable truncated description');
+const oldService = await runScenario({ name: 'missing-review-on-downgrade', includeAction: false, toolResult: { decision: 'ask', allowed: false } });
+assert(oldService.result?.block, 'older service without redacted review did not fail closed');
+for (const original of [null, 'command', []]) {
+  const malformed = await runScenario({ name: 'malformed-original-input', toolResult: { decision: 'ask', allowed: false, action: { version: 1, tool: 'exec', params: {}, input: { rampart_original_input: original } } } });
+  assert(malformed.result?.block && !malformed.result.requireApproval, 'malformed original action became approvable');
+}
+const redacted = await runScenario({ name: 'redacted-review', params: { command: 'echo --token=synthetic-private' }, toolResult: { decision: 'ask', allowed: false, action: { version: 1, tool: 'exec', params: { command: 'echo --token=[REDACTED]' } } } });
+assert(!JSON.stringify(redacted.result).includes('synthetic-private'), 'plugin displayed raw local params instead of server-redacted review');
 
 console.log(JSON.stringify({
   ok: true,
   scenarios: [
     { name: ask.name, result: ask.result },
     { name: deny.name, result: deny.result },
-    { name: allowAlways.name, learnPersisted: true },
+    { name: allowAlways.name, learnPersisted: false },
     ...nonPersistentResolutions.map((scenario) => ({ name: scenario.name, learnPersisted: false })),
   ],
 }, null, 2));

@@ -71,11 +71,11 @@ assert(allowBody.skip_pending_approval === true, 'expected skip_pending_approval
 
 const learnCalls = [];
 const askResult = await runWithFetch({
-  name: 'bash-ask-learns-canonical-exec',
+  name: 'bash-ask-reviews-canonical-exec',
   fetchImpl: async (url, opts = {}) => {
     learnCalls.push({ url: String(url), opts });
     if (String(url).includes('/v1/tool/exec')) {
-      return { ok: true, json: async () => ({ decision: 'ask', allowed: false, policy: 'test-policy', message: 'needs approval' }) };
+      return { ok: true, json: async () => ({ decision: 'ask', allowed: false, policy: 'test-policy', message: 'needs approval', action: { version: 1, tool: 'exec', params: JSON.parse(opts.body).params, input: JSON.parse(opts.body).input } }) };
     }
     if (String(url).includes('/v1/rules/learn')) {
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
@@ -97,10 +97,7 @@ const askResult = await runWithFetch({
 });
 assert(askResult.requireApproval.description.includes('sudo true'), 'approval description should include normalized command');
 const learnCall = learnCalls.find((call) => call.url.includes('/v1/rules/learn'));
-assert(learnCall, 'learn endpoint not called');
-const learnBody = parseBody(learnCall);
-assert(learnBody.tool === 'exec', `learn tool = ${learnBody.tool}, want exec`);
-assert(learnBody.args === 'sudo true', `learn args = ${learnBody.args}, want sudo true`);
+assert(!learnCall, 'native resolution must not create an unscoped permanent rule');
 
 const unreachableResult = await runWithFetch({
   name: 'bash-unreachable-blocks-as-exec',
@@ -117,7 +114,7 @@ console.log(JSON.stringify({
   ok: true,
   scenarios: [
     'bash-allow-maps-to-exec',
-    'bash-ask-learns-canonical-exec',
+    'bash-ask-reviews-canonical-exec',
     'bash-unreachable-blocks-as-exec',
   ],
 }, null, 2));

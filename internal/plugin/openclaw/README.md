@@ -43,14 +43,14 @@ Arguments:
 
 ## What to check
 
-- `ask` returns `requireApproval`
+- `ask` returns `requireApproval` only with a complete server-redacted action fitting the native 512-character description limit
 - `deny` returns `block: true`
-- `allow-always` calls `/v1/rules/learn`
-- `allow` returns nothing or param adjustment only when explicitly requested by Rampart
+- native approvals offer `allow-once` and `deny`; unsupported `allow-always` callbacks never create broader command/path rules
+- `allow` returns without rewriting executable tool parameters
 - there is no legacy `params.ask = "always"` mutation path
 - degraded mode blocks sensitive tools (`exec`, `write`) when serve is unreachable or returns 5xx
 - explicitly configured fail-open tools remain opt-in and test-covered; the deprecated coarse `failOpen: true` switch maps to `read`, `web_fetch`, `web_search`, and `image` for compatibility
-- command-execution aliases such as OpenClaw `bash` map to Rampart `exec` for policy checks, learning, and audit events
+- command-execution aliases such as OpenClaw `bash` map to Rampart `exec` for policy checks, full action review, and audit events
 - provider-surface replay covers canonical `exec`, nested `input.command`, command aliases, file tools, hosted approval, auth-error fail-closed behavior, audit normalization, and degraded sensitive-tool blocking
 
 This is a deterministic harness for the highest-leverage plugin regression: approval-path behavior without depending on model tool selection.

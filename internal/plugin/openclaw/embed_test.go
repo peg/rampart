@@ -15,7 +15,8 @@ func TestManifestDeclaresStartupActivation(t *testing.T) {
 		t.Fatalf("read manifest: %v", err)
 	}
 	var manifest struct {
-		Version    string `json:"version"`
+		Version    string   `json:"version"`
+		Hooks      []string `json:"hooks"`
 		Activation struct {
 			OnStartup      *bool    `json:"onStartup"`
 			OnCapabilities []string `json:"onCapabilities"`
@@ -29,6 +30,9 @@ func TestManifestDeclaresStartupActivation(t *testing.T) {
 	}
 	if !contains(manifest.Activation.OnCapabilities, "hook") {
 		t.Fatalf("manifest must declare activation.onCapabilities includes hook for control-plane activation planning")
+	}
+	if !contains(manifest.Hooks, "before_tool_call") {
+		t.Fatalf("manifest must declare before_tool_call in hooks for capability consent and static inspection")
 	}
 	if got, want := manifest.Version, Version(); got != want {
 		t.Fatalf("manifest version = %q, want package version %q", got, want)

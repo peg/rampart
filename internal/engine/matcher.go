@@ -927,17 +927,33 @@ func unwrapRestrictiveExecutor(tokens []string) []string {
 }
 
 func visitCanonicalCommandAliases(command string, visit func(string) bool) bool {
-	if !mayNeedCanonicalCommandAliases(command) {
+	canonical := mayNeedCanonicalCommandAliases(command)
+	download := strings.ContainsAny(command, ";&|\n") &&
+		(containsFold(command, "curl") || containsFold(command, "wget") || strings.ContainsAny(command, "'\"\\"))
+	if !canonical && !download {
 		return false
 	}
 	emitted, overflow := 0, false
-	emit := func(operand string) bool {
+	emitAlias := func(alias string) bool {
 		if emitted == maxCanonicalCommandAliases {
 			overflow = true
 			return false
 		}
 		emitted++
-		return visit("rm -rf " + cleanRestrictivePOSIXPath(operand))
+		return visit(alias)
+	}
+	stopped := false
+	if download {
+		visitDownloadExecutionAliases(command, func(alias string) bool {
+			stopped = !emitAlias(alias)
+			return !stopped
+		})
+	}
+	if stopped || !canonical {
+		return overflow
+	}
+	emit := func(operand string) bool {
+		return emitAlias("rm -rf " + cleanRestrictivePOSIXPath(operand))
 	}
 	visitRM := func(tokens, targets []string) bool {
 		for _, operand := range restrictiveRMOperands(tokens) {

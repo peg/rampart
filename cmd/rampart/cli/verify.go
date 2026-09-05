@@ -1167,13 +1167,24 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 }
 
 func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error {
-	askValue, err := readOpenClawConfigJSON(ctx, openclawBin, "tools.exec.ask")
+	_, configPath, err := resolveOpenClawStateDir(openclawBin)
 	if err != nil {
-		return fmt.Errorf("read tools.exec.ask: %w", err)
+		return fmt.Errorf("resolve active OpenClaw config: %w", err)
 	}
-	ask, ok := askValue.(string)
-	if !ok || strings.TrimSpace(ask) != "off" {
-		return fmt.Errorf("tools.exec.ask is %v, want off", askValue)
+	localExec, err := readVerifiedOpenClawExecConfigAt(configPath)
+	if err != nil {
+		return err
+	}
+	hostExec, err := readOpenClawConfigJSON(ctx, openclawBin, "tools.exec")
+	if err != nil {
+		return fmt.Errorf("read active tools.exec: %w", err)
+	}
+	hostExecMap, err := verifyOpenClawExecConfigValue(hostExec)
+	if err != nil {
+		return fmt.Errorf("active OpenClaw exec configuration: %w", err)
+	}
+	if openClawExecPolicyIdentity(localExec) != openClawExecPolicyIdentity(hostExecMap) {
+		return fmt.Errorf("active tools.exec policy differs from the resolved OpenClaw config file")
 	}
 
 	configValue, err := readOpenClawConfigJSON(ctx, openclawBin, "plugins.entries.rampart.config")
@@ -1202,6 +1213,67 @@ func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error 
 		return fmt.Errorf("plugins.entries.rampart.config.approvalTimeoutMs is not %d", ochardening.DesiredApprovalTimeoutMs)
 	}
 	return nil
+}
+
+func readVerifiedOpenClawExecConfigAt(configPath string) (map[string]any, error) {
+	doc, err := loadOpenClawToolsConfigDocument(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("read OpenClaw exec configuration: %w", err)
+	}
+	if doc.tools == nil {
+		return nil, fmt.Errorf("tools.exec is not configured")
+	}
+	execValue, present := doc.tools["exec"]
+	if !present {
+		return nil, fmt.Errorf("tools.exec is not configured")
+	}
+	return verifyOpenClawExecConfigValue(execValue)
+}
+
+func verifyOpenClawExecConfigValue(execValue any) (map[string]any, error) {
+	execCfg, ok := execValue.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("tools.exec must be a JSON object")
+	}
+	if modeValue, present := execCfg["mode"]; present {
+		if _, ok := validOpenClawExecMode(modeValue); !ok {
+			return nil, fmt.Errorf("tools.exec.mode is invalid")
+		}
+		if _, present := execCfg["security"]; present {
+			return nil, fmt.Errorf("tools.exec.security conflicts with canonical tools.exec.mode")
+		}
+		if _, present := execCfg["ask"]; present {
+			return nil, fmt.Errorf("tools.exec.ask conflicts with canonical tools.exec.mode")
+		}
+		return execCfg, nil
+	}
+	askValue, present := execCfg["ask"]
+	if !present {
+		return nil, fmt.Errorf("tools.exec.mode is absent and tools.exec.ask is not configured")
+	}
+	ask, ok := askValue.(string)
+	if !ok || ask != "off" {
+		return nil, fmt.Errorf("tools.exec.ask is %v, want off", askValue)
+	}
+	if securityValue, present := execCfg["security"]; present {
+		security, ok := securityValue.(string)
+		if !ok || (security != "deny" && security != "allowlist" && security != "full") {
+			return nil, fmt.Errorf("tools.exec.security is invalid")
+		}
+	}
+	return execCfg, nil
+}
+
+func openClawExecPolicyIdentity(execCfg map[string]any) string {
+	if mode, present := execCfg["mode"].(string); present {
+		return "mode:" + mode
+	}
+	security := "full"
+	if configured, present := execCfg["security"].(string); present {
+		security = configured
+	}
+	ask, _ := execCfg["ask"].(string)
+	return "legacy:" + security + ":" + ask
 }
 
 func readOpenClawConfigJSON(ctx context.Context, openclawBin, key string) (any, error) {

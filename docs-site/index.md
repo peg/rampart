@@ -212,10 +212,11 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.8.0 adds a fail-closed native hook for local Cursor Agent and Cmd+K
-tool calls, makes future run approval explicit and credential-bound, and keeps
-native approvals compatible with Hermes v0.20.2. Cursor Cloud Agent remains
-outside the local hook boundary. See the [release
+Rampart v1.8.1 repairs current OpenClaw installation and execution-policy
+compatibility, connects complete redacted approval review with immutable retry
+identity, and strengthens supported same-command download/execution checks.
+Read the [upgrade guidance](getting-started/upgrade.md) for approval-state backups
+and native OpenClaw review limits. See the [release
 notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade
 summary or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.
