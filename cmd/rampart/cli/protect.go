@@ -395,8 +395,8 @@ func configureOpenClawGuardMode(openclawBin, serveURL string, w, errW io.Writer)
 	if err != nil {
 		return fmt.Errorf("resolve active OpenClaw state: %w", err)
 	}
-	if err := setOpenClawExecAskAt(stateDir, configPath, "off"); err != nil {
-		return fmt.Errorf("repair tools.exec.ask ownership: %w", err)
+	if err := ensureOpenClawExecApprovalConfig(openclawBin, stateDir, configPath); err != nil {
+		return fmt.Errorf("repair OpenClaw exec approval configuration: %w", err)
 	}
 	if err := ensureOpenClawApprovalHardening(w, errW); err != nil {
 		return fmt.Errorf("repair OpenClaw approval timeout: %w", err)

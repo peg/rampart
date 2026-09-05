@@ -1,27 +1,27 @@
 ---
 title: OpenClaw Approval Flow
-description: How Rampart and OpenClaw share policy decisions, native approvals, and durable allow-always persistence.
+description: How Rampart and OpenClaw share policy decisions, native approvals, and complete action review.
 ---
 
 # OpenClaw Approval Flow
 
 ## Recommended path
 
-For current OpenClaw versions, the **native Rampart plugin** is the primary integration path. OpenClaw owns the operator-facing approval UI, while Rampart owns policy evaluation, audit logging, and durable allow-always writeback.
+For current OpenClaw versions, the **native Rampart plugin** is the primary integration path. OpenClaw owns the operator-facing approval UI, while Rampart owns policy evaluation, audit logging, and complete redacted action review.
 
 That means:
 
 - OpenClaw owns the visible approval UI and pending approval state
 - Rampart evaluates tool calls and returns `allow`, `deny`, or `ask`
 - OpenClaw shows native approvals when human review is needed
-- Rampart persists `allow-always` behavior without creating a second approval queue
+- Native plugin approvals authorize one call; explicit policies define persistent allowances
 
 ## Approval ownership model
 
 For OpenClaw-hosted workflows, there should be exactly **one** human-facing approval object per action.
 
 - OpenClaw owns the pending approval and native channel UX
-- Rampart owns policy evaluation, audit, and persistence
+- Rampart owns policy evaluation, audit, and the redacted review payload
 - Rampart must not create a second pending approval record for the same OpenClaw-hosted action
 
 ## Primary integration path
@@ -50,7 +50,7 @@ For each tool call:
    - `deny`
    - `ask`
 4. If `ask`, OpenClaw owns the native approval flow
-5. If the user chooses **Allow Always**, Rampart persists a rule so future matching calls are auto-allowed
+5. The user can allow once or deny. A request exceeding the native full-review limit is blocked before an approval is created. See [complete action approval](../integrations/openclaw.md#complete-action-approval) for size and host-composition limits.
 
 ## Native exec approvals
 

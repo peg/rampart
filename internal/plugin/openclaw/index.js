@@ -36,81 +36,47 @@ async function loadToken() {
 
 // ─── Params extraction ────────────────────────────────────────────────────────
 
-/**
- * Extract a human-readable "subject" from tool params for approval descriptions.
- * Different tools use different field names for their primary target.
- */
-function extractSubject(toolName, params) {
-  switch (toolName) {
-    case "exec":
-      return (
-        params.command ??
-        params.input?.command ??
-        params.script ??
-        "<unknown command>"
-      );
+// OpenClaw's native before_tool_call approval description has a 512-character
+// wire limit and does not forward reviewer detail. Never offer approval on a
+// shortened action; escaping can increase size, so bound the final text.
+const MAX_NATIVE_APPROVAL_DESCRIPTION = 512;
 
-    case "read":
-    case "write":
-    case "edit":
-      return (
-        params.path ??
-        params.file ??
-        params.filePath ??
-        params.file_path ??
-        "<unknown path>"
-      );
-
-    case "web_fetch":
-      return params.url ?? "<unknown url>";
-
-    case "web_search":
-      return params.query ?? "<unknown query>";
-
-    case "message":
-      return [
-        params.action ?? "message",
-        params.target ?? params.to ?? params.channelId ?? params.chatId,
-        params.message,
-      ].filter(Boolean).join(" → ") || "<unknown message action>";
-
-    case "browser":
-      return params.url ?? params.action ?? "<unknown browser action>";
-
-    case "image":
-      return params.image ?? params.images?.[0] ?? "<unknown image>";
-
-    default:
-      // Try common field names as fallback
-      return (
-        params.command ??
-        params.url ??
-        params.path ??
-        params.file ??
-        params.query ??
-        params.message ??
-        JSON.stringify(params).slice(0, 120)
-      );
+function nativeApprovalDescription(action) {
+  if (!action || action.version !== 1 || typeof action.tool !== "string" ||
+      !action.params || typeof action.params !== "object" || Array.isArray(action.params) ||
+      (action.input !== undefined && (!action.input || typeof action.input !== "object" || Array.isArray(action.input)))) {
+    return null;
   }
-}
-
-function truncateForApprovalDescription(text, max = 220) {
-  if (typeof text !== "string") return "<unknown>";
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return "<unknown>";
-  if (normalized.length <= max) return normalized;
-  return `${normalized.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
-}
-
-function markdownInlineCode(text) {
-  const value = truncateForApprovalDescription(text);
-  const longestRun = Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length));
-  const fence = "`".repeat(longestRun + 1);
-  return `${fence}${value}${fence}`;
-}
-
-function escapeMarkdownText(text) {
-  return truncateForApprovalDescription(text).replace(/([\\`*_[\]{}()<>#+\-.!|])/g, "\\$1");
+  if (action.input && Object.hasOwn(action.input, "rampart_original_input")) {
+    const original = action.input.rampart_original_input;
+    if (!original || typeof original !== "object" || Array.isArray(original)) return null;
+  }
+  // Render original host arguments once. Policy-derived fields are not
+  // executable arguments; retain their tool class, all parsed targets and
+  // host-derived requester/context separately instead of duplicating input.
+  const originalTool = action.params.rampart_original_tool ?? action.tool;
+  const context = Object.fromEntries(
+    ["agent", "agent_depth", "session", "run_id", "tool_call_id", "workdir"]
+      .filter((key) => action[key] !== undefined && action[key] !== "")
+      .map((key) => [key, action[key]]),
+  );
+  const presented = {
+    tool: originalTool,
+    ...(originalTool !== action.tool ? { policy_class: action.tool } : {}),
+    params: action.input?.rampart_original_input ?? action.input ?? action.params,
+    ...(Object.keys(context).length ? { context } : {}),
+    ...(action.params.rampart_targets ? { targets: action.params.rampart_targets } : {}),
+    ...(action.params.rampart_requester ? { requester: action.params.rampart_requester } : {}),
+    ...(action.params.rampart_origin_channel ? { origin_channel: action.params.rampart_origin_channel } : {}),
+  };
+  const text = JSON.stringify(presented)
+    .replace(/[\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g,
+      (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .replace(/`/g, "\\u0060")
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e");
+  const description = `Complete action (secrets redacted):\n\`\`\`json\n${text}\n\`\`\``;
+  return description.length <= MAX_NATIVE_APPROVAL_DESCRIPTION ? description : null;
 }
 
 function safeLogLabel(value, max = 80) {
@@ -451,6 +417,12 @@ function addBrowserURLFacts(policyParams) {
 // never returned to OpenClaw as executable tool parameters.
 function policyParamsForTool(toolName, params, ctx, originalToolName = toolName) {
   const policyParams = { ...(params ?? {}) };
+  // These facts belong to the adapter. A missing host value must not leave an
+  // agent-supplied label looking like an authoritative requester or target.
+  for (const field of ["rampart_integration", "rampart_original_tool", "rampart_consequence",
+    "rampart_origin_channel", "rampart_requester", "rampart_targets", "rampart_original_input"]) {
+    delete policyParams[field];
+  }
 
   // Scope the managed Guard layer to calls that actually crossed the native
   // OpenClaw integration. Other Rampart integrations sharing the policy
@@ -600,7 +572,7 @@ function isConsistentPolicyDecision(result) {
  *   { allowed: false, decision: "ask", message }     → require OpenClaw approval
  *   null                                              → degraded handling in hook (fail-open only for configured tools)
  */
-async function checkWithRampart(toolName, params, ctx, config, { verification = false } = {}) {
+async function checkWithRampart(toolName, params, ctx, config, { verification = false, input, toolCallId, runId } = {}) {
   const serveUrl = config?.serveUrl ?? "http://localhost:9090";
   const configuredTimeoutMs = Number(config?.timeoutMs ?? 3000);
   const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
@@ -625,7 +597,9 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
     const body = JSON.stringify({
       agent:   rampartAgentIdentity(ctx),
       session: ctx.sessionKey ?? ctx.sessionId ?? ctx.session ?? "",
-      run_id:  ctx.runId     ?? ctx.run_id   ?? "",
+      run_id:  runId ?? ctx.runId ?? ctx.run_id ?? "",
+      tool_call_id: toolCallId ?? ctx.toolCallId ?? "",
+      input,
       params,
       openclaw_hosted: true,
       skip_pending_approval: true,
@@ -734,9 +708,6 @@ export function register(api) {
   const serveURLDisplay = isTrustedServeUrl(serveUrl) ? serveUrl : "<untrusted>";
   api.logger.info(`[rampart] v${version} loaded (serve: ${serveURLDisplay})`);
 
-  // Severity emoji for approval embeds
-  const severityEmoji = { info: "ℹ️", warning: "⚠️", critical: "🚨" };
-
   // ── before_tool_call ────────────────────────────────────────────────────────
   const evaluateToolCall = async (event, ctx, options = {}) => {
     const normalized = normalizeToolCall(event?.toolName, event?.params, event);
@@ -756,18 +727,28 @@ export function register(api) {
     }
 
     const basePolicyParams = policyParamsForTool(toolName, params, ctx, originalToolName);
+    basePolicyParams.rampart_original_tool = originalToolName;
+    if (ctx?.requester) basePolicyParams.rampart_requester = ctx.requester;
+    if (policyPaths.length > 1) basePolicyParams.rampart_targets = policyPaths;
     const policyVariants = policyPaths.length > 0
       ? policyPaths.map((path) => ({ ...basePolicyParams, path }))
       : [basePolicyParams];
     let result;
-    let policyParams = basePolicyParams;
     let selectedRank = -1;
     for (const candidateParams of policyVariants) {
-      const candidate = await checkWithRampart(toolName, candidateParams, ctx, pluginConfig, options);
+      const candidate = await checkWithRampart(toolName, candidateParams, ctx, pluginConfig, {
+        // tool_param_matches evaluates Input. Keep the normalized policy
+        // facts authoritative there while retaining every original argument
+        // for review and identity. Assign the reserved field after the spread
+        // so an argument cannot replace the original action being reviewed.
+        ...options,
+        input: { ...candidateParams, rampart_original_input: event.params },
+        toolCallId: event.toolCallId,
+        runId: event.runId,
+      });
       const rank = policyDecisionRank(candidate);
       if (rank > selectedRank) {
         result = candidate;
-        policyParams = candidateParams;
         selectedRank = rank;
       }
       if (rank >= 99 || candidate?.decision === "deny") break;
@@ -854,29 +835,29 @@ export function register(api) {
       }
 
       case "ask": {
-        // Batched edits evaluate one path at a time. Describe and persist the
-        // path whose restrictive decision actually won, not merely the first
-        // target in the patch.
-        const subject = extractSubject(toolName, policyParams);
-        const subjectPreview = truncateForApprovalDescription(subject, 160);
+        // The service returns every represented argument and target, redacted
+        // before the native approval transport boundary.
+        const description = nativeApprovalDescription(result.action);
+        if (!description) {
+          return {
+            block: true,
+            blockReason: "rampart: complete action review unavailable or exceeds OpenClaw's native approval limit — update Rampart, split into smaller reviewable actions, or configure an explicit operator-reviewed policy",
+          };
+        }
+
         const severity = APPROVAL_SEVERITIES.has(result.severity)
           ? result.severity
           : "warning";
-        const emoji = severityEmoji[severity];
 
         api.logger.info(`[rampart] returning requireApproval for ${displayToolName}`);
         return {
           requireApproval: {
             pluginId: id,
             title: `🛡️ Rampart — ${displayToolName} approval required`,
-            description: [
-              `**Command:** ${markdownInlineCode(subjectPreview)}`,
-              result.policy  ? `**Policy:** ${markdownInlineCode(truncateForApprovalDescription(result.policy, 64))}` : null,
-              result.message ? `**Risk:** ${escapeMarkdownText(truncateForApprovalDescription(result.message, 96))}` : `**Risk:** ${emoji} Requires approval`,
-            ].filter(Boolean).join("\n"),
+            description,
             severity,
             timeoutMs: pluginConfig.approvalTimeoutMs ?? 120_000,
-            allowedDecisions: ["allow-once", "allow-always", "deny"],
+            allowedDecisions: ["allow-once", "deny"],
             timeoutReason: "rampart: approval timed out — tool call denied",
             // Retained for the stable OpenClaw train while 2026.7.2 migrates
             // to unconditional deny-on-timeout behavior.
@@ -884,51 +865,14 @@ export function register(api) {
             onResolution: async (resolution) => {
               api.logger.info(`[rampart] plugin approval resolved: ${displayToolName} → ${safeLogLabel(resolution)}`);
 
+              // This callback cannot veto or inspect the resumed parameters.
+              // It must never turn an unsupported/stale allow-always response
+              // into a command/path rule that omits the reviewed context.
               if (resolution === "allow-always") {
-                if (!isTrustedServeUrl(serveUrl)) {
-                  api.logger.warn("[rampart] refusing allow-always persistence to an untrusted serveUrl");
-                  return;
-                }
-                const learnPayload = {
-                  tool: toolName,
-                  args: subject,
-                  decision: "allow",
-                  source: "openclaw-approval",
-                };
-                api.logger.info(`[rampart] attempting always-allow persistence for ${displayToolName}`);
-
-                // Write a persistent allow rule via /v1/rules/learn.
-                // This works regardless of whether an approval_id exists.
-                try {
-                  const token = await loadToken();
-                  const learnResp = await fetch(`${serveUrl}/v1/rules/learn`, {
-                    method: "POST",
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                    },
-                    body: JSON.stringify(learnPayload),
-                    redirect: "error",
-                    signal: AbortSignal.timeout(5000),
-                  });
-                  await readControlResponseText(learnResp);
-                  if (learnResp.ok) {
-                    api.logger.info(`[rampart] always-allow rule written for ${displayToolName}`);
-                  } else {
-                    api.logger.warn(`[rampart] always-allow rule write failed: HTTP ${learnResp.status}`);
-                  }
-                } catch (err) {
-                  api.logger.warn(`[rampart] always-allow write error (${err?.name ?? "Error"})`);
-                }
-              } else {
-                api.logger.info(`[rampart] no durable allow write for resolution=${resolution}`);
+                api.logger.warn("[rampart] ignoring unsupported persistent native approval resolution; use an explicit policy");
               }
-              // For native OpenClaw plugin approvals, OpenClaw itself is the pending approval system.
-              // Rampart should not create or resolve a second hidden approval record here, or Discord
-              // ends up watching a different queue than the one the user is interacting with.
-              //
-              // Allow-once and deny are fully handled by OpenClaw's approval outcome for this tool call.
-              // Persisting an allow rule is the only side effect we need to send back to Rampart.
+              // OpenClaw owns the pending object and exact one-call resume.
+
             },
           },
         };

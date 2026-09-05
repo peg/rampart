@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -157,4 +161,43 @@ func TestResolveAddr(t *testing.T) {
 			t.Fatal("expected config parse error")
 		}
 	})
+}
+
+func TestPendingDetailsShowsCompleteSafelyRenderedAction(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	previousClient := rampartHTTPClient
+	t.Cleanup(func() { rampartHTTPClient = previousClient })
+	rampartHTTPClient = newRampartHTTPClient(0)
+	command := "echo " + strings.Repeat("x", 180) + " ; echo suffix\u001b[2J\u202e"
+	payload, err := json.Marshal(map[string]any{"approvals": []any{map[string]any{
+		"id": "short", "command": command, "tool": "exec", "message": "review\nforged-row",
+		"action": map[string]any{"version": 1, "tool": "exec", "params": map[string]any{"command": command, "targets": []string{"first", "last"}}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rampartHTTPClient.Transport = redirectTestTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(payload)), Header: make(http.Header)}, nil
+	})
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&output)
+	if err := listPendingDetails(cmd, "http://127.0.0.1:9090", "synthetic-token", true); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "suffix") || !strings.Contains(text, "last") {
+		t.Fatalf("complete detail missing: %s", text)
+	}
+	if strings.ContainsAny(text, "\u001b\u202e") {
+		t.Fatalf("unsafe terminal control in detail: %q", text)
+	}
+	output.Reset()
+	if err := listPending(cmd, "http://127.0.0.1:9090", "synthetic-token"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "review\nforged-row") || !strings.Contains(output.String(), "pending --details") {
+		t.Fatalf("unsafe or inaccessible compact view: %q", output.String())
+	}
 }

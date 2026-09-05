@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/notify"
 	"github.com/peg/rampart/internal/policy"
 )
 
@@ -74,6 +75,11 @@ func (s *Server) handleLearnRule(w http.ResponseWriter, r *http.Request) {
 		// These tools have exact command/path conditions in the policy schema.
 	default:
 		writeError(w, http.StatusBadRequest, "automatic allow persistence supports exec, read, write, and edit only; use an explicit policy for other tools")
+		return
+	}
+
+	if notify.SanitizeCommand(req.Args) != req.Args {
+		writeError(w, http.StatusBadRequest, "credential-bearing actions cannot create permanent literal rules; use an explicit policy")
 		return
 	}
 

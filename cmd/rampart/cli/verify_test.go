@@ -266,14 +266,14 @@ func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
 	if err := ocplugin.Extract(pluginDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"mode":"full"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "openclaw")
 	shim := `#!/bin/sh
 if [ "$1" = "config" ] && [ "$2" = "get" ]; then
   case "$3" in
-    tools.exec.ask) printf '%s\n' '"off"' ;;
+    tools.exec) printf '%s\n' '{"mode":"full"}' ;;
     plugins.entries.rampart.config) printf '%s\n' '{"failOpen":false,"failOpenTools":null,"serveUrl":"http://localhost:9090","approvalTimeoutMs":120000}' ;;
     *) exit 1 ;;
   esac
@@ -324,9 +324,15 @@ func TestVerifyOpenClawManagedConfigRejectsDrift(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+			config := []byte(`{"tools":{"exec":{"ask":` + testCase.askValue + `}}}`)
+			if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), config, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			bin := filepath.Join(t.TempDir(), "openclaw")
 			shim := "#!/bin/sh\ncase \"$3\" in\n" +
-				"  tools.exec.ask) printf '%s\\n' '" + testCase.askValue + "' ;;\n" +
+				"  tools.exec) printf '%s\\n' '{\"ask\":" + testCase.askValue + "}' ;;\n" +
 				"  plugins.entries.rampart.config) printf '%s\\n' '" + testCase.pluginConfig + "' ;;\n" +
 				"  *) exit 1 ;;\nesac\n"
 			if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
@@ -337,6 +343,75 @@ func TestVerifyOpenClawManagedConfigRejectsDrift(t *testing.T) {
 				t.Fatalf("error = %v, want %q drift", err, testCase.want)
 			}
 		})
+	}
+}
+
+func TestVerifyOpenClawManagedConfigAcceptsCanonicalExecModes(t *testing.T) {
+	skipOnWindows(t, "test uses POSIX OpenClaw shims")
+	for _, mode := range []string{"deny", "allowlist", "ask", "auto", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			stateDir := t.TempDir()
+			t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+			if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"tools":{"exec":{"mode":"`+mode+`","timeout":30}}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(t.TempDir(), "openclaw")
+			shim := "#!/bin/sh\ncase \"$3\" in\n" +
+				"  tools.exec) printf '%s\\n' '{\"mode\":\"" + mode + "\",\"timeout\":30}' ;;\n" +
+				"  plugins.entries.rampart.config) printf '%s\\n' '{\"failOpen\":false,\"failOpenTools\":null,\"serveUrl\":\"http://localhost:9090\",\"approvalTimeoutMs\":120000}' ;;\n" +
+				"  *) exit 1 ;;\nesac\n"
+			if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyOpenClawManagedConfig(context.Background(), bin); err != nil {
+				t.Fatalf("verify canonical mode: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyOpenClawManagedConfigRejectsInvalidCanonicalExecMode(t *testing.T) {
+	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
+	stateDir := t.TempDir()
+	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"tools":{"exec":{"mode":"future-unknown"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	shim := `#!/bin/sh
+case "$3" in
+  plugins.entries.rampart.config) printf '%s\n' '{"failOpen":false,"failOpenTools":null,"serveUrl":"http://localhost:9090","approvalTimeoutMs":120000}' ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyOpenClawManagedConfig(context.Background(), bin); err == nil || !strings.Contains(err.Error(), "tools.exec.mode") {
+		t.Fatalf("error = %v, want canonical mode drift", err)
+	}
+}
+
+func TestVerifyOpenClawManagedConfigRejectsActiveConfigMismatch(t *testing.T) {
+	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
+	stateDir := t.TempDir()
+	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"tools":{"exec":{"mode":"auto"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	shim := `#!/bin/sh
+case "$3" in
+  tools.exec) printf '%s\n' '{"mode":"full"}' ;;
+  plugins.entries.rampart.config) printf '%s\n' '{"failOpen":false,"failOpenTools":null,"serveUrl":"http://localhost:9090","approvalTimeoutMs":120000}' ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyOpenClawManagedConfig(context.Background(), bin); err == nil || !strings.Contains(err.Error(), "differs") {
+		t.Fatalf("error = %v, want active-config mismatch", err)
 	}
 }
 

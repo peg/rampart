@@ -125,14 +125,28 @@ resolved_npm_version="$(python3 - "${artifact_dir}/npm-package.json" <<'PY'
 import json, re, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     metadata = json.load(handle)
+if isinstance(metadata, list):
+    if len(metadata) != 1 or not isinstance(metadata[0], dict):
+        raise SystemExit(f"ambiguous resolved OpenClaw npm metadata: {metadata!r}")
+    metadata = metadata[0]
 version = metadata.get("version") if isinstance(metadata, dict) else None
 if not isinstance(version, str) or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._+-]*", version):
     raise SystemExit(f"invalid resolved OpenClaw npm version: {version!r}")
 print(version)
 PY
 )"
+npm_major="$(docker exec --user root "$container" npm --version | cut -d. -f1)"
+npm_lifecycle_args=()
+if [[ "$npm_major" =~ ^[0-9]+$ ]] && (( npm_major >= 11 )); then
+  # npm 11+ blocks unreviewed global dependency lifecycle scripts by default.
+  # Keep this explicit list synchronized with the scripts declared by the
+  # resolved OpenClaw package graph; a newly introduced lifecycle dependency
+  # stays blocked so this gate fails for maintainer review.
+  npm_lifecycle_args+=(--allow-scripts=openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs)
+fi
 docker exec --user root "$container" npm install --global --force --no-audit --no-fund \
-  "openclaw@${resolved_npm_version}" 2>&1 | tee "${artifact_dir}/npm-install.log"
+  "${npm_lifecycle_args[@]}" "openclaw@${resolved_npm_version}" \
+  2>&1 | tee "${artifact_dir}/npm-install.log"
 # npm lifecycle code can initialize the configured OpenClaw state while it is
 # running as root. Return every disposable runtime directory to the image's
 # unprivileged user before invoking OpenClaw itself.
@@ -155,9 +169,31 @@ docker exec "$container" openclaw config set gateway.port 19001
 docker exec "$container" openclaw config set gateway.auth.mode token
 docker exec "$container" openclaw config set gateway.auth.token rampart-container-fixture-token
 docker exec "$container" openclaw config set agents.defaults.workspace '"/tmp/openclaw-workspace"' --strict-json
+# Current OpenClaw uses mode as the canonical exec policy representation and
+# rejects Rampart's legacy ask field when both are present. Exercise protect
+# against that real upgrade shape instead of relying only on a fresh config.
+docker exec "$container" openclaw config set tools.exec.mode auto
+docker exec "$container" node -e '
+  const fs = require("node:fs");
+  const path = "/tmp/openclaw-state/openclaw.json";
+  const config = JSON.parse(fs.readFileSync(path, "utf8"));
+  config.tools.exec.security = "allowlist";
+  config.tools.exec.ask = "on-miss";
+  fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+'
 
 docker exec "$container" sh -lc 'env -u RAMPART_TOKEN rampart protect openclaw --no-restart --no-verify' \
   2>&1 | tee "${artifact_dir}/protect-first.log"
+
+docker exec "$container" node -e '
+  const fs = require("node:fs");
+  const config = JSON.parse(fs.readFileSync("/tmp/openclaw-state/openclaw.json", "utf8"));
+  const exec = config.tools?.exec;
+  if (exec?.mode !== "auto" || Object.hasOwn(exec, "ask") || Object.hasOwn(exec, "security")) {
+    throw new Error("protect did not preserve mode and remove equivalent retired siblings");
+  }
+'
+docker exec "$container" openclaw config validate
 
 docker exec -d "$container" sh -lc 'openclaw gateway --port 19001 >/tmp/openclaw-gateway.log 2>&1'
 healthy=0
@@ -186,6 +222,27 @@ if summary != {"checks": 12, "passed": 12, "failed": 0, "unverified": 0}:
 if not report.get("safe_canaries"):
     raise SystemExit("verification did not assert safe canaries")
 PY
+
+# Current OpenClaw preserves an operator-authored disabled state across
+# reinstall and requires capability consent when the plugin is enabled again.
+# Prove Doctor repair uses the host-owned enable contract rather than assuming
+# that reinstall silently reactivated the boundary.
+docker exec "$container" openclaw plugins disable rampart
+docker exec "$container" sh -lc 'env -u RAMPART_TOKEN rampart doctor --fix' \
+  2>&1 | tee "${artifact_dir}/doctor-fix-disabled-plugin.log"
+docker exec "$container" node -e '
+  const fs = require("node:fs");
+  const config = JSON.parse(fs.readFileSync("/tmp/openclaw-state/openclaw.json", "utf8"));
+  if (config.plugins?.entries?.rampart?.enabled !== true) {
+    throw new Error("doctor repair did not re-enable the Rampart plugin");
+  }
+'
+
+# Rampart ships the plugin as a reviewed local artifact instead of an OpenClaw
+# registry package. A Rampart upgrade therefore uses forced reinstall; prove
+# that path renegotiates current host consent as well.
+docker exec "$container" rampart protect openclaw --reinstall --no-restart --no-verify \
+  2>&1 | tee "${artifact_dir}/protect-reinstall.log"
 
 # A second protect run proves managed policy replacement, plugin integrity
 # detection, service discovery, and verification are idempotent.
