@@ -18,6 +18,7 @@
   --rampart-line: #d9cfd3;
   --rampart-surface: #f5f0ec;
   --rampart-accent-wash: #a523590c;
+  --rampart-on-accent: #ffffff;
 }
 
 [data-md-color-scheme="slate"] {
@@ -36,6 +37,7 @@
   --rampart-line: #44373e;
   --rampart-surface: #1c1719;
   --rampart-accent-wash: #ff8fbc0b;
+  --rampart-on-accent: #141212;
 }
 
 .md-grid { max-width: 68rem; }
@@ -61,6 +63,9 @@
 .md-typeset .docs-eyebrow { color: var(--md-typeset-a-color); font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-bottom: .4rem; }
 
 .md-typeset a:hover { text-decoration: underline; text-underline-offset: .18em; }
+.md-typeset .md-button--primary,
+.md-typeset .md-button--primary:hover,
+.md-typeset .md-button--primary:focus { color: var(--rampart-on-accent); }
 .md-typeset a:focus-visible,
 .md-nav__link:focus-visible { outline: 2px solid var(--md-accent-fg-color); outline-offset: 3px; }
 
