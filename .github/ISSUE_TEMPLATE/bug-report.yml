@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a non-security bug or a confusing setup step.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the [troubleshooting guide](https://docs.rampart.sh/getting-started/troubleshooting/).
+
+        **This report is public.** Do not attach raw logs, personal configuration, credentials, prompts, sessions or memories. Use harmless synthetic inputs and redact identifying paths.
+
+        **Suspected security bypass, exposed secret or vulnerability?** Do not describe it here. Follow the private reporting route in [SECURITY.md](https://github.com/peg/rampart/blob/main/SECURITY.md).
+  - type: input
+    id: rampart_version
+    attributes:
+      label: Rampart version
+      description: The version number from `rampart version`, or say if installation failed before you could check.
+      placeholder: "1.8.1"
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: Agent or integration and version
+      description: Name the agent, editor or integration involved. Use "CLI only" if none, or "unknown" if you cannot check its version.
+      placeholder: "OpenClaw 2026.x.x, Cline CLI x.y.z, or CLI only"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      description: Include the OS version and CPU architecture if known. Do not include hostnames or usernames.
+      placeholder: "macOS arm64, Ubuntu x86_64, or Windows arm64"
+    validations:
+      required: true
+  - type: dropdown
+    id: step
+    attributes:
+      label: Where did the problem occur?
+      options:
+        - Installation
+        - Upgrade
+        - Protection or verification
+        - Policy decision
+        - Approval
+        - Audit or service
+        - Documentation
+        - Other non-security bug
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Describe the task and the step that failed. A short redacted error is useful; full command output is not required.
+      placeholder: |
+        I was trying to:
+        I expected:
+        What happened instead:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal redacted reproduction (optional)
+      description: List the smallest harmless steps or synthetic example that shows the problem. If you cannot reproduce it safely, explain that instead. Do not share bypass details or private data.
+      placeholder: |
+        1. Install using ...
+        2. Run the setup step ...
+        3. Observe ...
