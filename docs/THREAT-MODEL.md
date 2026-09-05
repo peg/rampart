@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-08-17 | Applies to: v1.8.0+
+> Last reviewed: 2026-09-04 | Applies to: v1.8.1+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -144,12 +144,20 @@ An agent could encode commands to bypass pattern matching:
 
 ### 5. OpenClaw Integration Boundaries
 
-OpenClaw has a native plugin path, which is the preferred integration. Rampart keeps global `tools.exec.ask` off by default, evaluates tool calls first, and returns OpenClaw's native `requireApproval` result only for calls that match a Rampart `ask` rule. That gives you native OpenClaw approval cards without prompting on every routine action.
+OpenClaw has a native plugin path, which is the preferred integration. On older supported hosts Rampart keeps global `tools.exec.ask` off; on current hosts it preserves the canonical `tools.exec.mode` policy, removes only equivalent retired `ask`/`security` siblings, and refuses conflicting mixed policies. Rampart evaluates tool calls first and returns OpenClaw's native `requireApproval` result for calls that match a Rampart `ask` rule. A stricter operator-selected OpenClaw exec mode can add another approval or block after Rampart, but cannot grant past the Rampart hook.
 
 **What this means in practice:**
-- **Allow** rules pass through normally, with no approval prompt
+- **Allow** rules pass through without a Rampart-originated approval prompt; a stricter OpenClaw exec mode may still gate them
 - **Deny** rules short-circuit before native approval
-- **Ask** rules surface OpenClaw's native approval UI only for the matched exec call
+- **Ask** rules request native approval for the matched supported tool call only
+  when its complete redacted review fits the host's 512-character description
+  limit after escaping; otherwise the plugin blocks before creating an approval
+
+Native plugin approvals offer `allow-once` and `deny`. They do not create
+permanent command/path rules. OpenClaw owns the resume operation; Rampart's
+resolution callback cannot inspect or veto the resumed parameters. See the
+[OpenClaw integration limits](https://docs.rampart.sh/integrations/openclaw/#complete-action-approval)
+for the trusted-plugin composition boundary.
 
 `--patch-tools` still exists as a compatibility path for older OpenClaw setups and broader file-tool interception, but it remains fragile because it modifies installed framework files.
 
@@ -166,7 +174,11 @@ Rampart does **not** behave identically across every integration when policy eva
 **Current behavior:**
 - `rampart wrap --mode enforce` runs its own local policy service and denies shell commands when that service cannot confirm enforcement. Monitor mode permits them with a warning. This applies only to commands that reach the cooperative shell boundary.
 - `rampart preload` defaults to **fail-open** for transport and server failures unless explicitly configured fail-closed.
-- The native OpenClaw plugin supports per-tool degraded behavior. A manual plugin setup keeps explicitly configured lower-risk tools fail-open by default; `rampart protect openclaw` removes those exceptions and configures every tool to fail closed.
+- The native OpenClaw plugin defaults to fail closed for every tool when its
+  policy service is unavailable. Operators can explicitly opt tools into
+  degraded fail-open behavior with `failOpenTools` or the deprecated `failOpen`
+  setting; manual setup can retain those choices. `rampart protect openclaw`
+  clears the exceptions and configures every tool to fail closed.
 - Native hook integrations (Claude Code, Codex, Cline, Gemini CLI, GitHub Copilot) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path. Codex and Gemini approval-required actions still need the external Rampart queue and deny if it is unavailable; Copilot uses its native ask prompt.
 
 **Mitigations:**

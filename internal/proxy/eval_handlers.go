@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/engine"
@@ -179,6 +180,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk) {
+		resp["action"] = approval.ReviewCall(call)
 		ownerScope := ""
 		if identity.Token != nil {
 			ownerScope = identity.Token.Hash
@@ -646,6 +648,9 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		"eval_duration_us":      decision.EvalDuration.Microseconds(),
 		"enforced":              effectiveEnforcement,
 		"enforcement_requested": req.Enforce,
+	}
+	if decision.Action == engine.ActionAsk || decision.Action == engine.ActionRequireApproval {
+		preflightResp["action"] = approval.ReviewCall(call)
 	}
 	if req.Enforce && s.mode == "monitor" {
 		preflightResp["policy_decision"] = decision.Action.String()
