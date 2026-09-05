@@ -8,7 +8,7 @@
   if (!context) return;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const narrow = matchMedia('(max-width: 959px)');
-  let width = 0, height = 0, progress = 0, frame = 0, visible = true;
+  let width = 0, height = 0, pixelRatio = 0, progress = 0, frame = 0, visible = true;
   const clamp = value => Math.max(0, Math.min(1, value));
   const smooth = value => { const t = clamp(value); return t * t * (3 - 2 * t); };
 
@@ -86,8 +86,8 @@
     if (!visible || document.hidden) return;
     const rect = scene.getBoundingClientRect();
     const ratio = Math.min(devicePixelRatio || 1, 1.75);
-    if (width !== rect.width || height !== rect.height) {
-      width = rect.width; height = rect.height;
+    if (width !== rect.width || height !== rect.height || pixelRatio !== ratio) {
+      width = rect.width; height = rect.height; pixelRatio = ratio;
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
     }
