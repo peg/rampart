@@ -1,137 +1,100 @@
-# OpenClaw Approval Ownership
+# Approval identity and OpenClaw ownership
 
 Status: accepted
 
-## Problem
+An approval authorizes the represented action at a supported interception
+boundary. It does not establish model intent, arbitrary program behavior,
+filesystem race freedom, or that an audited action executed.
 
-Rampart currently supports multiple approval mechanisms:
+## One owner, one pending action
 
-- OpenClaw native approvals (`exec.approval.requested` / Discord native approval UI)
-- Rampart-native approval objects (`/v1/approvals`, dashboard/API/webhook flows)
-- OpenClaw plugin `requireApproval` flows
-- legacy OpenClaw exec dist patching that short-circuits into `/v1/tool/exec`
+OpenClaw owns its native pending approvals and resume operation. Rampart returns
+policy decisions and a redacted action review; it does not create a second
+Rampart pending object for an OpenClaw-hosted request. A native `allow` means
+Rampart does not object. It does not satisfy another host approval requirement.
+Hard denies remain terminal before native approval creation.
 
-These mechanisms are individually valid, but they become unsafe and confusing when more than one human-facing approval object is created for the same tool call.
+Rampart's existing approval store owns pending requests for its API/dashboard
+and non-hosted integrations. Its once-only retry identity includes the original
+command and structured input, tool class, agent/depth, session, run/call IDs,
+working directory and credential-owner scope. Quoting, component order,
+redirections, target changes and different input values remain distinct.
+Missing run or call identity cannot acquire an exact replay grant.
 
-That exact split-brain behavior causes the current OpenClaw integration failure mode:
+The OpenClaw adapter additionally preserves the original tool name, original
+arguments, all parsed batch targets, and available host requester identity in
+the represented request. Only supplied context is evidence: a policy service's
+local path resolution is not authoritative for another host or namespace.
 
-- a command is flagged by Rampart
-- a Rampart approval object is created
-- OpenClaw Discord native approvals look at OpenClaw's own approval queue instead
-- Discord sees no pending approval, even though Rampart does
+## Review and durable state
 
-## Decision
+The versioned `action` response is a redacted display projection, not a replay
+token. The CLI exposes complete details with `rampart pending --details`; the
+dashboard's expanded approval shows the same complete represented parameters
+and context. Compact list previews are not the approval scope. Terminal control
+characters, HTML and Markdown are rendered as data.
 
-For **OpenClaw-hosted workflows**, OpenClaw owns the operator-facing pending approval state.
+Pending journals contain redacted review data. The immutable original action
+fingerprint is captured before redaction and protected with HMAC-SHA256 using a
+32-byte key beside the journal (`<journal>.identity-key`). The key is stored with
+owner-only access and a single hard link. It protects a copied journal against
+guessing secret-bearing inputs without the key; it does not protect a
+compromised operating-system account.
 
-Rampart owns:
+First startup migrates legacy pending records transactionally under the journal
+lock, preserving their exact original identity while redacting stored content.
+Version 3 pending/replay formats cannot be consumed as older unscoped grants.
+Previously published legacy replay grants are not carried forward: retrying
+requires fresh approval. Redacted requests cannot become permanent literal
+command/path rules. If redaction changes the agent, session or run identity,
+the pending request cannot authorize future calls for that run; its original
+once-only fingerprint remains usable.
 
-- policy evaluation
-- deny enforcement
-- approval creation when Rampart itself returns `ask`
-- persistent rule writeback for `allow-always`
-- audit trail
-- diagnostics
+Keep the identity key with its journal and replay directory when restoring
+state. Missing, malformed or linked keys refuse new authorization. A running store
+also rejects a replaced key. Rampart never regenerates a missing key over
+version 3 state. After restart, an unrelated well-formed replacement key cannot
+replay the original pending fingerprints; restoring the original key is
+necessary to preserve those approvals. To retire a key,
+stop all services using that state, explicitly retire the pending/replay state,
+then initialize fresh state. There is no implicit rotation or recovery grant.
+A downgrade discards version 3 pending grants rather than authorizing their
+redacted display as though it were the original action.
 
-In legacy bridge-first mode, Rampart may also auto-resolve policy-allowed OpenClaw exec approvals as `allow-once`. In native OpenClaw plugin mode, Rampart must not auto-resolve allow/watch decisions for an approval OpenClaw already created; `allow` only means “Rampart does not object.”
+## OpenClaw contract and limits
 
-Rampart does **not** create a second human-facing approval object for the same OpenClaw-hosted tool call.
+The reviewed stable source is [OpenClaw v2026.9.1](https://github.com/openclaw/openclaw/tree/v2026.9.1).
+Its [hook runner](https://github.com/openclaw/openclaw/blob/v2026.9.1/src/plugins/hooks.ts)
+gives each modifying hook an isolated copy of the original event. Prior
+returned rewrites are not the event seen by Rampart. The first approval freezes
+the selected parameter snapshot; later hooks can block but cannot replace it.
+Freezing does not prove Rampart evaluated the final composed parameters. Other
+parameter-mutating plugins remain part of the trusted host configuration.
 
-For **non-OpenClaw workflows**, Rampart's native approval store remains canonical.
+`onResolution` receives a decision, not a replacement action or a consume-time
+veto. Rampart cannot use that callback to validate resumed execution. Native
+plugin approvals therefore offer `allow-once` and `deny`; persistent allowances
+require an explicit operator policy. A command/path rule alone does not bind
+all the parameters and execution context of an approved action.
 
-## Canonical ownership rules
+The native hook's [approval forwarding](https://github.com/openclaw/openclaw/blob/v2026.9.1/src/agents/agent-tools.before-tool-call.approval.ts)
+forwards a description but no complete-review attachment. Its
+[wire limit](https://github.com/openclaw/openclaw/blob/v2026.9.1/src/infra/plugin-approvals.ts)
+is 512 characters. Rampart sends a complete safely rendered action within that
+limit or blocks before creating a native approval. It never replaces a
+meaningful suffix with an ellipsis and offers approval on the prefix. Split an
+oversized request into smaller independently reviewable actions, or configure
+an explicit operator-reviewed policy. A service too old to provide the redacted
+review also blocks asks until upgraded.
 
-### OpenClaw-hosted flow
+| Boundary | Owner and remaining limit |
+| --- | --- |
+| Rampart native pending/replay | Rampart consumes the exact captured input once after reevaluating policy; missing identity returns to approval. |
+| OpenClaw plugin | OpenClaw owns timeout, native delivery and resume; Rampart cannot veto a callback or observe earlier returned parameter rewrites. |
+| Claude Code and other hosted hooks | The host owns native approval and execution. Rampart's replay store does not strengthen a host-owned resume contract. |
+| Paths and allowed programs | Canonicalization is policy evidence, not a filesystem lock, sandbox, syscall monitor or guarantee about an allowed script. Replay binds the represented path, not the underlying object if a symlink is retargeted. |
 
-1. OpenClaw determines that an exec/tool action requires approval.
-2. OpenClaw creates the native pending approval record.
-3. Discord/native approval surfaces read that native record.
-4. Rampart bridge/plugin evaluates the request.
-5. Rampart may:
-   - auto-resolve deny
-   - leave the native approval pending for human review
-   - auto-resolve allow only in legacy bridge-first mode
-6. If a human resolves it:
-   - `allow-once` resolves the native approval only
-   - `allow-always` resolves the native approval and writes a persistent Rampart rule
-   - `deny` resolves the native approval only
-
-### Rampart-hosted flow
-
-Rampart's own approval store is canonical when the host runtime is not OpenClaw native approvals, for example:
-
-- standalone dashboard/API approval workflows
-- explicit `/v1/approvals` usage
-- webhook or external review flows
-- non-OpenClaw integrations
-
-## Hard invariant
-
-**Exactly one system may own the operator-facing pending approval object for a given tool call.**
-
-Supporting metadata, audit events, and persistence helpers are fine. A second human-facing pending approval object is not.
-
-## Consequences
-
-### Allowed
-
-- OpenClaw native approval object + Rampart policy evaluation
-- OpenClaw native approval object + Rampart allow-always persistence
-- Rampart-native approval object for non-OpenClaw workflows
-
-### Forbidden
-
-- OpenClaw native approval + Rampart-native approval for the same command
-- OpenClaw plugin `requireApproval` + separate Rampart pending approval for the same action
-- legacy exec dist patch that bypasses native OpenClaw approval creation by polling Rampart `/v1/tool/exec`
-
-## Implementation direction
-
-### 1. Bridge-first OpenClaw exec flow
-
-`internal/bridge/openclaw.go` becomes the canonical OpenClaw exec approval seam:
-
-- receive `exec.approval.requested`
-- evaluate with Rampart engine
-- auto-resolve deny where possible
-- auto-resolve allow only in legacy bridge-first mode
-- leave native approval pending for human review in native plugin mode
-- persist allow-always after human resolution
-
-### 2. Remove legacy exec short-circuiting
-
-`cmd/rampart/cli/setup.go` must not install approval behavior that bypasses OpenClaw native approval creation for exec.
-
-### 3. Keep plugin asks single-owned
-
-`internal/plugin/openclaw/index.js` may use OpenClaw `requireApproval`, but it must not create or depend on a second Rampart pending approval object for the same action.
-
-### 4. Doctor must detect drift
-
-`rampart doctor` should detect:
-
-- stale exec dist patch still installed
-- bridge connected but native approval events absent
-- dual-queue behavior in OpenClaw mode
-- plugin loaded but ownership rules violated
-
-### 5. Tests must enforce the contract
-
-At least one end-to-end integration test should prove:
-
-- OpenClaw native approval is created for an exec ask
-- Rampart sees and evaluates it
-- no second Rampart approval object is created for the same OpenClaw action
-- allow-always writes a persistent rule
-- subsequent matching command is silent
-
-## Why this is the best UX
-
-This preserves the operator's mental model:
-
-- one approval card
-- one approval ID
-- one place to click
-- one visible source of truth
-
-Approvers stay in Discord where they already work, and Rampart makes that experience safer and smarter without introducing a second queue.
+Credential-free adapter and API tests prove mapping, display, persistence,
+restart and replay behavior. They do not prove authenticated native approval
+delivery or a model loop. Installed-boundary verification and its limits remain
+in `assurance/integrations.yaml` and the support matrix.

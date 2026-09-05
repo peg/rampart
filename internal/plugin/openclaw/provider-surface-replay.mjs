@@ -61,7 +61,7 @@ async function runPolicyScenario({ name, event, expectedTool, expectedCommand, r
     fetchImpl: async (url, opts = {}) => {
       calls.push({ url: String(url), opts });
       assert(String(url).includes(`/v1/tool/${encodeURIComponent(expectedTool)}`), `expected /v1/tool/${expectedTool}, got ${url}`);
-      return fetchJson(response);
+      return fetchJson({ ...response, action: { version: 1, tool: expectedTool, params: JSON.parse(opts.body).params, input: JSON.parse(opts.body).input } });
     },
     invoke: async ({ handlers }) => {
       const before = handlers.before_tool_call;
@@ -221,7 +221,7 @@ const patchAsk = await withPlugin({
     const body = parseBody({ opts });
     patchAskCalls.push({ url: String(url), body });
     return fetchJson(body.params.path === 'production/config.yaml'
-      ? { decision: 'ask', allowed: false, policy: 'production-write', message: 'production change' }
+      ? { decision: 'ask', allowed: false, policy: 'production-write', message: 'production change', action: { version: 1, tool: 'edit', params: body.params, input: body.input } }
       : { decision: 'allow', allowed: true, policy: 'workspace-write' });
   },
   invoke: async ({ handlers }) => handlers.before_tool_call(
@@ -418,7 +418,7 @@ const ask = await runPolicyScenario({
 assert(ask.result.requireApproval.timeoutBehavior === 'deny', 'approval should deny on timeout');
 assert(ask.result.requireApproval.pluginId === 'rampart', 'approval should identify its owning plugin');
 assert(
-  JSON.stringify(ask.result.requireApproval.allowedDecisions) === JSON.stringify(['allow-once', 'allow-always', 'deny']),
+  JSON.stringify(ask.result.requireApproval.allowedDecisions) === JSON.stringify(['allow-once', 'deny']),
   `unexpected approval decisions: ${JSON.stringify(ask.result.requireApproval.allowedDecisions)}`,
 );
 assert(ask.result.requireApproval.timeoutReason.includes('denied'), 'approval should explain timeout denial');
@@ -450,7 +450,7 @@ const liveVerification = await withPlugin({
     if (tool === 'exec' && body.params.command?.startsWith('cat ~/.ssh/id_')) decision = 'deny';
     if (tool === 'exec' && body.params.command?.startsWith('python3 -c ')) decision = 'ask';
     assert(body.verification === true, 'verification calls must request side-effect-free preflight mode');
-    return fetchJson({ decision, allowed: decision === 'allow' });
+    return fetchJson({ decision, allowed: decision === 'allow', action: { version: 1, tool, params: body.params, input: body.input } });
   },
   invoke: async ({ gatewayMethods }) => {
     const verify = gatewayMethods['rampart.verify'];

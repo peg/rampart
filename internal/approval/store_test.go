@@ -152,7 +152,7 @@ func TestResolveBeforePublishOrdersJournalAndAuditBeforeAuthorization(t *testing
 			t.Fatal("waiter woke before required audit work completed")
 		default:
 		}
-		_, published := store.approvedOnce[replayKey(call)]
+		_, published := store.approvedOnce[store.keyedIdentity(replayKey(call))]
 		assert.False(t, published, "one-shot authorization became visible before required audit work")
 		return nil
 	})
@@ -231,7 +231,7 @@ func TestResolveBeforePublishJournalFailurePreventsAuditAndAuthorization(t *test
 		t.Fatal("journal failure woke the approval waiter")
 	default:
 	}
-	_, published := store.approvedOnce[replayKey(call)]
+	_, published := store.approvedOnce[store.keyedIdentity(replayKey(call))]
 	assert.False(t, published, "journal failure published one-shot authorization")
 }
 
@@ -531,7 +531,7 @@ func TestOwnerScopedPendingDedupSurvivesRestart(t *testing.T) {
 	assert.NotContains(t, string(journal), ownerA, "persist only a domain-separated owner digest")
 	var record persistRecord
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(journal), &record))
-	assert.Equal(t, scopedPendingStatus, record.Status)
+	assert.Equal(t, privatePendingStatus, record.Status)
 	assert.NotEqual(t, "pending", record.Status, "v1.6.2 must discard scoped pending state on rollback")
 
 	restarted := NewStore(WithPersistenceFile(persistFile))
@@ -722,7 +722,7 @@ func TestExpiredApprovedReplayCannotBeConsumed(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Resolve(req.ID, true, "operator"))
 
-	key := replayKey(call)
+	key := store.keyedIdentity(replayKey(call))
 	grant := store.approvedOnce[key]
 	grant.ExpiresAt = time.Now().Add(-time.Second)
 	store.approvedOnce[key] = grant
@@ -745,7 +745,7 @@ func TestOwnerScopedPersistentReplayIsCrossStoreAndOneShot(t *testing.T) {
 	require.False(t, autoApproved)
 	require.NoError(t, store1.Resolve(req.ID, true, "operator"))
 	legacyKey := replayKey(call)
-	scopedKey := ownerBoundKey(legacyKey, ownerScopeDigest(ownerA))
+	scopedKey := store1.keyedIdentity(ownerBoundKey(legacyKey, ownerScopeDigest(ownerA)))
 	_, legacyReady, _ := store1.replayGrantPaths(legacyKey)
 	dataPath, scopedReady, _ := store1.replayGrantPaths(scopedKey)
 	_, err = os.Stat(legacyReady)
@@ -755,7 +755,7 @@ func TestOwnerScopedPersistentReplayIsCrossStoreAndOneShot(t *testing.T) {
 	require.NoError(t, err)
 	var persisted replayGrant
 	require.NoError(t, json.Unmarshal(encoded, &persisted))
-	assert.Equal(t, 2, persisted.Version)
+	assert.Equal(t, 3, persisted.Version)
 	assert.Equal(t, scopedKey, persisted.Fingerprint)
 
 	// A separate Store models a restarted or concurrently running process.
@@ -1055,7 +1055,7 @@ func TestRunScopeSnapshotReturnsAndCommitsPendingRace(t *testing.T) {
 	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, raced.ID, "operator", nil)
 	require.NoError(t, err)
 	store.mu.Lock()
-	racedGrant, replayPublished := store.approvedOnce[ownerBoundKey(replayKey(racedCall), "")]
+	racedGrant, replayPublished := store.approvedOnce[store.keyedIdentity(ownerBoundKey(replayKey(racedCall), ""))]
 	store.mu.Unlock()
 	require.True(t, replayPublished)
 	assert.False(t, racedGrant.ExpiresAt.After(snapshot.expiresAt), "exact replay grant outlived run-scope authorization window")
@@ -1281,7 +1281,7 @@ func TestPersistentApprovalAuthorizationFilesAreOwnerOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Resolve(req.ID, true, "operator"))
 
-	dataPath, readyPath, _ := store.replayGrantPaths(replayKey(call))
+	dataPath, readyPath, _ := store.replayGrantPaths(store.keyedIdentity(replayKey(call)))
 	for _, path := range []string{persistFile, dataPath, readyPath} {
 		info, err := os.Stat(path)
 		require.NoError(t, err, path)
@@ -1511,7 +1511,7 @@ func TestApprovalJournalAppendRefusesAggregateSizeLimit(t *testing.T) {
 	defer store.Close()
 	req, err := store.Create(testCall(), testDecision())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "journal would exceed")
+	assert.Contains(t, err.Error(), "token too long")
 	assert.Nil(t, req)
 	assert.Empty(t, store.List(), "unpersisted approval must not remain live after aggregate limit failure")
 }
@@ -1550,7 +1550,7 @@ func TestConsumePersistedReplayGrantRejectsOversizedDataPermanently(t *testing.T
 	call := testCall()
 	call.RunID = "run-oversized-replay"
 	call.ToolCallID = "call-oversized-replay"
-	key := replayKey(call)
+	key := store.keyedIdentity(replayKey(call))
 	require.NotEmpty(t, key)
 	dataPath, readyPath, consumedPath := store.replayGrantPaths(key)
 	require.NoError(t, os.MkdirAll(filepath.Dir(dataPath), 0o700))
