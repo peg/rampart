@@ -269,6 +269,44 @@ func TestServeLogConcurrentRecordsAndRestart(t *testing.T) {
 	}
 }
 
+func TestServeLogStartupRetainsOversizedLegacyLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "serve.log")
+	legacy := []byte(strings.Repeat("legacy diagnostic\n", 20))
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".1", []byte("previous backup\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w, err := openServeLog(path, 128, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintln(w, "new diagnostic"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for suffix, want := range map[string]string{
+		"":   "new diagnostic\n",
+		".1": string(legacy),
+		".2": "previous backup\n",
+	} {
+		data, err := os.ReadFile(path + suffix)
+		if err != nil || string(data) != want {
+			t.Fatalf("startup rotation changed %q: %q (%v)", suffix, data, err)
+		}
+	}
+	info, err := os.Stat(path + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatal("legacy active log was not secured before retention")
+	}
+}
+
 func BenchmarkServeDiagnosticLog(b *testing.B) {
 	w, err := openServeLog(filepath.Join(b.TempDir(), "serve.log"), serveLogMaxBytes, serveLogBackups)
 	if err != nil {
