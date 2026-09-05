@@ -156,6 +156,7 @@ nav:
   - Features:
     - Policy Engine: features/policy-engine.md
     - Audit Trail: features/audit-trail.md
+    - External Witnessing (Experimental): features/external-witness.md
     - Webhook Notifications: features/webhooks.md
     - Approval Dashboard: features/dashboard.md
     - Agent Team Oversight: features/agent-teams.md

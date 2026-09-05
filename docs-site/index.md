@@ -154,6 +154,8 @@ Core Rampart policy evaluation, audit logging, and the dashboard are local.
 Optional semantic verification and notification/webhook features send the
 configured request data to their configured providers. The agent itself may
 also use remote model and tool services independently of Rampart.
+Optional [external witnessing](features/external-witness.md) publishes compact
+audit checkpoints without commands, prompts or tool-request content.
 
 **Will Rampart slow down my agent?**  
 Core matching is local and benchmarked in microseconds. Hook startup and audit

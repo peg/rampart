@@ -589,6 +589,22 @@ Check hash chain integrity.
 rampart audit verify
 ```
 
+### `rampart audit witness`
+
+**Experimental.** Publish a checkpoint or retrieve retained evidence using an
+operator-owned witness configuration. The destination must be independently
+administered; Rampart does not install or operate a witness service.
+
+```bash
+rampart audit witness publish --config /etc/rampart/witness.json
+rampart audit witness status --config /etc/rampart/witness.json
+rampart audit verify --require-witness --witness-config /etc/rampart/witness.json
+```
+
+Missing, stale or invalid required evidence fails verification. See
+[External Witnessing](../features/external-witness.md) for deployment, identity,
+retention, transport and unwitnessed-tail limits.
+
 ### `rampart audit stats`
 
 Show decision breakdown.

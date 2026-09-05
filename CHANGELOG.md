@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in production guard** — Require approval for the documented infrastructure
+  and migration CLI mutations and explicitly named production Kubernetes targets.
+  Keep the base policy installed; implicit Kubernetes targets and native typed
+  MCP tools are outside this profile's scope.
+- **Bounded service diagnostics** — Managed background and launchd logging rotates
+  at 10 MiB with three backups, preserving owner permissions and redacting managed
+  records. `serve --log-file` exposes the same writer for custom setups. Existing
+  launchd installations adopt it after reinstalling their owned service definition.
+- **Experimental external audit witness** — Publish small checkpoints to separately
+  administered file storage or an operator-provided authenticated HTTPS endpoint,
+  and verify retained checkpoints against local history. This optional client
+  does not provision a service or establish independent storage administration.
+
+### Changed
+
+- **A coordinated website and documentation refresh** — A short architectural
+  scroll illustration connects actions, policy and audit records, followed by
+  the install, protect and verify journey. Static mobile, reduced-motion and
+  no-JavaScript fallbacks preserve useful content. MkDocs retains its existing
+  architecture and URLs with improved navigation, typography and themes.
+- **Clearer troubleshooting and feedback** — Current setup and verification
+  commands replace stale service and repair instructions. A structured bug form
+  gathers minimal redacted reports and keeps security disclosures private.
+
 ## [1.8.1] - 2026-09-04
 
 ### Fixed
