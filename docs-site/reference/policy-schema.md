@@ -122,6 +122,31 @@ when:
     - "*curl*webhook.site*"
 ```
 
+Restrictive rules (`deny` and `ask`) also recognize limited equivalent command
+forms. A literal HTTP(S) download to a file followed by execution of that same
+file in one represented POSIX command is matched as `curl URL | sh` or
+`wget URL | sh`. This lets the standard supply-chain rule cover both piped and
+file-backed execution. The original command remains the approval and audit
+identity; this interpretation never grants an `allow` or `watch` rule.
+
+The file correlation recognizes explicit curl `-o`/`--output`, wget
+`-O`/`--output-document`, and stdout file redirects, including quoted paths and
+attached option values. It covers sequential `;`, `&&`, `||` and newline
+components, literal shell `-c` bodies, and the existing transparent executor
+forms that do not change working directory or retokenize arguments. Execution
+means a literal shell/source/script operand, interpreter stdin, or an explicit
+executable path. Supported script interpreters are POSIX shells, `python`,
+`python3`, `node`, `ruby` and `perl`; inline programs and module arguments are
+not treated as script filenames.
+
+This is not shell dataflow analysis. It does not infer filenames from URLs,
+resolve variables or symlinks, inspect program contents, or correlate separate
+tool calls. The file detector skips here documents, pipelines/background jobs,
+unknown download options, and directory-changing `env` wrappers. Other policy
+rules still evaluate those commands. Literal path comparison preserves `..`
+because collapsing it could identify a different file through a symlink.
+Intervening effects inside programs remain unobserved.
+
 #### `path_matches` / `path_not_matches`
 
 Match against file paths for `read`/`write` tools:

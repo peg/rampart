@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -190,6 +191,449 @@ export const version = "1.0.0";
 	}
 }
 
+func TestNormalizeOpenClawExecModeConfigRemovesOnlyRetiredFields(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "openclaw.json")
+	before := `{
+  "identity": {"name": "keep-me", "largeId": 9007199254740993},
+  "tools": {"exec": {"mode": "full", "ask": "off", "security": "full", "timeout": 30}}
+}`
+	if err := os.WriteFile(configPath, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := normalizeOpenClawExecModeConfigAt(configPath)
+	if err != nil || !changed {
+		t.Fatalf("normalize = (%v, %v), want (true, nil)", changed, err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["identity"].(map[string]any)["name"] != "keep-me" {
+		t.Fatalf("unrelated config changed: %#v", cfg)
+	}
+	if !bytes.Contains(data, []byte(`"largeId": 9007199254740993`)) {
+		t.Fatalf("large unrelated numeric ID changed: %s", data)
+	}
+	execCfg := cfg["tools"].(map[string]any)["exec"].(map[string]any)
+	if execCfg["mode"] != "full" || execCfg["timeout"] != float64(30) {
+		t.Fatalf("canonical exec config changed: %#v", execCfg)
+	}
+	if _, exists := execCfg["ask"]; exists {
+		t.Fatalf("retired ask field remains: %#v", execCfg)
+	}
+	if _, exists := execCfg["security"]; exists {
+		t.Fatalf("retired security field remains: %#v", execCfg)
+	}
+
+	afterFirst := append([]byte(nil), data...)
+	changed, err = normalizeOpenClawExecModeConfigAt(configPath)
+	if err != nil || changed {
+		t.Fatalf("second normalize = (%v, %v), want (false, nil)", changed, err)
+	}
+	afterSecond, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterFirst, afterSecond) {
+		t.Fatal("idempotent mode normalization rewrote OpenClaw config")
+	}
+}
+
+func TestSetOpenClawExecAskPreservesCanonicalMode(t *testing.T) {
+	for _, tt := range []struct {
+		mode     string
+		security string
+		ask      string
+	}{
+		{mode: "deny", security: "deny", ask: "off"},
+		{mode: "allowlist", security: "allowlist", ask: "off"},
+		{mode: "ask", security: "allowlist", ask: "on-miss"},
+		{mode: "auto", security: "allowlist", ask: "on-miss"},
+		{mode: "full", security: "full", ask: "off"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			stateDir := t.TempDir()
+			configPath := filepath.Join(stateDir, "openclaw.json")
+			config := fmt.Sprintf(`{"tools":{"exec":{"mode":%q,"ask":%q,"security":%q}},"keep":true}`, tt.mode, tt.ask, tt.security)
+			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := setOpenClawExecAskAt(stateDir, configPath, "off"); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg map[string]any
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			execCfg := cfg["tools"].(map[string]any)["exec"].(map[string]any)
+			if execCfg["mode"] != tt.mode || cfg["keep"] != true {
+				t.Fatalf("canonical or unrelated config changed: %#v", cfg)
+			}
+			if _, exists := execCfg["ask"]; exists {
+				t.Fatalf("set reintroduced retired ask field: %#v", execCfg)
+			}
+			if _, exists := execCfg["security"]; exists {
+				t.Fatalf("set retained retired security field: %#v", execCfg)
+			}
+			if _, err := os.Lstat(openClawExecAskReceiptPath(stateDir)); !os.IsNotExist(err) {
+				t.Fatalf("canonical mode unexpectedly created a legacy receipt: %v", err)
+			}
+		})
+	}
+}
+
+func TestNormalizeOpenClawExecModeConfigRefusesConflictingLegacyPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		config string
+	}{
+		{name: "stricter ask", config: `{"tools":{"exec":{"mode":"full","ask":"always"}}}`},
+		{name: "stricter security", config: `{"tools":{"exec":{"mode":"full","security":"deny"}}}`},
+		{name: "weaker security", config: `{"tools":{"exec":{"mode":"deny","security":"full"}}}`},
+		{name: "malformed ask", config: `{"tools":{"exec":{"mode":"auto","ask":true}}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "openclaw.json")
+			before := []byte(tt.config)
+			if err := os.WriteFile(configPath, before, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := normalizeOpenClawExecModeConfigAt(configPath); err == nil || !strings.Contains(err.Error(), "conflicts with canonical") {
+				t.Fatalf("normalize error = %v, want canonical policy conflict", err)
+			}
+			after, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatal("conflicting config changed")
+			}
+		})
+	}
+}
+
+func TestOpenClawExecModeMigrationRollsBackFailedHostInstall(t *testing.T) {
+	stateDir := t.TempDir()
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	if err := ocplugin.Extract(pluginDir); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	before := []byte("{\n  \"plugins\": {\"entries\": {\"rampart\": {\"enabled\": true}}},\n  \"tools\": {\"exec\": {\"mode\": \"full\", \"ask\": \"off\"}}\n}\n")
+	if err := os.WriteFile(configPath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hostErr := errors.New("host install failed")
+	err := installOpenClawPluginSafely(stateDir, configPath, func() error {
+		return runWithOpenClawExecModeMigration(stateDir, configPath, func() error { return hostErr }, io.Discard)
+	}, noopOpenClawRuntimeValidation, io.Discard)
+	if !errors.Is(err, hostErr) {
+		t.Fatalf("install error = %v, want %v", err, hostErr)
+	}
+	after, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("failed install did not restore exact config bytes:\n%s", after)
+	}
+}
+
+func TestOpenClawExecModeMigrationRollbackPreservesConcurrentChange(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"mode":"full","ask":"off"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrateOpenClawExecModeConfigAt(configPath)
+	if err != nil || !migration.changed() {
+		t.Fatalf("migration = (%v, %v), want changed", migration, err)
+	}
+	operatorChange := []byte(`{"tools":{"exec":{"mode":"deny"}},"operator":true}`)
+	if err := os.WriteFile(configPath, operatorChange, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.rollbackIfUnchanged(); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("rollback error = %v, want concurrent-change refusal", err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, operatorChange) {
+		t.Fatal("rollback overwrote concurrent operator change")
+	}
+}
+
+func TestSetOpenClawExecAskDoesNotRewriteValidCanonicalConfig(t *testing.T) {
+	stateDir := t.TempDir()
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	before := []byte("{\n  \"tools\": {\"exec\": {\"mode\": \"auto\"}},\n  \"keep\": true\n}\n")
+	if err := os.WriteFile(configPath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := setOpenClawExecAskAt(stateDir, configPath, "off"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("valid canonical config was rewritten")
+	}
+}
+
+func TestEnsureOpenClawExecApprovalPreservesIncludeBackedCanonicalMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+	stateDir := t.TempDir()
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	includePath := filepath.Join(stateDir, "tools.json")
+	outer := []byte(`{"tools":{"$include":"tools.json"},"keep":true}`)
+	included := []byte(`{"exec":{"mode":"auto","security":"allowlist","ask":"on-miss"},"keep":true,"largeId":9007199254740993}`)
+	if err := os.WriteFile(configPath, outer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(includePath, included, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	script := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "tools.exec.mode" ]; then
+  printf '%s\n' '"auto"'
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureOpenClawExecApprovalConfig(bin, stateDir, configPath); err != nil {
+		t.Fatal(err)
+	}
+	gotOuter, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotIncluded, err := os.ReadFile(includePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotOuter, outer) {
+		t.Fatal("include-backed root config was rewritten")
+	}
+	var gotTools map[string]any
+	if err := json.Unmarshal(gotIncluded, &gotTools); err != nil {
+		t.Fatal(err)
+	}
+	execCfg := gotTools["exec"].(map[string]any)
+	if execCfg["mode"] != "auto" || gotTools["keep"] != true {
+		t.Fatalf("include-backed canonical config changed: %#v", gotTools)
+	}
+	if !bytes.Contains(gotIncluded, []byte(`"largeId": 9007199254740993`)) {
+		t.Fatalf("include-backed large numeric ID changed: %s", gotIncluded)
+	}
+	if _, present := execCfg["ask"]; present {
+		t.Fatalf("include-backed retired ask remains: %#v", execCfg)
+	}
+	if _, present := execCfg["security"]; present {
+		t.Fatalf("include-backed retired security remains: %#v", execCfg)
+	}
+	if _, err := os.Lstat(openClawExecAskReceiptPath(stateDir)); !os.IsNotExist(err) {
+		t.Fatalf("canonical include unexpectedly created a legacy receipt: %v", err)
+	}
+}
+
+func TestEnsureOpenClawExecApprovalAcceptsOperatorOwnedIncludeBackedLegacyOff(t *testing.T) {
+	stateDir := t.TempDir()
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	includePath := filepath.Join(stateDir, "tools.json")
+	outer := []byte(`{"tools":{"$include":"tools.json"},"keep":true}`)
+	included := []byte(`{"exec":{"security":"full","ask":"off"},"keep":true}`)
+	if err := os.WriteFile(configPath, outer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(includePath, included, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureOpenClawExecApprovalConfig("unused", stateDir, configPath); err != nil {
+		t.Fatal(err)
+	}
+	gotOuter, outerErr := os.ReadFile(configPath)
+	gotIncluded, includeErr := os.ReadFile(includePath)
+	if outerErr != nil || includeErr != nil {
+		t.Fatalf("read configs: outer=%v include=%v", outerErr, includeErr)
+	}
+	if !bytes.Equal(gotOuter, outer) || !bytes.Equal(gotIncluded, included) {
+		t.Fatal("operator-owned include-backed legacy config was rewritten")
+	}
+	if _, err := os.Lstat(openClawExecAskReceiptPath(stateDir)); !os.IsNotExist(err) {
+		t.Fatalf("operator-owned include unexpectedly created a receipt: %v", err)
+	}
+}
+
+func TestNormalizeOpenClawExecModeConfigRefusesLinkedConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on many Windows hosts")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	configPath := filepath.Join(dir, "openclaw.json")
+	before := []byte(`{"tools":{"exec":{"mode":"full","ask":"off"}}}`)
+	if err := os.WriteFile(target, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, configPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := normalizeOpenClawExecModeConfigAt(configPath); err == nil || !strings.Contains(err.Error(), "linked or non-regular") {
+		t.Fatalf("normalize error = %v, want linked config refusal", err)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("linked config target changed")
+	}
+}
+
+func TestOpenClawIncludesRefuseEscapingParentSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on many Windows hosts")
+	}
+	for _, section := range []string{"tools", "plugins"} {
+		t.Run(section, func(t *testing.T) {
+			stateDir := t.TempDir()
+			outsideDir := t.TempDir()
+			before := []byte(`{"exec":{"mode":"full","ask":"off"},"entries":{"rampart":{"enabled":true}}}`)
+			outsidePath := filepath.Join(outsideDir, "included.json")
+			if err := os.WriteFile(outsidePath, before, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outsideDir, filepath.Join(stateDir, "linked")); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(stateDir, "openclaw.json")
+			config := fmt.Sprintf(`{%q:{"$include":"linked/included.json"}}`, section)
+			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if section == "tools" {
+				_, err = normalizeOpenClawExecModeConfigAt(configPath)
+			} else {
+				_, err = loadOpenClawPluginsConfig(configPath)
+			}
+			if err == nil || !strings.Contains(err.Error(), "outside the OpenClaw config directory") {
+				t.Fatalf("include error = %v, want containment refusal", err)
+			}
+			after, err := os.ReadFile(outsidePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatal("outside include target changed")
+			}
+		})
+	}
+}
+
+func TestOpenClawIncludeMigrationPinsInRootParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on many Windows hosts")
+	}
+	stateDir := t.TempDir()
+	insideDir := filepath.Join(stateDir, "inside")
+	if err := os.Mkdir(insideDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	includePath := filepath.Join(insideDir, "tools.json")
+	before := []byte(`{"exec":{"mode":"full","ask":"off"}}`)
+	if err := os.WriteFile(includePath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(stateDir, "linked")
+	if err := os.Symlink(insideDir, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"$include":"linked/tools.json"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrateOpenClawExecModeConfigAt(configPath)
+	if err != nil || !migration.changed() {
+		t.Fatalf("migration = (%v, %v), want changed", migration, err)
+	}
+	resolvedInside, err := filepath.EvalSymlinks(insideDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migration.configPath != filepath.Join(resolvedInside, "tools.json") {
+		t.Fatalf("migration retained directory alias: %s", migration.configPath)
+	}
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "tools.json")
+	if err := os.WriteFile(outsidePath, migration.after, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.rollbackIfUnchanged(); err != nil {
+		t.Fatal(err)
+	}
+	insideAfter, insideErr := os.ReadFile(includePath)
+	outsideAfter, outsideErr := os.ReadFile(outsidePath)
+	if insideErr != nil || outsideErr != nil {
+		t.Fatalf("read targets: inside=%v outside=%v", insideErr, outsideErr)
+	}
+	if !bytes.Equal(insideAfter, before) || !bytes.Equal(outsideAfter, migration.after) {
+		t.Fatal("rollback did not preserve the resolved include target")
+	}
+}
+
+func TestOpenClawIncludeMigrationPreservesOtherHardLink(t *testing.T) {
+	stateDir := t.TempDir()
+	outsidePath := filepath.Join(t.TempDir(), "tools.json")
+	before := []byte(`{"exec":{"mode":"full","ask":"off"}}`)
+	if err := os.WriteFile(outsidePath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	includePath := filepath.Join(stateDir, "tools.json")
+	if err := os.Link(outsidePath, includePath); err != nil {
+		t.Skipf("creating a hard link is unavailable: %v", err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"$include":"tools.json"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := normalizeOpenClawExecModeConfigAt(configPath)
+	if err != nil || !changed {
+		t.Fatalf("migration = (%v, %v), want changed", changed, err)
+	}
+	after, err := os.ReadFile(outsidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("migration changed the other hard link")
+	}
+}
+
 func TestRemoveOpenClawNativePluginPreservesUnrelatedStateAndIsIdempotent(t *testing.T) {
 	stateDir := t.TempDir()
 	pluginDir := filepath.Join(stateDir, openclawPluginDir)
@@ -281,6 +725,125 @@ func TestRemoveOpenClawNativePluginPreservesUnrelatedStateAndIsIdempotent(t *tes
 	}
 	if !bytes.Equal(afterFirst, afterSecond) {
 		t.Fatal("idempotent removal rewrote OpenClaw config")
+	}
+}
+
+func TestOpenClawExecModeMigrationRollsBackFailedHostUninstall(t *testing.T) {
+	stateDir := t.TempDir()
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	if err := ocplugin.Extract(pluginDir); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	before := []byte("{\n  \"plugins\": {\"entries\": {\"rampart\": {\"enabled\": true}}},\n  \"tools\": {\"exec\": {\"mode\": \"full\", \"ask\": \"off\"}}\n}\n")
+	if err := os.WriteFile(configPath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hostErr := errors.New("host uninstall failed")
+	removed, err := removeOpenClawNativePluginWithHostAt(stateDir, configPath, func() error { return hostErr })
+	if removed || !errors.Is(err, hostErr) {
+		t.Fatalf("remove = (%v, %v), want (false, %v)", removed, err, hostErr)
+	}
+	after, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("failed uninstall did not restore exact config bytes:\n%s", after)
+	}
+	if !openClawPluginManaged(pluginDir) {
+		t.Fatal("failed host uninstall changed managed plugin path")
+	}
+}
+
+func TestOpenClawUninstallRefusesAmbiguousModeReceiptBeforeMutation(t *testing.T) {
+	stateDir := t.TempDir()
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	if err := ocplugin.Extract(pluginDir); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"ask":"always"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := setOpenClawExecAskAt(stateDir, configPath, "off"); err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decodeUserJSON(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["tools"].(map[string]any)["exec"].(map[string]any)["mode"] = "full"
+	data, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := openClawExecAskReceiptPath(stateDir)
+	receiptBefore, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configBefore := append([]byte(nil), data...)
+	hostCalled := false
+	removed, err := removeOpenClawNativePluginWithHostAt(stateDir, configPath, func() error {
+		hostCalled = true
+		return nil
+	})
+	if removed || err == nil || !strings.Contains(err.Error(), "prior operator-owned") {
+		t.Fatalf("remove = (%v, %v), want preflight refusal", removed, err)
+	}
+	if hostCalled {
+		t.Fatal("host uninstall ran before ambiguous receipt was resolved")
+	}
+	if !openClawPluginManaged(pluginDir) {
+		t.Fatal("plugin changed before ambiguous receipt was resolved")
+	}
+	configAfter, configErr := os.ReadFile(configPath)
+	receiptAfter, receiptErr := os.ReadFile(receiptPath)
+	if configErr != nil || receiptErr != nil || !bytes.Equal(configAfter, configBefore) || !bytes.Equal(receiptAfter, receiptBefore) {
+		t.Fatalf("ambiguous receipt refusal changed state: configErr=%v receiptErr=%v", configErr, receiptErr)
+	}
+}
+
+func TestRemoveOpenClawNativePluginFallbackNormalizesEquivalentMixedExecMode(t *testing.T) {
+	stateDir := t.TempDir()
+	pluginDir := filepath.Join(stateDir, openclawPluginDir)
+	if err := ocplugin.Extract(pluginDir); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	config := []byte(`{"plugins":{"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"mode":"full","security":"full","ask":"off"}},"keep":true}`)
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := removeOpenClawNativePluginAt(stateDir, configPath)
+	if err != nil || !removed {
+		t.Fatalf("remove = (%v, %v), want (true, nil)", removed, err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	execCfg := cfg["tools"].(map[string]any)["exec"].(map[string]any)
+	if execCfg["mode"] != "full" || cfg["keep"] != true {
+		t.Fatalf("canonical or unrelated config changed: %#v", cfg)
+	}
+	if _, present := execCfg["security"]; present {
+		t.Fatalf("retired security remains: %#v", execCfg)
+	}
+	if _, present := execCfg["ask"]; present {
+		t.Fatalf("retired ask remains: %#v", execCfg)
 	}
 }
 
@@ -402,6 +965,57 @@ func TestSetOpenClawExecAskRefreshesStaleReceiptAfterOperatorChange(t *testing.T
 	}
 	if got := cfg["tools"].(map[string]any)["exec"].(map[string]any)["ask"]; got != "on-miss" {
 		t.Fatalf("restored ask = %#v, want latest operator value on-miss", got)
+	}
+}
+
+func TestRestoreOpenClawExecAskRefusesAmbiguousPriorValueNextToMode(t *testing.T) {
+	stateDir := t.TempDir()
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"ask":"always"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := setOpenClawExecAskAt(stateDir, configPath, "off"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	execCfg := cfg["tools"].(map[string]any)["exec"].(map[string]any)
+	execCfg["mode"] = "full"
+	delete(execCfg, "ask")
+	data, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := restoreOpenClawExecAskFromReceipt(stateDir, configPath)
+	if changed || err == nil || !strings.Contains(err.Error(), "prior operator-owned") {
+		t.Fatalf("restore = (%v, %v), want ambiguity refusal", changed, err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(after, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	execCfg = cfg["tools"].(map[string]any)["exec"].(map[string]any)
+	if execCfg["mode"] != "full" {
+		t.Fatalf("canonical mode changed: %#v", execCfg)
+	}
+	if _, exists := execCfg["ask"]; exists {
+		t.Fatalf("legacy ask was reintroduced: %#v", execCfg)
+	}
+	if _, err := os.Lstat(openClawExecAskReceiptPath(stateDir)); err != nil {
+		t.Fatalf("ambiguity receipt was removed: %v", err)
 	}
 }
 
@@ -528,8 +1142,13 @@ func TestRemoveOpenClawNativePluginRemovesOwnedLegacyHookWithoutCallingNativeHos
 	if err := os.WriteFile(filepath.Join(hookDir, "index.js"), []byte(`export * from "../../index.js"`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	operatorConfig := []byte(`{"tools":{"exec":{"mode":"full","ask":"always"}},"keep":true}`)
+	if err := os.WriteFile(configPath, operatorConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	hostCalled := false
-	removed, err := removeOpenClawNativePluginWithHostAt(stateDir, filepath.Join(stateDir, "openclaw.json"), func() error {
+	removed, err := removeOpenClawNativePluginWithHostAt(stateDir, configPath, func() error {
 		hostCalled = true
 		return errors.New("native plugin is not installed")
 	})
@@ -541,6 +1160,9 @@ func TestRemoveOpenClawNativePluginRemovesOwnedLegacyHookWithoutCallingNativeHos
 	}
 	if _, err := os.Lstat(hookDir); !os.IsNotExist(err) {
 		t.Fatalf("managed legacy hook remains: %v", err)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || !bytes.Equal(after, operatorConfig) {
+		t.Fatalf("hook-only uninstall changed operator exec config: data=%q err=%v", after, err)
 	}
 }
 
@@ -819,6 +1441,10 @@ func TestOpenClawHostLifecycleCommandsUseForceAndRuntimeInspection(t *testing.T)
 	argsPath := filepath.Join(dir, "args")
 	t.Setenv("RAMPART_TEST_OPENCLAW_ARGS", argsPath)
 	script := `#!/bin/sh
+if [ "$3" = "--help" ]; then
+  printf '%s\n' '  --force  Skip source confirmation' '  --accept-capabilities  Accept the plugin declared capabilities'
+  exit 0
+fi
 printf '%s\n' "$@" > "$RAMPART_TEST_OPENCLAW_ARGS"
 if [ "$2" = "inspect" ]; then
   printf '%s\n' 'OpenClaw migration notice' '{"plugin":{"id":"rampart"},"runtime":{"hooks":["before_tool_call"]}}'
@@ -838,8 +1464,14 @@ fi
 	if err := runOpenClawPluginInstall(bin, "/staged/rampart", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(readArgs(), " "), "plugins install /staged/rampart --force"; got != want {
+	if got, want := strings.Join(readArgs(), " "), "plugins install /staged/rampart --force --accept-capabilities"; got != want {
 		t.Fatalf("install args = %q, want %q", got, want)
+	}
+	if err := runOpenClawPluginEnable(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(readArgs(), " "), "plugins enable rampart --accept-capabilities"; got != want {
+		t.Fatalf("enable args = %q, want %q", got, want)
 	}
 	if err := runOpenClawPluginUninstall(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
@@ -852,6 +1484,136 @@ fi
 	}
 	if got, want := strings.Join(readArgs(), " "), "plugins inspect rampart --runtime --json"; got != want {
 		t.Fatalf("runtime inspection args = %q, want %q", got, want)
+	}
+}
+
+func TestOpenClawPluginEnableUsesOnlySupportedCompatibilityFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell argument recorder is POSIX-only")
+	}
+	tests := []struct {
+		name string
+		help string
+		want string
+	}{
+		{
+			name: "current host requires capability consent",
+			help: "  --accept-capabilities  Accept the plugin declared capabilities",
+			want: "plugins enable rampart --accept-capabilities",
+		},
+		{
+			name: "supported floor predates capability consent",
+			help: "Usage: openclaw plugins enable [options] <id>",
+			want: "plugins enable rampart",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "openclaw")
+			argsPath := filepath.Join(dir, "args")
+			t.Setenv("RAMPART_TEST_OPENCLAW_ARGS", argsPath)
+			t.Setenv("RAMPART_TEST_OPENCLAW_HELP", tt.help)
+			script := `#!/bin/sh
+if [ "$3" = "--help" ]; then
+  printf '%s\n' "$RAMPART_TEST_OPENCLAW_HELP"
+  exit 0
+fi
+printf '%s\n' "$@" > "$RAMPART_TEST_OPENCLAW_ARGS"
+`
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := runOpenClawPluginEnable(bin, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(strings.Fields(string(data)), " "); got != tt.want {
+				t.Fatalf("enable args = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenClawPluginEnableRefusesWhenOptionsProbeFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runOpenClawPluginEnable(bin, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "inspect OpenClaw plugin enable options") {
+		t.Fatalf("probe error = %v, want fail-closed enable options inspection error", err)
+	}
+}
+
+func TestOpenClawPluginInstallUsesOnlySupportedCompatibilityFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell argument recorder is POSIX-only")
+	}
+	tests := []struct {
+		name string
+		help string
+		want string
+	}{
+		{
+			name: "force predates capability consent",
+			help: "  --force  Skip source confirmation",
+			want: "plugins install /staged/rampart --force",
+		},
+		{
+			name: "supported floor predates both flags",
+			help: "Usage: openclaw plugins install [options] <path>",
+			want: "plugins install /staged/rampart",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "openclaw")
+			argsPath := filepath.Join(dir, "args")
+			t.Setenv("RAMPART_TEST_OPENCLAW_ARGS", argsPath)
+			t.Setenv("RAMPART_TEST_OPENCLAW_HELP", tt.help)
+			script := `#!/bin/sh
+if [ "$3" = "--help" ]; then
+  printf '%s\n' "$RAMPART_TEST_OPENCLAW_HELP"
+  exit 0
+fi
+printf '%s\n' "$@" > "$RAMPART_TEST_OPENCLAW_ARGS"
+`
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := runOpenClawPluginInstall(bin, "/staged/rampart", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(strings.Fields(string(data)), " "); got != tt.want {
+				t.Fatalf("install args = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenClawPluginInstallRefusesWhenInstallOptionsProbeFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runOpenClawPluginInstall(bin, "/staged/rampart", &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "inspect OpenClaw plugin install options") {
+		t.Fatalf("probe error = %v, want fail-closed install options inspection error", err)
 	}
 }
 

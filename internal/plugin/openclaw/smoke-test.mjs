@@ -26,7 +26,7 @@ const api = {
 const originalFetch = global.fetch;
 global.fetch = async (url, opts = {}) => {
   if (String(url).includes(`/v1/tool/${encodeURIComponent(toolName)}`)) {
-    return { ok: true, json: async () => toolResult };
+    return { ok: true, json: async () => ({...toolResult, action: toolResult.action ?? { version: 1, tool: toolName, params }}) };
   }
   if (String(url).includes('/v1/rules/learn')) {
     return { ok: true, status: 200, json: async () => ({ ok: true }) };

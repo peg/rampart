@@ -1,5 +1,5 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.8.0
+baseline_release: v1.8.1
 reviewed_at: "2026-08-17"
 
 # Version 2 uses the canonical Rampart command target as each integration id
@@ -47,10 +47,10 @@ integrations:
         proves: The default plugin configuration denies every tool on service errors, malformed replies, and timeouts; explicitly opted-out tools fail open.
       - path: scripts/compat-openclaw-latest.mjs
         kind: upstream_latest
-        proves: The bundled plugin contract is checked against the latest published OpenClaw.
+        proves: The latest published OpenClaw accepts the bundled plugin through its current non-interactive install contract with a canonical exec mode before the adapter regression suites run.
       - path: scripts/compat-openclaw-container.sh
         kind: upstream_latest
-        proves: A disposable OpenClaw installation resolves the stable npm release and exercises the real plugin boundary.
+        proves: A disposable OpenClaw installation resolves the stable npm release and exercises zero-configuration protection, equivalent mixed-policy migration, canonical exec-mode preservation, host config validation, and the real plugin boundary.
     limitations:
       - rampart verify openclaw reaches the installed gateway plugin and its policy mapping; it does not run an authenticated agent turn or prove tool execution and approval resume through the host dispatcher.
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
@@ -59,6 +59,8 @@ integrations:
       - OpenClaw currently gives modifying hooks the original event rather than an authoritative post-composition parameter view; other parameter-mutating plugins are part of the trusted host boundary.
       - OpenClaw before_tool_call does not expose host CWD; relative file enforcement depends on host-supplied paths and derivedPaths, so absolute or recursive policy patterns are recommended.
       - OpenClaw after_tool_call is observational, so the native plugin does not claim blocking response redaction.
+      - Native plugin asks require complete redacted review within the 512-character host description limit; oversized or unavailable review blocks before native approval creation.
+      - Native plugin approval allows one call or denies; onResolution cannot validate resumed parameters, and persistent allowances require explicit operator policy.
       - MCP and delegated-agent coverage need dedicated live canaries.
 
   - id: claude-code

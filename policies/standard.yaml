@@ -388,7 +388,7 @@ policies:
             # Hex/octal encoding: printf '\x63\x61\x74...' | bash
             - "printf '\\x"
             - "printf \"\\x"
-        message: "Piped execution blocked (supply chain risk)"
+        message: "Downloaded or piped code execution blocked (supply chain risk)"
 
   - name: block-network-exfil
     description: "Block raw socket redirects and credential exfil uploads; require approval for generic cloud uploads"

@@ -26,7 +26,7 @@ rampart protect openclaw --no-restart # Configure without restarting the gateway
 rampart protect openclaw --no-verify  # Configure without running behavioral canaries
 ```
 
-The command installs managed Guard and OpenClaw policies, enables the bundled native plugin, starts the local policy service, configures every OpenClaw tool to fail closed when Rampart is unavailable, restarts the gateway, and runs safe behavioral verification. Existing unrelated OpenClaw settings and custom Rampart policy files are preserved.
+The command installs managed Guard and OpenClaw policies, enables the bundled native plugin, starts the local policy service, configures every OpenClaw tool to fail closed when Rampart is unavailable, restarts the gateway, and runs safe behavioral verification. On OpenClaw versions that require capability consent for external plugins, setup, forced reinstall, and Doctor repair accept only the exact capability surface OpenClaw reports for Rampart's bundled plugin and use the host's consent-aware enable command. Rampart preserves a valid canonical `tools.exec.mode`; on upgraded configs it removes only semantically equivalent retired `tools.exec.ask`/`security` siblings and refuses conflicting mixed policies. Existing unrelated OpenClaw settings and custom Rampart policy files are preserved.
 
 An explicit `--serve-url` is authoritative for startup checks, host
 configuration, and verification. OpenClaw's native plugin accepts only a
