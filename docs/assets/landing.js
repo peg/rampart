@@ -33,17 +33,16 @@
       if (fill) { context.fillStyle = fill; context.fill(); }
       if (stroke) { context.strokeStyle = stroke; context.lineWidth = weight; context.stroke(); }
     };
-    const faces = [];
-    const face = (points, color, edge = '#ac819744') => {
-      const depth = points.reduce((sum, point) => sum + (point[2] * Math.cos(yaw) + point[0] * Math.sin(yaw)) * Math.cos(pitch) + point[1] * Math.sin(pitch), 0) / points.length;
-      faces.push({ points, color, edge, depth });
-    };
-    const box = (x1, y1, z1, x2, y2, z2, shades) => {
-      face([[x1,y1,z2],[x2,y1,z2],[x2,y2,z2],[x1,y2,z2]], shades[0]);
-      face([[x2,y1,z1],[x2,y1,z2],[x2,y2,z2],[x2,y2,z1]], shades[1]);
-      face([[x1,y1,z1],[x1,y2,z1],[x2,y2,z1],[x2,y1,z1]], shades[0]);
-      face([[x1,y1,z1],[x1,y1,z2],[x1,y2,z2],[x1,y2,z1]], shades[1]);
-      face([[x1,y2,z1],[x1,y2,z2],[x2,y2,z2],[x2,y2,z1]], shades[2]);
+    const arch = ({ z, shift: y, shade }) => {
+      const back = z - 13, front = z + 13;
+      const face = (points, color) => path(points, color, '#ac819744');
+      // The camera stays above/right of the front. These are the exposed
+      // walls and top of one joined arch; its pillar-to-beam caps are internal.
+      face([[105,y,back],[105,y,front],[105,239+y,front],[105,239+y,back]], shade[1]);
+      face([[-72,y,back],[-72,205+y,back],[-72,205+y,front],[-72,y,front]], shade[1]);
+      face([[-105,239+y,back],[-105,239+y,front],[105,239+y,front],[105,239+y,back]], shade[2]);
+      face([[-105,y,front],[-72,y,front],[-72,205+y,front],[72,205+y,front],
+        [72,y,front],[105,y,front],[105,239+y,front],[-105,239+y,front]], shade[0]);
     };
     path([[-165,-5,-175],[165,-5,-175],[165,-5,190],[-165,-5,190]], '#151013', '#6e3f5355');
     path([[-165,-5,190],[165,-5,190],[165,-15,190],[-165,-15,190]], '#21151c', '#5e3b4b66');
@@ -56,16 +55,14 @@
       { z: 0, shift: unfold * 15, shade: ['#39222e','#6c344e','#b35780'] },
       { z: 29 + unfold * 77, shift: unfold * 46, shade: ['#292328','#4e3c47','#887280'] }
     ];
-    layers.forEach(layer => {
-      const z = layer.z, y = layer.shift;
-      box(-105,y,z-13,-72,205+y,z+13,layer.shade);
-      box(72,y,z-13,105,205+y,z+13,layer.shade);
-      box(-105,205+y,z-13,105,239+y,z+13,layer.shade);
+    // The z slabs never overlap, so complete layers draw back-to-front.
+    // The policy plane sits in the gap just behind the middle slab (z=-13).
+    // It illustrates the configured boundary, not a process sandbox or an
+    // independently witnessed execution record.
+    layers.forEach((layer, index) => {
+      if (index === 1) path([[-71,0,-14],[-71,203,-14],[71,203,-14],[71,0,-14]], '#ff4f9a0a', '#ff78b477');
+      arch(layer);
     });
-    // The policy plane is an illustration of the configured tool boundary,
-    // not a process sandbox or an independently witnessed execution record.
-    face([[-71,0,0],[-71,203,0],[71,203,0],[71,0,0]], '#ff4f9a0a', '#ff78b477');
-    faces.sort((a, b) => a.depth - b.depth).forEach(item => path(item.points, item.color, item.edge));
 
     if (unfold > .2 && !narrow.matches) {
       context.globalAlpha = clamp((unfold - .2) / .45);
