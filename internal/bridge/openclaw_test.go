@@ -973,10 +973,20 @@ func TestBridgeAuditFailureRespectsMode(t *testing.T) {
 				assert.Equal(t, test.wantDecision, params["decision"])
 			}
 
-			bridge.pendingMu.Lock()
-			_, pending := bridge.pendingCommands[approvalID]
-			bridge.pendingMu.Unlock()
-			assert.Equal(t, test.wantPending, pending)
+			isPending := func() bool {
+				bridge.pendingMu.Lock()
+				defer bridge.pendingMu.Unlock()
+				_, pending := bridge.pendingCommands[approvalID]
+				return pending
+			}
+			if test.wantDecision != "" {
+				// The gateway can receive a denial before the bridge finishes cleanup.
+				require.Eventually(t, func() bool {
+					return isPending() == test.wantPending
+				}, time.Second, 5*time.Millisecond, "unexpected pending state after audit failure")
+			} else {
+				assert.Equal(t, test.wantPending, isPending())
+			}
 		})
 	}
 }
