@@ -18,6 +18,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -944,6 +946,68 @@ func TestServeInstallCmd_Force(t *testing.T) {
 	// Don't actually run — just check parse.
 	if err := cmd.ParseFlags([]string{"--force", "--token", "test123"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServeInstallCmdReconcilesLegacyLaunchdLogRouting(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("launchd command generation")
+	}
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("RAMPART_TOKEN", "")
+	const token = "synthetic-existing-service-token"
+	if err := persistToken(token); err != nil {
+		t.Fatal(err)
+	}
+	path, err := plistPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(managedLaunchdFixture(t, token)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(home, "operator-config.json")
+	if err := os.WriteFile(unrelated, []byte("{\"keep\":true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath(), []byte("existing diagnostics\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	cmd := newServeInstallCmd(&rootOptions{configPath: "rampart.yaml"}, mockRunner(&calls))
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--force", "--port", "18275", "--mode", "monitor", "--approval-timeout", "90s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label, args, err := launchdServiceIdentity(data)
+	if err != nil || label != plistLabel {
+		t.Fatalf("service identity changed: %q (%v)", label, err)
+	}
+	want := []string{"serve", "--port", "18275", "--audit-dir", filepath.Join(home, ".rampart", "audit"), "--mode", "monitor", "--approval-timeout", "90s", "--log-file", logPath()}
+	if len(args) < 1 || !slices.Equal(args[1:], want) {
+		t.Fatalf("service arguments = %q, want executable followed by %q", args, want)
+	}
+	for name, want := range map[string]string{unrelated: "{\"keep\":true}\n", logPath(): "existing diagnostics\n"} {
+		data, err := os.ReadFile(name)
+		if err != nil || string(data) != want {
+			t.Fatalf("reinstall changed unrelated state: %q (%v)", data, err)
+		}
+	}
+	if got, err := readPersistedToken(); err != nil || got != token {
+		t.Fatal("reinstall changed the existing service token")
+	}
+	if !slices.Equal(calls, []string{"launchctl list " + plistLabel, "launchctl unload " + path, "launchctl load " + path}) {
+		t.Fatalf("unexpected service transitions: %q", calls)
 	}
 }
 

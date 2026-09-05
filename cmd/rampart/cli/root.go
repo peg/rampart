@@ -34,7 +34,7 @@ func Execute() error {
 	if err := cmd.Execute(); err != nil {
 		var ec interface{ ExitCode() int }
 		if !errors.As(err, &ec) {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
+			fmt.Fprintln(os.Stderr, sanitizeCommand(err.Error()))
 		}
 		return err
 	}
