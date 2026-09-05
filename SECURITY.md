@@ -4,8 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| 1.7.x | ✅ Current release |
-| 1.6.x | ⚠️ Critical fixes only |
+| 1.8.x | ✅ Current release |
+| 1.6.x–1.7.x | ⚠️ Critical fixes only |
 | < 1.6 | ❌ No longer supported |
 
 ## Reporting a Vulnerability
@@ -44,7 +44,9 @@ Rampart's threat model is documented in [`docs/THREAT-MODEL.md`](docs/THREAT-MOD
   dependency; explicitly configured notification, decision-webhook, semantic
   verification, and SIEM integrations send their documented data to the
   operator-selected endpoint
-- **Hash-chained audit** — tamper-evident append-only trail with SIEM export
+- **Hash-chained audit** — local records and checkpoints detect inconsistent
+  hashes and links; independent retention is needed to detect a complete
+  rewrite by an identity that can replace the audit directory
 
 The machine-readable integration guarantees, evidence paths, known limitations,
 and shared adversarial corpus live in [`assurance/`](assurance/README.md).

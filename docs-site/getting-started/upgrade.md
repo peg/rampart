@@ -85,6 +85,38 @@ configured integration with an active safe verifier without invoking a model.
 Use `rampart doctor` as well when you have a static-only integration such as
 Hermes.
 
+## Approval state and OpenClaw review
+
+The approval-state migration preserves live pending requests and their original
+action identity while redacting stored review data. Previously issued legacy
+one-time replay grants are retired; retrying those actions requires fresh
+approval. Older binaries cannot use the new approval-state format.
+
+The service creates an owner-only identity key beside its pending journal:
+`~/.rampart/pending-approvals.jsonl.identity-key`. Keep this key with
+`pending-approvals.jsonl` and its `.approved-once` directory when backing up or
+restoring approval state. It is separate from the audit signing key. A missing
+or malformed identity key blocks authorization over the new state; substituting
+another key does not recover the original approvals. Stop services using that
+state before restoring a matching backup. Custom journal locations use the same
+`.identity-key` and `.approved-once` suffixes.
+
+Native OpenClaw plugin approvals now offer **allow once** and **deny**.
+Persistent allowances require explicit operator policy; existing operator
+policies are retained. The plugin supplies the complete redacted action and
+available host context. OpenClaw's 512-character limit applies to that entire
+review after escaping, not just to the command. Oversized or unavailable review
+blocks before creating a native approval. Split such actions into smaller
+independently reviewable requests or define an explicit policy after reviewing
+the intended allowance. Upgrade and restart the policy service as well as the
+plugin; an older service without the complete review response blocks asks.
+
+When also upgrading OpenClaw, its own configuration migrations may be required
+before `rampart protect openclaw` can succeed. If the host reports retired
+configuration fields and instructs you to run `openclaw doctor --fix`, review
+and perform that host migration, then retry protection and verification.
+Rampart does not rewrite arbitrary upstream-owned configuration.
+
 ## What Upgrades Preserve
 
 Binary upgrades preserve user-owned state. The self-upgrader also refreshes

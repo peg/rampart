@@ -37,7 +37,13 @@ Send Rampart audit events to your existing security stack. Three output formats,
 
     When you don't have a syslog collector. Works on all platforms.
 
-All outputs run alongside the default JSONL audit trail — you don't lose anything by enabling SIEM output.
+SIEM outputs supplement the default local JSONL audit trail. Delivery is best
+effort: the bounded secondary queue can drop exported events when full, and
+`--syslog` uses UDP without an authenticated delivery receipt. A local CEF file
+does not create a separate trust boundary. Configure a separately controlled
+collector and its retention/access policy when independent evidence is needed;
+export alone does not make stored events immutable. `rampart audit verify`
+checks local history and checkpoints, not remote SIEM evidence.
 
 ## Wazuh Integration
 

@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-08-17 | Applies to: v1.8.0+
+> Last reviewed: 2026-09-04 | Applies to: v1.8.1+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -77,7 +77,11 @@ Rampart sees and evaluates `python3 script.py` — but cannot inspect what
 
 ### 2. Audit Log Rewrite
 
-The hash-chained audit trail detects **partial tampering** — editing, inserting, or deleting individual records breaks the chain. However, a complete rewrite from scratch with a new valid chain is not detectable from the log file alone.
+The hash-chained audit trail detects inconsistent event hashes and broken
+links between retained records. It cannot prove that every action was logged.
+A complete rewrite with a new valid chain, or deletion of a valid suffix
+beyond the retained checkpoint, is not detectable from the remaining local
+history alone.
 
 Rampart v1.6 also validates older logs containing chronological chain epochs
 created by legacy service restarts. Recovery verifies every event hash,
@@ -95,11 +99,21 @@ content, so operators must continue to protect audit storage and exports.
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](https://docs.rampart.sh/deployment/user-separation/) so the agent can't access audit files
-- Enable SIEM export (`--syslog` or `--cef`) to send events to an external immutable system
-- Webhook notifications send real-time alerts to Discord/Slack — a separate record
-- External chain anchors every 100 events provide additional integrity checkpoints
+- Configure SIEM export (`--syslog` or `--cef`) and a separately controlled
+  collector to retain received events outside the agent's write authority.
+  Export is best effort; the transport and collector determine delivery and
+  retention guarantees.
+- Webhook notifications can retain selected alerts in a separate system;
+  they are not a complete audit trail.
+- `audit-anchor.json` is a local checkpoint beside the audit files, updated
+  every 100 events by default. Verification checks it against retained events,
+  but an identity that can replace both logs and checkpoint can rewrite them
+  consistently. Append-mode files are not immutable storage.
 
-**For compliance environments:** Pair with external immutable logging (CloudTrail, Wazuh, etc.) for an independent trust anchor. See the [SIEM integration guide](https://docs.rampart.sh/features/siem-integration/).
+For independently retained evidence, configure collection, access control,
+and retention outside the agent's authority. Rampart's local verifier does
+not retrieve or validate remote SIEM evidence. See the
+[SIEM integration guide](https://docs.rampart.sh/features/siem-integration/).
 
 ### 3. Token Exposure in Wrap Mode
 
@@ -130,12 +144,20 @@ An agent could encode commands to bypass pattern matching:
 
 ### 5. OpenClaw Integration Boundaries
 
-OpenClaw has a native plugin path, which is the preferred integration. Rampart keeps global `tools.exec.ask` off by default, evaluates tool calls first, and returns OpenClaw's native `requireApproval` result only for calls that match a Rampart `ask` rule. That gives you native OpenClaw approval cards without prompting on every routine action.
+OpenClaw has a native plugin path, which is the preferred integration. On older supported hosts Rampart keeps global `tools.exec.ask` off; on current hosts it preserves the canonical `tools.exec.mode` policy, removes only equivalent retired `ask`/`security` siblings, and refuses conflicting mixed policies. Rampart evaluates tool calls first and returns OpenClaw's native `requireApproval` result for calls that match a Rampart `ask` rule. A stricter operator-selected OpenClaw exec mode can add another approval or block after Rampart, but cannot grant past the Rampart hook.
 
 **What this means in practice:**
-- **Allow** rules pass through normally, with no approval prompt
+- **Allow** rules pass through without a Rampart-originated approval prompt; a stricter OpenClaw exec mode may still gate them
 - **Deny** rules short-circuit before native approval
-- **Ask** rules surface OpenClaw's native approval UI only for the matched exec call
+- **Ask** rules request native approval for the matched supported tool call only
+  when its complete redacted review fits the host's 512-character description
+  limit after escaping; otherwise the plugin blocks before creating an approval
+
+Native plugin approvals offer `allow-once` and `deny`. They do not create
+permanent command/path rules. OpenClaw owns the resume operation; Rampart's
+resolution callback cannot inspect or veto the resumed parameters. See the
+[OpenClaw integration limits](https://docs.rampart.sh/integrations/openclaw/#complete-action-approval)
+for the trusted-plugin composition boundary.
 
 `--patch-tools` still exists as a compatibility path for older OpenClaw setups and broader file-tool interception, but it remains fragile because it modifies installed framework files.
 
@@ -152,7 +174,11 @@ Rampart does **not** behave identically across every integration when policy eva
 **Current behavior:**
 - `rampart wrap --mode enforce` runs its own local policy service and denies shell commands when that service cannot confirm enforcement. Monitor mode permits them with a warning. This applies only to commands that reach the cooperative shell boundary.
 - `rampart preload` defaults to **fail-open** for transport and server failures unless explicitly configured fail-closed.
-- The native OpenClaw plugin supports per-tool degraded behavior. A manual plugin setup keeps explicitly configured lower-risk tools fail-open by default; `rampart protect openclaw` removes those exceptions and configures every tool to fail closed.
+- The native OpenClaw plugin defaults to fail closed for every tool when its
+  policy service is unavailable. Operators can explicitly opt tools into
+  degraded fail-open behavior with `failOpenTools` or the deprecated `failOpen`
+  setting; manual setup can retain those choices. `rampart protect openclaw`
+  clears the exceptions and configures every tool to fail closed.
 - Native hook integrations (Claude Code, Codex, Cline, Gemini CLI, GitHub Copilot) evaluate policies locally in-process, so they do not depend on `rampart serve` for the core allow/deny path. Codex and Gemini approval-required actions still need the external Rampart queue and deny if it is unavailable; Copilot uses its native ask prompt.
 
 **Mitigations:**

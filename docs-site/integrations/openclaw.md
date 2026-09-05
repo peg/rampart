@@ -5,7 +5,7 @@ description: "Protect OpenClaw in one command with Rampart-managed policy, fail-
 
 # OpenClaw
 
-Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. This is the primary supported path. OpenClaw owns the visible approval UX, while Rampart owns policy evaluation, audit logging, and durable allow-always writeback.
+Rampart integrates with OpenClaw via the native `before_tool_call` plugin API. This is the primary supported path. OpenClaw owns the visible approval UX, while Rampart owns policy evaluation, audit logging, and complete redacted action review.
 
 When `rampart serve` is healthy, every supported tool call — exec, read, write, web_fetch, browser, message, and more — is evaluated against your policy before it runs.
 
@@ -34,6 +34,24 @@ That's it. Rampart:
 4. Starts `rampart serve` as a boot service, with a background fallback for headless environments
 5. Configures every OpenClaw tool to fail closed if the local policy service is unavailable
 6. Restarts the gateway and runs safe behavioral canaries through the live plugin path
+
+On OpenClaw versions that require capability consent for external plugins,
+this explicit protect command accepts the exact capability surface OpenClaw
+reports for Rampart's bundled plugin. That surface includes the
+`before_tool_call` hook used for enforcement. Rampart does not accept
+capabilities for any other plugin. Setup, forced reinstall, and `doctor --fix`
+also use OpenClaw's consent-aware enable command, so a previously disabled
+plugin is not mistaken for a repaired active boundary.
+
+Current OpenClaw versions use `tools.exec.mode` as the canonical exec-policy
+setting. Rampart preserves a valid operator-selected mode because OpenClaw's
+exec policy remains an additional gate after the Rampart hook; stricter modes
+can add an OpenClaw-owned approval or block but cannot bypass Rampart. During
+an upgrade, Rampart removes retired `tools.exec.ask` and `tools.exec.security`
+siblings only when they are semantically equivalent to `mode`; conflicting or
+malformed mixed policies require explicit operator resolution rather than an
+automatic weakening. Older supported OpenClaw versions continue to use Rampart's
+ownership-tracked `tools.exec.ask = "off"` setting.
 
 After setup, verify both services are healthy:
 
@@ -90,7 +108,7 @@ Agent wants to run a tool (exec, read, write, web_fetch, ...)
                  ├─ allow  → tool runs
                  ├─ deny   → tool blocked, agent gets error message
                  └─ ask    → OpenClaw owns the visible approval UI/state
-                              Rampart writes audit, evaluates policy, and persists allow-always rules
+                              Rampart writes audit, evaluates policy, and supplies complete action review
 ```
 
 ## Coverage
@@ -158,30 +176,35 @@ Install manually:
 rampart init --profile openclaw
 ```
 
-## Always Allow writeback
+## Complete action approval
 
-When you click "Always Allow" in the OpenClaw approval UI, Rampart writes a durable rule to `~/.rampart/policies/user-overrides.yaml` via `POST /v1/rules/learn`. The rule takes effect immediately without restarting serve.
+The native plugin offers `allow-once` and `deny`. It shows the complete
+represented arguments, targets and available host context with secrets redacted.
+The approval belongs to OpenClaw; Rampart creates no second pending queue.
+Timeouts deny the call.
 
-The Rampart-owned approval card explicitly offers `allow-once`, `allow-always`,
-and `deny`, and denies on timeout. Only `allow-always` creates a durable rule.
-One-time approvals, denials, timeouts, and cancellations never change policy.
+The policy input retains adapter-derived facts used by the Guard rules. Its
+`rampart_original_input` field preserves the original tool arguments for review
+and action identity, including any caller-supplied names that overlap the
+adapter's reserved fields. Those names cannot replace derived policy facts or
+host context. Native approval displays this original payload after redaction.
 
-Automatic approvals are exact by default. Rampart never inserts a wildcard or
-strips arguments, pipes, or redirects when persisting an approved command.
-Literal wildcard characters are escaped as policy literals. Exact automatic
-persistence supports exec commands and read/write/edit paths; other tool types
-require an explicit operator-authored policy.
+OpenClaw's native hook description is limited to 512 characters and does not
+forward a complete-review attachment. If the complete rendered action exceeds
+that limit, Rampart blocks it before creating an approval. Split it into smaller
+independently reviewable actions or configure an explicit operator-reviewed
+policy. An older Rampart service without the complete review response also
+blocks asks until upgraded.
 
-For example, approving `sudo apt-get install nmap` always writes:
-```yaml
-- name: user-allow-<hash>
-  match:
-    tool: exec
-  rules:
-    - when:
-        command_matches: ["sudo apt-get install nmap"]
-      action: allow
-```
+Native plugin approvals no longer offer permanent command/path writeback: such
+a rule would omit other reviewed parameters, requester and execution context.
+Use an explicit policy when you want a persistent allowance. Existing
+operator-authored policies are retained.
+
+Other plugins that return parameter rewrites are part of the trusted OpenClaw
+configuration. Although the first approval freezes selected parameters, Rampart
+receives the original event rather than preceding hooks' returned rewrites.
+Its resolution callback cannot inspect or veto the resumed action.
 
 ## Verify the integration
 
@@ -189,7 +212,13 @@ For example, approving `sudo apt-get install nmap` always writes:
 rampart verify openclaw
 ```
 
-The verification command checks routine work, destructive actions, credential access, policy tampering, direct external network commands, publishing, cross-conversation messages, opaque interpreters, and package publishing. Its fixed canaries traverse policy evaluation and the live plugin's decision mapping without executing the represented actions.
+The verification command checks managed configuration and policy canaries,
+then calls `rampart.verify` on the running gateway. That plugin method feeds
+fixed, non-executing canaries through the same normalization and decision
+mapping as `before_tool_call`. It proves the current plugin is loaded and can
+reach Rampart; it does not invoke the agent's tool dispatcher or exercise a
+native approval's resume path. An authenticated agent turn is separate
+evidence and is not run by this command.
 
 Use `rampart doctor` for the broader installation health report. Expected output when fully configured includes:
 
@@ -200,9 +229,8 @@ Use `rampart doctor` for the broader installation health report. Expected output
 ✓ Approval path: native OpenClaw UI active
 ```
 
-For safe end-to-end confidence, run `rampart verify openclaw`. It checks the
-installed plugin and exercises allow, ask, and deny behavior without executing
-the represented actions or invoking a model.
+See the [support matrix](../getting-started/support-matrix.md#degraded-behavior-notes)
+for service failure defaults and the limits of each verification level.
 
 Or check plugin status directly:
 

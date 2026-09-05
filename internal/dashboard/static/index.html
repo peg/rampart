@@ -129,10 +129,11 @@ body{font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.4;bac
 .detail-inner{max-height:0;overflow:hidden;transition:max-height .28s ease;padding:0 12px}
 /* pend-detail always carries the 1px separator between rows (avoids double-border with pend-item) */
 .pend-detail{border-bottom:1px solid var(--border)}
-.pend-detail.open .detail-inner{max-height:300px;padding:10px 12px 14px 52px}
+.pend-detail.open .detail-inner{max-height:none;padding:10px 12px 14px 52px}
 /* History detail row */
 .detail-row td{padding:0!important;border-bottom:1px solid var(--border)}
 .detail-row.open .detail-inner{max-height:300px;padding:10px 8px}
+.action-review{white-space:pre-wrap;overflow-wrap:anywhere}
 .detail-inner .kv{display:grid;grid-template-columns:100px 1fr;gap:4px 12px;font-size:12px}
 .detail-inner .kv dt{color:#52525b;font-weight:500}.detail-inner .kv dd{color:var(--text-bright);word-break:break-all}
 
@@ -1071,7 +1072,7 @@ function createPendingRow(a){
       <span class="pend-timer" id="timer-${esc(a.id)}"></span>
       <div class="pend-actions">
         <button class="act-btn approve" data-action="approve" data-id="${esc(a.id)}" title="Approve once">Allow</button>
-        <button class="act-btn always" data-action="always" data-id="${esc(a.id)}" title="Always allow this command pattern">Always Allow</button>
+        <button class="act-btn always" ${a.redacted?'disabled title="Use an explicit policy for redacted actions"':''} data-action="always" data-id="${esc(a.id)}" title="Always allow this command pattern">Always Allow</button>
         <button class="act-btn deny" data-action="deny" data-id="${esc(a.id)}" title="Deny">Deny</button>
       </div>
     </div>`;
@@ -1079,6 +1080,7 @@ function createPendingRow(a){
   const det=document.createElement('div');det.className='pend-detail';det.id='det-'+a.id;
   det.innerHTML=`<div class="detail-inner"><dl class="kv">
     <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
+    <dt>Complete action</dt><dd class="mono action-review">${esc(a.action?JSON.stringify(a.action,null,2).replace(/[\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0')):'Complete action unavailable; update the Rampart service before approving.')}</dd>
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(a.tool||'—')}</dd>
     <dt>Agent</dt><dd>${esc(a.agent||'—')}</dd>
@@ -1121,7 +1123,7 @@ function handlePendingClick(e){
     e.stopPropagation();
     if(btn.dataset.action==='always'){
       const cmd=extractCmd(pendingMap.get(btn.dataset.id)||{});
-      if(!confirm('Always Allow will create a permanent rule that auto-approves similar commands.\n\nCommand: '+cmd+'\n\nThis can be revoked later in the Policy tab. Continue?'))return;
+      if(!confirm('Always Allow will create a permanent command/path rule across contexts. It does not bind this complete action.\n\nCommand: '+cmd+'\n\nThis can be revoked later in the Policy tab. Continue?'))return;
     }
     resolveApproval(btn.dataset.id,btn.dataset.action);return;
   }

@@ -49,6 +49,33 @@ func TestRunDoctor(t *testing.T) {
 	}
 }
 
+func TestDoctorOpenClawAskModeAcceptsCanonicalMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX executable fixture")
+	}
+	stateDir := t.TempDir()
+	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+	if err := openclawplugin.Extract(filepath.Join(stateDir, openclawPluginDir)); err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"mode":"auto"}}}`)
+	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var gotName, gotStatus, gotMessage string
+	warnings := doctorOpenClawAskMode(func(name, status, message string) {
+		gotName, gotStatus, gotMessage = name, status, message
+	})
+	if warnings != 0 || gotName != "OpenClaw exec mode" || gotStatus != "ok" || !strings.Contains(gotMessage, "auto") {
+		t.Fatalf("doctor result = warnings %d, %q %q %q", warnings, gotName, gotStatus, gotMessage)
+	}
+}
+
 func TestRelHome(t *testing.T) {
 	got := relHome("/home/user/.rampart/audit", "/home/user")
 	want := filepath.FromSlash(".rampart/audit")
