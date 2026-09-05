@@ -88,8 +88,12 @@ func TestPolicySearch_JSON(t *testing.T) {
 
 	var results []policyRegistryEntry
 	require.NoError(t, json.Unmarshal([]byte(stdout), &results))
-	assert.Len(t, results, 1)
-	assert.Equal(t, "kubernetes", results[0].Name)
+	entry, found := findPolicyByName(&policyRegistryManifest{Policies: results}, "kubernetes")
+	require.True(t, found, "JSON results must include the matching remote policy")
+	assert.Equal(t, 87, entry.BenchScore)
+	for _, result := range results {
+		assert.True(t, entryMatchesQuery(result, "kubernetes"), "embedded matches can grow with the registry")
+	}
 }
 
 // ---------------------------------------------------------------------------

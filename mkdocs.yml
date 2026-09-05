@@ -14,7 +14,7 @@ theme:
   logo: assets/logo.svg
   favicon: assets/logo.svg
   font:
-    text: Inter
+    text: Manrope
     code: JetBrains Mono
   palette:
     - scheme: slate
@@ -36,7 +36,6 @@ theme:
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.sections
-    - navigation.expand
     - navigation.top
     - navigation.footer
     - search.suggest
@@ -114,6 +113,7 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+    - Upgrade: getting-started/upgrade.md
     - Support Matrix: getting-started/support-matrix.md
     - Security Assurance: getting-started/security-assurance.md
     - How It Works: getting-started/how-it-works.md
@@ -121,12 +121,12 @@ nav:
     - Configuration: getting-started/configuration.md
     - FAQ: getting-started/faq.md
     - Troubleshooting: getting-started/troubleshooting.md
-    - Upgrade: getting-started/upgrade.md
     - Uninstall: getting-started/uninstall.md
   - Security Guides:
     - Securing Claude Code: guides/securing-claude-code.md
     - Prompt Injection Protection: guides/prompt-injection.md
     - Customizing Policy: guides/customizing-policy.md
+    - Production Guard: guides/production-guard.md
     - Install via an AI Agent: guides/agent-install.md
     - Generate Policy from Behavior: guides/from-audit.md
     - Testing Policies: guides/testing-policies.md
@@ -156,6 +156,7 @@ nav:
   - Features:
     - Policy Engine: features/policy-engine.md
     - Audit Trail: features/audit-trail.md
+    - External Witnessing (Experimental): features/external-witness.md
     - Webhook Notifications: features/webhooks.md
     - Approval Dashboard: features/dashboard.md
     - Agent Team Oversight: features/agent-teams.md

@@ -6,15 +6,63 @@ hide:
   - toc
 ---
 
+<p class="docs-eyebrow">Rampart documentation</p>
+
 <div class="hero-title" markdown>
 
-# Rampart
+<span id="rampart"></span>
+
+# Put your policy into practice
 
 </div>
 
-<p class="hero-subtitle">Open-source guardrails for AI agents. A policy firewall for shell commands, file access, and MCP tools.</p>
+<p class="hero-subtitle">Install Rampart, connect a supported agent, and check the boundary before you rely on it.</p>
 
----
+## Start here
+
+<div class="grid cards" markdown>
+
+-   :material-download:{ .lg .middle } **New to Rampart**
+
+    Install the CLI, choose a supported integration, and run the first checks.
+
+    [Installation](getting-started/installation.md) · [Quick start](getting-started/quickstart.md)
+
+-   :material-arrow-up-circle:{ .lg .middle } **Upgrade an installation**
+
+    Update the binary and owned hooks, then verify the resulting setup.
+
+    [Upgrade guide](getting-started/upgrade.md) · [Release notes](https://github.com/peg/rampart/releases/latest)
+
+-   :material-file-document-edit:{ .lg .middle } **Write and test policy**
+
+    Express the actions you allow, deny, or send for human approval.
+
+    [Customize policy](guides/customizing-policy.md) · [Test policies](guides/testing-policies.md)
+
+-   :material-stethoscope:{ .lg .middle } **Check a problem**
+
+    Follow a failed check, unexpected denial, or integration limitation.
+
+    [Troubleshooting](getting-started/troubleshooting.md) · [Support matrix](getting-started/support-matrix.md)
+
+</div>
+
+## Quick Start
+
+```bash
+brew install peg/tap/rampart
+rampart protect
+rampart verify --all
+```
+
+`rampart protect` detects and configures supported installed agents.
+`rampart verify --all` re-checks policy and configured integrations with an
+active verifier. A setup check alone is not proof that a host ingests its
+hooks. Review your agent's [support status and limits](getting-started/support-matrix.md).
+
+For Linux, Windows, and other install methods, use the
+[installation guide](getting-started/installation.md).
 
 ## What is Rampart?
 
@@ -56,7 +104,7 @@ context. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
 
     [:octicons-arrow-right-24: Learn more](features/webhooks.md)
 
--   :material-connection:{ .lg .middle } **Universal Integration**
+-   :material-connection:{ .lg .middle } **Integration Boundaries**
 
     ---
 
@@ -83,22 +131,6 @@ context. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
 
 </div>
 
-## Quick Start
-
-```bash
-# Install
-brew install peg/tap/rampart
-
-# Detect, configure, and verify supported installed agents
-rampart protect
-
-# Re-check policy and every configured active-verifier integration
-rampart verify --all
-```
-
-That's it. Rampart selects the strongest supported native boundary for each
-detected agent. [Full setup guide →](getting-started/quickstart.md) · [Support matrix →](getting-started/support-matrix.md)
-
 ## Frequently Asked Questions
 
 **Is Claude Code safe to use in --dangerously-skip-permissions mode?**  
@@ -122,6 +154,8 @@ Core Rampart policy evaluation, audit logging, and the dashboard are local.
 Optional semantic verification and notification/webhook features send the
 configured request data to their configured providers. The agent itself may
 also use remote model and tool services independently of Rampart.
+Optional [external witnessing](features/external-witness.md) publishes compact
+audit checkpoints without commands, prompts or tool-request content.
 
 **Will Rampart slow down my agent?**  
 Core matching is local and benchmarked in microseconds. Hook startup and audit
@@ -133,85 +167,31 @@ Run `rampart allow "your command pattern"` and it's done — no YAML editing req
 
 ## How It Works
 
-```d2
-direction: right
+1. A configured integration exposes an agent's tool request to Rampart.
+2. YAML policy returns **allow/watch**, **deny**, or **ask**. Allow and watch
+   let the host continue; deny blocks the represented action; ask requires
+   human approval through the integration's supported path.
+3. The local audit trail records the request and policy decision.
 
-agents: {
-  label: "AI Agents"
-  claude: "Claude Code"
-  cline: "Cline"
-  openclaw: "OpenClaw"
-  codex: "Codex CLI"
-  other: "Any Agent"
-}
+<div class="architecture-figure" markdown>
 
-intercept: {
-  label: "Interception"
-  hooks: "Native Hooks"
-  plugin: "Native Plugin"
-  preload: "LD_PRELOAD"
-  mcp: "MCP Proxy"
-}
-
-engine: "YAML Policy Engine\\nlocal matching" {
-  style.fill: "#1d3320"
-  style.stroke: "#2ea043"
-  style.font-color: "#3fb950"
-  style.border-radius: 8
-}
-
-verify: "rampart-verify\\n(optional sidecar)" {
-  style.stroke-dash: 4
-  style.border-radius: 8
-}
-
-audit: "Audit Trail\\nhash-chained" {
-  style.border-radius: 8
-}
-
-outcomes: {
-  label: "Outcomes"
-  allow: "Execute" {
-    style.fill: "#1d3320"
-    style.stroke: "#2ea043"
-    style.font-color: "#3fb950"
-    style.border-radius: 6
-  }
-  deny: "Blocked" {
-    style.fill: "#2d1b1b"
-    style.stroke: "#da3633"
-    style.font-color: "#f85149"
-    style.border-radius: 6
-  }
-  approval: "Approval" {
-    style.fill: "#2d2508"
-    style.stroke: "#d29922"
-    style.font-color: "#d29922"
-    style.border-radius: 6
-  }
-}
-
-agents.claude -> intercept.hooks
-agents.cline -> intercept.hooks
-agents.openclaw -> intercept.plugin
-agents.codex -> intercept.hooks
-agents.cursor -> intercept.hooks
-agents.other -> intercept.mcp
-
-intercept.hooks -> engine
-intercept.plugin -> engine
-intercept.preload -> engine
-intercept.mcp -> engine
-
-engine -> outcomes.allow: "allow"
-engine -> outcomes.deny: "deny"
-engine -> verify: "ambiguous"
-engine -> audit
-
-verify -> outcomes.allow
-verify -> outcomes.deny
-verify -> outcomes.approval
+```d2 alt="An exposed agent action reaches a configured integration and YAML policy engine. Policy can directly allow or watch, deny, or ask for human approval. Decisions are recorded in a local audit trail."
+--8<-- "docs/architecture.d2"
 ```
+
+</div>
+
+`action: ask` routes directly from policy to human approval; it does not
+require a semantic verifier. The integration determines whether approval is
+shown by the host or handled through Rampart. See the
+[native ask guide](guides/native-ask.md) and your
+[integration guide](integrations/index.md) for the actual boundary.
+
+Only an explicitly matched `webhook` rule invokes an optional external
+[decision service](features/semantic-verification.md). The diagram describes
+policy decisions, not proof of execution or independent audit witnessing.
+
+[Architecture](reference/architecture.md) · [Threat model](reference/threat-model.md) · [Policy schema](reference/policy-schema.md)
 
 ## Integration Paths
 

@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated_at": "2026-08-11T01:04:32Z",
+  "updated_at": "2026-09-04T22:24:32Z",
   "policies": [
     {
       "name": "mcp-server",
@@ -19,6 +19,21 @@
       "sha256": "8191718bc9296bf558d07d612a4ec5d64544305a814ed81de637ade2ff5a8629",
       "version": "1.0.0",
       "author": ""
+    },
+    {
+      "name": "production-guard",
+      "description": "Opt-in approval for supported infrastructure, migration, and explicit production Kubernetes CLI mutations",
+      "tags": [
+        "production",
+        "iac",
+        "database",
+        "kubernetes"
+      ],
+      "url": "https://raw.githubusercontent.com/peg/rampart/main/policies/production-guard.yaml",
+      "sha256": "33f5cc5b40e67ec91e60a7ae4203cbf015c6a5c1fdddd3189f78e622f9d2b600",
+      "version": "1.0.0",
+      "author": "@rampart-team",
+      "min_rampart": "1.9.0"
     },
     {
       "name": "aws-cli",
