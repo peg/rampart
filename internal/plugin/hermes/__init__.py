@@ -810,6 +810,7 @@ def _hermes_supports_native_approval() -> bool:
     )
     resolver = getattr(hermes_plugins, "resolve_pre_tool_block", None)
     resolution_helper = getattr(hermes_plugins, "_resolve_block_from_details", None)
+    dispatch_helper = getattr(hermes_plugins, "_dispatch_pre_tool_call_hooks", None)
     if not (
         callable(public_getter)
         and callable(details_getter)
@@ -824,9 +825,10 @@ def _hermes_supports_native_approval() -> bool:
     # and the resolver supplies ``details.rule_key`` to the approval gate.
     # Hermes v0.20.2 moved the gate into ``_resolve_block_from_details``; for
     # that shape, also prove that the resolver passes the same directive into
-    # the helper. If source is unavailable or a future host delegates this
-    # differently, fail closed until that contract is reviewed instead of
-    # guessing from names.
+    # the helper. v0.21.1 delegates through ``_dispatch_pre_tool_call_hooks``;
+    # additionally prove that its resolved block is returned to the caller.
+    # If source is unavailable or a future host delegates differently, fail
+    # closed until that contract is reviewed instead of guessing from names.
     try:
         details_tree = ast.parse(textwrap.dedent(inspect.getsource(details_getter)))
         resolver_tree = ast.parse(textwrap.dedent(inspect.getsource(resolver)))
@@ -839,6 +841,94 @@ def _hermes_supports_native_approval() -> bool:
         if isinstance(node.func, ast.Attribute):
             return node.func.attr
         return ""
+
+    def named_call(node: ast.AST, name: str, arguments: tuple[str, ...]) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+            and len(node.args) == len(arguments)
+            and all(
+                isinstance(argument, ast.Name) and argument.id == expected
+                for argument, expected in zip(node.args, arguments)
+            )
+        )
+
+    def function_body(tree: ast.Module) -> list[ast.stmt]:
+        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.FunctionDef):
+            return []
+        body = tree.body[0].body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]
+        return body
+
+    def forwards_hook_kwargs(node: ast.Call) -> bool:
+        return (
+            len(node.keywords) == 1
+            and node.keywords[0].arg is None
+            and isinstance(node.keywords[0].value, ast.Name)
+            and node.keywords[0].value.id == "hook_kwargs"
+        )
+
+    def assigns_call(
+        node: ast.stmt, target: str, name: str, arguments: tuple[str, ...]
+    ) -> bool:
+        return (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == target
+            and named_call(node.value, name, arguments)
+        )
+
+    # Only accept the reviewed straight-line dispatcher form. Merely finding
+    # calls somewhere in its source would not prove the approval result wins.
+    resolver_body = function_body(resolver_tree)
+    if (
+        len(resolver_body) == 1
+        and isinstance(resolver_body[0], ast.Return)
+        and isinstance(resolver_body[0].value, ast.Subscript)
+        and named_call(
+            resolver_body[0].value.value,
+            "_dispatch_pre_tool_call_hooks",
+            ("tool_name", "args"),
+        )
+        and forwards_hook_kwargs(resolver_body[0].value.value)
+        and isinstance(resolver_body[0].value.slice, ast.Constant)
+        and type(resolver_body[0].value.slice.value) is int
+        and resolver_body[0].value.slice.value == 0
+    ):
+        if not callable(dispatch_helper) or not callable(resolution_helper):
+            return False
+        try:
+            dispatch_tree = ast.parse(textwrap.dedent(inspect.getsource(dispatch_helper)))
+        except (OSError, TypeError, SyntaxError, IndentationError):
+            return False
+        body = function_body(dispatch_tree)
+        if not (
+            len(body) == 3
+            and assigns_call(
+                body[0], "details", "_get_pre_tool_call_directive_details",
+                ("tool_name", "args"),
+            )
+            and forwards_hook_kwargs(body[0].value)
+            and assigns_call(
+                body[1], "block_msg", "_resolve_block_from_details",
+                ("details", "tool_name"),
+            )
+            and isinstance(body[2], ast.Return)
+            and isinstance(body[2].value, ast.Tuple)
+            and len(body[2].value.elts) == 2
+            and isinstance(body[2].value.elts[0], ast.Name)
+            and body[2].value.elts[0].id == "block_msg"
+        ):
+            return False
+        resolver_tree = dispatch_tree
 
     result_rule_key_is_captured = any(
         isinstance(node, ast.Assign)

@@ -53,9 +53,13 @@ class HermesPluginTests(unittest.TestCase):
         def resolve_block_from_details(*_):
             return None
 
+        def dispatch_pre_tool_call_hooks(*_):
+            return None
+
         hermes_plugins._get_pre_tool_call_directive_details = details_getter
         hermes_plugins.resolve_pre_tool_block = resolve_pre_tool_block
         hermes_plugins._resolve_block_from_details = resolve_block_from_details
+        hermes_plugins._dispatch_pre_tool_call_hooks = dispatch_pre_tool_call_hooks
         directive_type = type(
             "_PreToolCallDirective",
             (),
@@ -88,7 +92,18 @@ class HermesPluginTests(unittest.TestCase):
                         rule_key=details.rule_key or tool_name,
                     )
             """,
+            dispatch_pre_tool_call_hooks: """
+                def _dispatch_pre_tool_call_hooks(tool_name, args, **hook_kwargs):
+                    details = _get_pre_tool_call_directive_details(tool_name, args, **hook_kwargs)
+                    block_msg = _resolve_block_from_details(
+                        details, tool_name,
+                        **{k: hook_kwargs.get(k, "") for k in ("turn_id", "tool_call_id", "session_id")},
+                    )
+                    return (block_msg, details.modified_args)
+            """,
         }
+        original_gate_source = sources[resolve_block_from_details]
+        dispatcher_source = sources[dispatch_pre_tool_call_hooks]
 
         with (
             mock.patch.dict(sys.modules, modules),
@@ -105,6 +120,131 @@ class HermesPluginTests(unittest.TestCase):
                     return request_tool_approval(tool_name, details.message, rule_key=tool_name)
             """
             self.assertFalse(plugin._hermes_supports_native_approval())
+
+            delegated_resolver_source = """
+                def resolve_pre_tool_block(tool_name, args, **hook_kwargs):
+                    return _dispatch_pre_tool_call_hooks(tool_name, args, **hook_kwargs)[0]
+            """
+            sources[resolve_pre_tool_block] = delegated_resolver_source
+            self.assertTrue(plugin._hermes_supports_native_approval())
+
+            for label, function, source in (
+                (
+                    "wrong result index", resolve_pre_tool_block,
+                    delegated_resolver_source.replace("[0]", "[1]"),
+                ),
+                (
+                    "substituted original arguments", resolve_pre_tool_block,
+                    delegated_resolver_source.replace(
+                        "(tool_name, args, **hook_kwargs)[0]",
+                        "(tool_name, {}, **hook_kwargs)[0]",
+                    ),
+                ),
+                (
+                    "substituted original tool", resolve_pre_tool_block,
+                    delegated_resolver_source.replace(
+                        "_dispatch_pre_tool_call_hooks(tool_name, args, **hook_kwargs)",
+                        "_dispatch_pre_tool_call_hooks(other_tool, args, **hook_kwargs)",
+                    ),
+                ),
+                (
+                    "lost original context", resolve_pre_tool_block,
+                    delegated_resolver_source.replace(
+                        "_dispatch_pre_tool_call_hooks(tool_name, args, **hook_kwargs)",
+                        "_dispatch_pre_tool_call_hooks(tool_name, args)",
+                    ),
+                ),
+                (
+                    "substituted details input", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "_get_pre_tool_call_directive_details(tool_name, args, **hook_kwargs)",
+                        "_get_pre_tool_call_directive_details(tool_name, {}, **hook_kwargs)",
+                    ),
+                ),
+                (
+                    "substituted details tool", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "_get_pre_tool_call_directive_details(tool_name, args, **hook_kwargs)",
+                        "_get_pre_tool_call_directive_details(other_tool, args, **hook_kwargs)",
+                    ),
+                ),
+                (
+                    "substituted details context", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "_get_pre_tool_call_directive_details(tool_name, args, **hook_kwargs)",
+                        "_get_pre_tool_call_directive_details(tool_name, args, **other_kwargs)",
+                    ),
+                ),
+                (
+                    "substituted task identity", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "_get_pre_tool_call_directive_details(tool_name, args, **hook_kwargs)",
+                        "_get_pre_tool_call_directive_details(tool_name, args, task_id='other')",
+                    ),
+                ),
+                (
+                    "substituted details", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "details, tool_name,", "other_details, tool_name,"
+                    ),
+                ),
+                (
+                    "missing details lookup", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "details = _get_pre_tool_call_directive_details(tool_name, args, **hook_kwargs)",
+                        "details = other_details",
+                    ),
+                ),
+                (
+                    "discarded approval output", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "return (block_msg, details.modified_args)",
+                        "return (None, details.modified_args)",
+                    ),
+                ),
+                (
+                    "swapped result slots", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "return (block_msg, details.modified_args)",
+                        "return (details.modified_args, block_msg)",
+                    ),
+                ),
+                (
+                    "overwritten details", dispatch_pre_tool_call_hooks,
+                    dispatcher_source.replace(
+                        "block_msg =",
+                        "details = other_details\n                    block_msg =",
+                    ),
+                ),
+                (
+                    "lost rule key", resolve_block_from_details,
+                    original_gate_source.replace(
+                        "rule_key=details.rule_key or tool_name", "rule_key=tool_name"
+                    ),
+                ),
+            ):
+                with self.subTest(label=label):
+                    original = sources[function]
+                    sources[function] = source
+                    try:
+                        self.assertFalse(plugin._hermes_supports_native_approval())
+                    finally:
+                        sources[function] = original
+
+            with mock.patch.object(hermes_plugins, "_dispatch_pre_tool_call_hooks", None):
+                self.assertFalse(plugin._hermes_supports_native_approval())
+            with mock.patch.object(hermes_plugins, "_resolve_block_from_details", None):
+                self.assertFalse(plugin._hermes_supports_native_approval())
+
+            def source_without_dispatcher(function):
+                if function is dispatch_pre_tool_call_hooks:
+                    raise OSError("dispatcher source unavailable")
+                return sources[function]
+
+            with mock.patch.object(
+                plugin.inspect, "getsource", side_effect=source_without_dispatcher
+            ):
+                self.assertFalse(plugin._hermes_supports_native_approval())
 
             sources[resolve_pre_tool_block] = """
                 def resolve_pre_tool_block(tool_name, args):
