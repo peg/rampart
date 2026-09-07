@@ -1,8 +1,16 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/peg/rampart/internal/engine"
 )
 
 func FuzzToolRequest(f *testing.F) {
@@ -52,6 +60,13 @@ func FuzzToolRequest(f *testing.F) {
 	f.Add(`"string instead of object"`)
 	f.Add(`[1, 2, 3]`) // array instead of object
 	f.Add(`42`)        // number instead of object
+	f.Add(`{"agent": 12345, "session": true, "params": "not an object"}`)
+	f.Add(`{"agent": {"nested": "object"}, "params": [1,2,3]}`)
+	f.Add(`{"params": {"command": null, "path": false, "url": 123}}`)
+	f.Add(`{"params": {"a": {"b": {"c": {"d": {"e": {"f": {"g": "deep"}}}}}}}}`)
+	f.Add(`[{"agent": "test"}, {"agent": "test2"}]`)
+	f.Add(`{"agent": "\u0000\u0001\u0002", "params": {"command": "\xff\xfe\xfd"}}`)
+	f.Add(`{} {}`) // trailing JSON must be rejected by the HTTP decoder
 
 	// Large payloads
 	largeParams := `{"agent": "test", "params": {"data": "`
@@ -61,35 +76,51 @@ func FuzzToolRequest(f *testing.F) {
 	largeParams += `"}}`
 	f.Add(largeParams)
 
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := engine.NewMemoryStore([]byte("version: \"1\"\ndefault_action: deny\n"), "fuzz:http-request")
+	if _, err := engine.New(store, logger); err != nil {
+		f.Fatalf("invalid fixed HTTP policy: %v", err)
+	}
 	f.Fuzz(func(t *testing.T, jsonData string) {
+		// Use the real decoder, request preparation, and policy handler with
+		// isolated in-memory state. The deny policy cannot execute a tool.
+		eng, err := engine.New(store, logger)
+		if err != nil {
+			t.Fatalf("create engine: %v", err)
+		}
+		srv := New(eng, &mockSink{}, WithMode("enforce"), WithToken("fuzz-token"), WithLogger(logger))
 		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("Panic in toolRequest parsing: %v", r)
+			if err := srv.Shutdown(context.Background()); err != nil {
+				t.Errorf("shutdown fuzz server: %v", err)
 			}
 		}()
+		req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(jsonData))
+		req.Header.Set("Authorization", "Bearer fuzz-token")
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		srv.handler().ServeHTTP(recorder, req)
 
-		// Test direct JSON unmarshaling
-		var req toolRequest
-		err := json.Unmarshal([]byte(jsonData), &req)
-		_, _ = req, err // Don't care about errors, just that it doesn't panic
-
-		// Test via HTTP handler (which mirrors the real server code path)
-		testToolRequestHTTP(t, jsonData)
-	})
-}
-
-// testToolRequestHTTP tests the JSON parsing through the actual HTTP handler
-func testToolRequestHTTP(t *testing.T, jsonData string) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("Panic in HTTP handler: %v", r)
+		var response struct {
+			Allowed  *bool  `json:"allowed"`
+			Decision string `json:"decision"`
+			Error    string `json:"error"`
 		}
-	}()
-
-	// Create a minimal server for testing (without real engine)
-	// Just test JSON unmarshaling — full HTTP handler requires engine setup
-	var req2 toolRequest
-	json.Unmarshal([]byte(jsonData), &req2)
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("invalid handler response: %v", err)
+		}
+		switch recorder.Code {
+		case http.StatusBadRequest:
+			if response.Error == "" {
+				t.Fatal("invalid request was not explained")
+			}
+		case http.StatusForbidden:
+			if response.Allowed == nil || *response.Allowed || response.Decision != "deny" {
+				t.Fatal("fixed deny policy did not return a denial")
+			}
+		default:
+			t.Fatalf("unexpected status for deny-only handler: %d", recorder.Code)
+		}
+	})
 }
 
 func FuzzEnrichParams(f *testing.F) {
@@ -167,33 +198,5 @@ func FuzzDecodeBase64Command(f *testing.F) {
 		params := map[string]any{"command_b64": b64}
 		result, ok := decodeBase64Command(params)
 		_, _ = result, ok
-	})
-}
-
-func FuzzToolRequestStructures(f *testing.F) {
-	// Test with various JSON structures that might break unmarshaling
-	f.Add(`{"agent": 12345, "session": true, "params": "not an object"}`)
-	f.Add(`{"agent": {"nested": "object"}, "params": [1,2,3]}`)
-	f.Add(`{"params": {"command": null, "path": false, "url": 123}}`)
-
-	// Very large nested structures
-	f.Add(`{"params": {"a": {"b": {"c": {"d": {"e": {"f": {"g": "deep"}}}}}}}}`)
-
-	// Array of objects instead of single object
-	f.Add(`[{"agent": "test"}, {"agent": "test2"}]`)
-
-	// Binary data in strings
-	f.Add(`{"agent": "\u0000\u0001\u0002", "params": {"command": "\xff\xfe\xfd"}}`)
-
-	f.Fuzz(func(t *testing.T, jsonData string) {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("Panic with JSON structure: %v", r)
-			}
-		}()
-
-		// Test direct unmarshaling
-		var req toolRequest
-		json.Unmarshal([]byte(jsonData), &req)
 	})
 }

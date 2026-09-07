@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"testing"
@@ -16,15 +17,7 @@ func FuzzEvaluate(f *testing.F) {
 	f.Add("", "", "", "")
 	f.Add("unknown-tool", "weird-agent", "malicious command with \x00 nulls", "/invalid/\xff/path")
 
-	f.Fuzz(func(t *testing.T, tool, agent, command, path string) {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("Panic in Engine.Evaluate: %v", r)
-			}
-		}()
-
-		// Create a fixed policy configuration for consistent testing
-		policyYAML := []byte(`
+	policyYAML := []byte(`
 version: "1"  
 default_action: "deny"
 policies:
@@ -42,7 +35,7 @@ policies:
         when:
           command_matches: ["rm -rf *", "dd if=*", "curl *malicious*"]
         message: "Dangerous command blocked"
-      - action: "require_approval"
+      - action: "ask"
         when:
           path_matches: ["/etc/*", "**/.ssh/**"]
         message: "Sensitive path requires approval"
@@ -70,26 +63,18 @@ policies:
           response_matches: [".*password.*", ".*secret.*", ".*key.*"]
         message: "Sensitive response content blocked"
 `)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := NewMemoryStore(policyYAML, "fuzz:evaluate")
+	if _, err := New(store, logger); err != nil {
+		f.Fatalf("invalid fixed evaluation fixture: %v", err)
+	}
 
-		// Create temporary policy file
-		tmpFile, err := os.CreateTemp("", "engine-fuzz-*.yaml")
-		if err != nil {
-			t.Skip("Failed to create temp policy file")
-		}
-		defer os.Remove(tmpFile.Name())
-		defer tmpFile.Close()
-
-		if _, err := tmpFile.Write(policyYAML); err != nil {
-			t.Skip("Failed to write policy file")
-		}
-		tmpFile.Close()
-
-		// Create engine
-		store := NewFileStore(tmpFile.Name())
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	f.Fuzz(func(t *testing.T, tool, agent, command, path string) {
+		// Load a fresh config and counters for every input. Only the immutable
+		// policy bytes are shared; reload and evaluation state remain isolated.
 		engine, err := New(store, logger)
 		if err != nil {
-			t.Skip("Failed to create engine")
+			t.Fatalf("create engine from fixed fixture: %v", err)
 		}
 
 		// Create random ToolCall
@@ -129,8 +114,9 @@ policies:
 		// Test engine methods
 		_ = engine.PolicyCount()
 
-		// Test reload with potentially broken config
-		_ = engine.Reload()
+		if err := engine.Reload(); err != nil {
+			t.Fatalf("reload unchanged fixed fixture: %v", err)
+		}
 	})
 }
 

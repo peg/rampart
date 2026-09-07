@@ -410,11 +410,96 @@ func TestFollowAuditFile_ContextCancel(t *testing.T) {
 // --- patchOpenClawTools (setup.go) ---
 
 func TestPatchOpenClawTools(t *testing.T) {
-	dir := t.TempDir()
-	toolFile := filepath.Join(dir, "read.js")
-	os.WriteFile(toolFile, []byte("original content"), 0o644)
+	for _, tc := range []struct {
+		name, filename, original, marker string
+		dist                             bool
+	}{
+		{
+			name: "source", filename: "read.js",
+			original: "execute: async (_toolCallId, { path, offset, limit }, signal) => {\n            const absolutePath = resolveReadPath(path, cwd);",
+			marker:   "RAMPART_READ_CHECK",
+		},
+		{
+			name: "dist", filename: "pi-embedded-fixture.js", dist: true,
+			original: "function createOpenClawReadTool() {\nconst result = await executeReadWithAdaptivePaging({",
+			marker:   "RAMPART_DIST_CHECK_READ",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			toolFile := filepath.Join(dir, tc.filename)
+			if err := os.WriteFile(toolFile, []byte(tc.original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var distCandidates, toolsCandidates []string
+			if tc.dist {
+				distCandidates = []string{dir}
+			} else {
+				toolsCandidates = []string{dir}
+			}
+			cmd := testCobraCmd(context.Background())
+			var firstPatch []byte
+			for attempt := range 2 {
+				if err := patchOpenClawToolsIn(cmd, "http://127.0.0.1:8080", "fixture-token", distCandidates, toolsCandidates); err != nil {
+					t.Fatal(err)
+				}
+				patched, err := os.ReadFile(toolFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, want := range []string{tc.marker, "http://127.0.0.1:8080", "/v1/tool/read", "fixture-token"} {
+					if !bytes.Contains(patched, []byte(want)) {
+						t.Errorf("patched file missing %q", want)
+					}
+				}
+				if attempt == 0 {
+					firstPatch = patched
+				} else if !bytes.Equal(patched, firstPatch) {
+					t.Error("repeated patch changed the file")
+				}
+				backup, err := os.ReadFile(toolFile + ".rampart-backup")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(backup) != tc.original {
+					t.Error("backup did not preserve original bytes")
+				}
+				if _, err := os.Stat(filepath.Join(dir, ".rampart-write-test")); !os.IsNotExist(err) {
+					t.Errorf("write probe remains: %v", err)
+				}
+			}
+		})
+	}
 
-	cmd := testCobraCmd(context.Background())
-	err := patchOpenClawTools(cmd, "http://localhost:8080", "testtoken")
-	_ = err
+	t.Run("missing candidates", func(t *testing.T) {
+		cmd := testCobraCmd(context.Background())
+		err := patchOpenClawToolsIn(cmd, "http://127.0.0.1:8080", "", nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "could not find") {
+			t.Fatalf("expected missing tools error, got %v", err)
+		}
+	})
+
+	t.Run("write probe failure", func(t *testing.T) {
+		dir := t.TempDir()
+		toolFile := filepath.Join(dir, "read.js")
+		const original = "untouched fixture"
+		if err := os.WriteFile(toolFile, []byte(original), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(dir, ".rampart-write-test"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		cmd := testCobraCmd(context.Background())
+		err := patchOpenClawToolsIn(cmd, "http://127.0.0.1:8080", "", nil, []string{dir})
+		if err == nil {
+			t.Fatalf("expected write probe error, got %v", err)
+		}
+		got, err := os.ReadFile(toolFile)
+		if err != nil || string(got) != original {
+			t.Fatalf("source changed after failed probe: %q, %v", got, err)
+		}
+		if _, err := os.Stat(toolFile + ".rampart-backup"); !os.IsNotExist(err) {
+			t.Errorf("backup created after failed probe: %v", err)
+		}
+	})
 }

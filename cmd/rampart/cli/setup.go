@@ -1442,18 +1442,20 @@ func openclawToolsCandidates() []string {
 }
 
 func patchOpenClawTools(cmd *cobra.Command, url, token string) error {
+	return patchOpenClawToolsIn(cmd, url, token, openclawDistCandidates(), openclawToolsCandidates())
+}
+
+func patchOpenClawToolsIn(cmd *cobra.Command, url, token string, distCandidates, toolsCandidates []string) error {
 	// Try bundled dist files first (works for modern OpenClaw with webpack/esbuild output).
-	if patched, err := patchOpenClawDistTools(cmd, url, token); err != nil {
+	if patched, err := patchOpenClawDistToolsIn(cmd, url, token, distCandidates); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  ⚠ dist patch failed: %v\n", err)
 	} else if patched {
 		return nil
 	}
 
 	// Fall back to patching source files in node_modules.
-	candidates := openclawToolsCandidates()
-
 	var toolsDir string
-	for _, d := range candidates {
+	for _, d := range toolsCandidates {
 		if _, err := os.Stat(filepath.Join(d, "read.js")); err == nil {
 			toolsDir = d
 			break
@@ -1633,8 +1635,12 @@ func openclawDistCandidates() []string {
 // to inject Rampart policy checks into the tool execution wrappers.
 // Returns (true, nil) if dist files were found and patched.
 func patchOpenClawDistTools(cmd *cobra.Command, url, token string) (bool, error) {
+	return patchOpenClawDistToolsIn(cmd, url, token, openclawDistCandidates())
+}
+
+func patchOpenClawDistToolsIn(cmd *cobra.Command, url, token string, candidates []string) (bool, error) {
 	var distDir string
-	for _, d := range openclawDistCandidates() {
+	for _, d := range candidates {
 		// Accept dist dir if it has pi-embedded-*.js OR auth-profiles-*.js (newer OpenClaw)
 		piMatches, _ := filepath.Glob(filepath.Join(d, "pi-embedded-*.js"))
 		authMatches, _ := filepath.Glob(filepath.Join(d, "auth-profiles-*.js"))
