@@ -1788,53 +1788,72 @@ func TestRun_NilEngine(t *testing.T) {
 
 func TestRun_EndToEnd(t *testing.T) {
 	eng := buildAllowAllEngine(t)
-
-	// Set up pipes for child stdin/stdout
 	childStdinR, childStdinW := io.Pipe()
 	childStdoutR, childStdoutW := io.Pipe()
-
 	sink := &mockSink{}
 	p := NewProxy(eng, sink, childStdinW, childStdoutR, WithLogger(silentLogger()))
+	request := makeToolsCallJSON(1, "read_file", map[string]any{"path": "/tmp/x"})
+	response := makeResponseJSON(1, map[string]any{
+		"content": []map[string]any{{"type": "text", "text": "result"}},
+	})
+	parentOut := &bytes.Buffer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	childDone := make(chan struct{})
+	runDone := make(chan struct{})
+	var childErr, runErr error
+	t.Cleanup(func() {
+		cancel()
+		_ = childStdinR.Close()
+		_ = childStdinW.Close()
+		_ = childStdoutR.Close()
+		_ = childStdoutW.Close()
+		for _, done := range []<-chan struct{}{childDone, runDone} {
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Error("fixture goroutine did not stop after closing its pipes")
+			}
+		}
+	})
 
-	// Simulate child: echo back a response for each request
+	// The child must receive the original request and send its correlated
+	// response before closing stdout when Rampart closes its input.
 	go func() {
+		defer close(childDone)
 		defer childStdoutW.Close()
 		scanner := bufio.NewScanner(childStdinR)
+		requests := 0
 		for scanner.Scan() {
-			line := scanner.Bytes()
-			var req Request
-			if err := json.Unmarshal(line, &req); err != nil {
-				continue
+			requests++
+			if scanner.Text() != request || requests != 1 {
+				childErr = fmt.Errorf("child received an unexpected request")
+				return
 			}
-			resp := makeResponseJSON(json.RawMessage(req.ID), map[string]any{
-				"content": []map[string]any{{"type": "text", "text": "result"}},
-			})
-			fmt.Fprintln(childStdoutW, resp)
+			if _, err := fmt.Fprintln(childStdoutW, response); err != nil {
+				childErr = err
+				return
+			}
+		}
+		childErr = scanner.Err()
+		if childErr == nil && requests != 1 {
+			childErr = fmt.Errorf("child received %d requests, want 1", requests)
 		}
 	}()
-
-	parentIn := strings.NewReader(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/tmp/x"}) + "\n")
-	parentOut := &bytes.Buffer{}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	err := p.Run(ctx, parentIn, parentOut)
-	if err != nil {
-		t.Logf("Run ended: %v", err) // EOF is normal
-	}
-
-	// Give a moment for the response to propagate
-	time.Sleep(50 * time.Millisecond)
-
-	if parentOut.Len() > 0 {
-		var resp Response
-		if err := json.Unmarshal(bytes.TrimSpace(parentOut.Bytes()), &resp); err == nil {
-			if resp.Error != nil {
-				t.Errorf("unexpected error in response: %s", resp.Error.Message)
-			}
+	go func() {
+		defer close(runDone)
+		runErr = p.Run(ctx, strings.NewReader(request+"\n"), parentOut)
+	}()
+	for _, done := range []<-chan struct{}{runDone, childDone} {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			t.Fatal("proxy did not deliver the response and shut down before the deadline")
 		}
 	}
+	require.NoError(t, ctx.Err(), "normal EOF must shut down the proxy without cancellation")
+	require.NoError(t, runErr)
+	require.NoError(t, childErr)
+	require.JSONEq(t, response, strings.TrimSpace(parentOut.String()))
 }
 
 // ---------------------------------------------------------------------------

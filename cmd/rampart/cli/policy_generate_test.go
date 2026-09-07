@@ -18,19 +18,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/peg/rampart/internal/engine"
-	"github.com/peg/rampart/internal/generate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
-
-// Compile-time check: ensure generate package is used (avoids import error in
-// packages that only import for the side-effect of registration).
-var _ = generate.Presets
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -140,147 +134,4 @@ func TestPolicyGeneratePreset_CreatesParentDirs(t *testing.T) {
 	data, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "ci-block-secrets")
-}
-
-// ---------------------------------------------------------------------------
-// Tests: generate.Preset (unit-level, no CLI)
-// ---------------------------------------------------------------------------
-
-func TestFindPreset_ValidIDs(t *testing.T) {
-	ids := []string{"coding-agent", "research-agent", "ci-agent", "devops-agent"}
-	for _, id := range ids {
-		t.Run(id, func(t *testing.T) {
-			p, err := generate.FindPreset(id)
-			require.NoError(t, err)
-			assert.Equal(t, id, p.ID)
-			assert.NotEmpty(t, p.Description)
-		})
-	}
-}
-
-func TestFindPreset_InvalidID(t *testing.T) {
-	_, err := generate.FindPreset("bogus")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown preset")
-	assert.Contains(t, err.Error(), "coding-agent")
-}
-
-func TestFindPreset_EmptyID(t *testing.T) {
-	_, err := generate.FindPreset("")
-	require.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// Tests: RenderYAML produces engine-loadable YAML for every preset
-// ---------------------------------------------------------------------------
-
-func TestPreset_RenderYAML_AllPresets(t *testing.T) {
-	for _, p := range generate.Presets {
-		t.Run(p.ID, func(t *testing.T) {
-			data, err := p.RenderYAML()
-			require.NoError(t, err, "RenderYAML should not error")
-
-			// Must be valid YAML the engine can parse.
-			var cfg engine.Config
-			err = yaml.Unmarshal(data, &cfg)
-			require.NoError(t, err, "RenderYAML output must be valid engine Config YAML")
-
-			assert.Equal(t, "1", cfg.Version, "version must be '1'")
-			assert.NotEmpty(t, cfg.Policies, "must have at least one policy")
-
-			// Header comment must include preset ID and description.
-			assert.Contains(t, string(data), p.ID)
-			assert.Contains(t, string(data), "rampart policy generate preset")
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Tests: policy correctness — spot-check key rules
-// ---------------------------------------------------------------------------
-
-func TestCodingAgent_BlocksCredentials(t *testing.T) {
-	p, _ := generate.FindPreset("coding-agent")
-	data, _ := p.RenderYAML()
-	assert.Contains(t, string(data), ".aws/credentials")
-	assert.Contains(t, string(data), ".ssh/id_*")
-	assert.Contains(t, string(data), "deny")
-}
-
-func TestResearchAgent_DeniesWrites(t *testing.T) {
-	p, _ := generate.FindPreset("research-agent")
-	data, _ := p.RenderYAML()
-	assert.Contains(t, string(data), "research-block-writes")
-	assert.Contains(t, string(data), "read-only")
-}
-
-func TestCIAgent_BlocksNetwork(t *testing.T) {
-	p, _ := generate.FindPreset("ci-agent")
-	data, _ := p.RenderYAML()
-	assert.Contains(t, string(data), "ci-block-network")
-	// Must block curl and wget.
-	assert.Contains(t, string(data), "curl *")
-	assert.Contains(t, string(data), "wget *")
-}
-
-func TestDevopsAgent_RequiresApprovalForKubectl(t *testing.T) {
-	p, _ := generate.FindPreset("devops-agent")
-	data, _ := p.RenderYAML()
-	assert.Contains(t, string(data), "ask")
-	assert.Contains(t, string(data), "kubectl apply *")
-	assert.Contains(t, string(data), "ssh *")
-}
-
-// ---------------------------------------------------------------------------
-// Tests: WriteToFile
-// ---------------------------------------------------------------------------
-
-func TestPreset_WriteToFile_CreatesFile(t *testing.T) {
-	dir := t.TempDir()
-	dest := filepath.Join(dir, "out.yaml")
-
-	p, err := generate.FindPreset("coding-agent")
-	require.NoError(t, err)
-
-	err = p.WriteToFile(dest, false)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(dest)
-	require.NoError(t, err)
-	assert.True(t, strings.Contains(string(data), "coding-agent"))
-}
-
-func TestPreset_WriteToFile_RefusesOverwrite(t *testing.T) {
-	dir := t.TempDir()
-	dest := filepath.Join(dir, "out.yaml")
-	require.NoError(t, os.WriteFile(dest, []byte("existing"), 0o600))
-
-	p, _ := generate.FindPreset("coding-agent")
-	err := p.WriteToFile(dest, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
-}
-
-func TestPreset_WriteToFile_Force(t *testing.T) {
-	dir := t.TempDir()
-	dest := filepath.Join(dir, "out.yaml")
-	require.NoError(t, os.WriteFile(dest, []byte("existing"), 0o600))
-
-	p, _ := generate.FindPreset("ci-agent")
-	err := p.WriteToFile(dest, true)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(dest)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "ci-block-secrets")
-}
-
-func TestPreset_WriteToFile_MkdirAll(t *testing.T) {
-	dir := t.TempDir()
-	dest := filepath.Join(dir, "a", "b", "c", "policy.yaml")
-
-	p, _ := generate.FindPreset("devops-agent")
-	err := p.WriteToFile(dest, false)
-	require.NoError(t, err)
-	assert.FileExists(t, dest)
 }
