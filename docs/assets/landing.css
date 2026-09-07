@@ -967,21 +967,21 @@ h1 .final-line { white-space: nowrap; }
 .section-heading .chapter-index { grid-column: 1 / -1; }
 .section-heading h2, .boundary-summary h2, .closing h2 { font: 400 clamp(2.8rem,5vw,5.2rem)/.97 var(--display); letter-spacing: -.035em; margin: 0; }
 .section-heading > p:last-child { max-width: 490px; margin: 0; line-height: 1.8; color: #bfb4ad; }
-.workflow { background: var(--bone); color: #1d1a1b; padding: 100px 0 72px; }
-.workflow .chapter-index { color: #9b2356; }
-.workflow .section-heading > p:last-child { color: #51494b; }
+.workflow { background: #211b1e; color: var(--bone); padding: 100px 0 72px; border-block: 1px solid var(--line); }
+.workflow .chapter-index { color: var(--pink-soft); }
+.workflow .section-heading > p:last-child { color: #bfb4ad; }
 .workflow-steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 35px; }
-.workflow-steps li { border-top: 1px solid #29202940; padding-top: 22px; min-width: 0; }
-.step-number { font: .8rem var(--mono); color: #8f2a54; }
+.workflow-steps li { border-top: 1px solid var(--line); padding-top: 22px; min-width: 0; }
+.step-number { font: .8rem var(--mono); color: #c99bb0; }
 .workflow h3 { font: 400 2.5rem var(--display); margin: 22px 0 14px; }
-.workflow-steps p { min-height: 72px; color: #51494b; line-height: 1.7; }
-.command-block { min-height: 112px; padding: 18px; background: #e2ddd6; display: flex; align-items: start; flex-direction: column; gap: 16px; }
+.workflow-steps p { min-height: 72px; color: #bfb4ad; line-height: 1.7; }
+.command-block { min-height: 112px; padding: 18px; background: #151214; display: flex; align-items: start; flex-direction: column; gap: 16px; }
 .command-block code { font: .875rem/1.6 var(--mono); overflow-wrap: anywhere; }
-.copy-command { color: #4e4348; border: 1px solid #796970; background: transparent; padding: 4px 9px; font-size: .75rem; cursor: pointer; }
-.copy-command:hover { background: #d3c9cc; }
-.workflow .text-action { color: #5c1d39; font-size: .875rem; margin-top: 22px; }
-.workflow-note { margin: 35px 0 0; padding-top: 24px; border-top: 1px solid #29202940; max-width: 100%; font-size: .875rem; color: #51494b; }
-.workflow a:focus-visible, .workflow button:focus-visible { outline-color: #9b2356; }
+.copy-command { color: #d4c5cd; border: 1px solid #8b7280; background: transparent; padding: 4px 9px; font-size: .75rem; cursor: pointer; }
+.copy-command:hover { background: #30252b; }
+.workflow .text-action { color: var(--pink-soft); font-size: .875rem; margin-top: 22px; }
+.workflow-note { margin: 35px 0 0; padding-top: 24px; border-top: 1px solid var(--line); max-width: 100%; font-size: .875rem; color: #bfb4ad; }
+.workflow a:focus-visible, .workflow button:focus-visible { outline-color: var(--pink-soft); }
 .integration-section { padding-block: 110px 70px; }
 .integration-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 30px; }
 .integration-card { border: 1px solid var(--line); padding: 36px; background: linear-gradient(135deg,#21171c,#121011 80%); }
