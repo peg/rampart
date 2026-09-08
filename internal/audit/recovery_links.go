@@ -10,8 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -34,7 +32,7 @@ type linkedContinuation struct {
 
 // recoverChainStateByLinks validates legacy logs whose events are not in file
 // order. It stores only chain metadata, never full requests or responses.
-func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, error) {
+func recoverChainStateByLinks(files []string, open chainFileOpener, checkpoints map[int64]string) (recoveredChainState, error) {
 	eventsByHash := make(map[string]*linkedAuditEvent)
 	children := make(map[string][]*linkedAuditEvent)
 	firstEventByFile := make(map[string]*linkedAuditEvent)
@@ -47,8 +45,7 @@ func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, 
 	previousFile := ""
 
 	for _, name := range files {
-		path := filepath.Join(dir, name)
-		file, err := openAuditRegular(path, os.O_RDONLY)
+		file, err := open(name)
 		if err != nil {
 			return recoveredChainState{}, fmt.Errorf("open %s: %w", name, err)
 		}
@@ -169,6 +166,7 @@ func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, 
 		}
 	}
 	roots := children[""]
+	state.rootCount = len(roots)
 	if len(roots) == 0 {
 		return recoveredChainState{}, fmt.Errorf("verify audit chain: no root event found")
 	}
@@ -190,6 +188,7 @@ func recoverChainStateByLinks(dir string, files []string) (recoveredChainState, 
 		tail = root
 		for {
 			visited++
+			state.observeWitness(int64(visited), tail.hash, checkpoints)
 			if tail.timestamp.After(epochLatest) {
 				epochLatest = tail.timestamp
 			}

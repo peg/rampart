@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/peg/rampart/internal/audit"
@@ -114,37 +115,6 @@ func TestExtractPrimaryRequestValue(t *testing.T) {
 	}
 }
 
-// --- resolveTestPolicyPath (test_cmd.go) ---
-
-func TestResolveTestPolicyPath(t *testing.T) {
-	t.Run("existing file", func(t *testing.T) {
-		dir := t.TempDir()
-		p := filepath.Join(dir, "rampart.yaml")
-		os.WriteFile(p, []byte("version: 1"), 0o644)
-
-		got, cleanup, err := resolveTestPolicyPath(p)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		defer cleanup()
-		if got != p {
-			t.Errorf("expected %s, got %s", p, got)
-		}
-	})
-
-	t.Run("fallback to embedded", func(t *testing.T) {
-		// Use a non-existent path so it falls through
-		got, cleanup, err := resolveTestPolicyPath("/nonexistent/rampart.yaml")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		defer cleanup()
-		if got == "" {
-			t.Error("expected non-empty path")
-		}
-	})
-}
-
 // --- createShellShim (wrap.go) ---
 
 func TestCreateShellShim_Coverage(t *testing.T) {
@@ -234,36 +204,55 @@ func TestNewPolicyLintCmd_FileNotFound(t *testing.T) {
 
 func TestNewPolicyLintCmd_ValidFile(t *testing.T) {
 	dir := t.TempDir()
+	testSetHome(t, dir)
 	p := filepath.Join(dir, "policy.yaml")
-	os.WriteFile(p, []byte("version: \"1\"\ndefault_action: deny\nrules:\n  - action: allow\n    when:\n      tool: exec\n"), 0o644)
+	if err := os.WriteFile(p, []byte(`version: "1"
+default_action: deny
+policies:
+  - name: allow-echo
+    match:
+      tool: exec
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo *"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	cmd := newPolicyLintCmd()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{p})
-	// This may call os.Exit(1), but we're just testing the path
-	_ = cmd.Execute()
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(out.String()), p+": no issues found"; got != want {
+		t.Fatalf("lint output = %q, want %q", got, want)
+	}
 }
 
 // --- newLogCmd paths (log.go) ---
 
 func TestNewLogCmd(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
 	cmd := &cobra.Command{Use: "root"}
 	logCmd := newLogCmd(&rootOptions{})
 	cmd.AddCommand(logCmd)
 
 	// Test with empty audit dir
-	dir := t.TempDir()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetContext(context.Background())
 	cmd.SetArgs([]string{"log", "--audit-dir", dir})
-	err := cmd.Execute()
-	// Empty dir should be OK (no events)
-	if err != nil {
-		t.Logf("log cmd error (may be expected): %v", err)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "No events found." {
+		t.Fatalf("empty log output = %q", got)
 	}
 }
 

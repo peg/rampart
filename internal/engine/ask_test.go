@@ -20,22 +20,6 @@ import (
 
 // ── ParseAction ──────────────────────────────────────────────────────────────
 
-func TestParseAction_Ask(t *testing.T) {
-	a, err := ParseAction("ask")
-	if err != nil {
-		t.Fatalf("ParseAction(\"ask\") unexpected error: %v", err)
-	}
-	if a != ActionAsk {
-		t.Errorf("ParseAction(\"ask\") = %v, want ActionAsk", a)
-	}
-}
-
-func TestParseAction_AskString(t *testing.T) {
-	if got := ActionAsk.String(); got != "ask" {
-		t.Errorf("ActionAsk.String() = %q, want \"ask\"", got)
-	}
-}
-
 func TestParseAction_AllActions(t *testing.T) {
 	// Ensure each action round-trips through ParseAction → String cleanly.
 	cases := []struct {
@@ -89,8 +73,6 @@ func TestRuleParseAction_Ask(t *testing.T) {
 	}
 }
 
-// TestRuleAskAuditEnabled_RequireApprovalAlias removed — require_approval was removed in v0.9.9.
-
 func TestRuleAskAuditEnabled_AskExplicitAudit(t *testing.T) {
 	r := Rule{Action: "ask", Ask: AskActionConfig{Audit: true}}
 	if !r.AskAuditEnabled() {
@@ -111,8 +93,6 @@ func TestRuleHeadlessOnlyEnabled_AskExplicit(t *testing.T) {
 		t.Fatal("expected ask.headless_only=true to enable headless-only mode")
 	}
 }
-
-// TestRuleHeadlessOnlyEnabled_RequireApprovalFalse removed — require_approval was removed in v0.9.9.
 
 // ── Policy evaluation with action: ask ───────────────────────────────────────
 

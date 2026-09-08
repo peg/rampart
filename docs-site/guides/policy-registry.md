@@ -75,6 +75,14 @@ For agents exposed via MCP (Model Context Protocol), e.g. Claude Desktop extensi
 rampart init --profile mcp-server
 ```
 
+### `production-guard`
+
+An opt-in overlay for Rampart 1.9+ that asks before supported infrastructure and
+database migration CLI mutations, plus Kubernetes mutations with explicitly
+named production contexts or namespaces. Keep your base policy installed. See
+[Production Guard](production-guard.md) for supported forms, installation, and
+version limits.
+
 ## Registry integrity
 
 Every policy in the registry is verified with a SHA256 checksum before installation. The manifest is fetched from:

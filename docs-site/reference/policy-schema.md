@@ -145,7 +145,16 @@ tool calls. The file detector skips here documents, pipelines/background jobs,
 unknown download options, and directory-changing `env` wrappers. Other policy
 rules still evaluate those commands. Literal path comparison preserves `..`
 because collapsing it could identify a different file through a symlink.
+Grouping, function definitions, and conditional/loop grammar are also outside
+this detector. Known shell truncations invalidate an earlier file correlation,
+including redirections on shell wrappers or commands with opaque arguments.
+Shared wget outputs and stdout streams retain each contributing HTTP(S) source.
 Intervening effects inside programs remain unobserved.
+
+Restrictive rules also recognize the explicitly supported infrastructure and
+migration CLI forms described in [Production Guard](../guides/production-guard.md).
+Those aliases consume known option operands and retain literal target identity;
+they do not authorize commands or resolve an environment from configuration.
 
 #### `path_matches` / `path_not_matches`
 

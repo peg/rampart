@@ -1,203 +1,210 @@
 ---
 title: Troubleshooting
-description: "Fix common Rampart setup issues for Claude Code, Cline, OpenClaw, and CLI environments. Diagnose PATH, hooks, services, and policy connection problems."
+description: "Find the next step for Rampart installation, policy, approval, and integration problems, or share a minimal redacted bug report."
 ---
 
 # Troubleshooting
 
-Common issues and how to fix them.
+Start with the symptom you can observe. A policy test, an installed hook, and
+an agent actually invoking that hook establish different things.
+
+- [The CLI is not found](#rampart-command-not-found)
+- [Commands are not blocked](#commands-not-blocked)
+- [Expected work is blocked](#everything-blocked)
+- [Claude Code reports a hook error](#hook-error-startup)
+- [OpenClaw is not protected](#openclaw-plugin-not-intercepting-tool-calls)
+- [Report a problem](#still-stuck)
+
+## First checks
+
+```bash
+rampart version
+rampart doctor
+rampart verify --all
+```
+
+Read these results locally. `doctor` inspects configuration; `verify` checks
+the supported configured boundaries that have an active verifier, without a
+model request. `adapter_verified` does not prove that an authenticated host
+invoked its hooks. Use the [support matrix](support-matrix.md) to interpret the
+result for your integration. You do not need to publish the complete output
+to [report a problem](#still-stuck).
 
 ## `rampart: command not found` {#rampart-command-not-found}
 
-The `rampart` binary isn't in your `PATH`.
+Open a new terminal after installation. If the command is still missing, check
+the install method in the [installation guide](installation.md).
 
-**If you installed with Homebrew:**
+**Homebrew:** check that the package is installed, then link its executable:
 
 ```bash
+brew list rampart
 brew link rampart
 ```
 
-**If you installed with `go install`:**
-
-Add Go's bin directory to your PATH:
+**Go install:** add Go's bin directory to this shell's `PATH`:
 
 ```bash
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+export PATH="$(go env GOPATH)/bin:$PATH"
+rampart version
 ```
 
-Or symlink to a standard location:
-
-```bash
-sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart
-```
+If that works, add the export to the appropriate startup file for your shell.
+The Unix installer normally uses `~/.local/bin`; the Windows installer uses
+`~/.rampart/bin`. Use the path reported by your installer if you chose a custom
+location. Avoid replacing an unrelated executable or symlink to fix `PATH`.
 
 ## Commands aren't being blocked {#commands-not-blocked}
 
-If your agent is running commands that should be denied:
+!!! warning "Suspected security bypass?"
+    If a covered action can bypass a deny rule, follow the private reporting
+    route in [SECURITY.md](https://github.com/peg/rampart/blob/main/SECURITY.md).
+    Do not post bypass details in a public issue or execute a destructive
+    command to demonstrate the problem.
 
-### 1. Are hooks installed?
+### 1. Check the configured integration {#1-are-hooks-installed}
 
-```bash
-rampart doctor
-```
-
-If hooks aren't showing, reinstall:
-
-```bash
-rampart setup claude-code
-```
-
-### 2. Is your policy loading?
+Use `rampart doctor` and `rampart verify --all` first. If an owned integration
+is missing or stale, refresh the agent you use, for example:
 
 ```bash
-rampart status
+rampart protect claude-code
 ```
 
-Rampart looks for policies in this order:
+Follow the agent's restart or hook-enablement instructions. Check its
+[integration guide](../integrations/index.md) for coverage, host failure
+behavior and modes that disable hooks. An installed adapter alone does not
+establish interception.
 
-1. Path specified via `--config` flag
-2. `~/.rampart/policies/` directory (all `.yaml` files merged)
-3. Built-in `standard` profile (default)
+### 2. Check the policy you intended to load {#2-is-your-policy-loading}
 
-### 3. Does your rule actually match?
-
-Dry-run a specific command:
+Run diagnostics against the specific policy file you are investigating:
 
 ```bash
-rampart test "rm -rf /"
+rampart policy lint ./policy.yaml
+rampart --config ./policy.yaml policy explain "git status"
 ```
 
-Or pipe raw hook JSON:
+Replace the example filename with your policy. These diagnostics inspect that
+file; they do not prove the host or service loaded it. Check the integration's
+configured policy location and any project policies or service overrides in
+the [configuration guide](configuration.md).
+
+### 3. Test the represented action {#3-does-your-rule-actually-match}
 
 ```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
+rampart --config ./policy.yaml test "git status"
+rampart --config ./policy.yaml test --tool read "/etc/shadow"
 ```
 
-If the result is `allow` when you expect `deny`, your pattern doesn't match. Check:
+These commands evaluate the supplied text. They do not execute `git status`
+or read `/etc/shadow`. Match the tool class and action that the integration
+actually exposes. For agent- or session-scoped rules, use the corresponding
+`--agent` and `--session` options on `policy explain`.
 
-- Glob patterns use `*` (matches anything) not regex
-- `command_matches` patterns match the full command string
-- Use `rampart policy lint` to catch typos and common mistakes
+If the local result differs from your expectation, inspect the matching rule,
+its scope and its pattern syntax. See [testing policies](../guides/testing-policies.md)
+and the [policy schema](../reference/policy-schema.md). If policy tests pass but
+the host behaves differently, investigate the configured integration boundary.
 
 ## Everything is blocked {#everything-blocked}
 
-If every command gets denied, you probably have `default_action: deny` without enough `allow` rules.
+Read the denial reason before changing policy. A default-deny policy needs
+explicit allowances for intended work; a matched deny rule takes precedence
+over an allow rule. Configuration, service or approval failures can also block
+an action.
 
-**Quick fix** — switch to allow-by-default:
+Use `policy explain` with the relevant policy and a harmless example of the
+intended action. Correct the narrow rule or configuration problem, then test
+both an expected allowance and an expected denial. Keep unrelated protections
+in place. The [policy customization guide](../guides/customizing-policy.md)
+explains scopes and rule precedence.
 
-```yaml
-version: "1"
-default_action: allow  # Was: deny
-```
-
-**Better fix** — start from an example template:
-
-```bash
-cp policies/examples/web-developer.yaml ~/.rampart/policies/custom.yaml
-```
-
-!!! warning "Don't use `deny` as default until you're ready"
-    The `lockdown` template (`default_action: deny`) requires a complete allowlist. Start with `standard` or an example template and add deny rules for specific things.
+If an approval cannot be completed, check the integration's supported approval
+flow. After upgrading, read the [approval-state and OpenClaw review notes](upgrade.md#approval-state-and-openclaw-review)
+before restoring old state or retrying an oversized native approval.
 
 ## Hook error on Claude Code startup {#hook-error-startup}
 
-If Claude Code shows an error about hooks failing, the most common cause is that `rampart` isn't in the PATH that Claude Code sees.
-
-**Fix — symlink to a standard location:**
-
-```bash
-sudo ln -sf $(which rampart) /usr/local/bin/rampart
-```
-
-**Verify the hook config:**
+First confirm `rampart version` works in the environment that launches Claude
+Code. After moving or upgrading the binary, refresh the owned hook configuration:
 
 ```bash
-cat ~/.claude/settings.json | python3 -m json.tool
+rampart protect claude-code
+rampart doctor
 ```
 
-You should see `rampart hook` in the PreToolUse hooks. If the path is wrong, re-run:
-
-```bash
-rampart setup claude-code
-```
+Restart Claude Code if it requests that. If an error remains, check the
+[Claude Code guide](../integrations/claude-code.md) and record only the short
+relevant error for a report. You do not need to share your full settings file.
 
 ## How do I uninstall? {#uninstall}
 
-Remove the hooks from your agent:
-
-```bash
-rampart setup claude-code --remove
-```
-
-This only removes the hooks — your policy and audit files stay in `~/.rampart/`.
-
-To fully remove:
-
-```bash
-# Remove hooks
-rampart setup claude-code --remove
-
-# Remove the binary
-brew uninstall rampart  # or: rm $(which rampart)
-
-# Optionally remove config and audit data
-rm -rf ~/.rampart
-```
+Use the [uninstall guide](uninstall.md) for your integration and install method.
+Removing hooks, removing the binary, and deleting policies or audit history are
+separate choices. Keep the data you need before choosing the optional cleanup.
 
 ## How do I check if it's working? {#check-working}
 
+Run the [first checks](#first-checks), then follow your integration's evidence
+level in the [support matrix](support-matrix.md). For policy-only examples:
+
 ```bash
-# Health check
-rampart doctor
-
-# Quick status
-rampart status
-
-# Dry-run a command against your policy
-rampart test "rm -rf /"
+rampart test "git status"
 rampart test --tool read "/etc/shadow"
 ```
 
+A local policy result does not establish that every action in an allowed
+process is intercepted. See the [threat model](../reference/threat-model.md)
+for the boundary's limits.
+
 ## OpenClaw plugin not intercepting tool calls
 
-**Check if the plugin is installed:**
+Inspect the installed plugin and Rampart configuration:
 
 ```bash
 openclaw plugins list
-# Should show the rampart plugin as active (its component version may differ
-# from the Rampart CLI patch version).
-
 rampart doctor
-# Should show: ✓ OpenClaw plugin: installed (before_tool_call hook active)
 ```
 
-**Plugin missing — reinstall:**
+The plugin's component version may differ from the Rampart CLI patch version.
+For supported OpenClaw versions, repair owned state and run its verifier with:
 
 ```bash
-rampart protect openclaw --reinstall
+rampart protect openclaw
 ```
 
-**OpenClaw version too old:**
+Use `rampart protect openclaw --reinstall` if you need to replace the bundled
+plugin files. Follow the [OpenClaw guide](../integrations/openclaw.md) for version
+requirements and restart behavior. An OpenClaw upgrade can require its own
+[configuration migration](upgrade.md#approval-state-and-openclaw-review)
+before protection succeeds.
 
-The native plugin requires OpenClaw >= 2026.3.28. Upgrade:
-
-```bash
-npm install -g openclaw@latest
-rampart protect openclaw  # installs, restarts, and verifies the managed guard
-```
-
-**Rampart serve not running:**
-
-The plugin calls `localhost:9090` on every tool call. If serve isn't running, sensitive tools such as `exec` and `write` block instead of silently bypassing policy. Lower-risk tools listed in the plugin's `failOpenTools` config can still fail open.
-
-```bash
-rampart status          # check if serve is running
-rampart serve --start   # start if not running
-```
+**Service unavailable:** managed OpenClaw protection installs an empty
+`failOpenTools` list, so tool calls block when the Rampart service is unavailable.
+An operator can explicitly opt tools into degraded fail-open behavior; do not
+assume that a routine tool is exempt by default. Check `rampart status` and the
+configured service URL. If you manage the service separately, restart it with
+its existing service configuration. For manual background mode, the supported
+command is `rampart serve --background`.
 
 ## Still stuck?
 
-- Check [GitHub Issues](https://github.com/peg/rampart/issues)
-- Run `rampart doctor` and include the output in your issue
-- Email rampartsec@pm.me
+For a non-security bug or confusing setup step, [check existing issues](https://github.com/peg/rampart/issues)
+and send a short report. The form asks for:
+
+- Rampart and agent/integration versions, plus OS and architecture.
+- The install or setup step where you got stuck.
+- What you expected and what happened instead.
+- The smallest harmless, redacted reproduction you can share, if available.
+
+[Report a non-security bug](https://github.com/peg/rampart/issues/new?template=bug-report.yml){ .md-button .md-button--primary }
+
+Reports are public. Use synthetic filenames and inputs; omit credentials,
+personal paths, full logs, configuration files, prompts, sessions and memories.
+A short redacted error is enough to start. If you cannot reduce the problem
+safely, describe the step that fails without attaching private data.
+
+For a suspected bypass, exposed secret or other vulnerability, use the private
+contact in [SECURITY.md](https://github.com/peg/rampart/blob/main/SECURITY.md)
+instead of the public form.

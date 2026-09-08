@@ -18,6 +18,11 @@ An identity that can replace all local records and checkpoints can still
 construct a different valid history. Independent retention is needed to
 detect that rewrite; hashing alone does not make files immutable.
 
+For independently retained checkpoints, see [External Witnessing](external-witness.md).
+It is optional and runs separately from local logging. Verification checks every
+retained checkpoint, so a newer checkpoint cannot conceal a conflict with older
+evidence.
+
 ## Viewing the Audit Trail
 
 ```bash

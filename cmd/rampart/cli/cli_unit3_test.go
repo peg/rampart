@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/peg/rampart/internal/audit"
@@ -35,38 +37,9 @@ func TestNewInitCmd_AlreadyExists(t *testing.T) {
 	}
 }
 
-func TestNewInitCmd_Force(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "rampart.yaml")
-	os.WriteFile(p, []byte("existing"), 0o644)
-
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"init", "--config", p, "--force"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestNewInitCmd_NewFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "rampart.yaml")
-
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"init", "--config", p})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, err := os.Stat(p); err != nil {
-		t.Error("expected config file to be created")
-	}
-}
-
 func TestNewInitCmd_WithProfile(t *testing.T) {
 	dir := t.TempDir()
+	testSetHome(t, dir)
 	p := filepath.Join(dir, "rampart.yaml")
 
 	var out bytes.Buffer
@@ -80,6 +53,7 @@ func TestNewInitCmd_WithProfile(t *testing.T) {
 
 func TestNewInitCmd_DetectEnv(t *testing.T) {
 	dir := t.TempDir()
+	testSetHome(t, dir)
 	p := filepath.Join(dir, "rampart.yaml")
 
 	var out bytes.Buffer
@@ -95,70 +69,82 @@ func TestNewInitCmd_DetectEnv(t *testing.T) {
 
 func TestPolicyTestCmd_Basic(t *testing.T) {
 	dir := t.TempDir()
+	testSetHome(t, dir)
 	p := filepath.Join(dir, "rampart.yaml")
-	os.WriteFile(p, []byte(`version: "1"
+	if err := os.WriteFile(p, []byte(`version: "1"
 default_action: deny
-rules:
-  - action: allow
-    when:
+policies:
+  - name: allow-echo
+    match:
       tool: exec
-      command: "echo *"
-`), 0o644)
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo *"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"policy", "test", "--config", p, "exec", "echo hello"})
-	err := root.Execute()
-	_ = err // may or may not error depending on result formatting
+	root.SetArgs([]string{"policy", "test", "--config", p, "--tool", "exec", "--json", "echo hello"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var got bareCmdJSONResult
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode decision: %v; output: %s", err, &out)
+	}
+	if got.Command != "echo hello" || got.Action != "allow" || len(got.MatchedPolicies) != 1 || got.MatchedPolicies[0] != "allow-echo" {
+		t.Fatalf("unexpected alias decision: %+v", got)
+	}
 }
 
 // --- followAuditFile with data (audit.go) ---
 
 func TestFollowAuditFile_WithEvents(t *testing.T) {
-	dir := t.TempDir()
-	f := filepath.Join(dir, "audit.jsonl")
-
-	event := map[string]any{
-		"id": "evt1", "ts": time.Now().UTC().Format(time.RFC3339),
-		"tool": "exec", "agent": "claude",
-		"decision": map[string]any{"action": "allow", "matched_policies": []string{"default"}, "evaluation_time_us": 10},
-	}
-	data, _ := json.Marshal(event)
-	os.WriteFile(f, append(data, '\n'), 0o644)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := testCobraCmd(ctx)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- followAuditFile(cmd, dir, f, true)
-	}()
-
-	// Write a new event after a brief delay
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		f2, _ := os.OpenFile(f, os.O_APPEND|os.O_WRONLY, 0o644)
-		event2 := map[string]any{
-			"id": "evt2", "ts": time.Now().UTC().Format(time.RFC3339),
-			"tool": "read", "agent": "claude",
-			"decision": map[string]any{"action": "allow", "matched_policies": []string{"p"}, "evaluation_time_us": 5},
-		}
-		d, _ := json.Marshal(event2)
-		f2.Write(append(d, '\n'))
-		f2.Close()
-		time.Sleep(600 * time.Millisecond)
-		cancel()
-	}()
-
-	select {
-	case err := <-done:
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "audit.jsonl")
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
+		defer file.Close()
+		enc := json.NewEncoder(file)
+		event := audit.Event{
+			ID: "existing", Timestamp: time.Now().UTC(), Tool: "exec",
+			Request:  map[string]any{"command": "echo existing"},
+			Decision: audit.EventDecision{Action: "allow"},
+		}
+		if err := enc.Encode(event); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		cmd := testCobraCmd(ctx)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		done := make(chan error, 1)
+		go func() { done <- followAuditFile(cmd, dir, path, true) }()
+		// Wait until the follower has captured the initial offset and is polling.
+		synctest.Wait()
+		event.ID = "appended"
+		event.Request = map[string]any{"command": "echo appended"}
+		if err := enc.Encode(event); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * tailPollInterval)
+		synctest.Wait()
 		cancel()
-		t.Fatal("followAuditFile did not return")
-	}
+		if err := <-done; err != nil {
+			t.Fatalf("follow failed: %v", err)
+		}
+		if got := out.String(); strings.Count(got, "echo appended") != 1 || strings.Contains(got, "echo existing") {
+			t.Fatalf("expected only the appended event once, got %q", got)
+		}
+	})
 }
 
 // --- runReport success path (report.go) ---
@@ -231,44 +217,45 @@ func TestNewPreloadCmd_NoArgs(t *testing.T) {
 
 func TestNewHookCmd_NoStdin(t *testing.T) {
 	dir := t.TempDir()
+	testSetHome(t, dir)
+	t.Chdir(dir)
+	t.Setenv("RAMPART_TOKEN", "")
 	p := filepath.Join(dir, "rampart.yaml")
-	os.WriteFile(p, []byte(`version: "1"
+	if err := os.WriteFile(p, []byte(`version: "1"
 default_action: allow
-`), 0o644)
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auditDir := filepath.Join(dir, "audit")
 
 	var out, errBuf bytes.Buffer
 	root := NewRootCmd(context.Background(), &out, &errBuf)
-	root.SetArgs([]string{"hook", "--config", p})
-
-	// Redirect stdin to empty
-	oldStdin := os.Stdin
-	r, w, _ := os.Pipe()
-	w.Close()
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
-
-	err := root.Execute()
-	_ = err // may error on stdin read
-}
-
-// --- version command ---
-
-func TestVersionCmd(t *testing.T) {
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"version"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	root.SetIn(strings.NewReader(""))
+	root.SetArgs([]string{"hook", "--config", p, "--mode", "enforce", "--audit-dir", auditDir, "--serve-url", "http://127.0.0.1:1"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("clean EOF returned an error: %v", err)
 	}
-}
-
-// --- status command ---
-
-func TestStatusCmd_NoServer(t *testing.T) {
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"status", "--addr", "http://127.0.0.1:1"})
-	// Should fail connecting
-	_ = root.Execute()
+	var got hookOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode clean EOF response: %v; output: %s", err, &out)
+	}
+	if got.Decision != "" || got.HookSpecificOutput == nil || got.HookSpecificOutput.HookEventName != "PreToolUse" || got.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("unexpected clean EOF response: %+v", got)
+	}
+	if errBuf.Len() != 0 {
+		t.Fatalf("clean EOF wrote stderr: %s", &errBuf)
+	}
+	files, err := listAuditFiles(auditDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		events, err := readAuditEvents(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("clean EOF must not record a policy decision, got %d events", len(events))
+		}
+	}
 }

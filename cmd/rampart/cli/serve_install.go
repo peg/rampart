@@ -460,6 +460,9 @@ func newServeInstallCmd(opts *rootOptions, runner commandRunner) *cobra.Command 
 
 			homeDir, _ := os.UserHomeDir()
 			args := buildServiceArgs(port, opts.configPath, configDir, auditDir, mode, approvalTimeout)
+			if runtime.GOOS == "darwin" {
+				args = append(args, "--log-file", logPath())
+			}
 			// Strip control characters from token before embedding in
 			// service files. Newlines in a systemd Environment= directive
 			// or plist <string> could inject arbitrary directives.

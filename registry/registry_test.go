@@ -75,7 +75,7 @@ func TestManifestChecksumsMatchPublishedPolicySources(t *testing.T) {
 		})
 	}
 
-	for _, pattern := range []string{"registry/policies/*.yaml", "policies/community/*.yaml"} {
+	for _, pattern := range []string{"registry/policies/*.yaml", "policies/community/*.yaml", "policies/production-guard.yaml"} {
 		matches, err := filepath.Glob(filepath.Join(repoRoot, filepath.FromSlash(pattern)))
 		if err != nil {
 			t.Fatalf("glob registry sources: %v", err)

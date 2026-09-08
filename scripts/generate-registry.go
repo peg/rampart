@@ -71,10 +71,12 @@ func main() {
 
 	var entries []registryEntry
 
-	// 1. Parse first-party registry policies (registry/policies/*.yaml).
+	// 1. Parse first-party registry policies. Built-in overlays can publish
+	// their canonical embedded source without duplicating a YAML body here.
 	firstPartyFiles, _ := filepath.Glob(filepath.Join(registryPoliciesDir, "*.yaml"))
+	firstPartyFiles = append(firstPartyFiles, filepath.Join(repoRoot, "policies", "production-guard.yaml"))
 	for _, path := range firstPartyFiles {
-		entry, err := parseFirstPartyPolicy(path)
+		entry, err := parseFirstPartyPolicy(path, repoRoot)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARNING: skipping first-party policy %s: %v\n", path, err)
 			continue
@@ -165,7 +167,7 @@ func parseCommunityPolicy(path string) (registryEntry, error) {
 	}, nil
 }
 
-func parseFirstPartyPolicy(path string) (registryEntry, error) {
+func parseFirstPartyPolicy(path, repoRoot string) (registryEntry, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return registryEntry{}, fmt.Errorf("read file: %w", err)
@@ -181,8 +183,14 @@ func parseFirstPartyPolicy(path string) (registryEntry, error) {
 	sum := sha256.Sum256([]byte(normalizedContent))
 	sha := hex.EncodeToString(sum[:])
 
-	baseName := strings.TrimSuffix(filepath.Base(path), ".yaml")
-	url := fmt.Sprintf("https://raw.githubusercontent.com/peg/rampart/main/registry/policies/%s.yaml", baseName)
+	relative, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return registryEntry{}, fmt.Errorf("policy source path: %w", err)
+	}
+	url := "https://raw.githubusercontent.com/peg/rampart/main/" + filepath.ToSlash(relative)
+	if minimum := metadata["min-rampart"]; minimum != "" && !semverPattern.MatchString(minimum) {
+		return registryEntry{}, fmt.Errorf("invalid @min-rampart %q", minimum)
+	}
 
 	desc := metadata["description"]
 	if desc == "" {
@@ -197,6 +205,7 @@ func parseFirstPartyPolicy(path string) (registryEntry, error) {
 		SHA256:      sha,
 		Version:     "1.0.0",
 		Author:      metadata["author"],
+		MinRampart:  metadata["min-rampart"],
 	}, nil
 }
 

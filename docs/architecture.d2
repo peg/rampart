@@ -4,99 +4,46 @@ vars: {
   }
 }
 
-direction: right
+direction: down
 
-agents: {
-  label: "AI Agents"
-  style.border-radius: 8
-
-  claude: "Claude Code"
-  cline: "Cline"
-  openclaw: "OpenClaw" {
-    style.fill: "#1a1f2e"
-    style.stroke: "#FF6392"
-    style.font-color: "#FF6392"
-    style.border-radius: 6
-  }
-  codex: "Codex"
-  other: "Any Agent"
-}
-
-intercept: {
-  label: "Interception"
-  style.border-radius: 8
-
-  hooks: "Native Hooks"
-  bridge: "Gateway Bridge" {
-    style.fill: "#1a1f2e"
-    style.stroke: "#FF6392"
-    style.font-color: "#FF6392"
-    style.border-radius: 6
-  }
-  shim: "Shell Shim"
-  preload: "LD_PRELOAD"
-  mcp: "MCP Proxy"
-}
-
-engine: "Policy Engine\n<10μs" {
-  style.fill: "#1d3320"
-  style.stroke: "#2ea043"
-  style.font-color: "#3fb950"
+agent: "Agent tool request" {
   style.border-radius: 8
 }
 
-verify: "rampart-verify\n(optional)" {
-  style.stroke-dash: 4
+boundary: "Configured integration\nhook, plugin, proxy or wrapper" {
   style.border-radius: 8
 }
 
-audit: "Audit Trail\nhash-chained" {
+engine: "YAML policy engine\nlocal matching" {
+  style.fill: "#33232c"
+  style.stroke: "#ff8fbc"
+  style.font-color: "#f1ede7"
   style.border-radius: 8
 }
 
 outcomes: {
-  label: "Outcomes"
-  allow: "Execute" {
-    style.fill: "#1d3320"
-    style.stroke: "#2ea043"
-    style.font-color: "#3fb950"
-    style.border-radius: 6
+  label: "Decision returned to the integration"
+  allow: "Allow / watch\nhost may continue" {
+    style.border-radius: 8
   }
-  deny: "Blocked" {
-    style.fill: "#2d1b1b"
-    style.stroke: "#da3633"
-    style.font-color: "#f85149"
-    style.border-radius: 6
+  deny: "Deny\nblock represented action" {
+    style.border-radius: 8
   }
-  ask: "Approval" {
-    style.fill: "#2d2508"
-    style.stroke: "#d29922"
-    style.font-color: "#d29922"
-    style.border-radius: 6
+  ask: "Ask\nhuman approval required" {
+    style.fill: "#33232c"
+    style.stroke: "#ff8fbc"
+    style.font-color: "#f1ede7"
+    style.border-radius: 8
   }
 }
 
-# Agent connections
-agents.claude -> intercept.hooks
-agents.cline -> intercept.hooks
-agents.openclaw -> intercept.bridge: "exec approvals\n+ tool patches"
-agents.openclaw -> intercept.shim: "subagents"
-agents.codex -> intercept.hooks
-agents.other -> intercept.mcp
+audit: "Local audit trail\npolicy decision and request" {
+  style.border-radius: 8
+}
 
-# Intercept to engine
-intercept.hooks -> engine
-intercept.bridge -> engine
-intercept.shim -> engine
-intercept.preload -> engine
-intercept.mcp -> engine
-
-# Engine outcomes
-engine -> outcomes.allow: "allow"
+agent -> boundary: "exposed action"
+boundary -> engine
+engine -> outcomes.allow: "allow / watch"
 engine -> outcomes.deny: "deny"
-engine -> verify: "ambiguous"
-engine -> audit
-
-verify -> outcomes.allow
-verify -> outcomes.deny
-verify -> outcomes.ask
+engine -> outcomes.ask: "ask"
+engine -> audit: "record decision"

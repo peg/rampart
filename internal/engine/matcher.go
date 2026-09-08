@@ -703,33 +703,49 @@ func suffixAfterUnquotedByte(value string, target byte) string {
 	return ""
 }
 
-func restrictiveCommandCandidates(command string) []string {
-	analysis := analyzeGrantCommand(command)
+func restrictiveCommandCandidates(command string) ([]string, bool) {
 	seen := make(map[string]bool)
-	candidates := make([]string, 0, len(analysis.components)+4)
-	appendCandidate := func(candidate string) {
+	candidates := make([]string, 0, 4)
+	overflow := false
+	var appendCandidate func(string, int)
+	appendCandidate = func(candidate string, depth int) {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" || seen[candidate] {
 			return
 		}
+		if depth > 16 {
+			overflow = true
+			return
+		}
 		seen[candidate] = true
 		candidates = append(candidates, candidate)
+		// Split original shell syntax before normalization removes quotes.
+		// Otherwise quoted prose such as 'example; terraform apply' can
+		// manufacture a command component that the shell never executes.
+		for _, component := range SplitCompoundCommand(candidate) {
+			appendCandidate(component, depth+1)
+		}
 		for _, body := range restrictivePOSIXBodyCandidates(candidate) {
-			if !seen[body] {
-				seen[body] = true
-				candidates = append(candidates, body)
-			}
+			appendCandidate(body, depth+1)
+		}
+		tokens := unwrapRestrictiveExecutor(stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix")))
+		if body, wrapped := literalShellPayload(tokens); wrapped {
+			appendCandidate(body, depth+1)
 		}
 	}
-	appendCandidate(command)
-	for _, component := range analysis.components {
-		appendCandidate(component)
+	appendCandidate(command, 0)
+	for _, subcommand := range ExtractSubcommands(command) {
+		appendCandidate(subcommand, 0)
 	}
-	return candidates
+	return candidates, overflow
 }
 
 func matchRestrictiveCommandFirst(patterns []string, command string, action Action) string {
-	for _, candidate := range restrictiveCommandCandidates(command) {
+	candidates, overflow := restrictiveCommandCandidates(command)
+	if overflow && len(patterns) > 0 {
+		return patterns[0] // An incomplete analysis must not weaken a restriction.
+	}
+	for _, candidate := range candidates {
 		if matched := matchRestrictiveCommandCandidateFirst(patterns, candidate, action); matched != "" {
 			return matched
 		}
@@ -930,7 +946,10 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 	canonical := mayNeedCanonicalCommandAliases(command)
 	download := strings.ContainsAny(command, ";&|\n") &&
 		(containsFold(command, "curl") || containsFold(command, "wget") || strings.ContainsAny(command, "'\"\\"))
-	if !canonical && !download {
+	production := strings.ContainsAny(command, "'\"\\") || containsFold(command, "terraform") ||
+		containsFold(command, "tofu") || containsFold(command, "pulumi") ||
+		containsFold(command, "prisma") || containsFold(command, "alembic") || containsFold(command, "kubectl")
+	if !canonical && !download && !production {
 		return false
 	}
 	emitted, overflow := 0, false
@@ -945,6 +964,12 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 	stopped := false
 	if download {
 		visitDownloadExecutionAliases(command, func(alias string) bool {
+			stopped = !emitAlias(alias)
+			return !stopped
+		})
+	}
+	if !stopped && production {
+		visitProductionCommandAliases(command, func(alias string) bool {
 			stopped = !emitAlias(alias)
 			return !stopped
 		})
@@ -1262,7 +1287,11 @@ func restrictiveCommandComponentExcluded(patterns []string, component string) bo
 	// Exclusions weaken a restrictive rule, so retain granting-action matching
 	// semantics: executable names may follow host case rules, but arguments keep
 	// their exact bytes.
-	for _, candidate := range restrictiveCommandCandidates(component) {
+	candidates, overflow := restrictiveCommandCandidates(component)
+	if overflow {
+		return false // An incomplete analysis cannot establish an exclusion.
+	}
+	for _, candidate := range candidates {
 		if matchCommandAnyForAction(patterns, candidate, ActionAllow) {
 			return true
 		}

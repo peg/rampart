@@ -288,6 +288,26 @@ rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 
 `--tls-auto` generates a self-signed ECDSA P-256 certificate (1-year validity) and stores it in `~/.rampart/tls/`. A truncated SHA-256 fingerprint is printed on startup. `--tls-cert` and `--tls-key` must be used together and are mutually exclusive with `--tls-auto`.
 
+#### Diagnostic log retention
+
+`rampart serve --background` writes diagnostics to `~/.rampart/serve.log`.
+Rampart rotates application log records at 10 MiB and retains three backups,
+named `serve.log.1` through `serve.log.3`, with `.1` the newest. The active file
+and newly rotated files are owner-only. Common credential values are redacted
+before writing; diagnostic records larger than 64 KiB are omitted entirely.
+Audit history has separate storage and retention and is not deleted by this
+rotation.
+
+Use `--log-file /path/to/serve.log` to enable the same behavior for a foreground
+process; the parent directory must exist. A newly installed macOS service uses
+this writer too. Reinstall the managed service to update an older launchd
+configuration. Linux services continue to use journald and its retention policy.
+
+An existing oversized active log is rotated on startup and remains until it
+ages out of the three-backup set. Files written directly by a supervisor or
+runtime outside Rampart's application logger remain subject to that writer's
+behavior. Rotation is diagnostic housekeeping, not an immutable audit mechanism.
+
 ### `rampart wrap`
 
 Add policy enforcement to agents that launch commands through `$SHELL`.
@@ -568,6 +588,22 @@ Check hash chain integrity.
 ```bash
 rampart audit verify
 ```
+
+### `rampart audit witness`
+
+**Experimental.** Publish a checkpoint or retrieve retained evidence using an
+operator-owned witness configuration. The destination must be independently
+administered; Rampart does not install or operate a witness service.
+
+```bash
+rampart audit witness publish --config /etc/rampart/witness.json
+rampart audit witness status --config /etc/rampart/witness.json
+rampart audit verify --require-witness --witness-config /etc/rampart/witness.json
+```
+
+Missing, stale or invalid required evidence fails verification. See
+[External Witnessing](../features/external-witness.md) for deployment, identity,
+retention, transport and unwitnessed-tail limits.
 
 ### `rampart audit stats`
 
