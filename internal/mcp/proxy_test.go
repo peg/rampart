@@ -1860,7 +1860,7 @@ func TestRun_EndToEnd(t *testing.T) {
 // Test: Security bypass scenarios
 // ---------------------------------------------------------------------------
 
-func TestSecurityBypass_MethodCaseSensitivity(t *testing.T) {
+func TestHandleClientLine_MethodCaseSensitivity(t *testing.T) {
 	eng := buildDenyAllEngine(t)
 	childIn := &bytes.Buffer{}
 	parentOut := &bytes.Buffer{}
@@ -1870,19 +1870,12 @@ func TestSecurityBypass_MethodCaseSensitivity(t *testing.T) {
 		WithMode("enforce"), WithLogger(silentLogger()))
 	p.parentOut = parentOut
 
-	// Try uppercase method — should NOT be caught as tools/call
+	// JSON-RPC method names are case-sensitive; the child owns unknown methods.
 	line := `{"jsonrpc":"2.0","id":1,"method":"Tools/Call","params":{"name":"exec_command","arguments":{"command":"whoami"}}}` + "\n"
-	err := p.handleClientLine([]byte(line))
-	if err != nil {
-		t.Fatalf("handleClientLine: %v", err)
-	}
-
-	// This bypasses the check (method is case-sensitive in JSON-RPC).
-	// Document that this is expected behavior — MCP method names are case-sensitive.
-	// The line should be forwarded to child since it doesn't match "tools/call".
-	if childIn.Len() == 0 {
-		t.Log("Non-matching method forwarded (expected — method names are case-sensitive)")
-	}
+	require.NoError(t, p.handleClientLine([]byte(line)))
+	require.Equal(t, line, childIn.String(), "forward the unrecognized method unchanged")
+	require.Empty(t, parentOut.String(), "the child supplies the method response")
+	require.Empty(t, sink.getEvents(), "an unrecognized method is not a tool evaluation")
 }
 
 func TestSecurityBypass_ExtraFieldsInParams(t *testing.T) {
