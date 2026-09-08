@@ -214,9 +214,10 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.8.1 repairs current OpenClaw installation and execution-policy
-compatibility, connects complete redacted approval review with immutable retry
-identity, and strengthens supported same-command download/execution checks.
+Rampart v1.9.0 adds an opt-in [production guard](guides/production-guard.md),
+bounded service diagnostic logs, and an experimental
+[external audit witness](features/external-witness.md). The website and docs
+share a refreshed design, clearer troubleshooting, and improved browser support.
 Read the [upgrade guidance](getting-started/upgrade.md) for approval-state backups
 and native OpenClaw review limits. See the [release
 notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade

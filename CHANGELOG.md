@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-09-07
+
 ### Added
 
 - **Opt-in production guard** — Require approval for the documented infrastructure
@@ -32,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clearer troubleshooting and feedback** — Current setup and verification
   commands replace stale service and repair instructions. A structured bug form
   gathers minimal redacted reports and keeps security disclosures private.
+- **More meaningful regression checks** — Isolate setup fixtures, require actual
+  MCP and audit output, restore engine fuzz inputs previously skipped by a stale
+  fixture, and exercise the real HTTP handler. Consolidate duplicate preset
+  checks, verify effective Windows handle permissions, and build docs strictly.
 
 ### Fixed
 

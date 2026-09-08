@@ -15,7 +15,7 @@ body:
     attributes:
       label: Rampart version
       description: The version number from `rampart version`, or say if installation failed before you could check.
-      placeholder: "1.8.1"
+      placeholder: "1.9.0"
     validations:
       required: true
   - type: input
