@@ -243,6 +243,7 @@ integrations:
       - A release that cannot load Hermes' packaged plugin manager fails the rolling compatibility gate and is not inferred compatible from its source tree.
       - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
       - Hermes tools outside the plugin's typed map, including MCP and delegated-agent tools, fail closed but are not claimed as covered policy surfaces.
+      - Other plugins that rewrite tool arguments share the trusted host boundary; re-evaluation of their rewrites and arbitrary plugin composition are not verified.
       - Delegated-agent and authenticated live-host E2E are not present.
 
   - id: gemini

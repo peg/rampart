@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commands replace stale service and repair instructions. A structured bug form
   gathers minimal redacted reports and keeps security disclosures private.
 
+### Fixed
+
+- **Hermes v0.21.1 native approvals** — Recognize the host's additional approval
+  dispatcher while preserving approval identity checks and older supported
+  resolver paths. Keep working-directory identity correct across supported
+  Hermes paths. Unrecognized approval flows continue to block safely.
+
 ## [1.8.1] - 2026-09-04
 
 ### Fixed

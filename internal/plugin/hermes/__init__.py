@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 
 DEFAULT_SERVE_URL = "http://127.0.0.1:9090"
 DEFAULT_TIMEOUT_MS = 3000
@@ -810,6 +810,7 @@ def _hermes_supports_native_approval() -> bool:
     )
     resolver = getattr(hermes_plugins, "resolve_pre_tool_block", None)
     resolution_helper = getattr(hermes_plugins, "_resolve_block_from_details", None)
+    dispatch_helper = getattr(hermes_plugins, "_dispatch_pre_tool_call_hooks", None)
     if not (
         callable(public_getter)
         and callable(details_getter)
@@ -824,9 +825,10 @@ def _hermes_supports_native_approval() -> bool:
     # and the resolver supplies ``details.rule_key`` to the approval gate.
     # Hermes v0.20.2 moved the gate into ``_resolve_block_from_details``; for
     # that shape, also prove that the resolver passes the same directive into
-    # the helper. If source is unavailable or a future host delegates this
-    # differently, fail closed until that contract is reviewed instead of
-    # guessing from names.
+    # the helper. v0.21.1 delegates through ``_dispatch_pre_tool_call_hooks``;
+    # additionally prove that its resolved block is returned to the caller.
+    # If source is unavailable or a future host delegates differently, fail
+    # closed until that contract is reviewed instead of guessing from names.
     try:
         details_tree = ast.parse(textwrap.dedent(inspect.getsource(details_getter)))
         resolver_tree = ast.parse(textwrap.dedent(inspect.getsource(resolver)))
@@ -839,6 +841,94 @@ def _hermes_supports_native_approval() -> bool:
         if isinstance(node.func, ast.Attribute):
             return node.func.attr
         return ""
+
+    def named_call(node: ast.AST, name: str, arguments: tuple[str, ...]) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+            and len(node.args) == len(arguments)
+            and all(
+                isinstance(argument, ast.Name) and argument.id == expected
+                for argument, expected in zip(node.args, arguments)
+            )
+        )
+
+    def function_body(tree: ast.Module) -> list[ast.stmt]:
+        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.FunctionDef):
+            return []
+        body = tree.body[0].body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]
+        return body
+
+    def forwards_hook_kwargs(node: ast.Call) -> bool:
+        return (
+            len(node.keywords) == 1
+            and node.keywords[0].arg is None
+            and isinstance(node.keywords[0].value, ast.Name)
+            and node.keywords[0].value.id == "hook_kwargs"
+        )
+
+    def assigns_call(
+        node: ast.stmt, target: str, name: str, arguments: tuple[str, ...]
+    ) -> bool:
+        return (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == target
+            and named_call(node.value, name, arguments)
+        )
+
+    # Only accept the reviewed straight-line dispatcher form. Merely finding
+    # calls somewhere in its source would not prove the approval result wins.
+    resolver_body = function_body(resolver_tree)
+    if (
+        len(resolver_body) == 1
+        and isinstance(resolver_body[0], ast.Return)
+        and isinstance(resolver_body[0].value, ast.Subscript)
+        and named_call(
+            resolver_body[0].value.value,
+            "_dispatch_pre_tool_call_hooks",
+            ("tool_name", "args"),
+        )
+        and forwards_hook_kwargs(resolver_body[0].value.value)
+        and isinstance(resolver_body[0].value.slice, ast.Constant)
+        and type(resolver_body[0].value.slice.value) is int
+        and resolver_body[0].value.slice.value == 0
+    ):
+        if not callable(dispatch_helper) or not callable(resolution_helper):
+            return False
+        try:
+            dispatch_tree = ast.parse(textwrap.dedent(inspect.getsource(dispatch_helper)))
+        except (OSError, TypeError, SyntaxError, IndentationError):
+            return False
+        body = function_body(dispatch_tree)
+        if not (
+            len(body) == 3
+            and assigns_call(
+                body[0], "details", "_get_pre_tool_call_directive_details",
+                ("tool_name", "args"),
+            )
+            and forwards_hook_kwargs(body[0].value)
+            and assigns_call(
+                body[1], "block_msg", "_resolve_block_from_details",
+                ("details", "tool_name"),
+            )
+            and isinstance(body[2], ast.Return)
+            and isinstance(body[2].value, ast.Tuple)
+            and len(body[2].value.elts) == 2
+            and isinstance(body[2].value.elts[0], ast.Name)
+            and body[2].value.elts[0].id == "block_msg"
+        ):
+            return False
+        resolver_tree = dispatch_tree
 
     result_rule_key_is_captured = any(
         isinstance(node, ast.Assign)
@@ -929,7 +1019,6 @@ def _effective_terminal_cwd(task_id: str) -> str | None:
         resolve_overrides = getattr(hermes_terminal, "resolve_task_overrides")
         get_session_cwd = getattr(hermes_terminal, "get_session_cwd")
         resolve_cwd = getattr(hermes_terminal, "_resolve_command_cwd")
-        container_backends = getattr(hermes_terminal, "_CONTAINER_BACKENDS")
         unusable_container_cwd = getattr(
             hermes_terminal, "_is_unusable_container_cwd"
         )
@@ -946,25 +1035,70 @@ def _effective_terminal_cwd(task_id: str) -> str | None:
         ):
             return None
 
+        parameters = inspect.signature(resolve_cwd).parameters
+        legacy_parameters = {"workdir", "default_cwd", "session_key"}
+        modern_cwd = set(parameters) == legacy_parameters | {"env_type"}
+        if not modern_cwd and set(parameters) != legacy_parameters:
+            return None
+        if any(
+            parameter.kind not in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+            for parameter in parameters.values()
+        ):
+            return None
+        if modern_cwd:
+            # Current hosts classify plugin backends too, and may mount this
+            # task's host workspace at /workspace. Reuse their shared helpers.
+            is_container_backend = getattr(hermes_terminal, "_is_container_backend")
+            resolve_host_cwd = getattr(hermes_terminal, "_resolve_task_host_cwd")
+            if not callable(is_container_backend) or not callable(resolve_host_cwd):
+                return None
+        else:
+            container_backends = getattr(hermes_terminal, "_CONTAINER_BACKENDS")
+            if not isinstance(container_backends, (set, frozenset)) or not all(
+                isinstance(backend, str) for backend in container_backends
+            ):
+                return None
+
         config = get_config()
         overrides = resolve_overrides(task_id)
         if not isinstance(config, Mapping) or not isinstance(overrides, Mapping):
             return None
         env_type = config.get("env_type")
         cwd = overrides.get("cwd") or get_session_cwd(task_id) or config.get("cwd")
-        if not isinstance(env_type, str) or not isinstance(cwd, str) or not cwd:
+        if not isinstance(env_type, str) or not env_type or not isinstance(cwd, str) or not cwd:
             return None
-        if env_type in container_backends and unusable_container_cwd(cwd):
-            cwd = config.get("cwd")
-            if not isinstance(cwd, str) or not cwd:
+        container = is_container_backend(env_type) if modern_cwd else env_type in container_backends
+        if not isinstance(container, bool):
+            return None
+        if container:
+            unusable_cwd = unusable_container_cwd(cwd)
+            if not isinstance(unusable_cwd, bool):
                 return None
-        session_key = get_current_session_key(default="") or (task_id or "")
-        effective_cwd = resolve_cwd(
-            workdir=None,
-            default_cwd=cwd,
-            session_key=session_key,
-        )
-    except (ImportError, AttributeError, KeyError, OSError, TypeError, ValueError):
+            if unusable_cwd:
+                host_cwd = resolve_host_cwd(config, task_id) if modern_cwd else None
+                if host_cwd is not None and not isinstance(host_cwd, str):
+                    return None
+                cwd = "/workspace" if host_cwd else config.get("cwd")
+                if not isinstance(cwd, str) or not cwd:
+                    return None
+        current_session_key = get_current_session_key(default="")
+        if current_session_key is not None and not isinstance(current_session_key, str):
+            return None
+        session_key = current_session_key or (task_id or "")
+        if not isinstance(session_key, str):
+            return None
+        if modern_cwd:
+            effective_cwd = resolve_cwd(
+                workdir=None, default_cwd=cwd, session_key=session_key, env_type=env_type,
+            )
+        else:
+            effective_cwd = resolve_cwd(
+                workdir=None, default_cwd=cwd, session_key=session_key,
+            )
+    except Exception:
         return None
     return effective_cwd if isinstance(effective_cwd, str) and effective_cwd else None
 
