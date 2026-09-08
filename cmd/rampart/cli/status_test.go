@@ -16,6 +16,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +55,48 @@ func TestStatusCmdDefaultHumanOutput(t *testing.T) {
 	var payload map[string]any
 	if jsonErr := json.Unmarshal([]byte(stdout), &payload); jsonErr == nil {
 		t.Fatal("default status output should not be JSON")
+	}
+}
+
+func TestStatusCmd_NoServer(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Chdir(home)
+	t.Setenv("PATH", home)
+	for _, key := range []string{"CLAUDE_CONFIG_DIR", "HERMES_HOME", "COPILOT_HOME", "APPDATA", "LOCALAPPDATA", "ProgramData"} {
+		t.Setenv(key, filepath.Join(home, key))
+	}
+	t.Setenv("OPENCLAW_STATE_DIR", filepath.Join(home, ".openclaw"))
+	t.Setenv("OPENCLAW_CONFIG_PATH", filepath.Join(home, ".openclaw", "openclaw.json"))
+	t.Setenv("RAMPART_OPENCLAW_BIN", filepath.Join(home, "missing-openclaw"))
+	t.Setenv("RAMPART_URL", "http://127.0.0.1:1")
+
+	// Simulate unavailable service endpoints, including fallback ports, without
+	// probing any service on the machine running the test.
+	probes := 0
+	oldClient := rampartHTTPClient
+	rampartHTTPClient = &http.Client{Transport: redirectTestTransport(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.Path != "/healthz" {
+			t.Errorf("unexpected status request: %s %s", req.Method, req.URL.Path)
+		}
+		probes++
+		return nil, net.ErrClosed
+	})}
+	t.Cleanup(func() { rampartHTTPClient = oldClient })
+
+	stdout, stderr, err := runCLI(t, "status", "--json")
+	if err != nil {
+		t.Fatalf("offline status returned an error: %v", err)
+	}
+	var got statusJSONOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode offline status: %v; output: %s", err, stdout)
+	}
+	if probes == 0 || got.SchemaVersion != statusSchemaVersion || got.ServerRunning {
+		t.Fatalf("offline status: probes=%d schema=%q server_running=%t", probes, got.SchemaVersion, got.ServerRunning)
+	}
+	if stderr != "" {
+		t.Fatalf("offline status wrote stderr: %s", stderr)
 	}
 }
 

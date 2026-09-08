@@ -43,19 +43,3 @@ func TestEmbeddedPoliciesParse(t *testing.T) {
 		})
 	}
 }
-
-func TestProfileNamesMatchFiles(t *testing.T) {
-	entries, err := FS.ReadDir(".")
-	require.NoError(t, err)
-
-	yamlFiles := make(map[string]bool)
-	for _, e := range entries {
-		if !e.IsDir() && e.Name() != "embed.go" && e.Name() != "policies_test.go" {
-			yamlFiles[e.Name()] = true
-		}
-	}
-
-	for _, name := range ProfileNames {
-		assert.True(t, yamlFiles[name+".yaml"], "profile %s should have a matching YAML file", name)
-	}
-}

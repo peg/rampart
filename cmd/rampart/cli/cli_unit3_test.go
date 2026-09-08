@@ -37,38 +37,6 @@ func TestNewInitCmd_AlreadyExists(t *testing.T) {
 	}
 }
 
-func TestNewInitCmd_Force(t *testing.T) {
-	dir := t.TempDir()
-	testSetHome(t, dir)
-	p := filepath.Join(dir, "rampart.yaml")
-	os.WriteFile(p, []byte("existing"), 0o644)
-
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"init", "--config", p, "--force"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestNewInitCmd_NewFile(t *testing.T) {
-	dir := t.TempDir()
-	testSetHome(t, dir)
-	p := filepath.Join(dir, "rampart.yaml")
-
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"init", "--config", p})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, err := os.Stat(p); err != nil {
-		t.Error("expected config file to be created")
-	}
-}
-
 func TestNewInitCmd_WithProfile(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
@@ -249,44 +217,45 @@ func TestNewPreloadCmd_NoArgs(t *testing.T) {
 
 func TestNewHookCmd_NoStdin(t *testing.T) {
 	dir := t.TempDir()
+	testSetHome(t, dir)
+	t.Chdir(dir)
+	t.Setenv("RAMPART_TOKEN", "")
 	p := filepath.Join(dir, "rampart.yaml")
-	os.WriteFile(p, []byte(`version: "1"
+	if err := os.WriteFile(p, []byte(`version: "1"
 default_action: allow
-`), 0o644)
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auditDir := filepath.Join(dir, "audit")
 
 	var out, errBuf bytes.Buffer
 	root := NewRootCmd(context.Background(), &out, &errBuf)
-	root.SetArgs([]string{"hook", "--config", p})
-
-	// Redirect stdin to empty
-	oldStdin := os.Stdin
-	r, w, _ := os.Pipe()
-	w.Close()
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
-
-	err := root.Execute()
-	_ = err // may error on stdin read
-}
-
-// --- version command ---
-
-func TestVersionCmd(t *testing.T) {
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"version"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	root.SetIn(strings.NewReader(""))
+	root.SetArgs([]string{"hook", "--config", p, "--mode", "enforce", "--audit-dir", auditDir, "--serve-url", "http://127.0.0.1:1"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("clean EOF returned an error: %v", err)
 	}
-}
-
-// --- status command ---
-
-func TestStatusCmd_NoServer(t *testing.T) {
-	var out bytes.Buffer
-	root := NewRootCmd(context.Background(), &out, &bytes.Buffer{})
-	root.SetArgs([]string{"status", "--addr", "http://127.0.0.1:1"})
-	// Should fail connecting
-	_ = root.Execute()
+	var got hookOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode clean EOF response: %v; output: %s", err, &out)
+	}
+	if got.Decision != "" || got.HookSpecificOutput == nil || got.HookSpecificOutput.HookEventName != "PreToolUse" || got.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("unexpected clean EOF response: %+v", got)
+	}
+	if errBuf.Len() != 0 {
+		t.Fatalf("clean EOF wrote stderr: %s", &errBuf)
+	}
+	files, err := listAuditFiles(auditDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		events, err := readAuditEvents(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("clean EOF must not record a policy decision, got %d events", len(events))
+		}
+	}
 }

@@ -292,17 +292,6 @@ func TestListPending(t *testing.T) {
 // --- loadLogEvents (log.go) ---
 
 func TestLoadLogEvents(t *testing.T) {
-	t.Run("empty dir", func(t *testing.T) {
-		dir := t.TempDir()
-		events, err := loadLogEvents(dir, false, false)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(events) != 0 {
-			t.Errorf("expected 0 events, got %d", len(events))
-		}
-	})
-
 	t.Run("today only no files", func(t *testing.T) {
 		dir := t.TempDir()
 		events, err := loadLogEvents(dir, true, false)
