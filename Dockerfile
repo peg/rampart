@@ -2,7 +2,7 @@
 # requested image platform so linux/arm64 releases don't depend on slow QEMU
 # emulation for the Go build itself.
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM golang:1.26.8-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm AS build
 WORKDIR /src
 
 ARG TARGETOS
