@@ -103,6 +103,11 @@ directory from applying to another. A Rampart token is therefore required for
 native `ask` approval; without one, `ask` fails closed while ordinary allow and
 deny decisions continue to work.
 
+Other Hermes plugins that rewrite tool arguments share the trusted host
+boundary. Rampart evaluates the arguments supplied to its hook; it cannot
+guarantee that another plugin's rewrites are re-evaluated before execution.
+The isolated compatibility harness does not verify arbitrary plugin composition.
+
 For an availability-first deployment, `fail_open_tools` can explicitly list
 individual Hermes names such as `web_search`. This weakens the enforcement
 boundary and is never enabled by default; credential-bearing reads should stay

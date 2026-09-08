@@ -233,6 +233,9 @@ OpenClaw and Hermes operators can explicitly opt tools into degraded fail-open
 behavior; `rampart protect openclaw` installs an empty opt-out list. OpenClaw's
 [native approval limits](../integrations/openclaw.md)
 and trusted-plugin composition boundary also apply.
+Hermes likewise treats other argument-rewriting plugins as part of the
+[trusted host boundary](../integrations/hermes.md#decision-behavior);
+their rewrites are not verified as re-evaluated by Rampart.
 
 Disabled or undiscovered hooks provide no interception. See each integration's
 activation requirements, including Cline's legacy `--yolo` bypass. Legacy
