@@ -639,6 +639,163 @@ class HermesPluginTests(unittest.TestCase):
         self.assertNotEqual(safe_key, other_key)
         self.assertIsNone(ambiguous_key)
 
+    def test_effective_terminal_cwd_uses_the_host_backend_and_session(self) -> None:
+        cases = (
+            ("configured directory", {}, "/configured"),
+            ("task override", {"override_cwd": "/override"}, "/override"),
+            ("task record", {"records": {"task": "/task"}}, "/task"),
+            (
+                "current session wins",
+                {"override_cwd": "/override", "session_key": "session",
+                 "records": {"task": "/task", "session": "/session"}},
+                "/session",
+            ),
+            (
+                "configured backend stays authoritative",
+                {"override_env": "plugin-container", "override_cwd": "/host/work",
+                 "host_cwd": "/host/work"},
+                "/host/work",
+            ),
+            (
+                "container override without mount",
+                {"env_type": "plugin-container", "override_cwd": "/host/work"},
+                "/configured",
+            ),
+            (
+                "container override with mount",
+                {"env_type": "plugin-container", "override_cwd": "/host/work",
+                 "host_cwd": "/host/work"},
+                "/workspace",
+            ),
+            (
+                "container task record with mount",
+                {"env_type": "plugin-container", "records": {"task": "/host/work"},
+                 "host_cwd": "/host/work"},
+                "/workspace",
+            ),
+            (
+                "unusable current-session record",
+                {"env_type": "plugin-container", "session_key": "session",
+                 "records": {"session": "/host/work"}},
+                "/configured",
+            ),
+            (
+                "valid container current-session record",
+                {"env_type": "plugin-container", "session_key": "session",
+                 "records": {"session": "/sandbox/work"}},
+                "/sandbox/work",
+            ),
+            ("legacy resolver", {"legacy": True}, "/configured"),
+            (
+                "legacy container override",
+                {"legacy": True, "env_type": "legacy-container",
+                 "override_cwd": "/host/work"},
+                "/configured",
+            ),
+        )
+        for label, options, expected in cases:
+            with self.subTest(label=label):
+                modules, _, calls = self._terminal_cwd_runtime(**options)
+                with mock.patch.dict(sys.modules, modules):
+                    self.assertEqual(plugin._effective_terminal_cwd("task"), expected)
+                self.assertEqual(len(calls), 1)
+                self.assertIsNone(calls[0]["workdir"])
+                self.assertEqual(calls[0]["session_key"], options.get("session_key") or "task")
+                if not options.get("legacy"):
+                    self.assertEqual(calls[0]["env_type"], options.get("env_type", "local"))
+
+    def test_effective_terminal_cwd_refuses_unknown_host_contracts(self) -> None:
+        def raises(*args, **kwargs):
+            raise RuntimeError("host helper failed")
+
+        def unknown_resolver(*, workdir, default_cwd, session_key, env_type, new_context=None):
+            return default_cwd
+
+        def bad_result(*, workdir, default_cwd, session_key, env_type):
+            return {"cwd": default_cwd}
+
+        cases = (
+            ("missing predicate", "_is_container_backend", None),
+            ("missing mount helper", "_resolve_task_host_cwd", None),
+            ("unknown resolver signature", "_resolve_command_cwd", unknown_resolver),
+            ("opaque resolver signature", "_resolve_command_cwd", lambda **kwargs: "/unsafe"),
+            ("invalid predicate result", "_is_container_backend", lambda _: "yes"),
+            ("invalid mount result", "_resolve_task_host_cwd", lambda *_: {"cwd": "/host/work"}),
+            ("invalid path predicate", "_is_unusable_container_cwd", lambda _: 1),
+            ("invalid config", "_get_env_config", lambda: []),
+            ("invalid overrides", "resolve_task_overrides", lambda _: []),
+            ("invalid resolved directory", "_resolve_command_cwd", bad_result),
+            ("helper exception", "_resolve_task_host_cwd", raises),
+        )
+        for label, attribute, replacement in cases:
+            with self.subTest(label=label):
+                modules, terminal, _ = self._terminal_cwd_runtime(
+                    env_type="plugin-container", override_cwd="/host/work"
+                )
+                setattr(terminal, attribute, replacement)
+                with mock.patch.dict(sys.modules, modules):
+                    self.assertIsNone(plugin._effective_terminal_cwd("task"))
+
+        for session_key in (True, False):
+            with self.subTest(session_key=session_key):
+                modules, _, _ = self._terminal_cwd_runtime(session_key=session_key)
+                with mock.patch.dict(sys.modules, modules):
+                    self.assertIsNone(plugin._effective_terminal_cwd("task"))
+
+    @staticmethod
+    def _terminal_cwd_runtime(
+        *, env_type="local", override_cwd=None, override_env=None,
+        records=None, session_key="", host_cwd=None, legacy=False,
+    ):
+        """Synthetic host helpers; no terminal environment or process is created."""
+        tools_package = types.ModuleType("tools")
+        tools_package.__path__ = []
+        terminal = types.ModuleType("tools.terminal_tool")
+        approval = types.ModuleType("tools.approval")
+        tools_package.terminal_tool = terminal
+        tools_package.approval = approval
+        records = records or {}
+        calls = []
+        host_config = {"env_type": env_type, "cwd": "/configured"}
+        terminal._get_env_config = lambda: host_config
+
+        def task_overrides(task):
+            if task != "task":
+                raise AssertionError("override lookup changed task identity")
+            return {"cwd": override_cwd, "env_type": override_env}
+
+        def task_host_cwd(config, task):
+            if config is not host_config or task != "task":
+                raise AssertionError("mount lookup changed config or task identity")
+            return host_cwd
+
+        terminal.resolve_task_overrides = task_overrides
+        terminal.get_session_cwd = records.get
+        terminal._is_unusable_container_cwd = lambda cwd: cwd.startswith("/host/")
+        approval.get_current_session_key = lambda default: session_key
+
+        def modern_resolver(*, workdir, default_cwd, session_key=None, env_type=None):
+            calls.append(dict(workdir=workdir, default_cwd=default_cwd,
+                              session_key=session_key, env_type=env_type))
+            recorded = records.get(session_key)
+            if recorded and terminal._is_container_backend(env_type) and terminal._is_unusable_container_cwd(recorded):
+                return default_cwd
+            return recorded or default_cwd
+
+        def legacy_resolver(*, workdir, default_cwd, session_key=None):
+            calls.append(dict(workdir=workdir, default_cwd=default_cwd, session_key=session_key))
+            return records.get(session_key) or default_cwd
+
+        if legacy:
+            terminal._CONTAINER_BACKENDS = frozenset({"legacy-container"})
+            terminal._resolve_command_cwd = legacy_resolver
+        else:
+            terminal._is_container_backend = lambda backend: backend == "plugin-container"
+            terminal._resolve_task_host_cwd = task_host_cwd
+            terminal._resolve_command_cwd = modern_resolver
+        return ({"tools": tools_package, "tools.terminal_tool": terminal,
+                 "tools.approval": approval}, terminal, calls)
+
     def test_terminal_approval_key_requires_absolute_explicit_workdir(self) -> None:
         config = plugin.load_config()
 

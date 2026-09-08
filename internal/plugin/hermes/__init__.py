@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 
 DEFAULT_SERVE_URL = "http://127.0.0.1:9090"
 DEFAULT_TIMEOUT_MS = 3000
@@ -1019,7 +1019,6 @@ def _effective_terminal_cwd(task_id: str) -> str | None:
         resolve_overrides = getattr(hermes_terminal, "resolve_task_overrides")
         get_session_cwd = getattr(hermes_terminal, "get_session_cwd")
         resolve_cwd = getattr(hermes_terminal, "_resolve_command_cwd")
-        container_backends = getattr(hermes_terminal, "_CONTAINER_BACKENDS")
         unusable_container_cwd = getattr(
             hermes_terminal, "_is_unusable_container_cwd"
         )
@@ -1036,25 +1035,70 @@ def _effective_terminal_cwd(task_id: str) -> str | None:
         ):
             return None
 
+        parameters = inspect.signature(resolve_cwd).parameters
+        legacy_parameters = {"workdir", "default_cwd", "session_key"}
+        modern_cwd = set(parameters) == legacy_parameters | {"env_type"}
+        if not modern_cwd and set(parameters) != legacy_parameters:
+            return None
+        if any(
+            parameter.kind not in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+            for parameter in parameters.values()
+        ):
+            return None
+        if modern_cwd:
+            # Current hosts classify plugin backends too, and may mount this
+            # task's host workspace at /workspace. Reuse their shared helpers.
+            is_container_backend = getattr(hermes_terminal, "_is_container_backend")
+            resolve_host_cwd = getattr(hermes_terminal, "_resolve_task_host_cwd")
+            if not callable(is_container_backend) or not callable(resolve_host_cwd):
+                return None
+        else:
+            container_backends = getattr(hermes_terminal, "_CONTAINER_BACKENDS")
+            if not isinstance(container_backends, (set, frozenset)) or not all(
+                isinstance(backend, str) for backend in container_backends
+            ):
+                return None
+
         config = get_config()
         overrides = resolve_overrides(task_id)
         if not isinstance(config, Mapping) or not isinstance(overrides, Mapping):
             return None
         env_type = config.get("env_type")
         cwd = overrides.get("cwd") or get_session_cwd(task_id) or config.get("cwd")
-        if not isinstance(env_type, str) or not isinstance(cwd, str) or not cwd:
+        if not isinstance(env_type, str) or not env_type or not isinstance(cwd, str) or not cwd:
             return None
-        if env_type in container_backends and unusable_container_cwd(cwd):
-            cwd = config.get("cwd")
-            if not isinstance(cwd, str) or not cwd:
+        container = is_container_backend(env_type) if modern_cwd else env_type in container_backends
+        if not isinstance(container, bool):
+            return None
+        if container:
+            unusable_cwd = unusable_container_cwd(cwd)
+            if not isinstance(unusable_cwd, bool):
                 return None
-        session_key = get_current_session_key(default="") or (task_id or "")
-        effective_cwd = resolve_cwd(
-            workdir=None,
-            default_cwd=cwd,
-            session_key=session_key,
-        )
-    except (ImportError, AttributeError, KeyError, OSError, TypeError, ValueError):
+            if unusable_cwd:
+                host_cwd = resolve_host_cwd(config, task_id) if modern_cwd else None
+                if host_cwd is not None and not isinstance(host_cwd, str):
+                    return None
+                cwd = "/workspace" if host_cwd else config.get("cwd")
+                if not isinstance(cwd, str) or not cwd:
+                    return None
+        current_session_key = get_current_session_key(default="")
+        if current_session_key is not None and not isinstance(current_session_key, str):
+            return None
+        session_key = current_session_key or (task_id or "")
+        if not isinstance(session_key, str):
+            return None
+        if modern_cwd:
+            effective_cwd = resolve_cwd(
+                workdir=None, default_cwd=cwd, session_key=session_key, env_type=env_type,
+            )
+        else:
+            effective_cwd = resolve_cwd(
+                workdir=None, default_cwd=cwd, session_key=session_key,
+            )
+    except Exception:
         return None
     return effective_cwd if isinstance(effective_cwd, str) and effective_cwd else None
 
