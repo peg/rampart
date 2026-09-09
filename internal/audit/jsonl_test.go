@@ -1278,8 +1278,7 @@ func TestJSONLSink_PartialAppendRollbackFailure(t *testing.T) {
 			if tc.syncError != nil {
 				assert.Equal(t, prefix, after)
 				require.ErrorIs(t, sink.Close(), rollbackError)
-				_, err := file.Stat()
-				require.ErrorIs(t, err, os.ErrClosed, "a sync failure must not leak the audit file handle")
+				require.ErrorIs(t, file.Close(), os.ErrClosed, "a sync failure must not leak the audit file handle")
 				return
 			}
 			require.Greater(t, len(after), len(prefix))
