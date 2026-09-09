@@ -507,16 +507,17 @@ func (s *JSONLSink) Close() error {
 	if s.file == nil {
 		return nil
 	}
+	var closeErr error
 	if s.fsync {
 		if err := s.file.Sync(); err != nil {
-			return fmt.Errorf("audit: close sync: %w", err)
+			closeErr = fmt.Errorf("audit: close sync: %w", err)
 		}
 	}
 	if err := s.file.Close(); err != nil {
-		return fmt.Errorf("audit: close sink file: %w", err)
+		closeErr = errors.Join(closeErr, fmt.Errorf("audit: close sink file: %w", err))
 	}
 	s.file = nil
-	return nil
+	return closeErr
 }
 
 func (s *JSONLSink) filePath() string {

@@ -1262,6 +1262,7 @@ func TestJSONLSink_PartialAppendRollbackFailure(t *testing.T) {
 			require.NoError(t, sink.Write(sampleEvent("exec")))
 			prefix, err := os.ReadFile(sink.filePath())
 			require.NoError(t, err)
+			file := sink.file
 			sink.file = &partialAuditFile{auditAppendFile: sink.file, armed: true, writeError: syscall.ENOSPC,
 				truncateError: tc.truncateError, syncError: tc.syncError, extraWrite: tc.extraWrite}
 			err = sink.Write(sampleEvent("write"))
@@ -1276,6 +1277,9 @@ func TestJSONLSink_PartialAppendRollbackFailure(t *testing.T) {
 			require.NoError(t, err)
 			if tc.syncError != nil {
 				assert.Equal(t, prefix, after)
+				require.ErrorIs(t, sink.Close(), rollbackError)
+				_, err := file.Stat()
+				require.ErrorIs(t, err, os.ErrClosed, "a sync failure must not leak the audit file handle")
 				return
 			}
 			require.Greater(t, len(after), len(prefix))
