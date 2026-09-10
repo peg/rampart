@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
 )
@@ -427,7 +428,7 @@ func TestOutputHookResultCodexPreservesNativePermissions(t *testing.T) {
 }
 
 func TestResolveCodexApprovalPreservesExactToolIdentity(t *testing.T) {
-	var request createApprovalRequest
+	var request approval.ExternalRequest
 	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
@@ -439,9 +440,9 @@ func TestResolveCodexApprovalPreservesExactToolIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "codex-approval-1", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "codex-approval-1", "status": "pending"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/approvals/codex-approval-1":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "approved"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "codex-approval-1", "status": "approved"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -454,6 +455,7 @@ func TestResolveCodexApprovalPreservesExactToolIdentity(t *testing.T) {
 	cmd.SetOut(&stdout)
 	call := engine.ToolCall{
 		Tool:       "exec",
+		Session:    "hook",
 		Agent:      "codex",
 		RunID:      "session-1",
 		ToolCallID: "call-1",

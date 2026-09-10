@@ -284,11 +284,11 @@ func TestHookActionAsk_HeadlessOnly_DoesNotEmitPermissionDecisionAsk(t *testing.
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			createCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-headless-1", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "ap-headless-1", "status": "pending"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/approvals/ap-headless-1":
 			pollCount.Add(1)
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-headless-1", "status": "approved"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "ap-headless-1", "status": "approved"})
 		default:
 			http.NotFound(w, r)
 		}

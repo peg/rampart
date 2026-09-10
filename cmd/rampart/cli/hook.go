@@ -937,9 +937,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						autoDiscovered: serveAutoDiscovered,
 						errWriter:      cmd.ErrOrStderr(),
 					}
-					command, _ := call.Params["command"].(string)
-					path := call.Path() // handles both "file_path" (Claude Code) and "path"
-					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg, 5*time.Minute)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call, reasonMsg, 5*time.Minute)
 					if result == hookAsk {
 						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
 					}
@@ -957,10 +955,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						autoDiscovered: serveAutoDiscovered,
 						errWriter:      cmd.ErrOrStderr(),
 					}
-					command, _ := call.Params["command"].(string)
-					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -1001,10 +997,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						autoDiscovered: serveAutoDiscovered,
 						errWriter:      cmd.ErrOrStderr(),
 					}
-					command, _ := call.Params["command"].(string)
-					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)

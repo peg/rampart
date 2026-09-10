@@ -74,6 +74,7 @@ func redactedCall(call engine.ToolCall) (engine.ToolCall, bool, error) {
 // consults the caller's maps or invokes their JSON marshalers a second time.
 func redactCallSnapshot(snapshot engine.ToolCall, encoded []byte) (engine.ToolCall, bool, error) {
 	review := ReviewCall(snapshot)
+	snapshot.ID = notify.SanitizeCommand(snapshot.ID)
 	snapshot.Tool, snapshot.Agent = review.Tool, review.Agent
 	snapshot.Session, snapshot.RunID, snapshot.ToolCallID = review.Session, review.RunID, review.ToolCallID
 	snapshot.WorkDir = notify.SanitizeCommand(snapshot.WorkDir)
