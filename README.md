@@ -19,10 +19,9 @@
 ---
 
 AI agents can edit files, run commands, call APIs, and ship code at machine
-speed. Their permission systems usually ask a different question: **can this
-tool run?**
-
-Rampart asks: **should this action run?**
+speed. Harnesses provide their own permissions, sandboxes, and approval modes.
+Rampart adds operator-owned policies and a consistent audit trail across its
+supported integration boundaries.
 
 It sits at supported hooks, plugins, proxies, and process boundaries; evaluates
 the action against local policy; and returns `allow`, `ask`, or `deny` before the

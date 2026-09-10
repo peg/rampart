@@ -1,13 +1,13 @@
 ---
 title: Securing Codex
-description: "Secure Codex CLI, IDE, and desktop local tool calls with Rampart lifecycle hooks."
+description: Protect Codex CLI, IDE, and desktop local tool calls with native lifecycle hooks.
 ---
 
 # Codex
 
-Rampart's primary Codex integration is the host's native lifecycle-hook
-boundary. It does not replace the `codex` executable and does not require the
-preload library.
+Rampart uses [Codex lifecycle hooks](https://developers.openai.com/codex/hooks)
+to evaluate local tool calls before they run. One user-level setup covers
+Codex CLI, the IDE extension, and the desktop app.
 
 ## Setup
 
@@ -15,39 +15,58 @@ preload library.
 rampart setup codex
 ```
 
-This installs Rampart wildcard `PreToolUse` and `PostToolUse` handlers in the
-user-level Codex `hooks.json`. Existing unrelated hooks are preserved. Review
-and trust the definition in Codex with `/hooks` before first use.
+Rampart adds wildcard `PreToolUse` and `PostToolUse` entries to
+`$CODEX_HOME/hooks.json`, or `~/.codex/hooks.json` when `CODEX_HOME` is unset.
+Existing unrelated hooks are preserved. If an older Rampart release installed
+`~/.local/bin/codex`, setup removes that managed preload wrapper to avoid
+evaluating shell commands twice.
 
-The same user-level hook configuration applies to Codex CLI, the IDE extension,
-and the desktop app when they use that `CODEX_HOME`.
+Codex treats user hooks as executable configuration. Open `/hooks` in Codex,
+review the exact Rampart command, and trust it. A changed hook definition must
+be reviewed again.
 
-## What Rampart evaluates
+## Coverage
 
-- shell and unified execution;
-- direct reads, writes, edits, and multi-file patches;
-- MCP calls exposed to lifecycle hooks;
-- local web/browser-style actions;
-- delegated-agent calls exposed by the host.
+Codex reports supported local tool calls through the same lifecycle protocol:
 
-Unknown future `PreToolUse` tool names deny in enforce mode until Rampart knows
-how to classify them. A hosted or specialized action that does not emit the
-lifecycle event cannot be protected by this boundary.
+- shell and unified execution calls;
+- reads, writes, edits, and `apply_patch`;
+- MCP tool calls;
+- web/browser-style local tools;
+- delegated-agent calls when the host emits the lifecycle event.
 
-Allowed calls retain Codex's native sandbox and permission policy. Denied calls
-stop before execution. Approval-required calls use Rampart's external approval
-queue and require `rampart serve`; if it is unavailable, Rampart denies.
+Rampart evaluates every target in a multi-file `apply_patch`; the most
+restrictive decision wins. Unfamiliar future tool names fail closed in enforce
+mode until Rampart classifies them. Hosted tools and specialized paths that do
+not emit lifecycle hooks remain outside this boundary.
 
-## Verification
+## Decisions and approvals
+
+Allowed calls continue through Codex's own sandbox and permission checks.
+Denied calls receive Codex's structured `PreToolUse` denial. Ordinary local
+allow/deny evaluation does not require `rampart serve`.
+
+Codex does not currently accept an `ask` decision from `PreToolUse`. Approval
+policies use Rampart's blocking external approval queue:
+
+```bash
+rampart serve
+rampart watch
+```
+
+If the approval service is unavailable, the call is denied.
+
+## Verify
 
 ```bash
 rampart verify codex
 ```
 
-`rampart verify codex` proves installed configuration and adapter behavior; it
-does not launch a real Codex model/tool loop. See
-[Security Assurance](../getting-started/security-assurance.md) for the evidence
-levels and current platform gaps.
+This checks the installed hook definition and exercises the live Rampart
+adapter with safe, non-executing canaries. It proves installed configuration
+and adapter behavior without launching a model. See
+[Security Assurance](../getting-started/security-assurance.md) for the precise
+claim boundary.
 
 ## Uninstall
 
@@ -55,11 +74,11 @@ levels and current platform gaps.
 rampart setup codex --remove
 ```
 
-Rampart removes only its hook entries and any recognized legacy Rampart
-wrapper.
+Only Rampart's lifecycle hooks and a recognized legacy Rampart wrapper are
+removed. Other hooks remain untouched.
 
-## Platform support
+## Platforms
 
-The lifecycle-hook integration supports Linux, macOS, and Windows. POSIX
-preload remains optional defense in depth for other processes; it is not the
-Codex integration and is unavailable on Windows.
+Native lifecycle-hook setup supports Linux, macOS, and Windows. Rampart writes
+both POSIX and Windows hook command forms. Codex controls hook timeout behavior,
+so Rampart does not claim a host timeout fails closed.

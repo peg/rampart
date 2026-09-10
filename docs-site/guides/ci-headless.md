@@ -1,167 +1,93 @@
 ---
 title: CI/Headless Agents
-description: Configure Rampart for unattended agents with strict defaults and no interactive approvals.
+description: "Choose explicit denial or an external approval queue for unattended agents, and verify the installed enforcement boundary."
 ---
 
 # CI/Headless Agents
 
-When running AI agents in CI pipelines, automated workflows, or other headless environments, interactive approval prompts are impossible. Rampart provides the `ci` policy preset to convert all approval-required operations into hard denies.
+Decide whether an unattended job should deny sensitive actions immediately or
+wait for an operator. Use explicit `deny` rules when nobody will review the
+job. `ask` is appropriate only when the integration has a reachable approval
+owner and the job can tolerate its wait and timeout behavior.
 
-## Quick Start
+## Use a policy with no approval prompts
 
 ```bash
-# Use the CI preset instead of standard
 rampart init --profile ci
+rampart policy lint rampart.yaml
 ```
 
-## What CI Mode Does
+The shipped `ci` profile uses denies for its sensitive operations, including
+package installation, cloud uploads, and persistence changes. It does not
+rewrite other policy files or automatically convert every custom `ask` rule.
+Review the active policy set and test the commands your job needs.
 
-The `ci` preset is a strict variant of the standard policy:
+Configure your actual host with its [integration guide](../integrations/index.md)
+and verify that it invokes the installed boundary. The presence of a policy
+file alone does not protect a process. `rampart wrap` only covers a cooperative
+`$SHELL` path; wrapping a Python process does not intercept arbitrary Python
+file, network, or subprocess APIs.
 
-| Standard Policy | CI Policy |
-|-----------------|-----------|
-| `action: ask` → native prompt | `action: deny` |
-| `action: ask` (with `audit: true`) → dashboard | `action: deny` |
-| Package installs → approval | Package installs → **blocked** |
-| Cloud uploads → approval | Cloud uploads → **blocked** |
-| Persistence changes → approval | Persistence changes → **blocked** |
+## External review for a headless job
 
-## Why Use It
-
-**Problem:** In CI, there's no human to click "Allow" on Claude Code's permission prompt. Without the CI preset:
-- `action: ask` rules hang forever waiting for input
-- `action: ask` (with `audit: true`) rules poll the dashboard indefinitely
-- Your pipeline times out or runs forever
-
-**Solution:** The CI preset converts all interactive rules to denies. The agent completes (or fails fast) with no human intervention needed.
-
-## The `headless_only` Flag
-
-For fine-grained control, use `headless_only: true` in your ask rules:
+For the Claude hook, `ask.headless_only: true` selects Rampart's blocking
+external approval queue instead of the native prompt:
 
 ```yaml
+version: "1"
 policies:
-  - name: production-deploys
+  - name: reviewed-deployment
     match:
-      tool: ["exec"]
+      tool: [exec]
     rules:
       - action: ask
         ask:
-          audit: true
-          headless_only: true    # ← blocks in CI, prompts interactively
+          headless_only: true
         when:
-          command_matches:
-            - "kubectl apply *"
-        message: "Production deployment requires approval"
+          command_matches: ["kubectl apply *"]
+        message: "Deployment requires operator review"
 ```
 
-**How it works:**
-- **Interactive session** (Claude Code with user): Shows native approval prompt
-- **Headless/CI** (no `rampart serve`, no TTY): Blocks with a deny
+Run `rampart serve` and have the operator review the complete request in the
+dashboard or with `rampart pending --details`, then use `rampart approve <id>`
+or `rampart deny <id>`. Agent credentials should not have approval authority.
 
-This lets you write one policy that works both locally (with prompts) and in CI (with denies).
+This option does not inspect the TTY or detect CI. The hook requires a
+reachable service and waits up to five minutes for a result; it does not fall
+back to a native prompt. An earlier host timeout follows that host's documented
+failure behavior. Codex, Cursor, and Gemini already use external approval for
+`ask`; integrations without a resolver refuse the action. See the
+[approval support table](../getting-started/support-matrix.md#approval-paths-and-limits).
 
-### Detecting Headless Mode
+## Customize without weakening the baseline accidentally
 
-Rampart considers a session "headless" when:
-1. `rampart serve` is not running, OR
-2. The hook is invoked without a TTY (piped stdin)
-
-You can force headless mode with `RAMPART_HEADLESS=1`.
-
-## Example: GitHub Actions
-
-```yaml
-# .github/workflows/ai-agent.yml
-jobs:
-  agent:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rampart
-        run: curl -fsSL https://rampart.sh/install | bash
-      
-      - name: Configure CI policy
-        run: rampart init --profile ci
-      
-      - name: Run agent
-        run: |
-          rampart wrap -- python agent.py
-        env:
-          RAMPART_HEADLESS: "1"
-```
-
-## Customizing CI Behavior
-
-The built-in `ci` profile is intentionally strict. To customize:
+Copy a profile to a custom policy and edit only the restrictions you intend to
+change. Then point the integration at the intended policy set. Adding an
+ordinary higher-priority allow policy does **not** override an applicable deny.
+A project policy can tighten the global policy but cannot loosen a global deny.
 
 ```bash
-# Create a custom CI policy based on the preset
-cp ~/.rampart/policies/ci.yaml ~/.rampart/policies/ci-custom.yaml
+rampart policy lint /path/to/ci-custom.yaml
+rampart test --config /path/to/ci-custom.yaml "npm ci"
+rampart test --config /path/to/ci-custom.yaml "kubectl apply -f k8s/staging/"
 ```
 
-Then edit `ci-custom.yaml` to allow specific operations:
+Treat these as policy checks. Before using the job unattended, verify an allowed
+marker reaches the real dispatcher, a denied marker does not, and the installed
+host behaves as documented when the approval/service path is unavailable.
+Use the [marker walkthrough](../getting-started/tutorial.md) as a starting point
+and run failure cases in disposable state.
 
-```yaml
-# Allow npm install in CI (after the built-in deny rule)
-policies:
-  - name: ci-allow-npm
-    priority: 0    # Higher priority than default rules
-    match:
-      tool: ["exec"]
-    rules:
-      - action: allow
-        when:
-          command_matches:
-            - "npm ci"        # Deterministic installs only
-            - "npm install --frozen-lockfile"
-```
+## Audit and retention
 
-## Combining with Project Policies
+Native hooks write local audit records; `rampart serve` is required for the
+external queue and integrations that delegate evaluation to it. Check the
+correlated decisions and run `rampart audit verify` after the job.
 
-Project policies (`.rampart/policy.yaml` in your repo) are loaded on top of the global policy. In CI:
+Audit logs contain operational metadata even after credential redaction. Export
+only to access-controlled storage with deliberate retention. Do not upload
+personal agent state or credentials as CI artifacts.
 
-1. Global CI policy (`ci.yaml`) provides the strict baseline
-2. Project policy adds repo-specific overrides
-3. `RAMPART_NO_PROJECT_POLICY=1` disables project policies if needed
-
-```yaml
-# .rampart/policy.yaml in your repo
-version: "1"
-policies:
-  - name: project-allow-specific-deploy
-    match:
-      tool: ["exec"]
-    rules:
-      - action: allow
-        when:
-          command_matches:
-            - "kubectl apply -f k8s/staging/"  # Allow staging only
-```
-
-## Audit in CI
-
-Even with denies, you want visibility. Run `rampart serve` in the background for audit collection:
-
-```yaml
-- name: Start Rampart audit
-  run: |
-    rampart serve --background
-  
-- name: Run agent
-  run: rampart wrap -- python agent.py
-  
-- name: Upload audit
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: rampart-audit
-    path: ~/.rampart/audit/*.jsonl
-```
-
-## See Also
-
-- [Native Ask Prompt](native-ask.md) — interactive approval for local development
-- [Project Policies](project-policies.md) — team-shared rules in your repo
-- [Wazuh Integration](wazuh-integration.md) — SIEM integration for CI audit trails
+- [Project Policies](project-policies.md)
+- [Audit Trail](../features/audit-trail.md)
+- [SIEM Integration](../features/siem-integration.md)

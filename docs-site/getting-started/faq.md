@@ -34,7 +34,7 @@ the [Windows guide](../guides/windows.md).
 
 ## Can I use project-specific policies?
 
-Yes. Put a `rampart.yaml` in your project root and Rampart will use it. You can also layer global policies (`~/.rampart/policies/`) with project-specific overrides. See [Customizing Policy](../guides/customizing-policy.md).
+Use `rampart init --project` to create `.rampart/policy.yaml`. Project rules can tighten the global policy but cannot override a global deny. See [Project Policies](../guides/project-policies.md).
 
 ## Can my agent bypass Rampart?
 
@@ -48,7 +48,7 @@ the [Threat Model](../reference/threat-model.md).
 
 Set `action: ask` on a policy rule. Claude Code uses its native prompt,
 OpenClaw can use its native approval UI, Codex uses Rampart's external queue,
-Cline blocks with context, and Hermes currently blocks without resume. Consult
+Cline blocks with context, and compatible Hermes installations use native approval; older or incomplete Hermes installations block. Consult
 the support matrix before relying on a particular approval workflow.
 
 ```yaml
