@@ -4,157 +4,69 @@ title: Security Posture Report
 
 # Security Posture Report
 
-`rampart report compliance` generates a security posture report that evaluates how well your Rampart deployment enforces key agent security controls.
+`rampart report compliance` summarizes local audit and policy evidence. It does
+not certify enforcement, human oversight, or compliance with an external
+standard. The `compliance` command name remains for compatibility.
 
-## What it checks
-
-The report evaluates four areas of Rampart's enforcement:
-
-| Control | Name | What it checks |
-|---------|------|----------------|
-| RC-1 | Tool Call Authorization | Observed Rampart decisions show policy evaluation at the configured boundary |
-| RC-2 | Audit Logging | A tamper-evident audit chain is maintained |
-| RC-3 | Human-in-the-Loop | Sensitive operations require human approval |
-| RC-4 | Data Exfiltration Prevention | Credential and sensitive path access is blocked |
-
-These are Rampart's own controls — they are not part of an external compliance standard. If your organization needs to comply with frameworks like [AIUC-1](https://aiuc-1.com), [SOC 2](https://www.aicpa.org/soc2), or [NIST AI RMF](https://www.nist.gov/artificial-intelligence/risk-management-framework), this report can serve as supporting evidence but does not constitute certification.
-
-## Generating a report
+## Generate a report
 
 ```bash
 rampart report compliance
+rampart report compliance --since 2026-02-01 --until 2026-02-28
+rampart report compliance --format json --output posture-report.json
 ```
 
-Example output (with audit logs):
+Dates use `YYYY-MM-DD`. The default reporting period is the last 30 days.
+The JSON report includes the period, Rampart version, decision counts and
+per-control evidence. Review it before sharing: evidence can include local
+audit and policy paths.
 
-```
-Rampart Security Posture Report
-================================
-This report evaluates how well your Rampart deployment enforces key
-agent security controls.
-Learn more: https://docs.rampart.sh/guides/compliance/
+## What the controls establish
 
-Report ID: 3a1e1cc1-09b5-4641-b502-3ef8b1f9fc29
-Generated: 2026-02-28T22:08:48Z
-Period: 2026-01-29 to 2026-02-28
-Rampart Version: v0.8.1
-Standard: Rampart Security Posture
-Overall Status: PASS
+| Control | Evidence collected | Limit |
+|---------|--------------------|-------|
+| RC-1 — Tool Call Authorization | Audit events within the reporting period | Events do not prove that every host action was evaluated or that the host enforced each decision. |
+| RC-2 — Audit Logging | Hash-chain validation across available audit files, plus consistency checks for any local anchors | Local consistency does not establish that all original events or anchors are present. |
+| RC-3 — Human-in-the-Loop | Number of `ask` and legacy `require_approval` decisions | A request does not prove that a human reviewed or resolved it, or that the host enforced the result. |
+| RC-4 — Data Exfiltration Prevention | Sensitive-path keywords near deny text in the supplied policy file | This heuristic does not validate policy syntax, loaded configuration, rule matching, or actual prevention. |
 
-Decision Counts
----------------
-Total: 1,247
-Allow: 1,089 (87%)
-Deny: 143 (11%)
-Ask: 15 (1%)
+RC-1, RC-3 and RC-4 report **WARN** when evidence is available because those
+observations cannot prove enforcement. Finding more requests or policy keywords
+does not turn them into a passing assurance claim. RC-2 can report **PASS** when
+the available local chain and anchors validate.
 
-Controls
---------
-RC-1 PASS Tool Call Authorization
- - 1,247 tool calls evaluated against policy
- - 0 tool calls bypassed policy evaluation
-
-RC-2 PASS Audit Logging
- - Audit chain verified: 1,247 events, 0 hash mismatches
-
-RC-3 PASS Human-in-the-Loop
- - 15 ask decisions recorded in reporting period
-
-RC-4 PASS Data Exfiltration Prevention
- - Policy covers: /etc/shadow, ~/.ssh/*, *.env, ~/.aws/credentials
-```
+An otherwise healthy installation will therefore normally produce an overall
+**PARTIAL** result. This means additional evidence is needed; it is not a reason
+to weaken policy. A deployment that denies every forbidden action may correctly
+have no approval requests.
 
 ## Status levels
 
 | Status | Meaning |
 |--------|---------|
-| PASS | All four controls pass |
-| PARTIAL | Some controls pass, some warn |
-| FAIL | One or more controls fail |
+| PASS | The stated check passed within its documented boundary. |
+| WARN | The evidence is missing or insufficient to establish the control. |
+| PARTIAL | Overall result when at least one control warns and none fail. |
+| FAIL | A required local check failed or audit logs were unavailable. |
 
-!!! note
-    A fresh installation with no audit history will show FAIL. This is expected — run Rampart with an agent to generate audit logs, then re-run the report.
+A fresh installation without audit logs reports FAIL because there is no audit
+chain to inspect. An empty, valid audit file can pass chain validation while the
+other controls remain unproven.
 
-## Date ranges
+## Follow up on the evidence
 
-Scope the report to a specific period:
+- **RC-1:** Check installation with `rampart doctor`, then validate harmless
+  allowed and denied actions through the actual host. Consult the
+  [support matrix](../getting-started/support-matrix.md) for each verifier's limits.
+- **RC-2:** Run `rampart audit verify` to inspect local chain integrity. For
+  evidence held outside the local machine, see
+  [external witnessing](../features/external-witness.md).
+- **RC-3:** Validate complete redacted review, denial, expiry and allow-once
+  behavior through the host's approval flow. Keep deny rules for actions that
+  must remain forbidden; do not replace them with asks to improve report counts.
+- **RC-4:** Review the active policy and safely verify representative
+  sensitive-path denials. A matching keyword is not proof that a rule applies.
 
-```bash
-rampart report compliance --since 2026-02-01
-rampart report compliance --since 2026-02-01 --until 2026-02-28
-```
-
-Dates use `YYYY-MM-DD` format. The default period is the last 30 days.
-
-## JSON output
-
-For CI pipelines or tooling integrations:
-
-```bash
-rampart report compliance --format json
-rampart report compliance --format json --output posture-report.json
-```
-
-JSON output includes the full evidence array per control, suitable for internal audits or sharing with security teams.
-
-## What each control evaluates
-
-### RC-1 — Tool Call Authorization
-
-Checks that Rampart is actively evaluating tool calls. Passes if:
-- Audit logs exist with allow or deny decisions
-- No evidence of policy bypass
-
-This is evidence about calls present in Rampart's audit period, not proof that
-the host exposed every possible action to Rampart.
-
-### RC-2 — Audit Logging
-
-Verifies the tamper-evident hash chain in audit logs. Each event's hash covers the previous event's hash — if any event is modified or deleted, chain verification fails.
-
-### RC-3 — Human-in-the-Loop
-
-Checks that `ask` decisions exist in the audit log during the period. Passes if at least one human approval was requested.
-
-If all sensitive operations are auto-denied rather than asking for approval, this control will warn. Consider using `action: ask` for borderline operations.
-
-### RC-4 — Data Exfiltration Prevention
-
-Checks that the active policy contains rules blocking access to credential paths (`/etc/shadow`, `~/.ssh/*`, `*.env`, `~/.aws/credentials`, etc.).
-
-This check uses keyword proximity heuristics on the policy file — manual review of your policy is recommended for full assurance.
-
-## Sharing with security teams
-
-The JSON report includes:
-
-- Report ID (UUID for tracking)
-- Generation timestamp and Rampart version
-- Audit period and decision counts
-- Per-control status and evidence array
-- Chain verification result
-
-Export and share:
-
-```bash
-rampart report compliance --format json --output posture-$(date +%Y-%m-%d).json
-```
-
-## Improving your posture
-
-1. **RC-1**: Ensure Rampart hooks are installed and active (`rampart doctor`)
-2. **RC-2**: Ensure audit logging is enabled (on by default)
-3. **RC-3**: Use `action: ask` for sensitive operations instead of always-deny
-4. **RC-4**: Use `rampart init --profile standard` or ensure your policy covers credential paths
-
-Run `rampart doctor` to verify your setup before generating a report.
-
-## Relationship to compliance frameworks
-
-Rampart's security posture report is designed to provide evidence that can support compliance with external frameworks:
-
-- **[AIUC-1](https://aiuc-1.com)**: Tool call authorization, audit logging, and human oversight align with AIUC-1's security and accountability principles
-- **SOC 2**: Tamper-evident audit chain and access controls support Trust Services Criteria
-- **NIST AI RMF**: Policy enforcement and monitoring support the Govern and Measure functions
-
-However, Rampart does not certify compliance with any external standard. Compliance determinations require assessment by qualified auditors against the full requirements of each framework.
+The report can support an organization's assessment alongside deployment
+configuration and behavioral evidence. It cannot make a compliance determination
+on its own.
