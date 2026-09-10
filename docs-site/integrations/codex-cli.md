@@ -6,8 +6,9 @@ description: Protect Codex CLI, IDE, and desktop local tool calls with native li
 # Codex
 
 Rampart uses [Codex lifecycle hooks](https://developers.openai.com/codex/hooks)
-to evaluate local tool calls before they run. One user-level setup covers
-Codex CLI, the IDE extension, and the desktop app.
+to evaluate local tool calls before they run. Codex CLI, the IDE extension, and
+the desktop app can share this user-level setup when their local runtimes
+support lifecycle hooks and use the same `CODEX_HOME`.
 
 ## Setup
 
@@ -39,6 +40,18 @@ Rampart evaluates every target in a multi-file `apply_patch`; the most
 restrictive decision wins. Unfamiliar future tool names fail closed in enforce
 mode until Rampart classifies them. Hosted tools and specialized paths that do
 not emit lifecycle hooks remain outside this boundary.
+
+### Execution context visibility
+
+In Codex 0.153.2, the
+[unified execution handler](https://github.com/openai/codex/blob/rust-v0.153.2/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs)
+reports `exec_command` as `Bash` with only `command` in `tool_input`. It omits
+the requested `workdir` and `shell`. The
+[hook's `cwd`](https://developers.openai.com/codex/hooks#common-input-fields)
+describes the session working directory, which can differ from the requested
+execution directory.
+Rampart policy and approval review are limited to the fields Codex supplies;
+they cannot confirm the omitted execution directory or shell.
 
 ## Decisions and approvals
 
