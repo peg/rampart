@@ -70,9 +70,8 @@ func (r ExternalRequest) ToolCall() (engine.ToolCall, error) {
 	}
 	switch r.ActionVersion {
 	case ExternalActionVersion:
-		if strings.TrimSpace(r.Tool) == "" || strings.TrimSpace(r.Agent) == "" ||
-			strings.TrimSpace(r.Session) == "" || r.Params == nil || r.AgentDepth < 0 {
-			return engine.ToolCall{}, fmt.Errorf("versioned approval requires tool, agent, session, params and non-negative agent_depth")
+		if strings.TrimSpace(r.Tool) == "" || strings.TrimSpace(r.Agent) == "" || r.Params == nil || r.AgentDepth < 0 {
+			return engine.ToolCall{}, fmt.Errorf("versioned approval requires tool, agent, params and non-negative agent_depth")
 		}
 		if r.Command != "" || r.Path != "" {
 			return engine.ToolCall{}, fmt.Errorf("versioned approval must represent command and path in params")

@@ -25,6 +25,12 @@ import (
 // Exercise both production endpoints: a client-only mock cannot detect a
 // server that accepts the request while silently discarding action fields.
 func TestHookApprovalClientServerContract(t *testing.T) {
+	for _, session := range []string{"project-session", ""} {
+		t.Run("session="+session, func(t *testing.T) { testHookApprovalClientServerContract(t, session) })
+	}
+}
+
+func testHookApprovalClientServerContract(t *testing.T, session string) {
 	dir := t.TempDir()
 	policy := filepath.Join(dir, "policy.yaml")
 	require.NoError(t, os.WriteFile(policy, []byte("version: '1'\ndefault_action: deny\npolicies: []\n"), 0600))
@@ -65,7 +71,7 @@ func TestHookApprovalClientServerContract(t *testing.T) {
 	})
 	call := engine.ToolCall{
 		ID: "original-audit-event", Tool: "write", Agent: "codex", AgentDepth: 1,
-		Session: "session", RunID: "run", ToolCallID: "host-call", WorkDir: dir,
+		Session: session, RunID: "run", ToolCallID: "host-call", WorkDir: dir,
 		Params: map[string]any{"file_path": "first.txt", "content": "harmless marker", "targets": []any{"first.txt", "last.txt"}, "revision": json.Number("9007199254740993"), "password": "synthetic-private-value"},
 		Input:  map[string]any{"original_tool": "apply_patch"},
 	}

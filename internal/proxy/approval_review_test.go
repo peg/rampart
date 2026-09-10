@@ -95,7 +95,7 @@ func TestExternalApprovalRejectsPartialActionFormats(t *testing.T) {
 	srv, token, _ := setupTestServer(t, "version: '1'\ndefault_action: deny\npolicies: []\n", "enforce")
 	for _, body := range []string{
 		`{"action_version":2,"tool":"write","agent":"test","session":"s","params":{}}`,
-		`{"action_version":1,"tool":"write","agent":"test","params":{}}`,
+		`{"action_version":1,"tool":"write","agent":"","params":{}}`,
 		`{"action_version":1,"tool":"write","agent":"test","session":"s"}`,
 		`{"action_version":1,"tool":"write","agent":"test","session":"s","params":{},"command":"different action"}`,
 		`{"action_version":1,"tool":"write","agent":"test","session":"s","params":{},"future_identity":"unknown"}`,

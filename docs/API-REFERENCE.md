@@ -354,7 +354,7 @@ still scoped to the exact agent, session, run, and credential owner.
 ```json
 {
   "type": "object",
-  "required": ["action_version", "tool", "agent", "session", "params"],
+  "required": ["action_version", "tool", "agent", "params"],
   "additionalProperties": false,
   "properties": {
     "action_version": { "const": 1 },
@@ -378,6 +378,8 @@ text and all targets. `input` retains additional represented host input;
 `workdir` retains host-supplied working-directory context. Secret values are
 redacted before review and persistence. The optional `event_id` correlates the
 original hook audit event with the later approval-resolution event.
+`session` may be absent when no project-session label is available; missing
+scope context cannot authorize future calls through a run grant.
 
 Legacy manual clients may omit `action_version` and send `tool`, `agent`,
 `command`, `path`, `message`, `run_id` and `tool_call_id`. These requests use
