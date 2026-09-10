@@ -4,8 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| 1.8.x | ✅ Current release |
-| 1.6.x–1.7.x | ⚠️ Critical fixes only |
+| 1.9.x | ✅ Current release |
+| 1.6.x–1.8.x | ⚠️ Critical fixes only |
 | < 1.6 | ❌ No longer supported |
 
 ## Reporting a Vulnerability
