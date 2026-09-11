@@ -450,7 +450,7 @@ If the plugin is missing or the OpenClaw version is too old:
 ### `rampart status`
 
 Quick dashboard showing configured agents, the strongest current verification
-evidence, enforcement mode, and today's event counts.
+evidence, policy-service mode, and today's event counts.
 
 ```bash
 rampart status
@@ -464,7 +464,15 @@ details. Assurance levels distinguish `detected`, `configured`,
 `adapter_verified`, `host_verified`, `unverified`, and `degraded`; stale
 receipts fall back to current configuration state and explain why proof must be
 rerun. Evidence for a service-required integration is also stale whenever the
-local Rampart policy service is unavailable.
+configured Rampart policy service is unavailable; another daemon on a different
+port does not satisfy that check.
+
+`mode` comes from the configured service's health response and is `unknown`
+when that service cannot be reached or identified. Local hook enforcement can
+still operate without a service; this field does not infer each hook's mode.
+The separate `default_action` describes local policy configuration. An
+allow-by-default policy can actively deny matching requests and does not imply
+monitor mode.
 
 ### `rampart inventory`
 

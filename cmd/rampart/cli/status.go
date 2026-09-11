@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -120,8 +121,13 @@ func collectStatusSnapshot(generatedAt time.Time) statusSnapshot {
 		generatedAt = time.Now().UTC()
 	}
 	protected := detectProtectedAgents()
-	serverRunning := isServeRunningLocal()
-	mode, defaultAction := detectMode()
+	health, healthErr := configuredServiceHealth()
+	serverRunning := healthErr == nil
+	mode := "unknown"
+	if serverRunning {
+		mode = health.Mode
+	}
+	defaultAction := detectPolicyDefault()
 	allow, deny, pending, lastDeny := todayEventsAt(generatedAt)
 	return statusSnapshot{
 		generatedAt:   generatedAt,
@@ -202,20 +208,21 @@ func renderProgressBar(pct, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
 }
 
-// isServeRunningLocal returns true if rampart serve is reachable.
-// Uses resolveServeURL (state file → env → default), then tries common alternative ports.
+// isServeRunningLocal checks only the configured endpoint. A different daemon
+// cannot establish that this installation's policy service is available.
 func isServeRunningLocal() bool {
-	// Primary: resolved URL (state file, env, default).
-	if isServeRunning(resolveServeURL("")) {
-		return true
+	_, err := configuredServiceHealth()
+	return err == nil
+}
+
+func configuredServiceHealth() (rampartHealthResponse, error) {
+	serveURL, err := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return rampartHealthResponse{}, err
 	}
-	// Try common alternative ports (proxy port, common dev ports).
-	for _, port := range []int{defaultServePort, 9091, 8090} {
-		if isServeRunning(fmt.Sprintf("http://localhost:%d", port)) {
-			return true
-		}
-	}
-	return false
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	return fetchRampartHealth(ctx, rampartHTTPClient, strings.TrimRight(serveURL, "/")+"/healthz")
 }
 
 // buildStatusBox renders the full status panel.
@@ -312,11 +319,8 @@ func buildStatusBox(
 
 	// ── Mode ────────────────────────────────────────────────────────────────
 
-	modeStr := mode
-	if defaultAction != "" {
-		modeStr = mode + " (default: " + defaultAction + ")"
-	}
-	modeLine := lbl("Mode") + modeStr
+	modeLine := lbl("Service mode") + mode
+	defaultLine := lbl("Policy") + "default: " + defaultAction
 
 	// ── Today's stats ───────────────────────────────────────────────────────
 
@@ -355,6 +359,7 @@ func buildStatusBox(
 	sb.WriteString(row(statusLine) + "\n")
 	sb.WriteString(row(protectedLine) + "\n")
 	sb.WriteString(row(modeLine) + "\n")
+	sb.WriteString(row(defaultLine) + "\n")
 	sb.WriteString(row(todayLine) + "\n")
 	sb.WriteString(row(countsLine) + "\n")
 	if lastDenyLine != "" {
@@ -507,16 +512,18 @@ func hasLegacyOpenClawBridgeConfig(data []byte) bool {
 	return false
 }
 
-func detectMode() (string, string) {
+// detectPolicyDefault describes local policy configuration, not whether a
+// running service or a host hook is enforcing its decisions.
+func detectPolicyDefault() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "unknown", "unknown"
+		return "unknown"
 	}
 	policyDir := filepath.Join(home, ".rampart", "policies")
 
 	entries, err := os.ReadDir(policyDir)
 	if err != nil {
-		return "unknown", "unknown"
+		return "unknown"
 	}
 
 	for _, e := range entries {
@@ -532,13 +539,9 @@ func detectMode() (string, string) {
 		if da == "" {
 			da = "deny"
 		}
-		mode := "enforce"
-		if da == "allow" {
-			mode = "monitor"
-		}
-		return mode, da
+		return da
 	}
-	return "unknown", "unknown"
+	return "unknown"
 }
 
 // todayEvents returns today's allow/deny/pending counts and the most recent deny event.
