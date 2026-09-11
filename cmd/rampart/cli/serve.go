@@ -304,7 +304,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 			if opts.verbose {
 				level = slog.LevelDebug
 			}
-			logger := slog.New(slog.NewTextHandler(logOutput, &slog.HandlerOptions{Level: level}))
+			logger := audit.NewRedactingLogger(slog.New(slog.NewTextHandler(logOutput, &slog.HandlerOptions{Level: level})))
 			if ip := net.ParseIP(listenAddr); ip != nil && !ip.IsLoopback() && tlsCfg == nil && port > 0 {
 				logger.Warn("serve: listening on a non-loopback interface without TLS; bearer tokens and approval traffic will cross the network in plaintext",
 					"addr", listenAddr,

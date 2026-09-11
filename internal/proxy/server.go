@@ -205,6 +205,7 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 			opt(s)
 		}
 	}
+	s.logger = audit.NewRedactingLogger(s.logger)
 
 	s.mode = strings.ToLower(strings.TrimSpace(s.mode))
 	if s.mode == "" {
