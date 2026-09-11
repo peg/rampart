@@ -120,7 +120,7 @@ func TestNewUpgradeCmdAlreadyLatest(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if !strings.Contains(out.String(), "Already on latest (v1.2.3)") {
+	if !strings.Contains(out.String(), "Already on latest CLI (v1.2.3)") {
 		t.Fatalf("unexpected output: %q", out.String())
 	}
 }
@@ -864,4 +864,10 @@ policies:
 	if !strings.Contains(errOut.String(), "continuing automatically") {
 		t.Fatalf("missing non-interactive continuation note: %q", errOut.String())
 	}
+}
+
+// These lifecycle tests replace the owned process itself with a dependency.
+// Real launch capture and flag preservation are covered in serve_launch_test.
+func preparedRestartForTest(restart serveRestarter) func(func() (string, error), string, int) (serveRestarter, error) {
+	return func(func() (string, error), string, int) (serveRestarter, error) { return restart, nil }
 }

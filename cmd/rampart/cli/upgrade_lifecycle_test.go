@@ -50,7 +50,7 @@ func TestUpgradeRestartsBackgroundServeWhenInstallFails(t *testing.T) {
 			stopped++
 			return nil
 		},
-		restartServe: func(_ commandRunner, binary string, _, _ io.Writer) error {
+		prepareServeRestart: preparedRestartForTest(func(_ commandRunner, binary string, _, _ io.Writer) error {
 			restarted++
 			got, err := os.ReadFile(binary)
 			if err != nil {
@@ -60,7 +60,7 @@ func TestUpgradeRestartsBackgroundServeWhenInstallFails(t *testing.T) {
 				t.Fatalf("rollback restart observed %q, want old binary", got)
 			}
 			return nil
-		},
+		}),
 		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
 		validateCandidate:    acceptUpgradeCandidate,
 		prepareServeVerifier: acceptServeRestartVerification,
@@ -219,7 +219,7 @@ func TestUpgradeRollsBackWhenBackgroundServeCannotLoadCandidate(t *testing.T) {
 			}
 			return nil
 		},
-		restartServe: func(_ commandRunner, binary string, _, _ io.Writer) error {
+		prepareServeRestart: preparedRestartForTest(func(_ commandRunner, binary string, _, _ io.Writer) error {
 			restarts++
 			got, err := os.ReadFile(binary)
 			if err != nil {
@@ -235,7 +235,7 @@ func TestUpgradeRollsBackWhenBackgroundServeCannotLoadCandidate(t *testing.T) {
 				t.Fatalf("recovery restart observed %q, want old binary", got)
 			}
 			return nil
-		},
+		}),
 		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
 		validateCandidate:    acceptUpgradeCandidate,
 		prepareServeVerifier: acceptServeRestartVerification,

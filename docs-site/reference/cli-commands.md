@@ -243,6 +243,32 @@ rampart setup --force        # Deprecated unattended compatibility path
 
 Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and restarts a running background, systemd, or launchd Rampart service so it uses the new executable. Homebrew-managed installations must use `brew upgrade rampart`; Windows installations must rerun `install.ps1`.
 
+Background services started by current builds save typed launch settings in
+owner-only `serve.state`. An upgrade preserves the original working directory,
+policy and audit paths, mode, logging and approval options, and TLS certificate
+and key references. It reuses the existing private token file instead of an
+upgrading shell's `RAMPART_TOKEN` override. Systemd and launchd retain their
+existing owned service definitions. A restart must publish fresh owned state
+whose instance, build and mode match the health response; version alone does
+not establish activation. Existing custom TLS certificates are pinned before
+stopping the service. Missing settings, certificate trust or ownership cause
+the upgrade to stop before service interruption.
+
+The already-published v1.9.1 updater does not contain this launch-preservation
+logic: its background restart uses defaults. For a custom background service
+still managed by that older CLI, preserve its command and original working
+directory, stop it with `rampart serve stop`, update the binary using the
+[installation instructions](../getting-started/installation.md), then restart
+with the same explicit options from that directory. The ordinary v1.9.1
+background launch can also be recognized by a current CLI on Linux or macOS;
+ambiguous legacy custom launches require this manual migration. Do not replace
+an existing service definition with `serve install --force` to work around it.
+
+If the CLI is already current, upgrade reports the observed service's actual
+version and mode separately. That version check does not restart or verify
+service protection; use `rampart status` and the applicable `rampart verify`
+command after activation.
+
 ```bash
 rampart upgrade              # Upgrade to latest release
 rampart upgrade v0.8.0       # Upgrade to a specific version

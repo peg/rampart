@@ -19,11 +19,12 @@ import (
 // can discover the serve URL and port without requiring flags or env vars.
 type serveState struct {
 	proxy.RuntimeIdentity
-	URL        string `json:"url"`
-	Port       int    `json:"port"`
-	PID        int    `json:"pid"`
-	Started    string `json:"started"`
-	Executable string `json:"executable,omitempty"`
+	URL        string               `json:"url"`
+	Port       int                  `json:"port"`
+	PID        int                  `json:"pid"`
+	Started    string               `json:"started"`
+	Executable string               `json:"executable,omitempty"`
+	Launch     *serveLaunchSettings `json:"launch,omitempty"`
 }
 
 const (
@@ -32,7 +33,12 @@ const (
 )
 
 // writeServeState writes the serve state to ~/.rampart/serve.state.
-func writeServeState(dir string, port, pid int, tls bool, identity proxy.RuntimeIdentity) error {
+func writeServeState(dir string, port, pid int, tls bool, identity proxy.RuntimeIdentity, launch *serveLaunchSettings) error {
+	if launch != nil {
+		if err := launch.validate(); err != nil {
+			return err
+		}
+	}
 	scheme := "http"
 	if tls {
 		scheme = "https"
@@ -48,6 +54,7 @@ func writeServeState(dir string, port, pid int, tls bool, identity proxy.Runtime
 		PID:             pid,
 		Started:         time.Now().UTC().Format(time.RFC3339Nano),
 		Executable:      executable,
+		Launch:          launch,
 	}
 	data, err := json.Marshal(state)
 	if err != nil {

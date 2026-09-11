@@ -73,7 +73,7 @@ type upgradeDeps struct {
 	validateCandidate     func(context.Context, string, string) error
 	inspectServePID       func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
 	stopServe             func(int) error
-	restartServe          func(commandRunner, string, io.Writer, io.Writer) error
+	prepareServeRestart   func(func() (string, error), string, int) (serveRestarter, error)
 	detectSystemdService  func(commandRunner, func() (string, error), string) string
 	restartSystemdService func(commandRunner, string, io.Writer) error
 	detectLaunchdServices func(commandRunner, func() (string, error), string) []launchdService
@@ -105,7 +105,7 @@ func defaultUpgradeDeps() upgradeDeps {
 		validateCandidate:     validateUpgradeCandidate,
 		inspectServePID:       inspectServePID,
 		stopServe:             stopServeProcess,
-		restartServe:          restartServe,
+		prepareServeRestart:   preparePIDServeRestart,
 		detectSystemdService:  detectActiveSystemdService,
 		restartSystemdService: restartSystemdUserService,
 		detectLaunchdServices: detectActiveLaunchdServices,
@@ -175,8 +175,8 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		if deps.stopServe != nil {
 			resolved.stopServe = deps.stopServe
 		}
-		if deps.restartServe != nil {
-			resolved.restartServe = deps.restartServe
+		if deps.prepareServeRestart != nil {
+			resolved.prepareServeRestart = deps.prepareServeRestart
 		}
 		if deps.detectSystemdService != nil {
 			resolved.detectSystemdService = deps.detectSystemdService
@@ -277,7 +277,14 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			}
 
 			if current != "" && compareSemver(current, target) >= 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "Already on latest (%s)\n", target)
+				fmt.Fprintf(cmd.OutOrStdout(), "Already on latest CLI (%s)\n", target)
+				endpoint, endpointErr := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
+				observed, healthErr := observeServiceRuntime(ctx, endpoint, 150*time.Millisecond)
+				if endpointErr == nil && healthErr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "Observed service: %s (%s), mode %s; this check did not restart or verify its protection.\n", observed.Version, observed.Commit, observed.Mode)
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "No reachable service runtime was verified by this CLI version check.")
+				}
 				if !skipPolicyUpdate {
 					if err := resolved.updatePolicies(cmd.OutOrStdout(), dryRun); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed: %v\n", err)
@@ -409,6 +416,13 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			}
 
 			var restartVerifier serveRestartVerifier
+			var restartPID serveRestarter
+			if pidServeRunning {
+				restartPID, err = resolved.prepareServeRestart(resolved.userHomeDir, exePath, servePID)
+				if err != nil {
+					return fmt.Errorf("upgrade: prepare preserved background restart: %w", err)
+				}
+			}
 			if serveRunning {
 				restartVerifier, err = resolved.prepareServeVerifier(resolved.userHomeDir, resolved.readFile)
 				if err != nil {
@@ -426,7 +440,10 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			}
 			restartPIDRuntime := func(expectedVersion string) error {
 				restartedAt := time.Now()
-				if err := resolved.restartServe(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+				if restartPID == nil {
+					return fmt.Errorf("upgrade: preserved background restart is unavailable")
+				}
+				if err := restartPID(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 					return err
 				}
 				return verifyRestartedRuntime(expectedVersion, restartedAt)
@@ -1018,16 +1035,6 @@ func stopServeProcess(pid int) error {
 	}
 }
 
-func restartServe(runner commandRunner, binary string, stdout, stderr io.Writer) error {
-	cmd := runner(binary, "serve", "--background")
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("upgrade: restart rampart serve: %w", err)
-	}
-	return nil
-}
-
 // serveRestartVerifier proves that a restart created a fresh, Rampart-owned
 // local runtime and that the runtime loaded the expected binary version.
 // Implementations must be bounded by ctx; upgrade keeps its rollback binary
@@ -1035,11 +1042,12 @@ func restartServe(runner commandRunner, binary string, stdout, stderr io.Writer)
 type serveRestartVerifier func(ctx context.Context, expectedVersion string, restartedAt time.Time) error
 
 type serveRestartVerifierDeps struct {
-	processIdentity func(int) (bool, string, error)
-	now             func() time.Time
-	timeout         time.Duration
-	pollInterval    time.Duration
-	requestTimeout  time.Duration
+	processIdentity    func(int) (bool, string, error)
+	now                func() time.Time
+	timeout            time.Duration
+	pollInterval       time.Duration
+	requestTimeout     time.Duration
+	trustedCertificate []byte
 }
 
 func defaultServeRestartVerifierDeps() serveRestartVerifierDeps {
@@ -1078,6 +1086,29 @@ func prepareServeRestartVerifierWithDeps(
 		return nil, fmt.Errorf("read existing %s: %w", statePath, err)
 	}
 	previousState = append([]byte(nil), previousState...)
+	var previous serveState
+	if previousExists && json.Unmarshal(previousState, &previous) == nil && strings.HasPrefix(previous.URL, "https://") {
+		if _, err := validateLocalServeStateURL(previous); err != nil {
+			return nil, err
+		}
+		if deps.processIdentity == nil {
+			return nil, fmt.Errorf("process identity verifier is unavailable before TLS restart")
+		}
+		if previous.Launch != nil {
+			private, err := readPrivateServeState(filepath.Join(home, ".rampart"))
+			if err != nil || private.PID != previous.PID || private.RuntimeIdentity != previous.RuntimeIdentity || private.Launch == nil || *private.Launch != *previous.Launch {
+				return nil, fmt.Errorf("previous TLS launch settings are not matching private runtime state")
+			}
+		}
+		owned, _, err := deps.processIdentity(previous.PID)
+		if err != nil || !owned {
+			return nil, fmt.Errorf("cannot pin TLS for an unowned previous runtime")
+		}
+		deps.trustedCertificate, err = serveLaunchCertificate(previous, home, readFile)
+		if err != nil {
+			return nil, fmt.Errorf("prepare TLS trust before restart: %w", err)
+		}
+	}
 
 	return func(ctx context.Context, expectedVersion string, restartedAt time.Time) error {
 		verifiedState, err := verifyRestartedServe(
@@ -1228,7 +1259,7 @@ func verifyRestartedServeState(
 		return nil, fmt.Errorf("serve.state pid %d is not Rampart-owned (%s)", state.PID, identity)
 	}
 
-	client, closeClient, err := localServeHealthClient(serveURL, home, readFile, deps.requestTimeout)
+	client, closeClient, err := localServeHealthClient(serveURL, home, readFile, deps.requestTimeout, deps.trustedCertificate)
 	if err != nil {
 		return nil, err
 	}
@@ -1318,6 +1349,7 @@ func localServeHealthClient(
 	home string,
 	readFile func(string) ([]byte, error),
 	requestTimeout time.Duration,
+	pinnedCertificate ...[]byte,
 ) (*http.Client, func(), error) {
 	dialer := &net.Dialer{Timeout: requestTimeout}
 	transport := &http.Transport{
@@ -1352,15 +1384,23 @@ func localServeHealthClient(
 		},
 	}
 	if serveURL.Scheme == "https" {
-		// serve.state intentionally contains no arbitrary trust path. Self-upgrade
-		// therefore supports HTTPS only for Rampart's tls-auto certificate. A
-		// custom --tls-cert service needs an explicit future fingerprint/source
-		// design; falling back to system roots or InsecureSkipVerify here would
-		// weaken the proof that the restarted local process is the managed one.
+		// A prepared restart pins the certificate read from the previous owned
+		// launch. Legacy state without a certificate reference supports tls-auto
+		// only; never fall back to insecure verification or arbitrary roots.
 		certPath := filepath.Join(home, ".rampart", "tls", "cert.pem")
-		certPEM, err := readFile(certPath)
-		if err != nil {
-			return nil, func() {}, fmt.Errorf("verify HTTPS runtime: read managed tls-auto certificate %s: %w (custom --tls-cert runtimes require a manual upgrade and restart)", certPath, err)
+		var certPEM []byte
+		if len(pinnedCertificate) > 0 {
+			certPEM = pinnedCertificate[0]
+		}
+		if len(certPEM) == 0 {
+			var err error
+			certPEM, err = readFile(certPath)
+			if err != nil {
+				return nil, func() {}, fmt.Errorf("verify HTTPS runtime: read managed tls-auto certificate %s: %w (legacy custom --tls-cert runtimes require a manual upgrade and restart)", certPath, err)
+			}
+		}
+		if len(certPEM) > 1<<20 {
+			return nil, func() {}, fmt.Errorf("verify HTTPS runtime: certificate exceeds size limit")
 		}
 		roots := x509.NewCertPool()
 		if !roots.AppendCertsFromPEM(certPEM) {

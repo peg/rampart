@@ -4,9 +4,11 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -75,6 +77,20 @@ func serviceRuntimeClient(endpoint string, timeout time.Duration) (*http.Client,
 	client.CheckRedirect = newRampartHTTPClient(timeout).CheckRedirect
 	if strings.HasPrefix(endpoint, "https://") && isLoopbackURL(endpoint) {
 		if home, err := os.UserHomeDir(); err == nil {
+			if state, err := readPrivateServeState(filepath.Join(home, ".rampart")); err == nil && state.Launch != nil && state.Launch.TLSCert != "" {
+				stateURL, stateErr := validateLocalServeStateURL(state)
+				u, _ := url.Parse(endpoint)
+				if stateErr == nil && stateURL.Scheme == u.Scheme && stateURL.Port() == u.Port() {
+					owned, _, identityErr := isRampartServeProcess(state.PID)
+					if identityErr == nil && owned {
+						certificate, certErr := serveLaunchCertificate(state, home, os.ReadFile)
+						if certErr != nil {
+							return nil, func() {}, certErr
+						}
+						return localServeHealthClient(u, home, os.ReadFile, timeout, certificate)
+					}
+				}
+			}
 			if _, certErr := os.Stat(filepath.Join(home, ".rampart", "tls", "cert.pem")); !os.IsNotExist(certErr) {
 				u, _ := url.Parse(endpoint)
 				return localServeHealthClient(u, home, os.ReadFile, timeout)
@@ -106,23 +122,51 @@ func integrationServiceEndpoint(driver integrationDriver) (string, error) {
 
 func readPrivateServeState(dir string) (serveState, error) {
 	var state serveState
-	path := filepath.Join(dir, serveStateFile)
-	info, err := os.Lstat(path)
+	data, err := readPrivateServeStateData(dir)
 	if err != nil {
 		return state, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > maxServeStateFileBytes || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
-		return state, fmt.Errorf("serve.state is not a bounded private regular file")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return state, err
-	}
-	if len(data) > maxServeStateFileBytes {
-		return state, fmt.Errorf("serve.state exceeds size limit")
 	}
 	err = json.Unmarshal(data, &state)
 	return state, err
+}
+
+// Restart preparation is stricter than health/URL discovery. An older CLI
+// must refuse newer launch options rather than discard them during a restart.
+func readPrivateServeStateForRestart(dir string) (serveState, error) {
+	var state serveState
+	data, err := readPrivateServeStateData(dir)
+	if err != nil {
+		return state, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
+		return state, fmt.Errorf("saved runtime state has unsupported or invalid fields; restart manually with the original options before upgrading")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return state, fmt.Errorf("saved runtime state contains trailing data")
+	}
+	return state, nil
+}
+
+func readPrivateServeStateData(dir string) ([]byte, error) {
+	path := filepath.Join(dir, serveStateFile)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxServeStateFileBytes || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
+		return nil, fmt.Errorf("serve.state is not a bounded private regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxServeStateFileBytes {
+		return nil, fmt.Errorf("serve.state exceeds size limit")
+	}
+	return data, nil
 }
 
 func ownedServiceRuntime(observed serviceRuntimeObservation) bool {
