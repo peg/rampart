@@ -1048,6 +1048,8 @@ type serveRestartVerifierDeps struct {
 	pollInterval       time.Duration
 	requestTimeout     time.Duration
 	trustedCertificate []byte
+	expectedEndpoint   *url.URL
+	expectedMode       string
 }
 
 func defaultServeRestartVerifierDeps() serveRestartVerifierDeps {
@@ -1079,36 +1081,65 @@ func prepareServeRestartVerifierWithDeps(
 	if strings.TrimSpace(home) == "" {
 		return nil, fmt.Errorf("resolve home directory: empty path")
 	}
-	statePath := filepath.Join(home, ".rampart", serveStateFile)
-	previousState, err := readFile(statePath)
-	previousExists := err == nil
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read existing %s: %w", statePath, err)
+	previousState, err := readPrivateServeStateData(filepath.Join(home, ".rampart"))
+	if err != nil {
+		return nil, fmt.Errorf("read previous runtime state before restart: %w", err)
 	}
-	previousState = append([]byte(nil), previousState...)
+	previousExists := true
 	var previous serveState
-	if previousExists && json.Unmarshal(previousState, &previous) == nil && strings.HasPrefix(previous.URL, "https://") {
-		if _, err := validateLocalServeStateURL(previous); err != nil {
-			return nil, err
-		}
-		if deps.processIdentity == nil {
-			return nil, fmt.Errorf("process identity verifier is unavailable before TLS restart")
-		}
-		if previous.Launch != nil {
-			private, err := readPrivateServeState(filepath.Join(home, ".rampart"))
-			if err != nil || private.PID != previous.PID || private.RuntimeIdentity != previous.RuntimeIdentity || private.Launch == nil || *private.Launch != *previous.Launch {
-				return nil, fmt.Errorf("previous TLS launch settings are not matching private runtime state")
-			}
-		}
-		owned, _, err := deps.processIdentity(previous.PID)
-		if err != nil || !owned {
-			return nil, fmt.Errorf("cannot pin TLS for an unowned previous runtime")
-		}
+	if json.Unmarshal(previousState, &previous) != nil {
+		return nil, fmt.Errorf("previous runtime state is unavailable or invalid; restore it before upgrading")
+	}
+	previousURL, err := validateLocalServeStateURL(previous)
+	if err != nil {
+		return nil, err
+	}
+	if deps.processIdentity == nil {
+		return nil, fmt.Errorf("process identity verifier is unavailable before restart")
+	}
+	owned, _, err := deps.processIdentity(previous.PID)
+	if err != nil || !owned {
+		return nil, fmt.Errorf("cannot preserve an unowned previous runtime")
+	}
+	if previousURL.Scheme == "https" {
 		deps.trustedCertificate, err = serveLaunchCertificate(previous, home, readFile)
 		if err != nil {
 			return nil, fmt.Errorf("prepare TLS trust before restart: %w", err)
 		}
 	}
+	if deps.requestTimeout <= 0 {
+		deps.requestTimeout = time.Second
+	}
+	client, closeClient, err := localServeHealthClient(previousURL, home, readFile, deps.requestTimeout, deps.trustedCertificate)
+	if err != nil {
+		return nil, err
+	}
+	defer closeClient()
+	healthURL := *previousURL
+	healthURL.Path = "/healthz"
+	health, err := fetchRampartHealth(context.Background(), client, healthURL.String())
+	if err != nil {
+		return nil, fmt.Errorf("observe previous runtime before restart: %w", err)
+	}
+	if !validUpgradeHealthService(health.Service, health.Version) {
+		return nil, fmt.Errorf("previous health response lacks the expected Rampart service identity")
+	}
+	if (previous.InstanceID != "" || health.InstanceID != "") && (!runtimeIdentified(previous.RuntimeIdentity) || previous.RuntimeIdentity != health.RuntimeIdentity) {
+		return nil, fmt.Errorf("previous runtime state does not match its health identity")
+	}
+	if previous.InstanceID == "" && health.InstanceID == "" {
+		if cmp, ok := compareReleaseVersions(health.Version, "v1.9.1"); !ok || cmp > 0 {
+			return nil, fmt.Errorf("previous runtime lacks instance identity; legacy preservation is limited to v1.9.1 and older")
+		}
+	}
+	if previous.Launch != nil && previous.Launch.Mode != health.Mode {
+		return nil, fmt.Errorf("previous launch mode does not match its health response")
+	}
+	// Pin the actual pre-upgrade endpoint and mode, including legacy services
+	// whose private state did not yet contain a mode. A healthy candidate must
+	// retain both, even if its own new state and health agree with each other.
+	deps.expectedEndpoint = previousURL
+	deps.expectedMode = health.Mode
 
 	return func(ctx context.Context, expectedVersion string, restartedAt time.Time) error {
 		verifiedState, err := verifyRestartedServe(
@@ -1235,8 +1266,8 @@ func verifyRestartedServeState(
 	if err != nil {
 		return nil, fmt.Errorf("fresh serve.state has invalid started time %q", state.Started)
 	}
-	// writeServeState uses RFC3339 second precision. Truncating the restart
-	// boundary avoids rejecting a daemon that starts later in the same second.
+	// Legacy state used second precision. Accept a restart in the same second;
+	// current state also has an instance identity to establish freshness.
 	if started.Before(restartedAt.UTC().Truncate(time.Second)) {
 		return nil, fmt.Errorf("serve.state predates this restart (%s)", started.UTC().Format(time.RFC3339Nano))
 	}
@@ -1247,6 +1278,9 @@ func verifyRestartedServeState(
 	serveURL, err := validateLocalServeStateURL(state)
 	if err != nil {
 		return nil, err
+	}
+	if previous := deps.expectedEndpoint; previous != nil && (serveURL.Scheme != previous.Scheme || !strings.EqualFold(serveURL.Hostname(), previous.Hostname()) || serveURL.Port() != previous.Port()) {
+		return nil, fmt.Errorf("restarted runtime endpoint differs from the previous service")
 	}
 	owned, identity, err := deps.processIdentity(state.PID)
 	if err != nil {
@@ -1274,6 +1308,9 @@ func verifyRestartedServeState(
 	}
 	if !validUpgradeHealthService(health.Service, expectedVersion) {
 		return nil, fmt.Errorf("unexpected health service identity %q", health.Service)
+	}
+	if deps.expectedMode != "" && health.Mode != deps.expectedMode {
+		return nil, fmt.Errorf("restarted runtime mode mismatch: expected %s, got %s", deps.expectedMode, health.Mode)
 	}
 	if expectedVersion != "" {
 		expected, expectedErr := normalizeVersion(expectedVersion)

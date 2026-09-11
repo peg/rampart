@@ -250,7 +250,8 @@ and key references. It reuses the existing private token file instead of an
 upgrading shell's `RAMPART_TOKEN` override. Systemd and launchd retain their
 existing owned service definitions. A restart must publish fresh owned state
 whose instance, build and mode match the health response; version alone does
-not establish activation. Existing custom TLS certificates are pinned before
+not establish activation. Its endpoint and observed mode must also match the
+previous service. Existing custom TLS certificates are pinned before
 stopping the service. Missing settings, certificate trust or ownership cause
 the upgrade to stop before service interruption.
 

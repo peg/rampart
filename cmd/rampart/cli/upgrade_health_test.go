@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,17 +68,97 @@ func TestServeRestartVerifierRejectsStaleState(t *testing.T) {
 	}
 	writeUpgradeServeState(t, home, state)
 
-	verifier, err := prepareServeRestartVerifierWithDeps(
-		func() (string, error) { return home, nil },
-		os.ReadFile,
-		testServeRestartVerifierDeps(func(int) (bool, string, error) { return true, "rampart serve", nil }),
-	)
+	previous, err := os.ReadFile(filepath.Join(home, ".rampart", serveStateFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = verifier(context.Background(), "v1.4.1", time.Now())
+	_, err = verifyRestartedServe(context.Background(), home, os.ReadFile, "v1.4.1", previous, true, time.Now(),
+		testServeRestartVerifierDeps(func(int) (bool, string, error) { return true, "rampart serve", nil }))
 	if err == nil || !strings.Contains(err.Error(), "serve.state is stale") {
 		t.Fatalf("stale state error = %v", err)
+	}
+}
+
+func TestServeRestartVerifierPreservesObservedEndpointAndMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, oldMode, newMode, changedEndpoint, wantError string
+		previousVersion, wantPrepareError                  string
+		legacy                                             bool
+	}{
+		{name: "enforce retained", oldMode: "enforce", newMode: "enforce"},
+		{name: "monitor retained", oldMode: "monitor", newMode: "monitor"},
+		{name: "disabled retained", oldMode: "disabled", newMode: "disabled"},
+		{name: "matching new state and health weakened", oldMode: "enforce", newMode: "monitor", wantError: "mode mismatch"},
+		{name: "changed port", oldMode: "enforce", newMode: "enforce", changedEndpoint: "port", wantError: "endpoint differs"},
+		{name: "changed TLS", oldMode: "enforce", newMode: "enforce", changedEndpoint: "scheme", wantError: "endpoint differs"},
+		{name: "legacy observed mode retained", oldMode: "monitor", newMode: "monitor", legacy: true},
+		{name: "legacy observed mode changed", oldMode: "monitor", newMode: "enforce", legacy: true, wantError: "mode mismatch"},
+		{name: "modern identity missing before restart", oldMode: "enforce", legacy: true, previousVersion: "2.0.0", wantPrepareError: "lacks instance identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			uptime := 1
+			oldIdentity := proxy.RuntimeIdentity{InstanceID: "previous-instance-0001", Version: "1.9.1", Commit: "previous-build", Mode: tc.oldMode}
+			if tc.previousVersion != "" {
+				oldIdentity.Version = tc.previousVersion
+			}
+			if tc.legacy {
+				oldIdentity.InstanceID = ""
+				oldIdentity.Commit = ""
+			}
+			var health atomic.Value
+			health.Store(proxy.HealthResponse{RuntimeIdentity: oldIdentity, Service: "rampart", Status: "ok", UptimeSeconds: &uptime})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(health.Load().(proxy.HealthResponse))
+			}))
+			defer server.Close()
+			u, _ := url.Parse(server.URL)
+			port, _ := strconv.Atoi(u.Port())
+			previous := serveState{URL: server.URL, Port: port, PID: 4242, Started: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), RuntimeIdentity: oldIdentity}
+			if tc.legacy {
+				previous.RuntimeIdentity = proxy.RuntimeIdentity{}
+			}
+			writeUpgradeServeState(t, home, previous)
+			verifier, err := prepareServeRestartVerifierWithDeps(func() (string, error) { return home, nil }, os.ReadFile,
+				testServeRestartVerifierDeps(func(int) (bool, string, error) { return true, "rampart serve", nil }))
+			if tc.wantPrepareError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantPrepareError) {
+					t.Fatalf("preparation error=%v, want %q", err, tc.wantPrepareError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate := previous
+			candidate.RuntimeIdentity = proxy.RuntimeIdentity{InstanceID: "candidate-instance-0001", Version: "2.0.0", Commit: "candidate-build", Mode: tc.newMode}
+			candidate.Started = time.Now().UTC().Format(time.RFC3339Nano)
+			switch tc.changedEndpoint {
+			case "port":
+				candidate.Port = port%65535 + 1
+				candidate.URL = "http://127.0.0.1:" + strconv.Itoa(candidate.Port)
+			case "scheme":
+				candidate.URL = strings.Replace(server.URL, "http://", "https://", 1)
+			}
+			health.Store(proxy.HealthResponse{RuntimeIdentity: candidate.RuntimeIdentity, Service: "rampart", Status: "ok", UptimeSeconds: &uptime})
+			writeUpgradeServeState(t, home, candidate)
+			err = verifier(context.Background(), "v2.0.0", time.Now().Add(-time.Second))
+			if tc.wantError == "" && err != nil || tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
+				t.Fatalf("activation error=%v, want %q", err, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestServeRestartPreparationRequiresPreviousRuntime(t *testing.T) {
+	home := t.TempDir()
+	_, err := prepareServeRestartVerifierWithDeps(func() (string, error) { return home, nil }, os.ReadFile,
+		testServeRestartVerifierDeps(func(int) (bool, string, error) {
+			t.Fatal("missing state must refuse before process inspection")
+			return false, "", nil
+		}))
+	if err == nil || !strings.Contains(err.Error(), "previous runtime state") {
+		t.Fatalf("missing baseline error: %v", err)
 	}
 }
 
@@ -219,15 +300,13 @@ func prepareUpgradeHealthVerifier(
 	processIdentity func(int) (bool, string, error),
 ) serveRestartVerifier {
 	t.Helper()
-	verifier, err := prepareServeRestartVerifierWithDeps(
-		func() (string, error) { return home, nil },
-		os.ReadFile,
-		testServeRestartVerifierDeps(processIdentity),
-	)
-	if err != nil {
-		t.Fatal(err)
+	// These cases isolate candidate health validation. Preparation and
+	// continuity against a live previous service are covered separately.
+	return func(ctx context.Context, version string, restartedAt time.Time) error {
+		_, err := verifyRestartedServe(ctx, home, os.ReadFile, version, nil, false, restartedAt,
+			testServeRestartVerifierDeps(processIdentity))
+		return err
 	}
-	return verifier
 }
 
 func testServeRestartVerifierDeps(processIdentity func(int) (bool, string, error)) serveRestartVerifierDeps {
