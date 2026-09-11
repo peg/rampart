@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the original working directory, custom policy/audit options and TLS
   references. Refuse ambiguous legacy migration before stopping a service,
   and distinguish a current CLI from an older running service.
+- Verify that upgraded services retain their endpoint and mode. Stop an owned
+  failed candidate before restoring the previous executable and runtime;
+  retain the backup and report incomplete recovery if ownership has changed.
 
 ## [1.9.1] - 2026-09-10
 

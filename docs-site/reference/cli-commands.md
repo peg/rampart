@@ -255,6 +255,12 @@ previous service. Existing custom TLS certificates are pinned before
 stopping the service. Missing settings, certificate trust or ownership cause
 the upgrade to stop before service interruption.
 
+If activation fails, upgrade stops the owned failed candidate before restoring
+the previous executable and runtime. If the candidate's saved state or process
+identity has changed, automatic recovery refuses to stop it. The error retains
+the original activation failure and reports the backup executable's location
+for manual recovery with the original service settings.
+
 The already-published v1.9.1 updater does not contain this launch-preservation
 logic: its background restart uses defaults. For a custom background service
 still managed by that older CLI, preserve its command and original working
