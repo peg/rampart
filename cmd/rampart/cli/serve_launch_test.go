@@ -176,14 +176,22 @@ func TestServeCertificatePreservesRelativeSymlinkTraversal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(settings.WorkingDir, "actual", "cert.pem"), certificate, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Cleaning alias/../cert.pem would select this invalid decoy instead.
-	if err := os.WriteFile(filepath.Join(settings.WorkingDir, "cert.pem"), []byte("not a certificate"), 0o600); err != nil {
+	// Keep both native destinations valid but distinct. Unix traversal through
+	// the symlink and Windows lexical path handling need not select the same file.
+	lexicalCertificate := append([]byte("\n"), certificate...)
+	if err := os.WriteFile(filepath.Join(settings.WorkingDir, "cert.pem"), lexicalCertificate, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settings.TLSCert = "alias/../cert.pem"
+	t.Chdir(settings.WorkingDir)
+	// The actual TLS loader opens the original relative argument from this CWD.
+	expected, err := os.ReadFile(settings.TLSCert)
+	if err != nil {
+		t.Fatal(err)
+	}
 	state := serveState{Launch: &settings}
 	got, err := serveLaunchCertificate(state, home, os.ReadFile)
-	if err != nil || !bytes.Equal(got, certificate) {
+	if err != nil || !bytes.Equal(got, expected) {
 		t.Fatalf("relative TLS traversal lost: %v", err)
 	}
 	settings.TLSCert = "missing.pem"
@@ -233,6 +241,7 @@ func TestUpgradeCurrentCLIDoesNotImplyCurrentService(t *testing.T) {
 	t.Setenv("RAMPART_URL", server.URL)
 	var output bytes.Buffer
 	cmd := newUpgradeCmdWithDeps(&rootOptions{}, &upgradeDeps{
+		goos:           "linux", // Exercise the self-upgrade branch; Windows installer refusal has separate coverage.
 		currentVersion: func(context.Context, commandRunner, func() (string, error)) (string, error) { return "v2.0.0", nil },
 		inspectServePID: func(func() (string, error), func(string) ([]byte, error)) (int, bool, error) {
 			t.Fatal("current CLI must not stop or claim ownership of the observed service")
