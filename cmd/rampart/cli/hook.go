@@ -1044,7 +1044,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 // Returns a hookParseResult; Response is non-empty for PostToolUse events.
 func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input hookInput
-	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+	decoder := json.NewDecoder(reader)
+	decoder.UseNumber()
+	if err := decoder.Decode(&input); err != nil {
 		return nil, err
 	}
 	event := strings.TrimSpace(input.HookEventName)
@@ -1267,7 +1269,9 @@ func redactClaudeToolOutput(value any) any {
 // parseClineInput parses Cline hook input format
 func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input clineHookInput
-	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+	decoder := json.NewDecoder(reader)
+	decoder.UseNumber()
+	if err := decoder.Decode(&input); err != nil {
 		return nil, err
 	}
 
@@ -1517,7 +1521,7 @@ func decodeClineNestedValue(value any) any {
 		return value
 	}
 	var decoded any
-	if json.Unmarshal([]byte(trimmed), &decoded) == nil {
+	if decodeUserJSON([]byte(trimmed), &decoded) == nil {
 		return decoded
 	}
 	return value

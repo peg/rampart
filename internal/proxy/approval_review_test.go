@@ -6,11 +6,14 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/peg/rampart/internal/approval"
+	"github.com/peg/rampart/internal/dashboard"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,4 +112,79 @@ func TestExternalApprovalRejectsPartialActionFormats(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, rr.Code, body)
 	}
 	require.Empty(t, srv.approvals.List())
+}
+
+func TestToolApprovalPreservesJSONNumbersBeforeReviewAndReplay(t *testing.T) {
+	for _, field := range []string{"params", "input"} {
+		t.Run(field, func(t *testing.T) {
+			srv, token, _ := setupTestServer(t, "version: \"1\"\ndefault_action: ask\npolicies: []\n", "enforce")
+			t.Cleanup(srv.approvals.Close)
+			request := func(path, body string) *httptest.ResponseRecorder {
+				t.Helper()
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+token)
+				rr := httptest.NewRecorder()
+				srv.handler().ServeHTTP(rr, req)
+				return rr
+			}
+			body := fmt.Sprintf(`{"agent":"numeric-agent","session":"numeric-session","run_id":"numeric-run","tool_call_id":"numeric-call",%q:{"sequence":9007199254740993,"nested":[0.1234567890123456789,1e20]}}`, field)
+			initial := request("/v1/tool/mcp", body)
+			require.Equal(t, http.StatusAccepted, initial.Code, initial.Body.String())
+			var response struct {
+				ApprovalID string                `json:"approval_id"`
+				Action     approval.ActionReview `json:"action"`
+			}
+			decoder := json.NewDecoder(initial.Body)
+			decoder.UseNumber()
+			require.NoError(t, decoder.Decode(&response))
+			values := response.Action.Params
+			if field == "input" {
+				values = response.Action.Input
+			}
+			require.Equal(t, json.Number("9007199254740993"), values["sequence"])
+			require.Equal(t, []any{json.Number("0.1234567890123456789"), json.Number("1e20")}, values["nested"])
+
+			resolved := request("/v1/approvals/"+response.ApprovalID+"/resolve", `{"approved":true,"resolved_by":"operator"}`)
+			require.Equal(t, http.StatusOK, resolved.Code, resolved.Body.String())
+			changed := request("/v1/tool/mcp", strings.Replace(body, "9007199254740993", "9007199254740992", 1))
+			require.Equal(t, http.StatusAccepted, changed.Code, "a rounded adjacent integer must not consume approval: %s", changed.Body.String())
+			replay := request("/v1/tool/mcp", body)
+			require.Equal(t, http.StatusOK, replay.Code, replay.Body.String())
+			require.Contains(t, replay.Body.String(), `"approval_id":"`+response.ApprovalID+`"`)
+			require.Equal(t, http.StatusAccepted, request("/v1/tool/mcp", body).Code, "the exact action is approved only once")
+		})
+	}
+}
+
+func TestApprovalDisplayTextSurvivesFloatingPointJSONClients(t *testing.T) {
+	srv, token, _ := setupTestServer(t, "version: \"1\"\ndefault_action: ask\npolicies: []\n", "enforce")
+	t.Cleanup(srv.approvals.Close)
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/mcp", strings.NewReader(`{"params":{"sequence":9007199254740993,"amount":0.1234567890123456789,"large":1e20,"label":"<b>numeric-canary</b>","password":"synthetic-private"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rr, req)
+	require.Equal(t, http.StatusAccepted, rr.Code, rr.Body.String())
+	// The default decoder deliberately models clients that parse JSON numbers
+	// as float64. The display must survive that round trip unchanged.
+	var result struct {
+		Action approval.ActionReview `json:"action"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &result))
+	require.Equal(t, float64(9007199254740992), result.Action.Params["sequence"])
+	text := result.Action.DisplayText
+	require.Contains(t, text, `"sequence": 9007199254740993`)
+	require.Contains(t, text, `"amount": 0.1234567890123456789`)
+	require.Contains(t, text, `"large": 1e20`)
+	require.Contains(t, text, `\u003cb\u003enumeric-canary\u003c/b\u003e`)
+	require.Contains(t, text, "[REDACTED]")
+	require.NotContains(t, text, "synthetic-private")
+	require.NotContains(t, text, "display_text", "the display representation must not include itself")
+
+	// Guard the shipped render source as well: never regenerate the display
+	// from rounded structured fields or insert server action text as HTML.
+	page := httptest.NewRecorder()
+	dashboard.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Contains(t, page.Body.String(), "det.querySelector('.action-review').textContent=")
+	require.Contains(t, page.Body.String(), "a.action.display_text.replace(")
+	require.NotContains(t, page.Body.String(), "JSON.stringify(a.action")
 }
