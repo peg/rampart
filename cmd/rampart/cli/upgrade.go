@@ -74,6 +74,7 @@ type upgradeDeps struct {
 	inspectServePID       func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
 	stopServe             func(int) error
 	prepareServeRestart   func(func() (string, error), string, int) (serveRestarter, error)
+	captureServeCandidate func(func() (string, error), string, int, time.Time) (func() error, error)
 	detectSystemdService  func(commandRunner, func() (string, error), string) string
 	restartSystemdService func(commandRunner, string, io.Writer) error
 	detectLaunchdServices func(commandRunner, func() (string, error), string) []launchdService
@@ -106,6 +107,7 @@ func defaultUpgradeDeps() upgradeDeps {
 		inspectServePID:       inspectServePID,
 		stopServe:             stopServeProcess,
 		prepareServeRestart:   preparePIDServeRestart,
+		captureServeCandidate: captureServeCandidateCleanup,
 		detectSystemdService:  detectActiveSystemdService,
 		restartSystemdService: restartSystemdUserService,
 		detectLaunchdServices: detectActiveLaunchdServices,
@@ -177,6 +179,9 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		}
 		if deps.prepareServeRestart != nil {
 			resolved.prepareServeRestart = deps.prepareServeRestart
+		}
+		if deps.captureServeCandidate != nil {
+			resolved.captureServeCandidate = deps.captureServeCandidate
 		}
 		if deps.detectSystemdService != nil {
 			resolved.detectSystemdService = deps.detectSystemdService
@@ -438,13 +443,21 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				}
 				return nil
 			}
-			restartPIDRuntime := func(expectedVersion string) error {
+			var candidateCleanup func() error
+			var candidateCaptureErr error
+			restartPIDRuntime := func(expectedVersion string, captureCandidate bool) error {
 				restartedAt := time.Now()
 				if restartPID == nil {
 					return fmt.Errorf("upgrade: preserved background restart is unavailable")
 				}
 				if err := restartPID(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 					return err
+				}
+				if captureCandidate {
+					// Health may be the reason activation fails. Capture process
+					// ownership separately, before the health probe can race a
+					// replacement runtime or a changed private state file.
+					candidateCleanup, candidateCaptureErr = resolved.captureServeCandidate(resolved.userHomeDir, exePath, servePID, restartedAt)
 				}
 				return verifyRestartedRuntime(expectedVersion, restartedAt)
 			}
@@ -454,7 +467,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				if !pidServeNeedsRestart {
 					return
 				}
-				if restartErr := restartPIDRuntime(current); restartErr != nil {
+				if restartErr := restartPIDRuntime(current, false); restartErr != nil {
 					restartErr = fmt.Errorf("upgrade: restore previously running rampart serve: %w", restartErr)
 					if runErr == nil {
 						runErr = restartErr
@@ -529,7 +542,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			} else if len(activeLaunchd) > 0 {
 				runtimeRestartErrs = restartManagedServices(target)
 			} else if pidServeRunning {
-				if err := restartPIDRuntime(target); err != nil {
+				if err := restartPIDRuntime(target, true); err != nil {
 					runtimeRestartErrs = append(runtimeRestartErrs, err)
 				} else {
 					pidServeNeedsRestart = false
@@ -538,6 +551,21 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 			if len(runtimeRestartErrs) > 0 {
 				restartCause := errors.Join(runtimeRestartErrs...)
+				if pidServeRunning {
+					// This is the authoritative recovery attempt. In particular,
+					// a refused cleanup must not fall through to a deferred restart.
+					pidServeNeedsRestart = false
+					cleanupErr := candidateCaptureErr
+					if cleanupErr == nil && candidateCleanup != nil {
+						cleanupErr = candidateCleanup()
+					}
+					if cleanupErr != nil {
+						return errors.Join(
+							fmt.Errorf("upgrade: candidate runtime activation failed: %w", restartCause),
+							fmt.Errorf("upgrade: recovery incomplete; failed candidate cleanup could not be confirmed; previous executable retained at %s: %w", backupPath, cleanupErr),
+						)
+					}
+				}
 				if rollbackErr := resolved.rename(backupPath, exePath); rollbackErr != nil {
 					return errors.Join(
 						fmt.Errorf("upgrade: candidate runtime activation failed: %w", restartCause),
@@ -550,11 +578,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				if activeSvc != "" || len(activeLaunchd) > 0 {
 					recoveryErrs = restartManagedServices(current)
 				} else if pidServeRunning {
-					// Recovery below is the one authoritative retry. Disable the
-					// deferred fallback first so a failed recovery is reported once
-					// instead of starting an uncontrolled third process attempt.
-					pidServeNeedsRestart = false
-					if recoveryErr := restartPIDRuntime(current); recoveryErr != nil {
+					if recoveryErr := restartPIDRuntime(current, false); recoveryErr != nil {
 						recoveryErrs = append(recoveryErrs, recoveryErr)
 					}
 				}
