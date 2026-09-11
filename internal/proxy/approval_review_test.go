@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/peg/rampart/internal/approval"
+	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/dashboard"
 	"github.com/stretchr/testify/require"
 )
@@ -119,6 +121,13 @@ func TestToolApprovalPreservesJSONNumbersBeforeReviewAndReplay(t *testing.T) {
 		t.Run(field, func(t *testing.T) {
 			srv, token, _ := setupTestServer(t, "version: \"1\"\ndefault_action: ask\npolicies: []\n", "enforce")
 			t.Cleanup(srv.approvals.Close)
+			// Use the production persistence boundary: a memory sink misses
+			// precision loss when shared chain state verifies its last record.
+			dir := t.TempDir()
+			sink, err := audit.NewJSONLSink(dir)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sink.Close()) })
+			srv.sink = audit.NewRedactingSink(sink)
 			request := func(path, body string) *httptest.ResponseRecorder {
 				t.Helper()
 				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
@@ -127,7 +136,7 @@ func TestToolApprovalPreservesJSONNumbersBeforeReviewAndReplay(t *testing.T) {
 				srv.handler().ServeHTTP(rr, req)
 				return rr
 			}
-			body := fmt.Sprintf(`{"agent":"numeric-agent","session":"numeric-session","run_id":"numeric-run","tool_call_id":"numeric-call",%q:{"sequence":9007199254740993,"nested":[0.1234567890123456789,1e20]}}`, field)
+			body := fmt.Sprintf(`{"agent":"numeric-agent","session":"numeric-session","run_id":"numeric-run","tool_call_id":"numeric-call",%q:{"sequence":9007199254740993,"nested":[0.1234567890123456789,1e20,1e400]}}`, field)
 			initial := request("/v1/tool/mcp", body)
 			require.Equal(t, http.StatusAccepted, initial.Code, initial.Body.String())
 			var response struct {
@@ -142,7 +151,7 @@ func TestToolApprovalPreservesJSONNumbersBeforeReviewAndReplay(t *testing.T) {
 				values = response.Action.Input
 			}
 			require.Equal(t, json.Number("9007199254740993"), values["sequence"])
-			require.Equal(t, []any{json.Number("0.1234567890123456789"), json.Number("1e20")}, values["nested"])
+			require.Equal(t, []any{json.Number("0.1234567890123456789"), json.Number("1e20"), json.Number("1e400")}, values["nested"])
 
 			resolved := request("/v1/approvals/"+response.ApprovalID+"/resolve", `{"approved":true,"resolved_by":"operator"}`)
 			require.Equal(t, http.StatusOK, resolved.Code, resolved.Body.String())
@@ -151,7 +160,22 @@ func TestToolApprovalPreservesJSONNumbersBeforeReviewAndReplay(t *testing.T) {
 			replay := request("/v1/tool/mcp", body)
 			require.Equal(t, http.StatusOK, replay.Code, replay.Body.String())
 			require.Contains(t, replay.Body.String(), `"approval_id":"`+response.ApprovalID+`"`)
+			// Reopen with an exact numeric event at the chain tail, then append
+			// another ask. Recovery must neither reject nor rewrite that event.
+			require.NoError(t, sink.Close())
+			sink, err = audit.NewJSONLSink(dir)
+			require.NoError(t, err)
+			srv.sink = audit.NewRedactingSink(sink)
 			require.Equal(t, http.StatusAccepted, request("/v1/tool/mcp", body).Code, "the exact action is approved only once")
+			count, err := audit.VerifyManagedChain(dir)
+			require.NoError(t, err)
+			require.EqualValues(t, 6, count, "asks, resolution, approval consumption, and execution authorization are all durable")
+			files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			events, _, err := audit.ReadEventsFromOffset(files[0], 0)
+			require.NoError(t, err)
+			require.Len(t, events, int(count), "audit readers must retain events containing large exponents")
 		})
 	}
 }

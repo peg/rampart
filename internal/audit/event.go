@@ -23,6 +23,7 @@
 package audit
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -97,6 +98,18 @@ type Event struct {
 	// Hash is the SHA-256 hash of this event (excluding the hash field itself).
 	// Computed by ComputeHash after all other fields are set.
 	Hash string `json:"hash"`
+}
+
+// UnmarshalJSON preserves the numeric representation hashed by the writer.
+// Every event reader, including shared-tail validation and chain recovery,
+// must avoid float64 rounding or exponent normalization in dynamic fields.
+// Previously rounded values remain exactly as stored; verification never
+// retries against a lossy representation of a different event.
+func (e *Event) UnmarshalJSON(data []byte) error {
+	type eventJSON Event
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode((*eventJSON)(e))
 }
 
 // FieldCompaction describes an audit field that was replaced, dropped, or
