@@ -141,18 +141,43 @@ asyncio.run(main())
 client = rampart.RampartClient(
     url="https://rampart.example.com:8080",
     token="your-auth-token",
-    fail_open=True,  # Allow calls if server is unreachable (default)
+    fail_open=False, # Raise on transport/server failures (default)
     timeout=30.0,    # Request timeout in seconds
 )
 
-# Fail-closed mode (recommended for security boundaries)
-strict_client = rampart.RampartClient(fail_open=False)
+# Explicit availability choice: allow calls during transport/server failures.
+availability_client = rampart.RampartClient(fail_open=True)
 ```
 
 Non-loopback endpoints must use HTTPS because policy requests contain tool-call
 metadata even when no bearer token is configured. The SDK also ignores ambient
 proxy variables and refuses HTTP redirects so control-plane credentials and
 tool data remain bound to the configured Rampart endpoint.
+
+### Failure behavior and migration
+
+`RampartClient()` now defaults to `fail_open=False`, including clients supplied
+to decorators or `set_default_client()`. Transport failures and timeouts raise
+`RampartConnectionError`; HTTP server errors raise `RampartServerError`. Guards
+do not execute the wrapped function when these exceptions occur, even with
+`raise_on_deny=False`. That option only controls how policy denials are reported.
+
+Earlier SDK source checkouts defaulted to `fail_open=True`. Upgrading callers
+that omit the option changes outage behavior from a synthetic allow decision
+to an exception. This also affects `preflight`, `check_*`, and their async
+equivalents. Handle availability exceptions where the application can report or
+retry the unavailable operation, without treating them as authorization.
+
+Applications that deliberately prefer availability can retain the previous
+fallback with `RampartClient(fail_open=True)`. This permits calls during eligible
+transport failures and HTTP 5xx responses; returned decisions identify the
+fallback with a `fail-open` message. It does not override a policy deny/ask,
+authentication errors, or invalid decision responses. Explicit `True` and
+`False` configurations retain their existing behavior.
+
+Healthy decisions and the distinction between non-consuming previews and
+state-consuming enforcement are unchanged. `health()` and `ahealth()` remain
+observational and return `False` when the service is unavailable.
 
 ## API Reference
 
@@ -208,9 +233,11 @@ class Decision:
 - `session`: Session identifier for policy context
 - `raise_on_deny`: Whether to raise exception on denial (default: True)
 
-When no custom client is supplied, decorators create a fail-closed client.
-Pass an explicitly configured client only if your application has made a
-deliberate availability-versus-enforcement choice.
+Decorators and newly constructed custom clients fail closed by default.
+Supplying a client to customize its URL or timeout preserves that behavior.
+Only an explicitly configured `fail_open=True` client opts into availability
+fallbacks. Connection and server exceptions still propagate when
+`raise_on_deny=False`; a denied decision returns `None` without executing.
 
 ## Examples
 
