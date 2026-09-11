@@ -118,7 +118,7 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 			if opts.verbose {
 				logLevel = slog.LevelDebug
 			}
-			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: logLevel}))
+			logger := audit.NewRedactingLogger(slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: logLevel})))
 
 			policyPath, cleanupPolicy, err := resolveMCPPolicyPath(opts.configPath)
 			if err != nil {

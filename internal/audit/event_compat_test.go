@@ -14,6 +14,7 @@
 package audit
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -42,7 +43,7 @@ func TestVerifyHash_LegacyEventWithoutSchemaAndHost(t *testing.T) {
 		Agent:     "agent-1",
 		Session:   "session-1",
 		Tool:      "exec",
-		Request:   map[string]any{"command": "echo hello"},
+		Request:   map[string]any{"command": "echo hello", "rounded_sequence": float64(9007199254740993), "decimal": 0.1, "exponent": 1e30},
 		Decision:  EventDecision{Action: "allow", EvalTimeUS: 7},
 		PrevHash:  "",
 	}
@@ -62,8 +63,43 @@ func TestVerifyHash_LegacyEventWithoutSchemaAndHost(t *testing.T) {
 	require.NoError(t, json.Unmarshal(line, &parsed))
 	require.Empty(t, parsed.SchemaVersion)
 	require.Nil(t, parsed.Host)
+	// Older float64 ingress already rounded this value before writing. Preserve
+	// those valid historical bytes; never claim to recover the original input.
+	require.Equal(t, json.Number("9007199254740992"), parsed.Request["rounded_sequence"])
+	roundTrip, err := json.Marshal(parsed)
+	require.NoError(t, err)
+	require.Equal(t, line, roundTrip)
 
 	ok, err := parsed.VerifyHash()
 	require.NoError(t, err)
 	require.True(t, ok)
+}
+
+func TestEventDecodePreservesExactNumbersForHashVerification(t *testing.T) {
+	event := Event{
+		Request: map[string]any{
+			"sequence": json.Number("9007199254740993"),
+			"nested":   []any{json.Number("0.1234567890123456789"), json.Number("1e20"), json.Number("1e400")},
+		},
+		ApprovalOwner: map[string]any{"sequence": json.Number("9007199254740993")},
+	}
+	require.NoError(t, event.ComputeHash())
+	data, err := json.Marshal(event)
+	require.NoError(t, err)
+	var decoded Event
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Equal(t, event.Request, decoded.Request)
+	require.Equal(t, event.ApprovalOwner, decoded.ApprovalOwner)
+	valid, err := decoded.VerifyHash()
+	require.NoError(t, err)
+	require.True(t, valid)
+
+	// A neighboring integer must not verify via the same rounded float. Keep
+	// the original hash while changing one exact security-bearing value.
+	tampered := bytes.Replace(data, []byte(`"sequence":9007199254740993`), []byte(`"sequence":9007199254740992`), 1)
+	require.NotEqual(t, data, tampered)
+	require.NoError(t, json.Unmarshal(tampered, &decoded))
+	valid, err = decoded.VerifyHash()
+	require.NoError(t, err)
+	require.False(t, valid)
 }

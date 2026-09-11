@@ -88,7 +88,10 @@ jobs:
       - name: Install Linux preload dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
+          test -f /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update \
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=-
           sudo apt-get install --no-install-recommends libcurl4-openssl-dev
 
       - name: Download dependencies

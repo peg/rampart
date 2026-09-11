@@ -444,6 +444,160 @@ func TestRelativeToolPathResolvesSymlinkFromHostWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestPathPolicyPreservesFilesystemParentTraversal(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	protected := filepath.Join(root, "protected")
+	for _, dir := range []string{workspace, filepath.Join(protected, "nested")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(protected, "nested"), filepath.Join(workspace, "link")); err != nil {
+		t.Skipf("symlinks are unavailable on this host: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(protected, "marker.txt"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	protected, err := filepath.EvalSymlinks(protected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := setupEngine(t, fmt.Sprintf(`
+version: "1"
+default_action: allow
+policies:
+  - name: protected-path
+    match:
+      tool: [read, write]
+    rules:
+      - action: deny
+        when:
+          path_matches: [%q]
+`, filepath.ToSlash(filepath.Join(protected, "**"))))
+	cases := []struct {
+		name, path, cwd, suffix string
+	}{
+		{"absolute existing", workspace + "/link/../marker.txt", "", "marker.txt"},
+		{"relative existing", "link/../marker.txt", workspace, "marker.txt"},
+		{"missing descendants", "link/../new/child.txt", workspace, "new/child.txt"},
+		{"working directory traversal", "marker.txt", workspace + "/link/..", "marker.txt"},
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Symlink(filepath.Join(protected, "nested"), filepath.Join(workspace, "back\\slash")); err != nil {
+			t.Fatal(err)
+		}
+		cases = append(cases, struct{ name, path, cwd, suffix string }{
+			"literal Unix backslash", "back\\slash/../marker.txt", workspace, "marker.txt",
+		})
+		if err := os.Symlink(filepath.Join(protected, "nested"), filepath.Join(workspace, "trailing\\")); err != nil {
+			t.Fatal(err)
+		}
+		cases = append(cases, struct{ name, path, cwd, suffix string }{
+			"missing suffix after literal backslash", "trailing\\/new/child.txt", workspace, "nested/new/child.txt",
+		})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, resolved := cleanPathsAt(tc.path, tc.cwd)
+			if want := filepath.Join(protected, tc.suffix); resolved != want {
+				t.Fatalf("resolved = %q, want %q", resolved, want)
+			}
+			call := ToolCall{Tool: "write", WorkDir: tc.cwd, Params: map[string]any{"path": tc.path}}
+			if decision := engine.Enforce(call, EvalOptions{}); decision.Action != ActionDeny {
+				t.Fatalf("protected filesystem destination was not denied: %+v", decision)
+			}
+			allow := Condition{PathMatches: []string{filepath.ToSlash(filepath.Join(workspace, "**"))}}
+			if matchDurableAllowCondition(allow, call, nil) {
+				t.Fatal("workspace spelling granted a different filesystem destination")
+			}
+		})
+	}
+}
+
+func TestUnresolvedPathCannotGrantOrUsePolicyDefault(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
+		t.Skipf("symlinks are unavailable on this host: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing.txt"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	engine := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: scoped-path
+    match:
+      tool: read
+    rules:
+      - action: deny
+        when:
+          path_matches: ["**/protected/**"]
+`)
+	for _, name := range []string{"loop/marker.txt", "dangling"} {
+		t.Run(name, func(t *testing.T) {
+			call := ToolCall{Tool: "read", Params: map[string]any{"path": filepath.Join(root, name)}}
+			condition := Condition{PathMatches: []string{filepath.ToSlash(filepath.Join(root, "**"))}}
+			if matchDurableAllowCondition(condition, call, nil) {
+				t.Fatal("unresolved filesystem destination must not establish a durable grant")
+			}
+			decision := engine.Enforce(call, EvalOptions{})
+			if decision.Action != ActionDeny || !strings.Contains(decision.Message, "cannot resolve tool path") {
+				t.Fatalf("unresolved scoped path should fail explicitly: %+v", decision)
+			}
+			if len(decision.MatchedPolicies) != 0 {
+				t.Fatal("resolution failure must not claim a policy pattern matched")
+			}
+			call.Tool = "write"
+			if decision := engine.Enforce(call, EvalOptions{}); decision.Action != ActionAllow {
+				t.Fatalf("unrelated tool scope should retain its default: %+v", decision)
+			}
+		})
+	}
+}
+
+func TestUnresolvedPathPreservesRuleApplicability(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
+		t.Skipf("symlinks are unavailable on this host: %v", err)
+	}
+	for _, tc := range []struct {
+		name, rules string
+	}{
+		{"unconditional predecessor", `
+      - action: allow
+      - action: deny
+        when:
+          path_matches: ["**/protected/**"]`},
+		{"default ignores other fields", `
+      - action: allow
+        when:
+          default: true
+          path_matches: ["**/protected/**"]`},
+		{"false non-path condition", `
+      - action: deny
+        when:
+          command_matches: ["restricted-command"]
+          path_matches: ["**/protected/**"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies:
+  - name: ordered-path
+    match:
+      tool: read
+    rules:`+tc.rules)
+			call := ToolCall{Tool: "read", Params: map[string]any{"path": filepath.Join(root, "loop")}}
+			if decision := e.Enforce(call, EvalOptions{}); decision.Action != ActionAllow {
+				t.Fatalf("inapplicable path condition changed the decision: %+v", decision)
+			}
+		})
+	}
+}
+
 func TestGrantPathMustCoverLexicalAndSymlinkResolvedDestinations(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	protected := filepath.Join(t.TempDir(), "protected")
@@ -460,7 +614,8 @@ func TestGrantPathMustCoverLexicalAndSymlinkResolvedDestinations(t *testing.T) {
 	allowWorkspace := Condition{PathMatches: []string{filepath.ToSlash(filepath.Join(workspace, "**"))}}
 	direct := ToolCall{Tool: "write", WorkDir: workspace, Params: map[string]any{"path": "safe.txt"}}
 	if !matchConditionForAction(allowWorkspace, direct, nil, ActionAllow) {
-		t.Fatalf("direct path inside the allowed workspace should remain allowed: candidates=%v", pathCandidates(direct))
+		candidates, _ := pathCandidates(direct)
+		t.Fatalf("direct path inside the allowed workspace should remain allowed: candidates=%v", candidates)
 	}
 	if !matchDurableAllowCondition(allowWorkspace, direct, nil) {
 		t.Fatal("durable path allow rejected its direct destination")

@@ -492,7 +492,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				logLevel = slog.LevelDebug
 				logWriter = cmd.ErrOrStderr()
 			}
-			logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel}))
+			logger := audit.NewRedactingLogger(slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel})))
 
 			// Cleanup stale session state files in the background (best-effort).
 			// This runs once per hook invocation; typically fires every few seconds
@@ -937,9 +937,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						autoDiscovered: serveAutoDiscovered,
 						errWriter:      cmd.ErrOrStderr(),
 					}
-					command, _ := call.Params["command"].(string)
-					path := call.Path() // handles both "file_path" (Claude Code) and "path"
-					result := approvalClient.requestApprovalCtx(cmd.Context(), call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg, 5*time.Minute)
+					result := approvalClient.requestApprovalCtx(cmd.Context(), call, reasonMsg, 5*time.Minute)
 					if result == hookAsk {
 						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
 					}
@@ -957,10 +955,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						autoDiscovered: serveAutoDiscovered,
 						errWriter:      cmd.ErrOrStderr(),
 					}
-					command, _ := call.Params["command"].(string)
-					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -1001,10 +997,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 						autoDiscovered: serveAutoDiscovered,
 						errWriter:      cmd.ErrOrStderr(),
 					}
-					command, _ := call.Params["command"].(string)
-					path := call.Path()
 					registerCtx, cancelRegister := context.WithTimeout(cmd.Context(), 400*time.Millisecond)
-					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call.Tool, command, call.Agent, path, call.RunID, call.ToolCallID, reasonMsg); regErr == nil {
+					if approvalID, regErr := approvalClient.registerAskAuditCtx(registerCtx, call, reasonMsg); regErr == nil {
 						auditApprovalID = approvalID
 					} else {
 						logger.Debug("hook: ask audit registration failed (best-effort)", "error", regErr)
@@ -1050,7 +1044,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 // Returns a hookParseResult; Response is non-empty for PostToolUse events.
 func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input hookInput
-	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+	decoder := json.NewDecoder(reader)
+	decoder.UseNumber()
+	if err := decoder.Decode(&input); err != nil {
 		return nil, err
 	}
 	event := strings.TrimSpace(input.HookEventName)
@@ -1273,7 +1269,9 @@ func redactClaudeToolOutput(value any) any {
 // parseClineInput parses Cline hook input format
 func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog.Logger) (*hookParseResult, error) {
 	var input clineHookInput
-	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+	decoder := json.NewDecoder(reader)
+	decoder.UseNumber()
+	if err := decoder.Decode(&input); err != nil {
 		return nil, err
 	}
 
@@ -1523,7 +1521,7 @@ func decodeClineNestedValue(value any) any {
 		return value
 	}
 	var decoded any
-	if json.Unmarshal([]byte(trimmed), &decoded) == nil {
+	if decodeUserJSON([]byte(trimmed), &decoded) == nil {
 		return decoded
 	}
 	return value

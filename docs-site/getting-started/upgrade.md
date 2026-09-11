@@ -51,21 +51,19 @@ legacy `~\.rampart` ACL found on v1.2.x installations.
 
 ### Manual Binary
 
-Download the latest release from [GitHub Releases](https://github.com/peg/rampart/releases):
+For an existing manually installed binary on macOS or Linux, use the built-in
+upgrader:
 
 ```bash
-# macOS (Apple Silicon)
-curl -sL https://github.com/peg/rampart/releases/latest/download/rampart_$(curl -s https://api.github.com/repos/peg/rampart/releases/latest | grep tag_name | cut -d'"' -f4 | tr -d v)_darwin_arm64.tar.gz | tar xz
-sudo mv rampart /usr/local/bin/
-
-# macOS (Intel)
-curl -sL https://github.com/peg/rampart/releases/latest/download/rampart_$(curl -s https://api.github.com/repos/peg/rampart/releases/latest | grep tag_name | cut -d'"' -f4 | tr -d v)_darwin_amd64.tar.gz | tar xz
-sudo mv rampart /usr/local/bin/
-
-# Linux (x64)
-curl -sL https://github.com/peg/rampart/releases/latest/download/rampart_$(curl -s https://api.github.com/repos/peg/rampart/releases/latest | grep tag_name | cut -d'"' -f4 | tr -d v)_linux_amd64.tar.gz | tar xz
-sudo mv rampart /usr/local/bin/
+rampart upgrade
 ```
+
+It verifies the release checksum and candidate version before replacing the
+running CLI's installation. It retains rollback state until the managed runtime
+has restarted successfully. Homebrew-managed binaries direct you to Homebrew
+instead. If Rampart cannot run, use the [official installer](installation.md)
+and its reported installation path; avoid copying an unchecked archive over an
+existing executable.
 
 ### Verify
 
@@ -135,6 +133,21 @@ in place during the transition. Run `rampart protect` once to refresh only the
 managed integration entries and adopt any newer hook or plugin format. Custom
 policies, unrelated host hooks, memories, sessions, and credentials are not
 replaced.
+
+## Legacy approval actions
+
+`action: require_approval` was removed in v0.9.9 and is rejected by the policy
+engine and linter. Replace it with `action: ask` before using an old policy with
+a current release. Native and external approval paths have different owners;
+see [approval paths and limits](support-matrix.md#approval-paths-and-limits).
+`ask.audit: true` adds best-effort native review mirroring; it does not make the
+dashboard another native approval owner. `ask.headless_only: true` selects the
+service-backed blocking path for the Claude hook; use `deny` when an unattended
+job must not wait for review.
+
+Run `rampart policy lint /path/to/policy.yaml` after editing. The old
+`require_approval` spelling remains accepted only in notification filters for
+compatibility, not as a policy action.
 
 ## Breaking Changes
 

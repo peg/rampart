@@ -1,281 +1,147 @@
 ---
-title: Protect Your First Agent in 5 Minutes
-description: "Follow Rampart's 5-minute tutorial to secure your first AI coding agent. Block unsafe commands, test policy decisions, and understand approval flow."
+title: Check Your First Protected Agent
+description: "Check Rampart with harmless marker files: observe allowed and denied calls, review an approval, and correlate the audit record."
 ---
 
-# Protect Your First Agent in 5 Minutes
+# Check Your First Protected Agent
 
-So you've got an AI agent writing code on your machine. Maybe it's Claude Code, maybe it's Codex, maybe it's Cline. It can run commands, read your files, and — if you're not careful — do things you didn't ask for.
+This walkthrough uses Claude Code on macOS or Linux and harmless marker files
+in a disposable project. It separates policy checks from evidence that a real
+host invoked Rampart. Follow the [installation guide](installation.md) first.
 
-Rampart checks actions that your chosen integration exposes against rules you
-define. Matching denies stop before host execution; approval behavior depends
-on the integration. It is a policy boundary, not a sandbox.
-
-Let's set it up.
-
----
-
-## Prerequisites
-
-- **macOS or Linux** (Windows WSL works too)
-- **Go 1.26.8+** (recommended) or the install script for a no-Go option
-- **Claude Code, Codex, or Cline** — this guide uses Claude Code, but Rampart works with [many agents](../integrations/index.md)
-
----
-
-## Step 1: Install
-
-=== "Go install (recommended)"
-
-    ```bash
-    go install github.com/peg/rampart/cmd/rampart@latest
-    ```
-
-=== "Script"
-
-    ```bash
-    curl -fsSL https://rampart.sh/install | sh
-    ```
-
-=== "Homebrew"
-
-    ```bash
-    brew install peg/tap/rampart
-    ```
-
-Verify:
+## Protect and inspect
 
 ```bash
-rampart version
+rampart protect claude-code
+rampart verify claude-code
+rampart status
 ```
 
-!!! tip "Command not found?"
-    Make sure `$(go env GOPATH)/bin` is in your `PATH`, or symlink: `sudo ln -sf $(go env GOPATH)/bin/rampart /usr/local/bin/rampart`
+Resolve any reported failures before continuing. Claude's verifier checks the
+installed configuration and Rampart adapter without launching Claude or running
+a tool. The next steps exercise the actual host boundary.
 
----
+## Create a disposable project
 
-## Step 2: One Command to Get Protected
+Run these commands yourself in a terminal:
 
 ```bash
-rampart protect
+rampart_tutorial_dir=$(mktemp -d "${TMPDIR:-/tmp}/rampart-tutorial.XXXXXX")
+cd "$rampart_tutorial_dir"
+git init -q
+mkdir .rampart
 ```
 
-That's it. This single command:
-
-1. Detects your AI agent (Claude Code, Codex, Cline, etc.)
-2. Installs the right Rampart integration for that agent
-3. Starts or verifies the local `rampart serve` policy service
-4. Runs active safe verification and records the resulting assurance evidence
-
-The command exits unsuccessfully if a selected native integration cannot be
-configured or its active safe verification is incomplete. Its final report
-shows the checks that passed and gives a specific repair hint for any failure.
-
-Now start Claude Code:
-
-```bash
-claude
-```
-
-Claude Code sends its hook-visible tool requests through Rampart. Routine
-requests usually pass immediately; policy can deny or request approval for
-risky requests before Claude Code invokes the tool. This boundary does not
-observe work performed inside an already allowed process.
-
-!!! note "Different agents use different integration paths"
-    Claude Code, Cline, and Codex use native hooks; Gemini CLI has an experimental native-hook path. OpenClaw uses a native
-    plugin. The exact setup varies by agent, but `rampart protect` picks the
-    right path automatically. See the [support matrix](support-matrix.md).
-
----
-
-## Step 3: See It in Action
-
-### Blocked commands
-
-Ask Claude to do something destructive:
-
-> "Delete everything in the root directory"
-
-Claude Code will attempt `rm -rf /`. Rampart stops it:
-
-```
-🛡️ Rampart blocked: rm -rf /
-   Reason: Destructive command blocked
-```
-
-The command never ran.
-
-### Approved commands
-
-Safe commands pass through transparently:
-
-> "Run the tests, then commit the result"
-
-```
-npm test      ✅ allowed
-git add .     ✅ allowed
-git commit    ✅ allowed
-```
-
-No friction, no delays.
-
-### Commands requiring approval
-
-Some commands are too impactful to auto-allow or auto-deny — they should pause for a human decision. For example, deploying to production:
-
-> "Push this to main and deploy"
-
-```
-⏳ Approval required — "git push origin main"
-   Approve at: http://localhost:9090/dashboard/
-   Approval ID: 01KHT3...
-```
-
-Rampart pauses Claude Code and waits. Open the dashboard, review the request, and approve or deny it:
-
-```
-open http://localhost:9090/dashboard/
-```
-
-![Dashboard approval card showing the pending command with Approve and Deny buttons]
-
-Approve it → Claude continues. Deny it → Claude gets an explanation and tries a different approach.
-
-!!! tip "Working with an agent team?"
-    Pending approvals are grouped only when the calls report the same agent,
-    session, run ID, and credential owner. **Approve Pending** affects only the
-    calls shown; **Allow Future** separately grants time-bounded authority for
-    that exact team run without authorizing a colliding run ID or another
-    credential.
-
----
-
-## Step 4: Customize Your Policy
-
-The default policy blocks destructive commands. Your project probably needs more nuance. Open the policy file and edit it:
-
-```bash
-$EDITOR ~/.rampart/policies/custom.yaml
-```
-
-Here's what a real policy looks like:
+Save this policy as `.rampart/policy.yaml` in that new directory:
 
 ```yaml
 version: "1"
 default_action: allow
-
 policies:
-  - name: block-destructive
+  - name: tutorial-marker-actions
     match:
-      tool: ["exec"]
+      tool: [exec]
     rules:
       - action: deny
         when:
-          command_matches:
-            - "rm -rf /"
-            - "rm -rf ~"
-            - "dd if=*"
-            - "mkfs*"
-        message: "Destructive command blocked"
-
-  - name: approve-deploys
-    match:
-      tool: ["exec"]
-    rules:
+          command_contains: [rampart-denied-marker.txt]
+        message: "Tutorial marker creation denied"
       - action: ask
         when:
-          command_matches:
-            - "git push *main*"
-            - "npm publish*"
-            - "docker push *"
-        message: "Production deploy — approve?"
-
-  - name: block-credentials
-    match:
-      tool: ["read"]
-    rules:
-      - action: deny
+          command_contains: [rampart-review-marker.txt]
+        message: "Review this harmless tutorial marker"
+      - action: allow
         when:
-          path_matches:
-            - "**/.env"
-            - "**/.ssh/id_*"
-            - "**/.aws/credentials"
-        message: "Credential file access blocked"
+          command_contains: [rampart-allowed-marker.txt]
 ```
 
-After editing, validate before trusting it:
+Project policy adds restrictions to the global policy. It does not override a
+global deny. Keep `RAMPART_NO_PROJECT_POLICY` unset for this walkthrough. See
+[Project Policies](../guides/project-policies.md) if your environment disables
+project policy or imposes additional restrictions.
+
+## Check the policy before using the agent
 
 ```bash
-# Check for syntax errors and common mistakes
-rampart policy lint ~/.rampart/policies/custom.yaml
-
-# Test a specific command against your policy
-rampart test "git push origin main"
-# → ask (approve-deploys)
-
-rampart test "rm -rf /"
-# → deny (block-destructive)
+rampart policy lint .rampart/policy.yaml
+rampart test --config .rampart/policy.yaml "touch rampart-allowed-marker.txt"
+rampart test --config .rampart/policy.yaml "touch rampart-denied-marker.txt"
+rampart test --config .rampart/policy.yaml "touch rampart-review-marker.txt"
 ```
 
-The dashboard also has a built-in **Policy REPL** — type any command and instantly see what your policy would do.
+Expect `allow`, `deny`, and `ask`, respectively. These commands evaluate the
+example policy as data; they do not create files or prove host enforcement.
+The agent also evaluates your global policy, which may be more restrictive.
 
-!!! tip "Start permissive, tighten later"
-    Keep `default_action: allow` and use `action: watch` rules to observe what your agent actually does before you start blocking things. Check the audit trail after a day of work, then write deny rules for what concerns you.
+## Observe the real tool calls
 
----
+In a second terminal, start `rampart watch`. Launch Claude Code from the
+new project directory and complete any host configuration trust prompts.
+Ask for each command separately, using its shell tool and this project as its
+working directory. Tell it to stop after that one attempt and not substitute
+another tool or command.
 
-## Verify Everything Is Healthy
+| Request to the agent | What to check |
+| --- | --- |
+| Run `touch rampart-allowed-marker.txt` | A matching allow record and the marker file appear. |
+| Run `touch rampart-denied-marker.txt` | The audit record names `tutorial-marker-actions` with a deny; the marker is absent. |
+| Run `touch rampart-review-marker.txt` | Claude shows its native approval prompt. Before resolving it, the marker is absent. Deny the prompt and confirm it remains absent. |
 
-At any point, run:
+Check the files yourself in the original terminal, not through the agent:
 
 ```bash
-rampart doctor
+ls -l rampart-allowed-marker.txt
+test ! -e rampart-denied-marker.txt && echo "Denied marker absent"
+test ! -e rampart-review-marker.txt && echo "Review marker absent"
 ```
 
-```
-✓ rampart in PATH
-✓ Token configured
-✓ Hook binary path verified
-✓ Service reachable (localhost:9090)
-✓ Token auth working
-✓ 4 policies loaded
-⚠ 2 pending approvals
-```
+A model refusal or missing file alone is inconclusive: the host must attempt
+the call and a matching Rampart decision must appear. If the agent uses a
+different tool, changes the command, or never invokes a tool, repeat the
+requested shell action before drawing a conclusion. If a denied marker appears,
+stop using that boundary and inspect the integration with
+[troubleshooting](troubleshooting.md).
 
-Green checks mean the reported installation and integration diagnostics passed.
-They do not prove coverage of actions the host does not expose; review the
-[support matrix](support-matrix.md) and [threat model](../reference/threat-model.md).
+## Approve one action
 
----
+Request `touch rampart-review-marker.txt` again. Inspect the complete command
+and working directory in Claude's prompt, then approve only that invocation.
+Confirm the marker appears and correlate the request with its audit record.
 
-## What Happens on a Hook-Visible Tool Call
+Remove that one marker yourself:
 
-```
-Agent wants to run "npm test"
-        │
-        ▼
-Claude Code PreToolUse hook fires
-        │
-        ▼
-Rampart evaluates against YAML policies (microsecond-scale in-process):
-  1. Does "npm test" match block-destructive?  No.
-  2. Does "npm test" match approve-deploys?    No.
-  3. No rules matched → default_action: allow
-        │
-        ▼
-✅ Command executes normally
+```bash
+rm -- rampart-review-marker.txt
 ```
 
-The in-process evaluation is **microsecond-scale**. End-to-end hook latency also
-includes host process startup and audit I/O.
+Ask for the same shell command once more. It should require fresh review;
+deny it and confirm the marker stays absent. Do not select a persistent host
+permission while checking an individual approval.
 
----
+Claude owns its native prompt and resume. A dashboard entry mirrored for
+`ask.audit` is not another way to resume that native request. Codex and Cursor
+use Rampart's external queue; OpenClaw uses its own native approval UI. Use the
+[approval paths and limits](support-matrix.md#approval-paths-and-limits) for
+other integrations.
 
-## Next Steps
+## Read the evidence and finish
 
-- **[Example Policies](https://github.com/peg/rampart/tree/main/policies/examples)** — Ready-to-use templates for web dev, infrastructure, data science, and lockdown
-- **[Policy Engine →](../features/policy-engine.md)** — Condition types, rule priority, glob patterns
-- **[Dashboard →](../features/dashboard.md)** — Approval flow, audit history, policy management
-- **[Integration Guides →](../integrations/index.md)** — Cline, Cursor, Codex, MCP servers
-- **[Configuration →](configuration.md)** — Advanced options, webhooks, signing
+```bash
+rampart audit tail
+rampart audit verify
+```
+
+Check the tool, command, decision, and available session/call identifiers.
+The audit records the decision at Rampart's boundary; the marker provides
+separate evidence of an effect. Neither establishes coverage inside an allowed
+process or across every possible host tool.
+
+For release validation, also exercise expiry, cancellation, service failure,
+and changed arguments through the affected host. Host timeout and resume
+behavior differ; the [support matrix](support-matrix.md) identifies those limits.
+Do failure testing in an isolated installation, not by stopping a service that
+protects other ongoing work.
+
+When finished, exit the agent and remove the tutorial policy and marker files
+from this disposable project. Keep your ordinary installation protected.
+For real policies, continue with [Customizing Policy](../guides/customizing-policy.md).

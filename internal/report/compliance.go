@@ -217,9 +217,12 @@ func (r *PostureReport) applyAuditControlResults(auditDir string, auditFiles []s
 
 	if len(periodEvents) > 0 {
 		r.Controls["RC-1"] = ComplianceControl{
-			Name:     "Tool Call Authorization",
-			Status:   ControlStatusPass,
-			Evidence: []string{fmt.Sprintf("Found %d audited tool-call events in reporting period.", len(periodEvents))},
+			Name:   "Tool Call Authorization",
+			Status: ControlStatusWarn,
+			Evidence: []string{
+				fmt.Sprintf("Found %d audit events in reporting period.", len(periodEvents)),
+				"Recorded events do not prove that every host action was evaluated or that the host enforced each decision.",
+			},
 		}
 	} else {
 		r.Controls["RC-1"] = ComplianceControl{
@@ -233,15 +236,18 @@ func (r *PostureReport) applyAuditControlResults(auditDir string, auditFiles []s
 
 	if counts.Ask > 0 {
 		r.Controls["RC-3"] = ComplianceControl{
-			Name:     "Human-in-the-Loop",
-			Status:   ControlStatusPass,
-			Evidence: []string{fmt.Sprintf("Found %d ask decisions in reporting period.", counts.Ask)},
+			Name:   "Human-in-the-Loop",
+			Status: ControlStatusWarn,
+			Evidence: []string{
+				fmt.Sprintf("Found %d approval requests (ask decisions) in reporting period.", counts.Ask),
+				"An approval request does not prove that a human reviewed or resolved it, or that the host enforced the result.",
+			},
 		}
 	} else {
 		r.Controls["RC-3"] = ComplianceControl{
 			Name:     "Human-in-the-Loop",
 			Status:   ControlStatusWarn,
-			Evidence: []string{"No ask decisions found in reporting period."},
+			Evidence: []string{"No approval requests (ask decisions) found in reporting period. This does not indicate a policy weakness; denied actions may need no approval."},
 		}
 	}
 }
@@ -297,17 +303,16 @@ func (r *PostureReport) applyPolicyControlResult(policyPath string) {
 		return
 	}
 
-	// Note: evaluateSensitiveDenyCoverage uses keyword proximity heuristics,
-	// not semantic YAML parsing. Manual review of the policy file is recommended
-	// for full assurance that deny rules actually match the sensitive paths.
+	// This scan observes policy text, not a parsed or loaded enforcement policy.
+	// Keyword proximity cannot establish that any represented access is blocked.
 	covered, found, missing := evaluateSensitiveDenyCoverage(string(data))
-	heuristicNote := "Note: coverage check is keyword proximity heuristic — manual policy review recommended for full assurance."
+	heuristicNote := "Keyword proximity does not validate policy syntax, loaded configuration, rule matching, or prevention of data exfiltration."
 	if covered {
 		r.Controls["RC-4"] = ComplianceControl{
 			Name:   "Data Exfiltration Prevention",
-			Status: ControlStatusPass,
+			Status: ControlStatusWarn,
 			Evidence: []string{
-				fmt.Sprintf("Keyword proximity check passed for: %s", strings.Join(found, ", ")),
+				fmt.Sprintf("Found sensitive-path keywords near deny text for: %s", strings.Join(found, ", ")),
 				heuristicNote,
 			},
 		}
@@ -600,8 +605,8 @@ func FormatPostureTextReport(report *PostureReport) string {
 
 	_, _ = fmt.Fprintf(&b, "Rampart Security Posture Report\n")
 	_, _ = fmt.Fprintf(&b, "================================\n")
-	_, _ = fmt.Fprintf(&b, "This report evaluates how well your Rampart deployment enforces key\n")
-	_, _ = fmt.Fprintf(&b, "agent security controls.\n")
+	_, _ = fmt.Fprintf(&b, "This report summarizes local audit and policy evidence. It does not\n")
+	_, _ = fmt.Fprintf(&b, "certify enforcement, human oversight, or compliance.\n")
 	_, _ = fmt.Fprintf(&b, "Learn more: https://docs.rampart.sh/guides/compliance/\n\n")
 	_, _ = fmt.Fprintf(&b, "Report ID: %s\n", report.ReportID)
 	_, _ = fmt.Fprintf(&b, "Generated: %s\n", report.GeneratedAt.Format(time.RFC3339))
@@ -631,23 +636,23 @@ func FormatPostureTextReport(report *PostureReport) string {
 		}
 	}
 
-	// Remediation hints for non-compliant controls.
+	// Evidence gaps do not justify weakening policy or replacing user settings.
 	var remediations []string
 	if c, ok := report.Controls["RC-1"]; ok && c.Status != ControlStatusPass {
-		remediations = append(remediations, "RC-1: Run 'rampart doctor' to verify hooks are installed, then use an AI agent to generate audit events.")
+		remediations = append(remediations, "RC-1: Check installation with 'rampart doctor'; validate allow and deny behavior through the actual host boundary.")
 	}
 	if c, ok := report.Controls["RC-2"]; ok && c.Status == ControlStatusFail {
 		remediations = append(remediations, "RC-2: Run 'rampart audit verify' to inspect chain integrity. Old or manually-edited audit files can cause hash mismatches.")
 	}
 	if c, ok := report.Controls["RC-3"]; ok && c.Status != ControlStatusPass {
-		remediations = append(remediations, "RC-3: Use 'action: ask' (not 'action: deny') for sensitive operations so human approval events appear in the audit log.")
+		remediations = append(remediations, "RC-3: Validate complete action review and approval resolution through the host. Keep deny rules where actions must remain forbidden.")
 	}
 	if c, ok := report.Controls["RC-4"]; ok && c.Status != ControlStatusPass {
-		remediations = append(remediations, "RC-4: Run 'rampart init --profile standard --force' to ensure credential-blocking rules are active.")
+		remediations = append(remediations, "RC-4: Validate the active policy and safely check representative sensitive-path denials through the host; keyword matches alone are insufficient.")
 	}
 	if len(remediations) > 0 {
-		_, _ = fmt.Fprintf(&b, "\nRemediation\n")
-		_, _ = fmt.Fprintf(&b, "-----------\n")
+		_, _ = fmt.Fprintf(&b, "\nFollow-up checks\n")
+		_, _ = fmt.Fprintf(&b, "----------------\n")
 		for _, r := range remediations {
 			_, _ = fmt.Fprintf(&b, "  %s\n", r)
 		}

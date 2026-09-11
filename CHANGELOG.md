@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-09-10
+
+### Security
+
+- Preserve filesystem traversal when evaluating path policies, including relative
+  paths and missing descendants under symlinked directories. If an applicable
+  path rule needs a destination that cannot be resolved safely, deny explicitly
+  instead of granting from a cleaned spelling. Looping and dangling links can
+  therefore require repair before the protected operation proceeds.
+- Preserve exact JSON numeric arguments through HTTP, MCP and native-hook input
+  decoding, approval identity, review and audit recovery. The dashboard renders
+  redacted action text supplied by the service so browser conversion cannot change the
+  review. Values already rounded by the upstream host cannot be recovered.
+- Keep complete external action identity through approval transport and separate
+  a held host invocation from HTTP replay authorization. Invalid or incomplete
+  action formats fail closed; ordinary non-project sessions remain supported.
+- Redact common credential patterns in foreground diagnostics and host-supplied
+  audit metadata before output or new persistence. Existing audit history and
+  private authorization identity are preserved.
+
+### Fixed
+
+- Recover from failed partial audit appends while retaining prior records and
+  rejecting unexplained corruption. The failed request remains denied; later
+  audited requests can resume when storage is available.
+- Check the configured service endpoint and report its actual mode. Policy
+  fallback is shown separately, and an unavailable service invalidates dependent
+  cached assurance instead of borrowing another daemon's health.
+- Invalidate OpenClaw verification receipts when owned configuration or plugin
+  integrity changes. Keep posture reports within the evidence actually observed.
+- Repair Docker policy generation, Python authentication setup, manual upgrade
+  instructions and the public Go SDK constructor example.
+
+### Changed
+
+- Consolidate documentation navigation and duplicated guides, correct approval
+  ownership and support claims, and retain compatibility redirects. Update the
+  CLI and its owned integration setup together; native host limitations remain
+  documented in the support matrix.
+
 ## [1.9.0] - 2026-09-07
 
 ### Added

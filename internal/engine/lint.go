@@ -262,16 +262,15 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 	}
 
 	// Agent-scoping note for action: ask.
-	// The native Claude Code permission dialog only works for the claude-code agent.
-	// On other agents this falls back to deny, which is usually the correct/stricter
-	// behaviour. Reported as info so doctor output stays clean for standard policies.
+	// Approval ownership and resume support depend on the integration.
+	// Keep this informational; the same rule may be intentional across hosts.
 	if actionLower == "ask" {
 		effectiveAgent := p.Match.EffectiveAgent()
 		if effectiveAgent != "claude-code" {
 			result.add(LintFinding{
 				File:     filename,
 				Severity: LintInfo,
-				Message:  fmt.Sprintf("policy %q rule %d: action \"ask\" uses the native Claude Code permission prompt when available; other agents queue for approval via the dashboard. Add match.agent: [\"claude-code\"] to restrict to Claude Code only.", p.Name, ruleIdx+1),
+				Message:  fmt.Sprintf("policy %q rule %d: action \"ask\" depends on the integration: native host prompt, Rampart external queue, or refusal when no resolver is connected. Add match.agent: [\"claude-code\"] to restrict to Claude Code only.", p.Name, ruleIdx+1),
 			})
 		}
 	}

@@ -20,8 +20,15 @@ description: "Secure MCP tools with Rampart's transparent proxy. Enforce policy 
 rampart mcp -- npx @modelcontextprotocol/server-filesystem /path
 
 # Monitor mode (log only)
-rampart mcp --mode monitor -- npx @modelcontextprotocol/server-fs .
+rampart mcp --mode monitor -- npx @modelcontextprotocol/server-filesystem .
 ```
+
+!!! warning "Standalone approval limit"
+    `rampart mcp` evaluates policies locally but has no connected approval
+    resolver. In enforce mode, `ask` immediately refuses the call; it does not
+    create a request in `rampart pending` or the dashboard. Starting
+    `rampart serve` alone does not change this. Use explicit operator-reviewed
+    `allow` or `deny` rules for this path.
 
 ## MCP Client Configuration
 
@@ -112,9 +119,11 @@ policy:
 
 **Use both together** for defense in depth — hooks catch shell commands, MCP proxy catches tool calls.
 
-## Common MCP Servers It Works With
+## MCP server examples
 
-Rampart's MCP proxy works with **any** MCP server that uses stdio transport. Some popular ones:
+The proxy wraps command-launched MCP servers using newline-delimited JSON-RPC
+over stdio. Compatibility with a particular server, client, or optional
+protocol feature requires its own verification. Examples of server categories:
 
 | Server | Package | What It Does |
 |--------|---------|-------------|
@@ -191,7 +200,7 @@ policies:
       tool: ["mcp-dangerous"]
     rules:
       - action: ask
-        message: "Risky MCP operation — approve?"
+        message: "Risky MCP operation requires approval; standalone proxy refuses this call"
 
   - name: block-file-deletion
     match:
@@ -207,17 +216,15 @@ policies:
       tool: ["mcp"]
     rules:
       - action: ask
-        message: "Unclassified MCP tool call — approve?"
+        message: "Unclassified MCP tool requires approval; standalone proxy refuses this call"
 ```
 
 See [`configs/examples/mcp-server.yaml`](https://github.com/peg/rampart/blob/main/configs/examples/mcp-server.yaml) for a ready-to-use template.
 
-!!! warning "Approval-required rules"
-    The standalone stdio proxy does not expose a resolver through `rampart
-    serve`. An `ask` decision therefore fails closed immediately instead of
-    creating an unreachable pending request. Use explicit `allow` or `deny`
-    rules for this path until a service-backed exact-call approval owner is
-    available.
+The `ask` rules above retain their approval-required meaning, but the standalone
+proxy refuses them as described in the [approval limit](#usage). They do not
+present an approval button. See the [support matrix](../getting-started/support-matrix.md#approval-paths-and-limits)
+for integrations that provide an approval flow.
 
 ## Example: Proxmox MCP Policy
 

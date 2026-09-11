@@ -16,6 +16,11 @@ python -m pip install ./sdks/python
 
 ## Quick Start
 
+Start the local service and configure authentication using the
+[Python integration guide](https://docs.rampart.sh/integrations/python-agents/).
+The client reads `RAMPART_URL` and `RAMPART_TOKEN`; it does not automatically
+load the service's token file. Keep tokens out of source code and logs.
+
 ### Basic Client Usage
 
 ```python

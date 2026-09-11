@@ -35,7 +35,9 @@ type antigravityHookOutput struct {
 
 func parseAntigravityInput(reader io.Reader) (*hookParseResult, error) {
 	var input antigravityHookInput
-	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+	decoder := json.NewDecoder(reader)
+	decoder.UseNumber()
+	if err := decoder.Decode(&input); err != nil {
 		return nil, err
 	}
 	toolName := strings.TrimSpace(input.ToolCall.Name)

@@ -45,19 +45,43 @@ func TestOpenClawOriginalInputPreservesPolicyFacts(t *testing.T) {
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 const { default: plugin } = await import(pathToFileURL(process.argv[1]));
+const fetchHTTP = globalThis.fetch;
+// Initialize Node's real HTTP client before measuring a policy exchange. This
+// test covers policy facts, not cold client startup; the Go context bounds the
+// readiness request and the complete script without retrying either request.
+const readinessStarted = performance.now();
+const readiness = await fetchHTTP(new URL('/healthz', process.argv[2]));
+assert.equal(readiness.status, 200, 'policy fixture readiness failed');
+await readiness.arrayBuffer();
+const readinessMs = Math.round(performance.now() - readinessStarted);
+console.log('OpenClaw policy HTTP fixture ready in ' + readinessMs + 'ms');
 const handlers = {};
+const warnings = [];
 plugin.register({
   pluginConfig: { serveUrl: process.argv[2] },
-  logger: { info() {}, warn() {}, debug() {} },
+  logger: { info() {}, warn(message) { warnings.push(message); }, debug() {} },
   on(name, fn) { handlers[name] = fn; },
   registerGatewayMethod() {},
 });
-const fetchHTTP = globalThis.fetch;
 let observed;
+let requestCount = 0;
 globalThis.fetch = async (url, options) => {
-  const response = await fetchHTTP(url, options);
-  observed = { request: JSON.parse(options.body), response: await response.clone().json() };
-  return response;
+  const started = performance.now();
+  const attempt = { request: JSON.parse(options.body) };
+  observed = attempt;
+  requestCount++;
+  try {
+    const response = await fetchHTTP(url, options);
+    attempt.status = response.status;
+    attempt.response = await response.clone().json();
+    return response;
+  } catch (error) {
+    attempt.error = { name: error?.name, code: error?.code ?? error?.cause?.code };
+    throw error;
+  } finally {
+    attempt.elapsedMs = Math.round(performance.now() - started);
+    attempt.aborted = options.signal?.aborted === true;
+  }
 };
 const cases = [
   ['message', { action: 'send', target: 'channel:other', message: 'canary' }, 'ask'],
@@ -77,9 +101,20 @@ for (const [toolName, params, expected] of cases) {
       rampart_origin_channel: 'decoy',
     } : {}) };
     const before = JSON.stringify(original);
+    observed = undefined;
+    requestCount = 0;
+    warnings.length = 0;
     const result = await handlers.before_tool_call({ toolName, params: original }, {
       agentId: 'a', sessionKey: 's', runId: 'r', channelId: spoof ? undefined : 'origin',
     });
+    const exchange = observed && {
+      status: observed.status, error: observed.error,
+      elapsedMs: observed.elapsedMs, aborted: observed.aborted,
+    };
+    assert.ok(observed?.response, toolName + ': HTTP policy exchange did not complete: ' +
+      JSON.stringify({ spoof, readinessMs, requestCount, exchange, result, warnings }));
+    assert.equal(requestCount, 1, toolName + ': expected one fresh HTTP policy exchange');
+    assert.equal(observed.status, 200, toolName + ': HTTP policy exchange status');
     assert.equal(observed.response.decision, expected, toolName + ': policy decision');
     assert.equal(observed.request.input.rampart_consequence, observed.request.params.rampart_consequence);
     assert.equal(observed.request.params.rampart_requester, undefined);

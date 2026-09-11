@@ -52,18 +52,23 @@ For each tool call:
 4. If `ask`, OpenClaw owns the native approval flow
 5. The user can allow once or deny. A request exceeding the native full-review limit is blocked before an approval is created. See [complete action approval](../integrations/openclaw.md#complete-action-approval) for size and host-composition limits.
 
-## Native exec approvals
+## Exec-event compatibility bridge
 
-Rampart also supports OpenClaw native exec approval events as a **secondary seam**.
+Rampart retains a separate bridge for OpenClaw's `exec.approval.*` events.
+These are distinct from the native plugin's `plugin.approval.*` requests.
 
-This is useful for host-exec/native approval flows that already produce OpenClaw approval events. In that mode:
+- OpenClaw owns the pending exec approval and its UI.
+- In legacy bridge-first mode, Rampart can resolve policy-allowed commands as
+  allow-once. With the native plugin enabled, the bridge leaves allow/watch
+  decisions pending so it does not override a separate host approval requirement.
+- In enforce mode, a correlated exec-event `allow-always` resolution can write
+  a command override. That is a persistent command policy, not an approval bound
+  to every parameter of the original action.
 
-- OpenClaw still owns the pending approval UI/state
-- Rampart may auto-resolve allow/deny
-- if human review is needed, the approval remains pending in OpenClaw
-- Rampart writes `allow-always` persistence after native resolution
-
-This native exec approval path is supported and remains the reference UX for exec approval behavior. The plugin path should match its single-queue ownership model and, where possible, its native approval UX.
+This compatibility behavior is not an `allow-always` capability of the native
+plugin. The managed plugin path offers allow-once and deny, and persistent
+allowances require explicit operator policy. The plugin verifier does not
+establish current-host approval delivery or rule persistence for the bridge.
 
 ## Legacy compatibility path
 
@@ -82,19 +87,24 @@ rampart verify openclaw
 rampart doctor
 ```
 
-You should verify at minimum that:
+`rampart doctor` checks installation state. `rampart verify openclaw` performs
+preflight checks and asks the loaded gateway plugin to evaluate non-executing
+policy canaries. It does not send an agent turn, execute a tool, exercise normal
+audit persistence, or prove native approval delivery and resume.
 
-- Rampart plugin is installed in OpenClaw
-- `rampart serve` is running
-- plugin decisions are reaching Rampart
-- OpenClaw-hosted `ask` decisions do not create a second Rampart approval queue
+For an end-user acceptance check, use a disposable harmless action and observe
+the actual host: no effect before review, no effect after deny or expiry, and
+exactly one effect after allow-once. Review the complete redacted action and
+correlate its policy audit record. A policy decision alone is not proof that
+the host executed the action. See the [support matrix](../getting-started/support-matrix.md)
+for evidence levels and integration limits.
 
 ## Practical guidance
 
 If you are choosing what to support for current Rampart releases:
 
 - **Supported primary path:** native OpenClaw plugin
-- **Supported secondary seam:** native exec approval events where they fit cleanly
+- **Separate compatibility path:** exec-event bridge; do not infer its behavior from plugin verification
 - **Legacy/compatibility only:** direct `dist/` patching
 
 ## Long-term goal

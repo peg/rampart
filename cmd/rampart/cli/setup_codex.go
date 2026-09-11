@@ -19,9 +19,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// decodeUserJSON preserves arbitrary numeric fields owned by the host. The
-// default map[string]any decoder converts numbers to float64, which can round
-// unrelated integer settings when Rampart later rewrites the document.
+// decodeUserJSON preserves arbitrary numeric fields owned by the host, both
+// settings and tool arguments. The default map[string]any decoder converts
+// numbers to float64, which can round values before rewriting or authorizing.
 func decodeUserJSON(data []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()

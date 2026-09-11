@@ -128,15 +128,15 @@ func newReportComplianceCmd(rootOpts *rootOptions, defaultAuditDir string) *cobr
 		Short: "Generate security posture report",
 		Long: `Generate a security posture report from audit logs.
 
-This report evaluates how well your Rampart deployment enforces key
-agent security controls. It can be shared with security teams as
-supporting evidence for compliance efforts.
+This report summarizes local audit and policy evidence. It does not certify
+enforcement, human oversight, or compliance. WARN identifies evidence that
+requires further review, not a reason to weaken policy.
 
 Controls evaluated:
-  RC-1 Tool Call Authorization  — All tool calls evaluated against policy
-  RC-2 Audit Logging            — Tamper-evident audit chain maintained
-  RC-3 Human-in-the-Loop        — Sensitive ops require human approval
-  RC-4 Data Exfiltration Prev.  — Credential/sensitive path access blocked
+  RC-1 Tool Call Authorization  — Audit events observed; host coverage unproven
+  RC-2 Audit Logging            — Local hash chain and present anchors checked
+  RC-3 Human-in-the-Loop        — Approval requests observed; oversight unproven
+  RC-4 Data Exfiltration Prev.  — Policy keywords observed; enforcement unproven
 
 Note: a fresh installation with no audit history will show FAIL.
 Run Rampart with an agent to generate audit logs, then re-run this report.

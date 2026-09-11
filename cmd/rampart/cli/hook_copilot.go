@@ -128,7 +128,7 @@ func decodeCopilotValue(raw json.RawMessage) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := decodeUserJSON(raw, &value); err != nil {
 		return nil, err
 	}
 	if params, ok := value.(map[string]any); ok {

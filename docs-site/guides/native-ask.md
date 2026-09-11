@@ -1,176 +1,93 @@
 ---
 title: Native Ask Prompt
-description: Use action:ask to trigger Claude Code's inline approval dialog for sensitive commands.
+description: "Use action: ask with Claude Code's native approval UI and understand audit mirroring and external approval mode."
 ---
 
 # Native Ask Prompt (`action: ask`)
 
-`action: ask` surfaces Claude Code's built-in inline approval dialog when a policy rule matches, instead of blocking the command outright. The user sees the command details and can approve or deny without leaving their session.
+For Claude Code's normal native-hook path, Rampart returns
+`permissionDecision: "ask"` when a policy requires review. Claude owns the
+visible prompt, the user's decision, and resumed execution. Use `deny` for
+operations that must not be authorized through a prompt.
 
-## When to Use It
+Other integrations have different owners and capabilities. See
+[Approval paths and limits](../getting-started/support-matrix.md#approval-paths-and-limits)
+before relying on the same policy across hosts.
 
-Use `action: ask` when a command is sensitive but not always dangerous — you want a human in the loop without hard-blocking legitimate use:
+## Policy syntax
 
-- Running destructive-but-sometimes-needed commands (`rm -rf build/`, database resets)
-- Outbound network calls in trusted projects
-- Commands that modify configuration files
-- Anything where context matters and you trust the user to decide
-
-For commands that should **never** run (credential access, exfiltration), use `action: deny` instead.
-
-## Policy Syntax
-
-`action` and `when` must be nested inside a `rules:` list — **not** at the policy level:
+Use Rampart's normalized tool names such as `exec`, not host names such as
+`Bash`. Put `action` and `when` inside the policy's `rules` list:
 
 ```yaml
+version: "1"
 policies:
-  - name: ask before running tests
-    rules:
-      - action: ask
-        when:
-          command_contains:
-            - pytest
-            - npm test
-        message: "Running test suite — proceed?"
-
-  - name: ask before dropping databases
-    rules:
-      - action: ask
-        when:
-          command_matches:
-            - "dropdb *"
-            - "psql * DROP *"
-        message: "This will delete a database. Are you sure?"
-```
-
-## Ask Options
-
-### `audit: true` — Log User Decisions
-
-By default, `action: ask` prompts don't log the user's response. Add `audit: true` to record approvals and denials:
-
-```yaml
-policies:
-  - name: audited-deploys
-    rules:
-      - action: ask
-        ask:
-          audit: true    # ← log the user's decision
-        when:
-          command_matches:
-            - "kubectl apply *"
-        message: "Deploy to cluster?"
-```
-
-With `audit: true`, the audit trail includes whether the user approved or denied the prompt. This is useful for compliance, debugging, and understanding agent behavior patterns.
-
-### `headless_only: true` — Block in CI
-
-Use `headless_only: true` when you want interactive approval locally but hard denies in CI/headless environments:
-
-```yaml
-policies:
-  - name: production-safety
-    rules:
-      - action: ask
-        ask:
-          audit: true
-          headless_only: true    # ← deny in CI, prompt interactively
-        when:
-          command_matches:
-            - "*--env=production*"
-        message: "Production operation requires approval"
-```
-
-**Behavior:**
-- **Interactive session** (TTY, user present): Shows native approval prompt
-- **Headless/CI** (no TTY, no `rampart serve`): Blocks with a deny
-
-This lets you write one policy that works both locally (with prompts) and in CI (with denies). See [CI/Headless Agents](ci-headless.md) for more details.
-
-### `require_approval` Migration Note
-
-Older Rampart docs and policies may still reference `action: require_approval`, but current Rampart releases require `action: ask` explicitly.
-
-Use this form instead:
-
-```yaml
-- action: ask
-  message: "Needs approval"
-```
-
-!!! warning "Removed in current releases"
-    `action: require_approval` is no longer accepted by the policy engine. Update old examples and local policies to use `action: ask`.
-
-> ⚠️ Common mistake: putting `action: ask` directly inside the policy (as a sibling of `name` or `rules`). `rampart policy lint` will catch this and explain the correct structure.
-
-## What the User Sees
-
-When a matching command is intercepted, Claude Code displays:
-
-```
-Hook PreToolUse:Bash requires confirmation for this command:
-Rampart: Running test suite — proceed?
-
-Do you want to proceed?
-> 1. Yes
-  2. No
-
-Esc to cancel · Tab to amend · ctrl+e to explain
-```
-
-Pressing `ctrl+e` expands an AI-generated explanation of what the command does and its risk level — this is a Claude Code native feature, not Rampart.
-
-## Scoping to Specific Tools
-
-By default, a policy applies to all tools. Scope it to bash-only or specific tools using `match`:
-
-```yaml
-policies:
-  - name: ask before shell commands with curl
+  - name: review-deployment
     match:
-      tool: Bash
+      tool: [exec]
     rules:
       - action: ask
         when:
-          command_contains:
-            - curl
+          command_matches: ["kubectl apply *"]
+        message: "Review this deployment"
 ```
 
-## Limitations
+An applicable deny still wins. The prompt does not grant an exception to a
+Rampart deny or prove what an allowed program will do internally.
 
-### Works in `--dangerously-skip-permissions` mode
+## Ask options
 
-`action: ask` shows the native approval prompt even when Claude Code is launched with `--dangerously-skip-permissions`. Claude Code honors hook-returned `permissionDecision: ask` regardless of the bypass flag — the user still sees the inline dialog and must approve or deny.
+### `audit: true` — Mirror native review activity
 
-### Claude Code only
+```yaml
+ask:
+  audit: true
+```
 
-`action: ask` triggers Claude Code's native permission prompt. On other agents:
+For native Claude asks, this enables best-effort pending-state mirroring to a
+reachable `rampart serve` and outcome correlation from later host tool events.
+The native prompt still owns execution. Resolving the mirrored dashboard entry
+does not resume or cancel Claude's prompt, and a missing later event does not
+prove which choice the human made. Ordinary policy decisions are audited
+independently of this optional mirroring.
 
-- **Cline** — treated as a block (`cancel: true`)
-- **Other agents** — treated as deny
+### `headless_only: true` — Use the external approval queue
 
-`rampart policy lint` will warn if you use `action: ask` without scoping the policy to `match.agent: [claude-code]`.
+```yaml
+ask:
+  headless_only: true
+```
 
-### Requires Claude Code v2.0+
+Despite the option's name, this selects the service-backed blocking approval
+path instead of Claude's native prompt; it does not detect whether a person or
+TTY is present. A reachable `rampart serve` is required. The hook waits for an
+external resolution for up to five minutes, with no native ask fallback.
+A shorter host hook timeout can end the wait first, subject to that host's
+failure behavior.
 
-The `permissionDecision: ask` hook response was introduced in Claude Code v2.0. Older versions may treat it as allow.
+For unattended jobs that must never wait for review, use explicit `deny` rules
+or the `ci` profile. See [CI/Headless Agents](ci-headless.md).
 
-## Testing Your Policy
+## Host limits
 
-Use `rampart policy lint` to validate before deploying:
+Keep Claude's own permission and sandbox settings appropriate to the work.
+Rampart cannot turn a host hook launch failure or timeout into a veto; normal
+host permissions apply. Native prompt rendering, permission modes, and resume
+semantics belong to the installed Claude version. Consult the
+[Claude integration guide](../integrations/claude-code.md#failure-boundary)
+for the current reviewed boundary.
+
+## Check your policy and installation
 
 ```bash
 rampart policy lint ~/.rampart/policies/my-policy.yaml
+rampart test --tool exec --config ~/.rampart/policies/my-policy.yaml "kubectl apply -f example.yaml"
+rampart verify claude-code
 ```
 
-And test end-to-end:
+`test` is a policy dry run; `verify` checks installed configuration and adapter
+behavior. For an actual host approval and execution check, use the
+[harmless marker walkthrough](../getting-started/tutorial.md).
 
-```bash
-rampart test "kubectl apply -f prod.yaml"
-```
-
-## See Also
-
-- [CI/Headless Agents](ci-headless.md) — headless_only behavior in detail
-- [Testing Policies](testing-policies.md) — test your rules before deploying
+Old policy files using `require_approval` must migrate to `ask`; see the
+[upgrade note](../getting-started/upgrade.md#legacy-approval-actions).

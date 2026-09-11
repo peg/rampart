@@ -112,74 +112,69 @@ extra:
 copyright: Copyright &copy; 2026 Rampart Contributors — Apache 2.0
 
 nav:
-  - Home: index.md
-  - Getting Started:
+  - Get Started:
+    - Overview: index.md
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
-    - Upgrade: getting-started/upgrade.md
+    - Check Your First Agent: getting-started/tutorial.md
+    - How It Works: getting-started/how-it-works.md
     - Support Matrix: getting-started/support-matrix.md
     - Security Assurance: getting-started/security-assurance.md
-    - How It Works: getting-started/how-it-works.md
-    - "Tutorial: 5 Minutes to Protected": getting-started/tutorial.md
-    - Configuration: getting-started/configuration.md
     - FAQ: getting-started/faq.md
-    - Troubleshooting: getting-started/troubleshooting.md
-    - Uninstall: getting-started/uninstall.md
-  - Security Guides:
-    - Securing Claude Code: guides/securing-claude-code.md
-    - Prompt Injection Protection: guides/prompt-injection.md
-    - Customizing Policy: guides/customizing-policy.md
-    - Production Guard: guides/production-guard.md
     - Install via an AI Agent: guides/agent-install.md
-    - Generate Policy from Behavior: guides/from-audit.md
-    - Testing Policies: guides/testing-policies.md
-    - Native Ask Prompt: guides/native-ask.md
-    - Project Policies: guides/project-policies.md
-    - Benchmarking: guides/benchmarking.md
-    - Windows Setup: guides/windows.md
-    - CI/Headless Agents: guides/ci-headless.md
-    - OpenClaw Approval Flow: guides/openclaw-approval.md
-    - Wazuh Integration: guides/wazuh-integration.md
-    - Codex Integration: guides/codex-integration.md
-    - Community Policies: community-policies.md
-  - Integration Guides:
-    - Overview: integrations/index.md
+  - Integrations:
+    - Choose an Integration: integrations/index.md
     - Claude Code: integrations/claude-code.md
-    - Cline: integrations/cline.md
-    - Claude Desktop: integrations/claude-desktop.md
+    - Codex: integrations/codex-cli.md
+    - OpenClaw: integrations/openclaw.md
     - Cursor: integrations/cursor.md
-    - Codex CLI: integrations/codex-cli.md
-    - Gemini CLI: integrations/gemini-cli.md
+    - Cline: integrations/cline.md
     - Antigravity: integrations/antigravity.md
     - GitHub Copilot: integrations/github-copilot.md
-    - OpenClaw: integrations/openclaw.md
-    - Hermes Agent: integrations/hermes.md
+    - Gemini CLI (Experimental): integrations/gemini-cli.md
+    - Hermes (Experimental): integrations/hermes.md
+    - Claude Desktop: integrations/claude-desktop.md
+    - MCP Proxy: features/mcp-proxy.md
     - Python Agents: integrations/python-agents.md
     - Any CLI Agent: integrations/any-cli-agent.md
-  - Features:
+    - Windows Setup: guides/windows.md
+  - Policies:
     - Policy Engine: features/policy-engine.md
-    - Audit Trail: features/audit-trail.md
-    - External Witnessing (Experimental): features/external-witness.md
-    - Webhook Notifications: features/webhooks.md
-    - Approval Dashboard: features/dashboard.md
-    - Agent Team Oversight: features/agent-teams.md
-    - MCP Proxy: features/mcp-proxy.md
-    - Semantic Verification: features/semantic-verification.md
-    - SIEM Integration: features/siem-integration.md
-  - Team & Compliance:
+    - Customizing Policy: guides/customizing-policy.md
+    - Project Policies: guides/project-policies.md
+    - Testing Policies: guides/testing-policies.md
+    - Generate Policy from Behavior: guides/from-audit.md
+    - Native Ask: guides/native-ask.md
+    - OpenClaw Approvals: guides/openclaw-approval.md
+    - Securing Claude Code: guides/securing-claude-code.md
+    - Prompt Injection: guides/prompt-injection.md
+    - Production Guard: guides/production-guard.md
+    - CI/Headless Agents: guides/ci-headless.md
+    - Community Policies: community-policies.md
     - Policy Registry: guides/policy-registry.md
     - Policy Sync: guides/policy-sync.md
-    - Security Posture Report: guides/compliance.md
-  - Migration:
-    - Migrating to v0.6.6: migration/v0.6.6.md
-  - Deployment:
+    - Semantic Verification: features/semantic-verification.md
+  - Operate:
+    - Configuration: getting-started/configuration.md
+    - Approval Dashboard: features/dashboard.md
+    - Agent Teams: features/agent-teams.md
+    - Audit Trail: features/audit-trail.md
+    - External Witnessing (Experimental): features/external-witness.md
+    - Webhooks: features/webhooks.md
+    - SIEM Integration: features/siem-integration.md
+    - Wazuh Integration: guides/wazuh-integration.md
+    - Security Posture: guides/compliance.md
     - User Separation: deployment/user-separation.md
     - Production Checklist: deployment/production-checklist.md
+    - Upgrade: getting-started/upgrade.md
+    - Troubleshooting: getting-started/troubleshooting.md
+    - Uninstall: getting-started/uninstall.md
   - Reference:
     - CLI Commands: reference/cli-commands.md
     - API Reference: reference/api-reference.md
     - Policy Schema: reference/policy-schema.md
-    - OWASP Mapping: reference/owasp-mapping.md
     - Threat Model: reference/threat-model.md
     - Architecture: reference/architecture.md
-  - Contributing: contributing.md
+    - OWASP Mapping: reference/owasp-mapping.md
+    - Benchmarking: guides/benchmarking.md
+    - Contributing: contributing.md

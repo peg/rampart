@@ -9,12 +9,38 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/peg/rampart/internal/filetxn"
 	"github.com/peg/rampart/internal/securefile"
 )
 
 const maxAuditMetadataBytes = 1024 * 1024
+
+type auditAppendHandle struct {
+	*os.File
+}
+
+func (f *auditAppendHandle) Truncate(size int64) error {
+	if runtime.GOOS != "windows" {
+		return f.File.Truncate(size)
+	}
+	// Go's Windows append handles lack FILE_WRITE_DATA, which truncation
+	// requires. Reopen without O_APPEND and verify the original file identity.
+	before, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	file, err := openAuditRegular(f.Name(), os.O_WRONLY)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := validateOpenAuditFile(f.Name(), file, before); err != nil {
+		return err
+	}
+	return file.Truncate(size)
+}
 
 // validateAuditDirectory rejects a symlink or non-directory at the audit root.
 // We intentionally validate the configured leaf rather than every ancestor:

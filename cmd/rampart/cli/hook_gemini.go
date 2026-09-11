@@ -30,7 +30,9 @@ type geminiHookOutput struct {
 
 func parseGeminiInput(reader io.Reader) (*hookParseResult, error) {
 	var input geminiHookInput
-	if err := json.NewDecoder(reader).Decode(&input); err != nil {
+	decoder := json.NewDecoder(reader)
+	decoder.UseNumber()
+	if err := decoder.Decode(&input); err != nil {
 		return nil, err
 	}
 	event := strings.TrimSpace(input.HookEventName)

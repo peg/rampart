@@ -39,13 +39,14 @@ func TestExpandHomePathAcceptsWindowsSeparator(t *testing.T) {
 	}
 }
 
-func TestGeneratePostureReport_Compliant(t *testing.T) {
+func TestGeneratePostureReportObservationsDoNotProveEnforcement(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
 	events := makeEvents(t, now,
 		"allow",
 		"ask",
+		"approved",
 		"deny",
 	)
 	writeAuditFile(t, dir, "audit-20260228.jsonl", events)
@@ -78,23 +79,39 @@ policies:
 	if rep.Standard != "Rampart Security Posture" {
 		t.Fatalf("standard = %q, want Rampart Security Posture", rep.Standard)
 	}
-	if rep.Summary.ComplianceStatus != ComplianceStatusCompliant {
-		t.Fatalf("status = %s, want %s", rep.Summary.ComplianceStatus, ComplianceStatusCompliant)
+	if rep.Summary.ComplianceStatus != ComplianceStatusPartial {
+		t.Fatalf("status = %s, want %s", rep.Summary.ComplianceStatus, ComplianceStatusPartial)
 	}
-	if rep.Summary.DecisionCounts.Total != 3 || rep.Summary.DecisionCounts.Ask != 1 {
+	if rep.Summary.DecisionCounts.Total != 4 || rep.Summary.DecisionCounts.Ask != 1 {
 		t.Fatalf("unexpected decision counts: %+v", rep.Summary.DecisionCounts)
-	}
-	if rep.Controls["RC-1"].Status != ControlStatusPass {
-		t.Fatalf("RC-1 status = %s, want PASS", rep.Controls["RC-1"].Status)
 	}
 	if rep.Controls["RC-2"].Status != ControlStatusPass {
 		t.Fatalf("RC-2 status = %s, want PASS", rep.Controls["RC-2"].Status)
 	}
-	if rep.Controls["RC-3"].Status != ControlStatusPass {
-		t.Fatalf("RC-3 status = %s, want PASS", rep.Controls["RC-3"].Status)
+	for _, control := range []string{"RC-1", "RC-3", "RC-4"} {
+		if rep.Controls[control].Status != ControlStatusWarn {
+			t.Fatalf("%s status = %s, want WARN for observational evidence", control, rep.Controls[control].Status)
+		}
 	}
-	if rep.Controls["RC-4"].Status != ControlStatusPass {
-		t.Fatalf("RC-4 status = %s, want PASS", rep.Controls["RC-4"].Status)
+	if !strings.Contains(strings.Join(rep.Controls["RC-3"].Evidence, " "), "does not prove that a human reviewed or resolved it") {
+		t.Fatalf("approval requests and recorded resolutions must not imply oversight proof: %v", rep.Controls["RC-3"].Evidence)
+	}
+	text := FormatPostureTextReport(rep)
+	if !strings.Contains(text, "Keep deny rules") || strings.Contains(text, "--force") {
+		t.Fatalf("evidence follow-up must not weaken or replace policy: %s", text)
+	}
+}
+
+func TestPosturePolicyKeywordsCannotPassInvalidPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte("action: deny\n: [ invalid YAML /etc/shadow ~/.ssh/ .env credentials\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := &PostureReport{Controls: make(map[string]ComplianceControl)}
+	report.applyPolicyControlResult(path)
+	control := report.Controls["RC-4"]
+	if control.Status != ControlStatusWarn || !strings.Contains(strings.Join(control.Evidence, " "), "does not validate policy syntax") {
+		t.Fatalf("keyword presence must remain inconclusive: %#v", control)
 	}
 }
 

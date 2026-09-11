@@ -188,34 +188,19 @@ make test
 - Monitor and disabled modes
 - Child process inheritance
 
-### Manual Testing
+### Behavioral verification
 
-**Basic functionality:**
-```bash
-# Test library loads
-LD_PRELOAD=./librampart.so echo "hello"
+Use `make test` for the library's unit tests and `./test_preload.sh` for the
+Linux integration suite. The latter compiles a caller that invokes the
+interposed functions against a temporary scripted HTTP contract server. This
+proves the library contract, not an installed agent or the full policy service.
+Read its prerequisites before running it.
 
-# Test debug output
-RAMPART_DEBUG=1 LD_PRELOAD=./librampart.so echo "hello" 2>&1 | grep rampart
-
-# Test fail-open (server unreachable)
-RAMPART_URL=http://127.0.0.1:99999 LD_PRELOAD=./librampart.so echo "should work"
-```
-
-**Policy enforcement (requires `rampart serve` running):**
-```bash
-export LD_PRELOAD="./librampart.so"
-export RAMPART_URL="http://127.0.0.1:9090"
-export RAMPART_TOKEN="your-token"
-
-# Should work (typically allowed)
-echo "hello from preload"
-ls /tmp
-
-# Should be denied by policy (if configured)
-rm -rf /tmp/test
-curl http://example.com
-```
+A shell builtin such as `echo` may not execute a new process or load the
+library; its success does not prove interception. For a manual host check, use
+a harmless marker and a matching explicit deny policy, confirm the action
+crossed an interposed exec/spawn boundary, and inspect both the decision and
+absence of the marker. Never use deletion of real data as a canary.
 
 ## Installation
 
@@ -230,6 +215,19 @@ The `rampart` CLI will automatically find libraries in:
 1. `~/.rampart/lib/librampart.{so,dylib}`
 2. `/usr/local/lib/librampart.{so,dylib}`
 3. Next to the `rampart` binary
+
+## Architecture choices
+
+The library delegates each represented exec/spawn action to `rampart serve`;
+policy evaluation remains in Go. It does not cache authorization decisions or
+share decisions between processes. A separate library is built for each
+platform's compiler and libcurl ABI, so release archives contain only the CLI.
+
+Dynamic-loader interposition is the optional fallback because it is portable
+across compatible Linux and macOS processes without a kernel component. It has
+a weaker boundary than OS containment. `ptrace`, seccomp/eBPF, and macOS
+Endpoint Security would require different platform-specific implementations,
+privileges, or entitlements; they are not features of this library.
 
 ## Performance
 
