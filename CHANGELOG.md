@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Python SDK clients now fail closed by default on transport and server failures,
+  including custom clients supplied to guards and non-consuming preview calls.
+  Existing callers that deliberately need availability fallback must explicitly
+  set `fail_open=True`; policy denials and invalid responses remain errors or
+  denied decisions. Health checks still return `False` when unavailable.
+
 ## [1.9.1] - 2026-09-10
 
 ### Security
