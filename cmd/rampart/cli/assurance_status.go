@@ -5,6 +5,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -59,22 +60,24 @@ type verificationReceipt struct {
 	SafeCanaries           bool                       `json:"safe_canaries"`
 	Summary                verificationSummary        `json:"summary"`
 	Checks                 []verificationReceiptCheck `json:"checks"`
+	Runtime                *serviceRuntimeObservation `json:"runtime,omitempty"`
 }
 
 type integrationAssuranceStatus struct {
-	ID                  string         `json:"id"`
-	DisplayName         string         `json:"display_name"`
-	Boundary            string         `json:"boundary"`
-	ServiceRequired     bool           `json:"service_required"`
-	Installed           bool           `json:"installed"`
-	Configured          bool           `json:"configured"`
-	AssuranceLevel      assuranceLevel `json:"assurance_level"`
-	EvidenceSource      string         `json:"evidence_source,omitempty"`
-	CheckedAt           *time.Time     `json:"checked_at,omitempty"`
-	EvidenceExpiresAt   *time.Time     `json:"evidence_expires_at,omitempty"`
-	VerificationCommand string         `json:"verification_command"`
-	RecommendedCommand  string         `json:"recommended_command,omitempty"`
-	StaleReason         string         `json:"stale_reason,omitempty"`
+	ID                  string                     `json:"id"`
+	DisplayName         string                     `json:"display_name"`
+	Boundary            string                     `json:"boundary"`
+	ServiceRequired     bool                       `json:"service_required"`
+	Installed           bool                       `json:"installed"`
+	Configured          bool                       `json:"configured"`
+	AssuranceLevel      assuranceLevel             `json:"assurance_level"`
+	EvidenceSource      string                     `json:"evidence_source,omitempty"`
+	CheckedAt           *time.Time                 `json:"checked_at,omitempty"`
+	EvidenceExpiresAt   *time.Time                 `json:"evidence_expires_at,omitempty"`
+	VerificationCommand string                     `json:"verification_command"`
+	RecommendedCommand  string                     `json:"recommended_command,omitempty"`
+	StaleReason         string                     `json:"stale_reason,omitempty"`
+	Runtime             *serviceRuntimeObservation `json:"runtime,omitempty"`
 }
 
 func assuranceLevelForReport(report verificationReport) assuranceLevel {
@@ -116,8 +119,10 @@ func writeVerificationReceipt(report verificationReport) error {
 		return fmt.Errorf("resolve home: %w", err)
 	}
 	policyEndpoint := report.policyEndpoint
-	if policyEndpoint == "" {
-		policyEndpoint = resolveServeURL("")
+	if !driver.ServiceRequired {
+		policyEndpoint = ""
+	} else if report.Runtime != nil {
+		policyEndpoint = report.Runtime.Endpoint
 	}
 	fingerprint, err := integrationEnvironmentFingerprintAt(driver, home, policyEndpoint)
 	if err != nil {
@@ -139,6 +144,7 @@ func writeVerificationReceipt(report verificationReport) error {
 		SafeCanaries:           report.SafeCanaries,
 		Summary:                report.Summary,
 		Checks:                 make([]verificationReceiptCheck, 0, len(report.Checks)),
+		Runtime:                report.Runtime,
 	}
 	for _, check := range report.Checks {
 		receipt.Checks = append(receipt.Checks, verificationReceiptCheck{ID: check.ID, Status: check.Status})
@@ -220,6 +226,12 @@ func readVerificationReceipt(integrationID string) (verificationReceipt, error) 
 }
 
 func validateVerificationReceipt(receipt verificationReceipt, integrationID string) error {
+	if receipt.Runtime != nil {
+		endpoint, err := serviceEndpoint(receipt.Runtime.Endpoint)
+		if err != nil || endpoint != receipt.Runtime.Endpoint || !runtimeIdentified(receipt.Runtime.RuntimeIdentity) || receipt.Runtime.Mode != "enforce" {
+			return fmt.Errorf("receipt has invalid runtime evidence")
+		}
+	}
 	if receipt.SchemaVersion != verificationReceiptSchemaVersion {
 		return fmt.Errorf("unsupported receipt schema")
 	}
@@ -272,7 +284,11 @@ func validateVerificationReceipt(receipt verificationReceipt, integrationID stri
 }
 
 func integrationEnvironmentFingerprint(driver integrationDriver, home string) (string, error) {
-	return integrationEnvironmentFingerprintAt(driver, home, resolveServeURL(""))
+	endpoint, err := integrationServiceEndpoint(driver)
+	if err != nil {
+		return "", err
+	}
+	return integrationEnvironmentFingerprintAt(driver, home, endpoint)
 }
 
 func integrationEnvironmentFingerprintAt(driver integrationDriver, home, policyEndpoint string) (string, error) {
@@ -418,12 +434,17 @@ func openClawAssuranceConfiguration() (openClawAssuranceConfig, error) {
 	return config, nil
 }
 
-func collectIntegrationAssuranceStatuses(now time.Time, serverRunning bool) []integrationAssuranceStatus {
+func collectIntegrationAssuranceStatuses(now time.Time) []integrationAssuranceStatus {
 	home, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(home) == "" {
 		return []integrationAssuranceStatus{}
 	}
 	statuses := make([]integrationAssuranceStatus, 0)
+	type runtimeResult struct {
+		observation serviceRuntimeObservation
+		err         error
+	}
+	runtimes := make(map[string]runtimeResult)
 	for _, driver := range supportedIntegrationDrivers() {
 		installed := driver.Installed != nil && driver.Installed(home)
 		configured := integrationConfiguredForAssurance(driver, home)
@@ -456,11 +477,6 @@ func collectIntegrationAssuranceStatuses(now time.Time, serverRunning bool) []in
 		status.CheckedAt = &receipt.CheckedAt
 		status.EvidenceExpiresAt = &receipt.ExpiresAt
 		status.EvidenceSource = "local_verification_receipt"
-		if driver.ServiceRequired && !serverRunning {
-			status.StaleReason = "Rampart policy service is unavailable"
-			statuses = append(statuses, status)
-			continue
-		}
 		if receipt.CheckedAt.After(now.Add(5 * time.Minute)) {
 			status.StaleReason = "verification time is in the future"
 			statuses = append(statuses, status)
@@ -481,6 +497,36 @@ func collectIntegrationAssuranceStatuses(now time.Time, serverRunning bool) []in
 			status.StaleReason = "integration environment changed since verification"
 			statuses = append(statuses, status)
 			continue
+		}
+		if driver.ServiceRequired {
+			if receipt.Runtime == nil {
+				status.StaleReason = "verification receipt lacks runtime identity"
+				statuses = append(statuses, status)
+				continue
+			}
+			endpoint, endpointErr := integrationServiceEndpoint(driver)
+			if endpointErr != nil || endpoint != receipt.Runtime.Endpoint {
+				status.StaleReason = "integration service endpoint changed since verification"
+				statuses = append(statuses, status)
+				continue
+			}
+			current, found := runtimes[endpoint]
+			if !found {
+				ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+				current.observation, current.err = observeServiceRuntime(ctx, endpoint, 150*time.Millisecond)
+				cancel()
+				runtimes[endpoint] = current
+			}
+			if current.err != nil {
+				status.StaleReason = "Rampart policy service is unavailable"
+			} else if current.observation != *receipt.Runtime {
+				status.StaleReason = "service instance, build, or mode changed since verification"
+			}
+			if status.StaleReason != "" {
+				statuses = append(statuses, status)
+				continue
+			}
+			status.Runtime = receipt.Runtime
 		}
 		status.AssuranceLevel = receipt.AssuranceLevel
 		statuses = append(statuses, status)

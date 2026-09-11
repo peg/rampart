@@ -1921,9 +1921,11 @@ func ensureServeRunningForURL(w io.Writer, errW io.Writer, serveURL string) erro
 	if serveURL == "" {
 		return fmt.Errorf("rampart policy service URL is empty")
 	}
-	if isSetupServeReachableAt(serveURL) {
-		fmt.Fprintf(w, "✓ Rampart serve is running at %s\n", serveURL)
-		return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	observed, healthErr := observeServiceRuntime(ctx, serveURL, 500*time.Millisecond)
+	cancel()
+	if healthErr == nil {
+		return reportReusableServe(w, observed)
 	}
 	defaultURL := fmt.Sprintf("http://localhost:%d", defaultServePort)
 	if serveURL != defaultURL {
@@ -1944,9 +1946,8 @@ func ensureServeRunningForURL(w io.Writer, errW io.Writer, serveURL string) erro
 		// Wait up to 3 seconds for serve to come up.
 		for i := 0; i < 6; i++ {
 			time.Sleep(500 * time.Millisecond)
-			if isSetupServeReachableAt(serveURL) {
-				fmt.Fprintln(w, "✓ Rampart serve started (system service)")
-				return nil
+			if observed, err := observeServiceRuntime(context.Background(), serveURL, 500*time.Millisecond); err == nil {
+				return reportReusableServe(w, observed)
 			}
 		}
 		fmt.Fprintln(errW, "⚠ rampart serve service install did not become reachable; trying background fallback")
@@ -1963,6 +1964,21 @@ func ensureServeRunningForURL(w io.Writer, errW io.Writer, serveURL string) erro
 	return nil
 }
 
+func reportReusableServe(w io.Writer, observed serviceRuntimeObservation) error {
+	ownership := "ownership unproven; service left unchanged"
+	if ownedServiceRuntime(observed) {
+		ownership = "owned local service"
+	}
+	fmt.Fprintf(w, "Rampart service at %s: version %s, mode %s (%s)\n", observed.Endpoint, observed.Version, observed.Mode, ownership)
+	if observed.Mode != "enforce" {
+		return fmt.Errorf("the configured service is in %s mode; restart it in enforce mode using its existing service definition or launch settings before protecting this integration", observed.Mode)
+	}
+	if !runtimeIdentified(observed.RuntimeIdentity) {
+		fmt.Fprintln(w, "Legacy service is available; per-start runtime assurance requires updating the service and reverifying.")
+	}
+	return nil
+}
+
 func startServeBackgroundFallback(rampartBin, serveURL string, w io.Writer, errW io.Writer) error {
 	cmd := osexec.Command(rampartBin, "serve", "--background")
 	cmd.Stdout = w
@@ -1972,9 +1988,8 @@ func startServeBackgroundFallback(rampartBin, serveURL string, w io.Writer, errW
 	}
 	for i := 0; i < 10; i++ {
 		time.Sleep(500 * time.Millisecond)
-		if isSetupServeReachableAt(serveURL) {
-			fmt.Fprintln(w, "✓ Rampart serve started (background fallback)")
-			return nil
+		if observed, err := observeServiceRuntime(context.Background(), serveURL, 500*time.Millisecond); err == nil {
+			return reportReusableServe(w, observed)
 		}
 	}
 	return fmt.Errorf("rampart serve --background did not become reachable after 5s")

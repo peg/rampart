@@ -44,6 +44,7 @@ type verificationCheck struct {
 	Actual   string             `json:"actual,omitempty"`
 	Message  string             `json:"message"`
 	Hint     string             `json:"hint,omitempty"`
+	runtime  *serviceRuntimeObservation
 }
 
 type verificationSummary struct {
@@ -72,13 +73,14 @@ func latestAuditEvent(auditDir string) (audit.Event, error) {
 }
 
 type verificationReport struct {
-	SchemaVersion  string              `json:"schema_version"`
-	GeneratedAt    string              `json:"generated_at"`
-	Target         string              `json:"target"`
-	SafeCanaries   bool                `json:"safe_canaries"`
-	Assurance      assuranceLevel      `json:"assurance_level"`
-	Summary        verificationSummary `json:"summary"`
-	Checks         []verificationCheck `json:"checks"`
+	SchemaVersion  string                     `json:"schema_version"`
+	GeneratedAt    string                     `json:"generated_at"`
+	Target         string                     `json:"target"`
+	SafeCanaries   bool                       `json:"safe_canaries"`
+	Assurance      assuranceLevel             `json:"assurance_level"`
+	Summary        verificationSummary        `json:"summary"`
+	Checks         []verificationCheck        `json:"checks"`
+	Runtime        *serviceRuntimeObservation `json:"runtime,omitempty"`
 	policyEndpoint string
 }
 
@@ -125,24 +127,21 @@ func newVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify [openclaw|claude-code|cline|codex|gemini|antigravity|copilot|cursor|policy]",
 		Short: "Actively verify that agent safety boundaries really block",
-		Long: `Run non-destructive behavioral canaries against the live Rampart policy path.
+		Long: `Run non-destructive behavioral canaries against Rampart's integration boundaries.
 
 The canaries never execute commands, read files, send messages, or contact an
-external network. They use Rampart's policy endpoint and a decoy path/domain
-to prove the decisions the installed integration would receive. OpenClaw
-verification also runs fixed canaries through the live before_tool_call
-implementation.`,
+external network. Service-optional hooks verify their local installation,
+adapter and isolated audit behavior without HTTP. The policy target and
+service-backed integrations test the effective policy endpoint. OpenClaw also
+runs fixed canaries through the loaded before_tool_call implementation and
+compares its runtime observation with the CLI's observation.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all {
 				if len(args) > 0 {
 					return fmt.Errorf("verify: --all cannot be combined with target %q", args[0])
 				}
-				resolvedURL, err := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
-				if err != nil {
-					return fmt.Errorf("verify: resolve serve URL: %w", err)
-				}
-				report, receiptErr := runAllBehavioralVerifications(cmd.Context(), resolvedURL, timeout)
+				report, receiptErr := runAllBehavioralVerifications(cmd.Context(), serveURL, timeout)
 				if jsonOut {
 					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
 						return fmt.Errorf("verify: encode aggregate report: %w", err)
@@ -187,11 +186,7 @@ implementation.`,
 				target = driver.VerifyTarget
 			}
 
-			resolvedURL, err := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
-			if err != nil {
-				return fmt.Errorf("verify: resolve serve URL: %w", err)
-			}
-			report := runBehavioralVerification(cmd.Context(), target, resolvedURL, timeout)
+			report := runBehavioralVerification(cmd.Context(), target, serveURL, timeout)
 			receiptErr := writeVerificationReceipt(report)
 			if jsonOut {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
@@ -356,22 +351,85 @@ func behavioralCanaries(target string) []behavioralCanary {
 	return canaries
 }
 
-func runBehavioralVerification(ctx context.Context, target, serveURL string, timeout time.Duration) verificationReport {
+func runBehavioralVerification(ctx context.Context, target, serveURL string, timeout time.Duration) (report verificationReport) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	report := verificationReport{
-		SchemaVersion:  verifyJSONSchemaVersion,
-		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
-		Target:         target,
-		SafeCanaries:   true,
-		Checks:         make([]verificationCheck, 0),
-		policyEndpoint: strings.TrimRight(serveURL, "/"),
+	report = verificationReport{
+		SchemaVersion: verifyJSONSchemaVersion,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		Target:        target,
+		SafeCanaries:  true,
+		Checks:        make([]verificationCheck, 0),
 	}
+	driver, isIntegration := findIntegrationDriver(target)
+	if isIntegration && !driver.ServiceRequired {
+		if driver.VerifyChecks != nil {
+			report.Checks = append(report.Checks, driver.VerifyChecks(ctx, timeout)...)
+		}
+		return summarizeVerification(report)
+	}
+	var endpointErr error
+	if isIntegration {
+		var effective string
+		effective, endpointErr = integrationServiceEndpoint(driver)
+		if endpointErr == nil && serveURL != "" {
+			override, err := serviceEndpoint(serveURL)
+			if err != nil || override != effective {
+				endpointErr = fmt.Errorf("verification override differs from the integration's configured service; configure the host endpoint first or omit --serve-url")
+			}
+		}
+		serveURL = effective
+	} else {
+		serveURL, endpointErr = resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	}
+	if endpointErr != nil {
+		report.Checks = append(report.Checks, verificationCheck{ID: "service-runtime", Name: "Integration service identity", Status: verificationUnverified, Message: "The effective service endpoint could not be established", Hint: endpointErr.Error()})
+		return summarizeVerification(report)
+	}
+	report.policyEndpoint = serveURL
+	before, runtimeErr := observeServiceRuntime(ctx, serveURL, timeout)
+	if runtimeErr != nil {
+		report.Checks = append(report.Checks, verificationCheck{ID: "service-runtime", Name: "Integration service identity", Status: verificationUnverified, Message: "The selected Rampart service is unavailable or returned invalid health", Hint: "Start the configured service and rerun verification"})
+		return summarizeVerification(report)
+	}
+	if before.Mode != "enforce" {
+		report.Checks = append(report.Checks, verificationCheck{ID: "service-runtime", Name: "Integration service identity", Status: verificationFail, Actual: before.Mode, Message: "The selected service is not enforcing policy", Hint: "Start the service in enforce mode and rerun verification"})
+		return summarizeVerification(report)
+	}
+	hostRuntimeMatched := !driver.OpenClaw
+	defer func() {
+		after, err := observeServiceRuntime(ctx, serveURL, timeout)
+		switch {
+		case err != nil || before != after:
+			report.Runtime = nil
+			report.Checks = append(report.Checks, verificationCheck{ID: "service-runtime", Name: "Stable service runtime", Status: verificationFail, Message: "The service changed or became unavailable during verification; no runtime evidence was retained", Hint: "Rerun verification against a stable enforcing service"})
+		case !runtimeIdentified(before.RuntimeIdentity):
+			report.Checks = append(report.Checks, verificationCheck{ID: "service-runtime", Name: "Stable service runtime", Status: verificationUnverified, Message: "This legacy service does not expose a runtime instance and build identity", Hint: "Update the service, then rerun verification"})
+		default:
+			if hostRuntimeMatched {
+				report.Runtime = &before
+			}
+		}
+		report = summarizeVerification(report)
+	}()
 
 	if target != "policy" {
 		if driver, ok := findIntegrationDriver(target); ok && driver.VerifyChecks != nil {
-			report.Checks = append(report.Checks, driver.VerifyChecks(ctx, timeout)...)
+			checks := driver.VerifyChecks(ctx, timeout)
+			for i := range checks {
+				if driver.OpenClaw && checks[i].runtime != nil {
+					if *checks[i].runtime == before {
+						hostRuntimeMatched = true
+					} else {
+						checks[i].Status = verificationFail
+						checks[i].Actual = "loaded plugin uses a different runtime"
+						checks[i].Message = "The loaded OpenClaw plugin verified a different service endpoint or instance from the CLI"
+						checks[i].Hint = "Restart the OpenClaw gateway to load its current configuration, then verify again"
+					}
+				}
+			}
+			report.Checks = append(report.Checks, checks...)
 		}
 	}
 
@@ -399,7 +457,12 @@ func runBehavioralVerification(ctx context.Context, target, serveURL string, tim
 		return summarizeVerification(report)
 	}
 
-	client := newRampartHTTPClient(timeout)
+	client, closeClient, clientErr := serviceRuntimeClient(serveURL, timeout)
+	if clientErr != nil {
+		report.Checks = append(report.Checks, verificationCheck{ID: "policy-transport", Name: "Policy endpoint trust", Status: verificationUnverified, Message: "The selected service trust could not be established"})
+		return summarizeVerification(report)
+	}
+	defer closeClient()
 	for _, canary := range behavioralCanaries(target) {
 		report.Checks = append(report.Checks, runPreflightCanary(ctx, client, strings.TrimRight(serveURL, "/"), token, target, canary))
 	}
@@ -1159,11 +1222,48 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 		check.Hint = "Run `rampart protect openclaw --reinstall`, restart the gateway, and verify again"
 		return check
 	}
+	observed, err := pluginVerificationRuntime(pluginResult["runtime"])
+	if err != nil {
+		check.Status = verificationFail
+		check.Actual = "invalid loaded runtime observation"
+		check.Message = "The loaded plugin returned invalid runtime evidence"
+		check.Hint = "Reinstall the current plugin, restart the gateway, and verify again"
+		return check
+	}
+	if observed == nil {
+		check.Status = verificationUnverified
+		check.Actual = "canaries passed; loaded runtime unverified"
+		check.Message = "Plugin canaries passed, but the loaded plugin did not identify a stable enforcing service"
+		check.Hint = "Update Rampart and its plugin, restart the gateway, and verify again"
+		return check
+	}
+	check.runtime = observed
 
 	check.Status = verificationPass
 	check.Actual = "complete and current"
 	check.Message = "The current bundled plugin reached Rampart through its policy mapping path and returned every expected canary decision"
 	return check
+}
+
+func pluginVerificationRuntime(value any) (*serviceRuntimeObservation, error) {
+	if value == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var observed serviceRuntimeObservation
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&observed); err != nil {
+		return nil, err
+	}
+	endpoint, err := serviceEndpoint(observed.Endpoint)
+	if err != nil || endpoint != observed.Endpoint || !isLoopbackURL(endpoint) || !runtimeIdentified(observed.RuntimeIdentity) || observed.Mode != "enforce" {
+		return nil, fmt.Errorf("incomplete or non-enforcing runtime observation")
+	}
+	return &observed, nil
 }
 
 func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error {
@@ -1373,16 +1473,16 @@ func summarizeVerification(report verificationReport) verificationReport {
 
 func printVerificationReport(w io.Writer, report verificationReport) {
 	fmt.Fprintf(w, "Rampart behavioral verification — %s\n\n", report.Target)
-	fmt.Fprintln(w, "Safe canaries only: no commands, file reads, messages, or external network requests are executed.")
-	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
+	fmt.Fprintln(w, "Safe canaries do not execute tools or contact their represented targets.")
+	fmt.Fprintln(w, "HTTP checks use preflight; local adapter checks use temporary audit storage. Neither adds canary events to your audit log.")
 	fmt.Fprintln(w)
 	printVerificationResult(w, report)
 }
 
 func printVerificationBatchReport(w io.Writer, report verificationBatchReport) {
 	fmt.Fprintf(w, "Rampart behavioral verification — configured integrations with safe verifiers (%d targets)\n\n", report.Summary.Targets)
-	fmt.Fprintln(w, "Safe canaries only: no models, commands, file reads, messages, or external network requests are invoked.")
-	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
+	fmt.Fprintln(w, "Safe canaries do not invoke models, execute tools, or contact their represented targets.")
+	fmt.Fprintln(w, "HTTP checks use preflight; local adapter checks use temporary audit storage. Neither adds canary events to your audit log.")
 	fmt.Fprintln(w, "Static-only integrations are not included; use `rampart doctor` for their installation status.")
 	for index, result := range report.Results {
 		if index > 0 {

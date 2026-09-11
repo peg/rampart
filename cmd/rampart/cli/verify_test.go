@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
-	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 )
 
 func TestConfiguredVerificationTargetsIncludesPolicyAndConfiguredHooks(t *testing.T) {
@@ -51,7 +51,7 @@ func TestRunAllBehavioralVerificationsWritesAggregateEvidence(t *testing.T) {
 	if err := installCodexHooks(filepath.Join(home, ".codex", "hooks.json"), command, commandWindows, false); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(verificationTestHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer verification-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
 		}
@@ -78,7 +78,7 @@ func TestRunAllBehavioralVerificationsWritesAggregateEvidence(t *testing.T) {
 	if report.SchemaVersion != verifyAllJSONSchemaVersion || !report.SafeCanaries {
 		t.Fatalf("unexpected aggregate metadata: %#v", report)
 	}
-	if report.Summary.Targets != 2 || report.Summary.PassedTargets != 2 || report.Summary.Checks != 12 {
+	if report.Summary.Targets != 2 || report.Summary.PassedTargets != 2 || report.Summary.Checks != 7 {
 		t.Fatalf("unexpected aggregate summary: %#v", report.Summary)
 	}
 	if len(report.Results) != 2 || report.Results[0].Target != "policy" || report.Results[1].Target != "codex" {
@@ -101,7 +101,7 @@ func TestVerifyAllRejectsExplicitTarget(t *testing.T) {
 
 func TestBehavioralVerificationSafeCanariesPass(t *testing.T) {
 	installVerificationToken(t, "verification-token")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(verificationTestHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer verification-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
 		}
@@ -132,7 +132,7 @@ func TestBehavioralVerificationSafeCanariesPass(t *testing.T) {
 
 func TestBehavioralVerificationDetectsWrongDecision(t *testing.T) {
 	installVerificationToken(t, "verification-token")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(verificationTestHandler(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"allowed": true, "decision": "allow"})
 	}))
 	defer server.Close()
@@ -146,7 +146,11 @@ func TestBehavioralVerificationDetectsWrongDecision(t *testing.T) {
 func TestBehavioralVerificationReportsMissingTokenAsUnverified(t *testing.T) {
 	testSetHome(t, t.TempDir())
 	t.Setenv("RAMPART_TOKEN", "")
-	report := runBehavioralVerification(context.Background(), "policy", "http://127.0.0.1:1", 50*time.Millisecond)
+	server := httptest.NewServer(verificationTestHandler(func(http.ResponseWriter, *http.Request) {
+		t.Error("preflight must not run without a token")
+	}))
+	defer server.Close()
+	report := runBehavioralVerification(context.Background(), "policy", server.URL, time.Second)
 	if report.Summary.Unverified != 5 || report.Summary.Failed != 0 {
 		t.Fatalf("unexpected summary: %#v", report.Summary)
 	}
@@ -160,7 +164,7 @@ func TestBehavioralVerificationReportsMissingTokenAsUnverified(t *testing.T) {
 func TestBehavioralVerificationUsesEnvironmentToken(t *testing.T) {
 	testSetHome(t, t.TempDir())
 	t.Setenv("RAMPART_TOKEN", "environment-verification-token")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(verificationTestHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer environment-verification-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
 		}
@@ -259,18 +263,41 @@ func TestVerifyClaudeAndClineAdaptersBlockCanary(t *testing.T) {
 	}
 }
 
-func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
+func TestOpenClawVerificationBindsLoadedRuntime(t *testing.T) {
 	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
-	stateDir := t.TempDir()
-	pluginDir := filepath.Join(stateDir, openclawPluginDir)
-	if err := ocplugin.Extract(pluginDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(`{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"mode":"full"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(t.TempDir(), "openclaw")
-	shim := `#!/bin/sh
+	for _, scenario := range []struct {
+		name string
+		want assuranceLevel
+	}{
+		{"matching", assuranceHostVerified},
+		{"legacy", assuranceUnverified},
+		{"different endpoint", assuranceDegraded},
+		{"different instance", assuranceDegraded},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			home := t.TempDir()
+			installOpenClawAssuranceFixture(t, home)
+			t.Setenv("RAMPART_TOKEN", "verification-token")
+			t.Setenv("RAMPART_URL", "")
+			identity := map[string]string{
+				"endpoint": "http://localhost:9090", "instance_id": "test-service-instance-0001",
+				"version": "1.9.0", "commit": "test-commit", "mode": "enforce",
+			}
+			switch scenario.name {
+			case "different endpoint":
+				identity["endpoint"] = "http://localhost:19090"
+			case "different instance":
+				identity["instance_id"] = "test-service-instance-0002"
+			}
+			runtimeJSON := ""
+			if scenario.name != "legacy" {
+				data, err := json.Marshal(identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+				runtimeJSON = `"runtime":` + string(data) + ","
+			}
+			shim := `#!/bin/sh
 if [ "$1" = "config" ] && [ "$2" = "get" ]; then
   case "$3" in
     tools.exec) printf '%s\n' '{"mode":"full"}' ;;
@@ -281,17 +308,64 @@ if [ "$1" = "config" ] && [ "$2" = "get" ]; then
 fi
 printf '%s\n' '[state-migrations] Legacy state migration notes:'
 printf '%s\n' '- Left plugin install index in place because shared SQLite state has conflicting plugin install metadata for: rampart'
-printf '%s\n' '{"result":{"schema":"rampart.plugin.verify.v1","safeCanaries":true,"ok":true,"checks":[{"id":"routine-command","expected":"allow","actual":"allow","pass":true},{"id":"destructive-command","expected":"deny","actual":"deny","pass":true},{"id":"external-deployment","expected":"ask","actual":"ask","pass":true},{"id":"cross-conversation-message","expected":"ask","actual":"ask","pass":true},{"id":"credential-shell-read","expected":"deny","actual":"deny","pass":true},{"id":"opaque-interpreter","expected":"ask","actual":"ask","pass":true}]}}'
+printf '%s\n' '{"result":{"schema":"rampart.plugin.verify.v1",{{runtime}}"safeCanaries":true,"ok":true,"checks":[{"id":"routine-command","expected":"allow","actual":"allow","pass":true},{"id":"destructive-command","expected":"deny","actual":"deny","pass":true},{"id":"external-deployment","expected":"ask","actual":"ask","pass":true},{"id":"cross-conversation-message","expected":"ask","actual":"ask","pass":true},{"id":"credential-shell-read","expected":"deny","actual":"deny","pass":true},{"id":"opaque-interpreter","expected":"ask","actual":"ask","pass":true}]}}'
 `
-	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
-	t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+			bin := os.Getenv("RAMPART_OPENCLAW_BIN")
+			if err := os.WriteFile(bin, []byte(strings.Replace(shim, "{{runtime}}", runtimeJSON, 1)), 0o700); err != nil {
+				t.Fatal(err)
+			}
 
-	check := verifyOpenClawPluginLive(context.Background(), time.Second)
-	if check.Status != verificationPass {
-		t.Fatalf("unexpected check: %#v", check)
+			healthProbes := 0
+			rampartHTTPClient = &http.Client{Transport: redirectTestTransport(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Host != "localhost:9090" {
+					t.Fatalf("unexpected configured endpoint: %s", req.URL.Host)
+				}
+				if req.URL.Path == "/healthz" {
+					healthProbes++
+					return statusTestHealthResponse(req, "enforce"), nil
+				}
+				if !strings.HasPrefix(req.URL.Path, "/v1/preflight/") {
+					t.Fatalf("unexpected control path: %s", req.URL.Path)
+				}
+				var request struct {
+					Params map[string]any `json:"params"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				command, _ := request.Params["command"].(string)
+				decision := "deny"
+				switch {
+				case command == "pwd", request.Params["action"] == "read":
+					decision = "allow"
+				case strings.HasPrefix(command, "git push "), strings.HasPrefix(command, "python3 -c "), command == "npm publish", request.Params["action"] == "send":
+					decision = "ask"
+				}
+				data, err := json.Marshal(preflightResponse{Allowed: decision == "allow", Decision: decision})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Request: req, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(data))}, nil
+			})}
+			report := runBehavioralVerification(context.Background(), "openclaw", "", time.Second)
+			if report.Assurance != scenario.want || healthProbes != 2 {
+				t.Fatalf("verification assurance=%s want=%s probes=%d report=%#v", report.Assurance, scenario.want, healthProbes, report)
+			}
+			matched := scenario.name == "matching"
+			if (report.Runtime != nil) != matched {
+				t.Fatalf("loaded runtime association: %#v", report.Runtime)
+			}
+			if err := writeVerificationReceipt(report); err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := readVerificationReceipt("openclaw")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.AssuranceLevel != scenario.want || (receipt.Runtime != nil) != matched {
+				t.Fatalf("receipt promoted different or missing loaded runtime: %#v", receipt)
+			}
+		})
 	}
 }
 
@@ -435,5 +509,17 @@ func installVerificationToken(t *testing.T, token string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte(token), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// verificationTestHandler models the health contract around real HTTP preflight
+// fixtures without requiring bearer credentials on the public health endpoint.
+func verificationTestHandler(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"service": "rampart", "status": "ok", "mode": "enforce", "uptime_seconds": 1, "version": "test", "commit": "test-commit", "instance_id": "test-service-instance-0001"})
+			return
+		}
+		next(w, r)
 	}
 }

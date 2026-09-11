@@ -5,6 +5,8 @@ package cli
 
 import (
 	"bytes"
+	"github.com/peg/rampart/internal/proxy"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +30,7 @@ func TestHermesUsesCommonStaticAssuranceStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(time.Now().UTC(), false), "hermes")
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(time.Now().UTC()), "hermes")
 	if !ok {
 		t.Fatal("Hermes assurance status missing")
 	}
@@ -51,7 +53,7 @@ func TestVerificationReceiptPromotesConfiguredIntegration(t *testing.T) {
 		t.Fatalf("writeVerificationReceipt: %v", err)
 	}
 
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute), false), "codex")
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute)), "codex")
 	if !ok {
 		t.Fatal("Codex assurance status missing")
 	}
@@ -79,7 +81,7 @@ func TestVerificationReceiptInvalidatesAfterConfigurationChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute), false), "codex")
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute)), "codex")
 	if !ok {
 		t.Fatal("Codex assurance status missing")
 	}
@@ -108,7 +110,7 @@ func TestOpenClawReceiptInvalidatesOwnedConfigurationDrift(t *testing.T) {
 			if err := writeVerificationReceipt(passingAssuranceReport("openclaw", now)); err != nil {
 				t.Fatal(err)
 			}
-			status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now, true), "openclaw")
+			status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now), "openclaw")
 			if !ok || status.AssuranceLevel != assuranceHostVerified {
 				t.Fatalf("initial assurance = %#v, found=%t", status, ok)
 			}
@@ -131,7 +133,7 @@ func TestOpenClawReceiptInvalidatesOwnedConfigurationDrift(t *testing.T) {
 			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 				t.Fatal(err)
 			}
-			status, ok = findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute), true), "openclaw")
+			status, ok = findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute)), "openclaw")
 			if !ok || status.AssuranceLevel == assuranceHostVerified || status.StaleReason != "integration environment changed since verification" {
 				t.Fatalf("drifted assurance = %#v, found=%t", status, ok)
 			}
@@ -156,7 +158,7 @@ func TestOpenClawReceiptInvalidatesPluginContentDrift(t *testing.T) {
 	if writeErr != nil || closeErr != nil {
 		t.Fatalf("modify plugin: write=%v close=%v", writeErr, closeErr)
 	}
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute), true), "openclaw")
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute)), "openclaw")
 	if !ok || status.AssuranceLevel == assuranceHostVerified || status.StaleReason != "integration environment changed since verification" {
 		t.Fatalf("modified plugin assurance = %#v, found=%t", status, ok)
 	}
@@ -183,7 +185,7 @@ func TestOpenClawReceiptIgnoresUnrelatedConfiguration(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute), true), "openclaw")
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute)), "openclaw")
 	if !ok || status.AssuranceLevel != assuranceHostVerified || status.StaleReason != "" {
 		t.Fatalf("unrelated configuration invalidated assurance: %#v, found=%t", status, ok)
 	}
@@ -195,7 +197,7 @@ func TestOpenClawReceiptIgnoresUnrelatedConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, private := range []string{home, "private-provider", "provider-token", "other-plugin", "localhost:9090"} {
+	for _, private := range []string{home, "private-provider", "provider-token", "other-plugin"} {
 		if bytes.Contains(data, []byte(private)) {
 			t.Fatalf("receipt retained configuration detail %q", private)
 		}
@@ -206,6 +208,9 @@ func installOpenClawAssuranceFixture(t *testing.T, home string) string {
 	t.Helper()
 	testSetHome(t, home)
 	testSetOpenClawBinary(t, home)
+	oldClient := rampartHTTPClient
+	rampartHTTPClient = &http.Client{Transport: redirectTestTransport(func(req *http.Request) (*http.Response, error) { return statusTestHealthResponse(req, "enforce"), nil })}
+	t.Cleanup(func() { rampartHTTPClient = oldClient })
 	stateDir := filepath.Join(home, ".openclaw")
 	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
 	t.Setenv("OPENCLAW_CONFIG_PATH", filepath.Join(stateDir, "openclaw.json"))
@@ -246,13 +251,13 @@ func TestVerificationReceiptInvalidatesAfterPolicyChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute), false), "codex")
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute)), "codex")
 	if !ok || status.StaleReason != "integration environment changed since verification" {
 		t.Fatalf("policy-mutated assurance status = %#v, found=%t", status, ok)
 	}
 }
 
-func TestVerificationReceiptInvalidatesWhenPolicyEndpointChanges(t *testing.T) {
+func TestLocalAdapterReceiptDoesNotDependOnPolicyEndpoint(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
 	installCodexAssuranceFixture(t, home)
@@ -264,9 +269,9 @@ func TestVerificationReceiptInvalidatesWhenPolicyEndpointChanges(t *testing.T) {
 		t.Fatalf("writeVerificationReceipt: %v", err)
 	}
 
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute), false), "codex")
-	if !ok || status.StaleReason != "integration environment changed since verification" {
-		t.Fatalf("endpoint-mutated assurance status = %#v, found=%t", status, ok)
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(checkedAt.Add(time.Minute)), "codex")
+	if !ok || status.StaleReason != "" || status.AssuranceLevel != assuranceAdapterVerified || status.Runtime != nil {
+		t.Fatalf("local adapter assurance depends on HTTP: %#v, found=%t", status, ok)
 	}
 }
 
@@ -280,7 +285,7 @@ func TestVerificationReceiptExpires(t *testing.T) {
 		t.Fatalf("writeVerificationReceipt: %v", err)
 	}
 
-	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now, false), "codex")
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now), "codex")
 	if !ok || status.StaleReason != "verification evidence expired" || status.AssuranceLevel != assuranceConfigured {
 		t.Fatalf("expired assurance status = %#v, found=%t", status, ok)
 	}
@@ -372,7 +377,7 @@ func installCodexAssuranceFixture(t *testing.T, home string) {
 }
 
 func passingAssuranceReport(target string, checkedAt time.Time) verificationReport {
-	return summarizeVerification(verificationReport{
+	report := verificationReport{
 		SchemaVersion: verifyJSONSchemaVersion,
 		GeneratedAt:   checkedAt.UTC().Format(time.RFC3339),
 		Target:        target,
@@ -381,7 +386,12 @@ func passingAssuranceReport(target string, checkedAt time.Time) verificationRepo
 			{ID: "configuration", Name: "Configuration", Status: verificationPass, Message: "configured"},
 			{ID: "behavior", Name: "Behavior", Status: verificationPass, Message: "blocked"},
 		},
-	})
+	}
+	if driver, ok := findIntegrationDriver(target); ok && driver.ServiceRequired {
+		endpoint, _ := integrationServiceEndpoint(driver)
+		report.Runtime = &serviceRuntimeObservation{Endpoint: endpoint, RuntimeIdentity: proxy.RuntimeIdentity{InstanceID: "test-service-instance-0001", Version: "1.9.0", Commit: "test-commit", Mode: "enforce"}}
+	}
+	return summarizeVerification(report)
 }
 
 func findAssuranceStatus(statuses []integrationAssuranceStatus, id string) (integrationAssuranceStatus, bool) {
