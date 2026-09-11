@@ -1080,7 +1080,7 @@ function createPendingRow(a){
   const det=document.createElement('div');det.className='pend-detail';det.id='det-'+a.id;
   det.innerHTML=`<div class="detail-inner"><dl class="kv">
     <dt>ID</dt><dd class="mono">${esc(a.id)}</dd>
-    <dt>Complete action</dt><dd class="mono action-review">${esc(a.action?JSON.stringify(a.action,null,2).replace(/[\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0')):'Complete action unavailable; update the Rampart service before approving.')}</dd>
+    <dt>Complete action</dt><dd class="mono action-review"></dd>
     <dt>Command</dt><dd class="mono">${esc(cmd)}</dd>
     <dt>Tool</dt><dd>${esc(a.tool||'—')}</dd>
     <dt>Agent</dt><dd>${esc(a.agent||'—')}</dd>
@@ -1089,6 +1089,12 @@ function createPendingRow(a){
     <dt>Created</dt><dd>${a.created_at?new Date(a.created_at).toLocaleString():'—'}</dd>
     <dt>Expires</dt><dd>${a.expires_at?new Date(a.expires_at).toLocaleString():'—'}</dd>
   </dl></div>`;
+  // Browser JSON numbers may already be rounded. Render the server's exact,
+  // redacted text without reparsing it or treating action content as HTML.
+  det.querySelector('.action-review').textContent=
+    typeof a.action?.display_text==='string'&&a.action.display_text
+      ?a.action.display_text.replace(/[\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'))
+      :'Complete action unavailable; update the Rampart service before approving.';
   return{row:item,detail:det};
 }
 

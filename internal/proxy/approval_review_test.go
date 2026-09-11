@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/peg/rampart/internal/approval"
+	"github.com/peg/rampart/internal/dashboard"
 	"github.com/stretchr/testify/require"
 )
 
@@ -133,4 +134,37 @@ func TestToolApprovalPreservesJSONNumbersBeforeReviewAndReplay(t *testing.T) {
 			require.Equal(t, http.StatusAccepted, request("/v1/tool/mcp", body).Code, "the exact action is approved only once")
 		})
 	}
+}
+
+func TestApprovalDisplayTextSurvivesFloatingPointJSONClients(t *testing.T) {
+	srv, token, _ := setupTestServer(t, "version: \"1\"\ndefault_action: ask\npolicies: []\n", "enforce")
+	t.Cleanup(srv.approvals.Close)
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool/mcp", strings.NewReader(`{"params":{"sequence":9007199254740993,"amount":0.1234567890123456789,"large":1e20,"label":"<b>numeric-canary</b>","password":"synthetic-private"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rr, req)
+	require.Equal(t, http.StatusAccepted, rr.Code, rr.Body.String())
+	// The default decoder deliberately models clients that parse JSON numbers
+	// as float64. The display must survive that round trip unchanged.
+	var result struct {
+		Action approval.ActionReview `json:"action"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &result))
+	require.Equal(t, float64(9007199254740992), result.Action.Params["sequence"])
+	text := result.Action.DisplayText
+	require.Contains(t, text, `"sequence": 9007199254740993`)
+	require.Contains(t, text, `"amount": 0.1234567890123456789`)
+	require.Contains(t, text, `"large": 1e20`)
+	require.Contains(t, text, `\u003cb\u003enumeric-canary\u003c/b\u003e`)
+	require.Contains(t, text, "[REDACTED]")
+	require.NotContains(t, text, "synthetic-private")
+	require.NotContains(t, text, "display_text", "the display representation must not include itself")
+
+	// Guard the shipped render source as well: never regenerate the display
+	// from rounded structured fields or insert server action text as HTML.
+	page := httptest.NewRecorder()
+	dashboard.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Contains(t, page.Body.String(), "det.querySelector('.action-review').textContent=")
+	require.Contains(t, page.Body.String(), "a.action.display_text.replace(")
+	require.NotContains(t, page.Body.String(), "JSON.stringify(a.action")
 }

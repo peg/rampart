@@ -76,6 +76,14 @@ optional original `input`, and supplied `agent`, `agent_depth`, `session`,
 authorization token or proof of a host filesystem object. Render all fields as
 untrusted text; a command preview alone is not the full approval scope.
 
+`action.display_text` is server-generated JSON text of those same redacted
+fields, excluding `display_text` itself. Display clients should render this
+string as untrusted text without parsing it again: JavaScript and other
+floating-point JSON decoders can round numbers in the structured `action`
+fields. The structured fields remain available for API compatibility. This
+preserves numbers received by Rampart; it cannot recover precision already
+lost in a host's JavaScript number representation.
+
 Pending responses also include `redacted`. When true, resolving with
 `persist: true` is rejected before changing the pending approval: a redacted
 literal cannot represent the original action in a permanent command/path rule.
