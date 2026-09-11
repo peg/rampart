@@ -171,7 +171,12 @@ func (settings serveLaunchSettings) restart(runner commandRunner, executable str
 // separately by upgrade and remain authoritative for their own launches.
 func legacyDefaultServeLaunch(pid int, home, executable string) (serveLaunchSettings, error) {
 	var settings serveLaunchSettings
-	logPath := filepath.Join(home, ".rampart", "serve.log")
+	// The released background launcher passed the log's resolved parent path
+	// to its child. Use that same spelling when HOME contains a directory alias.
+	logPath, err := resolveServeLogPath(filepath.Join(home, ".rampart", "serve.log"))
+	if err != nil {
+		return settings, legacyLaunchError()
+	}
 	var cwd string
 	var args []string
 	switch runtime.GOOS {
