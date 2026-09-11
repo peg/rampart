@@ -58,17 +58,9 @@ func regexMatchString(re *regexp.Regexp, value string) bool {
 	return re.MatchString(value)
 }
 
-// cleanPath canonicalizes a file path for policy matching. It applies
-// filepath.Clean to resolve ".." and "." segments, then attempts
-// filepath.EvalSymlinks to resolve symlinks. If the leaf does not exist yet,
-// it resolves the longest existing ancestor and restores the missing suffix.
-// This ensures that
-// traversal tricks like "/etc/../etc/shadow" are normalized before
-// glob matching, regardless of which entry point (proxy, interceptor,
-// MCP, SDK) produced the path.
-// cleanPaths returns both the cleaned path and the symlink-resolved path.
-// On macOS, /etc -> /private/etc, so policies matching "/etc/**" need to
-// check both forms.
+// cleanPaths retains both lexical and filesystem-resolved policy candidates.
+// Resolving symlinks must precede collapsing parent components: a symlink's
+// parent is determined by its target, not by its spelling in the input path.
 func cleanPaths(p string) (cleaned string, resolved string) {
 	return cleanPathsAt(p, "")
 }
@@ -80,6 +72,12 @@ func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 	if p == "" {
 		return p, p
 	}
+	// Filesystem lookup keeps native spelling, including literal Unix backslashes.
+	nativePath := filepath.FromSlash(p)
+	nativeWorkDir := filepath.FromSlash(strings.TrimSpace(workDir))
+	if nativeWorkDir != "" && !filepath.IsAbs(nativePath) {
+		nativePath = strings.TrimRight(nativeWorkDir, string(filepath.Separator)) + string(filepath.Separator) + nativePath
+	}
 	// Normalize backslashes to forward slashes BEFORE filepath.Clean.
 	// This is critical for security: on Unix, backslash is a valid filename char,
 	// so "/home/user\../etc/shadow" would NOT be cleaned by filepath.Clean.
@@ -89,7 +87,8 @@ func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 	p = strings.ReplaceAll(p, "\\", "/")
 	workDir = strings.ReplaceAll(strings.TrimSpace(workDir), "\\", "/")
 	if workDir != "" && !filepath.IsAbs(p) {
-		p = filepath.Join(workDir, p)
+		// Join without cleaning away components before filesystem resolution.
+		p = strings.TrimRight(workDir, "/") + "/" + p
 	}
 	cleaned = filepath.Clean(p)
 
@@ -97,7 +96,7 @@ func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 	// upward until EvalSymlinks can resolve an existing ancestor, then append
 	// the missing components. This prevents writes through a symlinked parent
 	// directory from bypassing policy matching.
-	candidate := cleaned
+	candidate := nativePath
 	var missing []string
 	for {
 		r, err := filepath.EvalSymlinks(candidate)
@@ -109,14 +108,28 @@ func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 			return cleaned, resolved
 		}
 		if !os.IsNotExist(err) {
-			return cleaned, cleaned
+			return cleaned, ""
+		}
+		if info, statErr := os.Lstat(candidate); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			// A dangling symlink is not a missing leaf. Restoring its spelling
+			// under the parent would discard the destination it points to.
+			return cleaned, ""
 		}
 
-		parent := filepath.Dir(candidate)
-		if parent == candidate {
-			return cleaned, cleaned
+		// filepath.Dir cleans its result, which would change the traversal
+		// before we reach an existing ancestor. Split preserves those components.
+		dir, leaf := filepath.Split(candidate)
+		parent := strings.TrimRight(dir, string(filepath.Separator))
+		if parent == filepath.VolumeName(candidate) && dir != "" {
+			parent = dir // Preserve a filesystem or Windows volume root.
 		}
-		missing = append(missing, filepath.Base(candidate))
+		if parent == "" {
+			parent = "."
+		}
+		if parent == candidate {
+			return cleaned, ""
+		}
+		missing = append(missing, leaf)
 		candidate = parent
 	}
 }
@@ -125,8 +138,10 @@ func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 // normalized relative spelling when a host CWD was supplied. Keeping the
 // latter preserves compatibility with project policies such as `secrets/**`,
 // while absolute and symlink-resolved candidates ensure system-path denies see
-// the file the host will actually access.
-func pathCandidates(call ToolCall) []string {
+// the file the host will actually access. The boolean reports whether local
+// filesystem resolution succeeded, including a missing suffix under an existing
+// ancestor. An unresolved destination must never establish a grant.
+func pathCandidates(call ToolCall) ([]string, bool) {
 	path := call.Path()
 	workDir := call.WorkingDirectory()
 	cleaned, resolved := cleanPathsAt(path, workDir)
@@ -149,7 +164,7 @@ func pathCandidates(call ToolCall) []string {
 	if workDir != "" && raw != "" && !filepath.IsAbs(raw) {
 		appendUnique(filepath.Clean(raw))
 	}
-	return candidates
+	return candidates, path == "" || resolved != ""
 }
 
 // MatchGlob reports whether name matches the glob pattern.
@@ -1479,7 +1494,10 @@ func matchPathFirstForAction(patterns []string, path, workDir string, action Act
 // granting rule must cover every spelling so a workspace symlink cannot grant
 // access to a target outside the allowed tree.
 func matchPathFieldForAction(patterns []string, call ToolCall, action Action, requireAll bool) (bool, string) {
-	candidates := pathCandidates(call)
+	candidates, resolved := pathCandidates(call)
+	if requireAll && !resolved {
+		return false, ""
+	}
 	if len(candidates) == 0 {
 		return false, ""
 	}
@@ -1600,7 +1618,8 @@ func ExplainConditionForAction(cond Condition, call ToolCall, action Action) (bo
 			return false, ""
 		}
 		detail := fmt.Sprintf("path_matches [%q]", matched)
-		if requireAll && len(pathCandidates(call)) > 1 {
+		candidates, _ := pathCandidates(call)
+		if requireAll && len(candidates) > 1 {
 			detail += " (all resolved destinations)"
 		}
 		return true, detail
