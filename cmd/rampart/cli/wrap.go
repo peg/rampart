@@ -112,7 +112,7 @@ available, or rampart preload for compatible exec-family interposition.`,
 			if opts.verbose {
 				logLevel = slog.LevelDebug
 			}
-			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: logLevel}))
+			logger := audit.NewRedactingLogger(slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: logLevel})))
 
 			policyPath, cleanupPolicy, err := resolveWrapPolicyPath(opts.configPath)
 			if err != nil {

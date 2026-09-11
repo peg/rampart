@@ -210,6 +210,7 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 			opt(p)
 		}
 	}
+	p.logger = audit.NewRedactingLogger(p.logger)
 	p.mode = normalizeProxyMode(p.mode)
 	if p.agentID == "" {
 		p.agentID = "mcp-client"

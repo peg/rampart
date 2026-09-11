@@ -15,6 +15,21 @@ Start the Rampart proxy:
 rampart serve
 ```
 
+In a second terminal, configure the SDK for that local service. The service
+saves its administrative token in `~/.rampart/token`; the SDK reads
+`RAMPART_TOKEN` rather than automatically opening that file:
+
+```bash
+export RAMPART_URL="http://127.0.0.1:9090"
+export RAMPART_TOKEN="$(cat "$HOME/.rampart/token")"
+```
+
+This loads the token without displaying it. Use these settings only for local
+development. For a deployed agent, provision an
+[evaluation-scoped token](../reference/cli-commands.md#rampart-token-create)
+and supply it through the agent's secret configuration. Remote endpoints require
+HTTPS and an explicitly configured token; keep token values out of code and logs.
+
 The SDK is not currently published on PyPI. From a Rampart source checkout,
 install it and put its fail-closed enforcement call directly at the execution
 boundary:

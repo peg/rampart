@@ -492,7 +492,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				logLevel = slog.LevelDebug
 				logWriter = cmd.ErrOrStderr()
 			}
-			logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel}))
+			logger := audit.NewRedactingLogger(slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel})))
 
 			// Cleanup stale session state files in the background (best-effort).
 			// This runs once per hook invocation; typically fires every few seconds

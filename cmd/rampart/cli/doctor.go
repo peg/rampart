@@ -463,7 +463,7 @@ func printDoctorSummary(w io.Writer, useColor bool) {
 	}
 
 	// Policies
-	_, defaultAction := detectMode()
+	defaultAction := detectPolicyDefault()
 	if defaultAction != "" {
 		fmt.Fprintf(w, "  %s✓%s Policies loaded (default: %s)\n", green, reset, defaultAction)
 	}

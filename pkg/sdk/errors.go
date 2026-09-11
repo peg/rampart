@@ -20,8 +20,11 @@
 //
 // Basic usage:
 //
-//	engine := sdk.NewEngine("rampart.yaml")
-//	safeExec := engine.Wrap("exec", unsafeExec)
+//	s, err := sdk.NewSDK("rampart.yaml")
+//	if err != nil {
+//		return err
+//	}
+//	safeExec := s.Wrap("exec", unsafeExec)
 //	result, err := safeExec(ctx, map[string]any{"command": "git push"})
 //	// If denied: err is *ErrDenied
 package sdk

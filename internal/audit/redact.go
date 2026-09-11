@@ -34,17 +34,45 @@ func (s *redactingSink) Close() error { return s.inner.Close() }
 // RedactEvent returns a defensive copy suitable for persistence. It preserves
 // audit structure and policy evidence while scrubbing sensitive key values and
 // credential shapes embedded in strings such as shell commands.
+// Apply it before hashing new records; stored history and private authorization
+// identity must not be rewritten from this display representation.
 func RedactEvent(event Event) Event {
+	event.ID = notify.SanitizeCommand(event.ID)
+	event.Agent = notify.SanitizeCommand(event.Agent)
+	event.Session = notify.SanitizeCommand(event.Session)
+	event.RunID = notify.SanitizeCommand(event.RunID)
+	event.ToolCallID = notify.SanitizeCommand(event.ToolCallID)
+	event.Tool = notify.SanitizeCommand(event.Tool)
+	if event.Host != nil {
+		host := *event.Host
+		host.Hostname = notify.SanitizeCommand(host.Hostname)
+		host.OS = notify.SanitizeCommand(host.OS)
+		host.Arch = notify.SanitizeCommand(host.Arch)
+		event.Host = &host
+	}
 	event.Request = redactMap(event.Request)
 	event.ApprovalOwner = redactMap(event.ApprovalOwner)
+	event.Decision.Action = notify.SanitizeCommand(event.Decision.Action)
 	event.Decision.Message = notify.SanitizeCommand(event.Decision.Message)
-	if event.Decision.Suggestions != nil {
-		event.Decision.Suggestions = append([]string(nil), event.Decision.Suggestions...)
-		for i := range event.Decision.Suggestions {
-			event.Decision.Suggestions[i] = notify.SanitizeCommand(event.Decision.Suggestions[i])
-		}
+	event.Decision.MatchedPolicies = redactStrings(event.Decision.MatchedPolicies)
+	event.Decision.Suggestions = redactStrings(event.Decision.Suggestions)
+	if event.Response != nil {
+		response := *event.Response
+		response.Flags = redactStrings(response.Flags)
+		event.Response = &response
 	}
 	return event
+}
+
+func redactStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	redacted := make([]string, len(values))
+	for i, value := range values {
+		redacted[i] = notify.SanitizeCommand(value)
+	}
+	return redacted
 }
 
 func redactMap(values map[string]any) map[string]any {
@@ -81,11 +109,7 @@ func redactAuditValue(value any) any {
 		}
 		return items
 	case []string:
-		items := append([]string(nil), typed...)
-		for i := range items {
-			items[i] = notify.SanitizeCommand(items[i])
-		}
-		return items
+		return redactStrings(typed)
 	default:
 		return value
 	}
