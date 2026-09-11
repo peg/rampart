@@ -485,16 +485,17 @@ function toolDisplayName(toolName, originalToolName) {
 // ─── Rampart API client ───────────────────────────────────────────────────────
 
 const MAX_CONTROL_RESPONSE_BYTES = 1024 * 1024;
+const MAX_HEALTH_RESPONSE_BYTES = 4 * 1024;
 const POLICY_DECISIONS = new Set(["allow", "watch", "ask", "deny"]);
 const APPROVAL_SEVERITIES = new Set(["info", "warning", "critical"]);
 
 class InvalidControlResponseError extends Error {}
 
-async function readControlResponseText(response) {
+async function readControlResponseText(response, maxBytes = MAX_CONTROL_RESPONSE_BYTES) {
   const declaredLength = response?.headers?.get?.("content-length");
   if (declaredLength !== null && declaredLength !== undefined && declaredLength !== "") {
     const parsedLength = Number(declaredLength);
-    if (Number.isFinite(parsedLength) && parsedLength > MAX_CONTROL_RESPONSE_BYTES) {
+    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
       await response?.body?.cancel?.().catch(() => {});
       throw new InvalidControlResponseError("Rampart response exceeded the size limit");
     }
@@ -512,7 +513,7 @@ async function readControlResponseText(response) {
         const { done, value } = await reader.read();
         if (done) break;
         total += value?.byteLength ?? 0;
-        if (total > MAX_CONTROL_RESPONSE_BYTES) {
+        if (total > maxBytes) {
           await reader.cancel().catch(() => {});
           throw new InvalidControlResponseError("Rampart response exceeded the size limit");
         }
@@ -528,14 +529,14 @@ async function readControlResponseText(response) {
   // production Fetch path above performs the limit before buffering the body.
   if (typeof response?.text === "function") {
     const text = await response.text();
-    if (new TextEncoder().encode(text).byteLength > MAX_CONTROL_RESPONSE_BYTES) {
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
       throw new InvalidControlResponseError("Rampart response exceeded the size limit");
     }
     return text;
   }
   if (typeof response?.json === "function") {
     const text = JSON.stringify(await response.json());
-    if (new TextEncoder().encode(text).byteLength > MAX_CONTROL_RESPONSE_BYTES) {
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
       throw new InvalidControlResponseError("Rampart response exceeded the size limit");
     }
     return text;
@@ -543,8 +544,8 @@ async function readControlResponseText(response) {
   throw new InvalidControlResponseError("Rampart response body is unreadable");
 }
 
-async function readControlResponseJSON(response) {
-  const text = await readControlResponseText(response);
+async function readControlResponseJSON(response, maxBytes = MAX_CONTROL_RESPONSE_BYTES) {
+  const text = await readControlResponseText(response, maxBytes);
   try {
     return JSON.parse(text);
   } catch (err) {
@@ -557,6 +558,42 @@ function isConsistentPolicyDecision(result) {
   if (!POLICY_DECISIONS.has(result.decision)) return false;
   if (typeof result.allowed !== "boolean") return false;
   return result.allowed === (result.decision === "allow" || result.decision === "watch");
+}
+
+// Observe the endpoint captured by this loaded plugin, so CLI verification
+// cannot attribute its canary decisions to a different configured service.
+// Health is public: never send the control token or return arbitrary fields.
+async function observeVerificationRuntime(serveUrl) {
+  if (typeof serveUrl !== "string" || !isTrustedServeUrl(serveUrl)) return null;
+  const endpoint = serveUrl.trim().replace(/\/+$/, "");
+  try {
+    const response = await fetch(`${endpoint}/healthz`, {
+      method: "GET",
+      redirect: "error",
+      signal: AbortSignal.timeout(3000),
+    });
+    if (response.status !== 200) {
+      await response?.body?.cancel?.().catch(() => {});
+      return null;
+    }
+    const health = await readControlResponseJSON(response, MAX_HEALTH_RESPONSE_BYTES);
+    if (!health || health.service !== "rampart" || health.status !== "ok" ||
+        health.mode !== "enforce" || !Number.isInteger(health.uptime_seconds) || health.uptime_seconds < 0 ||
+        typeof health.instance_id !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(health.instance_id) ||
+        typeof health.version !== "string" || !health.version.trim() ||
+        typeof health.commit !== "string" || !health.commit.trim()) return null;
+    return {
+      endpoint,
+      instance_id: health.instance_id,
+      version: health.version,
+      commit: health.commit,
+      mode: health.mode,
+    };
+  } catch {
+    // Legacy, unavailable, malformed and redirected health provide no runtime
+    // proof. The fixed canary results are still useful to older CLI versions.
+    return null;
+  }
 }
 
 /**
@@ -939,6 +976,7 @@ export function register(api) {
   // tool. The canaries are fixed here rather than caller-supplied so this RPC
   // can never become an execution or arbitrary policy-probing surface.
   api.registerGatewayMethod("rampart.verify", async ({ respond }) => {
+    const before = await observeVerificationRuntime(serveUrl);
     const canaryCtx = {
       agentId: "rampart-verification",
       sessionKey: "rampart-verification",
@@ -1007,11 +1045,15 @@ export function register(api) {
         });
       }
     }
+    const after = await observeVerificationRuntime(serveUrl);
+    const stableRuntime = before && after &&
+      ["endpoint", "instance_id", "version", "commit", "mode"].every((key) => before[key] === after[key]);
     respond(true, {
       schema: "rampart.plugin.verify.v1",
       safeCanaries: true,
       ok: checks.every((check) => check.pass),
       checks,
+      ...(stableRuntime ? { runtime: before } : {}),
     });
   });
 
