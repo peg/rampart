@@ -71,6 +71,9 @@ func canonicalToolName(raw string) (string, error) {
 // silently ignore.
 func decodeJSONBody(r io.Reader, dst any) error {
 	dec := json.NewDecoder(r)
+	// Tool arguments must reach policy, approval identity, and review without
+	// rounding integers or decimals through float64 first.
+	dec.UseNumber()
 	if err := dec.Decode(dst); err != nil {
 		return err
 	}

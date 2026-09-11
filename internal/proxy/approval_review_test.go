@@ -6,11 +6,13 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/stretchr/testify/require"
 )
 
@@ -89,4 +91,46 @@ policies:
 	require.Equal(t, http.StatusOK, preview.Code)
 	require.Contains(t, preview.Body.String(), `"action"`)
 	require.NotContains(t, preview.Body.String(), "synthetic-private")
+}
+
+func TestToolApprovalPreservesJSONNumbersBeforeReviewAndReplay(t *testing.T) {
+	for _, field := range []string{"params", "input"} {
+		t.Run(field, func(t *testing.T) {
+			srv, token, _ := setupTestServer(t, "version: \"1\"\ndefault_action: ask\npolicies: []\n", "enforce")
+			t.Cleanup(srv.approvals.Close)
+			request := func(path, body string) *httptest.ResponseRecorder {
+				t.Helper()
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+token)
+				rr := httptest.NewRecorder()
+				srv.handler().ServeHTTP(rr, req)
+				return rr
+			}
+			body := fmt.Sprintf(`{"agent":"numeric-agent","session":"numeric-session","run_id":"numeric-run","tool_call_id":"numeric-call",%q:{"sequence":9007199254740993,"nested":[0.1234567890123456789,1e20]}}`, field)
+			initial := request("/v1/tool/mcp", body)
+			require.Equal(t, http.StatusAccepted, initial.Code, initial.Body.String())
+			var response struct {
+				ApprovalID string                `json:"approval_id"`
+				Action     approval.ActionReview `json:"action"`
+			}
+			decoder := json.NewDecoder(initial.Body)
+			decoder.UseNumber()
+			require.NoError(t, decoder.Decode(&response))
+			values := response.Action.Params
+			if field == "input" {
+				values = response.Action.Input
+			}
+			require.Equal(t, json.Number("9007199254740993"), values["sequence"])
+			require.Equal(t, []any{json.Number("0.1234567890123456789"), json.Number("1e20")}, values["nested"])
+
+			resolved := request("/v1/approvals/"+response.ApprovalID+"/resolve", `{"approved":true,"resolved_by":"operator"}`)
+			require.Equal(t, http.StatusOK, resolved.Code, resolved.Body.String())
+			changed := request("/v1/tool/mcp", strings.Replace(body, "9007199254740993", "9007199254740992", 1))
+			require.Equal(t, http.StatusAccepted, changed.Code, "a rounded adjacent integer must not consume approval: %s", changed.Body.String())
+			replay := request("/v1/tool/mcp", body)
+			require.Equal(t, http.StatusOK, replay.Code, replay.Body.String())
+			require.Contains(t, replay.Body.String(), `"approval_id":"`+response.ApprovalID+`"`)
+			require.Equal(t, http.StatusAccepted, request("/v1/tool/mcp", body).Code, "the exact action is approved only once")
+		})
+	}
 }

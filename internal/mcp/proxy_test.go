@@ -457,6 +457,44 @@ func TestHandleToolsCall_RequireApproval(t *testing.T) {
 	}
 }
 
+func TestToolsCallApprovalNumbersMatchForwardedJSON(t *testing.T) {
+	childIn := &bytes.Buffer{}
+	sink := &mockSink{}
+	store := approval.NewStore()
+	t.Cleanup(store.Close)
+	p := NewProxy(buildAskEngine(t), sink, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithApprovalStore(store), WithLogger(silentLogger()))
+	p.parentOut = &bytes.Buffer{}
+	line := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"numeric_tool","arguments":{"sequence":9007199254740993,"nested":[0.1234567890123456789,1e400]}}}` + "\n")
+	done := make(chan error, 1)
+	go func() { done <- p.handleClientLine(line) }()
+	var pending *approval.Request
+	require.Eventually(t, func() bool {
+		items := store.List()
+		if len(items) == 1 {
+			pending = items[0]
+			return true
+		}
+		return false
+	}, time.Second, time.Millisecond)
+	// Resolve before inspecting the captured review so an assertion failure
+	// cannot leave the production handler waiting for an operator.
+	require.NoError(t, store.Resolve(pending.ID, true, "operator"))
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("approved tools/call did not resume")
+	}
+	require.Equal(t, json.Number("9007199254740993"), pending.Call.Input["sequence"])
+	require.Equal(t, []any{json.Number("0.1234567890123456789"), json.Number("1e400")}, pending.Call.Input["nested"])
+	require.Equal(t, pending.Call.Input["sequence"], pending.Call.Params["sequence"])
+	require.Equal(t, line, childIn.Bytes(), "the reviewed numbers must match the unmodified forwarded request")
+	for _, event := range sink.getEvents() {
+		require.Equal(t, json.Number("9007199254740993"), event.Request["sequence"])
+	}
+}
+
 func TestHandleToolsCall_ResponseDuringApprovalInvalidatesReservation(t *testing.T) {
 	childIn := &bytes.Buffer{}
 	parentOut := &bytes.Buffer{}
