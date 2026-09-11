@@ -79,8 +79,8 @@ For cloud MCP servers, use a more restrictive policy (deny by default, explicit 
 
 The standalone stdio proxy has no safely reachable approval resolver. When a
 policy action is `ask`, it fails closed immediately and returns a JSON-RPC error
-to Claude Desktop with code `-32600`. Use explicit `allow` or `deny` rules until
-a service-backed exact-call approval owner is configured.
+to Claude Desktop with code `-32600`. Use explicit operator-reviewed `allow` or
+`deny` rules. Starting `rampart serve` does not connect a resolver to this proxy.
 
 ## Monitor
 
@@ -94,4 +94,4 @@ rampart audit tail --follow
 - **Built-in tools** (like Claude's code interpreter) don't go through MCP and can't be intercepted.
 - **Already-compromised context:** If prompt injection happened in a previous turn, Claude may try alternative approaches when blocked.
 
-See the full [Claude Desktop security guide](https://github.com/peg/rampart/blob/main/docs/guides/securing-claude-desktop.md) for more details.
+See [MCP Proxy](../features/mcp-proxy.md) for the transport and policy details.

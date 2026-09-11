@@ -16,6 +16,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/peg/rampart/internal/approval"
+	"github.com/peg/rampart/internal/engine"
 )
 
 // hookApprovalClient delegates require_approval decisions to a running
@@ -29,22 +32,12 @@ type hookApprovalClient struct {
 	errWriter      io.Writer
 }
 
-// createApprovalRequest is the JSON body POSTed to POST /v1/approvals.
-type createApprovalRequest struct {
-	Tool       string `json:"tool"`
-	Command    string `json:"command,omitempty"`
-	Agent      string `json:"agent"`
-	Path       string `json:"path,omitempty"`
-	Message    string `json:"message"`
-	RunID      string `json:"run_id,omitempty"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
-}
-
 // createApprovalResponse is the JSON returned from POST /v1/approvals.
 type createApprovalResponse struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	ExpiresAt string `json:"expires_at"`
+	ActionVersion int    `json:"action_version"`
+	ID            string `json:"id"`
+	Status        string `json:"status"`
+	ExpiresAt     string `json:"expires_at"`
 }
 
 // pollApprovalResponse is the JSON returned from GET /v1/approvals/{id}.
@@ -53,21 +46,25 @@ type pollApprovalResponse struct {
 	Status string `json:"status"`
 }
 
+func decodeApprovalResponse(body io.Reader, target any) error {
+	const maxBytes = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(body, maxBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxBytes {
+		return fmt.Errorf("approval response exceeds size limit")
+	}
+	return json.Unmarshal(data, target)
+}
+
 // requestApprovalCtx creates an approval and polls until resolved. The context
 // allows cancellation (for example, when the user presses Ctrl-C).
-func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, command, agent, path, runID, toolCallID, message string, timeout time.Duration) hookDecisionType {
-	message = enrichApprovalMessage(message, command)
-
-	// Create the approval
-	body := createApprovalRequest{
-		Tool:       tool,
-		Command:    command,
-		Agent:      agent,
-		Path:       path,
-		Message:    message,
-		RunID:      runID,
-		ToolCallID: toolCallID,
-	}
+func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, call engine.ToolCall, message string, timeout time.Duration) hookDecisionType {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	message = enrichApprovalMessage(message, call.Command())
+	body := approval.NewExternalRequest(call, message)
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -106,10 +103,8 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 	// 200 means the approval was already resolved (auto-approve or bulk-resolve).
 	// Status field determines the outcome — don't assume approved.
 	if resp.StatusCode == http.StatusOK {
-		var autoResp struct {
-			Status string `json:"status"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&autoResp); err == nil {
+		var autoResp createApprovalResponse
+		if err := decodeApprovalResponse(resp.Body, &autoResp); err == nil && autoResp.ActionVersion == approval.ExternalActionVersion && ctx.Err() == nil {
 			switch autoResp.Status {
 			case "approved":
 				c.logger.Debug("hook: run auto-approved by bulk-resolve, skipping queue")
@@ -121,20 +116,24 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 			}
 		}
 		c.logger.Error("hook: unexpected 200 from approval create", "url", c.serveURL)
-		return hookAsk
+		return hookDeny
 	}
 
 	if resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		c.logger.Error("hook: create approval failed", "status", resp.StatusCode, "body", string(respBody))
+		c.logger.Error("hook: create approval failed", "status", resp.StatusCode)
 		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned %d, falling back to native prompt\n", resp.StatusCode)
 		return hookAsk
 	}
 
 	var created createApprovalResponse
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+	if err := decodeApprovalResponse(resp.Body, &created); err != nil {
 		c.logger.Error("hook: decode approval response", "error", err)
 		return hookAsk
+	}
+
+	if created.ActionVersion != approval.ExternalActionVersion {
+		fmt.Fprintln(c.stderrWriter(), "Approval service cannot preserve the complete action; upgrade and restart rampart serve")
+		return hookDeny
 	}
 
 	// Guard against a serve bug returning 201 with an empty ID — polling
@@ -155,21 +154,19 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, tool, comma
 
 // pollApprovalCtx polls GET /v1/approvals/{id} every 500ms until resolved.
 func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, timeout time.Duration) hookDecisionType {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	client := newRampartHTTPClient(5 * time.Second)
-	deadline := time.After(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Fprintf(c.stderrWriter(), "⚠ Approval cancelled\n")
-			return hookDeny
-		case <-deadline:
-			fmt.Fprintf(c.stderrWriter(), "⏰ Approval timed out — no response received within %s\n", timeout)
+			fmt.Fprintf(c.stderrWriter(), "⚠ Approval cancelled or timed out\n")
 			return hookDeny
 		case <-ticker.C:
-			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/approvals/%s", c.serveURL, id), nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/approvals/%s", c.serveURL, url.PathEscape(id)), nil)
 			if err != nil {
 				continue
 			}
@@ -196,10 +193,16 @@ func (c *hookApprovalClient) pollApprovalCtx(ctx context.Context, id string, tim
 			}
 
 			var status pollApprovalResponse
-			err = json.NewDecoder(resp.Body).Decode(&status)
+			err = decodeApprovalResponse(resp.Body, &status)
 			resp.Body.Close()
-			if err != nil {
-				continue
+			if ctx.Err() != nil {
+				return hookDeny
+			}
+			if resp.StatusCode != http.StatusOK {
+				return hookDeny
+			}
+			if err != nil || status.ID != id {
+				return hookDeny
 			}
 
 			switch status.Status {
@@ -227,16 +230,8 @@ func (c *hookApprovalClient) stderrWriter() io.Writer {
 
 // registerAskAuditCtx creates a pending approval in serve for ask+audit
 // visibility, but does not wait for human resolution.
-func (c *hookApprovalClient) registerAskAuditCtx(ctx context.Context, tool, command, agent, path, runID, toolCallID, message string) (string, error) {
-	body := createApprovalRequest{
-		Tool:       tool,
-		Command:    command,
-		Agent:      agent,
-		Path:       path,
-		Message:    enrichApprovalMessage(message, command),
-		RunID:      runID,
-		ToolCallID: toolCallID,
-	}
+func (c *hookApprovalClient) registerAskAuditCtx(ctx context.Context, call engine.ToolCall, message string) (string, error) {
+	body := approval.NewExternalRequest(call, enrichApprovalMessage(message, call.Command()))
 	data, err := json.Marshal(body)
 	if err != nil {
 		return "", err
@@ -256,22 +251,16 @@ func (c *hookApprovalClient) registerAskAuditCtx(ctx context.Context, tool, comm
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		var autoResp struct {
-			ID string `json:"id"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&autoResp); err != nil {
-			return "", err
-		}
-		return autoResp.ID, nil
-	}
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("create approval returned status %d", resp.StatusCode)
 	}
 
 	var created createApprovalResponse
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+	if err := decodeApprovalResponse(resp.Body, &created); err != nil {
 		return "", err
+	}
+	if created.ActionVersion != approval.ExternalActionVersion || created.ID == "" {
+		return "", fmt.Errorf("approval service did not acknowledge the complete action")
 	}
 	return created.ID, nil
 }

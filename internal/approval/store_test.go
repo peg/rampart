@@ -128,6 +128,41 @@ func TestCreateAndResolveApproval(t *testing.T) {
 	}
 }
 
+func TestExternalApprovalRestartKeepsInvocationsSeparate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approvals.jsonl")
+	store := NewStore(WithPersistenceFile(path))
+	t.Cleanup(store.Close)
+	call := testCall()
+	call.WorkDir = "/synthetic-workspace"
+	call.Params = map[string]any{"file_path": "marker.txt", "content": "review me", "password": "synthetic-private"}
+	first, _, auto, err := store.CreateExternalOrAutoApprovedWithExpiry(call, testDecision(), "owner")
+	require.NoError(t, err)
+	require.False(t, auto)
+	second, _, _, err := store.CreateExternalOrAutoApprovedWithExpiry(call, testDecision(), "owner")
+	require.NoError(t, err)
+	require.NotEqual(t, first.ID, second.ID, "separate held invocations must not share one authorization")
+	store.Close()
+	journal, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(journal), "synthetic-private")
+	store = NewStore(WithPersistenceFile(path))
+	t.Cleanup(store.Close)
+	restored, found := store.Get(first.ID)
+	require.True(t, found)
+	require.Equal(t, call.ID, restored.Call.ID)
+	require.Equal(t, call.ToolCallID, restored.Call.ToolCallID)
+	require.Equal(t, call.WorkDir, restored.Call.WorkDir)
+	require.Equal(t, "review me", restored.Call.Params["content"])
+	require.NoError(t, store.Resolve(first.ID, true, "reviewer"))
+	other, found := store.Get(second.ID)
+	require.True(t, found)
+	require.Equal(t, StatusPending, other.Status)
+	_, consumed, err := store.ConsumeApprovedFor(call, "owner")
+	require.NoError(t, err)
+	require.False(t, consumed, "polling approval must not also grant an HTTP execution replay")
+	require.NoError(t, store.Resolve(second.ID, false, "reviewer"))
+}
+
 func TestResolveBeforePublishOrdersJournalAndAuditBeforeAuthorization(t *testing.T) {
 	persistFile := filepath.Join(t.TempDir(), "approvals.jsonl")
 	store := NewStore(WithPersistenceFile(persistFile))

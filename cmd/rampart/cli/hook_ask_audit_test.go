@@ -38,7 +38,7 @@ policies:
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			createCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "a1", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "a1", "status": "pending"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -103,7 +103,7 @@ policies:
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			createCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-alias-1", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "ap-alias-1", "status": "pending"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -173,12 +173,12 @@ policies:
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			createCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-audit-1", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "ap-audit-1", "status": "pending"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals/ap-audit-1/resolve":
 			resolveCount.Add(1)
 			_ = json.NewDecoder(r.Body).Decode(&lastResolveBody)
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-audit-1", "status": "approved"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "ap-audit-1", "status": "approved"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -252,12 +252,12 @@ policies:
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals":
 			createCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-audit-denied-1", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "ap-audit-denied-1", "status": "pending"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/approvals/ap-audit-denied-1/resolve":
 			resolveCount.Add(1)
 			_ = json.NewDecoder(r.Body).Decode(&lastResolveBody)
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ap-audit-denied-1", "status": "denied"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": 1, "id": "ap-audit-denied-1", "status": "denied"})
 		default:
 			http.NotFound(w, r)
 		}

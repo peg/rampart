@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,10 +12,61 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/peg/rampart/internal/engine"
+	"github.com/stretchr/testify/require"
 )
 
 func requestApprovalForTest(client *hookApprovalClient, tool, command, agent, path, runID, message string, timeout time.Duration) hookDecisionType {
-	return client.requestApprovalCtx(context.Background(), tool, command, agent, path, runID, "", message, timeout)
+	return client.requestApprovalCtx(context.Background(), engine.ToolCall{Tool: tool, Agent: agent, Session: "hook", RunID: runID, Params: map[string]any{"command": command, "path": path}}, message, timeout)
+}
+
+func TestHookApprovalRejectsUnacknowledgedOrInvalidResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		createStatus int
+		createBody   string
+		pollBody     string
+	}{
+		{"old queued service", 201, `{"id":"approval","status":"pending"}`, ""},
+		{"old auto approving service", 200, `{"id":"approval","status":"approved"}`, ""},
+		{"malformed auto approval", 200, `{"action_version":1,"status":"approved"} {}`, ""},
+		{"oversized auto approval", 200, `{"action_version":1,"status":"approved"}` + strings.Repeat(" ", 1<<20), ""},
+		{"different approval", 201, `{"action_version":1,"id":"approval","status":"pending"}`, `{"id":"another-approval","status":"approved"}`},
+		{"malformed resolution", 201, `{"action_version":1,"id":"approval","status":"pending"}`, `{"id":"approval","status":"approved"} {}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" {
+					w.WriteHeader(tc.createStatus)
+					_, _ = io.WriteString(w, tc.createBody)
+					return
+				}
+				_, _ = io.WriteString(w, tc.pollBody)
+			}))
+			defer srv.Close()
+			client := &hookApprovalClient{serveURL: srv.URL, token: "synthetic", logger: testLogger(), errWriter: io.Discard}
+			require.Equal(t, hookDeny, requestApprovalForTest(client, "exec", "echo marker", "codex", "", "", "review", 3*time.Second))
+		})
+	}
+}
+
+func TestHookApprovalLateResolutionCannotAllow(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.WriteHeader(201)
+			_, _ = io.WriteString(w, `{"action_version":1,"id":"approval","status":"pending"}`)
+			return
+		}
+		cancel()
+		_, _ = io.WriteString(w, `{"id":"approval","status":"approved"}`)
+	}))
+	defer srv.Close()
+	client := &hookApprovalClient{serveURL: srv.URL, token: "synthetic", logger: testLogger(), errWriter: io.Discard}
+	call := engine.ToolCall{Tool: "exec", Agent: "codex", Session: "s", Params: map[string]any{"command": "echo marker"}}
+	require.Equal(t, hookDeny, client.requestApprovalCtx(ctx, call, "review", 3*time.Second))
 }
 
 func TestHookApprovalClient_Approved(t *testing.T) {
@@ -25,9 +77,10 @@ func TestHookApprovalClient_Approved(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/v1/approvals":
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "test-123",
-				"status":     "pending",
-				"expires_at": time.Now().Add(5 * time.Minute).Format(time.RFC3339),
+				"id":             "test-123",
+				"status":         "pending",
+				"action_version": 1,
+				"expires_at":     time.Now().Add(5 * time.Minute).Format(time.RFC3339),
 			})
 		case r.Method == "GET" && r.URL.Path == "/v1/approvals/test-123":
 			n := pollCount.Add(1)
@@ -63,9 +116,10 @@ func TestHookApprovalClient_Denied(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/v1/approvals":
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "test-456",
-				"status":     "pending",
-				"expires_at": time.Now().Add(5 * time.Minute).Format(time.RFC3339),
+				"id":             "test-456",
+				"status":         "pending",
+				"action_version": 1,
+				"expires_at":     time.Now().Add(5 * time.Minute).Format(time.RFC3339),
 			})
 		case r.Method == "GET" && r.URL.Path == "/v1/approvals/test-456":
 			json.NewEncoder(w).Encode(map[string]any{
@@ -136,9 +190,10 @@ func TestHookApprovalClient_AutoDiscoverApproved(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/v1/approvals":
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "auto-1",
-				"status":     "pending",
-				"expires_at": time.Now().Add(5 * time.Minute).Format(time.RFC3339),
+				"id":             "auto-1",
+				"status":         "pending",
+				"action_version": 1,
+				"expires_at":     time.Now().Add(5 * time.Minute).Format(time.RFC3339),
 			})
 		case r.Method == "GET" && r.URL.Path == "/v1/approvals/auto-1":
 			json.NewEncoder(w).Encode(map[string]any{
@@ -224,9 +279,10 @@ func TestHookApprovalClient_Timeout(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/v1/approvals":
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "test-789",
-				"status":     "pending",
-				"expires_at": time.Now().Add(5 * time.Minute).Format(time.RFC3339),
+				"id":             "test-789",
+				"status":         "pending",
+				"action_version": 1,
+				"expires_at":     time.Now().Add(5 * time.Minute).Format(time.RFC3339),
 			})
 		case r.Method == "GET" && r.URL.Path == "/v1/approvals/test-789":
 			// Always return pending

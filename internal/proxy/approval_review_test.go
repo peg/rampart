@@ -90,3 +90,23 @@ policies:
 	require.Contains(t, preview.Body.String(), `"action"`)
 	require.NotContains(t, preview.Body.String(), "synthetic-private")
 }
+
+func TestExternalApprovalRejectsPartialActionFormats(t *testing.T) {
+	srv, token, _ := setupTestServer(t, "version: '1'\ndefault_action: deny\npolicies: []\n", "enforce")
+	for _, body := range []string{
+		`{"action_version":2,"tool":"write","agent":"test","session":"s","params":{}}`,
+		`{"action_version":1,"tool":"write","agent":"","params":{}}`,
+		`{"action_version":1,"tool":"write","agent":"test","session":"s"}`,
+		`{"action_version":1,"tool":"write","agent":"test","session":"s","params":{},"command":"different action"}`,
+		`{"action_version":1,"tool":"write","agent":"test","session":"s","params":{},"future_identity":"unknown"}`,
+		`{"tool":"write","agent":"test","params":{"file_path":"lost.txt"}}`,
+		`{"tool":"exec","agent":"test","command":"echo marker"} {}`,
+	} {
+		req := httptest.NewRequest("POST", "/v1/approvals", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		srv.handler().ServeHTTP(rr, req)
+		require.Equal(t, http.StatusBadRequest, rr.Code, body)
+	}
+	require.Empty(t, srv.approvals.List())
+}

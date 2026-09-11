@@ -40,9 +40,10 @@ Before running AI agents unsupervised in production, verify each item.
 ## Testing
 
 - [ ] **Policy validation** — `rampart policy check` passes
-- [ ] **Integration verification** — `rampart verify <integration>` passes for every installed native integration
-- [ ] **Deny test** — Confirmed a blocked command returns error
-- [ ] **Allow test** — Confirmed normal commands work
+- [ ] **Integration verification** — Run `rampart verify <integration>` where a safe verifier exists; inspect static-only integrations with `rampart doctor` and their documented checks
+- [ ] **Deny test** — A real host attempts a harmless policy-denied marker action; the matching deny is recorded and the marker remains absent
+- [ ] **Allow test** — A real host executes an allowed marker action and the decision and effect correlate
+- [ ] **Approval test** — Where used, the correct owner shows the full review; denial/expiry prevent an effect and approval resumes only the reviewed action
 - [ ] **Webhook test** — Notifications arrive on deny
 - [ ] **Chain verification** — `rampart audit verify` passes
 

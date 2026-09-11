@@ -136,6 +136,21 @@ managed integration entries and adopt any newer hook or plugin format. Custom
 policies, unrelated host hooks, memories, sessions, and credentials are not
 replaced.
 
+## Legacy approval actions
+
+`action: require_approval` was removed in v0.9.9 and is rejected by the policy
+engine and linter. Replace it with `action: ask` before using an old policy with
+a current release. Native and external approval paths have different owners;
+see [approval paths and limits](support-matrix.md#approval-paths-and-limits).
+`ask.audit: true` adds best-effort native review mirroring; it does not make the
+dashboard another native approval owner. `ask.headless_only: true` selects the
+service-backed blocking path for the Claude hook; use `deny` when an unattended
+job must not wait for review.
+
+Run `rampart policy lint /path/to/policy.yaml` after editing. The old
+`require_approval` spelling remains accepted only in notification filters for
+compatibility, not as a policy action.
+
 ## Breaking Changes
 
 Check the [CHANGELOG](https://github.com/peg/rampart/blob/main/CHANGELOG.md) before upgrading. Breaking changes (if any) are listed under each version.

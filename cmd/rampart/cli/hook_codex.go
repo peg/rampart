@@ -321,12 +321,6 @@ func resolveExternalHookApproval(
 		)
 	}
 
-	command := call.Command()
-	if command == "" && call.Path() == "" {
-		if data, err := json.Marshal(call.Params); err == nil {
-			command = string(data)
-		}
-	}
 	client := &hookApprovalClient{
 		serveURL:       strings.TrimRight(serveURL, "/"),
 		token:          serveToken,
@@ -339,12 +333,7 @@ func resolveExternalHookApproval(
 	}
 	result := client.requestApprovalCtx(
 		cmd.Context(),
-		call.Tool,
-		command,
-		call.Agent,
-		call.Path(),
-		call.RunID,
-		call.ToolCallID,
+		call,
 		reason,
 		5*time.Minute,
 	)

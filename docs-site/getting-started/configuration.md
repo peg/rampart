@@ -107,7 +107,7 @@ policies:
 
 ## Tool Types
 
-Rampart recognizes four tool types:
+Common normalized tool types include:
 
 | Tool | What It Matches |
 |------|----------------|

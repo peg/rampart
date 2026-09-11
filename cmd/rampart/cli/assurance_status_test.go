@@ -4,11 +4,14 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 
 	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
 )
@@ -83,6 +86,143 @@ func TestVerificationReceiptInvalidatesAfterConfigurationChange(t *testing.T) {
 	if status.AssuranceLevel == assuranceAdapterVerified || status.StaleReason != "integration environment changed since verification" {
 		t.Fatalf("stale Codex assurance status = %#v", status)
 	}
+}
+
+func TestOpenClawReceiptInvalidatesOwnedConfigurationDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, before, after string
+	}{
+		{"fail open", "plugins.json", `"failOpen":false`, `"failOpen":true `},
+		{"plugin disabled", "plugins.json", `"enabled":true`, `"enabled":null`},
+		{"policy timeout", "plugins.json", `"timeoutMs":3000`, `"timeoutMs":4000`},
+		{"approval timeout", "plugins.json", `"approvalTimeoutMs":120000`, `"approvalTimeoutMs":240000`},
+		{"plugin endpoint", "plugins.json", `localhost:9090`, `localhost:9999`},
+		{"malformed plugin setting", "plugins.json", `"failOpen":false`, `"failOpen":"bad"`},
+		{"exec mode", "tools.json", `"full"`, `"auto"`},
+		{"invalid exec mode", "tools.json", `"full"`, `"oops"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			stateDir := installOpenClawAssuranceFixture(t, home)
+			now := time.Now().UTC().Truncate(time.Second)
+			if err := writeVerificationReceipt(passingAssuranceReport("openclaw", now)); err != nil {
+				t.Fatal(err)
+			}
+			status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now, true), "openclaw")
+			if !ok || status.AssuranceLevel != assuranceHostVerified {
+				t.Fatalf("initial assurance = %#v, found=%t", status, ok)
+			}
+			path := filepath.Join(stateDir, tc.file)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := bytes.Replace(data, []byte(tc.before), []byte(tc.after), 1)
+			if bytes.Equal(data, changed) || len(data) != len(changed) {
+				t.Fatal("fixture must change content without changing file size")
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, changed, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			status, ok = findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute), true), "openclaw")
+			if !ok || status.AssuranceLevel == assuranceHostVerified || status.StaleReason != "integration environment changed since verification" {
+				t.Fatalf("drifted assurance = %#v, found=%t", status, ok)
+			}
+		})
+	}
+}
+
+func TestOpenClawReceiptInvalidatesPluginContentDrift(t *testing.T) {
+	home := t.TempDir()
+	stateDir := installOpenClawAssuranceFixture(t, home)
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := writeVerificationReceipt(passingAssuranceReport("openclaw", now)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(stateDir, openclawPluginDir, "index.js")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := file.WriteString("\n// modified installation\n")
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("modify plugin: write=%v close=%v", writeErr, closeErr)
+	}
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute), true), "openclaw")
+	if !ok || status.AssuranceLevel == assuranceHostVerified || status.StaleReason != "integration environment changed since verification" {
+		t.Fatalf("modified plugin assurance = %#v, found=%t", status, ok)
+	}
+}
+
+func TestOpenClawReceiptIgnoresUnrelatedConfiguration(t *testing.T) {
+	home := t.TempDir()
+	stateDir := installOpenClawAssuranceFixture(t, home)
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := writeVerificationReceipt(passingAssuranceReport("openclaw", now)); err != nil {
+		t.Fatal(err)
+	}
+	// A provider include is deliberately unreadable as JSON. Status must not
+	// traverse it, nor fingerprint provider values or another plugin's settings.
+	if err := os.WriteFile(filepath.Join(stateDir, "providers.json"), []byte("synthetic-private-provider-state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(stateDir, "plugins.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte(`"other-plugin":{"enabled":false}`), []byte(`"other-plugin":{"enabled":true}`), 1)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute), true), "openclaw")
+	if !ok || status.AssuranceLevel != assuranceHostVerified || status.StaleReason != "" {
+		t.Fatalf("unrelated configuration invalidated assurance: %#v, found=%t", status, ok)
+	}
+	receiptPath, err := verificationReceiptPath("openclaw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{home, "private-provider", "provider-token", "other-plugin", "localhost:9090"} {
+		if bytes.Contains(data, []byte(private)) {
+			t.Fatalf("receipt retained configuration detail %q", private)
+		}
+	}
+}
+
+func installOpenClawAssuranceFixture(t *testing.T, home string) string {
+	t.Helper()
+	testSetHome(t, home)
+	testSetOpenClawBinary(t, home)
+	stateDir := filepath.Join(home, ".openclaw")
+	t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENCLAW_CONFIG_PATH", filepath.Join(stateDir, "openclaw.json"))
+	if err := ocplugin.Extract(filepath.Join(stateDir, openclawPluginDir)); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"openclaw.json":  `{"tools":{"$include":"tools.json"},"plugins":{"$include":"plugins.json"},"models":{"$include":"providers.json"}}`,
+		"tools.json":     `{"exec":{"mode":"full"}}`,
+		"plugins.json":   `{"allow":["rampart"],"entries":{"rampart":{"config":{"enabled":true,"failOpen":false,"failOpenTools":[],"timeoutMs":3000,"approvalTimeoutMs":120000,"serveUrl":"http://localhost:9090"}},"other-plugin":{"enabled":false}}}`,
+		"providers.json": `{"credential":"synthetic-provider-token"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(stateDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return stateDir
 }
 
 func TestVerificationReceiptInvalidatesAfterPolicyChange(t *testing.T) {

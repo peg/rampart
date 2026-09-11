@@ -61,6 +61,7 @@ integrations:
       - OpenClaw after_tool_call is observational, so the native plugin does not claim blocking response redaction.
       - Native plugin asks require complete redacted review within the 512-character host description limit; oversized or unavailable review blocks before native approval creation.
       - Native plugin approval allows one call or denies; onResolution cannot validate resumed parameters, and persistent allowances require explicit operator policy.
+      - The separate exec-event compatibility bridge can persist a correlated allow-always command override in enforce mode; this is not the native plugin's approval contract and is not covered by its verifier.
       - MCP and delegated-agent coverage need dedicated live canaries.
 
   - id: claude-code
