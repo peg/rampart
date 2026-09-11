@@ -11,11 +11,14 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/peg/rampart/internal/proxy"
 )
 
 // serveState is written by `rampart serve` so other commands (doctor, watch, log)
 // can discover the serve URL and port without requiring flags or env vars.
 type serveState struct {
+	proxy.RuntimeIdentity
 	URL        string `json:"url"`
 	Port       int    `json:"port"`
 	PID        int    `json:"pid"`
@@ -29,7 +32,7 @@ const (
 )
 
 // writeServeState writes the serve state to ~/.rampart/serve.state.
-func writeServeState(dir string, port, pid int, tls bool) error {
+func writeServeState(dir string, port, pid int, tls bool, identity proxy.RuntimeIdentity) error {
 	scheme := "http"
 	if tls {
 		scheme = "https"
@@ -39,11 +42,12 @@ func writeServeState(dir string, port, pid int, tls bool) error {
 		executable, _ = filepath.Abs(executable)
 	}
 	state := serveState{
-		URL:        fmt.Sprintf("%s://localhost:%d", scheme, port),
-		Port:       port,
-		PID:        pid,
-		Started:    time.Now().UTC().Format(time.RFC3339),
-		Executable: executable,
+		RuntimeIdentity: identity,
+		URL:             fmt.Sprintf("%s://localhost:%d", scheme, port),
+		Port:            port,
+		PID:             pid,
+		Started:         time.Now().UTC().Format(time.RFC3339Nano),
+		Executable:      executable,
 	}
 	data, err := json.Marshal(state)
 	if err != nil {

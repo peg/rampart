@@ -254,10 +254,6 @@ func TestStatusUnavailableConfiguredEndpointInvalidatesServiceReceipt(t *testing
 	if err := writeVerificationReceipt(passingAssuranceReport("cursor", now)); err != nil {
 		t.Fatal(err)
 	}
-	initial, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now, true), "cursor")
-	if !ok || initial.AssuranceLevel != assuranceAdapterVerified {
-		t.Fatalf("initial Cursor assurance = %#v, found=%t", initial, ok)
-	}
 
 	var probes []string
 	oldClient := rampartHTTPClient
@@ -275,7 +271,7 @@ func TestStatusUnavailableConfiguredEndpointInvalidatesServiceReceipt(t *testing
 	if snapshot.serverRunning || snapshot.mode != "unknown" {
 		t.Fatalf("unavailable endpoint: running=%t mode=%q", snapshot.serverRunning, snapshot.mode)
 	}
-	if len(probes) != 1 || probes[0] != "127.0.0.1:19099" {
+	if len(probes) != 2 || probes[0] != "127.0.0.1:19099" || probes[1] != "127.0.0.1:19099" {
 		t.Fatalf("status probed endpoints other than its configured service: %v", probes)
 	}
 	status, ok := findAssuranceStatus(snapshot.integrations, "cursor")
@@ -289,7 +285,7 @@ func statusTestHealthResponse(req *http.Request, mode string) *http.Response {
 		StatusCode: http.StatusOK,
 		Request:    req,
 		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"service":"rampart","status":"ok","mode":%q,"uptime_seconds":1,"version":"1.9.0"}`, mode))),
+		Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"service":"rampart","status":"ok","mode":%q,"uptime_seconds":1,"version":"1.9.0","commit":"test-commit","instance_id":"test-service-instance-0001"}`, mode))),
 	}
 }
 

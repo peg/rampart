@@ -88,10 +88,26 @@ it does not contain prompts, commands, host output, credentials, or filesystem
 paths. OpenClaw's live plugin verifier earns `host_verified`; the ordinary
 native-hook commands earn `adapter_verified` because they invoke Rampart's
 adapter without asking a model to act. Receipts expire after seven days and are
-treated as stale when Rampart, the configured boundary, the selected policy
-endpoint, local policy-file metadata, or a detected host executable changes.
+treated as stale when Rampart, the configured boundary, local policy-file contents, or a detected host executable changes. Service-backed
+evidence additionally binds the effective policy endpoint.
 They are local status caches, not tamper-resistant
 attestations.
+
+Service-backed evidence includes the exact service origin, per-start instance
+identifier, service build and enforce mode. Health observations before and
+after verification must match. OpenClaw also returns this observation from the
+loaded gateway plugin; changing a config file without reloading that plugin
+cannot verify the new endpoint. An explicit `--serve-url` must match the
+integration's effective endpoint. Legacy services or loaded plugins without
+runtime observations remain visible but require updating and reverification
+before earning this evidence.
+
+Service-optional native hooks verify their installation, local adapter and
+isolated audit behavior without HTTP. Their adapter receipts remain meaningful
+when the service is stopped or replaced. Use `rampart verify policy` separately
+to test HTTP policy decisions. Runtime observations establish only the service
+observed during these probes; they do not attest remote policy contents,
+continuous enforcement, or host tool execution.
 
 ### `rampart setup claude-code`
 
@@ -466,6 +482,15 @@ receipts fall back to current configuration state and explain why proof must be
 rerun. Evidence for a service-required integration is also stale whenever the
 configured Rampart policy service is unavailable; another daemon on a different
 port does not satisfy that check.
+
+Status reports the CLI build separately from the observed `service` version,
+commit, mode and endpoint. `service_owned` requires matching private process
+state and OS process identity; an instance identifier alone does not establish
+ownership. Service-backed receipts become stale after a service instance,
+build or mode change. Healthy older services are displayed even when they
+cannot supply the newer freshness evidence. Protection reports the actual
+reused service and refuses monitor or disabled mode without changing an
+external service or replacing an existing service definition.
 
 `mode` comes from the configured service's health response and is `unknown`
 when that service cannot be reached or identified. Local hook enforcement can

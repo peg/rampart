@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bind service verification receipts to the observed endpoint, server start,
+  build and enforce mode. Status separates CLI and service builds; stale or
+  legacy runtime evidence requires reverification. Service-optional native
+  hooks retain independent local adapter verification without HTTP.
+
 ## [1.9.1] - 2026-09-10
 
 ### Security

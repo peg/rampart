@@ -15,6 +15,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -57,6 +58,7 @@ type Server struct {
 	policyWriteMu       sync.Mutex
 	server              *http.Server
 	startedAt           time.Time
+	instanceID          string
 	notifyConfig        *engine.NotifyConfig
 	notificationSlots   chan struct{}
 	metricsEnabled      bool
@@ -178,7 +180,7 @@ func WithApprovalPersistenceFile(path string) Option {
 	}
 }
 
-// WithConfigPath sets the config path string shown in the /v1/policy endpoint.
+// WithConfigPath sets the config path string shown in the /v1/status endpoint.
 // Use "embedded:standard" when the embedded default policy is active.
 func WithConfigPath(path string) Option {
 	return func(s *Server) {
@@ -195,6 +197,7 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 		mode:              defaultMode,
 		logger:            slog.Default(),
 		startedAt:         time.Now().UTC(),
+		instanceID:        rand.Text(),
 		sse:               newSSEHub(),
 		stopCleanup:       make(chan struct{}),
 		notificationSlots: make(chan struct{}, maxConcurrentNotifications),

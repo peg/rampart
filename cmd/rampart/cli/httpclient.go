@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/peg/rampart/internal/proxy"
 )
 
 // rampartHTTPClient is used for all outgoing HTTP requests from CLI commands
@@ -89,13 +91,7 @@ func validateCredentialEndpoint(rawURL, tokenSource string) error {
 
 const maxRampartHealthResponseBytes = 4 << 10
 
-type rampartHealthResponse struct {
-	Service       string `json:"service"`
-	Status        string `json:"status"`
-	Mode          string `json:"mode"`
-	UptimeSeconds *int   `json:"uptime_seconds"`
-	Version       string `json:"version"`
-}
+type rampartHealthResponse = proxy.HealthResponse
 
 // fetchRampartHealth verifies that healthURL belongs to a Rampart server, not
 // merely that an unrelated process happens to return HTTP 200 on the same port.

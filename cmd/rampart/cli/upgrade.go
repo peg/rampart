@@ -1254,6 +1254,17 @@ func verifyRestartedServeState(
 			return nil, fmt.Errorf("restarted runtime version mismatch: expected %s, got %q", expected, health.Version)
 		}
 	}
+	if state.InstanceID != "" || health.InstanceID != "" {
+		if !runtimeIdentified(state.RuntimeIdentity) || state.RuntimeIdentity != health.RuntimeIdentity {
+			return nil, fmt.Errorf("restarted runtime identity does not match fresh owned serve.state")
+		}
+		var previous serveState
+		if previousExists && json.Unmarshal(previousState, &previous) == nil && previous.InstanceID == state.InstanceID {
+			return nil, fmt.Errorf("restarted runtime reused the previous instance identity")
+		}
+	} else if cmp, ok := compareReleaseVersions(expectedVersion, "v1.9.1"); !ok || cmp > 0 {
+		return nil, fmt.Errorf("restarted runtime lacks instance identity; legacy recovery is limited to v1.9.1 and older")
+	}
 	return append([]byte(nil), stateData...), nil
 }
 

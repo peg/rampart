@@ -16,7 +16,46 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/peg/rampart/internal/proxy"
 )
+
+func TestServeRestartVerifierBindsSameVersionHealthToOwnedInstance(t *testing.T) {
+	for _, tc := range []struct {
+		name, expected, stateID, healthID, previousID string
+		wantError                                     bool
+	}{
+		{"matching", "v2.0.0", "fresh-instance-0001", "fresh-instance-0001", "previous-instance-0001", false},
+		{"unrelated same version", "v2.0.0", "fresh-instance-0001", "other-instance-0001", "previous-instance-0001", true},
+		{"reused instance", "v2.0.0", "fresh-instance-0001", "fresh-instance-0001", "fresh-instance-0001", true},
+		{"modern identity missing", "v2.0.0", "", "", "previous-instance-0001", true},
+		{"legacy rollback", "v1.9.1", "", "", "previous-instance-0001", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			uptime := 1
+			identity := proxy.RuntimeIdentity{InstanceID: tc.healthID, Version: tc.expected, Commit: "same-build", Mode: "enforce"}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(proxy.HealthResponse{RuntimeIdentity: identity, Service: "rampart", Status: "ok", UptimeSeconds: &uptime})
+			}))
+			defer server.Close()
+			parsed, _ := url.Parse(server.URL)
+			port, _ := strconv.Atoi(parsed.Port())
+			state := serveState{URL: server.URL, Port: port, PID: 4242, Started: time.Now().UTC().Format(time.RFC3339Nano), RuntimeIdentity: identity}
+			state.InstanceID = tc.stateID
+			previous := state
+			previous.InstanceID = tc.previousID
+			previous.Started = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+			data, _ := json.Marshal(state)
+			previousData, _ := json.Marshal(previous)
+			deps := testServeRestartVerifierDeps(func(int) (bool, string, error) { return true, "rampart serve", nil })
+			_, err := verifyRestartedServeState(context.Background(), home, os.ReadFile, data, tc.expected, previousData, true, time.Now().Add(-time.Second), deps)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("activation error=%v, wantError=%t", err, tc.wantError)
+			}
+		})
+	}
+}
 
 func TestServeRestartVerifierRejectsStaleState(t *testing.T) {
 	home := t.TempDir()

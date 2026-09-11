@@ -51,6 +51,8 @@ const statusSchemaVersion = "rampart.status.v1"
 type statusSnapshot struct {
 	generatedAt   time.Time
 	buildVersion  string
+	service       *serviceRuntimeObservation
+	serviceOwned  bool
 	protected     []string
 	integrations  []integrationAssuranceStatus
 	mode          string
@@ -67,6 +69,9 @@ type statusJSONOutput struct {
 	SchemaVersion string                       `json:"schema_version"`
 	GeneratedAt   time.Time                    `json:"generated_at"`
 	BuildVersion  string                       `json:"build_version"`
+	BuildCommit   string                       `json:"build_commit"`
+	Service       *serviceRuntimeObservation   `json:"service,omitempty"`
+	ServiceOwned  bool                         `json:"service_owned"`
 	Protected     []string                     `json:"protected_agents"`
 	Integrations  []integrationAssuranceStatus `json:"integrations"`
 	Mode          string                       `json:"mode"`
@@ -110,6 +115,17 @@ func runStatus(w io.Writer, jsonOut bool) error {
 		useColor,
 	)
 	fmt.Fprintln(w, box)
+	fmt.Fprintf(w, "CLI: %s (%s)\n", snapshot.buildVersion, build.Commit)
+	if snapshot.service != nil {
+		ownership := "ownership unproven"
+		if snapshot.serviceOwned {
+			ownership = "owned local service"
+		}
+		fmt.Fprintf(w, "Service: %s (%s), %s, %s · %s\n", snapshot.service.Version, snapshot.service.Commit, snapshot.service.Mode, ownership, snapshot.service.Endpoint)
+		if !runtimeIdentified(snapshot.service.RuntimeIdentity) {
+			fmt.Fprintln(w, "Service freshness is unavailable for this legacy health response; runtime-bound verification requires an updated service.")
+		}
+	}
 	printIntegrationAssurance(w, snapshot.integrations, snapshot.generatedAt)
 
 	printStatusHints(w, snapshot.serverRunning, snapshot.protected, snapshot.allow, snapshot.deny, snapshot.pending)
@@ -121,19 +137,31 @@ func collectStatusSnapshot(generatedAt time.Time) statusSnapshot {
 		generatedAt = time.Now().UTC()
 	}
 	protected := detectProtectedAgents()
-	health, healthErr := configuredServiceHealth()
+	endpoint, endpointErr := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	health, healthErr := observeServiceRuntime(ctx, endpoint, 150*time.Millisecond)
+	if endpointErr != nil {
+		healthErr = endpointErr
+	}
 	serverRunning := healthErr == nil
 	mode := "unknown"
+	var service *serviceRuntimeObservation
+	serviceOwned := false
 	if serverRunning {
 		mode = health.Mode
+		service = &health
+		serviceOwned = ownedServiceRuntime(health)
 	}
 	defaultAction := detectPolicyDefault()
 	allow, deny, pending, lastDeny := todayEventsAt(generatedAt)
 	return statusSnapshot{
 		generatedAt:   generatedAt,
 		buildVersion:  build.Version,
+		service:       service,
+		serviceOwned:  serviceOwned,
 		protected:     protected,
-		integrations:  collectIntegrationAssuranceStatuses(generatedAt, serverRunning),
+		integrations:  collectIntegrationAssuranceStatuses(generatedAt),
 		mode:          mode,
 		defaultAction: defaultAction,
 		serverRunning: serverRunning,
@@ -159,6 +187,9 @@ func writeStatusJSON(w io.Writer, snapshot statusSnapshot) error {
 		SchemaVersion: statusSchemaVersion,
 		GeneratedAt:   snapshot.generatedAt,
 		BuildVersion:  snapshot.buildVersion,
+		BuildCommit:   build.Commit,
+		Service:       snapshot.service,
+		ServiceOwned:  snapshot.serviceOwned,
 		Protected:     protected,
 		Integrations:  integrations,
 		Mode:          snapshot.mode,
