@@ -162,15 +162,15 @@ class RampartClient:
     Provides methods to check tool calls against policies and query server health.
     Supports both synchronous and asynchronous operation via the async client.
 
-    The client fails open by default - if the server is unreachable, tool calls
-    are allowed to proceed. This ensures agent operation continues even if the
-    policy server is down.
+    Policy requests fail closed by default: connection and server failures
+    raise an exception. Set fail_open=True explicitly only when the application
+    should allow calls without a policy decision during those failures.
 
     Args:
         url: Base URL of the Rampart server (default: http://localhost:9090)
         token: Bearer token for authentication (default: reads from the
             RAMPART_TOKEN environment variable)
-        fail_open: Whether to allow calls when server is unreachable (default: True)
+        fail_open: Allow transport/server failures explicitly (default: False)
         timeout: Request timeout in seconds (default: 30)
 
     Example:
@@ -184,7 +184,7 @@ class RampartClient:
         self,
         url: Optional[str] = None,
         token: Optional[str] = None,
-        fail_open: bool = True,
+        fail_open: bool = False,
         timeout: float = 30.0,
     ):
         raw_url = (

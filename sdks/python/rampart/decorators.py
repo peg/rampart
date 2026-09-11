@@ -44,9 +44,7 @@ def get_default_client() -> RampartClient:
     """Get the default client, creating a fail-closed guard client if needed."""
     global _default_client
     if _default_client is None:
-        # Decorators sit directly on an execution boundary. Preserve the
-        # generic client's historical availability-first default, but never
-        # turn a policy-service outage into implicit authorization here.
+        # Keep the execution boundary's fail-closed choice explicit.
         _default_client = RampartClient(fail_open=False)
     return _default_client
 
@@ -62,8 +60,10 @@ def guard(
 ) -> Callable[[F], F]:
     """Decorator to wrap a function with Rampart policy checks.
 
-    The decorator performs a preflight check before calling the wrapped function.
+    The decorator enforces policy before calling the wrapped function, consuming
+    stateful once and call-count rules.
     By default, it raises RampartDeniedError if the call is denied by policy.
+    Connection and server errors propagate even when raise_on_deny=False.
 
     Args:
         tool_name: Name of the tool for policy evaluation
