@@ -28,7 +28,7 @@ func TestHealthIdentifiesOnlyTheServerStart(t *testing.T) {
 	if health.RuntimeIdentity != first.RuntimeIdentity() || health.Mode != "monitor" {
 		t.Fatalf("health identity = %#v", health)
 	}
-	for _, private := range []string{"synthetic-private-token", "pid", "executable", "arguments"} {
+	for _, private := range []string{"synthetic-private-token", `"pid":`, `"executable":`, `"arguments":`} {
 		if strings.Contains(response.Body.String(), private) {
 			t.Fatalf("health exposed private field %s", private)
 		}

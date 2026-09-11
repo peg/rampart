@@ -1473,7 +1473,7 @@ func summarizeVerification(report verificationReport) verificationReport {
 
 func printVerificationReport(w io.Writer, report verificationReport) {
 	fmt.Fprintf(w, "Rampart behavioral verification — %s\n\n", report.Target)
-	fmt.Fprintln(w, "Safe canaries only: no commands, file reads, messages, or external network requests are executed.")
+	fmt.Fprintln(w, "Safe canaries do not execute tools or contact their represented targets.")
 	fmt.Fprintln(w, "HTTP checks use preflight; local adapter checks use temporary audit storage. Neither adds canary events to your audit log.")
 	fmt.Fprintln(w)
 	printVerificationResult(w, report)
@@ -1481,7 +1481,7 @@ func printVerificationReport(w io.Writer, report verificationReport) {
 
 func printVerificationBatchReport(w io.Writer, report verificationBatchReport) {
 	fmt.Fprintf(w, "Rampart behavioral verification — configured integrations with safe verifiers (%d targets)\n\n", report.Summary.Targets)
-	fmt.Fprintln(w, "Safe canaries only: no models, commands, file reads, messages, or external network requests are invoked.")
+	fmt.Fprintln(w, "Safe canaries do not invoke models, execute tools, or contact their represented targets.")
 	fmt.Fprintln(w, "HTTP checks use preflight; local adapter checks use temporary audit storage. Neither adds canary events to your audit log.")
 	fmt.Fprintln(w, "Static-only integrations are not included; use `rampart doctor` for their installation status.")
 	for index, result := range report.Results {
