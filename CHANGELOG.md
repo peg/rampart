@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of granting from a cleaned spelling. Looping and dangling links can
   therefore require repair before the protected operation proceeds.
 - Preserve exact JSON numeric arguments through HTTP, MCP and native-hook input
-  decoding, approval identity and review. The dashboard renders redacted action
-  text supplied by the service so browser numeric conversion cannot change the
+  decoding, approval identity, review and audit recovery. The dashboard renders
+  redacted action text supplied by the service so browser conversion cannot change the
   review. Values already rounded by the upstream host cannot be recovered.
 - Keep complete external action identity through approval transport and separate
   a held host invocation from HTTP replay authorization. Invalid or incomplete
