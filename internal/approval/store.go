@@ -225,6 +225,7 @@ type persistRecord struct {
 	Redacted        bool           `json:"redacted,omitempty"`
 	ScopeRedacted   bool           `json:"run_scope_redacted,omitempty"`
 	ID              string         `json:"id"`
+	EventID         string         `json:"event_id,omitempty"`
 	Tool            string         `json:"tool"`
 	Agent           string         `json:"agent"`
 	AgentDepth      int            `json:"agent_depth,omitempty"`
@@ -461,7 +462,7 @@ func replayGrantVersion(key string) int {
 func (s *Store) Create(call engine.ToolCall, decision engine.Decision) (*Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.createLocked(call, decision, "")
+	return s.createLocked(call, decision, "", true)
 }
 
 // CreateOrAutoApproved atomically checks the run-scoped auto-approval cache
@@ -483,6 +484,17 @@ func (s *Store) CreateOrAutoApprovedWithExpiry(
 	decision engine.Decision,
 	ownerScope string,
 ) (*Request, time.Time, bool, error) {
+	return s.createOrAutoApprovedWithExpiry(call, decision, ownerScope, true)
+}
+
+// CreateExternalOrAutoApprovedWithExpiry keeps each held external hook request
+// separate. Its approval wakes that invocation through polling, so it must not
+// also grant an HTTP evaluation replay or release a second waiting invocation.
+func (s *Store) CreateExternalOrAutoApprovedWithExpiry(call engine.ToolCall, decision engine.Decision, ownerScope string) (*Request, time.Time, bool, error) {
+	return s.createOrAutoApprovedWithExpiry(call, decision, ownerScope, false)
+}
+
+func (s *Store) createOrAutoApprovedWithExpiry(call engine.ToolCall, decision engine.Decision, ownerScope string, replay bool) (*Request, time.Time, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -493,12 +505,12 @@ func (s *Store) CreateOrAutoApprovedWithExpiry(
 	if expiresAt, ok := s.autoApprovalExpiryLocked(call, ownerScope); ok {
 		return nil, expiresAt, true, nil
 	}
-	req, err := s.createLocked(call, decision, ownerScope)
+	req, err := s.createLocked(call, decision, ownerScope, replay)
 	return req, time.Time{}, false, err
 }
 
 // createLocked enqueues one request. The caller must hold s.mu.
-func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, ownerScope string) (*Request, error) {
+func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, ownerScope string, replay bool) (*Request, error) {
 	if s.closed {
 		return nil, ErrStoreClosed
 	}
@@ -511,7 +523,10 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 	if err != nil {
 		return nil, fmt.Errorf("approval: cannot snapshot action: %w", err)
 	}
-	key := s.keyedIdentity(ownerBoundKey(dedupKey(call), ownerScope))
+	key := ""
+	if replay {
+		key = s.keyedIdentity(ownerBoundKey(dedupKey(call), ownerScope))
+	}
 	review, redacted, err := redactCallSnapshot(call, encoded)
 	if err != nil {
 		return nil, fmt.Errorf("approval: cannot snapshot action: %w", err)
@@ -1633,6 +1648,7 @@ func toRecord(req *Request) persistRecord {
 		Redacted:        req.redacted,
 		ScopeRedacted:   req.scopeRedacted,
 		ID:              req.ID,
+		EventID:         call.ID,
 		Tool:            call.Tool,
 		Agent:           call.Agent,
 		AgentDepth:      call.AgentDepth,
@@ -1663,6 +1679,7 @@ func fromRecord(rec persistRecord) (*Request, bool) {
 	}
 
 	call := engine.ToolCall{
+		ID:         rec.EventID,
 		Tool:       rec.Tool,
 		Agent:      rec.Agent,
 		AgentDepth: rec.AgentDepth,

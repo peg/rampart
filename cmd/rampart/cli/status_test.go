@@ -16,6 +16,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -103,6 +105,11 @@ func TestStatusCmd_NoServer(t *testing.T) {
 func TestStatusCmdJSONOutput(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
+	oldClient := rampartHTTPClient
+	rampartHTTPClient = &http.Client{Transport: redirectTestTransport(func(req *http.Request) (*http.Response, error) {
+		return statusTestHealthResponse(req, "enforce"), nil
+	})}
+	t.Cleanup(func() { rampartHTTPClient = oldClient })
 
 	policyDir := filepath.Join(home, ".rampart", "policies")
 	if err := os.MkdirAll(policyDir, 0o755); err != nil {
@@ -186,8 +193,8 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 	if got.BuildVersion == "" {
 		t.Fatal("build_version should be set")
 	}
-	if got.Mode != "monitor" {
-		t.Fatalf("mode=%q, want monitor", got.Mode)
+	if got.Mode != "enforce" {
+		t.Fatalf("mode=%q, want enforce even with default_action=allow", got.Mode)
 	}
 	if got.DefaultAction != "allow" {
 		t.Fatalf("default_action=%q, want allow", got.DefaultAction)
@@ -203,6 +210,86 @@ func TestStatusCmdJSONOutput(t *testing.T) {
 	}
 	if !strings.Contains(got.LastDeny.Command, "rm -rf") {
 		t.Fatalf("last_deny.command=%q, want command summary", got.LastDeny.Command)
+	}
+}
+
+func TestStatusUsesServiceModeIndependentlyOfPolicyDefault(t *testing.T) {
+	for _, mode := range []string{"monitor", "disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			home := t.TempDir()
+			testSetHome(t, home)
+			t.Setenv("PATH", home)
+			t.Setenv("RAMPART_URL", "http://127.0.0.1:19090")
+			policyDir := filepath.Join(home, ".rampart", "policies")
+			if err := os.MkdirAll(policyDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(policyDir, "policy.yaml"), []byte("version: \"1\"\ndefault_action: deny\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			oldClient := rampartHTTPClient
+			rampartHTTPClient = &http.Client{Transport: redirectTestTransport(func(req *http.Request) (*http.Response, error) {
+				return statusTestHealthResponse(req, mode), nil
+			})}
+			t.Cleanup(func() { rampartHTTPClient = oldClient })
+
+			snapshot := collectStatusSnapshot(time.Now().UTC())
+			if !snapshot.serverRunning || snapshot.mode != mode || snapshot.defaultAction != "deny" {
+				t.Fatalf("running=%t mode=%q default=%q", snapshot.serverRunning, snapshot.mode, snapshot.defaultAction)
+			}
+		})
+	}
+}
+
+func TestStatusUnavailableConfiguredEndpointInvalidatesServiceReceipt(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("PATH", home)
+	t.Setenv("RAMPART_URL", "http://127.0.0.1:19099")
+	hooksPath := filepath.Join(home, ".cursor", "hooks.json")
+	if err := installCursorHooks(hooksPath, currentCursorHookCommand(), false); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := writeVerificationReceipt(passingAssuranceReport("cursor", now)); err != nil {
+		t.Fatal(err)
+	}
+	initial, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now, true), "cursor")
+	if !ok || initial.AssuranceLevel != assuranceAdapterVerified {
+		t.Fatalf("initial Cursor assurance = %#v, found=%t", initial, ok)
+	}
+
+	var probes []string
+	oldClient := rampartHTTPClient
+	rampartHTTPClient = &http.Client{Transport: redirectTestTransport(func(req *http.Request) (*http.Response, error) {
+		probes = append(probes, req.URL.Host)
+		if req.URL.Host == "127.0.0.1:19099" {
+			return nil, net.ErrClosed
+		}
+		// A different healthy daemon must not replace the unavailable endpoint.
+		return statusTestHealthResponse(req, "enforce"), nil
+	})}
+	t.Cleanup(func() { rampartHTTPClient = oldClient })
+
+	snapshot := collectStatusSnapshot(now)
+	if snapshot.serverRunning || snapshot.mode != "unknown" {
+		t.Fatalf("unavailable endpoint: running=%t mode=%q", snapshot.serverRunning, snapshot.mode)
+	}
+	if len(probes) != 1 || probes[0] != "127.0.0.1:19099" {
+		t.Fatalf("status probed endpoints other than its configured service: %v", probes)
+	}
+	status, ok := findAssuranceStatus(snapshot.integrations, "cursor")
+	if !ok || status.AssuranceLevel == assuranceAdapterVerified || status.StaleReason != "Rampart policy service is unavailable" {
+		t.Fatalf("unavailable Cursor assurance = %#v, found=%t", status, ok)
+	}
+}
+
+func statusTestHealthResponse(req *http.Request, mode string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Request:    req,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"service":"rampart","status":"ok","mode":%q,"uptime_seconds":1,"version":"1.9.0"}`, mode))),
 	}
 }
 

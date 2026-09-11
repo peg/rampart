@@ -15,36 +15,38 @@ import (
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/token"
 )
 
 func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAdminAuth(w, r) {
+	identity, authErr := s.identify(r)
+	if identity == nil {
+		writeError(w, http.StatusUnauthorized, authErr)
 		return
 	}
-
-	var req createApprovalRequest
-	if err := decodeJSONBody(r.Body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	if !identity.HasScope(token.ScopeAdmin) {
+		writeError(w, http.StatusForbidden, "this endpoint requires admin scope")
 		return
 	}
-
-	params := map[string]any{}
-	if req.Command != "" {
-		params["command"] = req.Command
-	}
-	if req.Path != "" {
-		params["path"] = req.Path
+	ownerScope := ""
+	if identity.Token != nil {
+		ownerScope = identity.Token.Hash
 	}
 
-	call := engine.ToolCall{
-		ID:        audit.NewEventID(),
-		Agent:     req.Agent,
-		Session:   "hook",
-		RunID:     req.RunID,
-		Tool:      req.Tool,
-		Params:    params,
-		Timestamp: time.Now().UTC(),
+	req, err := approval.DecodeExternalRequest(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid approval request")
+		return
 	}
+	call, err := req.ToolCall()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if call.ID == "" {
+		call.ID = audit.NewEventID()
+	}
+	call.Timestamp = time.Now().UTC()
 
 	decision := engine.Decision{
 		Action:  engine.ActionRequireApproval,
@@ -54,7 +56,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	// Check run-scoped authorization and enqueue atomically. A bulk cache
 	// publication can never slip between a stale check and Create, leaving an
 	// orphan pending request for a call that should have been auto-approved.
-	pending, grantExpiresAt, autoApproved, err := s.approvals.CreateOrAutoApprovedWithExpiry(call, decision, "")
+	pending, grantExpiresAt, autoApproved, err := s.approvals.CreateExternalOrAutoApprovedWithExpiry(call, decision, ownerScope)
 	if err != nil {
 		s.logger.Error("proxy: approval store full", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -63,10 +65,11 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	if autoApproved {
 		s.logger.Debug("proxy: run auto-approved (hook), bypassing approval queue", "tool", req.Tool, "run_id", call.RunID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":         audit.NewEventID(),
-			"status":     "approved",
-			"message":    "auto-approved by bulk-resolve",
-			"expires_at": grantExpiresAt.UTC().Format(time.RFC3339Nano),
+			"id":             audit.NewEventID(),
+			"status":         "approved",
+			"message":        "auto-approved by bulk-resolve",
+			"expires_at":     grantExpiresAt.UTC().Format(time.RFC3339Nano),
+			"action_version": req.ActionVersion,
 		})
 		return
 	}
@@ -75,9 +78,7 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("proxy: external approval created",
 		"id", pending.ID,
 		"tool", req.Tool,
-		"command", req.Command,
 		"agent", req.Agent,
-		"message", req.Message,
 	)
 
 	if s.shouldNotify(decision.Action.String()) {
@@ -85,9 +86,10 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":         pending.ID,
-		"status":     pending.Status.String(),
-		"expires_at": pending.ExpiresAt.Format(time.RFC3339),
+		"id":             pending.ID,
+		"status":         pending.Status.String(),
+		"expires_at":     pending.ExpiresAt.Format(time.RFC3339),
+		"action_version": req.ActionVersion,
 	})
 }
 
@@ -268,6 +270,7 @@ func approvalResolutionEvent(resolved *approval.Request, approved, persistReques
 			"resolution":        resolution,
 			"resolved_by":       resolvedBy,
 			"approval_id":       resolved.ID,
+			"event_id":          resolved.Call.ID,
 			"persist_requested": approved && persistRequested,
 			"persist":           false,
 		},

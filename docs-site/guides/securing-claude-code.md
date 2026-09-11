@@ -5,7 +5,7 @@ description: "Step-by-step guide to securing Claude Code with Rampart. Block dan
 
 # Securing Claude Code — Complete Safety Guide
 
-Claude Code is a powerful AI coding agent, but `--dangerously-skip-permissions` mode — the mode most people use for autonomous work — gives it unrestricted shell access. This guide walks through securing Claude Code with Rampart so you get the productivity benefits without the risk.
+Claude Code provides native permissions and sandbox controls. Rampart adds operator-owned policy at its supported tool hooks. Keep the host controls appropriate to your work; this additional boundary does not make unrestricted execution safe.
 
 ## The Risk
 

@@ -26,13 +26,16 @@ type ActionReview struct {
 	WorkDir    string         `json:"workdir,omitempty"`
 	Params     map[string]any `json:"params"`
 	Input      map[string]any `json:"input,omitempty"`
+	// DisplayText retains exact numeric values through clients whose JSON
+	// decoders use floating point. It contains only the redacted fields above.
+	DisplayText string `json:"display_text,omitempty"`
 }
 
 // ReviewCall preserves every represented parameter instead of extracting a
 // command prefix or first path. Shared audit redaction runs before this value
 // reaches an API, dashboard, terminal, or native approval transport.
 func ReviewCall(call engine.ToolCall) ActionReview {
-	return ActionReview{
+	review := ActionReview{
 		Version:    1,
 		Tool:       notify.SanitizeCommand(call.Tool),
 		Agent:      notify.SanitizeCommand(call.Agent),
@@ -44,6 +47,12 @@ func ReviewCall(call engine.ToolCall) ActionReview {
 		Params:     audit.RedactEvent(audit.Event{Request: call.Params}).Request,
 		Input:      audit.RedactEvent(audit.Event{Request: call.Input}).Request,
 	}
+	// Encode before assigning DisplayText so the review never includes a copy
+	// of itself. Missing text means the client cannot present an exact review.
+	if encoded, err := json.MarshalIndent(review, "", "  "); err == nil {
+		review.DisplayText = string(encoded)
+	}
+	return review
 }
 
 // snapshotCall serializes caller-owned values once before deriving either
@@ -74,6 +83,7 @@ func redactedCall(call engine.ToolCall) (engine.ToolCall, bool, error) {
 // consults the caller's maps or invokes their JSON marshalers a second time.
 func redactCallSnapshot(snapshot engine.ToolCall, encoded []byte) (engine.ToolCall, bool, error) {
 	review := ReviewCall(snapshot)
+	snapshot.ID = notify.SanitizeCommand(snapshot.ID)
 	snapshot.Tool, snapshot.Agent = review.Tool, review.Agent
 	snapshot.Session, snapshot.RunID, snapshot.ToolCallID = review.Session, review.RunID, review.ToolCallID
 	snapshot.WorkDir = notify.SanitizeCommand(snapshot.WorkDir)

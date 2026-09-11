@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1182,23 +1184,152 @@ func TestJSONLSink_WriteCompactsOversizedDecisionFields(t *testing.T) {
 	assert.True(t, valid)
 }
 
-func TestJSONLSink_WriteErrorDoesNotUpdateHash(t *testing.T) {
-	dir := t.TempDir()
-	sink, err := NewJSONLSink(dir, WithFsync(false))
-	require.NoError(t, err)
+func TestJSONLSink_PartialAppendPreservesChain(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		header     bool
+		writeError error
+		wantError  error
+	}{
+		{name: "event ENOSPC", writeError: syscall.ENOSPC, wantError: syscall.ENOSPC},
+		{name: "event short write", wantError: io.ErrShortWrite},
+		{name: "rotation header ENOSPC", header: true, writeError: syscall.ENOSPC, wantError: syscall.ENOSPC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sink, err := NewJSONLSink(dir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sink.Close() })
+			require.NoError(t, sink.Write(sampleEvent("exec")))
+			before := sink.currentSharedStateLocked()
+			previousFile := sink.currentFile
+			if tc.header {
+				require.NoError(t, sink.file.Close())
+				name, err := sink.nextRotatedFilenameLocked()
+				require.NoError(t, err)
+				require.NoError(t, sink.openNamedFileLocked(name))
+			}
+			prefix, err := os.ReadFile(sink.filePath())
+			require.NoError(t, err)
+			sink.file = &partialAuditFile{auditAppendFile: sink.file, armed: true, writeError: tc.writeError}
+			if tc.header {
+				err = sink.withDirectoryLock(func() error { return sink.writeChainContinuationLocked(previousFile) })
+			} else {
+				err = sink.Write(sampleEvent("write"))
+			}
+			require.ErrorIs(t, err, tc.wantError)
+			after, err := os.ReadFile(sink.filePath())
+			require.NoError(t, err)
+			assert.Equal(t, prefix, after, "only the uncommitted partial append may be removed")
+			assert.Equal(t, int64(len(prefix)), sink.currentSize)
+			assert.Equal(t, before.LastHash, sink.lastHash)
+			assert.Equal(t, before.EventCount, sink.eventCount)
+			count, err := VerifyManagedChain(dir)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), count)
 
-	// Write one good event.
-	require.NoError(t, sink.Write(sampleEvent("exec")))
-	hashAfterFirst := sink.lastHash
+			// A restarted writer and the original writer must both continue the
+			// retained chain without retrying or publishing the failed event.
+			reopened, err := NewJSONLSink(dir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = reopened.Close() })
+			require.NoError(t, reopened.Write(sampleEvent("read")))
+			require.NoError(t, sink.Write(sampleEvent("edit")))
+			count, err = VerifyManagedChain(dir)
+			require.NoError(t, err)
+			assert.Equal(t, int64(3), count)
+		})
+	}
+}
 
-	// Close the underlying file to cause a write error.
-	require.NoError(t, sink.Close())
+func TestJSONLSink_PartialAppendRollbackFailure(t *testing.T) {
+	rollbackError := errors.New("injected rollback failure")
+	for _, tc := range []struct {
+		name          string
+		truncateError error
+		syncError     error
+		extraWrite    bool
+	}{
+		{name: "truncate fails", truncateError: rollbackError},
+		{name: "rollback sync fails", syncError: rollbackError},
+		{name: "unexpected append", extraWrite: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sink, err := NewJSONLSink(dir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sink.Close() })
+			require.NoError(t, sink.Write(sampleEvent("exec")))
+			prefix, err := os.ReadFile(sink.filePath())
+			require.NoError(t, err)
+			file := sink.file
+			sink.file = &partialAuditFile{auditAppendFile: sink.file, armed: true, writeError: syscall.ENOSPC,
+				truncateError: tc.truncateError, syncError: tc.syncError, extraWrite: tc.extraWrite}
+			err = sink.Write(sampleEvent("write"))
+			require.ErrorIs(t, err, syscall.ENOSPC)
+			if !tc.extraWrite {
+				require.ErrorIs(t, err, rollbackError)
+			} else {
+				require.ErrorContains(t, err, "size changed")
+			}
+			assert.Equal(t, int64(1), sink.eventCount)
+			after, err := os.ReadFile(sink.filePath())
+			require.NoError(t, err)
+			if tc.syncError != nil {
+				assert.Equal(t, prefix, after)
+				require.ErrorIs(t, sink.Close(), rollbackError)
+				require.ErrorIs(t, file.Close(), os.ErrClosed, "a sync failure must not leak the audit file handle")
+				return
+			}
+			require.Greater(t, len(after), len(prefix))
+			assert.Equal(t, prefix, after[:len(prefix)])
+			_, err = NewJSONLSink(dir)
+			require.ErrorContains(t, err, "unterminated audit record")
+			unchanged, err := os.ReadFile(sink.filePath())
+			require.NoError(t, err)
+			assert.Equal(t, after, unchanged, "startup must not silently repair unexplained corruption")
+		})
+	}
+}
 
-	err = sink.Write(sampleEvent("exec"))
-	assert.Error(t, err)
+type partialAuditFile struct {
+	auditAppendFile
+	armed         bool
+	writeError    error
+	truncateError error
+	syncError     error
+	extraWrite    bool
+}
 
-	// lastHash should not have changed on error.
-	assert.Equal(t, hashAfterFirst, sink.lastHash)
+func (f *partialAuditFile) Write(p []byte) (int, error) {
+	if !f.armed {
+		return f.auditAppendFile.Write(p)
+	}
+	f.armed = false
+	n, err := f.auditAppendFile.Write(p[:min(7, len(p))])
+	if err != nil {
+		return n, err
+	}
+	if f.extraWrite {
+		if _, err := f.auditAppendFile.Write([]byte("unexpected")); err != nil {
+			return n, err
+		}
+	}
+	return n, f.writeError
+}
+
+func (f *partialAuditFile) Truncate(size int64) error {
+	if f.truncateError != nil {
+		return f.truncateError
+	}
+	return f.auditAppendFile.Truncate(size)
+}
+
+func (f *partialAuditFile) Sync() error {
+	if f.syncError != nil {
+		return f.syncError
+	}
+	return f.auditAppendFile.Sync()
 }
 
 func sampleEvent(tool string) Event {

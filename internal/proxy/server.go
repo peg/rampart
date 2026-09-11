@@ -205,6 +205,7 @@ func New(eng *engine.Engine, sink audit.AuditSink, opts ...Option) *Server {
 			opt(s)
 		}
 	}
+	s.logger = audit.NewRedactingLogger(s.logger)
 
 	s.mode = strings.ToLower(strings.TrimSpace(s.mode))
 	if s.mode == "" {
@@ -554,16 +555,6 @@ func (req toolRequest) validateTrustedHostedApproval() error {
 		return nil
 	}
 	return fmt.Errorf("hosted approval requests require approval_owner.mode=hosted or both openclaw_hosted and skip_pending_approval")
-}
-
-// createApprovalRequest is the JSON body for POST /v1/approvals.
-type createApprovalRequest struct {
-	Tool    string `json:"tool"`
-	Command string `json:"command,omitempty"`
-	Agent   string `json:"agent"`
-	Path    string `json:"path,omitempty"`
-	Message string `json:"message"`
-	RunID   string `json:"run_id,omitempty"`
 }
 
 type resolveRequest struct {

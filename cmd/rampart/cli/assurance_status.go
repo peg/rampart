@@ -306,6 +306,15 @@ func integrationEnvironmentFingerprintAt(driver integrationDriver, home, policyE
 		}
 		fmt.Fprintf(hash, "%s:%s:%d:%d\n", executable, resolved, info.Size(), info.ModTime().UnixNano())
 	}
+	if driver.OpenClaw {
+		config, err := openClawAssuranceConfiguration()
+		if err != nil {
+			return "", fmt.Errorf("inspect OpenClaw enforcement configuration: %w", err)
+		}
+		if err := json.NewEncoder(hash).Encode(config); err != nil {
+			return "", fmt.Errorf("fingerprint OpenClaw enforcement configuration: %w", err)
+		}
+	}
 	policyDir := filepath.Join(home, ".rampart", "policies")
 	entries, err := os.ReadDir(policyDir)
 	if err != nil {
@@ -347,6 +356,66 @@ func integrationEnvironmentFingerprintAt(driver integrationDriver, home, policyE
 		}
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// Only the owned enforcement settings enter the receipt fingerprint. Provider
+// configuration and other plugins are not evidence for this verifier, and
+// included provider files must not be traversed just to refresh local status.
+type openClawAssuranceConfig struct {
+	PluginCurrent bool   `json:"plugin_current"`
+	ExecMode      string `json:"exec_mode"`
+	Plugin        struct {
+		Enabled           *bool    `json:"enabled"`
+		ServeURL          string   `json:"serveUrl"`
+		TimeoutMS         *float64 `json:"timeoutMs"`
+		FailOpen          *bool    `json:"failOpen"`
+		FailOpenTools     []string `json:"failOpenTools"`
+		ApprovalTimeoutMS *float64 `json:"approvalTimeoutMs"`
+	} `json:"plugin"`
+}
+
+func openClawAssuranceConfiguration() (openClawAssuranceConfig, error) {
+	var config openClawAssuranceConfig
+	bin, _ := findOpenClawBinary()
+	stateDir, configPath, err := resolveOpenClawStateDir(bin)
+	if err != nil {
+		return config, err
+	}
+	execConfig, err := readVerifiedOpenClawExecConfigAt(configPath)
+	if err != nil {
+		return config, fmt.Errorf("managed exec settings are unavailable or invalid")
+	}
+	config.ExecMode = openClawExecPolicyIdentity(execConfig)
+	config.PluginCurrent = openClawPluginCurrent(getOpenClawPluginStateAt(stateDir, configPath))
+	plugins, err := loadOpenClawPluginsConfig(configPath)
+	if err != nil {
+		return config, fmt.Errorf("managed plugin settings are unavailable or invalid")
+	}
+	entries, ok := plugins["entries"].(map[string]any)
+	if !ok {
+		return config, fmt.Errorf("managed plugin entry is unavailable or invalid")
+	}
+	entry, ok := entries["rampart"].(map[string]any)
+	if !ok {
+		return config, fmt.Errorf("managed plugin entry is unavailable or invalid")
+	}
+	settings, ok := entry["config"].(map[string]any)
+	if !ok {
+		return config, fmt.Errorf("managed plugin configuration is unavailable or invalid")
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return config, fmt.Errorf("managed plugin configuration is invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config.Plugin); err != nil {
+		return config, fmt.Errorf("managed plugin configuration is invalid")
+	}
+	if validateCredentialEndpoint(config.Plugin.ServeURL, "file") != nil {
+		return config, fmt.Errorf("managed plugin endpoint is invalid")
+	}
+	return config, nil
 }
 
 func collectIntegrationAssuranceStatuses(now time.Time, serverRunning bool) []integrationAssuranceStatus {

@@ -23,21 +23,20 @@ rampart serve --config ~/.rampart/policies/my-policy.yaml --port 9090
 
 The dashboard HTML is served without authentication — it contains no secrets. All data is fetched from the `/v1/approvals` API, which requires a Bearer token.
 
-When `rampart serve` starts, it prints the token:
+An interactive `rampart serve` can display the bootstrap token. Background
+and redirected service output omit the full token. Retrieve it in your own
+terminal with `rampart token`, then enter it in the dashboard. Keep it out of
+shared logs, screenshots, and agent prompts.
 
-```
-serve: full token: <generated-64-character-token>
-```
-
-Enter this token in the dashboard's token field. It's stored in your browser's `localStorage` — never sent to any external service.
+The browser stores it in `localStorage` for that origin and sends it to the
+configured Rampart service to authenticate requests.
 
 ### Admin Scope vs. Eval Scope
 
 Rampart credentials carry explicit scopes:
 
-- **Bootstrap admin token** — generated at startup, printed to stdout, and
-  stored in `~/.rampart/token`. It carries admin scope and can access all
-  dashboard APIs.
+- **Bootstrap admin token** — persisted in `~/.rampart/token`. It carries
+  admin scope and can access all dashboard APIs.
 - **Named tokens** — created with `rampart token create <name>`. They can carry
   eval scope, admin scope, or both, plus optional policy profiles.
 
@@ -67,44 +66,35 @@ APIs; they cannot turn an agent's own request into operator authorization.
 
 ## Network Access
 
-By default, `rampart serve` binds to `127.0.0.1` (localhost only). To expose it:
+By default, `rampart serve` binds to `127.0.0.1` (localhost only). Keep that
+binding for local use. Non-loopback bindings require TLS or a trusted HTTPS
+reverse proxy; an address alone does not establish a protected remote service.
+See the [CLI reference](../reference/cli-commands.md) for `--tls-cert`,
+`--tls-key`, and `--tls-auto`.
 
-- **LAN access**: Use `--addr 0.0.0.0` to bind to all interfaces
-- **Tailscale**: Use `--addr <tailscale-ip>` for secure remote access without exposing to the internet
-- **Reverse proxy**: Put nginx/Caddy in front with your own auth
-
-!!! warning
-    The dashboard token grants full approval authority. Treat it like a password. Don't expose the port to the public internet without additional authentication.
+The dashboard token grants approval authority. Restrict access to the service
+and its credentials. Signed approval links likewise carry authority for the
+associated request and must stay private to intended reviewers.
 
 ## API Reference
 
-The dashboard uses the same REST API available to any client:
-
-```bash
-# List approvals
-curl http://localhost:9090/v1/approvals \
-  -H "Authorization: Bearer $TOKEN"
-
-# Approve
-curl -X POST http://localhost:9090/v1/approvals/APPROVAL_ID/resolve \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"approved": true, "resolved_by": "security-team"}'
-
-# Deny
-curl -X POST http://localhost:9090/v1/approvals/APPROVAL_ID/resolve \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"approved": false, "resolved_by": "security-team", "reason": "not authorized"}'
-```
+For authenticated request and response formats, see the canonical
+[approval API reference](../reference/api-reference.md).
 
 ## Integration with Hooks
 
-When Claude Code triggers an `ask` policy, the flow is:
+The dashboard resolves requests owned by Rampart's external approval queue,
+including Codex and Cursor hook requests. The waiting integration consumes the
+result; the dashboard itself does not execute the tool.
 
-1. Hook returns `permissionDecision: "ask"` — Claude Code shows native approval prompt
-2. Approval is also created in the server's approval store
-3. Dashboard shows the pending approval
-4. Webhooks fire (if configured) with signed approve/deny URLs
+Claude Code's ordinary `ask` returns `permissionDecision: "ask"` and Claude
+owns the native prompt and resume. With `ask.audit: true`, the hook can mirror
+pending review data to the service and correlate later host events on a
+best-effort basis. Resolving that mirrored entry does not resume or cancel the
+native prompt. Claude's explicit `ask.headless_only` path instead waits on the
+external queue; see [Native Ask](../guides/native-ask.md).
 
-The first resolution wins — whether from Claude Code's prompt, the dashboard, a webhook link, or the API.
+OpenClaw native plugin approvals are owned by OpenClaw and do not create a
+second Rampart pending request. Consult
+[approval paths and limits](../getting-started/support-matrix.md#approval-paths-and-limits)
+for other integrations.

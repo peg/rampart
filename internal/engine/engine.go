@@ -165,6 +165,16 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 	if opts.PolicyFilter != "" {
 		matching = filterByProfile(matching, opts.PolicyFilter)
 	}
+	if call.Path() != "" {
+		if _, resolved := cleanPathsAt(call.Path(), call.WorkingDirectory()); resolved == "" &&
+			e.policiesNeedPathResolution(matching, call) {
+			return Decision{
+				Action:       ActionDeny,
+				Message:      "cannot resolve tool path safely; failing closed",
+				EvalDuration: time.Since(start),
+			}
+		}
+	}
 
 	if len(matching) == 0 {
 		if hasDurableAllow {
@@ -915,6 +925,39 @@ func (e *Engine) collectMatching(cfg *Config, call ToolCall) []Policy {
 	})
 
 	return result
+}
+
+// policiesNeedPathResolution is used only after resolution fails. Preserve rule
+// order and other conditions instead of attributing the failure to an
+// unreachable or otherwise inapplicable path rule.
+func (e *Engine) policiesNeedPathResolution(policies []Policy, call ToolCall) bool {
+	for _, policy := range policies {
+		for _, rule := range policy.Rules {
+			if rule.IsExpired() {
+				continue
+			}
+			if rule.When.Default || rule.When.IsEmpty() {
+				break
+			}
+			action, err := rule.ParseAction()
+			if err != nil {
+				break // Ordinary evaluation reports the invalid rule.
+			}
+			if len(rule.When.PathMatches) > 0 {
+				remaining := rule.When
+				remaining.PathMatches = nil
+				remaining.PathNotMatches = nil
+				if matchConditionForAction(remaining, call, e.callCounter, action) {
+					return true
+				}
+				continue
+			}
+			if matchConditionForAction(rule.When, call, e.callCounter, action) {
+				break
+			}
+		}
+	}
+	return false
 }
 
 // filterByProfile keeps only policies whose source file matches the given profile name.

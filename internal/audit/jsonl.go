@@ -219,12 +219,20 @@ func managedAuditFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
+type auditAppendFile interface {
+	io.Writer
+	Stat() (os.FileInfo, error)
+	Sync() error
+	Truncate(int64) error
+	Close() error
+}
+
 // JSONLSink is an append-only JSONL audit sink with hash chaining.
 type JSONLSink struct {
 	mu sync.Mutex
 
 	dir            string
-	file           *os.File
+	file           auditAppendFile
 	currentFile    string
 	currentSize    int64
 	lastHash       string
@@ -398,16 +406,8 @@ func (s *JSONLSink) Write(event Event) error {
 			}
 		}
 		eventStart := s.currentSize
-		if _, err := s.file.Write(line); err != nil {
+		if err := s.appendRecordLocked(line); err != nil {
 			return fmt.Errorf("audit: write event: %w", err)
-		}
-
-		s.currentSize += int64(len(line))
-
-		if s.fsync {
-			if err := s.file.Sync(); err != nil {
-				return fmt.Errorf("audit: fsync event: %w", err)
-			}
 		}
 
 		s.lastHash = encodedEvent.Hash
@@ -432,6 +432,49 @@ func (s *JSONLSink) Write(event Event) error {
 
 		return nil
 	})
+}
+
+// appendRecordLocked requires the directory lock. Only a partial append from
+// this write may be rolled back; existing corrupt records remain fail-closed.
+func (s *JSONLSink) appendRecordLocked(line []byte) error {
+	n, err := s.file.Write(line)
+	if n != len(line) {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		if n > 0 && n < len(line) {
+			err = errors.Join(err, s.rollbackPartialAppendLocked(n))
+		}
+	}
+	if err != nil {
+		return err
+	}
+	s.currentSize += int64(n)
+	if s.fsync {
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("fsync record: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *JSONLSink) rollbackPartialAppendLocked(written int) error {
+	info, err := s.file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect partial append: %w", err)
+	}
+	if info.Size() != s.currentSize+int64(written) {
+		return fmt.Errorf("cannot roll back partial append: file size changed")
+	}
+	if err := s.file.Truncate(s.currentSize); err != nil {
+		return fmt.Errorf("roll back partial append: %w", err)
+	}
+	if s.fsync {
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("persist partial append rollback: %w", err)
+		}
+	}
+	return nil
 }
 
 // Flush flushes pending data to disk.
@@ -464,16 +507,17 @@ func (s *JSONLSink) Close() error {
 	if s.file == nil {
 		return nil
 	}
+	var closeErr error
 	if s.fsync {
 		if err := s.file.Sync(); err != nil {
-			return fmt.Errorf("audit: close sync: %w", err)
+			closeErr = fmt.Errorf("audit: close sync: %w", err)
 		}
 	}
 	if err := s.file.Close(); err != nil {
-		return fmt.Errorf("audit: close sink file: %w", err)
+		closeErr = errors.Join(closeErr, fmt.Errorf("audit: close sink file: %w", err))
 	}
 	s.file = nil
-	return nil
+	return closeErr
 }
 
 func (s *JSONLSink) filePath() string {

@@ -102,7 +102,7 @@ func (s *JSONLSink) openNamedFileLocked(name string) error {
 			return fmt.Errorf("audit: persist jsonl directory entry: %w", err)
 		}
 	}
-	s.file = file
+	s.file = &auditAppendHandle{File: file}
 	s.currentFile = name
 	s.currentSize = info.Size()
 	return nil
@@ -120,16 +120,8 @@ func (s *JSONLSink) writeChainContinuationLocked(prevFile string) error {
 	}
 
 	line = append(line, '\n')
-	if _, err := s.file.Write(line); err != nil {
+	if err := s.appendRecordLocked(line); err != nil {
 		return fmt.Errorf("audit: write chain continuation: %w", err)
-	}
-
-	s.currentSize += int64(len(line))
-	if !s.fsync {
-		return nil
-	}
-	if err := s.file.Sync(); err != nil {
-		return fmt.Errorf("audit: fsync chain continuation: %w", err)
 	}
 	return nil
 }

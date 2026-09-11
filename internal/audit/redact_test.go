@@ -21,6 +21,9 @@ func (s *captureAuditSink) Close() error            { s.closes++; return nil }
 func TestRedactEventScrubsSecretsWithoutMutatingSource(t *testing.T) {
 	command := `curl -H 'Authorization: Bearer top-secret-token' https://example.com`
 	event := Event{
+		ID: "token=id-secret", Agent: "token=agent-secret", Session: "token=session-secret",
+		RunID: "token=run-secret", ToolCallID: "token=call-secret", Tool: "token=tool-secret",
+		Host: &HostContext{Hostname: "token=host-secret", OS: "token=os-secret", Arch: "token=arch-secret"},
 		Request: map[string]any{
 			"command":     command,
 			"command_b64": "encoded-secret-copy",
@@ -31,12 +34,23 @@ func TestRedactEventScrubsSecretsWithoutMutatingSource(t *testing.T) {
 			},
 		},
 		Decision: EventDecision{
-			Message:     "blocked " + command,
-			Suggestions: []string{"rampart allow " + command},
+			MatchedPolicies: []string{"token=policy-secret"},
+			Message:         "blocked " + command,
+			Suggestions:     []string{"rampart allow " + command},
 		},
+		Response: &ToolResponse{Flags: []string{"token=flag-secret"}},
 	}
 
 	redacted := RedactEvent(event)
+	for _, value := range []string{redacted.ID, redacted.Agent, redacted.Session, redacted.RunID, redacted.ToolCallID, redacted.Tool,
+		redacted.Host.Hostname, redacted.Host.OS, redacted.Host.Arch, redacted.Decision.MatchedPolicies[0], redacted.Response.Flags[0]} {
+		if strings.Contains(value, "-secret") || !strings.Contains(value, redactedValue) {
+			t.Errorf("metadata was not redacted: %q", value)
+		}
+	}
+	if event.Host.Hostname != "token=host-secret" || event.Decision.MatchedPolicies[0] != "token=policy-secret" || event.Response.Flags[0] != "token=flag-secret" {
+		t.Fatal("source metadata was mutated")
+	}
 	if got := redacted.Request["command"].(string); strings.Contains(got, "top-secret-token") || !strings.Contains(got, redactedValue) {
 		t.Fatalf("redacted command = %q", got)
 	}

@@ -1,29 +1,19 @@
 ---
 title: Agent Team Oversight
-description: "Rampart groups sub-agent approvals by shared run ID so you can supervise agent teams safely. Review and approve parallel Claude Code or Cline actions together."
+description: "Review current Rampart-owned approvals together and separately grant temporary authority to an exact agent, session, run, and credential owner."
 ---
 
 # Agent Team Oversight
 
-When you run Claude Code with multiple sub-agents — or any orchestrator spawning
-parallel workers — every agent in the session shares the same **run ID**.
-Rampart groups their pending approvals so you can decide the current calls
-together and separately choose whether later calls receive a time-bounded
-grant.
+Rampart groups its own pending approvals when the caller supplies matching
+agent, session, run, and credential-owner identities. You can review the current
+calls together and separately authorize future calls for that exact scope.
 
-!!! info "Available since v0.4.0"
-
----
-
-## How It Works
-
-Claude Code assigns a `session_id` to every session. When you run an orchestrator that spawns sub-agents, all of them share that same `session_id`. Rampart reads it from the `PreToolUse` hook payload and uses it as the **run ID** for grouping.
-
-Cline uses `taskId` instead — Rampart maps that automatically.
-
-You don't configure anything. If you already use Rampart, agent team grouping just works.
-
----
+This is a feature of Rampart's external approval queue. It does not combine
+native host approval prompts or add a resolver to integrations without one.
+A shared session alone does not establish that every delegated agent belongs
+to the same approval scope. See
+[approval paths and limits](../getting-started/support-matrix.md#approval-paths-and-limits).
 
 ## Dashboard View
 

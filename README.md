@@ -19,10 +19,9 @@
 ---
 
 AI agents can edit files, run commands, call APIs, and ship code at machine
-speed. Their permission systems usually ask a different question: **can this
-tool run?**
-
-Rampart asks: **should this action run?**
+speed. Harnesses provide their own permissions, sandboxes, and approval modes.
+Rampart adds operator-owned policies and a consistent audit trail across its
+supported integration boundaries.
 
 It sits at supported hooks, plugins, proxies, and process boundaries; evaluates
 the action against local policy; and returns `allow`, `ask`, or `deny` before the
@@ -221,20 +220,27 @@ working in a repository whose policy you do not trust.
 
 ## Approvals without prompt fatigue
 
-An `ask` rule escalates only the action that matched. Depending on the
-integration, approval appears in the agent's native UI or in Rampart's CLI and
-dashboard.
+An `ask` rule requires human review of the action that matched. The integration
+determines where that review appears and whether it can resume the call. Paths
+without an approval resolver block the request.
+
+For integrations using Rampart's approval queue, review and resolve requests
+through its dashboard or CLI:
 
 ```bash
-rampart pending
+rampart pending --details
 rampart approve <id>
 rampart deny <id>
 ```
 
-OpenClaw can offer `allow-once`, `allow-always`, and `deny` on the original tool
-call. Compatible Hermes installations pause and resume that same call. Other
-integrations expose only the approval behavior their host can safely support;
-Rampart does not invent a second approval owner and call it equivalent.
+The OpenClaw native plugin offers `allow-once` and `deny` in OpenClaw's own UI;
+those requests do not also appear in Rampart's queue. Persistent allowances
+require explicit operator policy. Compatible Hermes installations likewise use
+host-owned approval and resume. Standalone `rampart mcp` currently blocks `ask`
+requests; starting `rampart serve` does not connect a resolver to that proxy.
+
+See the [approval paths and limits](https://docs.rampart.sh/getting-started/support-matrix/#approval-paths-and-limits)
+before choosing an integration.
 
 ## Watch, verify, and audit
 
@@ -280,14 +286,10 @@ setuid, direct-syscall, and SIP-protected paths remain outside that boundary.
 [Any CLI agent →](https://docs.rampart.sh/integrations/any-cli-agent/) ·
 [Threat model →](docs/THREAT-MODEL.md)
 
-## What changed in 1.8
+## Releases
 
-Rampart 1.8 adds a native local Cursor hook, separates approval of reviewed
-pending calls from explicit grants for future calls, and binds those grants
-to the requesting credential and run. It also gives approval state one live
-service owner and keeps native approvals compatible with Hermes v0.20.2.
-
-Read the [changelog](CHANGELOG.md) for the full release notes.
+Use the [latest stable release](https://github.com/peg/rampart/releases/latest)
+and read the [changelog](CHANGELOG.md) for features, fixes, and upgrade notes.
 
 ## Documentation
 

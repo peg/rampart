@@ -210,6 +210,7 @@ func NewProxy(eng *engine.Engine, sink audit.AuditSink, childIn io.WriteCloser, 
 			opt(p)
 		}
 	}
+	p.logger = audit.NewRedactingLogger(p.logger)
 	p.mode = normalizeProxyMode(p.mode)
 	if p.agentID == "" {
 		p.agentID = "mcp-client"
@@ -437,7 +438,9 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		}
 	}
 	var params ToolsCallParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(req.Params))
+	decoder.UseNumber() // Match the exact numbers in the request forwarded below.
+	if err := decoder.Decode(&params); err != nil {
 		if p.mode == "enforce" && HasID(req.ID) {
 			return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: invalid tools/call params")
 		}

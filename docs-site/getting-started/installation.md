@@ -95,7 +95,17 @@ Multi-arch container image (amd64 + arm64), built on distroless for minimal atta
 docker run --rm -p 127.0.0.1:9090:9090 ghcr.io/peg/rampart:latest
 ```
 
-Or use with docker-compose. First, create a policy file (e.g. `mkdir policies && rampart init > policies/rampart.yaml`):
+Or use with docker-compose. Create the policy file explicitly; `init` writes
+configuration to the selected path and prints a human-readable summary:
+
+```bash
+mkdir -p policies
+rampart --config policies/rampart.yaml init
+chmod 644 policies/rampart.yaml
+```
+
+The container runs as a nonroot user and needs read access to this generated
+policy. Use its standard policy and audit locations:
 
 ```yaml
 services:
@@ -104,9 +114,9 @@ services:
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
-      - ./policies:/policies:ro
-      - rampart-audit:/audit
-    command: ["serve", "--addr", "0.0.0.0", "--port", "9090", "--config", "/policies/rampart.yaml", "--audit-dir", "/audit"]
+      - ./policies:/home/nonroot/.rampart/policies:ro
+      - rampart-audit:/home/nonroot/.rampart/audit
+    restart: unless-stopped
 
 volumes:
   rampart-audit:

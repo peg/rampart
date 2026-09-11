@@ -76,6 +76,14 @@ optional original `input`, and supplied `agent`, `agent_depth`, `session`,
 authorization token or proof of a host filesystem object. Render all fields as
 untrusted text; a command preview alone is not the full approval scope.
 
+`action.display_text` is server-generated JSON text of those same redacted
+fields, excluding `display_text` itself. Display clients should render this
+string as untrusted text without parsing it again: JavaScript and other
+floating-point JSON decoders can round numbers in the structured `action`
+fields. The structured fields remain available for API compatibility. This
+preserves numbers received by Rampart; it cannot recover precision already
+lost in a host's JavaScript number representation.
+
 Pending responses also include `redacted`. When true, resolving with
 `persist: true` is rejected before changing the pending approval: a redacted
 literal cannot represent the original action in a permanent command/path rule.
@@ -333,7 +341,17 @@ curl -X POST "http://127.0.0.1:9090/v1/preflight/exec" \
 ```
 
 ## POST /v1/approvals
-Creates an external/manual approval request.
+Creates an external/manual approval request. Rampart hooks send the complete
+represented action using `action_version: 1`. The response must acknowledge
+that version before the hook can accept a resolution; upgrade and restart
+`rampart serve` alongside the hook binary. Older services cannot acknowledge
+the fields they previously discarded.
+
+Each creation represents one waiting external invocation. Approving it lets
+that invocation resume through polling; it does not create a second grant for
+`/v1/tool/*`, even when host run and tool-call IDs are present. Separate
+creations remain separate pending approvals. Explicit future run grants are
+still scoped to the exact agent, session, run, and credential owner.
 
 ### Request Headers
 - `Authorization: Bearer <admin-scoped-token>` (eval-only credentials are rejected)
@@ -344,17 +362,38 @@ Creates an external/manual approval request.
 ```json
 {
   "type": "object",
-  "required": ["tool", "agent", "message"],
+  "required": ["action_version", "tool", "agent", "params"],
+  "additionalProperties": false,
   "properties": {
+    "action_version": { "const": 1 },
+    "event_id": { "type": "string" },
     "tool": { "type": "string" },
-    "command": { "type": "string" },
-    "path": { "type": "string" },
     "agent": { "type": "string" },
+    "agent_depth": { "type": "integer", "minimum": 0 },
+    "session": { "type": "string" },
+    "workdir": { "type": "string" },
+    "params": { "type": "object" },
+    "input": { "type": "object" },
     "message": { "type": "string" },
-    "run_id": { "type": "string" }
+    "run_id": { "type": "string" },
+    "tool_call_id": { "type": "string" }
   }
 }
 ```
+
+`params` retains every represented parameter, including file content, patch
+text and all targets. `input` retains additional represented host input;
+`workdir` retains host-supplied working-directory context. Secret values are
+redacted before review and persistence. The optional `event_id` correlates the
+original hook audit event with the later approval-resolution event.
+`session` may be absent when no project-session label is available; missing
+scope context cannot authorize future calls through a run grant.
+
+Legacy manual clients may omit `action_version` and send `tool`, `agent`,
+`command`, `path`, `message`, `run_id` and `tool_call_id`. These requests use
+session `hook` and receive `action_version: 0`; they cannot express a complete
+file/edit action. Mixing legacy command/path fields with versioned parameters,
+unknown fields, and unsupported versions returns `400`.
 
 ### Response Body Schema
 Created (`201`):
@@ -362,8 +401,9 @@ Created (`201`):
 ```json
 {
   "type": "object",
-  "required": ["id", "status", "expires_at"],
+  "required": ["action_version", "id", "status", "expires_at"],
   "properties": {
+    "action_version": { "type": "integer", "enum": [0, 1] },
     "id": { "type": "string" },
     "status": { "type": "string" },
     "expires_at": { "type": "string", "format": "date-time" }
@@ -375,6 +415,7 @@ Auto-approved (`200`, when an explicit owner-bound run grant is active):
 
 ```json
 {
+  "action_version": 1,
   "id": "01J...",
   "status": "approved",
   "message": "auto-approved by bulk-resolve",
@@ -386,7 +427,7 @@ Auto-approved (`200`, when an explicit owner-bound run grant is active):
 - `201 Created` approval created
 - `200 OK` auto-approved by an active grant for the exact
   agent/session/run/credential-owner scope
-- `400 Bad Request` invalid JSON
+- `400 Bad Request` malformed or unsupported action request
 - `401 Unauthorized`
 - `403 Forbidden` valid credential without admin scope
 - `503 Service Unavailable` approval queue full
@@ -396,7 +437,7 @@ Auto-approved (`200`, when an explicit owner-bound run grant is active):
 curl -X POST "http://127.0.0.1:9090/v1/approvals" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"tool":"exec","command":"kubectl delete pod foo","agent":"claude-code","message":"requires approval"}'
+  -d '{"action_version":1,"tool":"write","agent":"example-agent","session":"example-session","params":{"file_path":"marker.txt","content":"reviewed marker"},"message":"Review this write"}'
 ```
 
 ## GET /v1/approvals

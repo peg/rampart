@@ -104,7 +104,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Managed native guard<br><code>rampart protect openclaw</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX">First-class plugin approvals / native approval UI</td>
+      <td data-label="Approval UX">OpenClaw native allow-once / deny; complete review required</td>
       <td data-label="Support tier"><strong>Verified</strong></td>
     </tr>
     <tr class="tier-experimental" data-integration="hermes">
@@ -152,7 +152,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">MCP proxy<br><code>rampart mcp --</code></td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">No</td>
-      <td data-label="Approval UX">Fails closed when no resolver is available</td>
+      <td data-label="Approval UX">Standalone CLI blocks <code>ask</code>; no connected resolver</td>
       <td data-label="Support tier">Supported</td>
     </tr>
     <tr class="tier-supported">
@@ -207,6 +207,28 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
   checks. Older Hermes releases block `ask` with upgrade guidance. Its built-in
   status check remains static, so it is not included in `rampart verify --all`,
   and authenticated live-host proof remains pending
+
+## Approval paths and limits
+
+An `ask` decision requires approval; it does not promise that every integration
+has a working approval UI. Use the owner for the configured path:
+
+| Path | Where to review | What approval can do |
+| --- | --- | --- |
+| OpenClaw native plugin | OpenClaw's native approval UI | Allow one call or deny. Complete redacted review must fit the host's limit; otherwise the plugin blocks. These requests are not duplicated in `rampart pending`. |
+| Other native approval integrations | The host's UI, where supported | The host owns delivery and resume. Consult the integration's limits; Hermes remains experimental. |
+| Rampart external queue, including Codex, Gemini and Cursor hooks | Rampart dashboard or `rampart pending --details`, then `rampart approve <id>` / `rampart deny <id>` | The waiting integration handles the result. An unavailable resolver cannot authorize the action. Gemini remains experimental. |
+| Cline and standalone `rampart mcp` | No connected approval resolver | `ask` cancels or refuses the call. Starting `rampart serve` alone does not add an approval path to either integration. |
+| Custom HTTP API clients | Rampart's queue or an explicitly configured host owner | The caller implements waiting and execution; an approved API response does not execute a tool. |
+
+Approving a pending action and granting permission to future actions are
+different operations. The OpenClaw native plugin does not learn persistent
+allowances from approval callbacks. Its separate exec-event compatibility
+bridge has different behavior; see the [OpenClaw approval guide](../guides/openclaw-approval.md#exec-event-compatibility-bridge).
+
+The verification probes described above do not prove approval delivery or
+resume. A supported native approval contract and a completed installed-host
+journey are different evidence.
 
 ## Degraded behavior notes
 

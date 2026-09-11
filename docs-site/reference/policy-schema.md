@@ -11,7 +11,7 @@ Complete YAML reference for Rampart policy files.
 
 ```yaml
 version: "1"              # Required. Always "1".
-default_action: allow      # Required. "allow" or "deny".
+default_action: allow      # allow | deny | ask | watch.
 
 notify:                    # Optional. Webhook notifications.
   url: "https://..."
@@ -102,7 +102,9 @@ rules:
 
 ### Conditions (`when`)
 
-All conditions use **glob patterns**:
+Pattern fields such as `command_matches` and `path_matches` use **glob patterns**.
+Substring, regular-expression, and numeric conditions use their documented
+matching rules instead:
 
 | Glob | Meaning |
 |------|---------|
