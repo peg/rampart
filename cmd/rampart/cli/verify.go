@@ -129,12 +129,13 @@ func newVerifyCmd() *cobra.Command {
 		Short: "Actively verify that agent safety boundaries really block",
 		Long: `Run non-destructive behavioral canaries against Rampart's integration boundaries.
 
-The canaries never execute commands, read files, send messages, or contact an
-external network. Service-optional hooks verify their local installation,
-adapter and isolated audit behavior without HTTP. The policy target and
-service-backed integrations test the effective policy endpoint. OpenClaw also
-runs fixed canaries through the loaded before_tool_call implementation and
-compares its runtime observation with the CLI's observation.`,
+Safe canaries do not execute tools or contact their represented targets.
+Service-optional hooks verify their local installation, adapter and isolated
+audit behavior without HTTP. The policy target and service-backed integrations
+contact the configured policy endpoint, which may be remote. Verification
+inspects local configuration and adapter files. OpenClaw also runs fixed
+canaries through the loaded before_tool_call implementation and compares its
+runtime observation with the CLI's observation.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all {
