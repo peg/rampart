@@ -625,7 +625,11 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
       if (resp.status === 403 || resp.status === 401) {
         // Drain the bounded body for connection reuse, but never reflect an
         // rejection response body into host logs or approval UI.
-        await readControlResponseText(resp);
+        try {
+          await readControlResponseText(resp);
+        } catch {
+          // A failed body cannot undo a rejection status already received.
+        }
         const rejection = resp.status === 401 ? "authentication rejected" : "request rejected";
         return { allowed: false, decision: "deny", message: `Rampart ${rejection} (HTTP ${resp.status})` };
       }
