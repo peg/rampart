@@ -178,10 +178,18 @@ rampart init --profile openclaw
 
 ## Complete action approval
 
-The native plugin offers `allow-once` and `deny`. It shows the complete
-represented arguments, targets and available host context with secrets redacted.
+The native plugin offers `allow-once` and `deny`. It shows the complete original
+execution arguments and derived targets with secrets redacted, together with
+the available agent, delegation depth, requester, origin and working directory.
 The approval belongs to OpenClaw; Rampart creates no second pending queue.
 Timeouts deny the call.
+
+Opaque session, run and tool-call identifiers remain in Rampart's service
+requests and audit records instead of consuming the visible review budget.
+OpenClaw separately retains its native tool-call, agent and session approval
+binding. A working directory already represented exactly in the original
+arguments is shown once; a distinct working directory is also included.
+Original arguments with these same field names are always retained.
 
 The policy input retains adapter-derived facts used by the Guard rules. Its
 `rampart_original_input` field preserves the original tool arguments for review
@@ -190,7 +198,8 @@ adapter's reserved fields. Those names cannot replace derived policy facts or
 host context. Native approval displays this original payload after redaction.
 
 OpenClaw's native hook description is limited to 512 characters and does not
-forward a complete-review attachment. If the complete rendered action exceeds
+forward a complete-review attachment. Compact presentation avoids duplicated
+metadata; it never truncates arguments or targets. If the final escaped review exceeds
 that limit, Rampart blocks it before creating an approval. Split it into smaller
 independently reviewable actions or configure an explicit operator-reviewed
 policy. An older Rampart service without the complete review response also
