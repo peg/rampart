@@ -43,7 +43,7 @@ Arguments:
 
 ## What to check
 
-- `ask` returns `requireApproval` only with a complete server-redacted action fitting the native 512-character description limit
+- `ask` returns `requireApproval` only with complete server-redacted execution arguments, targets and execution context fitting the native 512-character description limit; opaque correlation IDs remain bound outside that display
 - `deny` returns `block: true`
 - native approvals offer `allow-once` and `deny`; unsupported `allow-always` callbacks never create broader command/path rules
 - `allow` returns without rewriting executable tool parameters
