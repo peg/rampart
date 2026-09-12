@@ -620,13 +620,14 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
     });
 
     if (!resp.ok) {
-      // Authentication failures are explicit denies, and their bodies are
-      // bounded/drained without being reflected into logs or approval UI.
+      // 401 is an authentication failure; 403 may instead be a policy/access
+      // rejection. Both deny without reflecting their bounded/drained bodies.
       if (resp.status === 403 || resp.status === 401) {
         // Drain the bounded body for connection reuse, but never reflect an
-        // authentication response body into host logs or approval UI.
+        // rejection response body into host logs or approval UI.
         await readControlResponseText(resp);
-        return { allowed: false, decision: "deny", message: `Rampart authentication rejected (HTTP ${resp.status})` };
+        const rejection = resp.status === 401 ? "authentication rejected" : "request rejected";
+        return { allowed: false, decision: "deny", message: `Rampart ${rejection} (HTTP ${resp.status})` };
       }
       await resp?.body?.cancel?.().catch(() => {});
       // Redirects and other client errors indicate an incompatible or invalid
