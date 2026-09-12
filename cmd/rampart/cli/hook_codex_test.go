@@ -476,6 +476,11 @@ func TestResolveCodexApprovalPreservesExactToolIdentity(t *testing.T) {
 	if request.RunID != "session-1" || request.ToolCallID != "call-1" {
 		t.Fatalf("approval identity = run %q call %q", request.RunID, request.ToolCallID)
 	}
+	if !strings.Contains(request.Message, "approval required") ||
+		!strings.Contains(request.Message, "satisfies Rampart policy for this invocation") ||
+		!strings.Contains(request.Message, "Codex may still require a separate sandbox or permission approval") {
+		t.Fatalf("external review must retain the policy reason and explain native approval scope: %q", request.Message)
+	}
 }
 
 func runCodexHookOutput(t *testing.T, decision hookDecisionType, post bool) map[string]any {

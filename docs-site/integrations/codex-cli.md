@@ -43,8 +43,8 @@ not emit lifecycle hooks remain outside this boundary.
 
 ### Execution context visibility
 
-In Codex 0.153.2, the
-[unified execution handler](https://github.com/openai/codex/blob/rust-v0.153.2/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs)
+In Codex 0.154.0, the
+[unified execution handler](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs)
 reports `exec_command` as `Bash` with only `command` in `tool_input`. It omits
 the requested `workdir` and `shell`. The
 [hook's `cwd`](https://developers.openai.com/codex/hooks#common-input-fields)
@@ -68,6 +68,45 @@ rampart watch
 ```
 
 If the approval service is unavailable, the call is denied.
+
+### Why Codex may ask again
+
+Approving the Rampart request satisfies Rampart policy for that invocation.
+Codex may then request its own sandbox escalation or permission approval.
+Both decisions remain necessary when both policies require review. A Rampart
+approval does not grant Codex broader filesystem or network access, and a
+native denial still prevents execution.
+
+Codex 0.154.0 has a separate
+[`PermissionRequest` hook](https://learn.chatgpt.com/docs/hooks#permissionrequest)
+that can decide a pending native approval. Rampart does not automatically
+approve it: the
+[external hook input](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/hooks/src/events/permission_request.rs#L171)
+omits the tool-call ID, and its Bash input omits the requested execution
+directory and sandbox permissions. Those missing fields prevent safely
+binding a prior Rampart approval to the full native request. Deferring every
+Rampart `ask` to this hook would also miss calls that need no native approval.
+
+### Reduce routine reviews deliberately
+
+If you want a specific routine command to run without a Rampart review, add
+an explicit global user rule, for example:
+
+```bash
+rampart allow "python3 -m unittest -q" --global --tool exec
+```
+
+This authorizes the command whenever that rule matches. It does not pin the
+test files or their future contents: the same command can execute changed
+repository code. Choose this only when that continuing authority is intended;
+avoid broad interpreter patterns such as `python3 **`. Keep Codex's sandbox,
+permission rules and reviewer enabled. Other Rampart rules that require review,
+such as publication rules, can still produce a second approval alongside
+Codex's native request.
+
+This is an optional policy change, not an automatic handoff between approval
+systems. Rampart does not compile its policies into Codex prefix rules or
+change native permissions to suppress prompts.
 
 ## Verify
 
