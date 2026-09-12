@@ -581,7 +581,19 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 
 				// Write serve state file for discovery by doctor/watch/log.
 				if rampartDir != "" {
-					if err := writeServeState(rampartDir, listenPort, os.Getpid(), tlsCfg != nil); err != nil {
+					workingDir, _ := os.Getwd()
+					launch := &serveLaunchSettings{
+						WorkingDir: workingDir, ConfigPath: opts.configPath, ConfigDir: configDir, AuditDir: auditDir,
+						Mode: mode, Port: listenPort, Addr: listenAddr, Syslog: syslogAddr, CEF: cef,
+						ResolveBaseURL: resolveBaseURL, SigningKey: signingKeyPath, Metrics: metrics, LogFile: logFilePath,
+						ReloadInterval: reloadInterval, ApprovalTimeout: approvalTimeout, TLSCert: tlsCert, TLSKey: tlsKey,
+						TLSAuto: tlsAuto, NoOpenClawBridge: noOpenClawBridge, Verbose: opts.verbose,
+					}
+					if err := launch.validate(); err != nil {
+						logger.Warn("serve: automatic restart settings unavailable; preserve original launch settings for manual upgrades", "reason", err)
+						launch = nil
+					}
+					if err := writeServeState(rampartDir, listenPort, os.Getpid(), tlsCfg != nil, proxyServer.RuntimeIdentity(), launch); err != nil {
 						logger.Warn("serve: failed to write state file", "error", err)
 					}
 				}

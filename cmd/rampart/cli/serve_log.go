@@ -35,15 +35,11 @@ func openServeLog(path string, maxBytes int64, backups int) (*serveLog, error) {
 	if maxBytes <= 0 || backups < 1 {
 		return nil, fmt.Errorf("serve: invalid diagnostic log retention limits")
 	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
-	if err != nil {
-		return nil, fmt.Errorf("serve: resolve log directory: %w", err)
-	}
-	parent, err = filepath.Abs(parent)
+	resolved, err := resolveServeLogPath(path)
 	if err != nil {
 		return nil, err
 	}
-	w := &serveLog{path: serveLogNativePath(filepath.Join(parent, filepath.Base(path))), maxBytes: maxBytes, backups: backups}
+	w := &serveLog{path: resolved, maxBytes: maxBytes, backups: backups}
 	if err := w.open(); err != nil {
 		return nil, err
 	}
@@ -56,6 +52,18 @@ func openServeLog(path string, maxBytes int64, backups int) (*serveLog, error) {
 		return nil, err
 	}
 	return w, nil
+}
+
+func resolveServeLogPath(path string) (string, error) {
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return "", fmt.Errorf("serve: resolve log directory: %w", err)
+	}
+	parent, err = filepath.Abs(parent)
+	if err != nil {
+		return "", err
+	}
+	return serveLogNativePath(filepath.Join(parent, filepath.Base(path))), nil
 }
 
 func inspectServeLog(path string) (os.FileInfo, error) {

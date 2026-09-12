@@ -14,6 +14,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/proxy"
 	"github.com/peg/rampart/policies"
 	"github.com/stretchr/testify/require"
 )
@@ -379,7 +380,7 @@ func TestServeStatePublishesPrivateExecutableIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	const pid = 4242
-	if err := writeServeState(dir, 19090, pid, false); err != nil {
+	if err := writeServeState(dir, 19090, pid, false, proxy.RuntimeIdentity{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	want, err := os.Executable()

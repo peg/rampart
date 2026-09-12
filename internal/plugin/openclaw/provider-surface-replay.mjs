@@ -437,35 +437,86 @@ assert(authError?.block === true, '401 auth error should block sensitive tool ca
 assert(authError.blockReason.includes('HTTP 401'), `auth block reason should mention HTTP 401: ${authError.blockReason}`);
 scenarios.push('auth-error-fail-closed');
 
-const liveVerification = await withPlugin({
-  name: 'live-behavioral-verification',
-  fetchImpl: async (url, opts = {}) => {
-    assert(String(url).includes('/v1/preflight/'), `unexpected verification URL: ${url}`);
-    const body = parseBody({ opts });
-    const tool = decodeURIComponent(String(url).split('/v1/preflight/')[1]);
-    let decision = 'allow';
-    if (tool === 'exec' && body.params.command === 'rm -rf /') decision = 'deny';
-    if (tool === 'exec' && body.params.command?.startsWith('git push ')) decision = 'ask';
-    if (tool === 'message' && body.params.rampart_consequence === 'openclaw:external-message') decision = 'ask';
-    if (tool === 'exec' && body.params.command?.startsWith('cat ~/.ssh/id_')) decision = 'deny';
-    if (tool === 'exec' && body.params.command?.startsWith('python3 -c ')) decision = 'ask';
-    assert(body.verification === true, 'verification calls must request side-effect-free preflight mode');
-    return fetchJson({ decision, allowed: decision === 'allow', action: { version: 1, tool, params: body.params, input: body.input } });
-  },
-  invoke: async ({ gatewayMethods }) => {
-    const verify = gatewayMethods['rampart.verify'];
-    assert(typeof verify === 'function', 'rampart.verify gateway method missing');
-    let response;
-    await verify({ respond: (ok, payload) => { response = { ok, payload }; } });
-    return response;
-  },
-});
+const verificationEndpoint = 'http://127.0.0.1:19091';
+const verificationHealth = {
+  service: 'rampart', status: 'ok', uptime_seconds: 1,
+  instance_id: 'verification-instance-0001', version: '2.0.0', commit: 'fixture-commit', mode: 'enforce',
+};
+
+async function runVerificationScenario(name, healthResponse) {
+  const requests = [];
+  let healthCalls = 0;
+  const response = await withPlugin({
+    name,
+    pluginConfig: { serveUrl: verificationEndpoint },
+    fetchImpl: async (url, opts = {}) => {
+      requests.push(String(url));
+      assert(opts.redirect === 'error', 'verification must reject redirects');
+      if (String(url) === `${verificationEndpoint}/healthz`) {
+        assert(opts.method === 'GET' && opts.signal, 'health must use a bounded GET');
+        assert(!opts.headers?.Authorization, 'health must not carry the control token');
+        return healthResponse(++healthCalls);
+      }
+      assert(String(url).startsWith(`${verificationEndpoint}/v1/preflight/`), `unexpected verification URL: ${url}`);
+      const body = parseBody({ opts });
+      const tool = decodeURIComponent(String(url).split('/v1/preflight/')[1]);
+      let decision = 'allow';
+      if (tool === 'exec' && body.params.command === 'rm -rf /') decision = 'deny';
+      if (tool === 'exec' && body.params.command?.startsWith('git push ')) decision = 'ask';
+      if (tool === 'message' && body.params.rampart_consequence === 'openclaw:external-message') decision = 'ask';
+      if (tool === 'exec' && body.params.command?.startsWith('cat ~/.ssh/id_')) decision = 'deny';
+      if (tool === 'exec' && body.params.command?.startsWith('python3 -c ')) decision = 'ask';
+      assert(body.verification === true, 'verification calls must request side-effect-free preflight mode');
+      return fetchJson({ decision, allowed: decision === 'allow', action: { version: 1, tool, params: body.params, input: body.input } });
+    },
+    invoke: async ({ gatewayMethods }) => {
+      const verify = gatewayMethods['rampart.verify'];
+      assert(typeof verify === 'function', 'rampart.verify gateway method missing');
+      let result;
+      await verify({ respond: (ok, payload) => { result = { ok, payload }; } });
+      return result;
+    },
+  });
+  assert(healthCalls === 2 && requests.length === 8, `${name}: expected health around six fixed canaries`);
+  assert(requests[0].endsWith('/healthz') && requests.at(-1).endsWith('/healthz'), `${name}: health must bracket canaries`);
+  return response;
+}
+
+const liveVerification = await runVerificationScenario('live-behavioral-verification', () => fetchJson({
+  ...verificationHealth, token: 'synthetic-private-value', pid: 42, executable: '/synthetic/private/path',
+}));
 assert(liveVerification?.ok === true, 'gateway verification RPC should respond successfully');
 assert(liveVerification.payload?.schema === 'rampart.plugin.verify.v1', 'verification schema missing');
 assert(liveVerification.payload?.safeCanaries === true, 'verification must identify safe canaries');
 assert(liveVerification.payload?.ok === true, `verification failed: ${JSON.stringify(liveVerification.payload)}`);
 assert(liveVerification.payload?.checks?.length === 6, 'expected six plugin policy canaries');
+assert(JSON.stringify(liveVerification.payload.runtime) === JSON.stringify({
+  endpoint: verificationEndpoint,
+  instance_id: verificationHealth.instance_id,
+  version: verificationHealth.version,
+  commit: verificationHealth.commit,
+  mode: verificationHealth.mode,
+}), 'runtime proof must contain only the loaded endpoint and stable public identity');
 scenarios.push('live-behavioral-verification');
+
+for (const [name, healthResponse] of [
+  ['legacy-runtime', () => fetchJson({ service: 'rampart', status: 'ok', uptime_seconds: 1, version: '1.9.1', mode: 'enforce' })],
+  ['restarted-runtime', (call) => fetchJson({ ...verificationHealth, instance_id: `verification-instance-000${call}` })],
+  ['changed-runtime-build', (call) => fetchJson({ ...verificationHealth, commit: `fixture-commit-${call}` })],
+  ['monitor-runtime', () => fetchJson({ ...verificationHealth, mode: 'monitor' })],
+  ['disabled-runtime', () => fetchJson({ ...verificationHealth, mode: 'disabled' })],
+  ['unavailable-runtime', () => { throw new Error('synthetic private error'); }],
+  ['redirected-runtime', () => new Response(null, { status: 302 })],
+  ['malformed-runtime', () => new Response('{')],
+  ['oversized-runtime', () => new Response(JSON.stringify({ ...verificationHealth, extra: 'x'.repeat(4096) }))],
+]) {
+  const result = await runVerificationScenario(name, healthResponse);
+  assert(result?.ok === true && result.payload?.ok === true, `${name}: legacy canary result contract changed`);
+  assert(result.payload?.checks?.length === 6, `${name}: fixed canaries missing`);
+  assert(!Object.hasOwn(result.payload, 'runtime'), `${name}: runtime evidence must be withheld`);
+  assert(!JSON.stringify(result).includes('synthetic private error'), `${name}: private health error reflected`);
+  scenarios.push(`verification-${name}`);
+}
 
 const degraded = await withPlugin({
   name: 'degraded-sensitive-exec-blocks',

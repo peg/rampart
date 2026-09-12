@@ -1307,15 +1307,26 @@ Unauthenticated health check.
 ```json
 {
   "type": "object",
-  "required": ["status", "mode", "uptime_seconds", "version"],
+  "required": ["service", "status", "mode", "uptime_seconds", "version", "commit", "instance_id"],
   "properties": {
+    "service": { "type": "string", "const": "rampart" },
     "status": { "type": "string" },
     "mode": { "type": "string" },
     "uptime_seconds": { "type": "integer" },
-    "version": { "type": "string" }
+    "version": { "type": "string" },
+    "commit": { "type": "string" },
+    "instance_id": { "type": "string" }
   }
 }
 ```
+
+`instance_id` is an opaque identifier generated for each server start. It is
+shared with the owner's private `serve.state`; health never returns a PID,
+executable path, launch arguments, or token. The identifier provides freshness
+evidence, not authentication or process ownership. `commit` is build metadata
+(including development-build values), not a cryptographic attestation. Older services may omit
+`commit` and `instance_id`; clients can display their version and mode while
+withholding runtime-bound verification evidence.
 
 ### Status Codes
 - `200 OK`

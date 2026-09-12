@@ -123,7 +123,7 @@ func TestUpgradeRestoresPreviousBinaryWhenFinalValidationFails(t *testing.T) {
 			return 4242, true, nil
 		},
 		stopServe: func(int) error { return nil },
-		restartServe: func(_ commandRunner, binary string, _, _ io.Writer) error {
+		prepareServeRestart: preparedRestartForTest(func(_ commandRunner, binary string, _, _ io.Writer) error {
 			restarted++
 			got, err := os.ReadFile(binary)
 			if err != nil {
@@ -133,7 +133,7 @@ func TestUpgradeRestoresPreviousBinaryWhenFinalValidationFails(t *testing.T) {
 				return errors.New("restart did not observe restored binary")
 			}
 			return nil
-		},
+		}),
 		detectSystemdService: func(commandRunner, func() (string, error), string) string { return "" },
 		prepareServeVerifier: acceptServeRestartVerification,
 		validateCandidate: func(context.Context, string, string) error {

@@ -88,10 +88,26 @@ it does not contain prompts, commands, host output, credentials, or filesystem
 paths. OpenClaw's live plugin verifier earns `host_verified`; the ordinary
 native-hook commands earn `adapter_verified` because they invoke Rampart's
 adapter without asking a model to act. Receipts expire after seven days and are
-treated as stale when Rampart, the configured boundary, the selected policy
-endpoint, local policy-file metadata, or a detected host executable changes.
+treated as stale when Rampart, the configured boundary, local policy-file contents, or a detected host executable changes. Service-backed
+evidence additionally binds the effective policy endpoint.
 They are local status caches, not tamper-resistant
 attestations.
+
+Service-backed evidence includes the exact service origin, per-start instance
+identifier, service build and enforce mode. Health observations before and
+after verification must match. OpenClaw also returns this observation from the
+loaded gateway plugin; changing a config file without reloading that plugin
+cannot verify the new endpoint. An explicit `--serve-url` must match the
+integration's effective endpoint. Legacy services or loaded plugins without
+runtime observations remain visible but require updating and reverification
+before earning this evidence.
+
+Service-optional native hooks verify their installation, local adapter and
+isolated audit behavior without HTTP. Their adapter receipts remain meaningful
+when the service is stopped or replaced. Use `rampart verify policy` separately
+to test HTTP policy decisions. Runtime observations establish only the service
+observed during these probes; they do not attest remote policy contents,
+continuous enforcement, or host tool execution.
 
 ### `rampart setup claude-code`
 
@@ -226,6 +242,39 @@ rampart setup --force        # Deprecated unattended compatibility path
 ### `rampart upgrade`
 
 Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and restarts a running background, systemd, or launchd Rampart service so it uses the new executable. Homebrew-managed installations must use `brew upgrade rampart`; Windows installations must rerun `install.ps1`.
+
+Background services started by current builds save typed launch settings in
+owner-only `serve.state`. An upgrade preserves the original working directory,
+policy and audit paths, mode, logging and approval options, and TLS certificate
+and key references. It reuses the existing private token file instead of an
+upgrading shell's `RAMPART_TOKEN` override. Systemd and launchd retain their
+existing owned service definitions. A restart must publish fresh owned state
+whose instance, build and mode match the health response; version alone does
+not establish activation. Its endpoint and observed mode must also match the
+previous service. Existing custom TLS certificates are pinned before
+stopping the service. Missing settings, certificate trust or ownership cause
+the upgrade to stop before service interruption.
+
+If activation fails, upgrade stops the owned failed candidate before restoring
+the previous executable and runtime. If the candidate's saved state or process
+identity has changed, automatic recovery refuses to stop it. The error retains
+the original activation failure and reports the backup executable's location
+for manual recovery with the original service settings.
+
+The already-published v1.9.1 updater does not contain this launch-preservation
+logic: its background restart uses defaults. For a custom background service
+still managed by that older CLI, preserve its command and original working
+directory, stop it with `rampart serve stop`, update the binary using the
+[installation instructions](../getting-started/installation.md), then restart
+with the same explicit options from that directory. The ordinary v1.9.1
+background launch can also be recognized by a current CLI on Linux or macOS;
+ambiguous legacy custom launches require this manual migration. Do not replace
+an existing service definition with `serve install --force` to work around it.
+
+If the CLI is already current, upgrade reports the observed service's actual
+version and mode separately. That version check does not restart or verify
+service protection; use `rampart status` and the applicable `rampart verify`
+command after activation.
 
 ```bash
 rampart upgrade              # Upgrade to latest release
@@ -466,6 +515,15 @@ receipts fall back to current configuration state and explain why proof must be
 rerun. Evidence for a service-required integration is also stale whenever the
 configured Rampart policy service is unavailable; another daemon on a different
 port does not satisfy that check.
+
+Status reports the CLI build separately from the observed `service` version,
+commit, mode and endpoint. `service_owned` requires matching private process
+state and OS process identity; an instance identifier alone does not establish
+ownership. Service-backed receipts become stale after a service instance,
+build or mode change. Healthy older services are displayed even when they
+cannot supply the newer freshness evidence. Protection reports the actual
+reused service and refuses monitor or disabled mode without changing an
+external service or replacing an existing service definition.
 
 `mode` comes from the configured service's health response and is `unknown`
 when that service cannot be reached or identified. Local hook enforcement can

@@ -73,7 +73,8 @@ type upgradeDeps struct {
 	validateCandidate     func(context.Context, string, string) error
 	inspectServePID       func(func() (string, error), func(string) ([]byte, error)) (int, bool, error)
 	stopServe             func(int) error
-	restartServe          func(commandRunner, string, io.Writer, io.Writer) error
+	prepareServeRestart   func(func() (string, error), string, int) (serveRestarter, error)
+	captureServeCandidate func(func() (string, error), string, int, time.Time) (func() error, error)
 	detectSystemdService  func(commandRunner, func() (string, error), string) string
 	restartSystemdService func(commandRunner, string, io.Writer) error
 	detectLaunchdServices func(commandRunner, func() (string, error), string) []launchdService
@@ -105,7 +106,8 @@ func defaultUpgradeDeps() upgradeDeps {
 		validateCandidate:     validateUpgradeCandidate,
 		inspectServePID:       inspectServePID,
 		stopServe:             stopServeProcess,
-		restartServe:          restartServe,
+		prepareServeRestart:   preparePIDServeRestart,
+		captureServeCandidate: captureServeCandidateCleanup,
 		detectSystemdService:  detectActiveSystemdService,
 		restartSystemdService: restartSystemdUserService,
 		detectLaunchdServices: detectActiveLaunchdServices,
@@ -175,8 +177,11 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 		if deps.stopServe != nil {
 			resolved.stopServe = deps.stopServe
 		}
-		if deps.restartServe != nil {
-			resolved.restartServe = deps.restartServe
+		if deps.prepareServeRestart != nil {
+			resolved.prepareServeRestart = deps.prepareServeRestart
+		}
+		if deps.captureServeCandidate != nil {
+			resolved.captureServeCandidate = deps.captureServeCandidate
 		}
 		if deps.detectSystemdService != nil {
 			resolved.detectSystemdService = deps.detectSystemdService
@@ -277,7 +282,14 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			}
 
 			if current != "" && compareSemver(current, target) >= 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "Already on latest (%s)\n", target)
+				fmt.Fprintf(cmd.OutOrStdout(), "Already on latest CLI (%s)\n", target)
+				endpoint, endpointErr := resolveServeURLStrict("", fmt.Sprintf("http://localhost:%d", defaultServePort))
+				observed, healthErr := observeServiceRuntime(ctx, endpoint, 150*time.Millisecond)
+				if endpointErr == nil && healthErr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "Observed service: %s (%s), mode %s; this check did not restart or verify its protection.\n", observed.Version, observed.Commit, observed.Mode)
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "No reachable service runtime was verified by this CLI version check.")
+				}
 				if !skipPolicyUpdate {
 					if err := resolved.updatePolicies(cmd.OutOrStdout(), dryRun); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "⚠ policy update failed: %v\n", err)
@@ -409,6 +421,13 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			}
 
 			var restartVerifier serveRestartVerifier
+			var restartPID serveRestarter
+			if pidServeRunning {
+				restartPID, err = resolved.prepareServeRestart(resolved.userHomeDir, exePath, servePID)
+				if err != nil {
+					return fmt.Errorf("upgrade: prepare preserved background restart: %w", err)
+				}
+			}
 			if serveRunning {
 				restartVerifier, err = resolved.prepareServeVerifier(resolved.userHomeDir, resolved.readFile)
 				if err != nil {
@@ -424,10 +443,21 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				}
 				return nil
 			}
-			restartPIDRuntime := func(expectedVersion string) error {
+			var candidateCleanup func() error
+			var candidateCaptureErr error
+			restartPIDRuntime := func(expectedVersion string, captureCandidate bool) error {
 				restartedAt := time.Now()
-				if err := resolved.restartServe(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+				if restartPID == nil {
+					return fmt.Errorf("upgrade: preserved background restart is unavailable")
+				}
+				if err := restartPID(resolved.commandRunner, exePath, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 					return err
+				}
+				if captureCandidate {
+					// Health may be the reason activation fails. Capture process
+					// ownership separately, before the health probe can race a
+					// replacement runtime or a changed private state file.
+					candidateCleanup, candidateCaptureErr = resolved.captureServeCandidate(resolved.userHomeDir, exePath, servePID, restartedAt)
 				}
 				return verifyRestartedRuntime(expectedVersion, restartedAt)
 			}
@@ -437,7 +467,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				if !pidServeNeedsRestart {
 					return
 				}
-				if restartErr := restartPIDRuntime(current); restartErr != nil {
+				if restartErr := restartPIDRuntime(current, false); restartErr != nil {
 					restartErr = fmt.Errorf("upgrade: restore previously running rampart serve: %w", restartErr)
 					if runErr == nil {
 						runErr = restartErr
@@ -512,7 +542,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 			} else if len(activeLaunchd) > 0 {
 				runtimeRestartErrs = restartManagedServices(target)
 			} else if pidServeRunning {
-				if err := restartPIDRuntime(target); err != nil {
+				if err := restartPIDRuntime(target, true); err != nil {
 					runtimeRestartErrs = append(runtimeRestartErrs, err)
 				} else {
 					pidServeNeedsRestart = false
@@ -521,6 +551,21 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 
 			if len(runtimeRestartErrs) > 0 {
 				restartCause := errors.Join(runtimeRestartErrs...)
+				if pidServeRunning {
+					// This is the authoritative recovery attempt. In particular,
+					// a refused cleanup must not fall through to a deferred restart.
+					pidServeNeedsRestart = false
+					cleanupErr := candidateCaptureErr
+					if cleanupErr == nil && candidateCleanup != nil {
+						cleanupErr = candidateCleanup()
+					}
+					if cleanupErr != nil {
+						return errors.Join(
+							fmt.Errorf("upgrade: candidate runtime activation failed: %w", restartCause),
+							fmt.Errorf("upgrade: recovery incomplete; failed candidate cleanup could not be confirmed; previous executable retained at %s: %w", backupPath, cleanupErr),
+						)
+					}
+				}
 				if rollbackErr := resolved.rename(backupPath, exePath); rollbackErr != nil {
 					return errors.Join(
 						fmt.Errorf("upgrade: candidate runtime activation failed: %w", restartCause),
@@ -533,11 +578,7 @@ func newUpgradeCmdWithDeps(_ *rootOptions, deps *upgradeDeps) *cobra.Command {
 				if activeSvc != "" || len(activeLaunchd) > 0 {
 					recoveryErrs = restartManagedServices(current)
 				} else if pidServeRunning {
-					// Recovery below is the one authoritative retry. Disable the
-					// deferred fallback first so a failed recovery is reported once
-					// instead of starting an uncontrolled third process attempt.
-					pidServeNeedsRestart = false
-					if recoveryErr := restartPIDRuntime(current); recoveryErr != nil {
+					if recoveryErr := restartPIDRuntime(current, false); recoveryErr != nil {
 						recoveryErrs = append(recoveryErrs, recoveryErr)
 					}
 				}
@@ -1018,16 +1059,6 @@ func stopServeProcess(pid int) error {
 	}
 }
 
-func restartServe(runner commandRunner, binary string, stdout, stderr io.Writer) error {
-	cmd := runner(binary, "serve", "--background")
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("upgrade: restart rampart serve: %w", err)
-	}
-	return nil
-}
-
 // serveRestartVerifier proves that a restart created a fresh, Rampart-owned
 // local runtime and that the runtime loaded the expected binary version.
 // Implementations must be bounded by ctx; upgrade keeps its rollback binary
@@ -1035,11 +1066,14 @@ func restartServe(runner commandRunner, binary string, stdout, stderr io.Writer)
 type serveRestartVerifier func(ctx context.Context, expectedVersion string, restartedAt time.Time) error
 
 type serveRestartVerifierDeps struct {
-	processIdentity func(int) (bool, string, error)
-	now             func() time.Time
-	timeout         time.Duration
-	pollInterval    time.Duration
-	requestTimeout  time.Duration
+	processIdentity    func(int) (bool, string, error)
+	now                func() time.Time
+	timeout            time.Duration
+	pollInterval       time.Duration
+	requestTimeout     time.Duration
+	trustedCertificate []byte
+	expectedEndpoint   *url.URL
+	expectedMode       string
 }
 
 func defaultServeRestartVerifierDeps() serveRestartVerifierDeps {
@@ -1071,13 +1105,65 @@ func prepareServeRestartVerifierWithDeps(
 	if strings.TrimSpace(home) == "" {
 		return nil, fmt.Errorf("resolve home directory: empty path")
 	}
-	statePath := filepath.Join(home, ".rampart", serveStateFile)
-	previousState, err := readFile(statePath)
-	previousExists := err == nil
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read existing %s: %w", statePath, err)
+	previousState, err := readPrivateServeStateData(filepath.Join(home, ".rampart"))
+	if err != nil {
+		return nil, fmt.Errorf("read previous runtime state before restart: %w", err)
 	}
-	previousState = append([]byte(nil), previousState...)
+	previousExists := true
+	var previous serveState
+	if json.Unmarshal(previousState, &previous) != nil {
+		return nil, fmt.Errorf("previous runtime state is unavailable or invalid; restore it before upgrading")
+	}
+	previousURL, err := validateLocalServeStateURL(previous)
+	if err != nil {
+		return nil, err
+	}
+	if deps.processIdentity == nil {
+		return nil, fmt.Errorf("process identity verifier is unavailable before restart")
+	}
+	owned, _, err := deps.processIdentity(previous.PID)
+	if err != nil || !owned {
+		return nil, fmt.Errorf("cannot preserve an unowned previous runtime")
+	}
+	if previousURL.Scheme == "https" {
+		deps.trustedCertificate, err = serveLaunchCertificate(previous, home, readFile)
+		if err != nil {
+			return nil, fmt.Errorf("prepare TLS trust before restart: %w", err)
+		}
+	}
+	if deps.requestTimeout <= 0 {
+		deps.requestTimeout = time.Second
+	}
+	client, closeClient, err := localServeHealthClient(previousURL, home, readFile, deps.requestTimeout, deps.trustedCertificate)
+	if err != nil {
+		return nil, err
+	}
+	defer closeClient()
+	healthURL := *previousURL
+	healthURL.Path = "/healthz"
+	health, err := fetchRampartHealth(context.Background(), client, healthURL.String())
+	if err != nil {
+		return nil, fmt.Errorf("observe previous runtime before restart: %w", err)
+	}
+	if !validUpgradeHealthService(health.Service, health.Version) {
+		return nil, fmt.Errorf("previous health response lacks the expected Rampart service identity")
+	}
+	if (previous.InstanceID != "" || health.InstanceID != "") && (!runtimeIdentified(previous.RuntimeIdentity) || previous.RuntimeIdentity != health.RuntimeIdentity) {
+		return nil, fmt.Errorf("previous runtime state does not match its health identity")
+	}
+	if previous.InstanceID == "" && health.InstanceID == "" {
+		if cmp, ok := compareReleaseVersions(health.Version, "v1.9.1"); !ok || cmp > 0 {
+			return nil, fmt.Errorf("previous runtime lacks instance identity; legacy preservation is limited to v1.9.1 and older")
+		}
+	}
+	if previous.Launch != nil && previous.Launch.Mode != health.Mode {
+		return nil, fmt.Errorf("previous launch mode does not match its health response")
+	}
+	// Pin the actual pre-upgrade endpoint and mode, including legacy services
+	// whose private state did not yet contain a mode. A healthy candidate must
+	// retain both, even if its own new state and health agree with each other.
+	deps.expectedEndpoint = previousURL
+	deps.expectedMode = health.Mode
 
 	return func(ctx context.Context, expectedVersion string, restartedAt time.Time) error {
 		verifiedState, err := verifyRestartedServe(
@@ -1204,8 +1290,8 @@ func verifyRestartedServeState(
 	if err != nil {
 		return nil, fmt.Errorf("fresh serve.state has invalid started time %q", state.Started)
 	}
-	// writeServeState uses RFC3339 second precision. Truncating the restart
-	// boundary avoids rejecting a daemon that starts later in the same second.
+	// Legacy state used second precision. Accept a restart in the same second;
+	// current state also has an instance identity to establish freshness.
 	if started.Before(restartedAt.UTC().Truncate(time.Second)) {
 		return nil, fmt.Errorf("serve.state predates this restart (%s)", started.UTC().Format(time.RFC3339Nano))
 	}
@@ -1216,6 +1302,9 @@ func verifyRestartedServeState(
 	serveURL, err := validateLocalServeStateURL(state)
 	if err != nil {
 		return nil, err
+	}
+	if previous := deps.expectedEndpoint; previous != nil && (serveURL.Scheme != previous.Scheme || !strings.EqualFold(serveURL.Hostname(), previous.Hostname()) || serveURL.Port() != previous.Port()) {
+		return nil, fmt.Errorf("restarted runtime endpoint differs from the previous service")
 	}
 	owned, identity, err := deps.processIdentity(state.PID)
 	if err != nil {
@@ -1228,7 +1317,7 @@ func verifyRestartedServeState(
 		return nil, fmt.Errorf("serve.state pid %d is not Rampart-owned (%s)", state.PID, identity)
 	}
 
-	client, closeClient, err := localServeHealthClient(serveURL, home, readFile, deps.requestTimeout)
+	client, closeClient, err := localServeHealthClient(serveURL, home, readFile, deps.requestTimeout, deps.trustedCertificate)
 	if err != nil {
 		return nil, err
 	}
@@ -1244,6 +1333,9 @@ func verifyRestartedServeState(
 	if !validUpgradeHealthService(health.Service, expectedVersion) {
 		return nil, fmt.Errorf("unexpected health service identity %q", health.Service)
 	}
+	if deps.expectedMode != "" && health.Mode != deps.expectedMode {
+		return nil, fmt.Errorf("restarted runtime mode mismatch: expected %s, got %s", deps.expectedMode, health.Mode)
+	}
 	if expectedVersion != "" {
 		expected, expectedErr := normalizeVersion(expectedVersion)
 		actual, actualErr := normalizeVersion(health.Version)
@@ -1253,6 +1345,17 @@ func verifyRestartedServeState(
 		if actualErr != nil || actual != expected {
 			return nil, fmt.Errorf("restarted runtime version mismatch: expected %s, got %q", expected, health.Version)
 		}
+	}
+	if state.InstanceID != "" || health.InstanceID != "" {
+		if !runtimeIdentified(state.RuntimeIdentity) || state.RuntimeIdentity != health.RuntimeIdentity {
+			return nil, fmt.Errorf("restarted runtime identity does not match fresh owned serve.state")
+		}
+		var previous serveState
+		if previousExists && json.Unmarshal(previousState, &previous) == nil && previous.InstanceID == state.InstanceID {
+			return nil, fmt.Errorf("restarted runtime reused the previous instance identity")
+		}
+	} else if cmp, ok := compareReleaseVersions(expectedVersion, "v1.9.1"); !ok || cmp > 0 {
+		return nil, fmt.Errorf("restarted runtime lacks instance identity; legacy recovery is limited to v1.9.1 and older")
 	}
 	return append([]byte(nil), stateData...), nil
 }
@@ -1307,6 +1410,7 @@ func localServeHealthClient(
 	home string,
 	readFile func(string) ([]byte, error),
 	requestTimeout time.Duration,
+	pinnedCertificate ...[]byte,
 ) (*http.Client, func(), error) {
 	dialer := &net.Dialer{Timeout: requestTimeout}
 	transport := &http.Transport{
@@ -1341,15 +1445,23 @@ func localServeHealthClient(
 		},
 	}
 	if serveURL.Scheme == "https" {
-		// serve.state intentionally contains no arbitrary trust path. Self-upgrade
-		// therefore supports HTTPS only for Rampart's tls-auto certificate. A
-		// custom --tls-cert service needs an explicit future fingerprint/source
-		// design; falling back to system roots or InsecureSkipVerify here would
-		// weaken the proof that the restarted local process is the managed one.
+		// A prepared restart pins the certificate read from the previous owned
+		// launch. Legacy state without a certificate reference supports tls-auto
+		// only; never fall back to insecure verification or arbitrary roots.
 		certPath := filepath.Join(home, ".rampart", "tls", "cert.pem")
-		certPEM, err := readFile(certPath)
-		if err != nil {
-			return nil, func() {}, fmt.Errorf("verify HTTPS runtime: read managed tls-auto certificate %s: %w (custom --tls-cert runtimes require a manual upgrade and restart)", certPath, err)
+		var certPEM []byte
+		if len(pinnedCertificate) > 0 {
+			certPEM = pinnedCertificate[0]
+		}
+		if len(certPEM) == 0 {
+			var err error
+			certPEM, err = readFile(certPath)
+			if err != nil {
+				return nil, func() {}, fmt.Errorf("verify HTTPS runtime: read managed tls-auto certificate %s: %w (legacy custom --tls-cert runtimes require a manual upgrade and restart)", certPath, err)
+			}
+		}
+		if len(certPEM) > 1<<20 {
+			return nil, func() {}, fmt.Errorf("verify HTTPS runtime: certificate exceeds size limit")
 		}
 		roots := x509.NewCertPool()
 		if !roots.AppendCertsFromPEM(certPEM) {

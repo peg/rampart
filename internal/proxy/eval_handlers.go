@@ -10,7 +10,6 @@ import (
 
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
-	"github.com/peg/rampart/internal/build"
 	"github.com/peg/rampart/internal/engine"
 )
 
@@ -814,11 +813,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	uptime := int(time.Since(s.startedAt).Seconds())
-	writeJSON(w, http.StatusOK, map[string]any{
-		"service":        "rampart",
-		"status":         "ok",
-		"mode":           s.mode,
-		"uptime_seconds": uptime,
-		"version":        build.Version,
+	writeJSON(w, http.StatusOK, HealthResponse{
+		RuntimeIdentity: s.RuntimeIdentity(),
+		Service:         "rampart",
+		Status:          "ok",
+		UptimeSeconds:   &uptime,
 	})
 }
