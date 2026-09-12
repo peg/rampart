@@ -64,7 +64,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup codex</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local allow/deny;<br>required for approval queue</td>
-      <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
+      <td data-label="Approval UX">External Rampart queue; native approval may also be required. Unavailable approval service denies</td>
       <td data-label="Support tier"><strong>Supported</strong><br>installed-hook and adapter verification</td>
     </tr>
     <tr class="tier-supported" data-integration="cline">

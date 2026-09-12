@@ -202,6 +202,7 @@ integrations:
       - The verification command exercises installed configuration and the adapter; it does not invoke a model or prove host hook ingestion.
       - Codex hosted tools and specialized local tool paths that opt out of lifecycle hooks are not covered.
       - Approval actions require rampart serve because Codex PreToolUse does not currently accept an ask decision.
+      - Rampart approval does not authorize Codex sandbox escalation or native permission requests; the host may require a separate approval.
       - Codex controls hook timeout behavior; a host timeout cannot be claimed fail-closed.
       - Physical Windows host ingestion remains unverified.
 

@@ -35,6 +35,8 @@ type codexHookInput struct {
 
 const maxCodexPatchPaths = 100
 
+const codexApprovalScopeNotice = "Approval here satisfies Rampart policy for this invocation. Codex may still require a separate sandbox or permission approval."
+
 func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 	var input codexHookInput
 	if err := json.NewDecoder(reader).Decode(&input); err != nil {
@@ -331,10 +333,14 @@ func resolveExternalHookApproval(
 		// this call waits in Rampart's approval queue.
 		errWriter: io.Discard,
 	}
+	approvalMessage := reason
+	if format == "codex" {
+		approvalMessage += "\n\n" + codexApprovalScopeNotice
+	}
 	result := client.requestApprovalCtx(
 		cmd.Context(),
 		call,
-		reason,
+		approvalMessage,
 		5*time.Minute,
 	)
 	if result == hookAsk {
