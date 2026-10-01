@@ -43,6 +43,13 @@ policies:
       - action: allow
         when:
           command_matches: ["echo token=synthetic-command"]
+  - name: "token=synthetic-validation-policy"
+    match:
+      tool: "unused-webhook"
+    rules:
+      - action: webhook
+        webhook:
+          url: "http://127.0.0.1:1/unused"
 `)
 	ctx := context.WithValue(context.Background(), AgentKey, "agent-token=synthetic-agent")
 	ctx = context.WithValue(ctx, SessionKey, "session-token=synthetic-session")
@@ -64,12 +71,12 @@ policies:
 	if params["command"] != "echo token=synthetic-command" || wantErr.Error() != "token=synthetic-error" {
 		t.Fatal("logging changed the caller's original action or error")
 	}
-	for _, secret := range []string{"synthetic-tool", "synthetic-agent", "synthetic-session", "synthetic-policy", "synthetic-command", "synthetic-result", "synthetic-error"} {
+	for _, secret := range []string{"synthetic-tool", "synthetic-agent", "synthetic-session", "synthetic-policy", "synthetic-validation-policy", "synthetic-command", "synthetic-result", "synthetic-error"} {
 		if strings.Contains(logs.String(), secret) {
 			t.Fatalf("SDK-owned logging retained synthetic sensitive text %q", secret)
 		}
 	}
-	for _, message := range []string{"sdk: tool evaluated", "sdk: tool completed", "[REDACTED]"} {
+	for _, message := range []string{"webhook URL uses insecure", "sdk: tool evaluated", "sdk: tool completed", "[REDACTED]"} {
 		if !strings.Contains(logs.String(), message) {
 			t.Fatalf("SDK-owned log is missing %q", message)
 		}
