@@ -949,9 +949,13 @@ def _hermes_supports_native_approval() -> bool:
         return value
 
     collector_ast = ast.Module(body=function_body(details_tree), type_ignores=[])
-    reviewed_collector = hashlib.sha256(json.dumps(
-        canonical_ast(collector_ast), sort_keys=True, separators=(",", ":"),
-    ).encode("utf-8")).hexdigest() == "4b67bc090a9c24220254276e912e375fa63cdfe710b2ecfb61265fe822c79c3a"
+    try:
+        reviewed_collector = hashlib.sha256(json.dumps(
+            canonical_ast(collector_ast), sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest() == "4b67bc090a9c24220254276e912e375fa63cdfe710b2ecfb61265fe822c79c3a"
+    except (TypeError, ValueError):
+        # An unfamiliar source form is not approval capability evidence.
+        return False
 
     result_rule_key_is_captured = any(
         isinstance(node, ast.Assign)

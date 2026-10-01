@@ -200,6 +200,13 @@ class HermesPluginTests(unittest.TestCase):
                     self.assertIn(original, CURRENT_APPROVAL_COLLECTOR)
                     sources[details_getter] = CURRENT_APPROVAL_COLLECTOR.replace(original, replacement)
                     self.assertFalse(plugin._hermes_supports_native_approval())
+            for constant in ("b'unknown'", "1j", "..."):
+                sources[details_getter] = CURRENT_APPROVAL_COLLECTOR.replace(
+                    "modified_args: Optional[Dict[str, Any]] = None",
+                    "modified_args: Optional[Dict[str, Any]] = " + constant,
+                )
+                self.assertNotEqual(sources[details_getter], CURRENT_APPROVAL_COLLECTOR)
+                self.assertFalse(plugin._hermes_supports_native_approval())
             sources[details_getter] = original_collector
 
             for label, function, source in (
