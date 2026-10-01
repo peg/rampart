@@ -43,8 +43,8 @@ not emit lifecycle hooks remain outside this boundary.
 
 ### Execution context visibility
 
-In Codex 0.154.0, the
-[unified execution handler](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs)
+In Codex 0.159.3, the
+[unified execution handler](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs)
 reports `exec_command` as `Bash` with only `command` in `tool_input`. It omits
 the requested `workdir` and `shell`. The
 [hook's `cwd`](https://developers.openai.com/codex/hooks#common-input-fields)
@@ -77,11 +77,11 @@ Both decisions remain necessary when both policies require review. A Rampart
 approval does not grant Codex broader filesystem or network access, and a
 native denial still prevents execution.
 
-Codex 0.154.0 has a separate
+Codex 0.159.3 has a separate
 [`PermissionRequest` hook](https://learn.chatgpt.com/docs/hooks#permissionrequest)
 that can decide a pending native approval. Rampart does not automatically
 approve it: the
-[external hook input](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/hooks/src/events/permission_request.rs#L171)
+[external hook input](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/hooks/src/events/permission_request.rs#L171)
 omits the tool-call ID, and its Bash input omits the requested execution
 directory and sandbox permissions. Those missing fields prevent safely
 binding a prior Rampart approval to the full native request. Deferring every

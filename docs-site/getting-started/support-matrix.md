@@ -31,7 +31,10 @@ calls `rampart.verify` on the running gateway plugin, which exercises the same
 policy mapping used by its pre-tool hook. Neither probe runs an authenticated
 agent turn or demonstrates a tool's execution or approval resume through the
 host dispatcher. Package startup and rolling compatibility tests are separate
-evidence, not a promotion of adapter checks to host ingestion.
+evidence, not a promotion of adapter checks to host ingestion. File read/write
+mapping remains `tested` because the loaded OpenClaw verifier has no active
+file cases. Cached service-backed receipts do not identify the current running
+service instance/build/mode and cannot promote current status.
 
 Static-only integrations are excluded from the aggregate rather than reported
 as passing. In particular, use `rampart doctor` for Hermes installation status
@@ -56,7 +59,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Native hooks<br><code>rampart setup claude-code</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement;<br>yes for dashboard/headless approval flows</td>
-      <td data-label="Approval UX">Claude native approval prompt</td>
+      <td data-label="Approval UX" data-approval="native">Claude native approval prompt</td>
       <td data-label="Support tier"><strong>Supported</strong><br>installed-hook and adapter verification</td>
     </tr>
     <tr class="tier-supported" data-integration="codex">
@@ -64,7 +67,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup codex</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local allow/deny;<br>required for approval queue</td>
-      <td data-label="Approval UX">External Rampart queue; native approval may also be required. Unavailable approval service denies</td>
+      <td data-label="Approval UX" data-approval="external">External Rampart queue; native approval may also be required. Unavailable approval service denies</td>
       <td data-label="Support tier"><strong>Supported</strong><br>installed-hook and adapter verification</td>
     </tr>
     <tr class="tier-supported" data-integration="cline">
@@ -72,7 +75,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Native hooks<br><code>rampart setup cline</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
-      <td data-label="Approval UX">No native ask UI; approval-required actions cancel with context</td>
+      <td data-label="Approval UX" data-approval="block_and_retry">No native ask UI; approval-required actions cancel with context</td>
       <td data-label="Support tier"><strong>Supported</strong><br>current editor/CLI source contract + adapter/setup tests; no current host proof</td>
     </tr>
     <tr class="tier-experimental" data-integration="gemini">
@@ -80,7 +83,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Native lifecycle hooks<br><code>rampart setup gemini</code></td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Not required for local allow/deny;<br>required for external approvals</td>
-      <td data-label="Approval UX">External Rampart queue; unavailable approval service denies</td>
+      <td data-label="Approval UX" data-approval="external">External Rampart queue; unavailable approval service denies</td>
       <td data-label="Support tier"><strong>Experimental</strong><br>adapter-tested; authenticated host proof pending; not Antigravity</td>
     </tr>
     <tr class="tier-supported" data-integration="antigravity">
@@ -88,7 +91,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Shared policy plugin<br><code>rampart setup antigravity</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
-      <td data-label="Approval UX">Native <code>force_ask</code> prompt</td>
+      <td data-label="Approval UX" data-approval="native">Native <code>force_ask</code> prompt</td>
       <td data-label="Support tier"><strong>Supported</strong><br>installed-plugin and adapter verification</td>
     </tr>
     <tr class="tier-supported" data-integration="copilot">
@@ -96,7 +99,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Shared native lifecycle hooks<br><code>rampart setup copilot</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
-      <td data-label="Approval UX">Native Copilot prompt</td>
+      <td data-label="Approval UX" data-approval="native">Native Copilot prompt</td>
       <td data-label="Support tier"><strong>Supported</strong> CLI adapter<br>package startup + adapter evidence; authenticated hook ingestion pending; VS Code is contract-tested Preview</td>
     </tr>
     <tr class="tier-recommended" data-integration="openclaw">
@@ -104,15 +107,15 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Managed native guard<br><code>rampart protect openclaw</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX">OpenClaw native allow-once / deny; complete review required</td>
-      <td data-label="Support tier"><strong>Verified</strong></td>
+      <td data-label="Approval UX" data-approval="native">OpenClaw native allow-once / deny; complete review required</td>
+      <td data-label="Support tier"><strong>Verified</strong><br>loaded execution/messaging mapping; file read/write adapter-tested</td>
     </tr>
     <tr class="tier-experimental" data-integration="hermes">
       <td data-label="Surface"><strong>Hermes Agent</strong></td>
       <td data-label="Best path">Experimental user plugin<br><code>rampart setup hermes</code></td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX">Compatible Hermes native approval; older or incomplete installs block <code>ask</code></td>
+      <td data-label="Approval UX" data-approval="native">Compatible Hermes native approval; older or incomplete installs block <code>ask</code></td>
       <td data-label="Support tier"><strong>Experimental</strong><br>credential-free package/runtime gate; authenticated live-host proof pending</td>
     </tr>
     <tr class="tier-supported">
@@ -144,7 +147,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Best path">Native hook<br><code>rampart setup cursor</code></td>
       <td data-label="Bare protect">Yes</td>
       <td data-label="rampart serve">Required</td>
-      <td data-label="Approval UX">External Rampart queue; Cloud and Tab are separate</td>
+      <td data-label="Approval UX" data-approval="external">External Rampart queue; Cloud and Tab are separate</td>
       <td data-label="Support tier">Supported</td>
     </tr>
     <tr class="tier-supported">
@@ -249,7 +252,7 @@ necessarily execute the tool.
 | [GitHub Copilot](../integrations/github-copilot.md) | Local policy and native `ask` remain available. | CLI command errors deny, but CLI timeouts continue, including policy hooks. VS Code blocks exit 2 and treats other errors as warnings. |
 | [Cursor local Agent](../integrations/cursor.md) | Local allow/deny remains available; external approvals deny when unavailable. | Managed `failClosed: true` requests blocking on crash, timeout, or invalid JSON. Installed configuration and adapter checks do not prove host ingestion. [Upstream contract](https://cursor.com/docs/hooks#per-script-configuration-options) |
 | [OpenClaw native plugin](../integrations/openclaw.md) | All tools deny by default, including routine tools. | Rampart catches adapter exceptions and denies on its service request deadline. Failure outside that handler remains host-controlled. |
-| [Hermes Agent](../integrations/hermes.md) (experimental) | All tools deny by default. | Rampart catches adapter exceptions and service timeouts; Hermes skips a callback that escapes with an exception. |
+| [Hermes Agent](../integrations/hermes.md) (experimental) | All tools deny by default. | Rampart catches adapter exceptions and service timeouts. Hermes 0.21.5 source blocks pre-tool callback errors/timeouts; broader installed failure proof remains pending. |
 
 OpenClaw and Hermes operators can explicitly opt tools into degraded fail-open
 behavior; `rampart protect openclaw` installs an empty opt-out list. OpenClaw's

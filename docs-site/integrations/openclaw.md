@@ -139,7 +139,7 @@ can reach the service's permissive generic fallback. New capabilities require
 an explicit typed mapping and tests before Rampart allows them.
 
 Other OpenClaw plugins that rewrite tool parameters share the trusted host
-boundary. Current OpenClaw hook composition does not give Rampart an
+boundary. OpenClaw 2026.9.7 [hook composition](https://github.com/openclaw/openclaw/blob/v2026.9.7/src/plugins/hooks.ts) gives modifying hooks the original event, not an
 authoritative post-composition view of the final parameters, so do not combine
 Rampart with an untrusted parameter-mutating plugin.
 
@@ -155,8 +155,12 @@ plugin can redact a completed tool response before the model receives it.
 !!! note "Sub-agents"
     The `before_tool_call` hook fires for tool calls from subagents too. The `openclaw.yaml` profile recognizes current `agent:*:subagent:*` and `agent:*:acp:*` session keys plus their legacy forms to apply stricter rules to child sessions.
 
-!!! success "Enforcement verified"
-    `before_tool_call` is properly awaited and blocking in OpenClaw 2026.3.28+. Deny decisions are enforced end-to-end, not just logged.
+!!! note "What verification establishes"
+    `rampart verify openclaw` checks policy preflights and the loaded plugin's
+    execution and messaging mapping. It does not dispatch a real tool or resume
+    a native approval. File read/write mapping is adapter-tested; the loaded
+    verifier has no active file cases. Actual dispatcher behavior needs separate
+    evidence for the installed host version.
 
 ## The `openclaw.yaml` profile
 

@@ -482,6 +482,13 @@ func collectIntegrationAssuranceStatuses(now time.Time, serverRunning bool) []in
 			statuses = append(statuses, status)
 			continue
 		}
+		// These receipts retain historical checks, but do not bind the live
+		// service instance, build, and mode. Reachability cannot renew that proof.
+		if driver.ServiceRequired {
+			status.StaleReason = "cached verification lacks current service runtime identity"
+			statuses = append(statuses, status)
+			continue
+		}
 		status.AssuranceLevel = receipt.AssuranceLevel
 		statuses = append(statuses, status)
 	}
