@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -338,7 +339,7 @@ func TestVerifyOpenClawManagedConfigRejectsDrift(t *testing.T) {
 			if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			err := verifyOpenClawManagedConfig(context.Background(), bin)
+			err := verifyOpenClawManagedConfig(context.Background(), bin, time.Second)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("error = %v, want %q drift", err, testCase.want)
 			}
@@ -363,7 +364,7 @@ func TestVerifyOpenClawManagedConfigAcceptsCanonicalExecModes(t *testing.T) {
 			if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyOpenClawManagedConfig(context.Background(), bin); err != nil {
+			if err := verifyOpenClawManagedConfig(context.Background(), bin, time.Second); err != nil {
 				t.Fatalf("verify canonical mode: %v", err)
 			}
 		})
@@ -387,7 +388,7 @@ esac
 	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyOpenClawManagedConfig(context.Background(), bin); err == nil || !strings.Contains(err.Error(), "tools.exec.mode") {
+	if err := verifyOpenClawManagedConfig(context.Background(), bin, time.Second); err == nil || !strings.Contains(err.Error(), "tools.exec.mode") {
 		t.Fatalf("error = %v, want canonical mode drift", err)
 	}
 }
@@ -410,8 +411,75 @@ esac
 	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyOpenClawManagedConfig(context.Background(), bin); err == nil || !strings.Contains(err.Error(), "differs") {
+	if err := verifyOpenClawManagedConfig(context.Background(), bin, time.Second); err == nil || !strings.Contains(err.Error(), "differs") {
 		t.Fatalf("error = %v, want active-config mismatch", err)
+	}
+}
+
+func TestVerifyOpenClawConfigObservationsHaveIndependentBudgets(t *testing.T) {
+	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
+	stateDir := t.TempDir()
+	t.Setenv("OPENCLAW_STATE_DIR", "")
+	t.Setenv("OPENCLAW_CONFIG_PATH", "")
+	configPath := filepath.Join(stateDir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"mode":"full"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "openclaw")
+	shim := `#!/bin/sh
+sleep 0.15
+case "$2:$3" in
+  file:) printf '%s\n' "$RAMPART_TEST_CONFIG_PATH" ;;
+  get:tools.exec) printf '%s\n' '{"mode":"full"}' ;;
+  get:plugins.entries.rampart.config) printf '%s\n' '{"failOpen":false,"serveUrl":"http://localhost:9090","approvalTimeoutMs":120000}' ;;
+  *) exit 1 ;;
+esac
+`
+	t.Setenv("RAMPART_TEST_CONFIG_PATH", configPath)
+	if err := os.WriteFile(bin, []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Three serial startup costs exceed one budget, but each observation fits.
+	if err := verifyOpenClawManagedConfig(context.Background(), bin, 400*time.Millisecond); err != nil {
+		t.Fatalf("independently bounded observation failed: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := verifyOpenClawManagedConfig(ctx, bin, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("parent cancellation lost: %v", err)
+	}
+}
+
+func TestVerifyOpenClawObservationFailureIsNotDrift(t *testing.T) {
+	skipOnWindows(t, "test uses POSIX OpenClaw shims")
+	for _, testCase := range []struct{ name, script string }{
+		{"unavailable", "exit 1"},
+		{"timeout", "exec sleep 5"},
+		{"unreadable", "printf '%s\\n' 'synthetic-private-unreadable-output'"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			t.Setenv("OPENCLAW_STATE_DIR", stateDir)
+			if err := ocplugin.Extract(filepath.Join(stateDir, openclawPluginDir)); err != nil {
+				t.Fatal(err)
+			}
+			config := `{"plugins":{"allow":["rampart"],"entries":{"rampart":{"enabled":true}}},"tools":{"exec":{"mode":"full"}}}`
+			if err := os.WriteFile(filepath.Join(stateDir, "openclaw.json"), []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(t.TempDir(), "openclaw")
+			if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+testCase.script+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("RAMPART_OPENCLAW_BIN", bin)
+			check := verifyOpenClawPluginLive(context.Background(), 100*time.Millisecond)
+			if check.Status != verificationUnverified || check.Actual != "configuration observation unavailable" {
+				t.Fatalf("unavailable observation became drift or pass: %#v", check)
+			}
+			if strings.Contains(check.Message, "synthetic-private") {
+				t.Fatalf("child output leaked: %s", check.Message)
+			}
+		})
 	}
 }
 
