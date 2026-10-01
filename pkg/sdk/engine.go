@@ -57,14 +57,15 @@ type SDK struct {
 // NewSDK creates a new SDK from a policy configuration file path.
 func NewSDK(configPath string) (*SDK, error) {
 	store := engine.NewFileStore(configPath)
-	e, err := engine.New(store, slog.Default())
+	logger := audit.NewRedactingLogger(slog.Default())
+	e, err := engine.New(store, logger)
 	if err != nil {
 		return nil, fmt.Errorf("sdk: create engine: %w", err)
 	}
 
 	return &SDK{
 		engine: e,
-		logger: slog.Default(),
+		logger: logger,
 	}, nil
 }
 

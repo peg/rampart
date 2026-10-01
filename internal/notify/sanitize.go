@@ -3,7 +3,10 @@
 
 package notify
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var sanitizePatterns = []struct {
 	re          *regexp.Regexp
@@ -29,14 +32,30 @@ var sanitizePatterns = []struct {
 	{regexp.MustCompile(`(?i)(\b(?:api[-_]?key|auth[-_]?token|access[-_]?token|password|token|secret)\b\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s&]+)`), "$1[REDACTED]"},
 }
 
-// SanitizeCommand removes common credential shapes before command or path
-// details leave the local Rampart process through a notification transport.
+// SanitizeCommand removes common credential shapes from presentation text.
+// Apply it to output copies, never to private authorization identity.
 func SanitizeCommand(command string) string {
 	result := command
 	for _, pattern := range sanitizePatterns {
 		result = pattern.re.ReplaceAllString(result, pattern.replacement)
 	}
 	return result
+}
+
+// SanitizeSuggestions returns a copy containing only guidance that needs no
+// redaction. Rewriting a runnable allowance would authorize a different action;
+// omit it instead, including guidance already containing a redaction marker.
+func SanitizeSuggestions(suggestions []string) []string {
+	if suggestions == nil {
+		return nil
+	}
+	safe := make([]string, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		if !strings.Contains(suggestion, "[REDACTED]") && SanitizeCommand(suggestion) == suggestion {
+			safe = append(safe, suggestion)
+		}
+	}
+	return safe
 }
 
 func sanitizeEvent(event NotifyEvent) NotifyEvent {

@@ -162,6 +162,8 @@ to decorators or `set_default_client()`. Transport failures and timeouts raise
 do not execute the wrapped function when these exceptions occur, even with
 `raise_on_deny=False`. That option only controls how policy denials are reported.
 
+SDK 0.2.0 intentionally changes the outage default from source-distributed
+alpha SDK 0.1.0. Its version is independent of the Rampart CLI.
 Earlier SDK source checkouts defaulted to `fail_open=True`. Upgrading callers
 that omit the option changes outage behavior from a synthetic allow decision
 to an exception. This also affects `preflight`, `check_*`, and their async

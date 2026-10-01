@@ -14,14 +14,67 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/peg/rampart/internal/engine"
 )
+
+func TestWrapRedactsOwnedLogsAndPreservesCallbackIdentity(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	s := setupSDK(t, `
+version: "1"
+default_action: deny
+policies:
+  - name: "token=synthetic-policy"
+    match:
+      tool: "tool-token=synthetic-tool"
+      agent: "agent-token=synthetic-agent"
+    rules:
+      - action: allow
+        when:
+          command_matches: ["echo token=synthetic-command"]
+`)
+	ctx := context.WithValue(context.Background(), AgentKey, "agent-token=synthetic-agent")
+	ctx = context.WithValue(ctx, SessionKey, "session-token=synthetic-session")
+	params := map[string]any{"command": "echo token=synthetic-command"}
+	wantResult := &struct{ Value string }{Value: "token=synthetic-result"}
+	wantErr := errors.New("token=synthetic-error")
+	called := 0
+	wrapped := s.Wrap("tool-token=synthetic-tool", func(gotCtx context.Context, gotParams map[string]any) (any, error) {
+		called++
+		if gotCtx != ctx || gotParams["command"] != params["command"] {
+			t.Fatal("callback did not receive the original action context")
+		}
+		return wantResult, wantErr
+	})
+	result, err := wrapped(ctx, params)
+	if called != 1 || result != wantResult || err != wantErr {
+		t.Fatalf("callback result/error identity changed: calls=%d result=%T error=%T", called, result, err)
+	}
+	if params["command"] != "echo token=synthetic-command" || wantErr.Error() != "token=synthetic-error" {
+		t.Fatal("logging changed the caller's original action or error")
+	}
+	for _, secret := range []string{"synthetic-tool", "synthetic-agent", "synthetic-session", "synthetic-policy", "synthetic-command", "synthetic-result", "synthetic-error"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Fatalf("SDK-owned logging retained synthetic sensitive text %q", secret)
+		}
+	}
+	for _, message := range []string{"sdk: tool evaluated", "sdk: tool completed", "[REDACTED]"} {
+		if !strings.Contains(logs.String(), message) {
+			t.Fatalf("SDK-owned log is missing %q", message)
+		}
+	}
+}
 
 // setupSDK creates an SDK using a temporary policy file.
 func setupSDK(t *testing.T, policy string) *SDK {

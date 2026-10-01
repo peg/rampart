@@ -9,6 +9,9 @@ Integrate Rampart with any Python agent framework — LangChain, CrewAI, AutoGen
 
 ## Python SDK (source-distributed alpha)
 
+SDK 0.2.0 has its own component version, independent of the Rampart CLI. Its
+outage default intentionally differs from SDK 0.1.0; see the migration below.
+
 Start the Rampart proxy:
 
 ```bash
