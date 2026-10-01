@@ -1473,7 +1473,7 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 				patch, _ = params["command"].(string)
 			}
 			if strings.TrimSpace(patch) != "" {
-				patchPaths, patchErr := extractCodexPatchPaths(patch)
+				patchPaths, patchErr := extractPatchPaths(patch, clinePatchSyntax)
 				if patchErr != nil {
 					return nil, nil, fmt.Errorf("%s", strings.ReplaceAll(patchErr.Error(), "Codex", "Cline"))
 				}

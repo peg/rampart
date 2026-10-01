@@ -209,6 +209,70 @@ policies:
 	}
 }
 
+func TestCodexPatchTargetsMatchHostWhitespaceSemantics(t *testing.T) {
+	// Codex's patch grammar retains whitespace after the marker's single
+	// separator, trims header endings, and distinguishes update context lines
+	// from indented headers outside an update hunk.
+	patch := "*** Begin Patch\n" +
+		"  *** Add File:  notes.txt \t\n+note\n" +
+		"\t*** Delete File: \told-notes.txt \n" +
+		"  *** Update File:  draft.txt \n" +
+		"*** Move to:  final.txt \n" +
+		"@@\n *** Add File: ordinary file content\n-old\n+new\n" +
+		"*** Add File: summary.txt\n+summary\n*** End Patch"
+	toolInput, err := json.Marshal(map[string]string{"command": patch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(codexHookInput{
+		SessionID: "session-1", HookEventName: "PreToolUse",
+		ToolName: "apply_patch", ToolUseID: "call-1",
+		ToolInput: toolInput,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseCodexInput(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{" notes.txt", "\told-notes.txt", " draft.txt", " final.txt", "summary.txt"}
+	if strings.Join(parsed.PolicyPaths, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("policy paths = %#v, want %#v", parsed.PolicyPaths, want)
+	}
+	if parsed.Params["command"] != patch {
+		t.Fatal("patch parsing changed the original command")
+	}
+}
+
+func TestClinePatchTargetsMatchHostWhitespaceSemantics(t *testing.T) {
+	patch := "*** Begin Patch\n" +
+		"*** Add File: \uFEFF notes.txt \t\n+note\n" +
+		"*** Update File: \tdraft.txt \n" +
+		"*** Move to: final.txt \uFEFF\n@@\n-old\n+new\n" +
+		"*** Add File: \u0085summary.txt\u0085\n+summary\n*** End Patch"
+	input, err := json.Marshal(map[string]any{
+		"hookName": "PreToolUse", "taskId": "session-1",
+		"preToolUse": map[string]any{
+			"tool": "apply_patch", "parameters": map[string]string{"input": patch},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseClineInput(bytes.NewReader(input), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"notes.txt", "draft.txt", "final.txt", "\u0085summary.txt\u0085"}
+	if strings.Join(parsed.PolicyPaths, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("policy paths = %#v, want %#v", parsed.PolicyPaths, want)
+	}
+	if parsed.Params["input"] != patch {
+		t.Fatal("patch parsing changed the original input")
+	}
+}
+
 func TestEvaluateHookCallClaimsOnceBeforeLaterBatchDeny(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
 	if err := os.WriteFile(policyPath, []byte(`
