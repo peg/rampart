@@ -81,7 +81,7 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 	result := &hookParseResult{
 		Tool:          mappedTool,
 		Params:        params,
-		WorkDir:       strings.TrimSpace(input.CWD),
+		WorkDir:       input.CWD,
 		Agent:         "codex",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: input.HookEventName,

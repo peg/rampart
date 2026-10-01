@@ -54,7 +54,7 @@ func parseCursorInput(reader io.Reader) (*hookParseResult, error) {
 	result := &hookParseResult{
 		Tool:          tool,
 		Params:        params,
-		WorkDir:       strings.TrimSpace(input.CWD),
+		WorkDir:       input.CWD,
 		Agent:         "cursor",
 		RunID:         deriveRunID(input.ConversationID),
 		HookEventName: input.HookEventName,
@@ -116,8 +116,8 @@ func validateCursorActionParams(toolName, tool string, params map[string]any, cw
 			if strings.TrimSpace(cwd) == "" {
 				return fmt.Errorf("%s requires a file path or working directory", context)
 			}
-			params["path"] = strings.TrimSpace(cwd)
-			path = strings.TrimSpace(cwd)
+			params["path"] = cwd
+			path = cwd
 			found = true
 		}
 		if !found || path == "" {
