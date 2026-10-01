@@ -33,8 +33,9 @@ agent turn or demonstrates a tool's execution or approval resume through the
 host dispatcher. Package startup and rolling compatibility tests are separate
 evidence, not a promotion of adapter checks to host ingestion. File read/write
 mapping remains `tested` because the loaded OpenClaw verifier has no active
-file cases. Cached service-backed receipts do not identify the current running
-service instance/build/mode and cannot promote current status.
+file cases. Matching installed plugin files does not identify the gateway's
+loaded plugin build. Cached service-backed receipts do not identify the current
+running service instance/build/mode and cannot promote current status.
 
 Static-only integrations are excluded from the aggregate rather than reported
 as passing. In particular, use `rampart doctor` for Hermes installation status

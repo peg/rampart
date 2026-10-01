@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - OpenClaw file read/write mapping is `tested`; loaded-plugin verification covers
   execution and messaging mapping, not tool execution or approval resume.
+  Matching installed plugin files does not establish loaded-plugin build identity.
   Service-backed cached receipts no longer promote current runtime assurance
   without service instance/build/mode association.
 - Custom background services require stop → install → restart with the original

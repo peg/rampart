@@ -81,6 +81,11 @@ uses `rampart.verify-all.v1`, retains the per-target `rampart.verify.v1`
 reports, and exits 1 if any target fails or 2 if none fail but at least one is
 unverified.
 
+Unavailable OpenClaw configuration discovery remains an unverified target in
+`--all`. The `--timeout` budget applies independently to each active policy
+request or host observation; it is not a total command deadline. Installation
+metadata lookups retain their own bounded discovery budget.
+
 For integration targets, a completed run also records a minimal verification
 receipt under `~/.rampart/verification/`. The receipt contains check IDs and
 outcomes, Rampart build identity, an environment fingerprint, and timestamps;
@@ -94,8 +99,9 @@ They are local status caches, not tamper-resistant
 attestations. Service-backed receipts do not bind the service endpoint, instance,
 build, and mode into one observation. Status therefore retains their timestamps
 but does not promote current service-backed assurance from a cached receipt.
-A live OpenClaw result establishes loaded mapping checks, not the running
-service build or a dispatched tool action.
+A live OpenClaw result establishes loaded mapping checks. Matching installed
+plugin files does not identify the gateway's loaded plugin build; the running
+service build and dispatched tool actions also require separate evidence.
 
 ### `rampart setup claude-code`
 

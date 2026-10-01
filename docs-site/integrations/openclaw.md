@@ -159,8 +159,9 @@ plugin can redact a completed tool response before the model receives it.
     `rampart verify openclaw` checks policy preflights and the loaded plugin's
     execution and messaging mapping. It does not dispatch a real tool or resume
     a native approval. File read/write mapping is adapter-tested; the loaded
-    verifier has no active file cases. Actual dispatcher behavior needs separate
-    evidence for the installed host version.
+    verifier has no active file cases. Matching installed plugin files does not
+    establish which plugin build the gateway has loaded. Actual dispatcher
+    behavior needs separate evidence for the installed host version.
 
 ## The `openclaw.yaml` profile
 
@@ -228,10 +229,11 @@ rampart verify openclaw
 The verification command checks managed configuration and policy canaries,
 then calls `rampart.verify` on the running gateway. That plugin method feeds
 fixed, non-executing canaries through the same normalization and decision
-mapping as `before_tool_call`. It proves the current plugin is loaded and can
-reach Rampart; it does not invoke the agent's tool dispatcher or exercise a
-native approval's resume path. An authenticated agent turn is separate
-evidence and is not run by this command.
+mapping as `before_tool_call`. It observes the loaded plugin's mapping decisions
+and checks that installed plugin files match the CLI. It does not bind those
+files to the gateway's loaded build, invoke the agent's tool dispatcher, or
+exercise a native approval's resume path. An authenticated agent turn is
+separate evidence and is not run by this command.
 
 Use `rampart doctor` for the broader installation health report. Expected output when fully configured includes:
 
