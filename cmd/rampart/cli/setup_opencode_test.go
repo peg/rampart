@@ -50,13 +50,16 @@ func TestOpenCodeInstallRepairsOwnedPluginAtomicallyAndPreservesState(t *testing
 	if err := installOpenCodePlugin(path, oldBinary); err != nil {
 		t.Fatal(err)
 	}
-	oldInfo, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Ownership survives a stale executable and a drifted managed body.
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// File.Stat captures the original handle's identity immediately. Windows
+	// os.Stat defers identity lookup until SameFile, after this path is replaced.
+	oldInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
 		t.Fatal(err)
 	}
 	if _, err := file.WriteString("\n// stale owned customization\n"); err != nil {
