@@ -1,2 +1,3 @@
 # Registry digests and embedded policies use the same bytes on every platform.
 policies/**/*.yaml text eol=lf
+internal/plugin/opencode/rampart.js text eol=lf
