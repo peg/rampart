@@ -7,6 +7,10 @@ description: "Secure any CLI AI agent that respects SHELL by wrapping it with Ra
 
 `rampart wrap` works with **any agent** that reads the `$SHELL` environment variable. This covers most CLI-based AI agents.
 
+OpenCode has an [experimental native plugin](opencode.md) for supported V1
+tool calls. Use that guide for shell, file, and web-fetch policy checks; a
+shell wrapper covers only commands actually routed through its shim.
+
 ## Setup
 
 ```bash
@@ -17,7 +21,6 @@ rampart wrap -- <your-agent-command>
 
 ```bash
 rampart wrap -- aider
-rampart wrap -- opencode
 rampart wrap -- python my_agent.py
 rampart wrap -- node agent.js
 ```

@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"github.com/peg/rampart/internal/engine"
 	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
 	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
+	opencodeplugin "github.com/peg/rampart/internal/plugin/opencode"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -960,7 +962,42 @@ func doctorHooks(emit emitFn) int {
 		}
 	}
 
+	issues += doctorOpenCodeHooks(emit, home)
 	return issues
+}
+
+// doctorOpenCodeHooks checks only the installed file and its executable
+// binding. It does not start OpenCode or infer that a running host loaded it.
+func doctorOpenCodeHooks(emit emitFn, home string) int {
+	path := openCodePluginPath(home)
+	_, fileErr := os.Lstat(path)
+	_, binaryErr := execLookPath("opencode")
+	if os.IsNotExist(fileErr) && binaryErr != nil {
+		return 0
+	}
+	data, exists, err := readOpenCodePlugin(path)
+	if err != nil {
+		emit("OpenCode plugin", "fail", "Experimental plugin file is unsafe or unreadable: "+err.Error()+hintSep+
+			"Inspect the plugin path; setup refuses linked files and directories")
+		return 1
+	}
+	if !exists {
+		emit("OpenCode plugin", "fail", "Experimental plugin is not installed"+hintSep+"rampart setup opencode")
+		return 1
+	}
+	if !opencodeplugin.Managed(data) {
+		emit("OpenCode plugin", "fail", "The rampart.js file is not owned by Rampart; it will not be replaced"+hintSep+
+			"Choose a different location for the unrelated plugin before running rampart setup opencode")
+		return 1
+	}
+	want, err := opencodeplugin.Render(resolveRampartHookBinary())
+	if err != nil || !bytes.Equal(data, want) {
+		emit("OpenCode plugin", "fail", "Experimental plugin source or Rampart executable binding is stale"+hintSep+
+			"rampart setup opencode && restart OpenCode")
+		return 1
+	}
+	emit("OpenCode plugin", "ok", "Experimental plugin file and executable binding are current (static check only; host loading unverified; ask decisions refuse execution)")
+	return 0
 }
 
 // doctorCoverage cross-checks whether a user with OpenClaw protection but no

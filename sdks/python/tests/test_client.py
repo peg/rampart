@@ -14,6 +14,7 @@
 """Unit tests for the Rampart client."""
 
 import base64
+import json
 import os
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -41,7 +42,7 @@ class TestRampartClient:
             client = RampartClient()
             assert client.url == "http://localhost:9090"
             assert client.token is None
-        assert client.fail_open is True
+        assert client.fail_open is False
 
     def test_default_decorator_client_fails_closed(self):
         """Execution-boundary decorators must not authorize on server outage."""
@@ -906,3 +907,83 @@ class TestDecorators:
 
             result = run_command("dangerous command")
             assert result is None  # Function not called, returns None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "response_kind,availability_opt_in,raise_on_deny,expected_error,executes",
+    [
+        ("connection", False, False, RampartConnectionError, False),
+        ("timeout", False, False, RampartConnectionError, False),
+        ("server-error", False, False, RampartServerError, False),
+        ("connection", True, False, None, True),
+        ("server-error", True, False, None, True),
+        ("deny", True, True, RampartDeniedError, False),
+        ("ask", True, False, None, False),
+        ("malformed", True, False, RampartServerError, False),
+        ("allow", False, True, None, True),
+    ],
+)
+async def test_custom_client_guard_failure_behavior(
+    asynchronous,
+    response_kind,
+    availability_opt_in,
+    raise_on_deny,
+    expected_error,
+    executes,
+):
+    """Join the real client/parser to the guard's observable execution boundary."""
+    calls = []
+    effects = []
+
+    def respond(request):
+        calls.append(request)
+        assert request.url.path == "/v1/preflight/exec"
+        assert json.loads(request.content)["enforce"] is True
+        if response_kind == "connection":
+            raise httpx.ConnectError("unavailable", request=request)
+        if response_kind == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
+        if response_kind == "server-error":
+            return httpx.Response(503, text="service unavailable")
+        allowed = response_kind in {"allow", "malformed"}
+        action = "deny" if response_kind == "malformed" else response_kind
+        return httpx.Response(200, json={"allowed": allowed, "decision": action})
+
+    # Supplying a client just to customize its timeout must preserve the
+    # default guard's outage protection. Availability requires explicit True.
+    options = {"fail_open": True} if availability_opt_in else {}
+    client = RampartClient(url="http://127.0.0.1:9090", timeout=2, **options)
+    transport = httpx.MockTransport(respond)
+    if asynchronous:
+        client._async_client = httpx.AsyncClient(transport=transport)
+    else:
+        client._client = httpx.Client(transport=transport)
+
+    def operation(command):
+        effects.append(command)
+        return "executed"
+
+    async def async_operation(command):
+        return operation(command)
+
+    protected = exec_guard(client=client, raise_on_deny=raise_on_deny)(
+        async_operation if asynchronous else operation
+    )
+
+    async def invoke():
+        if asynchronous:
+            return await protected("marker")
+        return protected("marker")
+
+    try:
+        if expected_error is not None:
+            with pytest.raises(expected_error):
+                await invoke()
+        else:
+            assert await invoke() == ("executed" if executes else None)
+        assert effects == (["marker"] if executes else [])
+        assert len(calls) == 1
+    finally:
+        await client.aclose()

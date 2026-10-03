@@ -71,7 +71,11 @@ With the standard policy:
 
 - **Local servers:** A denied proxied request is stopped before the server sees
   it. Behavior inside an allowed server call is not inspected.
-- **Cloud servers:** Rampart blocks requests before they leave your machine. Allowed calls execute remotely.
+- **Remote servers through a local stdio bridge:** When Claude Desktop launches
+  that bridge through `rampart mcp --`, Rampart can deny the proxied request
+  before the bridge forwards it. Allowed calls execute remotely.
+- **Direct remote connections:** Arbitrary HTTP/SSE MCP connections configured
+  directly in the host do not pass through this command-launched stdio proxy.
 
 For cloud MCP servers, use a more restrictive policy (deny by default, explicit allowlist).
 

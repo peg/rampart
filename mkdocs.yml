@@ -133,6 +133,7 @@ nav:
     - GitHub Copilot: integrations/github-copilot.md
     - Gemini CLI (Experimental): integrations/gemini-cli.md
     - Hermes (Experimental): integrations/hermes.md
+    - OpenCode (Experimental): integrations/opencode.md
     - Claude Desktop: integrations/claude-desktop.md
     - MCP Proxy: features/mcp-proxy.md
     - Python Agents: integrations/python-agents.md

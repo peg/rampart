@@ -88,7 +88,7 @@ func parseCopilotInput(reader io.Reader) (*hookParseResult, error) {
 	result := &hookParseResult{
 		Tool:          tool,
 		Params:        params,
-		WorkDir:       strings.TrimSpace(input.CWD),
+		WorkDir:       input.CWD,
 		Agent:         "github-copilot",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: event,
@@ -238,8 +238,7 @@ func collectNativeHookPaths(params map[string]any, host string) ([]string, error
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
 	add := func(value string) error {
-		value = strings.TrimSpace(value)
-		if value == "" {
+		if strings.TrimSpace(value) == "" {
 			return nil
 		}
 		if _, exists := seen[value]; exists {

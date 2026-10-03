@@ -51,20 +51,24 @@ function nativeApprovalDescription(action) {
     const original = action.input.rampart_original_input;
     if (!original || typeof original !== "object" || Array.isArray(original)) return null;
   }
-  // Render original host arguments once. Policy-derived fields are not
-  // executable arguments; retain their tool class, all parsed targets and
-  // host-derived requester/context separately instead of duplicating input.
+  // Keep every original argument and execution-relevant host fact. Correlation
+  // IDs remain in the service request and audit, and the host retains its own
+  // approval binding. They need not consume the small human-review field.
+  // Only deduplicate workdir
+  // when the original arguments already contain the exact same value.
   const originalTool = action.params.rampart_original_tool ?? action.tool;
+  const originalParams = action.input?.rampart_original_input ?? action.input ?? action.params;
   const context = Object.fromEntries(
-    ["agent", "agent_depth", "session", "run_id", "tool_call_id", "workdir"]
-      .filter((key) => action[key] !== undefined && action[key] !== "")
+    ["agent", "agent_depth", "workdir"]
+      .filter((key) => action[key] !== undefined && action[key] !== "" &&
+        (key !== "workdir" || action[key] !== originalParams.workdir))
       .map((key) => [key, action[key]]),
   );
   const presented = {
     tool: originalTool,
     ...(originalTool !== action.tool ? { policy_class: action.tool } : {}),
-    params: action.input?.rampart_original_input ?? action.input ?? action.params,
-    ...(Object.keys(context).length ? { context } : {}),
+    params: originalParams,
+    ...context,
     ...(action.params.rampart_targets ? { targets: action.params.rampart_targets } : {}),
     ...(action.params.rampart_requester ? { requester: action.params.rampart_requester } : {}),
     ...(action.params.rampart_origin_channel ? { origin_channel: action.params.rampart_origin_channel } : {}),
@@ -75,7 +79,7 @@ function nativeApprovalDescription(action) {
     .replace(/`/g, "\\u0060")
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e");
-  const description = `Complete action (secrets redacted):\n\`\`\`json\n${text}\n\`\`\``;
+  const description = `Action (redacted):\n\`\`\`json\n${text}\n\`\`\``;
   return description.length <= MAX_NATIVE_APPROVAL_DESCRIPTION ? description : null;
 }
 
@@ -616,13 +620,18 @@ async function checkWithRampart(toolName, params, ctx, config, { verification = 
     });
 
     if (!resp.ok) {
-      // Authentication failures are explicit denies, and their bodies are
-      // bounded/drained without being reflected into logs or approval UI.
+      // 401 is an authentication failure; 403 may instead be a policy/access
+      // rejection. Both deny without reflecting their bounded/drained bodies.
       if (resp.status === 403 || resp.status === 401) {
         // Drain the bounded body for connection reuse, but never reflect an
-        // authentication response body into host logs or approval UI.
-        await readControlResponseText(resp);
-        return { allowed: false, decision: "deny", message: `Rampart authentication rejected (HTTP ${resp.status})` };
+        // rejection response body into host logs or approval UI.
+        try {
+          await readControlResponseText(resp);
+        } catch {
+          // A failed body cannot undo a rejection status already received.
+        }
+        const rejection = resp.status === 401 ? "authentication rejected" : "request rejected";
+        return { allowed: false, decision: "deny", message: `Rampart ${rejection} (HTTP ${resp.status})` };
       }
       await resp?.body?.cancel?.().catch(() => {});
       // Redirects and other client errors indicate an incompatible or invalid

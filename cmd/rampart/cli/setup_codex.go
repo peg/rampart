@@ -115,6 +115,8 @@ Run 'rampart setup codex --remove' to uninstall.`,
 			fmt.Fprintln(out, "  Covers Codex CLI, IDE extension, and desktop local tool calls.")
 			fmt.Fprintln(out, "  Codex will require review of this hook definition before first use.")
 			fmt.Fprintln(out, "  Open `/hooks` in Codex and trust the Rampart hooks.")
+			fmt.Fprintln(out, "  Rampart approvals do not replace Codex sandbox or permission approvals.")
+			fmt.Fprintln(out, "  Approval guidance: https://docs.rampart.sh/integrations/codex-cli/#decisions-and-approvals")
 			if removedWrapper {
 				fmt.Fprintf(out, "✓ Removed legacy preload wrapper at %s to prevent duplicate checks.\n", wrapperPath)
 			}

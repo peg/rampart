@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Experimental OpenCode V1 pre-tool integration on Linux and macOS with a
+  supported POSIX shell. Explicit setup installs a local policy bridge for
+  supported shell, file, and web-fetch calls; approval-required and unsupported
+  tools refuse execution. Static installation checks do not claim host loading
+  or universal model compatibility.
+
+### Changed
+
+- Source-distributed alpha Python SDK 0.2.0 clients now fail closed by default on transport and server failures,
+  including custom clients supplied to guards and non-consuming preview calls.
+  Existing callers that deliberately need availability fallback must explicitly
+  set `fail_open=True`; policy denials and invalid responses remain errors or
+  denied decisions. Health checks still return `False` when unavailable.
+
+### Fixed
+
+- Preserve exact path and working-directory identity in policy evaluation and
+  native mappings while retaining existing traversal and platform checks.
+- Redact denial guidance, diagnostic output, and Rampart-generated Go SDK logs
+  without changing caller results/errors or private authorization identity.
+  Suppress suggestions whose redaction would change the proposed allowance.
+- Link HTTP approval resolution to the originating persisted policy audit record.
+- Preserve complete OpenClaw native approval review and explicit HTTP rejection
+  when response-body handling fails. Explain separate Codex native approvals.
+- Bound each OpenClaw configuration observation independently and distinguish
+  confirmed drift from unavailable or timed-out observation.
+- Recognize Hermes 0.21.5's reviewed approval collector while retaining rule
+  identity, later-denial precedence, and refusal of unknown capability contracts.
+  The experimental compatibility gate now uses the real native approval queue
+  and reports bounded redacted child-failure categories.
+
+### Compatibility and migration
+
+- OpenClaw file read/write mapping is `tested`; loaded-plugin verification covers
+  execution and messaging mapping, not tool execution or approval resume.
+  Matching installed plugin files does not establish loaded-plugin build identity.
+  Service-backed cached receipts no longer promote current runtime assurance
+  without service instance/build/mode association.
+- Custom background services require stop → install → restart with the original
+  options and CWD. The v1.9.1 updater can restart with defaults before the new
+  binary runs; automatic option preservation and recovery remain deferred.
+  See the canonical upgrade guide for the manual migration.
+- Clarify native-hook local audit behavior and command-launched stdio MCP/bridge
+  scope. Existing legacy documentation redirects remain available.
+
 ## [1.9.1] - 2026-09-10
 
 ### Security

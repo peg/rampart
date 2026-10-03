@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/peg/rampart/internal/notify"
 )
 
 const (
@@ -42,6 +44,9 @@ func stderrSupportsColor() bool {
 // formatDenyMessage returns a branded deny message suitable for stderr.
 // The suggestions slice contains ready-to-run "rampart allow ..." commands.
 func formatDenyMessage(command, reason string, suggestions []string) string {
+	command = notify.SanitizeCommand(command)
+	reason = notify.SanitizeCommand(reason)
+	suggestions = notify.SanitizeSuggestions(suggestions)
 	var sb strings.Builder
 	if stderrSupportsColor() {
 		sb.WriteString(fmt.Sprintf("🛡️ %sRampart blocked: %s%s\n   %sReason: %s%s\n",
