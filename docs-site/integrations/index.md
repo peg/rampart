@@ -1,6 +1,6 @@
 ---
 title: Integration Guides
-description: "Find the right Rampart integration for Claude Code, Cline, Cursor, OpenClaw, Hermes Agent, Codex, Antigravity, experimental Gemini CLI, GitHub Copilot, and custom agents."
+description: "Find the right Rampart integration for Claude Code, Cline, Cursor, OpenClaw, Hermes Agent, OpenCode, Codex, Antigravity, experimental Gemini CLI, GitHub Copilot, and custom agents."
 ---
 
 # Integration Guides
@@ -12,20 +12,19 @@ for the evidence and known limitations of that path.
 
 After setup, `rampart verify --all` safely checks the policy engine and every
 configured integration with an active behavioral verifier without invoking a
-model. Static-only integrations such as Hermes remain visible in
-`rampart doctor` and require their isolated compatibility harness for runtime
-evidence.
+model. Static-only integrations such as Hermes and OpenCode remain visible in
+`rampart doctor`; static installation checks do not prove host interception.
 
 ## Integration Methods
 
 | Method | How It Works | Best For |
 |--------|-------------|----------|
 | **Native Hooks** | Uses the agent's built-in hook system | Claude Code, Cline, Codex, Cursor, GitHub Copilot; Gemini CLI (experimental enterprise/API-key path) |
-| **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, OpenCode, Continue |
+| **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, Continue, agents without native hooks |
 | **MCP Proxy** | Transparent proxy for individual MCP servers | Claude Desktop, Cursor (optional second boundary) |
 | **LD_PRELOAD** | Interposes supported libc exec/spawn functions; native library is source-built | Optional defense in depth for compatible Unix processes |
 | **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
-| **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Antigravity, Hermes Agent (experimental) |
+| **Native Plugin** | Agent framework calls Rampart before supported tool calls run | OpenClaw, Antigravity; Hermes Agent and OpenCode (experimental) |
 | **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
 
 ## Ask Behavior
@@ -44,6 +43,7 @@ When a policy action is `ask`, behavior varies by integration:
 | **Standalone MCP proxy** | Proxy blocks, returns JSON-RPC error on deny |
 | **OpenClaw** | OpenClaw owns the visible approval UI; Rampart plugin supplies policy decisions |
 | **Hermes Agent** | Compatible Hermes installations own the native approval prompt and resume the same call; older or incomplete installs block with upgrade guidance |
+| **OpenCode (experimental)** | `ask` and `require_approval` refuse the call; no approval queue or resume path |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
 | **LD_PRELOAD** | Library blocks exec call, process appears "hung" |
 | **HTTP API** | Returns `"decision":"ask"` with approval metadata when interactive review is required |
@@ -62,6 +62,7 @@ When a policy action is `ask`, behavior varies by integration:
 | [GitHub Copilot CLI / VS Code](github-copilot.md) | CLI adapter-tested; shared VS Code Preview contract | `rampart setup copilot` | All |
 | [OpenClaw](openclaw.md) | Managed native guard | `rampart protect openclaw` | Linux, macOS |
 | [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | Linux, macOS |
+| [OpenCode](opencode.md) | Experimental V1 pre-tool plugin; static installation check | `rampart setup opencode` | Linux, macOS; POSIX shell |
 | [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
 
@@ -81,7 +82,7 @@ q: "Integration method?" {shape: diamond}
 hooks: "rampart protect\\n(native hook auto-detection)" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
-shim: "rampart protect openclaw\\nrampart setup hermes (experimental)" {
+shim: "rampart protect openclaw\\nrampart setup hermes (experimental)\\nrampart setup opencode (experimental)" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 mcp: "rampart mcp --" {
@@ -100,7 +101,7 @@ api: "HTTP API / SDK\\nlocalhost:9090" {
 start -> q
 
 q -> hooks: "Claude Code, Cline, Codex, Cursor, or Copilot\\n(native hooks, lowest overhead)"
-q -> shim: "OpenClaw, Antigravity, or Hermes\\n(native plugin where supported)"
+q -> shim: "OpenClaw, Antigravity, Hermes, or OpenCode\\n(native plugin where supported)"
 q -> mcp: "Claude Desktop or any MCP-compatible client\\n(Cursor can use this as a second boundary)"
 q -> wrap: "Any CLI agent\\nwith \$SHELL support"
 q -> preload: "Any CLI agent\\nwithout \$SHELL or native hooks"

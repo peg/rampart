@@ -107,6 +107,7 @@ specific setup subcommands remain supported for advanced operations.
 Supported AI Agents:
   • Claude Code (Anthropic)   - Native hook integration
   • Hermes Agent              - Experimental user plugin integration
+  • OpenCode                  - Experimental global policy plugin
   • Cline (editor and CLI)    - Native hook integration
   • OpenClaw                  - Native plugin integration
   • Codex                     - Native lifecycle hook integration
@@ -136,6 +137,7 @@ Supported AI Agents:
 
 	cmd.AddCommand(newSetupClaudeCodeCmd(opts))
 	cmd.AddCommand(newSetupHermesCmd())
+	cmd.AddCommand(newSetupOpenCodeCmd())
 	cmd.AddCommand(newSetupClineCmd(opts))
 	cmd.AddCommand(newSetupOpenClawCmd(opts))
 	cmd.AddCommand(newSetupCodexCmd(opts))

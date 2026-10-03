@@ -38,8 +38,9 @@ loaded plugin build. Cached service-backed receipts do not identify the current
 running service instance/build/mode and cannot promote current status.
 
 Static-only integrations are excluded from the aggregate rather than reported
-as passing. In particular, use `rampart doctor` for Hermes installation status
-and the isolated latest-Hermes compatibility check for runtime evidence.
+as passing. Use `rampart doctor` for Hermes and OpenCode installation status;
+Hermes also has an isolated latest-runtime compatibility check. These static
+checks do not establish host interception.
 
 ## At a glance
 
@@ -118,6 +119,14 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="rampart serve">Required</td>
       <td data-label="Approval UX" data-approval="native">Compatible Hermes native approval; older or incomplete installs block <code>ask</code></td>
       <td data-label="Support tier"><strong>Experimental</strong><br>credential-free package/runtime gate; authenticated live-host proof pending</td>
+    </tr>
+    <tr class="tier-experimental" data-integration="opencode">
+      <td data-label="Surface"><strong>OpenCode V1 tool dispatcher</strong></td>
+      <td data-label="Best path">Experimental native plugin<br><code>rampart setup opencode</code></td>
+      <td data-label="Bare protect">No</td>
+      <td data-label="rampart serve">Not required for local enforcement</td>
+      <td data-label="Approval UX"><code>ask</code> and <code>require_approval</code> refuse; no approval queue</td>
+      <td data-label="Support tier"><strong>Experimental</strong><br>Linux/macOS POSIX shell; adapter/setup tests and static doctor; no active host verifier</td>
     </tr>
     <tr class="tier-supported">
       <td data-label="Surface"><strong>OpenClaw 2026.4.29 - 2026.5.1</strong></td>
@@ -211,6 +220,12 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
   checks. Older Hermes releases block `ask` with upgrade guidance. Its built-in
   status check remains static, so it is not included in `rampart verify --all`,
   and authenticated live-host proof remains pending
+- **OpenCode** → experimental plugin for supported V1 model-dispatched tools
+  on Linux and macOS with a POSIX shell. Local enforcement needs no service;
+  approval-required and unsupported calls refuse. Plugin startup is
+  host-controlled, and `rampart doctor` checks the managed file rather than
+  proving that OpenCode loaded it. See the [OpenCode guide](../integrations/opencode.md)
+  for local-model behavior and excluded execution paths
 
 ## Approval paths and limits
 
@@ -222,7 +237,7 @@ has a working approval UI. Use the owner for the configured path:
 | OpenClaw native plugin | OpenClaw's native approval UI | Allow one call or deny. Complete redacted review must fit the host's limit; otherwise the plugin blocks. These requests are not duplicated in `rampart pending`. |
 | Other native approval integrations | The host's UI, where supported | The host owns delivery and resume. Consult the integration's limits; Hermes remains experimental. |
 | Rampart external queue, including Codex, Gemini and Cursor hooks | Rampart dashboard or `rampart pending --details`, then `rampart approve <id>` / `rampart deny <id>` | The waiting integration handles the result. An unavailable resolver cannot authorize the action. Gemini remains experimental. |
-| Cline and standalone `rampart mcp` | No connected approval resolver | `ask` cancels or refuses the call. Starting `rampart serve` alone does not add an approval path to either integration. |
+| Cline, OpenCode and standalone `rampart mcp` | No connected approval resolver | `ask` cancels or refuses the call. Starting `rampart serve` alone does not add an approval path to these integrations. |
 | Custom HTTP API clients | Rampart's queue or an explicitly configured host owner | The caller implements waiting and execution; an approved API response does not execute a tool. |
 
 Approving a pending action and granting permission to future actions are
@@ -254,6 +269,7 @@ necessarily execute the tool.
 | [Cursor local Agent](../integrations/cursor.md) | Local allow/deny remains available; external approvals deny when unavailable. | Managed `failClosed: true` requests blocking on crash, timeout, or invalid JSON. Installed configuration and adapter checks do not prove host ingestion. [Upstream contract](https://cursor.com/docs/hooks#per-script-configuration-options) |
 | [OpenClaw native plugin](../integrations/openclaw.md) | All tools deny by default, including routine tools. | Rampart catches adapter exceptions and denies on its service request deadline. Failure outside that handler remains host-controlled. |
 | [Hermes Agent](../integrations/hermes.md) (experimental) | All tools deny by default. | Rampart catches adapter exceptions and service timeouts. Hermes 0.21.5 source blocks pre-tool callback errors/timeouts; broader installed failure proof remains pending. |
+| [OpenCode](../integrations/opencode.md) (experimental) | Local allow/deny remains available; approval-required calls refuse. | The loaded bridge refuses child launch failures, nonzero exits, malformed replies, and its ten-second deadline. OpenCode can continue after plugin load or initialization failure; `OPENCODE_PURE` skips external plugins. |
 
 OpenClaw and Hermes operators can explicitly opt tools into degraded fail-open
 behavior; `rampart protect openclaw` installs an empty opt-out list. OpenClaw's
@@ -279,6 +295,7 @@ It does not imply syscall, packet, or arbitrary subprocess inspection.
 - Use the **Antigravity shared policy plugin** for Antigravity CLI and IDE.
 - Use the **OpenClaw native plugin** on current OpenClaw builds.
 - Use the **Hermes Agent plugin** for conservative early Hermes testing.
+- Use the **experimental OpenCode plugin** for its supported model-dispatched tools.
 - Use **wrapper / preload** when the CLI agent has no hook system.
 - Use **MCP proxy** or **HTTP API** for clients that integrate through MCP or custom service calls.
 
