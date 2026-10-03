@@ -139,7 +139,7 @@ func extractOpenCodePatchPaths(patch string) ([]string, error) {
 			break
 		}
 	}
-	return extractCodexPatchPaths(strings.Join(lines, "\n"))
+	return extractPatchPaths(strings.Join(lines, "\n"), clinePatchSyntax)
 }
 
 func outputOpenCodeHookResult(writer io.Writer, decision hookDecisionType, reason string) error {

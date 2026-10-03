@@ -125,7 +125,7 @@ checks do not establish host interception.
       <td data-label="Best path">Experimental native plugin<br><code>rampart setup opencode</code></td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Not required for local enforcement</td>
-      <td data-label="Approval UX"><code>ask</code> and <code>require_approval</code> refuse; no approval queue</td>
+      <td data-label="Approval UX" data-approval="none"><code>ask</code> and <code>require_approval</code> refuse; no approval queue</td>
       <td data-label="Support tier"><strong>Experimental</strong><br>Linux/macOS POSIX shell; adapter/setup tests and static doctor; no active host verifier</td>
     </tr>
     <tr class="tier-supported">
