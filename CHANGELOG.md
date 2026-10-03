@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Experimental OpenCode V1 pre-tool integration on Linux and macOS with a
+  supported POSIX shell. Explicit setup installs a local policy bridge for
+  supported shell, file, and web-fetch calls; approval-required and unsupported
+  tools refuse execution. Static installation checks do not claim host loading
+  or universal model compatibility.
+
 ## [1.9.1] - 2026-09-10
 
 ### Security

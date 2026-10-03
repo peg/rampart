@@ -247,6 +247,58 @@ integrations:
       - Other plugins that rewrite tool arguments share the trusted host boundary; re-evaluation of their rewrites and arbitrary plugin composition are not verified.
       - Delegated-agent and authenticated live-host E2E are not present.
 
+  - id: opencode
+    display_name: OpenCode
+    support_tier: experimental
+    setup_command: rampart setup opencode
+    boundary: native_plugin
+    platforms: [linux, macos]
+    auto_protect: false
+    service_required: false
+    upstream_ci: none
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: partial
+      mcp: not_covered
+      subagents: not_covered
+    degraded:
+      policy_unavailable: deny
+      adapter_error: deny
+      timeout: deny
+    approval: none
+    verification:
+      level: static
+      command: rampart doctor
+      safe_canaries: false
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_opencode_test.go
+        kind: integration
+        proves: Native command, path, session, and call identity are preserved; unmapped tools refuse, every patch target participates in deny-wins evaluation, and approvals or failed audit persistence refuse execution.
+      - path: cmd/rampart/cli/setup_opencode_test.go
+        kind: unit
+        proves: Setup and removal preserve unrelated configuration, repair owned plugin drift, bind the Rampart executable, and refuse unowned or linked plugin files.
+      - path: internal/plugin/opencode/embed_test.go
+        kind: unit
+        proves: The bundled plugin binds an absolute executable without shell interpolation and recognizes only its complete ownership header.
+      - path: internal/plugin/opencode/runtime_test.go
+        kind: failure_injection
+        proves: The JavaScript bridge preserves direct subprocess arguments and dispatch identity, refuses missing or failing children and malformed replies, suppresses child diagnostics, and rejects changing or non-JSON arguments before freezing allowed original arguments.
+    limitations:
+      - The experimental contract targets OpenCode V1 model-dispatched tools; static doctor checks installed file integrity, not plugin loading or host dispatch, and there is no active installed-host verifier.
+      - OpenCode may continue after plugin load or initialization failure; OPENCODE_PURE skips external plugins entirely. The deny and timeout guarantees apply only after the managed callback loads.
+      - The loaded bridge refuses unavailable, failing, malformed, or timed-out Rampart child evaluations within a ten-second deadline; it does not claim every host-controlled crash or interruption fails closed.
+      - Only supported POSIX shells on Linux and macOS are covered; the native bash tool name also represents other upstream shells, which the bridge refuses.
+      - Unmapped tool names, including additional custom and MCP tools, plus glob, grep, delegated-agent, skill-loading, code-mode, LSP, and web-search tools refuse execution until an explicit mapping is added; directory searches need a sound contract for every inspected file.
+      - Ask and require_approval decisions refuse the call without creating an approval queue; starting rampart serve does not add approval or resume support.
+      - The bridge preserves native session and call identity, compares the original arguments after evaluation, and freezes allowed plain JSON arguments; arbitrary plugin composition and built-in tool overrides remain part of the trusted host boundary.
+      - Manual shell commands, PTYs, command-template shell interpolation, debug tool execution, attached-file and resource context ingestion, and experimental V2 execution are outside this hook.
+      - Host-added instruction reads and formatter or language-server side effects are outside the requested action evaluated by this plugin.
+      - This is a before-only integration; tool result scanning, execution-outcome reporting, and redaction of OpenCode's sessions, streamed metadata, or output files are not claimed.
+      - Local and remote model providers share the tool boundary, but individual provider and model combinations require separate validation.
+
   - id: gemini
     display_name: Gemini CLI
     support_tier: experimental
