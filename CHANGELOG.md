@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-10-09
+
 ### Changed
 
 - Source-distributed alpha Python SDK 0.2.0 clients now fail closed by default on transport and server failures,
