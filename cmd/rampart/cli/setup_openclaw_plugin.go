@@ -784,6 +784,9 @@ func resolveOpenClawStateDir(openclawBin string) (stateDir string, configPath st
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		cmd := osexec.CommandContext(ctx, openclawBin, "config", "file")
+		// Metadata callers retain their five-second discovery budget; allow at
+		// most one additional second for inherited child output pipes to close.
+		cmd.WaitDelay = time.Second
 		cmd.Env = append(os.Environ(), "OPENCLAW_HIDE_BANNER=1", "OPENCLAW_SUPPRESS_NOTES=1")
 		out, runErr := cmd.Output()
 		if runErr == nil {
@@ -1559,6 +1562,7 @@ type openClawPluginState struct {
 	ManifestVersion string
 	RuntimeVersion  string
 	StartupExplicit bool
+	configErr       error
 }
 
 func getOpenClawPluginState() openClawPluginState {
@@ -1595,6 +1599,7 @@ func getOpenClawPluginStateAt(stateDir, configPath string) openClawPluginState {
 	state.readInstalledPluginMetadata()
 	plugins, err := loadOpenClawPluginsConfig(configPath)
 	if err != nil {
+		state.configErr = err
 		return state
 	}
 	state.Enabled = true

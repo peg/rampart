@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peg/rampart/internal/notify"
 	"gopkg.in/yaml.v3"
 )
 
@@ -573,7 +574,7 @@ func validatePolicy(policy Policy, cache map[string]*regexp.Regexp) error {
 			}
 			if strings.HasPrefix(rule.Webhook.URL, "http://") {
 				slog.Warn("webhook URL uses insecure http:// scheme; use https:// in production",
-					"policy", policy.Name, "rule", index)
+					"policy", notify.SanitizeCommand(policy.Name), "rule", index)
 			}
 		}
 		if err := compileResponseRegexes(rule.When, cache); err != nil {
@@ -656,7 +657,7 @@ func compileResponseRegexes(cond Condition, cache map[string]*regexp.Regexp) err
 			return fmt.Errorf("invalid response regex %q: %w", pattern, err)
 		}
 		if responseRegexBackreferencePattern.MatchString(pattern) {
-			slog.Warn("engine: response regex contains backreference; pattern may be unsupported", "pattern", pattern)
+			slog.Warn("engine: response regex contains backreference; pattern may be unsupported", "pattern", notify.SanitizeCommand(pattern))
 		}
 
 		re, err := regexp.Compile(pattern)

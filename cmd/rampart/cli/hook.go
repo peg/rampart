@@ -23,6 +23,7 @@ import (
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/internal/notify"
 	"github.com/peg/rampart/internal/session"
 	"github.com/spf13/cobra"
 )
@@ -164,8 +165,7 @@ func normalizeHookStringAliases(
 		if !ok {
 			return "", false, fmt.Errorf("%s requires %s alias %q to be a string", context, field, key)
 		}
-		value = strings.TrimSpace(value)
-		if value == "" {
+		if strings.TrimSpace(value) == "" {
 			continue
 		}
 		if found && value != selected {
@@ -301,32 +301,32 @@ func gitRevParseContextAt(workDir string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	args := []string{"rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"}
-	if workDir = strings.TrimSpace(workDir); workDir != "" {
+	if strings.TrimSpace(workDir) != "" {
 		args = append([]string{"-C", workDir}, args...)
 	}
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
 		return "", "", err
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
 	if len(lines) != 2 {
 		return "", "", fmt.Errorf("git context returned %d lines", len(lines))
 	}
-	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), nil
+	return lines[0], strings.TrimSpace(lines[1]), nil
 }
 
 func gitRevParseTopLevelAt(workDir string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	args := []string{"rev-parse", "--show-toplevel"}
-	if workDir = strings.TrimSpace(workDir); workDir != "" {
+	if strings.TrimSpace(workDir) != "" {
 		args = append([]string{"-C", workDir}, args...)
 	}
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil || len(out) == 0 {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSuffix(string(out), "\n"), nil
 }
 
 // sessionStateDir returns the directory used for per-session state files.
@@ -727,7 +727,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					msg = "⛔ Blocked" + policyHint + ": " + decision.Message + "\n\n" + msg
 				}
-				suggestions := engine.GenerateSuggestions(failedCall)
+				suggestions := notify.SanitizeSuggestions(engine.GenerateSuggestions(failedCall))
 				if len(suggestions) > 0 {
 					msg += "\n\nTo allow this specific operation, a human can run:\n"
 					for _, s := range suggestions {
@@ -739,7 +739,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				out := hookOutput{
 					HookSpecificOutput: &hookDecision{
 						HookEventName:     "PostToolUseFailure",
-						AdditionalContext: msg,
+						AdditionalContext: notify.SanitizeCommand(msg),
 					},
 				}
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
@@ -1100,7 +1100,7 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	result := &hookParseResult{
 		Tool:          toolType,
 		Params:        params,
-		WorkDir:       strings.TrimSpace(input.CWD),
+		WorkDir:       input.CWD,
 		Agent:         "claude-code",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: event,
@@ -1408,7 +1408,7 @@ func parseClineInput(reader interface{ Read([]byte) (int, error) }, logger *slog
 
 func firstNonEmptyString(values []string) string {
 	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
+		if strings.TrimSpace(value) != "" {
 			return value
 		}
 	}
@@ -1473,7 +1473,7 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 				patch, _ = params["command"].(string)
 			}
 			if strings.TrimSpace(patch) != "" {
-				patchPaths, patchErr := extractCodexPatchPaths(patch)
+				patchPaths, patchErr := extractPatchPaths(patch, clinePatchSyntax)
 				if patchErr != nil {
 					return nil, nil, fmt.Errorf("%s", strings.ReplaceAll(patchErr.Error(), "Codex", "Cline"))
 				}
@@ -1611,8 +1611,7 @@ func collectClinePaths(params map[string]any) ([]string, error) {
 	paths := make([]string, 0, 4)
 	seen := make(map[string]struct{})
 	add := func(path string) error {
-		path = strings.TrimSpace(path)
-		if path == "" {
+		if strings.TrimSpace(path) == "" {
 			return nil
 		}
 		if strings.IndexByte(path, 0) >= 0 {
@@ -1884,6 +1883,8 @@ func outputHookResultWithResponse(
 	updatedToolOutput any,
 	suggestions ...string,
 ) error {
+	reason = notify.SanitizeCommand(reason)
+	suggestions = notify.SanitizeSuggestions(suggestions)
 	// NOTE: Do NOT print to stderr for Claude Code hook decisions — Claude Code
 	// can interpret stderr as a hook failure. The structured JSON response carries
 	// deny/ask reasons. Keep Cline's historical stderr deny output for now.

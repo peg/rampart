@@ -255,7 +255,7 @@ func TestStatusUnavailableConfiguredEndpointInvalidatesServiceReceipt(t *testing
 		t.Fatal(err)
 	}
 	initial, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now, true), "cursor")
-	if !ok || initial.AssuranceLevel != assuranceAdapterVerified {
+	if !ok || initial.AssuranceLevel != assuranceConfigured || initial.StaleReason != "cached verification lacks current service runtime identity" {
 		t.Fatalf("initial Cursor assurance = %#v, found=%t", initial, ok)
 	}
 

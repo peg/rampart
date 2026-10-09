@@ -22,6 +22,66 @@ sys.modules[spec.name] = plugin
 spec.loader.exec_module(plugin)
 
 
+# The fixture below is derived from Hermes Agent and is licensed separately:
+# MIT License
+#
+# Copyright (c) 2025 Nous Research
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Released Hermes collector, normalized from v2026.9.24/hermes_cli/plugins.py.
+# Keeps the source-recognition regression faithful to the installed host.
+CURRENT_APPROVAL_COLLECTOR = """
+def _get_pre_tool_call_directive_details(tool_name: str, args: Optional[Dict[str, Any]], task_id: str='', session_id: str='', tool_call_id: str='', turn_id: str='', api_request_id: str='', middleware_trace: Optional[List[Dict[str, Any]]]=None) -> _PreToolCallDirective:
+    allowed = getattr(_thread_tool_whitelist, 'allowed', None)
+    if allowed is not None and tool_name not in allowed:
+        fmt = getattr(_thread_tool_whitelist, 'fmt', "Tool '{tool_name}' denied")
+        return _PreToolCallDirective(action='block', message=fmt.format(tool_name=tool_name))
+    from hermes_cli.lifecycle import invoke_hook as invoke_lifecycle_hook
+    hook_results = invoke_lifecycle_hook('pre_tool_call', tool_name=tool_name, args=args if isinstance(args, dict) else {}, task_id=task_id, session_id=session_id, tool_call_id=tool_call_id, turn_id=turn_id, api_request_id=api_request_id, middleware_trace=list(middleware_trace or []))
+    modified_args: Optional[Dict[str, Any]] = None
+    first_approve: Optional[Tuple[Optional[str], Optional[str]]] = None
+    for result in hook_results:
+        if not isinstance(result, dict):
+            continue
+        action = result.get('action')
+        if action == 'modify':
+            partial = result.get('args')
+            if isinstance(partial, dict) and partial:
+                modified_args = {**(modified_args if modified_args is not None else args if isinstance(args, dict) else {}), **partial}
+            continue
+        if action not in ('block', 'approve'):
+            continue
+        message = result.get('message')
+        message = message if isinstance(message, str) and message else None
+        if action == 'block' and (not message):
+            continue
+        if action == 'block':
+            return _PreToolCallDirective(action='block', message=message, modified_args=modified_args)
+        if first_approve is None:
+            rule_key = result.get('rule_key')
+            first_approve = (message, rule_key.strip() or None if isinstance(rule_key, str) else None)
+    if first_approve is not None:
+        return _PreToolCallDirective(action='approve', message=first_approve[0], rule_key=first_approve[1], modified_args=modified_args)
+    return _PreToolCallDirective(modified_args=modified_args)
+"""
+
 class HermesPluginTests(unittest.TestCase):
     def setUp(self) -> None:
         self.env_patch = mock.patch.dict(
@@ -127,6 +187,27 @@ class HermesPluginTests(unittest.TestCase):
             """
             sources[resolve_pre_tool_block] = delegated_resolver_source
             self.assertTrue(plugin._hermes_supports_native_approval())
+
+            original_collector = sources[details_getter]
+            sources[details_getter] = CURRENT_APPROVAL_COLLECTOR
+            self.assertTrue(plugin._hermes_supports_native_approval())
+            for original, replacement in (
+                ("rule_key=first_approve[1]", "rule_key=tool_name"),
+                ("if first_approve is None:", "if True:"),
+                ("if action == 'block':", "if action == 'unknown':"),
+            ):
+                with self.subTest(collector_change=original):
+                    self.assertIn(original, CURRENT_APPROVAL_COLLECTOR)
+                    sources[details_getter] = CURRENT_APPROVAL_COLLECTOR.replace(original, replacement)
+                    self.assertFalse(plugin._hermes_supports_native_approval())
+            for constant in ("b'unknown'", "1j", "..."):
+                sources[details_getter] = CURRENT_APPROVAL_COLLECTOR.replace(
+                    "modified_args: Optional[Dict[str, Any]] = None",
+                    "modified_args: Optional[Dict[str, Any]] = " + constant,
+                )
+                self.assertNotEqual(sources[details_getter], CURRENT_APPROVAL_COLLECTOR)
+                self.assertFalse(plugin._hermes_supports_native_approval())
+            sources[details_getter] = original_collector
 
             for label, function, source in (
                 (

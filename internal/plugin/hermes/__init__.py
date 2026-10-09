@@ -930,6 +930,33 @@ def _hermes_supports_native_approval() -> bool:
             return False
         resolver_tree = dispatch_tree
 
+    # Hermes v2026.9.24 (0.21.5) retains the first approval in a tuple so a
+    # later veto wins. Accept that reviewed collector's normalized AST only;
+    # finding a tuple lookup somewhere would not prove retained identity or
+    # deny precedence. Comments/formatting/docstrings do not affect this check.
+    # Unknown collector changes still refuse approval until independently
+    # reviewed against the host dispatcher and native approval transport.
+    def canonical_ast(value):
+        # ast.dump changed empty-field formatting in Python 3.13. Serialize
+        # semantic fields explicitly so supported Python versions agree.
+        if isinstance(value, ast.AST):
+            return {"node": type(value).__name__, "fields": {
+                key: canonical_ast(child) for key, child in ast.iter_fields(value)
+                if child is not None and child != []
+            }}
+        if isinstance(value, list):
+            return [canonical_ast(child) for child in value]
+        return value
+
+    collector_ast = ast.Module(body=function_body(details_tree), type_ignores=[])
+    try:
+        reviewed_collector = hashlib.sha256(json.dumps(
+            canonical_ast(collector_ast), sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest() == "4b67bc090a9c24220254276e912e375fa63cdfe710b2ecfb61265fe822c79c3a"
+    except (TypeError, ValueError):
+        # An unfamiliar source form is not approval capability evidence.
+        return False
+
     result_rule_key_is_captured = any(
         isinstance(node, ast.Assign)
         and any(
@@ -1002,7 +1029,7 @@ def _hermes_supports_native_approval() -> bool:
     )
     return (
         result_rule_key_is_captured
-        and captured_rule_key_reaches_directive
+        and (captured_rule_key_reaches_directive or reviewed_collector)
         and resolver_loads_same_details
         and details_rule_key_reaches_gate
     )
