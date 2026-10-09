@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.9.2] - 2026-10-09
 
+### Security
+
+- **Release builds use Go 1.26.9** — The module baseline, container build, and
+  source-build requirement now use the Go patch release that resolves the called
+  standard-library vulnerabilities reported against Go 1.26.8 in `net/http`,
+  `crypto/tls`, `net/textproto`, and `html/template`.
+
 ### Changed
 
 - Source-distributed alpha Python SDK 0.2.0 clients now fail closed by default on transport and server failures,
