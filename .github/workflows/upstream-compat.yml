@@ -87,8 +87,8 @@ jobs:
       - name: Check latest package startup and Rampart adapter
         run: node scripts/compat-gemini-latest.mjs
 
-  hermes-latest:
-    name: Hermes latest isolated plugin gate
+  hermes-pinned:
+    name: Hermes reviewed-release isolated plugin gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -106,8 +106,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Validate against latest Hermes Agent
-        run: python scripts/compat-hermes-latest.py
+      # Pinned to the last release Rampart reviewed so upstream releases cannot
+      # turn this scheduled gate red; move the pin only after reviewing a newer one.
+      - name: Validate against the reviewed Hermes release
+        run: python scripts/compat-hermes-latest.py --release-tag v2026.9.24
 
   openclaw-latest:
     name: OpenClaw latest source + container gate

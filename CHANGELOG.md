@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the active mode. With it enabled, a Rampart crash or hang blocks tool calls
   until fixed or reverted with `--hook-failure=continue`.
 
+### Changed
+
+- The experimental Hermes compatibility gate now tests the last reviewed release
+  (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
+  releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
+  claimed compatible until reviewed.
+
 ## [1.10.0] - 2026-10-12
 
 ### Added

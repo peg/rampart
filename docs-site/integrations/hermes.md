@@ -132,19 +132,24 @@ Hermes plugin instead of treating its static configuration as behavioral proof.
 Use `rampart doctor` to confirm local installation and service requirements,
 then use the isolated compatibility harness for runtime evidence.
 
-Use the isolated latest-Hermes compatibility harness before enabling the plugin on a live gateway:
+Use the isolated Hermes compatibility harness before enabling the plugin on a live gateway:
 
 ```bash
-python scripts/compat-hermes-latest.py
+python scripts/compat-hermes-latest.py --release-tag v2026.9.24
 ```
 
 The harness creates a temporary Hermes state, installs the Rampart plugin there, exercises Hermes plugin discovery plus `pre_tool_call` dispatch, and verifies deny, allow, native `ask` approval/denial, and fail-closed behavior without restarting any long-running Hermes gateway.
-By default it resolves Hermes' official latest stable GitHub release and uses
-an isolated editable checkout of that exact tag, the development install path
-Hermes permits. `--package` is an explicit maintainer override; it is not the
-definition of the latest supported Hermes release. Package discovery failures
-fail the gate rather than treating a source-tree import as compatibility. The
-check does not use provider credentials or invoke a model.
+`--release-tag` selects one official Hermes release and uses an isolated
+editable checkout of that exact tag, the development install path Hermes
+permits. Scheduled CI runs the last release Rampart reviewed, Hermes v2026.9.24
+(0.21.5), so upstream releases cannot turn Rampart's CI red; newer releases are
+not claimed compatible until reviewed. Without `--release-tag` the harness
+resolves Hermes' official latest stable release instead, but that mode cannot
+currently evaluate Hermes v0.21.6 or newer, which use a different tag scheme
+and no longer stamp the package version. `--package` is an explicit maintainer
+override; it is not the definition of a supported Hermes release. Package
+discovery failures fail the gate rather than treating a source-tree import as
+compatibility. The check does not use provider credentials or invoke a model.
 
 !!! warning "Why this remains experimental"
     Hermes v2026.9.24 (0.21.5) [dispatch source](https://github.com/NousResearch/hermes-agent/blob/v2026.9.24/hermes_cli/plugins_dispatch.py#L209)
