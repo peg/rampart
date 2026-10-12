@@ -130,6 +130,26 @@ class CompatEnvironmentTests(unittest.TestCase):
             "git+https://github.com/NousResearch/hermes-agent.git@v0.21.7#egg=hermes-agent",
         )
 
+    def test_release_identity_accepts_stamped_version(self) -> None:
+        def unexpected() -> list[str]:
+            raise AssertionError("checkout must not be consulted for a stamped version")
+
+        MODULE.verify_release_identity("0.21.5", "0.21.5", "v2026.9.24", unexpected)
+
+    def test_release_identity_accepts_placeholder_only_at_release_tag(self) -> None:
+        MODULE.verify_release_identity("0.0.0", "0.21.7", "v0.21.7", lambda: ["v0.21.7"])
+        for tags in ([], ["v0.21.6"], ["v2026.9.24"]):
+            with self.subTest(tags=tags):
+                with self.assertRaisesRegex(RuntimeError, "expected 0.21.7"):
+                    MODULE.verify_release_identity("0.0.0", "0.21.7", "v0.21.7", lambda tags=tags: tags)
+
+    def test_release_identity_rejects_other_versions_without_consulting_checkout(self) -> None:
+        def unexpected() -> list[str]:
+            raise AssertionError("checkout must not rescue a mismatched stamped version")
+
+        with self.assertRaisesRegex(RuntimeError, "installed distribution 0.21.4, expected 0.21.5"):
+            MODULE.verify_release_identity("0.21.4", "0.21.5", "v2026.9.24", unexpected)
+
     def test_official_release_rejects_untrusted_metadata(self) -> None:
         for payload in (
             {"tag_name": "../../main", "name": "Hermes Agent v0.20.0", "draft": False, "prerelease": False},

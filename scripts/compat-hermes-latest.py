@@ -22,6 +22,7 @@ import textwrap
 import threading
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,8 @@ HERMES_RELEASE_API = "https://api.github.com/repos/NousResearch/hermes-agent/rel
 HERMES_RELEASE_TAG = re.compile(r"^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(?:\.[0-9]+)?$")
 # Hermes switched from calendar tags to plain SemVer tags with v0.21.6.
 HERMES_SEMVER_TAG = re.compile(r"^v([0-9]+\.[0-9]+\.[0-9]+)$")
+# Since v0.21.6 the package metadata carries this placeholder, not the release.
+HERMES_PLACEHOLDER_VERSION = "0.0.0"
 HERMES_RELEASE_NAME = re.compile(r"^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)")
 
 
@@ -355,6 +358,45 @@ def distribution_version(python: Path, distribution: str, env: dict[str, str]) -
         env=env,
     )
     return result.stdout.strip()
+
+
+def checkout_tags_at_head(python: Path, env: dict[str, str]) -> list[str]:
+    """Return the tags checked out at the installed (editable) Hermes source."""
+
+    located = run(
+        [
+            str(python),
+            "-c",
+            "import pathlib, hermes_cli; print(pathlib.Path(hermes_cli.__file__).resolve().parent.parent)",
+        ],
+        env=env,
+    )
+    tags = run(["git", "-C", located.stdout.strip(), "tag", "--points-at", "HEAD"], env=env)
+    return tags.stdout.split()
+
+
+def verify_release_identity(
+    installed_version: str,
+    release_version: str,
+    release_tag: str,
+    checkout_tags: Callable[[], list[str]],
+) -> None:
+    """Require the installed Hermes to be the release the API announced.
+
+    Releases that stamp their version in package metadata must report it.
+    Hermes v0.21.6+ ships a ``0.0.0`` placeholder and derives its identity from
+    build stamps or git instead, so for that placeholder the installed checkout
+    must be sitting exactly at the release tag.
+    """
+
+    if installed_version == release_version:
+        return
+    if installed_version == HERMES_PLACEHOLDER_VERSION and release_tag in checkout_tags():
+        return
+    raise RuntimeError(
+        f"Hermes release {release_tag} installed distribution "
+        f"{installed_version}, expected {release_version}"
+    )
 
 
 def url_opener(env: dict[str, str]) -> urllib.request.OpenerDirector:
@@ -662,11 +704,12 @@ def main() -> int:
             hermes_python, hermes_bin_path = make_venv(temp, package, env, args.python, editable=editable)
             if args.package is None:
                 installed_package_version = distribution_version(hermes_python, "hermes-agent", env)
-                if installed_package_version != official_release_version:
-                    raise RuntimeError(
-                        f"Hermes release {official_release_tag} installed distribution "
-                        f"{installed_package_version}, expected {official_release_version}"
-                    )
+                verify_release_identity(
+                    installed_package_version,
+                    official_release_version,
+                    official_release_tag,
+                    lambda: checkout_tags_at_head(hermes_python, env),
+                )
 
         hermes_home = temp / "hermes-home"
         plugin_dir = hermes_home / "plugins" / "rampart"
