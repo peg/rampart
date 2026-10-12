@@ -260,7 +260,7 @@ necessarily execute the tool.
 
 | Integration | `rampart serve` unavailable | Host hook failure or timeout |
 | --- | --- | --- |
-| [Claude Code](../integrations/claude-code.md) | Local policy and native `ask` remain available. | Command-hook timeout or launch failure supplies no veto; normal Claude permissions apply. A valid denial or blocking exit still blocks. [Upstream contract](https://code.claude.com/docs/en/hooks#timeouts) |
+| [Claude Code](../integrations/claude-code.md) | Local policy and native `ask` remain available. | By default a command-hook timeout or launch failure supplies no veto and normal Claude permissions apply. With `onFailure: "block"` (Claude Code 2.1.295+; set on new installs there, opt-in for existing ones) these failures block PreToolUse. A valid denial or blocking exit always blocks. [Upstream contract](https://code.claude.com/docs/en/hooks#timeouts) |
 | [Cline](../integrations/cline.md) | Local policy remains available; `ask` cancels with context. | Current CLI continues after pre-hook launch, timeout, or control-parse errors. Post-tool file hooks are observational. |
 | [Codex](../integrations/codex-cli.md) | Local allow/deny remains available; external approvals deny when unavailable. | Host-controlled; unexpected crash and timeout behavior is not claimed fail-closed. |
 | [Gemini CLI](../integrations/gemini-cli.md) (experimental) | Local allow/deny remains available; external approvals deny when unavailable. | Host-controlled; unexpected crash and timeout behavior is not claimed fail-closed. |

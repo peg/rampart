@@ -84,9 +84,11 @@ integrations:
       subagents: partial
     degraded:
       policy_unavailable: local
-      adapter_error: host_defined
-      # A command-hook timeout supplies no veto; Claude's own permissions still apply.
-      timeout: allow
+      # Mixed: Claude Code lets a failing or timed-out hook proceed through its own
+      # permissions unless the hook sets onFailure "block" (Claude Code 2.1.295+).
+      # Rampart sets it on PreToolUse for new installs there and offers it to others.
+      adapter_error: mixed
+      timeout: mixed
     approval: native
     verification:
       level: active
@@ -109,12 +111,16 @@ integrations:
       - path: cmd/rampart/cli/verify_test.go
         kind: integration
         proves: Verification checks installed hook configuration and directly invokes the adapter with a non-executing denial canary; it does not launch Claude.
+      - path: cmd/rampart/cli/setup_claude_failure_test.go
+        kind: unit
+        proves: Setup writes onFailure "block" only on Rampart's PreToolUse hook, only for a new install on a detected Claude Code 2.1.295 or newer, never for an older or undetected host, never silently on an existing install, and preserves other hooks and user settings; verify reports the active mode.
     limitations:
       - No rolling latest-Claude compatibility job currently exercises the installed host.
       - rampart verify claude-code proves installed configuration and adapter behavior but does not prove Claude loaded or invoked the hook.
       - Documented hook-visible tools are mapped, and in enforce mode future unknown PreToolUse tools deny until Rampart is updated.
       - Host-owned or server-side actions that do not emit lifecycle hooks are outside this boundary; Claude's EndConversation tool is a documented benign example.
-      - Claude's documented command-hook timeout and launch-failure behavior does not block PreToolUse; adapter failures without a blocking exit or valid denial also permit normal host permission processing.
+      - Unless PreToolUse sets onFailure "block", Claude's documented command-hook timeout and launch-failure behavior does not block, and adapter failures without a blocking exit or valid denial also permit normal host permission processing. Fail-closed needs Claude Code 2.1.295 or newer and is on by default only for new installs; existing installs opt in with --hook-failure=block.
+      - Rampart configures the documented onFailure host behavior but does not verify that a running Claude Code honors it, and with it enabled a Rampart crash or hang blocks tool calls until fixed or reverted.
       - Subagent and host-failure contracts have not been proven through authenticated live conformance tests.
 
   - id: cline
