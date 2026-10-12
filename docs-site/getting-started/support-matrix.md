@@ -39,7 +39,8 @@ running service instance/build/mode and cannot promote current status.
 
 Static-only integrations are excluded from the aggregate rather than reported
 as passing. Use `rampart doctor` for Hermes and OpenCode installation status;
-Hermes also has an isolated latest-runtime compatibility check. These static
+Hermes also has an isolated compatibility check against its last reviewed
+release. These static
 checks do not establish host interception.
 
 ## At a glance
@@ -215,9 +216,11 @@ checks do not establish host interception.
   `BeforeTool`/`AfterTool` hooks cover documented shell, file, network, MCP,
   memory, and delegated-agent calls; a real authenticated host proof is still
   pending, and this does not cover Antigravity
-- **Hermes Agent** → experimental plugin path with isolated latest-runtime
-  discovery, dispatch, deny/allow, native approval/resume, and degraded-mode
-  checks. Older Hermes releases block `ask` with upgrade guidance. Its built-in
+- **Hermes Agent** → experimental plugin path with isolated discovery,
+  dispatch, deny/allow, native approval/resume, and degraded-mode checks against
+  its last reviewed release (Hermes 0.21.5); newer releases are not claimed
+  compatible until reviewed. Older Hermes releases block `ask` with upgrade
+  guidance. Its built-in
   status check remains static, so it is not included in `rampart verify --all`,
   and authenticated live-host proof remains pending
 - **OpenCode** → experimental plugin for supported V1 model-dispatched tools
