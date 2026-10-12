@@ -214,10 +214,12 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.9.2 preserves the original path and working-directory identity of
-native actions, redacts denial guidance and diagnostic output, and links HTTP
-approval resolutions to the policy event that was persisted. The alpha Python
-SDK 0.2.0 now fails closed by default. Read the
+Rampart v1.10.0 adds an experimental OpenCode policy bridge for Linux and macOS.
+Explicit setup installs a local plugin that evaluates supported shell, file, and
+web-fetch calls before execution and refuses approval-required or unsupported
+tools. It builds on v1.9.2, which preserves native action path and
+working-directory identity, redacts diagnostics, and makes the alpha Python SDK
+fail closed by default. Read the
 [upgrade guidance](getting-started/upgrade.md) before upgrading a custom
 background service or relying on native OpenClaw approval review. See the [release
 notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade
