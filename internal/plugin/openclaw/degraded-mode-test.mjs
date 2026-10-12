@@ -147,26 +147,31 @@ const oversizedResponse = await runScenario({
 });
 assert(oversizedResponse.result?.block === true, 'oversized response must fail closed');
 
-const slowBody = await runScenario({
-  name: 'slow-response-body',
-  toolName: 'exec',
-  pluginConfig: { timeoutMs: 5 },
-  fetchImpl: async (_url, opts) => new Response(new ReadableStream({
-    start(controller) {
-      const delayed = setTimeout(() => {
-        controller.enqueue(new TextEncoder().encode('{"decision":"allow","allowed":true}'));
-        controller.close();
-      }, 50);
-      opts.signal.addEventListener('abort', () => {
-        clearTimeout(delayed);
-        const error = new Error('response body aborted');
-        error.name = 'AbortError';
-        controller.error(error);
-      }, { once: true });
-    },
-  }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
-});
-assert(slowBody.result?.block === true, 'timeout must cover the complete response body');
+for (const status of [200, 401, 403]) {
+  const slowBody = await runScenario({
+    name: `slow-response-body-${status}`,
+    toolName: status === 200 ? 'exec' : 'read',
+    pluginConfig: { timeoutMs: 5, failOpenTools: ['read'] },
+    fetchImpl: async (_url, opts) => new Response(new ReadableStream({
+      start(controller) {
+        const delayed = setTimeout(() => {
+          controller.enqueue(new TextEncoder().encode('{"decision":"allow","allowed":true}'));
+          controller.close();
+        }, 50);
+        opts.signal.addEventListener('abort', () => {
+          clearTimeout(delayed);
+          const error = new Error('response body aborted');
+          error.name = 'AbortError';
+          controller.error(error);
+        }, { once: true });
+      },
+    }), { status, headers: { 'Content-Type': 'application/json' } }),
+  });
+  assert(slowBody.result?.block === true, `${status}: body timeout must not allow the tool`);
+  if (status !== 200) {
+    assert(slowBody.result.blockReason.includes(`HTTP ${status}`), 'body timeout lost the already received rejection');
+  }
+}
 
 const untrustedServeUrl = await runScenario({
   name: 'untrusted-serve-url',
@@ -191,4 +196,4 @@ for (const serveUrl of [
   assert(!JSON.stringify(scenario.logs).includes('password'), 'unsafe serveUrl credentials must not reach logs');
 }
 
-console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read-explicit-fail-open', 'unreachable-read-default-closed', 'server-error-write', 'timeout-edit', 'server-error-read-strict', 'client-error-read-explicit-fail-open', 'manual-redirect-read-explicit-fail-open', 'empty-object-response', 'array-response', 'missing-allowed-response', 'contradictory-allow-response', 'contradictory-deny-response', 'unknown-decision', 'redirect-read-explicit-fail-open', 'oversized-response', 'slow-response-body', 'untrusted-serve-url'] }, null, 2));
+console.log(JSON.stringify({ ok: true, scenarios: ['unreachable-exec', 'unreachable-read-explicit-fail-open', 'unreachable-read-default-closed', 'server-error-write', 'timeout-edit', 'server-error-read-strict', 'client-error-read-explicit-fail-open', 'manual-redirect-read-explicit-fail-open', 'empty-object-response', 'array-response', 'missing-allowed-response', 'contradictory-allow-response', 'contradictory-deny-response', 'unknown-decision', 'redirect-read-explicit-fail-open', 'oversized-response', 'slow-response-body-200', 'slow-response-body-401', 'slow-response-body-403', 'untrusted-serve-url'] }, null, 2));

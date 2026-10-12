@@ -53,3 +53,20 @@ func TestFormatDenyMessage_NoSuggestions(t *testing.T) {
 		t.Fatalf("should not show 'To allow:' with empty suggestions: %q", msg)
 	}
 }
+
+func TestFormatDenyMessageRedactsPresentationAndOmitsAlteredAllowances(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	suggestions := []string{`rampart allow "echo token=synthetic-command"`}
+	msg := formatDenyMessage("echo token=synthetic-command", "token=synthetic-reason", suggestions)
+	for _, secret := range []string{"synthetic-command", "synthetic-reason"} {
+		if strings.Contains(msg, secret) {
+			t.Fatalf("deny presentation retained synthetic sensitive text: %q", msg)
+		}
+	}
+	if !strings.Contains(msg, "[REDACTED]") || strings.Contains(msg, "To allow:") {
+		t.Fatalf("expected redacted denial without an altered allowance: %q", msg)
+	}
+	if !strings.Contains(suggestions[0], "synthetic-command") {
+		t.Fatal("deny presentation changed its caller's suggestions")
+	}
+}

@@ -57,7 +57,7 @@ rampart watch -q           # quiet mode (hides system noise)
 rampart watch --tool exec  # only exec events
 ```
 
-Watch reads from the audit log (`~/.rampart/audit/`). It doesn't need the daemon to be running, but you won't see new events without it.
+Watch reads from the audit log (`~/.rampart/audit/`) without needing the daemon. Native hooks can continue writing local decision records while the service is stopped. Service-backed evaluations and the service's dashboard/SSE stream require a running daemon.
 
 ## Audit log
 
@@ -121,4 +121,4 @@ On Windows, Rampart currently uses a login-scoped background process.
 Yes: `rampart serve --port 19090`. Set `RAMPART_URL=http://localhost:19090` so other commands find it.
 
 **Does watch need the daemon?**
-No. Watch reads audit files directly. But without the daemon, there are no new events to watch.
+No. Watch reads audit files directly, including new local native-hook records. Stopping the daemon stops service-backed evaluation and its live dashboard/SSE stream.

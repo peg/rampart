@@ -147,12 +147,15 @@ fail the gate rather than treating a source-tree import as compatibility. The
 check does not use provider credentials or invoke a model.
 
 !!! warning "Why this remains experimental"
-    Hermes currently documents that a plugin callback which fails outside
-    Rampart's adapter wrapper can be skipped while agent execution continues.
-    Rampart converts ordinary adapter exceptions into explicit blocks, but it
-    cannot honestly claim fail-closed behavior after every host-level plugin
-    failure. The credential-free compatibility harness proves current-host
-    dispatcher behavior, not an authenticated live-agent journey.
+    Hermes v2026.9.24 (0.21.5) [dispatch source](https://github.com/NousResearch/hermes-agent/blob/v2026.9.24/hermes_cli/plugins_dispatch.py#L209)
+    returns a blocking directive for `pre_tool_call` callback exceptions and
+    configured callback timeouts; other observer-hook failures may be skipped.
+    Those host-controlled failure paths need separate installed evidence before
+    a broader failure guarantee is claimed. The credential-free compatibility
+    harness exercises the real native approval queue and plugin dispatcher,
+    including retained rule identity and a later plugin veto. It does not run
+    an authenticated agent/model loop. Unknown approval collector structures
+    remain unsupported and block `ask` until reviewed.
 
 ## Provider authentication errors
 

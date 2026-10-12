@@ -53,15 +53,16 @@ func TestDeriveGitContextAt_UsesSingleGitProcess(t *testing.T) {
 	gitPath := filepath.Join(dir, "git")
 	script := "#!/bin/sh\n" +
 		"printf 'call\\n' >> \"$RAMPART_GIT_CALL_LOG\"\n" +
-		"printf '/workspace/repository\\nmain\\n'\n"
+		"[ \"$2\" = \"/workspace/repository \" ] || exit 1\n" +
+		"printf '/workspace/repository \\nmain\\n'\n"
 	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
 	t.Setenv("RAMPART_GIT_CALL_LOG", logPath)
 
-	ctx := deriveGitContextAt("/workspace/repository")
-	if ctx.root != "/workspace/repository" || ctx.session != "repository/main" {
+	ctx := deriveGitContextAt("/workspace/repository ")
+	if ctx.root != "/workspace/repository " || ctx.session != "repository /main" {
 		t.Fatalf("unexpected git context: %+v", ctx)
 	}
 	calls, err := os.ReadFile(logPath)

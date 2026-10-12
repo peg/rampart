@@ -63,6 +63,31 @@ class CompatEnvironmentTests(unittest.TestCase):
         ):
             self.assertNotIn(key, env)
 
+    def test_failed_child_diagnostics_preserve_category_without_values(self) -> None:
+        secret = "synthetic-private-value"
+        for stderr, expected in (
+            ("ask did not request Hermes native approval: " + secret, "ask did not request Hermes native approval"),
+            ("ModuleNotFoundError: " + secret, "ModuleNotFoundError"),
+            ("unrecognized failure " + secret, "child diagnostic unavailable"),
+        ):
+            result = MODULE.child_failure_diagnostic(stderr)
+            self.assertIn(expected, result)
+            self.assertNotIn(secret, result)
+            self.assertIn("redacted", result)
+        failed = MODULE.subprocess.CompletedProcess(["python", "-c", secret], 1, "", "RuntimeError: " + secret)
+        with mock.patch.object(MODULE.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(RuntimeError, "python exited 1: RuntimeError") as error:
+                MODULE.run(["python", "-c", secret], env={})
+        self.assertNotIn(secret, str(error.exception))
+
+    def test_child_timeout_does_not_render_command_or_output(self) -> None:
+        secret = "synthetic-private-value"
+        error = MODULE.subprocess.TimeoutExpired(["python", "-c", secret], 1, output=secret, stderr=secret)
+        with mock.patch.object(MODULE.subprocess, "run", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "timed out after 1s") as caught:
+                MODULE.run(["python", "-c", secret], env={}, timeout=1)
+        self.assertNotIn(secret, str(caught.exception))
+
     def test_official_release_resolves_validated_github_checkout(self) -> None:
         payload = {
             "tag_name": "v2026.8.3",

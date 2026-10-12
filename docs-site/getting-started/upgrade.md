@@ -65,6 +65,51 @@ instead. If Rampart cannot run, use the [official installer](installation.md)
 and its reported installation path; avoid copying an unchecked archive over an
 existing executable.
 
+### Custom background services: manual migration
+
+The v1.9.1 updater restarts a `serve --background` process with default options.
+Installing a corrected destination binary cannot repair that earlier restart.
+Automatic preservation of custom background launch options and working directory
+also remains unavailable in this release; use this route for later self-upgrades
+until preservation is explicitly supported.
+
+1. Record the service's original command options and working directory from
+   your deployment definition. Keep credentials in their existing secret source;
+   do not paste tokens into shell history or issue reports. If the original
+   options are unavailable, recover them before upgrading.
+2. Stop the background service with `rampart serve stop`. For a systemd or
+   launchd service, stop it through that service manager instead and retain its
+   definition. Service-backed protection is unavailable while stopped, so pause
+   dependent agents during the migration.
+3. Install the selected release with the checksum/version-validating installer,
+   or stage a verified release binary beside the old executable and atomically
+   replace it. Retain a copy of the old binary until verification succeeds.
+   Do not invoke v1.9.1's self-updater while the custom service is running.
+4. Return to the original working directory and start the new binary with the
+   original options. Preserve relative policy, audit, log and certificate paths,
+   listener address/port, mode, timeouts and any bridge setting. For example:
+
+   ```bash
+   cd /path/to/original/service-directory
+   /path/to/rampart serve --background --config policies.yaml \
+     --audit-dir audit --port 9191 --mode enforce --no-openclaw-bridge
+   ```
+
+   Substitute your recorded command; these example flags are not defaults to
+   apply to an existing installation. Retain the existing token/signing files,
+   unrelated configuration and their permissions.
+5. Confirm the intended endpoint reports the new version and original mode,
+   and check the intended policy and audit locations. If validation fails, stop
+   that candidate process before restoring the retained binary and restarting
+   it with the same original options and directory. Do not infer recovery from
+   a different reachable Rampart service.
+
+The core release does not add automatic service recovery or runtime-bound
+verification receipts. A saved verification timestamp cannot establish the
+identity or mode of a currently running service. Service-manager definitions
+remain authoritative for their own launches; the manual background migration
+does not prove systemd or launchd upgrade/recovery behavior.
+
 ### Verify
 
 ```bash

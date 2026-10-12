@@ -9,6 +9,9 @@ Integrate Rampart with any Python agent framework — LangChain, CrewAI, AutoGen
 
 ## Python SDK (source-distributed alpha)
 
+SDK 0.2.0 has its own component version, independent of the Rampart CLI. Its
+outage default intentionally differs from SDK 0.1.0; see the migration below.
+
 Start the Rampart proxy:
 
 ```bash
@@ -51,6 +54,22 @@ The decorator sends an `enforce: true` preflight at the actual call boundary,
 consumes one-shot grants and call-count state exactly once, and does not execute
 the function unless Rampart returns a consistent allow decision. Its default
 client fails closed when the policy service is unavailable or malformed.
+
+`RampartClient()` also fails closed by default, so supplying a custom client
+to change its URL or timeout preserves this protection. Transport failures and
+timeouts raise `RampartConnectionError`; HTTP server errors raise
+`RampartServerError`. Guards do not execute when these errors occur, including
+when `raise_on_deny=False`.
+
+**Upgrading earlier SDK source checkouts:** calls that omitted `fail_open`
+previously returned a synthetic allow during transport/server failures. They
+now raise, including `preflight`, `check_*`, and their async equivalents.
+Handle availability exceptions without executing the guarded operation.
+If the application deliberately needs the previous availability fallback, use
+`RampartClient(fail_open=True)` explicitly. This does not override policy
+deny/ask or invalid decision responses. Explicit true/false settings and healthy
+decisions retain their behavior; `health()` and `ahealth()` still return `False`
+when unavailable.
 
 ## Preflight API
 

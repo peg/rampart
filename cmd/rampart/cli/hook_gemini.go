@@ -55,7 +55,7 @@ func parseGeminiInput(reader io.Reader) (*hookParseResult, error) {
 		Tool:          tool,
 		Params:        params,
 		PolicyPaths:   policyPaths,
-		WorkDir:       strings.TrimSpace(input.CWD),
+		WorkDir:       input.CWD,
 		Agent:         "gemini-cli",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: event,
@@ -132,8 +132,7 @@ func normalizeGeminiParams(toolName string, input map[string]any, enforce bool) 
 		seen := make(map[string]struct{})
 		paths := make([]string, 0, 4)
 		add := func(path string) error {
-			path = strings.TrimSpace(path)
-			if path == "" {
+			if strings.TrimSpace(path) == "" {
 				return nil
 			}
 			if _, exists := seen[path]; exists {

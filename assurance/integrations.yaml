@@ -1,5 +1,5 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.9.1
+baseline_release: v1.9.2
 reviewed_at: "2026-08-17"
 
 # Version 2 uses the canonical Rampart command target as each integration id
@@ -20,8 +20,8 @@ integrations:
     upstream_ci: rolling_latest
     coverage:
       shell: verified
-      file_read: verified
-      file_write: verified
+      file_read: tested
+      file_write: tested
       network: partial
       mcp: not_covered
       subagents: partial
@@ -52,7 +52,9 @@ integrations:
         kind: upstream_latest
         proves: A disposable OpenClaw installation resolves the stable npm release and exercises zero-configuration protection, equivalent mixed-policy migration, canonical exec-mode preservation, host config validation, and the real plugin boundary.
     limitations:
-      - rampart verify openclaw reaches the installed gateway plugin and its policy mapping; it does not run an authenticated agent turn or prove tool execution and approval resume through the host dispatcher.
+      - rampart verify openclaw reaches the installed gateway plugin's execution and messaging mapping; file read/write mapping is adapter-tested, not actively verified by its loaded-plugin cases. It does not prove tool execution or approval resume through the host dispatcher.
+      - Matching installed plugin files does not bind the gateway's loaded plugin build to this CLI; the loaded mapping result has no plugin-build fingerprint.
+      - Verification receipts do not bind the observed service endpoint, instance, build, and mode together; cached service-backed receipts cannot establish current runtime assurance.
       - Rampart evaluates OpenClaw tool calls, not arbitrary network syscalls made inside an allowed process.
       - Host behavior after an uncaught plugin exception is not yet independently proven fail-closed.
       - Unknown plugin and MCP tool names deny until Rampart has an explicit typed mapping for them.
@@ -202,6 +204,7 @@ integrations:
       - The verification command exercises installed configuration and the adapter; it does not invoke a model or prove host hook ingestion.
       - Codex hosted tools and specialized local tool paths that opt out of lifecycle hooks are not covered.
       - Approval actions require rampart serve because Codex PreToolUse does not currently accept an ask decision.
+      - Rampart approval does not authorize Codex sandbox escalation or native permission requests; the host may require a separate approval.
       - Codex controls hook timeout behavior; a host timeout cannot be claimed fail-closed.
       - Physical Windows host ingestion remains unverified.
 
@@ -239,8 +242,8 @@ integrations:
         kind: upstream_latest
         proves: Hermes' official latest stable GitHub release is resolved independently of PyPI and must pass packaged discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior in isolation.
     limitations:
-      - Hermes documents that a crashing plugin callback is skipped and the agent continues.
-      - Native approval/resume requires a Hermes release that exposes the plugin approval directive; older releases block `ask` decisions with an upgrade message.
+      - Hermes v2026.9.24 source blocks pre_tool_call callback exceptions and configured timeouts; these host-owned failure paths are not all covered by installed evidence. Observer-hook failures may be skipped.
+      - Native approval/resume requires a reviewed Hermes approval collector that retains rule identity and lets later denials win; unknown source structures and older incomplete releases block `ask`.
       - A release that cannot load Hermes' packaged plugin manager fails the rolling compatibility gate and is not inferred compatible from its source tree.
       - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
       - Hermes tools outside the plugin's typed map, including MCP and delegated-agent tools, fail closed but are not claimed as covered policy surfaces.

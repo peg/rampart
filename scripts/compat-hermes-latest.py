@@ -245,16 +245,65 @@ def _marker_from_command(command: str) -> str:
     return ""
 
 
-def run(cmd: list[str], *, env: dict[str, str], cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-    )
+# Only these harness-owned diagnostics may leave a failed child. Arbitrary
+# provider/library output and assertion values are not safe diagnostic text.
+CHILD_FAILURE_MARKERS = (
+    "rampart plugin was not discovered",
+    "rampart plugin discovered but not enabled",
+    "rampart plugin did not register a pre_tool_call hook",
+    "deny did not block as expected",
+    "ask did not request Hermes native approval",
+    "approved Hermes native call did not resume",
+    "denied Hermes native approval did not block",
+    "browser approval did not show its safe origin",
+    "browser approval exposed secret URL material",
+    "approved browser call did not resume",
+    "Hermes did not receive Rampart approval rule keys",
+    "distinct browser targets received the same approval rule key",
+    "allow should continue without a directive",
+    "auth error did not fail closed",
+    "multi-path patch did not block protected second target",
+    "mutating terminal did not fail closed",
+    "configured read_file fail-open should continue",
+    "later plugin veto did not win over approval",
+    "unknown tool capability was not refused",
+)
+
+
+def child_failure_diagnostic(stderr: str) -> str:
+    """Expose a bounded failure category, never arbitrary child output/values."""
+
+    for line in reversed(stderr[-8192:].splitlines()):
+        for marker in CHILD_FAILURE_MARKERS:
+            if line == marker or line.startswith(marker + ":"):
+                return marker + " [details redacted]"
+        match = re.match(r"^(ImportError|ModuleNotFoundError|SyntaxError|TypeError|ValueError|RuntimeError|AssertionError):", line)
+        if match:
+            return match.group(1) + " [details redacted]"
+    return "child diagnostic unavailable [output redacted]"
+
+
+def run(cmd: list[str], *, env: dict[str, str], cwd: Path = REPO_ROOT, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"compatibility child timed out after {timeout}s [output redacted]") from None
+    if result.returncode:
+        # Never let CalledProcessError render the command: -c contains the
+        # probe source, and future command arguments may contain private values.
+        executable = Path(cmd[0]).name
+        stage = executable if executable in {"go", "python", "python3", "hermes", "hermes.exe", "python.exe"} else "compatibility child"
+        raise RuntimeError(f"{stage} exited {result.returncode}: {child_failure_diagnostic(result.stderr)}")
+    return result
 
 
 def resolve_executable(value: str) -> Path:
@@ -359,6 +408,9 @@ def write_hermes_config(hermes_home: Path, serve_url: str) -> None:
     (hermes_home / "config.yaml").write_text(
         textwrap.dedent(
             f"""
+            approvals:
+              mode: manual
+              timeout: 2
             plugins:
               enabled:
                 - rampart
@@ -382,7 +434,9 @@ def child_probe_code(unused_port: int) -> str:
         f"""
         import json
         import os
-        from unittest import mock
+        from contextlib import contextmanager
+        from tools.approval import register_gateway_notify, resolve_gateway_approval, unregister_gateway_notify
+        from tools.approval_context import set_current_session_key, reset_current_session_key
         from hermes_cli.plugins import (
             discover_plugins,
             get_plugin_manager,
@@ -400,6 +454,31 @@ def child_probe_code(unused_port: int) -> str:
         hooks = manager._hooks.get('pre_tool_call') or []
         if not hooks:
             raise SystemExit('rampart plugin did not register a pre_tool_call hook')
+
+        @contextmanager
+        def native_approval(choice, captures=None):
+            previous_gateway = os.environ.get('HERMES_GATEWAY_SESSION')
+            os.environ['HERMES_GATEWAY_SESSION'] = '1'
+            session_token = set_current_session_key('compat-native-approval')
+            def respond(data):
+                if captures is not None:
+                    captures.append(dict(data))
+                resolved = resolve_gateway_approval(
+                    'compat-native-approval', choice, reason='operator denied' if choice == 'deny' else None,
+                    request_id=data['request_id'],
+                )
+                if resolved != 1:
+                    raise RuntimeError('native approval response did not resolve exactly one request')
+            register_gateway_notify('compat-native-approval', respond)
+            try:
+                yield
+            finally:
+                unregister_gateway_notify('compat-native-approval')
+                reset_current_session_key(session_token)
+                if previous_gateway is None:
+                    os.environ.pop('HERMES_GATEWAY_SESSION', None)
+                else:
+                    os.environ['HERMES_GATEWAY_SESSION'] = previous_gateway
 
         def directive(tool, args, call_id):
             return get_pre_tool_call_directive(
@@ -419,7 +498,7 @@ def child_probe_code(unused_port: int) -> str:
         if ask_action != 'approve' or not ask or 'approval required' not in ask or 'compat-audit-ask' not in ask:
             raise SystemExit(f'ask did not request Hermes native approval: {{(ask_action, ask)!r}}')
 
-        with mock.patch('tools.approval.request_tool_approval', return_value={{'approved': True, 'message': 'approved'}}):
+        with native_approval('once'):
             resumed = resolve_pre_tool_block(
                 'terminal', ask_args, task_id='compat-task',
                 session_id='compat-session', tool_call_id='compat-ask-resume-call',
@@ -427,12 +506,12 @@ def child_probe_code(unused_port: int) -> str:
         if resumed is not None:
             raise SystemExit(f'approved Hermes native call did not resume: {{resumed!r}}')
 
-        with mock.patch('tools.approval.request_tool_approval', return_value={{'approved': False, 'message': 'operator denied'}}):
+        with native_approval('deny'):
             approval_denied = resolve_pre_tool_block(
                 'terminal', ask_args, task_id='compat-task',
                 session_id='compat-session', tool_call_id='compat-ask-deny-call',
             )
-        if approval_denied != 'operator denied':
+        if not approval_denied or 'operator denied' not in approval_denied:
             raise SystemExit(f'denied Hermes native approval did not block: {{approval_denied!r}}')
 
         browser_targets = [
@@ -452,11 +531,7 @@ def child_probe_code(unused_port: int) -> str:
                 raise SystemExit(f'browser approval exposed secret URL material: {{forbidden!r}} in {{browser_message!r}}')
 
         approval_calls = []
-        def approve_and_capture(*call_args, **call_kwargs):
-            approval_calls.append((call_args, call_kwargs))
-            return {{'approved': True, 'message': 'approved'}}
-
-        with mock.patch('tools.approval.request_tool_approval', side_effect=approve_and_capture):
+        with native_approval('once', approval_calls):
             for index, target in enumerate(browser_targets):
                 resumed = resolve_pre_tool_block(
                     'browser_navigate', {{'url': target}}, task_id='compat-task',
@@ -464,11 +539,26 @@ def child_probe_code(unused_port: int) -> str:
                 )
                 if resumed is not None:
                     raise SystemExit(f'approved browser call did not resume: {{resumed!r}}')
-        rule_keys = [kwargs.get('rule_key') for _, kwargs in approval_calls]
-        if len(rule_keys) != 2 or not all(isinstance(key, str) and key.startswith('rampart:') for key in rule_keys):
+        rule_keys = [data.get('pattern_key') for data in approval_calls]
+        if len(rule_keys) != 2 or not all(isinstance(key, str) and key.startswith('plugin_rule:rampart:') for key in rule_keys):
             raise SystemExit(f'Hermes did not receive Rampart approval rule keys: {{rule_keys!r}}')
         if rule_keys[0] == rule_keys[1]:
             raise SystemExit('distinct browser targets received the same approval rule key')
+
+        # Exercise precedence through Hermes' real dispatcher. An approval
+        # collected earlier must not eclipse a later plugin's denial.
+        def later_veto(**kwargs):
+            return {{'action': 'block', 'message': 'compat-later-veto'}}
+        manager._hooks.setdefault('pre_tool_call', []).append(later_veto)
+        try:
+            veto_action, veto = directive('terminal', ask_args, 'compat-ask-later-veto-call')
+            if veto_action != 'block' or veto != 'compat-later-veto':
+                raise SystemExit('later plugin veto did not win over approval')
+        finally:
+            manager._hooks['pre_tool_call'].remove(later_veto)
+        unknown_action, unknown = directive('future_unknown_capability', {{}}, 'compat-unknown-call')
+        if unknown_action != 'block':
+            raise SystemExit('unknown tool capability was not refused')
 
         allow_action, allow = directive('terminal', {{'command': 'printf rampart-allow-marker'}}, 'compat-allow-call')
         if allow_action is not None or allow is not None:
@@ -514,6 +604,9 @@ def child_probe_code(unused_port: int) -> str:
             'deny_blocked': True,
             'ask_native_approval_resumed': True,
             'ask_native_approval_denied': True,
+            'native_approval_transport': True,
+            'later_plugin_veto_wins': True,
+            'unknown_tool_refused': True,
             'allow_continued': True,
             'auth_error_fail_closed': True,
             'multi_path_patch_deny_wins': True,
@@ -609,7 +702,7 @@ def main() -> int:
                 except Exception:
                     hermes_version = "version command failed"
 
-            probe = run([str(hermes_python), "-c", child_probe_code(free_port())], env=env, cwd=temp)
+            probe = run([str(hermes_python), "-c", child_probe_code(free_port())], env=env, cwd=temp, timeout=90)
             child_summary = json.loads(probe.stdout.strip().splitlines()[-1])
 
             paths = {entry["path"] for entry in RampartStub.requests_seen}
@@ -630,6 +723,7 @@ def main() -> int:
                 "compat-ask-call",
                 "compat-ask-resume-call",
                 "compat-ask-deny-call",
+                "compat-ask-later-veto-call",
             }
             if set(ask_call_ids) != expected_ask_call_ids:
                 raise RuntimeError(

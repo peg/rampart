@@ -20,6 +20,23 @@ import (
 	"time"
 )
 
+func TestGenerateSuggestionsOmitsSensitiveAction(t *testing.T) {
+	for _, call := range []ToolCall{
+		{Tool: "exec", Params: map[string]any{"command": "echo token=synthetic-value"}},
+		{Tool: "read", Params: map[string]any{"path": "/tmp/token=synthetic-value/marker"}},
+		{Tool: "token=synthetic-value", Params: map[string]any{"path": "/tmp/marker"}},
+		{Tool: "exec", Params: map[string]any{"command": "echo token=[REDACTED]"}},
+	} {
+		command, path, tool := call.Command(), call.Path(), call.Tool
+		if got := GenerateSuggestions(call); len(got) != 0 {
+			t.Fatalf("sensitive action produced executable guidance: %q", got)
+		}
+		if call.Command() != command || call.Path() != path || call.Tool != tool {
+			t.Fatal("guidance changed the original action identity")
+		}
+	}
+}
+
 func TestGeneralizeCommandPatterns(t *testing.T) {
 	tests := []struct {
 		name  string

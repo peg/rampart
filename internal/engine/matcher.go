@@ -74,7 +74,7 @@ func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 	}
 	// Filesystem lookup keeps native spelling, including literal Unix backslashes.
 	nativePath := filepath.FromSlash(p)
-	nativeWorkDir := filepath.FromSlash(strings.TrimSpace(workDir))
+	nativeWorkDir := filepath.FromSlash(workDir)
 	if nativeWorkDir != "" && !filepath.IsAbs(nativePath) {
 		nativePath = strings.TrimRight(nativeWorkDir, string(filepath.Separator)) + string(filepath.Separator) + nativePath
 	}
@@ -85,7 +85,7 @@ func cleanPathsAt(p, workDir string) (cleaned string, resolved string) {
 	// This also enables cross-platform policy matching (Windows paths match
 	// forward-slash patterns like "**/.ssh/id_*").
 	p = strings.ReplaceAll(p, "\\", "/")
-	workDir = strings.ReplaceAll(strings.TrimSpace(workDir), "\\", "/")
+	workDir = strings.ReplaceAll(workDir, "\\", "/")
 	if workDir != "" && !filepath.IsAbs(p) {
 		// Join without cleaning away components before filesystem resolution.
 		p = strings.TrimRight(workDir, "/") + "/" + p

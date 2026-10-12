@@ -139,7 +139,7 @@ can reach the service's permissive generic fallback. New capabilities require
 an explicit typed mapping and tests before Rampart allows them.
 
 Other OpenClaw plugins that rewrite tool parameters share the trusted host
-boundary. Current OpenClaw hook composition does not give Rampart an
+boundary. OpenClaw 2026.9.7 [hook composition](https://github.com/openclaw/openclaw/blob/v2026.9.7/src/plugins/hooks.ts) gives modifying hooks the original event, not an
 authoritative post-composition view of the final parameters, so do not combine
 Rampart with an untrusted parameter-mutating plugin.
 
@@ -155,8 +155,13 @@ plugin can redact a completed tool response before the model receives it.
 !!! note "Sub-agents"
     The `before_tool_call` hook fires for tool calls from subagents too. The `openclaw.yaml` profile recognizes current `agent:*:subagent:*` and `agent:*:acp:*` session keys plus their legacy forms to apply stricter rules to child sessions.
 
-!!! success "Enforcement verified"
-    `before_tool_call` is properly awaited and blocking in OpenClaw 2026.3.28+. Deny decisions are enforced end-to-end, not just logged.
+!!! note "What verification establishes"
+    `rampart verify openclaw` checks policy preflights and the loaded plugin's
+    execution and messaging mapping. It does not dispatch a real tool or resume
+    a native approval. File read/write mapping is adapter-tested; the loaded
+    verifier has no active file cases. Matching installed plugin files does not
+    establish which plugin build the gateway has loaded. Actual dispatcher
+    behavior needs separate evidence for the installed host version.
 
 ## The `openclaw.yaml` profile
 
@@ -178,10 +183,18 @@ rampart init --profile openclaw
 
 ## Complete action approval
 
-The native plugin offers `allow-once` and `deny`. It shows the complete
-represented arguments, targets and available host context with secrets redacted.
+The native plugin offers `allow-once` and `deny`. It shows the complete original
+execution arguments and derived targets with secrets redacted, together with
+the available agent, delegation depth, requester, origin and working directory.
 The approval belongs to OpenClaw; Rampart creates no second pending queue.
 Timeouts deny the call.
+
+Opaque session, run and tool-call identifiers remain in Rampart's service
+requests and audit records instead of consuming the visible review budget.
+OpenClaw separately retains its native tool-call, agent and session approval
+binding. A working directory already represented exactly in the original
+arguments is shown once; a distinct working directory is also included.
+Original arguments with these same field names are always retained.
 
 The policy input retains adapter-derived facts used by the Guard rules. Its
 `rampart_original_input` field preserves the original tool arguments for review
@@ -190,7 +203,8 @@ adapter's reserved fields. Those names cannot replace derived policy facts or
 host context. Native approval displays this original payload after redaction.
 
 OpenClaw's native hook description is limited to 512 characters and does not
-forward a complete-review attachment. If the complete rendered action exceeds
+forward a complete-review attachment. Compact presentation avoids duplicated
+metadata; it never truncates arguments or targets. If the final escaped review exceeds
 that limit, Rampart blocks it before creating an approval. Split it into smaller
 independently reviewable actions or configure an explicit operator-reviewed
 policy. An older Rampart service without the complete review response also
@@ -215,10 +229,11 @@ rampart verify openclaw
 The verification command checks managed configuration and policy canaries,
 then calls `rampart.verify` on the running gateway. That plugin method feeds
 fixed, non-executing canaries through the same normalization and decision
-mapping as `before_tool_call`. It proves the current plugin is loaded and can
-reach Rampart; it does not invoke the agent's tool dispatcher or exercise a
-native approval's resume path. An authenticated agent turn is separate
-evidence and is not run by this command.
+mapping as `before_tool_call`. It observes the loaded plugin's mapping decisions
+and checks that installed plugin files match the CLI. It does not bind those
+files to the gateway's loaded build, invoke the agent's tool dispatcher, or
+exercise a native approval's resume path. An authenticated agent turn is
+separate evidence and is not run by this command.
 
 Use `rampart doctor` for the broader installation health report. Expected output when fully configured includes:
 

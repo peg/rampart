@@ -71,7 +71,7 @@ rampart verify policy          # Verify the local Rampart policy path
 rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
 
-Verification does not execute commands, read files, send messages, contact external hosts, or add canary events to the audit log. A failed expectation exits with status 1; an incomplete or unreachable check exits with status 2. Human and JSON reports identify the resulting `policy_verified`, `adapter_verified`, `host_verified`, `unverified`, or `degraded` assurance level.
+Verification does not execute represented commands, read represented target files, send represented messages, or contact represented external hosts. Configuration and adapter checks do read local installation files. HTTP preflight canaries skip normal audit persistence; native-hook adapter checks can write isolated local audit records. A failed expectation exits with status 1; an incomplete or unreachable check exits with status 2. Human and JSON reports identify the resulting `policy_verified`, `adapter_verified`, `host_verified`, `unverified`, or `degraded` assurance level.
 
 `--all` always checks the policy path, then every configured integration on the
 current platform that exposes an active safe verifier. It does not invoke a
@@ -80,6 +80,11 @@ use `rampart doctor` for their installation status. The aggregate JSON report
 uses `rampart.verify-all.v1`, retains the per-target `rampart.verify.v1`
 reports, and exits 1 if any target fails or 2 if none fail but at least one is
 unverified.
+
+Unavailable OpenClaw configuration discovery remains an unverified target in
+`--all`. The `--timeout` budget applies independently to each active policy
+request or host observation; it is not a total command deadline. Installation
+metadata lookups retain their own bounded discovery budget.
 
 For integration targets, a completed run also records a minimal verification
 receipt under `~/.rampart/verification/`. The receipt contains check IDs and
@@ -91,7 +96,12 @@ adapter without asking a model to act. Receipts expire after seven days and are
 treated as stale when Rampart, the configured boundary, the selected policy
 endpoint, local policy-file metadata, or a detected host executable changes.
 They are local status caches, not tamper-resistant
-attestations.
+attestations. Service-backed receipts do not bind the service endpoint, instance,
+build, and mode into one observation. Status therefore retains their timestamps
+but does not promote current service-backed assurance from a cached receipt.
+A live OpenClaw result establishes loaded mapping checks. Matching installed
+plugin files does not identify the gateway's loaded plugin build; the running
+service build and dispatched tool actions also require separate evidence.
 
 ### `rampart setup claude-code`
 
@@ -235,6 +245,13 @@ rampart upgrade --dry-run    # Preview without making changes
 rampart upgrade --no-policy-update  # Skip refreshing built-in policy profiles
 rampart upgrade --no-binary # Refresh managed policies without replacing the binary
 ```
+
+Custom `serve --background` launches do not retain their original options or
+working directory through automatic restart. This includes the incoming
+v1.9.1 updater: the destination binary cannot repair a restart already performed
+by the old executable. Stop the service, install the new binary, and restart
+with the original options and CWD using the [manual migration](../getting-started/upgrade.md#custom-background-services-manual-migration).
+Automatic background preservation and recovery remain outside this release.
 
 After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
 
@@ -463,9 +480,10 @@ with mode, the backward-compatible `protected_agents` list, per-integration
 details. Assurance levels distinguish `detected`, `configured`,
 `adapter_verified`, `host_verified`, `unverified`, and `degraded`; stale
 receipts fall back to current configuration state and explain why proof must be
-rerun. Evidence for a service-required integration is also stale whenever the
-configured Rampart policy service is unavailable; another daemon on a different
-port does not satisfy that check.
+rerun. Service-backed receipts cannot establish the current service instance,
+build, or enforcement mode. Their evidence remains historical and status falls
+back to detected/configured until runtime association is supported. A reachable
+daemon alone does not promote that evidence.
 
 `mode` comes from the configured service's health response and is `unknown`
 when that service cannot be reached or identified. Local hook enforcement can

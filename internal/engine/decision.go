@@ -135,13 +135,13 @@ type ToolCall struct {
 // WorkingDirectory returns the explicit host working directory, falling back
 // to common structured parameter names used by SDK and HTTP callers.
 func (tc ToolCall) WorkingDirectory() string {
-	if workDir := strings.TrimSpace(tc.WorkDir); workDir != "" {
+	if strings.TrimSpace(tc.WorkDir) != "" {
+		return tc.WorkDir
+	}
+	if workDir := tc.Param("workdir"); strings.TrimSpace(workDir) != "" {
 		return workDir
 	}
-	if workDir := strings.TrimSpace(tc.Param("workdir")); workDir != "" {
-		return workDir
-	}
-	return strings.TrimSpace(tc.Param("cwd"))
+	return tc.Param("cwd")
 }
 
 // Param returns a string value from Params, falling back to Input.
@@ -239,7 +239,7 @@ func validateStringAliases(field string, maps []map[string]any, keys ...string) 
 func validateStringAliasesWithValues(field string, initial []string, maps []map[string]any, keys ...string) error {
 	values := make(map[string]struct{}, len(initial)+len(maps)*len(keys))
 	for _, value := range initial {
-		if value = strings.TrimSpace(value); value != "" {
+		if strings.TrimSpace(value) != "" {
 			values[value] = struct{}{}
 		}
 	}
@@ -253,7 +253,7 @@ func validateStringAliasesWithValues(field string, initial []string, maps []map[
 			if !ok {
 				return fmt.Errorf("%s must be a string", field)
 			}
-			if text = strings.TrimSpace(text); text != "" {
+			if strings.TrimSpace(text) != "" {
 				values[text] = struct{}{}
 			}
 		}

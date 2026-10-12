@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,28 @@ func TestPublicSupportMatrixNamesEveryAssuredIntegration(t *testing.T) {
 			continue
 		}
 		row := page[start : start+end]
+		// Compare the visible tier/service columns and explicit approval owner,
+		// keeping prose descriptions free to explain each host's limitations.
+		cell := func(label string) string {
+			t.Helper()
+			match := regexp.MustCompile(`<td data-label="` + regexp.QuoteMeta(label) + `"[^>]*>(.*?)</td>`).FindStringSubmatch(row)
+			if len(match) != 2 {
+				t.Errorf("matrix row %q lacks %q", integration.ID, label)
+				return ""
+			}
+			return strings.TrimSpace(regexp.MustCompile(`<[^>]*>`).ReplaceAllString(match[1], " "))
+		}
+		if fields := strings.Fields(cell("support tier")); len(fields) == 0 || fields[0] != integration.SupportTier {
+			t.Errorf("matrix tier for %q differs from %q", integration.ID, integration.SupportTier)
+		}
+		service := cell("rampart serve")
+		if integration.ServiceRequired != strings.HasPrefix(service, "required") ||
+			(!integration.ServiceRequired && !strings.HasPrefix(service, "not required")) {
+			t.Errorf("matrix service requirement for %q differs from %s", integration.ID, strconv.FormatBool(integration.ServiceRequired))
+		}
+		if !strings.Contains(row, `data-label="approval ux" data-approval="`+integration.Approval+`"`) {
+			t.Errorf("matrix approval owner for %q differs from %q", integration.ID, integration.Approval)
+		}
 		if !strings.Contains(row, strings.ToLower(integration.DisplayName)) {
 			t.Errorf("public support matrix row for %q does not contain display name %q", integration.ID, integration.DisplayName)
 		}

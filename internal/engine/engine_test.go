@@ -14,6 +14,7 @@
 package engine
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"os"
@@ -719,6 +720,21 @@ policies:
 	if got.Message != "suspicious response" {
 		t.Fatalf("response message = %q", got.Message)
 	}
+}
+
+func TestValidationResponseWarningRedactsPresentation(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	const pattern = `token=synthetic-pattern\1`
+	err := compileResponseRegexes(Condition{ResponseMatches: []string{pattern}}, make(map[string]*regexp.Regexp))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "synthetic-pattern", "validation errors retain the caller's original pattern")
+	require.Contains(t, logs.String(), "response regex contains backreference")
+	require.Contains(t, logs.String(), "[REDACTED]")
+	require.NotContains(t, logs.String(), "synthetic-pattern")
 }
 
 func TestValidation_InvalidResponseRegex(t *testing.T) {
