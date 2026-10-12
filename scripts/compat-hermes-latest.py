@@ -282,6 +282,15 @@ def child_failure_diagnostic(stderr: str) -> str:
         for marker in CHILD_FAILURE_MARKERS:
             if line == marker or line.startswith(marker + ":"):
                 return marker + " [details redacted]"
+        # A missing module is a public package name, never a runtime value, but
+        # only the exact interpreter message with a plain dotted identifier is
+        # exposed; anything else stays category-only.
+        missing = re.fullmatch(
+            r"ModuleNotFoundError: No module named '([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)'",
+            line,
+        )
+        if missing and len(missing.group(1)) <= 100:
+            return f"ModuleNotFoundError: No module named {missing.group(1)!r} [details redacted]"
         match = re.match(r"^(ImportError|ModuleNotFoundError|SyntaxError|TypeError|ValueError|RuntimeError|AssertionError):", line)
         if match:
             return match.group(1) + " [details redacted]"

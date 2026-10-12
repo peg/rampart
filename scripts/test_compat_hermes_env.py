@@ -80,6 +80,23 @@ class CompatEnvironmentTests(unittest.TestCase):
                 MODULE.run(["python", "-c", secret], env={})
         self.assertNotIn(secret, str(error.exception))
 
+    def test_missing_module_name_is_exposed_only_as_a_plain_identifier(self) -> None:
+        exposed = MODULE.child_failure_diagnostic(
+            "Traceback (most recent call last):\nModuleNotFoundError: No module named 'yaml.nodes'"
+        )
+        self.assertIn("'yaml.nodes'", exposed)
+        self.assertIn("redacted", exposed)
+        for stderr in (
+            "ModuleNotFoundError: No module named 'synthetic-private-value'",
+            "ModuleNotFoundError: No module named 'a' injected synthetic-private-value",
+            "ModuleNotFoundError: No module named '" + "a" * 101 + "'",
+        ):
+            with self.subTest(stderr=stderr):
+                result = MODULE.child_failure_diagnostic(stderr)
+                self.assertNotIn("synthetic-private-value", result)
+                self.assertNotIn("No module named", result)
+                self.assertIn("ModuleNotFoundError", result)
+
     def test_child_timeout_does_not_render_command_or_output(self) -> None:
         secret = "synthetic-private-value"
         error = MODULE.subprocess.TimeoutExpired(["python", "-c", secret], 1, output=secret, stderr=secret)
