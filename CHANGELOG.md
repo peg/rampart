@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rampart setup claude-code --hook-failure=auto|block|continue` controls what
+  happens when the PreToolUse hook fails. Claude Code lets a hook that cannot
+  start, times out, or exits unexpectedly proceed by default, which silently
+  disables enforcement; Claude Code 2.1.295+ can block instead. A new
+  installation on a detected supported version now fails closed on PreToolUse
+  only. An existing installation is left unchanged and told how to opt in, and
+  an older or undetected Claude Code never receives the field. `verify` reports
+  the active mode. With it enabled, a Rampart crash or hang blocks tool calls
+  until fixed or reverted with `--hook-failure=continue`.
+
 ### Changed
 
 - The experimental Hermes compatibility gate now tests the last reviewed release

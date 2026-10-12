@@ -237,6 +237,7 @@ type claudeSettings map[string]any
 func newSetupClaudeCodeCmd(opts *rootOptions) *cobra.Command {
 	var force bool
 	var remove bool
+	var hookFailure string
 
 	cmd := &cobra.Command{
 		Use:   "claude-code",
@@ -250,6 +251,13 @@ This includes Bash, Read, Write, Edit, Fetch, Task, and any future tools.
 
 Safe to run multiple times — will not duplicate hooks or overwrite
 other settings.
+
+By default Claude Code lets a tool call proceed when a hook cannot start, times
+out, or exits unexpectedly, so a Rampart failure would disable enforcement.
+Claude Code 2.1.295 and newer can block instead (onFailure "block"). A new
+installation on a supported version enables that for the PreToolUse hook; an
+existing installation is left unchanged and told how to opt in. Use
+--hook-failure=block or --hook-failure=continue to choose explicitly.
 
 Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -288,8 +296,24 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
 			// settings.json never needs to contain credentials.
 			hookCommand := currentClaudeHookCommand()
-			if claudeHooksUseCommand(settings, hookCommand) && !force {
+
+			// Decide whether the PreToolUse hook fails closed. An existing
+			// installation keeps its current mode unless the user asks.
+			failurePlan, err := planClaudeHookFailure(
+				hookFailure,
+				claudeRampartHooksInstalled(settings),
+				claudePreToolUseBlocksOnFailure(settings),
+				detectClaudeVersion,
+			)
+			if err != nil {
+				return fmt.Errorf("setup: %w", err)
+			}
+			if claudeHooksUseCommand(settings, hookCommand) && !force &&
+				failurePlan.Block == claudePreToolUseBlocksOnFailure(settings) {
 				fmt.Fprintln(cmd.OutOrStdout(), "Rampart hook already configured in Claude Code settings.")
+				if failurePlan.Notice != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", failurePlan.Notice)
+				}
 				return nil
 			}
 
@@ -297,12 +321,15 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				"type":    "command",
 				"command": hookCommand,
 			}
+			// Only PreToolUse is the enforcement point; the Post hooks keep
+			// Claude Code's default so a scanning failure cannot hide tool output.
+			preToolUseHook := buildClaudePreToolUseHook(settings, hookCommand, failurePlan)
 
 			// Use wildcard matcher to intercept ALL tools (Bash, Read, Write, Edit, Fetch, Task, etc.)
 			// This ensures comprehensive coverage as Claude Code adds new tools.
 			allToolsMatcher := map[string]any{
 				"matcher": ".*",
-				"hooks":   []any{rampartHook},
+				"hooks":   []any{preToolUseHook},
 			}
 
 			// PostToolUse scans successful tool responses and correlates approval
@@ -383,6 +410,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
 			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will route hook-visible tool calls through Rampart.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Documented tools are classified; in enforce mode, unknown future PreToolUse tools deny until Rampart is updated.")
+			if failurePlan.Notice != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", failurePlan.Notice)
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
 			fmt.Fprintln(cmd.OutOrStdout(), "")
 
@@ -429,6 +459,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing Rampart hook config")
 	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart hooks from Claude Code settings")
+	cmd.Flags().StringVar(&hookFailure, "hook-failure", claudeHookFailureAuto,
+		"What happens when the PreToolUse hook fails: auto (fail closed on a new install with Claude Code 2.1.295+), block, or continue")
 	return cmd
 }
 
